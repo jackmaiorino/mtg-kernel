@@ -1,0 +1,4868 @@
+{
+ "schema": "line-b-engineering-diagnostics-receipt/v1",
+ "name": "diagnostics-001",
+ "provenance": {
+  "binary": "E:\\pinned-binaries\\822d04268cce1601d2c938cd7fa40f69bcbc46a137bce60c21e3fb59eb946628\\expanded_deck_training_v1.exe",
+  "binary_sha256": "822d04268cce1601d2c938cd7fa40f69bcbc46a137bce60c21e3fb59eb946628",
+  "tool_head": "2c01b44bd24cd7be95ec486ddf31a1018d9e3d00"
+ },
+ "seed_name": "diagnostics-001",
+ "claim": "non-outcome diagnostics of the teacher at engineering roots; no outcome claim",
+ "template": {
+  "path": "E:\\mtg-postboard-campaign-20260920\\broader-exposure-pilot-001\\broader\\config.json",
+  "sha256": "d2e4ace81253e6a393d5b3687250f77f5c4af433afd28dda97fa5ee2ab533529"
+ },
+ "rollouts": 16,
+ "teacher_workers": 24,
+ "backend": "cpu",
+ "updates": [
+  {
+   "label": "u000",
+   "seconds": 8.151,
+   "teacher_seconds": 5.0494669,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 23754,
+    "policy_steps": 26550,
+    "rollouts": 304,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.036092489240743694,
+   "ordinary_head_l2": 0.1677378310693344,
+   "head_l2_ratio": 0.21517202774504024,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 8,
+     "status": "complete",
+     "student_p_max": 0.9163320965701198,
+     "student_entropy": 0.34624752413646687,
+     "target_p_max": 0.9163320965701198,
+     "target_entropy": 0.34624752413646687,
+     "mean_return_spread": 0.0,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 128,
+     "rollout_decisions_summary": {
+      "mean": 33.625,
+      "median": 31.0,
+      "max": 111
+     },
+     "rollout_outcome_counts": {
+      "complete": 128
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999188884900901,
+     "student_entropy": 0.0008451531490263646,
+     "target_p_max": 0.9999188884900901,
+     "target_entropy": 0.000845153149026365,
+     "mean_return_spread": 0.0,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 8.28125,
+      "median": 9.0,
+      "max": 13
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.9943292832358899,
+     "student_entropy": 0.034986195564679,
+     "target_p_max": 0.9943292832358899,
+     "target_entropy": 0.03498619556467901,
+     "mean_return_spread": 0.0,
+     "list": "published-21659427193c1e62",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 6.583333333333333,
+      "median": 4.0,
+      "max": 18
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9985980151466836,
+     "student_entropy": 0.010611854645525954,
+     "target_p_max": 0.9985980151466836,
+     "target_entropy": 0.010611854645525954,
+     "mean_return_spread": 0.0,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 179.71875,
+      "median": 162.0,
+      "max": 378
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 6,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.39698338927263205,
+     "student_entropy": 1.0890253957142706,
+     "target_p_max": 0.57765399393865,
+     "target_entropy": 0.9654563778875803,
+     "mean_return_spread": 0.25,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 204.96875,
+      "median": 185.5,
+      "max": 523
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    }
+   ]
+  },
+  {
+   "label": "u001",
+   "seconds": 5.695,
+   "teacher_seconds": 2.4037079,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 14162,
+    "policy_steps": 16223,
+    "rollouts": 320,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.00033989018290848374,
+   "ordinary_head_l2": 0.3509284132492047,
+   "head_l2_ratio": 0.0009685456351666732,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 7,
+     "status": "complete",
+     "student_p_max": 0.9492371376796335,
+     "student_entropy": 0.20807500645454063,
+     "target_p_max": 0.9492371376796335,
+     "target_entropy": 0.20807500645454066,
+     "mean_return_spread": 0.0,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 112,
+     "rollout_decisions_summary": {
+      "mean": 20.982142857142858,
+      "median": 19.5,
+      "max": 32
+     },
+     "rollout_outcome_counts": {
+      "complete": 112
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 5,
+     "status": "complete",
+     "student_p_max": 0.99854483822634,
+     "student_entropy": 0.012977392534735727,
+     "target_p_max": 0.9994641830352616,
+     "target_entropy": 0.005314081705475267,
+     "mean_return_spread": 0.25,
+     "list": "published-4599429f3c506715",
+     "rollouts": 80,
+     "rollout_decisions_summary": {
+      "mean": 65.6,
+      "median": 57.0,
+      "max": 137
+     },
+     "rollout_outcome_counts": {
+      "complete": 80
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999998752372201,
+     "student_entropy": 2.1080981756205817e-06,
+     "target_p_max": 0.9999998752372201,
+     "target_entropy": 2.108098175620583e-06,
+     "mean_return_spread": 0.0,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 19.8125,
+      "median": 19.5,
+      "max": 32
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 8,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999810313420243,
+     "student_entropy": 0.00022520943283580176,
+     "target_p_max": 0.9999810313420243,
+     "target_entropy": 0.00022520943283580166,
+     "mean_return_spread": 0.0,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 105.21875,
+      "median": 88.0,
+      "max": 241
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 9,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.9976048078984858,
+     "student_entropy": 0.01923748999791,
+     "target_p_max": 0.9976048078984858,
+     "target_entropy": 0.01923748999791,
+     "mean_return_spread": 0.0,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 40.046875,
+      "median": 38.0,
+      "max": 56
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    }
+   ]
+  },
+  {
+   "label": "u002",
+   "seconds": 33.264,
+   "teacher_seconds": 29.7350928,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 67661,
+    "policy_steps": 72710,
+    "rollouts": 288,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.006847514903671412,
+   "ordinary_head_l2": 0.14334122517364875,
+   "head_l2_ratio": 0.04777072956768776,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.5441119015212499,
+     "student_entropy": 0.773857139705017,
+     "target_p_max": 0.5546537859235919,
+     "target_entropy": 0.6985348836876732,
+     "mean_return_spread": 0.625,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 343.890625,
+      "median": 318.0,
+      "max": 661
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999587388400734,
+     "student_entropy": 0.000457816018401816,
+     "target_p_max": 0.9999587388400734,
+     "target_entropy": 0.0004578160184018163,
+     "mean_return_spread": 0.0,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 55.71875,
+      "median": 59.5,
+      "max": 99
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.999607612395176,
+     "student_entropy": 0.00390098797586677,
+     "target_p_max": 0.999607612395176,
+     "target_entropy": 0.003900987975866772,
+     "mean_return_spread": 0.0,
+     "list": "published-21659427193c1e62",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 142.3125,
+      "median": 140.0,
+      "max": 229
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    },
+    {
+     "trajectory_index": 7,
+     "width": 5,
+     "status": "complete",
+     "student_p_max": 0.5462455878744334,
+     "student_entropy": 0.7012258442905458,
+     "target_p_max": 0.5440222777032282,
+     "target_entropy": 0.7242952357879407,
+     "mean_return_spread": 0.375,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 80,
+     "rollout_decisions_summary": {
+      "mean": 417.775,
+      "median": 407.5,
+      "max": 848
+     },
+     "rollout_outcome_counts": {
+      "complete": 80
+     }
+    },
+    {
+     "trajectory_index": 8,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.9996937405680932,
+     "student_entropy": 0.0029959186764379206,
+     "target_p_max": 0.9996937405680932,
+     "target_entropy": 0.002995918676437919,
+     "mean_return_spread": 0.0,
+     "list": "published-4599429f3c506715",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 27.895833333333332,
+      "median": 25.0,
+      "max": 56
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    }
+   ]
+  },
+  {
+   "label": "u003",
+   "seconds": 2.936,
+   "teacher_seconds": 1.2953636,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 9147,
+    "policy_steps": 10361,
+    "rollouts": 176,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.0,
+   "ordinary_head_l2": 0.10401530211736865,
+   "head_l2_ratio": 0.0,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999815420820608,
+     "student_entropy": 0.0002196493691816871,
+     "target_p_max": 0.9999815420820608,
+     "target_entropy": 0.00021964936918168724,
+     "mean_return_spread": 0.0,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 35.71875,
+      "median": 36.0,
+      "max": 58
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999669836855082,
+     "student_entropy": 0.0003736948990967,
+     "target_p_max": 0.9999669836855082,
+     "target_entropy": 0.00037369489909670035,
+     "mean_return_spread": 0.0,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 21.8125,
+      "median": 17.0,
+      "max": 48
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9996466060502035,
+     "student_entropy": 0.0031620808557977585,
+     "target_p_max": 0.9996466060502035,
+     "target_entropy": 0.0031620808557977593,
+     "mean_return_spread": 0.0,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 117.375,
+      "median": 109.0,
+      "max": 216
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.9830765250294637,
+     "student_entropy": 0.09748569713539197,
+     "target_p_max": 0.9830765250294637,
+     "target_entropy": 0.097485697135392,
+     "mean_return_spread": 0.0,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 47.1875,
+      "median": 45.0,
+      "max": 95
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 7,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999849495962686,
+     "student_entropy": 0.0001821715649524557,
+     "target_p_max": 0.9999849495962686,
+     "target_entropy": 0.00018217156495245582,
+     "mean_return_spread": 0.0,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 40.15625,
+      "median": 44.5,
+      "max": 58
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    }
+   ]
+  },
+  {
+   "label": "u004",
+   "seconds": 3.696,
+   "teacher_seconds": 1.8200972,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 13013,
+    "policy_steps": 15382,
+    "rollouts": 304,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 1.714810924940801e-05,
+   "ordinary_head_l2": 0.20483306180904123,
+   "head_l2_ratio": 8.371748729409024e-05,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999299340007872,
+     "student_entropy": 0.0007403200018102945,
+     "target_p_max": 0.9999742230176979,
+     "target_entropy": 0.00029813698289394094,
+     "mean_return_spread": 0.25,
+     "list": "published-21659427193c1e62",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 111.84375,
+      "median": 100.5,
+      "max": 292
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 5,
+     "status": "complete",
+     "student_p_max": 0.9996803640054374,
+     "student_entropy": 0.003106558345319178,
+     "target_p_max": 0.9996803580852069,
+     "target_entropy": 0.003106672394494737,
+     "mean_return_spread": 0.375,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 80,
+     "rollout_decisions_summary": {
+      "mean": 38.7875,
+      "median": 35.0,
+      "max": 116
+     },
+     "rollout_outcome_counts": {
+      "complete": 80
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9995434212870471,
+     "student_entropy": 0.003968363527314226,
+     "target_p_max": 0.9995434212870471,
+     "target_entropy": 0.003968363527314225,
+     "mean_return_spread": 0.0,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 80.125,
+      "median": 78.5,
+      "max": 142
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 6,
+     "status": "complete",
+     "student_p_max": 0.3884476515522605,
+     "student_entropy": 1.0899336052757258,
+     "target_p_max": 0.3884476515522605,
+     "target_entropy": 1.0899336052757258,
+     "mean_return_spread": 0.0,
+     "list": "published-4599429f3c506715",
+     "rollouts": 96,
+     "rollout_decisions_summary": {
+      "mean": 20.197916666666668,
+      "median": 20.5,
+      "max": 35
+     },
+     "rollout_outcome_counts": {
+      "complete": 96
+     }
+    },
+    {
+     "trajectory_index": 5,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.6856023571916401,
+     "student_entropy": 0.6225742252690032,
+     "target_p_max": 0.6856023571916403,
+     "target_entropy": 0.6225742252690031,
+     "mean_return_spread": 0.0,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 28.5625,
+      "median": 26.0,
+      "max": 61
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    }
+   ]
+  },
+  {
+   "label": "u005",
+   "seconds": 29.207,
+   "teacher_seconds": 24.6388123,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 55306,
+    "policy_steps": 58253,
+    "rollouts": 272,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.004707905470050304,
+   "ordinary_head_l2": 0.14486613760036102,
+   "head_l2_ratio": 0.03249831567290003,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9685542972925899,
+     "student_entropy": 0.13973220776144615,
+     "target_p_max": 0.9491912734983139,
+     "target_entropy": 0.20088963944695132,
+     "mean_return_spread": 0.125,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 267.0625,
+      "median": 244.5,
+      "max": 524
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9998869405161434,
+     "student_entropy": 0.0011404920590090417,
+     "target_p_max": 0.9998869405161434,
+     "target_entropy": 0.001140492059009042,
+     "mean_return_spread": 0.0,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 29.5625,
+      "median": 28.5,
+      "max": 66
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999563767071425,
+     "student_entropy": 0.0004815966816918666,
+     "target_p_max": 0.9999563767071425,
+     "target_entropy": 0.00048159668169186684,
+     "mean_return_spread": 0.0,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 141.78125,
+      "median": 136.5,
+      "max": 316
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 6,
+     "status": "complete",
+     "student_p_max": 0.9995860843848209,
+     "student_entropy": 0.0036381698581377016,
+     "target_p_max": 0.9995860843851612,
+     "target_entropy": 0.003638169848380419,
+     "mean_return_spread": 0.25,
+     "list": "published-21659427193c1e62",
+     "rollouts": 96,
+     "rollout_decisions_summary": {
+      "mean": 112.10416666666667,
+      "median": 106.0,
+      "max": 286
+     },
+     "rollout_outcome_counts": {
+      "complete": 96
+     }
+    },
+    {
+     "trajectory_index": 9,
+     "width": 5,
+     "status": "complete",
+     "student_p_max": 0.30611244560389006,
+     "student_entropy": 1.3019104560972647,
+     "target_p_max": 0.3934519533153605,
+     "target_entropy": 1.2022436158572058,
+     "mean_return_spread": 0.25,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 80,
+     "rollout_decisions_summary": {
+      "mean": 381.4375,
+      "median": 355.5,
+      "max": 700
+     },
+     "rollout_outcome_counts": {
+      "complete": 80
+     }
+    }
+   ]
+  },
+  {
+   "label": "u006",
+   "seconds": 4.609,
+   "teacher_seconds": 2.2955824,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 13334,
+    "policy_steps": 14548,
+    "rollouts": 240,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 2.9335247594542916e-15,
+   "ordinary_head_l2": 0.104438237315574,
+   "head_l2_ratio": 2.8088608491066896e-14,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.9999210797318572,
+     "student_entropy": 0.0008790556600092447,
+     "target_p_max": 0.9999210797318572,
+     "target_entropy": 0.0008790556600092454,
+     "mean_return_spread": 0.0,
+     "list": "published-4599429f3c506715",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 64.64583333333333,
+      "median": 68.5,
+      "max": 114
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.9999999997910543,
+     "student_entropy": 4.8663202321462105e-09,
+     "target_p_max": 0.9999999997910423,
+     "target_entropy": 4.866699004616147e-09,
+     "mean_return_spread": 0.125,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 69.75,
+      "median": 48.0,
+      "max": 198
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.9999948830535206,
+     "student_entropy": 6.745645609481601e-05,
+     "target_p_max": 0.9999948830535206,
+     "target_entropy": 6.745645609481603e-05,
+     "mean_return_spread": 0.0,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 77.359375,
+      "median": 60.0,
+      "max": 171
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.4343590737127339,
+     "student_entropy": 1.0765767972537654,
+     "target_p_max": 0.43435907371273397,
+     "target_entropy": 1.0765767972537654,
+     "mean_return_spread": 0.0,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 17.958333333333332,
+      "median": 20.5,
+      "max": 74
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9998217584435859,
+     "student_entropy": 0.0017168728897028946,
+     "target_p_max": 0.9998217584435859,
+     "target_entropy": 0.0017168728897028933,
+     "mean_return_spread": 0.0,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 33.4375,
+      "median": 32.0,
+      "max": 71
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    }
+   ]
+  },
+  {
+   "label": "u007",
+   "seconds": 13.256,
+   "teacher_seconds": 9.9834675,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 38000,
+    "policy_steps": 42426,
+    "rollouts": 416,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.0005714214684964438,
+   "ordinary_head_l2": 0.15666293955190658,
+   "head_l2_ratio": 0.00364745784887508,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 7,
+     "status": "complete",
+     "student_p_max": 0.9930248404189426,
+     "student_entropy": 0.048912665703286826,
+     "target_p_max": 0.9885517095743158,
+     "target_entropy": 0.07458185049488962,
+     "mean_return_spread": 0.5,
+     "list": "published-21659427193c1e62",
+     "rollouts": 112,
+     "rollout_decisions_summary": {
+      "mean": 148.97321428571428,
+      "median": 133.0,
+      "max": 310
+     },
+     "rollout_outcome_counts": {
+      "complete": 112
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.9989051860178382,
+     "student_entropy": 0.009372612444871106,
+     "target_p_max": 0.9970444666928969,
+     "target_entropy": 0.02230680974370398,
+     "mean_return_spread": 0.25,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 153.03125,
+      "median": 140.0,
+      "max": 308
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 8,
+     "status": "complete",
+     "student_p_max": 0.9999999890417072,
+     "student_entropy": 2.133729511215495e-07,
+     "target_p_max": 0.9999999890417074,
+     "target_entropy": 2.1337295089950502e-07,
+     "mean_return_spread": 0.0,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 128,
+     "rollout_decisions_summary": {
+      "mean": 72.9453125,
+      "median": 70.0,
+      "max": 171
+     },
+     "rollout_outcome_counts": {
+      "complete": 128
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999951068608935,
+     "student_entropy": 6.472484927805982e-05,
+     "target_p_max": 0.9999951068608935,
+     "target_entropy": 6.472484927805986e-05,
+     "mean_return_spread": 0.0,
+     "list": "published-4599429f3c506715",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 44.625,
+      "median": 37.0,
+      "max": 108
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 5,
+     "status": "complete",
+     "student_p_max": 0.9304375639721616,
+     "student_entropy": 0.25760251483117597,
+     "target_p_max": 0.9304375639721616,
+     "target_entropy": 0.25760251483117597,
+     "mean_return_spread": 0.0,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 80,
+     "rollout_decisions_summary": {
+      "mean": 9.45,
+      "median": 9.0,
+      "max": 17
+     },
+     "rollout_outcome_counts": {
+      "complete": 80
+     }
+    }
+   ]
+  },
+  {
+   "label": "u008",
+   "seconds": 6.684,
+   "teacher_seconds": 4.0265091,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 29781,
+    "policy_steps": 31344,
+    "rollouts": 288,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.0008346803081852238,
+   "ordinary_head_l2": 0.20291498600233307,
+   "head_l2_ratio": 0.004113448319561902,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.9897998798333459,
+     "student_entropy": 0.05692103707428546,
+     "target_p_max": 0.9937883844737893,
+     "target_entropy": 0.03775675716446916,
+     "mean_return_spread": 0.125,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 174.765625,
+      "median": 173.0,
+      "max": 391
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.99926581065242,
+     "student_entropy": 0.0063444660708565645,
+     "target_p_max": 0.99926581065242,
+     "target_entropy": 0.0063444660708565645,
+     "mean_return_spread": 0.0,
+     "list": "published-21659427193c1e62",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 2.0833333333333335,
+      "median": 2.0,
+      "max": 4
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 7,
+     "status": "complete",
+     "student_p_max": 0.9996745681312356,
+     "student_entropy": 0.0032427558417762407,
+     "target_p_max": 0.9997023413796001,
+     "target_entropy": 0.00292058046208754,
+     "mean_return_spread": 0.5,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 112,
+     "rollout_decisions_summary": {
+      "mean": 75.14285714285714,
+      "median": 73.0,
+      "max": 132
+     },
+     "rollout_outcome_counts": {
+      "complete": 112
+     }
+    },
+    {
+     "trajectory_index": 7,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999893641000802,
+     "student_entropy": 0.00013243046346839558,
+     "target_p_max": 0.9999893641000802,
+     "target_entropy": 0.00013243046346839556,
+     "mean_return_spread": 0.0,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 227.59375,
+      "median": 222.5,
+      "max": 522
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 8,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9995584750663133,
+     "student_entropy": 0.003852329449327147,
+     "target_p_max": 0.9995584750663133,
+     "target_entropy": 0.0038523294493271482,
+     "mean_return_spread": 0.0,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 87.40625,
+      "median": 87.5,
+      "max": 135
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    }
+   ]
+  },
+  {
+   "label": "u009",
+   "seconds": 8.762,
+   "teacher_seconds": 5.8220773999999995,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 20031,
+    "policy_steps": 21330,
+    "rollouts": 208,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.0,
+   "ordinary_head_l2": 0.11161888292596257,
+   "head_l2_ratio": 0.0,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.999662941171601,
+     "student_entropy": 0.0030318726528665704,
+     "target_p_max": 0.999662941171601,
+     "target_entropy": 0.0030318726528665713,
+     "mean_return_spread": 0.0,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 0.5,
+      "median": 0.5,
+      "max": 1
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.999845248142107,
+     "student_entropy": 0.0016197438892248317,
+     "target_p_max": 0.999845248142107,
+     "target_entropy": 0.001619743889224831,
+     "mean_return_spread": 0.0,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 257.5,
+      "median": 236.5,
+      "max": 633
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.999911818757196,
+     "student_entropy": 0.0009114476916253131,
+     "target_p_max": 0.999911818757196,
+     "target_entropy": 0.0009114476916253131,
+     "mean_return_spread": 0.0,
+     "list": "published-4599429f3c506715",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 25.96875,
+      "median": 24.0,
+      "max": 55
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9997147429956781,
+     "student_entropy": 0.002613518218924691,
+     "target_p_max": 0.9997147429956781,
+     "target_entropy": 0.002613518218924692,
+     "mean_return_spread": 0.0,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 0,
+      "median": 0.0,
+      "max": 0
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.9990154779914124,
+     "student_entropy": 0.008780386931980829,
+     "target_p_max": 0.9990154779914124,
+     "target_entropy": 0.008780386931980829,
+     "mean_return_spread": 0.0,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 106.625,
+      "median": 95.5,
+      "max": 195
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    }
+   ]
+  },
+  {
+   "label": "u010",
+   "seconds": 2.942,
+   "teacher_seconds": 1.1225413,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 8270,
+    "policy_steps": 9897,
+    "rollouts": 384,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 1.6087778923133398e-05,
+   "ordinary_head_l2": 0.18947988000065072,
+   "head_l2_ratio": 8.490494570229909e-05,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9998603486108063,
+     "student_entropy": 0.001379237826520801,
+     "target_p_max": 0.9997697746413797,
+     "target_entropy": 0.002158670499364904,
+     "mean_return_spread": 0.125,
+     "list": "published-21659427193c1e62",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 45.3125,
+      "median": 44.5,
+      "max": 75
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.5126570795776857,
+     "student_entropy": 0.694424442979147,
+     "target_p_max": 0.5126570795776857,
+     "target_entropy": 0.694424442979147,
+     "mean_return_spread": 0.0,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 43.770833333333336,
+      "median": 48.0,
+      "max": 94
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 8,
+     "status": "complete",
+     "student_p_max": 0.3293758567967938,
+     "student_entropy": 1.3616973075075365,
+     "target_p_max": 0.3293758567967938,
+     "target_entropy": 1.3616973075075365,
+     "mean_return_spread": 0.0,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 128,
+     "rollout_decisions_summary": {
+      "mean": 19.8125,
+      "median": 19.0,
+      "max": 30
+     },
+     "rollout_outcome_counts": {
+      "complete": 128
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 5,
+     "status": "complete",
+     "student_p_max": 0.5332051881319174,
+     "student_entropy": 1.1319737227667037,
+     "target_p_max": 0.5332051881319174,
+     "target_entropy": 1.1319737227667037,
+     "mean_return_spread": 0.0,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 80,
+     "rollout_decisions_summary": {
+      "mean": 20.6375,
+      "median": 20.0,
+      "max": 26
+     },
+     "rollout_outcome_counts": {
+      "complete": 80
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 6,
+     "status": "complete",
+     "student_p_max": 0.3420703799361695,
+     "student_entropy": 1.1019453725544908,
+     "target_p_max": 0.3420703799361695,
+     "target_entropy": 1.1019453725544908,
+     "mean_return_spread": 0.0,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 96,
+     "rollout_decisions_summary": {
+      "mean": 5.541666666666667,
+      "median": 7.0,
+      "max": 7
+     },
+     "rollout_outcome_counts": {
+      "complete": 96
+     }
+    }
+   ]
+  },
+  {
+   "label": "u011",
+   "seconds": 2.952,
+   "teacher_seconds": 1.4784164,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 10832,
+    "policy_steps": 12153,
+    "rollouts": 288,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 5.683173111690559e-06,
+   "ordinary_head_l2": 0.26738559913753795,
+   "head_l2_ratio": 2.1254596844489166e-05,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9987835459715323,
+     "student_entropy": 0.00938032846996379,
+     "target_p_max": 0.9987835459715323,
+     "target_entropy": 0.009380328469963789,
+     "mean_return_spread": 0.0,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 10.40625,
+      "median": 10.0,
+      "max": 12
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 7,
+     "status": "complete",
+     "student_p_max": 0.9991231134656718,
+     "student_entropy": 0.008487073285582451,
+     "target_p_max": 0.9991231134656718,
+     "target_entropy": 0.008487073285582451,
+     "mean_return_spread": 0.0,
+     "list": "published-21659427193c1e62",
+     "rollouts": 112,
+     "rollout_decisions_summary": {
+      "mean": 37.125,
+      "median": 34.0,
+      "max": 61
+     },
+     "rollout_outcome_counts": {
+      "complete": 112
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999509353770362,
+     "student_entropy": 0.0005359008747273308,
+     "target_p_max": 0.99997024022734,
+     "target_entropy": 0.0003399261853123614,
+     "mean_return_spread": 0.125,
+     "list": "published-4599429f3c506715",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 93.34375,
+      "median": 91.5,
+      "max": 157
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.9999999998193632,
+     "student_entropy": 4.2332165326694744e-09,
+     "target_p_max": 0.9999999998193632,
+     "target_entropy": 4.233216532669471e-09,
+     "mean_return_spread": 0.0,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 43.145833333333336,
+      "median": 42.0,
+      "max": 86
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 6,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.9980937055846224,
+     "student_entropy": 0.015903497741301512,
+     "target_p_max": 0.9980937055846224,
+     "target_entropy": 0.015903497741301512,
+     "mean_return_spread": 0.0,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 20.046875,
+      "median": 18.5,
+      "max": 34
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    }
+   ]
+  },
+  {
+   "label": "u012",
+   "seconds": 13.117,
+   "teacher_seconds": 10.4454164,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 30123,
+    "policy_steps": 33953,
+    "rollouts": 528,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.0011028506181629013,
+   "ordinary_head_l2": 0.12860948539598432,
+   "head_l2_ratio": 0.008575188795501832,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999804269655209,
+     "student_entropy": 0.00023177111159301456,
+     "target_p_max": 0.9999881282630559,
+     "target_entropy": 0.00014651319061503447,
+     "mean_return_spread": 0.125,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 157.59375,
+      "median": 145.5,
+      "max": 553
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 8,
+     "status": "complete",
+     "student_p_max": 0.9999675931018778,
+     "student_entropy": 0.00038629873700841527,
+     "target_p_max": 0.9999675931018778,
+     "target_entropy": 0.0003862987370084152,
+     "mean_return_spread": 0.0,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 128,
+     "rollout_decisions_summary": {
+      "mean": 5.25,
+      "median": 5.0,
+      "max": 7
+     },
+     "rollout_outcome_counts": {
+      "complete": 128
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 8,
+     "status": "complete",
+     "student_p_max": 0.9984685300647903,
+     "student_entropy": 0.01149314538395329,
+     "target_p_max": 0.9984685300647903,
+     "target_entropy": 0.011493145383953293,
+     "mean_return_spread": 0.0,
+     "list": "published-4599429f3c506715",
+     "rollouts": 128,
+     "rollout_decisions_summary": {
+      "mean": 82.8203125,
+      "median": 69.0,
+      "max": 263
+     },
+     "rollout_outcome_counts": {
+      "complete": 128
+     }
+    },
+    {
+     "trajectory_index": 6,
+     "width": 7,
+     "status": "complete",
+     "student_p_max": 0.974671554884982,
+     "student_entropy": 0.13009917623404146,
+     "target_p_max": 0.9831078523443473,
+     "target_entropy": 0.09616713266578246,
+     "mean_return_spread": 0.125,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 112,
+     "rollout_decisions_summary": {
+      "mean": 92.99107142857143,
+      "median": 88.0,
+      "max": 158
+     },
+     "rollout_outcome_counts": {
+      "complete": 112
+     }
+    },
+    {
+     "trajectory_index": 9,
+     "width": 8,
+     "status": "complete",
+     "student_p_max": 0.49919317457328993,
+     "student_entropy": 1.5011287562638087,
+     "target_p_max": 0.4991931745732898,
+     "target_entropy": 1.5011287562638087,
+     "mean_return_spread": 0.0,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 128,
+     "rollout_decisions_summary": {
+      "mean": 26.5,
+      "median": 26.5,
+      "max": 39
+     },
+     "rollout_outcome_counts": {
+      "complete": 128
+     }
+    }
+   ]
+  },
+  {
+   "label": "u013",
+   "seconds": 18.109,
+   "teacher_seconds": 14.3263732,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 41898,
+    "policy_steps": 46107,
+    "rollouts": 304,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.000725074001930059,
+   "ordinary_head_l2": 0.12207133979834313,
+   "head_l2_ratio": 0.005939756237031982,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 5,
+     "status": "complete",
+     "student_p_max": 0.9994354181727435,
+     "student_entropy": 0.004912636499265165,
+     "target_p_max": 0.9996231966178222,
+     "target_entropy": 0.0035026846646714085,
+     "mean_return_spread": 0.625,
+     "list": "published-21659427193c1e62",
+     "rollouts": 80,
+     "rollout_decisions_summary": {
+      "mean": 151.7625,
+      "median": 139.0,
+      "max": 353
+     },
+     "rollout_outcome_counts": {
+      "complete": 80
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 8,
+     "status": "complete",
+     "student_p_max": 0.9940408272309641,
+     "student_entropy": 0.04722478909911908,
+     "target_p_max": 0.9963770841707225,
+     "target_entropy": 0.030517800421170953,
+     "mean_return_spread": 0.125,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 128,
+     "rollout_decisions_summary": {
+      "mean": 156.9609375,
+      "median": 143.5,
+      "max": 390
+     },
+     "rollout_outcome_counts": {
+      "complete": 128
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9996902233809728,
+     "student_entropy": 0.002812618113429221,
+     "target_p_max": 0.9994893673151155,
+     "target_entropy": 0.004381026574372051,
+     "mean_return_spread": 0.125,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 55.125,
+      "median": 51.0,
+      "max": 145
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999325086821647,
+     "student_entropy": 0.000715642693504166,
+     "target_p_max": 0.9999590633593648,
+     "target_entropy": 0.0004545385388390349,
+     "mean_return_spread": 0.125,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 152.5625,
+      "median": 145.5,
+      "max": 240
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 5,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999665020956309,
+     "student_entropy": 0.00037866067705631976,
+     "target_p_max": 0.9999665020956309,
+     "target_entropy": 0.0003786606770563198,
+     "mean_return_spread": 0.0,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 94.375,
+      "median": 85.0,
+      "max": 190
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    }
+   ]
+  },
+  {
+   "label": "u014",
+   "seconds": 8.091,
+   "teacher_seconds": 5.7438952,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 34237,
+    "policy_steps": 36478,
+    "rollouts": 496,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.0057411472304816,
+   "ordinary_head_l2": 0.1296984018956341,
+   "head_l2_ratio": 0.04426536600737297,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 5,
+     "status": "complete",
+     "student_p_max": 0.9990312807624694,
+     "student_entropy": 0.007831100359757415,
+     "target_p_max": 0.9993843294118777,
+     "target_entropy": 0.005355449460969575,
+     "mean_return_spread": 0.25,
+     "list": "published-4599429f3c506715",
+     "rollouts": 80,
+     "rollout_decisions_summary": {
+      "mean": 94.55,
+      "median": 95.5,
+      "max": 193
+     },
+     "rollout_outcome_counts": {
+      "complete": 80
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.9959943869626752,
+     "student_entropy": 0.02885528062466254,
+     "target_p_max": 0.9959943869626752,
+     "target_entropy": 0.028855280624662534,
+     "mean_return_spread": 0.0,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 30.958333333333332,
+      "median": 29.5,
+      "max": 78
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 8,
+     "status": "complete",
+     "student_p_max": 0.988853346769598,
+     "student_entropy": 0.07453144330095676,
+     "target_p_max": 0.988853346769598,
+     "target_entropy": 0.07453144330095675,
+     "mean_return_spread": 0.0,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 128,
+     "rollout_decisions_summary": {
+      "mean": 86.3828125,
+      "median": 85.0,
+      "max": 131
+     },
+     "rollout_outcome_counts": {
+      "complete": 128
+     }
+    },
+    {
+     "trajectory_index": 5,
+     "width": 8,
+     "status": "complete",
+     "student_p_max": 0.509742496607483,
+     "student_entropy": 1.055241039296754,
+     "target_p_max": 0.47436054976941205,
+     "target_entropy": 1.1646891890433482,
+     "mean_return_spread": 0.125,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 128,
+     "rollout_decisions_summary": {
+      "mean": 36.2421875,
+      "median": 31.0,
+      "max": 230
+     },
+     "rollout_outcome_counts": {
+      "complete": 128
+     }
+    },
+    {
+     "trajectory_index": 9,
+     "width": 7,
+     "status": "complete",
+     "student_p_max": 0.997341451604881,
+     "student_entropy": 0.018443633755785917,
+     "target_p_max": 0.9983826745048292,
+     "target_entropy": 0.012044337867145741,
+     "mean_return_spread": 0.375,
+     "list": "published-21659427193c1e62",
+     "rollouts": 112,
+     "rollout_decisions_summary": {
+      "mean": 84.74107142857143,
+      "median": 57.5,
+      "max": 276
+     },
+     "rollout_outcome_counts": {
+      "complete": 112
+     }
+    }
+   ]
+  },
+  {
+   "label": "u015",
+   "seconds": 6.138,
+   "teacher_seconds": 2.8584829000000003,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 16467,
+    "policy_steps": 18556,
+    "rollouts": 256,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.0,
+   "ordinary_head_l2": 0.17434804646477992,
+   "head_l2_ratio": 0.0,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.9913079239194603,
+     "student_entropy": 0.055925381129243834,
+     "target_p_max": 0.9913079239194602,
+     "target_entropy": 0.05592538112924393,
+     "mean_return_spread": 0.0,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 71.875,
+      "median": 50.0,
+      "max": 228
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999069141830751,
+     "student_entropy": 0.0009571029877075134,
+     "target_p_max": 0.9999069141830751,
+     "target_entropy": 0.000957102987707514,
+     "mean_return_spread": 0.0,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 172.9375,
+      "median": 166.0,
+      "max": 343
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9967903147668187,
+     "student_entropy": 0.021633200933531396,
+     "target_p_max": 0.9967903147668187,
+     "target_entropy": 0.021633200933531403,
+     "mean_return_spread": 0.0,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 28.5,
+      "median": 24.0,
+      "max": 46
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.9996706005241942,
+     "student_entropy": 0.0033319431236329892,
+     "target_p_max": 0.9996706005241942,
+     "target_entropy": 0.0033319431236329914,
+     "mean_return_spread": 0.0,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 90.53125,
+      "median": 79.0,
+      "max": 157
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 5,
+     "status": "complete",
+     "student_p_max": 0.985536590649609,
+     "student_entropy": 0.07563396112633634,
+     "target_p_max": 0.985536590649609,
+     "target_entropy": 0.07563396112633636,
+     "mean_return_spread": 0.0,
+     "list": "published-4599429f3c506715",
+     "rollouts": 80,
+     "rollout_decisions_summary": {
+      "mean": 9.7125,
+      "median": 10.0,
+      "max": 18
+     },
+     "rollout_outcome_counts": {
+      "complete": 80
+     }
+    }
+   ]
+  },
+  {
+   "label": "u016",
+   "seconds": 16.633,
+   "teacher_seconds": 13.5279295,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 41863,
+    "policy_steps": 45471,
+    "rollouts": 352,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.000927059617896455,
+   "ordinary_head_l2": 0.13654734224183498,
+   "head_l2_ratio": 0.006789290825262398,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.6263760968446754,
+     "student_entropy": 0.660885989602796,
+     "target_p_max": 0.626376096850381,
+     "target_entropy": 0.6608859893836571,
+     "mean_return_spread": 0.125,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 170.671875,
+      "median": 165.5,
+      "max": 299
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 6,
+     "status": "complete",
+     "student_p_max": 0.9999998723688007,
+     "student_entropy": 2.15366541007781e-06,
+     "target_p_max": 0.9999998723688005,
+     "target_entropy": 2.153665410299856e-06,
+     "mean_return_spread": 0.0,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 96,
+     "rollout_decisions_summary": {
+      "mean": 22.739583333333332,
+      "median": 22.0,
+      "max": 47
+     },
+     "rollout_outcome_counts": {
+      "complete": 96
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999488247561825,
+     "student_entropy": 0.0005567983756509274,
+     "target_p_max": 0.9999689600205889,
+     "target_entropy": 0.00035324176363437184,
+     "mean_return_spread": 0.125,
+     "list": "published-21659427193c1e62",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 51.375,
+      "median": 46.0,
+      "max": 139
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 8,
+     "status": "complete",
+     "student_p_max": 0.9891357750517419,
+     "student_entropy": 0.08026910377427746,
+     "target_p_max": 0.9839118470677023,
+     "target_entropy": 0.11189902415733784,
+     "mean_return_spread": 0.125,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 128,
+     "rollout_decisions_summary": {
+      "mean": 160.5390625,
+      "median": 143.0,
+      "max": 392
+     },
+     "rollout_outcome_counts": {
+      "complete": 128
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.7809964366958544,
+     "student_entropy": 0.5256439088438187,
+     "target_p_max": 0.7809964366958544,
+     "target_entropy": 0.5256439088438187,
+     "mean_return_spread": 0.0,
+     "list": "published-4599429f3c506715",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 205.125,
+      "median": 156.5,
+      "max": 485
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    }
+   ]
+  },
+  {
+   "label": "u017",
+   "seconds": 6.944,
+   "teacher_seconds": 3.8883548,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 22544,
+    "policy_steps": 25706,
+    "rollouts": 400,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 1.565053660036662e-07,
+   "ordinary_head_l2": 0.27709437086013433,
+   "head_l2_ratio": 5.648088971199765e-07,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.9995592596009745,
+     "student_entropy": 0.004151706705851513,
+     "target_p_max": 0.9995592596009745,
+     "target_entropy": 0.004151706705851516,
+     "mean_return_spread": 0.0,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 145.4375,
+      "median": 122.0,
+      "max": 395
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 5,
+     "status": "complete",
+     "student_p_max": 0.9999921375594055,
+     "student_entropy": 0.00010813935911133124,
+     "target_p_max": 0.9999925648889911,
+     "target_entropy": 0.00010216648266550831,
+     "mean_return_spread": 0.125,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 80,
+     "rollout_decisions_summary": {
+      "mean": 121.9,
+      "median": 117.0,
+      "max": 205
+     },
+     "rollout_outcome_counts": {
+      "complete": 80
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 7,
+     "status": "complete",
+     "student_p_max": 0.9992599055565395,
+     "student_entropy": 0.007399372762843611,
+     "target_p_max": 0.9992599055565395,
+     "target_entropy": 0.007399372762843616,
+     "mean_return_spread": 0.0,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 112,
+     "rollout_decisions_summary": {
+      "mean": 9.919642857142858,
+      "median": 7.0,
+      "max": 26
+     },
+     "rollout_outcome_counts": {
+      "complete": 112
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 8,
+     "status": "complete",
+     "student_p_max": 0.8534634771187675,
+     "student_entropy": 0.517980315336717,
+     "target_p_max": 0.8534634771187675,
+     "target_entropy": 0.5179803153367171,
+     "mean_return_spread": 0.0,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 128,
+     "rollout_decisions_summary": {
+      "mean": 4.875,
+      "median": 5.0,
+      "max": 5
+     },
+     "rollout_outcome_counts": {
+      "complete": 128
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9995997337118192,
+     "student_entropy": 0.0035316216494637826,
+     "target_p_max": 0.9995997337118192,
+     "target_entropy": 0.0035316216494637835,
+     "mean_return_spread": 0.0,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 127.375,
+      "median": 121.0,
+      "max": 241
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    }
+   ]
+  },
+  {
+   "label": "u018",
+   "seconds": 32.272,
+   "teacher_seconds": 28.8216918,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 71868,
+    "policy_steps": 78232,
+    "rollouts": 512,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.00454624445800203,
+   "ordinary_head_l2": 0.1649540123516588,
+   "head_l2_ratio": 0.027560678235034837,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 8,
+     "status": "complete",
+     "student_p_max": 0.9999999878045233,
+     "student_entropy": 2.3680276716049954e-07,
+     "target_p_max": 0.9999999802753541,
+     "target_entropy": 3.723472116381247e-07,
+     "mean_return_spread": 0.125,
+     "list": "published-21659427193c1e62",
+     "rollouts": 128,
+     "rollout_decisions_summary": {
+      "mean": 71.953125,
+      "median": 60.0,
+      "max": 226
+     },
+     "rollout_outcome_counts": {
+      "complete": 128
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 7,
+     "status": "complete",
+     "student_p_max": 0.9889237580215209,
+     "student_entropy": 0.06372362425080468,
+     "target_p_max": 0.9955530095806703,
+     "target_entropy": 0.03437703973624746,
+     "mean_return_spread": 0.75,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 112,
+     "rollout_decisions_summary": {
+      "mean": 269.8125,
+      "median": 273.5,
+      "max": 369
+     },
+     "rollout_outcome_counts": {
+      "complete": 112
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.9986335734065586,
+     "student_entropy": 0.010377836544410888,
+     "target_p_max": 0.9991707745560691,
+     "target_entropy": 0.0067122514860004315,
+     "mean_return_spread": 1.125,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 358.34375,
+      "median": 336.5,
+      "max": 714
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 8,
+     "status": "complete",
+     "student_p_max": 0.5001851062727468,
+     "student_entropy": 0.76720596407007,
+     "target_p_max": 0.5001851062727468,
+     "target_entropy": 0.76720596407007,
+     "mean_return_spread": 0.0,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 128,
+     "rollout_decisions_summary": {
+      "mean": 68.59375,
+      "median": 77.0,
+      "max": 191
+     },
+     "rollout_outcome_counts": {
+      "complete": 128
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 5,
+     "status": "complete",
+     "student_p_max": 0.4212746576062298,
+     "student_entropy": 1.1576042612710404,
+     "target_p_max": 0.4212746576062298,
+     "target_entropy": 1.1576042612710404,
+     "mean_return_spread": 0.0,
+     "list": "published-4599429f3c506715",
+     "rollouts": 80,
+     "rollout_decisions_summary": {
+      "mean": 9.0625,
+      "median": 9.0,
+      "max": 10
+     },
+     "rollout_outcome_counts": {
+      "complete": 80
+     }
+    }
+   ]
+  },
+  {
+   "label": "u019",
+   "seconds": 10.321,
+   "teacher_seconds": 6.8994139,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 32762,
+    "policy_steps": 35271,
+    "rollouts": 320,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.02019353934739301,
+   "ordinary_head_l2": 0.21779826796715862,
+   "head_l2_ratio": 0.09271671228550796,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.9999760810380217,
+     "student_entropy": 0.0002950090838047186,
+     "target_p_max": 0.9999912005725896,
+     "target_entropy": 0.00011732877870662399,
+     "mean_return_spread": 0.25,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 173.0625,
+      "median": 168.5,
+      "max": 400
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.999930732439243,
+     "student_entropy": 0.0007671452462302458,
+     "target_p_max": 0.999988915422911,
+     "target_entropy": 0.00014378663924867135,
+     "mean_return_spread": 0.75,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 105.70833333333333,
+      "median": 92.5,
+      "max": 284
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 5,
+     "status": "complete",
+     "student_p_max": 0.4369369754368331,
+     "student_entropy": 1.176884483646759,
+     "target_p_max": 0.4307792298510925,
+     "target_entropy": 1.158576974392498,
+     "mean_return_spread": 0.25,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 80,
+     "rollout_decisions_summary": {
+      "mean": 141.2,
+      "median": 126.5,
+      "max": 305
+     },
+     "rollout_outcome_counts": {
+      "complete": 80
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.9979463626765633,
+     "student_entropy": 0.01618290112301566,
+     "target_p_max": 0.9979463626765633,
+     "target_entropy": 0.01618290112301566,
+     "mean_return_spread": 0.0,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 141.4375,
+      "median": 128.5,
+      "max": 385
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 6,
+     "width": 6,
+     "status": "complete",
+     "student_p_max": 0.9857891164010434,
+     "student_entropy": 0.08749602674749848,
+     "target_p_max": 0.9857891164010434,
+     "target_entropy": 0.08749602674749847,
+     "mean_return_spread": 0.0,
+     "list": "published-21659427193c1e62",
+     "rollouts": 96,
+     "rollout_decisions_summary": {
+      "mean": 13.5,
+      "median": 7.0,
+      "max": 52
+     },
+     "rollout_outcome_counts": {
+      "complete": 96
+     }
+    }
+   ]
+  },
+  {
+   "label": "u020",
+   "seconds": 16.171,
+   "teacher_seconds": 13.8336634,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 40165,
+    "policy_steps": 42339,
+    "rollouts": 336,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.00011008786406916204,
+   "ordinary_head_l2": 0.11347467240451899,
+   "head_l2_ratio": 0.0009701536187451282,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 8,
+     "status": "complete",
+     "student_p_max": 0.9996354218184129,
+     "student_entropy": 0.0037662811838431146,
+     "target_p_max": 0.9996354218184129,
+     "target_entropy": 0.003766281183843112,
+     "mean_return_spread": 0.0,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 128,
+     "rollout_decisions_summary": {
+      "mean": 184.328125,
+      "median": 140.0,
+      "max": 631
+     },
+     "rollout_outcome_counts": {
+      "complete": 128
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.6010980582963645,
+     "student_entropy": 0.6729065027000225,
+     "target_p_max": 0.6010852162947944,
+     "target_entropy": 0.6731068431827244,
+     "mean_return_spread": 0.125,
+     "list": "published-4599429f3c506715",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 135.83333333333334,
+      "median": 142.0,
+      "max": 297
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.999109674447133,
+     "student_entropy": 0.00771141356134667,
+     "target_p_max": 0.9994598010148166,
+     "target_entropy": 0.004948852662358488,
+     "mean_return_spread": 0.125,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 58.6875,
+      "median": 59.5,
+      "max": 87
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.839087347990778,
+     "student_entropy": 0.5717050462494225,
+     "target_p_max": 0.839087347990778,
+     "target_entropy": 0.5717050462494225,
+     "mean_return_spread": 0.0,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 43.734375,
+      "median": 37.0,
+      "max": 84
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    },
+    {
+     "trajectory_index": 5,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.9936474390860467,
+     "student_entropy": 0.0385275939290303,
+     "target_p_max": 0.9936213687173935,
+     "target_entropy": 0.038811648986870007,
+     "mean_return_spread": 0.375,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 92.39583333333333,
+      "median": 86.0,
+      "max": 209
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    }
+   ]
+  },
+  {
+   "label": "u021",
+   "seconds": 5.987,
+   "teacher_seconds": 2.4028767,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 15783,
+    "policy_steps": 18505,
+    "rollouts": 240,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.0009195960516577982,
+   "ordinary_head_l2": 0.2280269426310145,
+   "head_l2_ratio": 0.004032839457685742,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9989679095793169,
+     "student_entropy": 0.00812838578671762,
+     "target_p_max": 0.9924237841828508,
+     "target_entropy": 0.04454014644301488,
+     "mean_return_spread": 0.5,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 35.5625,
+      "median": 30.0,
+      "max": 83
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.9962394722303582,
+     "student_entropy": 0.024750231330374593,
+     "target_p_max": 0.9898434537104759,
+     "target_entropy": 0.05672240611137335,
+     "mean_return_spread": 0.25,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 162.296875,
+      "median": 161.0,
+      "max": 260
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.9998768781870431,
+     "student_entropy": 0.0013667588189319741,
+     "target_p_max": 0.9998768781870431,
+     "target_entropy": 0.0013667588189319748,
+     "mean_return_spread": 0.0,
+     "list": "published-21659427193c1e62",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 25.0625,
+      "median": 13.0,
+      "max": 178
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.9999329070943911,
+     "student_entropy": 0.0007583204630699007,
+     "target_p_max": 0.9999329070943911,
+     "target_entropy": 0.0007583204630699005,
+     "mean_return_spread": 0.0,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 48.25,
+      "median": 49.0,
+      "max": 72
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9915520247473898,
+     "student_entropy": 0.04874137506788915,
+     "target_p_max": 0.9915520247473898,
+     "target_entropy": 0.04874137506788914,
+     "mean_return_spread": 0.0,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 10.5625,
+      "median": 10.0,
+      "max": 12
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    }
+   ]
+  },
+  {
+   "label": "u022",
+   "seconds": 7.116,
+   "teacher_seconds": 3.4592516,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 22296,
+    "policy_steps": 24135,
+    "rollouts": 336,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.0008584760244163815,
+   "ordinary_head_l2": 0.07400399632509946,
+   "head_l2_ratio": 0.011600400884367075,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.991503296655726,
+     "student_entropy": 0.054861326912360495,
+     "target_p_max": 0.9860680970059651,
+     "target_entropy": 0.08302768756774433,
+     "mean_return_spread": 0.125,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 225.89583333333334,
+      "median": 208.0,
+      "max": 332
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9984646492741044,
+     "student_entropy": 0.01148170335562975,
+     "target_p_max": 0.9984646492741044,
+     "target_entropy": 0.011481703355629747,
+     "mean_return_spread": 0.0,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 40.28125,
+      "median": 37.0,
+      "max": 116
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 8,
+     "status": "complete",
+     "student_p_max": 0.4059521130393857,
+     "student_entropy": 1.0625954664140576,
+     "target_p_max": 0.4059521130393857,
+     "target_entropy": 1.0625954664140576,
+     "mean_return_spread": 0.0,
+     "list": "published-4599429f3c506715",
+     "rollouts": 128,
+     "rollout_decisions_summary": {
+      "mean": 29.515625,
+      "median": 29.0,
+      "max": 55
+     },
+     "rollout_outcome_counts": {
+      "complete": 128
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.998515690526112,
+     "student_entropy": 0.012747783846629255,
+     "target_p_max": 0.998515690526112,
+     "target_entropy": 0.012747783846629253,
+     "mean_return_spread": 0.0,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 13.65625,
+      "median": 14.5,
+      "max": 23
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    },
+    {
+     "trajectory_index": 5,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.9920666734772418,
+     "student_entropy": 0.05267958576527593,
+     "target_p_max": 0.9950789681483959,
+     "target_entropy": 0.03526456127844742,
+     "mean_return_spread": 0.125,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 86.125,
+      "median": 85.0,
+      "max": 165
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    }
+   ]
+  },
+  {
+   "label": "u023",
+   "seconds": 24.169,
+   "teacher_seconds": 17.8920433,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 42825,
+    "policy_steps": 48437,
+    "rollouts": 400,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.012738250836175496,
+   "ordinary_head_l2": 0.19338574864624988,
+   "head_l2_ratio": 0.06586964616238031,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 8,
+     "status": "complete",
+     "student_p_max": 0.7612610251610035,
+     "student_entropy": 0.8387218973148154,
+     "target_p_max": 0.6740278416246168,
+     "target_entropy": 0.9826144914446385,
+     "mean_return_spread": 0.125,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 128,
+     "rollout_decisions_summary": {
+      "mean": 126.6953125,
+      "median": 111.0,
+      "max": 347
+     },
+     "rollout_outcome_counts": {
+      "complete": 128
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.9999660896301708,
+     "student_entropy": 0.00040640312806500153,
+     "target_p_max": 0.9999660896301708,
+     "target_entropy": 0.0004064031280650015,
+     "mean_return_spread": 0.0,
+     "list": "published-21659427193c1e62",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 125.9375,
+      "median": 118.5,
+      "max": 334
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9987264037181822,
+     "student_entropy": 0.009762463947989684,
+     "target_p_max": 0.9987264037181822,
+     "target_entropy": 0.00976246394798968,
+     "mean_return_spread": 0.0,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 177.53125,
+      "median": 176.0,
+      "max": 450
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 6,
+     "status": "complete",
+     "student_p_max": 0.5882535906829928,
+     "student_entropy": 0.721846534792346,
+     "target_p_max": 0.5882437360207579,
+     "target_entropy": 0.7220068823550847,
+     "mean_return_spread": 0.125,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 96,
+     "rollout_decisions_summary": {
+      "mean": 145.71875,
+      "median": 84.0,
+      "max": 614
+     },
+     "rollout_outcome_counts": {
+      "complete": 96
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 6,
+     "status": "complete",
+     "student_p_max": 0.9985037460899637,
+     "student_entropy": 0.011232130489598886,
+     "target_p_max": 0.9985037460899633,
+     "target_entropy": 0.011232130489599323,
+     "mean_return_spread": 0.0,
+     "list": "published-4599429f3c506715",
+     "rollouts": 96,
+     "rollout_decisions_summary": {
+      "mean": 9.302083333333334,
+      "median": 10.0,
+      "max": 10
+     },
+     "rollout_outcome_counts": {
+      "complete": 96
+     }
+    }
+   ]
+  },
+  {
+   "label": "u024",
+   "seconds": 5.148,
+   "teacher_seconds": 2.3997869,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 13212,
+    "policy_steps": 14375,
+    "rollouts": 192,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.0001903950005845772,
+   "ordinary_head_l2": 0.1664898912796402,
+   "head_l2_ratio": 0.0011435829474162214,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.9857719167998026,
+     "student_entropy": 0.08767689365738188,
+     "target_p_max": 0.9857719167998026,
+     "target_entropy": 0.08767689365738188,
+     "mean_return_spread": 0.0,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 18.265625,
+      "median": 13.5,
+      "max": 57
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999896615521232,
+     "student_entropy": 0.00012902006258089103,
+     "target_p_max": 0.9999896615521232,
+     "target_entropy": 0.00012902006258089103,
+     "mean_return_spread": 0.0,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 41.84375,
+      "median": 45.0,
+      "max": 72
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9998877766006926,
+     "student_entropy": 0.0011328910550834337,
+     "target_p_max": 0.9991713691365548,
+     "target_entropy": 0.006708033121273213,
+     "mean_return_spread": 0.5,
+     "list": "published-21659427193c1e62",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 45.4375,
+      "median": 46.0,
+      "max": 75
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9991204826297592,
+     "student_entropy": 0.007067535406760624,
+     "target_p_max": 0.9996762636565503,
+     "target_entropy": 0.0029250935871322635,
+     "mean_return_spread": 0.25,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 165.59375,
+      "median": 154.5,
+      "max": 388
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 6,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.7507476823316489,
+     "student_entropy": 0.5615122398850987,
+     "target_p_max": 0.7507476823316489,
+     "target_entropy": 0.5615122398850987,
+     "mean_return_spread": 0.0,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 123.46875,
+      "median": 113.5,
+      "max": 284
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    }
+   ]
+  },
+  {
+   "label": "u025",
+   "seconds": 11.884,
+   "teacher_seconds": 8.9643513,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 39641,
+    "policy_steps": 44280,
+    "rollouts": 336,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.0007600690389205086,
+   "ordinary_head_l2": 0.27618544011529833,
+   "head_l2_ratio": 0.0027520242870268784,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 7,
+     "status": "complete",
+     "student_p_max": 0.92191622364334,
+     "student_entropy": 0.2760946247913038,
+     "target_p_max": 0.92191622364334,
+     "target_entropy": 0.2760946247913038,
+     "mean_return_spread": 0.0,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 112,
+     "rollout_decisions_summary": {
+      "mean": 144.01785714285714,
+      "median": 127.0,
+      "max": 448
+     },
+     "rollout_outcome_counts": {
+      "complete": 112
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999170647534005,
+     "student_entropy": 0.0008623116750436474,
+     "target_p_max": 0.9999170647534005,
+     "target_entropy": 0.0008623116750436472,
+     "mean_return_spread": 0.0,
+     "list": "published-4599429f3c506715",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 23.3125,
+      "median": 23.5,
+      "max": 30
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 7,
+     "status": "complete",
+     "student_p_max": 0.9832604936102721,
+     "student_entropy": 0.10171033263391506,
+     "target_p_max": 0.9868583950119485,
+     "target_entropy": 0.08412015632021405,
+     "mean_return_spread": 0.125,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 112,
+     "rollout_decisions_summary": {
+      "mean": 151.26785714285714,
+      "median": 130.0,
+      "max": 294
+     },
+     "rollout_outcome_counts": {
+      "complete": 112
+     }
+    },
+    {
+     "trajectory_index": 5,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.9999999546137536,
+     "student_entropy": 8.441805364964761e-07,
+     "target_p_max": 0.9999999546137536,
+     "target_entropy": 8.441805364964759e-07,
+     "mean_return_spread": 0.0,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 30.583333333333332,
+      "median": 28.0,
+      "max": 64
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 8,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9993185133241814,
+     "student_entropy": 0.005650133135697489,
+     "target_p_max": 0.9995865465718278,
+     "target_entropy": 0.003634569412947822,
+     "mean_return_spread": 0.125,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 136.09375,
+      "median": 122.5,
+      "max": 236
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    }
+   ]
+  },
+  {
+   "label": "u026",
+   "seconds": 9.014,
+   "teacher_seconds": 6.2179328,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 21376,
+    "policy_steps": 23085,
+    "rollouts": 224,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 1.1215438261189532e-15,
+   "ordinary_head_l2": 0.11382408022982989,
+   "head_l2_ratio": 9.85330892948459e-15,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.5511067620020436,
+     "student_entropy": 0.6879158668062109,
+     "target_p_max": 0.5511067620020437,
+     "target_entropy": 0.6879158668062109,
+     "mean_return_spread": 0.0,
+     "list": "published-21659427193c1e62",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 45.5625,
+      "median": 46.5,
+      "max": 103
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 5,
+     "status": "complete",
+     "student_p_max": 0.9999999999955789,
+     "student_entropy": 1.2007062457624938e-10,
+     "target_p_max": 0.9999999999955742,
+     "target_entropy": 1.2022076277400943e-10,
+     "mean_return_spread": 0.125,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 80,
+     "rollout_decisions_summary": {
+      "mean": 133.5375,
+      "median": 123.0,
+      "max": 243
+     },
+     "rollout_outcome_counts": {
+      "complete": 80
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999364150827341,
+     "student_entropy": 0.0006780124885128722,
+     "target_p_max": 0.9999364150827341,
+     "target_entropy": 0.0006780124885128727,
+     "mean_return_spread": 0.0,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 65.875,
+      "median": 56.0,
+      "max": 134
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999873141670412,
+     "student_entropy": 0.00015571883247111968,
+     "target_p_max": 0.9999873141670412,
+     "target_entropy": 0.0001557188324711198,
+     "mean_return_spread": 0.0,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 95.84375,
+      "median": 58.5,
+      "max": 572
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 5,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999911789933922,
+     "student_entropy": 0.00011148314665848743,
+     "target_p_max": 0.9999911789933922,
+     "target_entropy": 0.00011148314665848736,
+     "mean_return_spread": 0.0,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 104.09375,
+      "median": 99.0,
+      "max": 279
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    }
+   ]
+  },
+  {
+   "label": "u027",
+   "seconds": 6.395,
+   "teacher_seconds": 3.3626149,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 19321,
+    "policy_steps": 22507,
+    "rollouts": 368,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 8.664047834905352e-07,
+   "ordinary_head_l2": 0.10252136087155056,
+   "head_l2_ratio": 8.450968423800552e-06,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999923822528114,
+     "student_entropy": 9.739309638151809e-05,
+     "target_p_max": 0.9999874405202418,
+     "target_entropy": 0.0001542935672574778,
+     "mean_return_spread": 0.125,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 208.65625,
+      "median": 167.5,
+      "max": 504
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 5,
+     "status": "complete",
+     "student_p_max": 0.6017055560478304,
+     "student_entropy": 0.6723140604056671,
+     "target_p_max": 0.6017055560478339,
+     "target_entropy": 0.6723140604054785,
+     "mean_return_spread": 0.125,
+     "list": "published-21659427193c1e62",
+     "rollouts": 80,
+     "rollout_decisions_summary": {
+      "mean": 8.7125,
+      "median": 6.5,
+      "max": 100
+     },
+     "rollout_outcome_counts": {
+      "complete": 80
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 5,
+     "status": "complete",
+     "student_p_max": 0.5105633532801263,
+     "student_entropy": 0.6929340641648667,
+     "target_p_max": 0.5105633532801263,
+     "target_entropy": 0.6929340641648667,
+     "mean_return_spread": 0.0,
+     "list": "published-4599429f3c506715",
+     "rollouts": 80,
+     "rollout_decisions_summary": {
+      "mean": 15.7875,
+      "median": 15.0,
+      "max": 21
+     },
+     "rollout_outcome_counts": {
+      "complete": 80
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 8,
+     "status": "complete",
+     "student_p_max": 0.6369168793578677,
+     "student_entropy": 0.7940802578032767,
+     "target_p_max": 0.6369168793578676,
+     "target_entropy": 0.7940802578032767,
+     "mean_return_spread": 0.0,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 128,
+     "rollout_decisions_summary": {
+      "mean": 70.5546875,
+      "median": 68.0,
+      "max": 111
+     },
+     "rollout_outcome_counts": {
+      "complete": 128
+     }
+    },
+    {
+     "trajectory_index": 6,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.9990040126054466,
+     "student_entropy": 0.008469339533682552,
+     "target_p_max": 0.9990040126054466,
+     "target_entropy": 0.008469339533682552,
+     "mean_return_spread": 0.0,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 34.4375,
+      "median": 36.0,
+      "max": 48
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    }
+   ]
+  },
+  {
+   "label": "u028",
+   "seconds": 6.24,
+   "teacher_seconds": 3.5072241,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 23976,
+    "policy_steps": 26950,
+    "rollouts": 368,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 5.707579632803029e-06,
+   "ordinary_head_l2": 0.15066668051039114,
+   "head_l2_ratio": 3.788216222371336e-05,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9998182335308907,
+     "student_entropy": 0.0017472659819161968,
+     "target_p_max": 0.9998182335308907,
+     "target_entropy": 0.0017472659819161977,
+     "mean_return_spread": 0.0,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 70.34375,
+      "median": 68.0,
+      "max": 101
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.3967525358319947,
+     "student_entropy": 1.0617079918401358,
+     "target_p_max": 0.39675253583199477,
+     "target_entropy": 1.0617079918401358,
+     "mean_return_spread": 0.0,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 95.203125,
+      "median": 66.5,
+      "max": 489
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 5,
+     "status": "complete",
+     "student_p_max": 0.9984256338530914,
+     "student_entropy": 0.013100386828521717,
+     "target_p_max": 0.998444307146466,
+     "target_entropy": 0.012910175296446216,
+     "mean_return_spread": 0.125,
+     "list": "published-4599429f3c506715",
+     "rollouts": 80,
+     "rollout_decisions_summary": {
+      "mean": 68.225,
+      "median": 65.0,
+      "max": 119
+     },
+     "rollout_outcome_counts": {
+      "complete": 80
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.3908641111993512,
+     "student_entropy": 1.0875502455169996,
+     "target_p_max": 0.3908641111993512,
+     "target_entropy": 1.0875502455169994,
+     "mean_return_spread": 0.0,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 116.6875,
+      "median": 98.0,
+      "max": 211
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 8,
+     "status": "complete",
+     "student_p_max": 0.9238218332033945,
+     "student_entropy": 0.36728858832155786,
+     "target_p_max": 0.9238218332033945,
+     "target_entropy": 0.36728858832155786,
+     "mean_return_spread": 0.0,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 128,
+     "rollout_decisions_summary": {
+      "mean": 21.140625,
+      "median": 20.0,
+      "max": 31
+     },
+     "rollout_outcome_counts": {
+      "complete": 128
+     }
+    }
+   ]
+  },
+  {
+   "label": "u029",
+   "seconds": 10.593,
+   "teacher_seconds": 7.5367158,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 28855,
+    "policy_steps": 32961,
+    "rollouts": 304,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.0145819937834981,
+   "ordinary_head_l2": 0.1527224867844742,
+   "head_l2_ratio": 0.09548033227141314,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.9999999969713909,
+     "student_entropy": 6.24364969344034e-08,
+     "target_p_max": 0.9999999969713909,
+     "target_entropy": 6.243649693440334e-08,
+     "mean_return_spread": 0.0,
+     "list": "published-21659427193c1e62",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 26.375,
+      "median": 25.5,
+      "max": 38
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9997455490129465,
+     "student_entropy": 0.0023603573526989226,
+     "target_p_max": 0.9997455490129465,
+     "target_entropy": 0.0023603573526989226,
+     "mean_return_spread": 0.0,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 10.46875,
+      "median": 10.5,
+      "max": 19
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9082566482551275,
+     "student_entropy": 0.3065528547059202,
+     "target_p_max": 0.8572374226321626,
+     "target_entropy": 0.4099468431550207,
+     "mean_return_spread": 0.125,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 99.65625,
+      "median": 92.5,
+      "max": 333
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 8,
+     "status": "complete",
+     "student_p_max": 0.992357671794518,
+     "student_entropy": 0.05859662465771366,
+     "target_p_max": 0.9740378116500237,
+     "target_entropy": 0.1641478160548234,
+     "mean_return_spread": 0.375,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 128,
+     "rollout_decisions_summary": {
+      "mean": 166,
+      "median": 139.0,
+      "max": 472
+     },
+     "rollout_outcome_counts": {
+      "complete": 128
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.9986015523498654,
+     "student_entropy": 0.011557935705946359,
+     "target_p_max": 0.9949885895620573,
+     "target_entropy": 0.034865789538888546,
+     "mean_return_spread": 0.375,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 49.895833333333336,
+      "median": 46.5,
+      "max": 72
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    }
+   ]
+  },
+  {
+   "label": "u030",
+   "seconds": 5.092,
+   "teacher_seconds": 1.7688492,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 8705,
+    "policy_steps": 9936,
+    "rollouts": 224,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.0,
+   "ordinary_head_l2": 0.23367889255741886,
+   "head_l2_ratio": 0.0,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9978658828683054,
+     "student_entropy": 0.015256023185708971,
+     "target_p_max": 0.9978658828683054,
+     "target_entropy": 0.015256023185708966,
+     "mean_return_spread": 0.0,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 64.8125,
+      "median": 35.0,
+      "max": 390
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.9994279215287106,
+     "student_entropy": 0.005470655386461786,
+     "target_p_max": 0.9994279215287106,
+     "target_entropy": 0.005470655386461782,
+     "mean_return_spread": 0.0,
+     "list": "published-4599429f3c506715",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 49.546875,
+      "median": 50.0,
+      "max": 77
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999946516771365,
+     "student_entropy": 7.027014254203836e-05,
+     "target_p_max": 0.9999946516771365,
+     "target_entropy": 7.02701425420384e-05,
+     "mean_return_spread": 0.0,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 20.90625,
+      "median": 20.5,
+      "max": 38
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.9973820100019701,
+     "student_entropy": 0.020819381750758193,
+     "target_p_max": 0.9973820100019701,
+     "target_entropy": 0.020819381750758193,
+     "mean_return_spread": 0.0,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 22.1875,
+      "median": 21.5,
+      "max": 32
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    },
+    {
+     "trajectory_index": 6,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999995064956948,
+     "student_entropy": 7.660042556648468e-06,
+     "target_p_max": 0.9999995064956948,
+     "target_entropy": 7.66004255664847e-06,
+     "mean_return_spread": 0.0,
+     "list": "published-21659427193c1e62",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 42.84375,
+      "median": 35.0,
+      "max": 96
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    }
+   ]
+  },
+  {
+   "label": "u031",
+   "seconds": 12.47,
+   "teacher_seconds": 8.2093625,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 37034,
+    "policy_steps": 41233,
+    "rollouts": 432,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 7.77771104519973e-05,
+   "ordinary_head_l2": 0.0817240104117998,
+   "head_l2_ratio": 0.000951704524289564,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.9999834863638032,
+     "student_entropy": 0.00020697177739747964,
+     "target_p_max": 0.999972773908412,
+     "target_entropy": 0.0003276222163036437,
+     "mean_return_spread": 0.125,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 194.52083333333334,
+      "median": 185.5,
+      "max": 435
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 7,
+     "status": "complete",
+     "student_p_max": 0.9983371332433926,
+     "student_entropy": 0.013889388238489411,
+     "target_p_max": 0.9983371332433926,
+     "target_entropy": 0.013889388238489415,
+     "mean_return_spread": 0.0,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 112,
+     "rollout_decisions_summary": {
+      "mean": 45.75,
+      "median": 48.5,
+      "max": 60
+     },
+     "rollout_outcome_counts": {
+      "complete": 112
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.9996775257583389,
+     "student_entropy": 0.0032076543220630155,
+     "target_p_max": 0.9996775257583389,
+     "target_entropy": 0.0032076543220630176,
+     "mean_return_spread": 0.0,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 65.875,
+      "median": 62.5,
+      "max": 114
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 6,
+     "status": "complete",
+     "student_p_max": 0.505824127820627,
+     "student_entropy": 0.7407547719880927,
+     "target_p_max": 0.5059513083931376,
+     "target_entropy": 0.7387774079055627,
+     "mean_return_spread": 0.5,
+     "list": "published-4599429f3c506715",
+     "rollouts": 96,
+     "rollout_decisions_summary": {
+      "mean": 156.42708333333334,
+      "median": 161.0,
+      "max": 268
+     },
+     "rollout_outcome_counts": {
+      "complete": 96
+     }
+    },
+    {
+     "trajectory_index": 6,
+     "width": 7,
+     "status": "complete",
+     "student_p_max": 0.9766021948501461,
+     "student_entropy": 0.12106307751442917,
+     "target_p_max": 0.9766021948501461,
+     "target_entropy": 0.12106307751442917,
+     "mean_return_spread": 0.0,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 112,
+     "rollout_decisions_summary": {
+      "mean": 29.821428571428573,
+      "median": 22.0,
+      "max": 73
+     },
+     "rollout_outcome_counts": {
+      "complete": 112
+     }
+    }
+   ]
+  },
+  {
+   "label": "u032",
+   "seconds": 6.161,
+   "teacher_seconds": 3.0426444,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 25852,
+    "policy_steps": 27747,
+    "rollouts": 256,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.0013381342275593777,
+   "ordinary_head_l2": 0.1684094175995039,
+   "head_l2_ratio": 0.007945720890393481,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999921513846134,
+     "student_entropy": 0.00010011041960806757,
+     "target_p_max": 0.9999786655391351,
+     "target_entropy": 0.0002507903475453267,
+     "mean_return_spread": 0.25,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 111.5625,
+      "median": 102.0,
+      "max": 208
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 5,
+     "status": "complete",
+     "student_p_max": 0.3399293500197607,
+     "student_entropy": 1.3572354177870187,
+     "target_p_max": 0.33992739607186245,
+     "target_entropy": 1.3572929327222867,
+     "mean_return_spread": 0.125,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 80,
+     "rollout_decisions_summary": {
+      "mean": 119.2875,
+      "median": 111.0,
+      "max": 200
+     },
+     "rollout_outcome_counts": {
+      "complete": 80
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.998736363050029,
+     "student_entropy": 0.01057182447397384,
+     "target_p_max": 0.9992331841844353,
+     "target_entropy": 0.0067985425522087565,
+     "mean_return_spread": 0.125,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 150.39583333333334,
+      "median": 133.0,
+      "max": 378
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.9782458366787335,
+     "student_entropy": 0.10478967384386373,
+     "target_p_max": 0.9866915174106848,
+     "target_entropy": 0.07070358684090927,
+     "mean_return_spread": 0.125,
+     "list": "published-21659427193c1e62",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 71.765625,
+      "median": 71.0,
+      "max": 124
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    },
+    {
+     "trajectory_index": 5,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9983137687658948,
+     "student_entropy": 0.012451832381023337,
+     "target_p_max": 0.9983137687658948,
+     "target_entropy": 0.012451832381023337,
+     "mean_return_spread": 0.0,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 28.96875,
+      "median": 25.5,
+      "max": 61
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    }
+   ]
+  },
+  {
+   "label": "u033",
+   "seconds": 7.491,
+   "teacher_seconds": 5.0883304,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 31152,
+    "policy_steps": 33517,
+    "rollouts": 368,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.002514621148784399,
+   "ordinary_head_l2": 0.33170502199495894,
+   "head_l2_ratio": 0.007580895621238484,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.9999364715181077,
+     "student_entropy": 0.0007214365456034561,
+     "target_p_max": 0.9999364715181077,
+     "target_entropy": 0.0007214365456034563,
+     "mean_return_spread": 0.0,
+     "list": "published-4599429f3c506715",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 47.708333333333336,
+      "median": 46.5,
+      "max": 66
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9994984082648528,
+     "student_entropy": 0.0043124215042578355,
+     "target_p_max": 0.9994984082648528,
+     "target_entropy": 0.004312421504257835,
+     "mean_return_spread": 0.0,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 22.65625,
+      "median": 24.0,
+      "max": 35
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 7,
+     "status": "complete",
+     "student_p_max": 0.9992336932622359,
+     "student_entropy": 0.007633125253446188,
+     "target_p_max": 0.9992336932622359,
+     "target_entropy": 0.00763312525344619,
+     "mean_return_spread": 0.0,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 112,
+     "rollout_decisions_summary": {
+      "mean": 169.41071428571428,
+      "median": 162.0,
+      "max": 298
+     },
+     "rollout_outcome_counts": {
+      "complete": 112
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.990679339813629,
+     "student_entropy": 0.052896447737354815,
+     "target_p_max": 0.9965507988014586,
+     "target_entropy": 0.023013834744307248,
+     "mean_return_spread": 0.25,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 174.89583333333334,
+      "median": 159.5,
+      "max": 501
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 6,
+     "width": 8,
+     "status": "complete",
+     "student_p_max": 0.8589869110212576,
+     "student_entropy": 0.5241981655327108,
+     "target_p_max": 0.8589869110212576,
+     "target_entropy": 0.5241981655327108,
+     "mean_return_spread": 0.0,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 128,
+     "rollout_decisions_summary": {
+      "mean": 6,
+      "median": 6.0,
+      "max": 10
+     },
+     "rollout_outcome_counts": {
+      "complete": 128
+     }
+    }
+   ]
+  },
+  {
+   "label": "u034",
+   "seconds": 11.181,
+   "teacher_seconds": 8.6287993,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 31405,
+    "policy_steps": 35328,
+    "rollouts": 320,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 2.087043149536176e-06,
+   "ordinary_head_l2": 0.15403462238063723,
+   "head_l2_ratio": 1.35491821077657e-05,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9978345058614564,
+     "student_entropy": 0.01544868536878875,
+     "target_p_max": 0.9978345058614564,
+     "target_entropy": 0.01544868536878875,
+     "mean_return_spread": 0.0,
+     "list": "published-21659427193c1e62",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 30.25,
+      "median": 28.0,
+      "max": 52
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 8,
+     "status": "complete",
+     "student_p_max": 0.5333884654386597,
+     "student_entropy": 0.7098109564095566,
+     "target_p_max": 0.5333884654386597,
+     "target_entropy": 0.7098109564095566,
+     "mean_return_spread": 0.0,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 128,
+     "rollout_decisions_summary": {
+      "mean": 168.9921875,
+      "median": 153.0,
+      "max": 437
+     },
+     "rollout_outcome_counts": {
+      "complete": 128
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999837418550931,
+     "student_entropy": 0.000195535219884179,
+     "target_p_max": 0.9999558070147135,
+     "target_entropy": 0.00048731261887240097,
+     "mean_return_spread": 0.25,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 100.59375,
+      "median": 91.0,
+      "max": 245
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 6,
+     "status": "complete",
+     "student_p_max": 0.9999998938726536,
+     "student_entropy": 1.8114702377447131e-06,
+     "target_p_max": 0.9999998938726536,
+     "target_entropy": 1.8114702377447127e-06,
+     "mean_return_spread": 0.0,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 96,
+     "rollout_decisions_summary": {
+      "mean": 35.0625,
+      "median": 35.0,
+      "max": 46
+     },
+     "rollout_outcome_counts": {
+      "complete": 96
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9999913645986203,
+     "student_entropy": 0.00010932103858528906,
+     "target_p_max": 0.9999980731685808,
+     "target_entropy": 2.7283225155033313e-05,
+     "mean_return_spread": 0.375,
+     "list": "published-4599429f3c506715",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 69.40625,
+      "median": 68.0,
+      "max": 102
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    }
+   ]
+  },
+  {
+   "label": "u035",
+   "seconds": 10.74,
+   "teacher_seconds": 7.7697671,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 37425,
+    "policy_steps": 39903,
+    "rollouts": 384,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.004796268401854439,
+   "ordinary_head_l2": 0.26670030366614517,
+   "head_l2_ratio": 0.017983738060750005,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 6,
+     "status": "complete",
+     "student_p_max": 0.5000075748271485,
+     "student_entropy": 0.6931490048184011,
+     "target_p_max": 0.5000075748271485,
+     "target_entropy": 0.6931490048184011,
+     "mean_return_spread": 0.0,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 96,
+     "rollout_decisions_summary": {
+      "mean": 50.635416666666664,
+      "median": 51.0,
+      "max": 74
+     },
+     "rollout_outcome_counts": {
+      "complete": 96
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9982003756133818,
+     "student_entropy": 0.013171949305133372,
+     "target_p_max": 0.9997560677478405,
+     "target_entropy": 0.002273082216143669,
+     "mean_return_spread": 0.5,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 62.84375,
+      "median": 57.5,
+      "max": 260
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 7,
+     "status": "complete",
+     "student_p_max": 0.5404096883368619,
+     "student_entropy": 0.6898777752760432,
+     "target_p_max": 0.5404096883291,
+     "target_entropy": 0.6898777756145057,
+     "mean_return_spread": 1.0,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 112,
+     "rollout_decisions_summary": {
+      "mean": 94.70535714285714,
+      "median": 79.5,
+      "max": 287
+     },
+     "rollout_outcome_counts": {
+      "complete": 112
+     }
+    },
+    {
+     "trajectory_index": 4,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.9977933669244309,
+     "student_entropy": 0.01707315144833828,
+     "target_p_max": 0.9952035791204291,
+     "target_entropy": 0.03237357410405359,
+     "mean_return_spread": 0.25,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 159.125,
+      "median": 151.5,
+      "max": 329
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 8,
+     "width": 6,
+     "status": "complete",
+     "student_p_max": 0.932871183711606,
+     "student_entropy": 0.24615967959148444,
+     "target_p_max": 0.9581799364312601,
+     "target_entropy": 0.17369050300725145,
+     "mean_return_spread": 0.25,
+     "list": "published-21659427193c1e62",
+     "rollouts": 96,
+     "rollout_decisions_summary": {
+      "mean": 128.20833333333334,
+      "median": 102.5,
+      "max": 286
+     },
+     "rollout_outcome_counts": {
+      "complete": 96
+     }
+    }
+   ]
+  },
+  {
+   "label": "u036",
+   "seconds": 6.943,
+   "teacher_seconds": 4.0543405,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 18940,
+    "policy_steps": 21252,
+    "rollouts": 336,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 6.287054555485093e-07,
+   "ordinary_head_l2": 0.09993348568305868,
+   "head_l2_ratio": 6.291239130219704e-06,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.9986537051913906,
+     "student_entropy": 0.010961657031303433,
+     "target_p_max": 0.9986537051913906,
+     "target_entropy": 0.010961657031303435,
+     "mean_return_spread": 0.0,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 113.16666666666667,
+      "median": 114.0,
+      "max": 290
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.9986053672253258,
+     "student_entropy": 0.011948456498870143,
+     "target_p_max": 0.9986053672253258,
+     "target_entropy": 0.011948456498870141,
+     "mean_return_spread": 0.0,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 21.09375,
+      "median": 20.0,
+      "max": 33
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9993643712176922,
+     "student_entropy": 0.005314223987403204,
+     "target_p_max": 0.9993643712176922,
+     "target_entropy": 0.0053142239874032025,
+     "mean_return_spread": 0.0,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 35.03125,
+      "median": 34.0,
+      "max": 64
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 6,
+     "status": "complete",
+     "student_p_max": 0.552467155894065,
+     "student_entropy": 0.6937567298717634,
+     "target_p_max": 0.5524671558940651,
+     "target_entropy": 0.6937567298717633,
+     "mean_return_spread": 0.0,
+     "list": "published-4599429f3c506715",
+     "rollouts": 96,
+     "rollout_decisions_summary": {
+      "mean": 43.208333333333336,
+      "median": 43.0,
+      "max": 70
+     },
+     "rollout_outcome_counts": {
+      "complete": 96
+     }
+    },
+    {
+     "trajectory_index": 7,
+     "width": 6,
+     "status": "complete",
+     "student_p_max": 0.9999065148156038,
+     "student_entropy": 0.0009815679348137377,
+     "target_p_max": 0.9999086556905539,
+     "target_entropy": 0.0009551227158691082,
+     "mean_return_spread": 0.25,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 96,
+     "rollout_decisions_summary": {
+      "mean": 71.76041666666667,
+      "median": 69.0,
+      "max": 143
+     },
+     "rollout_outcome_counts": {
+      "complete": 96
+     }
+    }
+   ]
+  },
+  {
+   "label": "u037",
+   "seconds": 10.911,
+   "teacher_seconds": 7.7270283,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 26388,
+    "policy_steps": 31331,
+    "rollouts": 304,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.029167441990022257,
+   "ordinary_head_l2": 0.18014634755440284,
+   "head_l2_ratio": 0.16190970500367158,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.999999989258007,
+     "student_entropy": 2.0785329911744496e-07,
+     "target_p_max": 0.999999989258007,
+     "target_entropy": 2.0785329911744512e-07,
+     "mean_return_spread": 0.0,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 36.1875,
+      "median": 35.0,
+      "max": 159
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.9998815399460939,
+     "student_entropy": 0.0012467811995020037,
+     "target_p_max": 0.9998815399460939,
+     "target_entropy": 0.0012467811995020045,
+     "mean_return_spread": 0.0,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 27.9375,
+      "median": 27.0,
+      "max": 45
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.7508497403935377,
+     "student_entropy": 0.5626681588491945,
+     "target_p_max": 0.6464639929743425,
+     "target_entropy": 0.6503492941008336,
+     "mean_return_spread": 0.25,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 131.52083333333334,
+      "median": 136.5,
+      "max": 200
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 7,
+     "status": "complete",
+     "student_p_max": 0.4996822927301323,
+     "student_entropy": 0.6981400118019236,
+     "target_p_max": 0.4999822211227925,
+     "target_entropy": 0.6936914383342769,
+     "mean_return_spread": 0.625,
+     "list": "published-21659427193c1e62",
+     "rollouts": 112,
+     "rollout_decisions_summary": {
+      "mean": 51.24107142857143,
+      "median": 50.0,
+      "max": 125
+     },
+     "rollout_outcome_counts": {
+      "complete": 112
+     }
+    },
+    {
+     "trajectory_index": 5,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9998424374337174,
+     "student_entropy": 0.001537118812838585,
+     "target_p_max": 0.9997402497956601,
+     "target_entropy": 0.002404159642525923,
+     "mean_return_spread": 0.125,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 333.71875,
+      "median": 306.5,
+      "max": 688
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    }
+   ]
+  },
+  {
+   "label": "u038",
+   "seconds": 10.625,
+   "teacher_seconds": 7.7545298,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 28620,
+    "policy_steps": 31428,
+    "rollouts": 432,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 0.007911134477133791,
+   "ordinary_head_l2": 0.41011460918977316,
+   "head_l2_ratio": 0.019290057705486554,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 5,
+     "status": "complete",
+     "student_p_max": 0.9465465616281772,
+     "student_entropy": 0.20863117409403145,
+     "target_p_max": 0.9148237822672433,
+     "target_entropy": 0.2913450995478469,
+     "mean_return_spread": 0.125,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 80,
+     "rollout_decisions_summary": {
+      "mean": 136.5875,
+      "median": 110.5,
+      "max": 410
+     },
+     "rollout_outcome_counts": {
+      "complete": 80
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 8,
+     "status": "complete",
+     "student_p_max": 0.9653895197807334,
+     "student_entropy": 0.15128044649083558,
+     "target_p_max": 0.9653895197807334,
+     "target_entropy": 0.15128044649083558,
+     "mean_return_spread": 0.0,
+     "list": "published-4599429f3c506715",
+     "rollouts": 128,
+     "rollout_decisions_summary": {
+      "mean": 39.984375,
+      "median": 35.0,
+      "max": 63
+     },
+     "rollout_outcome_counts": {
+      "complete": 128
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.9467687297471478,
+     "student_entropy": 0.2079231079417873,
+     "target_p_max": 0.9467687297471478,
+     "target_entropy": 0.2079231079417873,
+     "mean_return_spread": 0.0,
+     "list": "published-09972f4f8a1ff9d8",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 26.34375,
+      "median": 23.5,
+      "max": 60
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    },
+    {
+     "trajectory_index": 7,
+     "width": 7,
+     "status": "complete",
+     "student_p_max": 0.9997728742619497,
+     "student_entropy": 0.0023791245748254666,
+     "target_p_max": 0.9997728742619497,
+     "target_entropy": 0.0023791245748254657,
+     "mean_return_spread": 0.0,
+     "list": "published-6f07fa1e70875d83",
+     "rollouts": 112,
+     "rollout_decisions_summary": {
+      "mean": 57.401785714285715,
+      "median": 57.0,
+      "max": 90
+     },
+     "rollout_outcome_counts": {
+      "complete": 112
+     }
+    },
+    {
+     "trajectory_index": 8,
+     "width": 3,
+     "status": "complete",
+     "student_p_max": 0.9999112129248147,
+     "student_entropy": 0.0009696570608402503,
+     "target_p_max": 0.9999112129248147,
+     "target_entropy": 0.0009696570608402509,
+     "mean_return_spread": 0.0,
+     "list": "published-8b2659507fe45b64",
+     "rollouts": 48,
+     "rollout_decisions_summary": {
+      "mean": 92.91666666666667,
+      "median": 87.5,
+      "max": 184
+     },
+     "rollout_outcome_counts": {
+      "complete": 48
+     }
+    }
+   ]
+  },
+  {
+   "label": "u039",
+   "seconds": 18.828,
+   "teacher_seconds": 15.3913504,
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 5,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 38307,
+    "policy_steps": 41653,
+    "rollouts": 272,
+    "selected_roots": 5,
+    "teacher_games": 5
+   },
+   "auxiliary_head_l2": 8.253972132898907e-05,
+   "ordinary_head_l2": 0.07420946218444084,
+   "head_l2_ratio": 0.0011122533286098224,
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9996623461756304,
+     "student_entropy": 0.0030366290706207453,
+     "target_p_max": 0.9998757575817376,
+     "target_entropy": 0.0012415810476173236,
+     "mean_return_spread": 0.25,
+     "list": "published-bb9d4b569800944e",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 164.125,
+      "median": 155.0,
+      "max": 389
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 1,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.99996727345309,
+     "student_entropy": 0.00037070366398798905,
+     "target_p_max": 0.9999460441914968,
+     "target_entropy": 0.0005841967089721964,
+     "mean_return_spread": 0.125,
+     "list": "published-21659427193c1e62",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 252.46875,
+      "median": 229.5,
+      "max": 427
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 2,
+     "width": 7,
+     "status": "complete",
+     "student_p_max": 0.7800983045599078,
+     "student_entropy": 0.5468231796610129,
+     "target_p_max": 0.7800983045599078,
+     "target_entropy": 0.5468231796610129,
+     "mean_return_spread": 0.0,
+     "list": "published-44ae71e1e126b63d",
+     "rollouts": 112,
+     "rollout_decisions_summary": {
+      "mean": 163.70535714285714,
+      "median": 150.0,
+      "max": 450
+     },
+     "rollout_outcome_counts": {
+      "complete": 112
+     }
+    },
+    {
+     "trajectory_index": 3,
+     "width": 2,
+     "status": "complete",
+     "student_p_max": 0.9754511900857722,
+     "student_entropy": 0.11524968589751189,
+     "target_p_max": 0.9754511900857721,
+     "target_entropy": 0.115249685897512,
+     "mean_return_spread": 0.0,
+     "list": "published-4599429f3c506715",
+     "rollouts": 32,
+     "rollout_decisions_summary": {
+      "mean": 175.125,
+      "median": 141.0,
+      "max": 429
+     },
+     "rollout_outcome_counts": {
+      "complete": 32
+     }
+    },
+    {
+     "trajectory_index": 5,
+     "width": 4,
+     "status": "complete",
+     "student_p_max": 0.9999909794060295,
+     "student_entropy": 0.00011400786858781765,
+     "target_p_max": 0.9999909794060295,
+     "target_entropy": 0.00011400786858781755,
+     "mean_return_spread": 0.0,
+     "list": "published-fd5b036e653ae933",
+     "rollouts": 64,
+     "rollout_decisions_summary": {
+      "mean": 16.203125,
+      "median": 15.0,
+      "max": 28
+     },
+     "rollout_outcome_counts": {
+      "complete": 64
+     }
+    }
+   ]
+  }
+ ],
+ "compacted": {
+  "note": "per-rollout decision and outcome lists summarized per root; summary.md was computed from the full receipt",
+  "full_receipt": {
+   "path": "D:\\e-scratch\\opus-exit-teacher\\receipts\\diagnostics-001\\receipt.json",
+   "sha256": "c276a42a3f007055528903aa375849bd521afbde320791ab2eb06bda2eae8dae",
+   "bytes": 500198
+  }
+ }
+}
