@@ -15,8 +15,10 @@ Modes:
               reverse-kl and forward-kl updates on it per backend, each
               replayed; head distances; a serial collection replay.
   chain       per arm a chain of updates, each collecting from the
-              previous checkpoint, replayed; control collections also
-              collected serially (identity smokes).
+              previous checkpoint, replayed (identity smokes): the
+              control arm's replay collects serially (one worker) and must
+              match its parallel run byte for byte; each treatment arm
+              must match across two replays.
   throughput  the teach step on one fixed batch of published-list games
               at several worker counts (same seeds, identical packets).
   diagnostics independent first updates from g115 over consecutive
@@ -312,6 +314,9 @@ def chain(args, directory):
     }
     for arm in ARMS:
         for replay in "ab"[: args.replays]:
+            # The control arm's second replay is its serial replay (one
+            # collection worker); treatment replays repeat the same settings.
+            collect_workers = 1 if arm == "control" and replay == "b" else args.collect_workers
             student = initial
             steps = []
             for update in range(args.updates):
@@ -319,21 +324,14 @@ def chain(args, directory):
                 entries = iterations[args.iteration + update]["episodes"]
                 episodes, games = batch(args.name, update, entries, initial, a48)
                 collect = collect_command(
-                    student, episodes, args.collect_workers, directory / f"{label}-collect"
+                    student, episodes, collect_workers, directory / f"{label}-collect"
                 )
                 collected, collect_seconds = run(collect, directory, f"{label}-collect")
                 step = {
+                    "collect_workers": collect_workers,
                     "collect_seconds": round(collect_seconds, 3),
                     "trajectories_sha256": [pin["sha256"] for pin in collected["trajectories"]],
                 }
-                if arm == "control" and replay == "a":
-                    serial = dict(
-                        collect, workers=1, output_directory=str(directory / f"{label}-collect-serial")
-                    )
-                    serial_result, _ = run(serial, directory, f"{label}-collect-serial")
-                    step["serial_equals_parallel"] = [
-                        pin["sha256"] for pin in serial_result["trajectories"]
-                    ] == step["trajectories_sha256"]
                 options = None if arm == "control" else teacher(arm, games, args, False)
                 command = update_command(
                     student, collected["trajectories"], backend, options, directory / label
@@ -349,16 +347,15 @@ def chain(args, directory):
     for arm in ARMS:
         runs = [record["chains"].get(f"{arm}-{replay}") for replay in "ab"[: args.replays]]
         if len(runs) > 1 and all(runs):
-            found[f"{arm}_replays_identical"] = all(
+            # Control: parallel run against its serial replay; treatment:
+            # two replays. Trajectories, packets and every after-state.
+            name = "control_equals_serial_replay" if arm == "control" else f"{arm}_replays_identical"
+            found[name] = all(
                 a["after_state_sha256"] == b["after_state_sha256"]
                 and a["trajectories_sha256"] == b["trajectories_sha256"]
                 and (a["teacher"] or {}).get("packet") == (b["teacher"] or {}).get("packet")
                 for a, b in zip(*runs)
             )
-    control = record["chains"].get("control-a", [])
-    found["control_serial_equals_parallel"] = bool(control) and all(
-        step.get("serial_equals_parallel") for step in control
-    )
     steps = [s for chain_steps in record["chains"].values() for s in chain_steps]
     found["frozen_tensor_sha256_constant"] = len({s["frozen_tensor_sha256"] for s in steps}) == 1
     found["gauge_within_bound"] = all(

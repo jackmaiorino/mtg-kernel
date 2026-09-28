@@ -128,9 +128,13 @@ def throughput(record):
         for r in runs
     ]
     placement = record.get("placement", {})
+    best = max((r["rollouts_per_second"] or 0.0 for r in runs), default=0.0)
     return "\n".join(
         [
             f"Placement: priority {placement.get('priority', 'n/a')}, affinity {placement.get('affinity', 'n/a')}.",
+            f"Best teach-step rate {fmt(best)} rollouts per second against the cap's 1.48 completed"
+            " rollouts per reserved host-second (256,000 rollouts in 48 host-hours); the teach"
+            " step alone, before collection and update time.",
             "",
             table(
                 [
