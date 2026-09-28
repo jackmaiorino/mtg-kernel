@@ -468,6 +468,45 @@ fn publish_bytes(directory: &Path, name: &str, bytes: &[u8]) -> Result<String, S
 
 /// All collectors use the current batch's parameters. Results are ordered by
 /// the original schedule before publication and the single learning update.
+/// The update's input from one trajectory: the learner's physical-decision
+/// groups in order, each row with its tensor and public row. The learner
+/// filter comes first, so no opponent row, record or auxiliary row enters.
+pub(super) fn learner_groups(
+    trajectory: &Trajectory,
+) -> Result<
+    Vec<
+        Vec<(
+            &DecisionRecordV1,
+            NativeFlatDecisionTensorV4,
+            &PublicFeatureRowsV1,
+        )>,
+    >,
+    String,
+> {
+    let mut groups = Vec::new();
+    let mut index = 0;
+    while index < trajectory.decisions.len() {
+        let first = &trajectory.decisions[index];
+        let end = index + first.substep_count as usize;
+        if first.actor == trajectory.episode.learner_seat {
+            let mut group = Vec::new();
+            for i in index..end {
+                let row = &trajectory.decisions[i];
+                let auxiliary = trajectory.auxiliary[i]
+                    .as_ref()
+                    .ok_or("missing learner public row")?;
+                let tensor = NativeFlatDecisionTensorV4 {
+                    common: row.tensor.tensor(),
+                };
+                group.push((row, tensor, auxiliary));
+            }
+            groups.push(group);
+        }
+        index = end;
+    }
+    Ok(groups)
+}
+
 fn collect_parallel(
     policy: &PublicInputPlayPolicyV1,
     episodes: &[ExpandedEpisodeV1],
@@ -752,31 +791,16 @@ pub fn run(command: Command) -> Result<Value, String> {
         let mut value_targets = Vec::new();
         for trajectory in &trajectories {
             let group_start = records.len();
-            let mut index = 0;
-            while index < trajectory.decisions.len() {
-                let first = &trajectory.decisions[index];
-                let end = index + first.substep_count as usize;
-                if first.actor == trajectory.episode.learner_seat {
-                    let mut group = Vec::new();
-                    for i in index..end {
-                        let row = &trajectory.decisions[i];
-                        let auxiliary = trajectory.auxiliary[i]
-                            .as_ref()
-                            .ok_or("missing learner public row")?;
-                        let tensor = NativeFlatDecisionTensorV4 {
-                            common: row.tensor.tensor(),
-                        };
-                        let output = policy.replay(&tensor, auxiliary)?;
-                        ensure(
-                            bits(&output.logits) == row.logits
-                                && output.value.to_bits() == row.value,
-                            "public rollout replay differs from current learner",
-                        )?;
-                        group.push((row, tensor, auxiliary));
-                    }
-                    records.push(group);
+            for group in learner_groups(trajectory)? {
+                for (row, tensor, auxiliary) in &group {
+                    let output = policy.replay(tensor, auxiliary)?;
+                    ensure(
+                        bits(&output.logits) == row.logits
+                            && output.value.to_bits() == row.value,
+                        "public rollout replay differs from current learner",
+                    )?;
                 }
-                index = end;
+                records.push(group);
             }
             ensure(
                 records.len() > group_start,

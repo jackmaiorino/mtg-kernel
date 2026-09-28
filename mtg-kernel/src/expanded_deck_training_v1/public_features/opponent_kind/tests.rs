@@ -220,6 +220,70 @@ fn learner_rows_do_not_depend_on_the_opponent_kind() {
     assert_eq!(prefix(&recent), prefix(&ordinary));
 }
 
+/// Learner isolation for Legacy, on the update's own input (the extracted
+/// learner groups). Forced and scored singletons both play action 0 with one
+/// draw, so a game with forced actions on and the same game with them off
+/// have identical actions: every learner group must then be identical over
+/// the whole game, singletons included, while the opponent rows differ. And
+/// before the opponent first acts, a Legacy game and an ordinary game give
+/// the same learner groups (FABLE-REVIEW-20260927 20:00, kinds change 3).
+#[test]
+fn legacy_learner_groups_do_not_depend_on_the_opponent() {
+    use super::super::learner_groups;
+    // Each group as its rows (tensor bits included) and public rows, taken
+    // below a step bound.
+    let groups = |t: &Trajectory, below: u64| {
+        learner_groups(t)
+            .unwrap()
+            .iter()
+            .filter(|g| g[0].0.step < below)
+            .map(|g| {
+                g.iter()
+                    .map(|(row, _, auxiliary)| serde_json::to_vec(&(row, auxiliary)).unwrap())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+    };
+    for learner_seat in [0, 1] {
+        let (episode, forced) = legacy_games(learner_seat, true, false).pop().unwrap();
+        let mut unforced_episode = episode.clone();
+        unforced_episode.opponent_kind = Some(legacy_kind(false, false));
+        let unforced = play(&unforced_episode, legacy_seat(false, false));
+        let actions = |t: &Trajectory| {
+            t.decisions
+                .iter()
+                .map(|r| (r.actor, r.selected))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(actions(&forced), actions(&unforced));
+        assert!(forced.decisions.iter().any(|r| {
+            r.actor != learner_seat
+                && r.sampler_identity.as_deref() == Some(V3_FORCED_SINGLETON_SAMPLER)
+        }));
+        assert_ne!(
+            serde_json::to_vec(&forced.decisions).unwrap(),
+            serde_json::to_vec(&unforced.decisions).unwrap(),
+            "the opponent rows record the singletons differently"
+        );
+        assert!(!groups(&forced, u64::MAX).is_empty());
+        assert_eq!(groups(&forced, u64::MAX), groups(&unforced, u64::MAX));
+    }
+    // Before the opponent first acts, Legacy and an ordinary opponent give
+    // the same learner groups.
+    let legacy = play(
+        &episode(0, Some(legacy_kind(true, true))),
+        legacy_seat(true, true),
+    );
+    let ordinary = play(&episode(0, None), net_seat());
+    let first_opponent = |t: &Trajectory| t.decisions.iter().find(|r| r.actor != 0).unwrap().step;
+    let bound = first_opponent(&legacy).min(first_opponent(&ordinary));
+    assert!(
+        !groups(&legacy, bound).is_empty(),
+        "learner moves first in this fixture"
+    );
+    assert_eq!(groups(&legacy, bound), groups(&ordinary, bound));
+}
+
 fn legacy_kind(forced: bool, spell_adapter: bool) -> ExpandedOpponentKindV1 {
     ExpandedOpponentKindV1::Legacy {
         source: episode(0, None).opponent.unwrap(),
