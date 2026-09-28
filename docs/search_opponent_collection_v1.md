@@ -22,7 +22,7 @@ The line (a) template (`a.json`, SHA256 `4352f9cc...`) is consumed by the public
 - Validation: learner rows replay the behavior sampler exactly as before; each search row must match its record in order, with simulations and transitions within the descriptor budget and the descriptor itself at the D3 budget; ordinary validation refuses a search trajectory.
 - The update is unchanged and reads learner rows only. No opponent action, visit count or value enters any learner target.
 - A typed search error aborts the run: no fallback opponent, no derived-seed retry.
-- A run whose schedule has search games publishes `search-opponent-receipt.json`: config SHA256, descriptor and checkpoint SHA256, search episode ids, build and executable SHA256.
+- A run whose schedule has search games publishes `search-opponent-receipt.json` (schema v2): config SHA256, descriptor and checkpoint SHA256, the scheduled search episode ids, the updates this invocation plays with their search episode ids, and the build and executable SHA256. `completion.json` records how far the invocation got.
 
 ## Python readers of public trajectories (census)
 
