@@ -68,12 +68,16 @@ class HeldTests(unittest.TestCase):
 
     def constructor_failure(self, transferred):
         api = self.api(); kernel = Mock(); partial_handle = Mock()
+        partials = []
         partial_handle.Close.side_effect = lambda: api.CloseHandle(10)
         def initialize(partial, *args, **kwargs):
             partial._child_created = False
             self.assertIs(held._HELD.constructing, partial)
+            partials.append(partial)
             api.CreateProcess()
             if transferred:
+                partial._child_created = True
+                partial.returncode = None
                 partial._handle = partial_handle
                 api.CloseHandle(20)
             raise OSError('after successful capture')
@@ -87,6 +91,10 @@ class HeldTests(unittest.TestCase):
         kernel.ResumeThread.assert_not_called()
         self.assertEqual(sorted(c.args[0] for c in api.closed.call_args_list), [10, 11, 20, 21])
         self.assertEqual(partial_handle.Close.call_count, int(transferred))
+        self.assertFalse(partials[0]._child_created)
+        with patch.object(partials[0], '_internal_poll', side_effect=AssertionError('closed handle polled')) as poll:
+            partials[0].__del__()
+            poll.assert_not_called()
         self.assertFalse(held._HELD.active)
         for name in ('process', 'thread', 'raw_process', 'raw_thread', 'constructing'):
             self.assertIsNone(getattr(held._HELD, name))

@@ -96,6 +96,10 @@ def spawn_held(command, executable, **kwargs):
             try:
                 _winapi.TerminateProcess(_HELD.process, 1)
                 _winapi.WaitForSingleObject(_HELD.process, _winapi.INFINITE)
+                # Construction failed and the child is reaped. Popen.__del__ must
+                # not poll its original handle after we close it below.
+                if _HELD.constructing is not None:
+                    _HELD.constructing._child_created = False
             finally:
                 handle = getattr(_HELD.constructing, '_handle', None)
                 if handle is not None:
