@@ -46,7 +46,9 @@ RECOMPUTATION = {'a06fa9566106f0ea': SEALED / 'receipts/card-db-recomputation/18
 LINEAGE = SEALED / 'receipts/lineage-parents-v1.json'
 LINKAGE = SEALED / 'receipts/registry-linkage-v1.json'
 # Set to True only after the R14 route's Fable verdict and Codex countersign accept it.
-R14_ACCEPTED = False
+R14_ACCEPTED = True
+R14_ACCEPTED_COMMIT = '34decc2779d566616752f64ec63ab4823fff293c'
+R14_ACCEPTANCE_NOTE = 'CODEX #615'
 PINNED = Path('E:/pinned-binaries')
 TOOLCHAINS = {
     '40b06e66 (strict route: refresh-034/current-1)': {
@@ -57,6 +59,9 @@ TOOLCHAINS = {
         'exporter': '6a5a229cad98fde27789fe2f915f5e3917c586c8038788db30cffe1fd2f7dd58/native_checkpoint_export_v1.exe',
         'roundtrip': '3fe7a162a2dc573d6acdaf6100e8840ff7fca633ac88ef787f3f5c447aa90f9a/native_inference_export_roundtrip_v1.exe',
         'evaluator': '020873c27eee82acfc66ed27510cf8bdb86b48dbad9d6720821e6d9663630fcd/public_feature_evaluation_v1.exe'},
+    '34decc27 (R14 accepted: round trips and smokes of the seven; their bundles stand from 5dacb01b, whose exporter path is byte-identical)': {
+        'roundtrip': '6b01201d36312f9b16c59a8e4ca9b796655b2458613429ca257116a3e9496bea/native_inference_export_roundtrip_v1.exe',
+        'evaluator': '0584895f40bc60d4bd746592e4269484e961e8ab4a824eb70208c0eba2c530bb/public_feature_evaluation_v1.exe'},
 }
 CYCLE3_TRAINING_COMMITS = ['162b7579f899c3df76910be59a9a076d14adfd5e', 'b01afb528d27ffed942a06a4ab9f606edfb6258c',
                            'a7043e3044d38f20dbb95afbc430af74d2f11ec8']
@@ -162,6 +167,13 @@ def sealed_receipts(label):
     for name in ('summary', 'roundtrip', 'smoke'):
         path = base / f'{name}.json'
         if path.exists(): out[name] = {'path': path.as_posix(), 'sha256': sha(path), 'body': json.loads(path.read_bytes())}
+    accepted = base / ('accepted-' + R14_ACCEPTED_COMMIT[:8])
+    if accepted.is_dir():
+        # The accepted-commit rerun is the evidence of record; the export-time receipts stay cited.
+        for name in ('roundtrip', 'smoke'):
+            out['export_time_' + name] = out.pop(name)
+            path = accepted / f'{name}.json'
+            out[name] = {'path': path.as_posix(), 'sha256': sha(path), 'body': json.loads(path.read_bytes())}
     return out
 
 
@@ -198,6 +210,9 @@ def member(index, label, family, store, facts, pin_check, provenance, registries
             forced, spell_target = flags.pop()
             record['legacy_adapter_flags'] = {'v3_forced_actions': forced, 'v3_spell_target_reference_adapter': spell_target,
                                               'source': 'smoke receipt seat models'}
+    for name in ('export_time_roundtrip', 'export_time_smoke'):
+        if name in receipts:
+            record[name + '_receipt'] = {k: receipts[name][k] for k in ('path', 'sha256')}
     admission = SEALED / 'admission/r3' / (label.replace('/', '__') + '.json')
     if admission.exists():
         record['admission'] = {'path': admission.as_posix(), 'sha256': sha(admission), 'route': json.loads(admission.read_bytes())['route']}
@@ -274,6 +289,9 @@ def main(revision, output):
                               'Playable means exported, imported bit-exactly and loaded by the public evaluator; it is not a strength claim.'],
                 'sources': {'refresh_manifest': {'path': REFRESH.as_posix(), 'sha256': sha(REFRESH)}, 'v3b_archive_root': V3B.as_posix(),
                             'sealed_root': SEALED.as_posix(),
+                            'dependency_closure': {'path': (SEALED / 'receipts/dependency-closure-v2.json').as_posix(),
+                                                   'sha256': sha(SEALED / 'receipts/dependency-closure-v2.json'),
+                                                   'supersedes': 'dependency-closure-v1.json (983b47ff)'},
                             'rulings': 'collab/DIRECTOR-RULINGS-20260927.md R3, R10, R11, R14; collab/FABLE-REVIEW-20260927.md (panel-export verdict)'},
                 'toolchain': toolchain_record(members),
                 'r14_route': {
@@ -284,11 +302,14 @@ def main(revision, output):
                                   'source_card_db_hash': 'a06fa9566106f0ea',
                                   'destination_registry_sha256': sha(DESTINATION)},
                     'semantics_report': {'path': (SEALED / 'receipts/r14-semantics-report-v1.json').as_posix(),
-                                         'sha256': sha(SEALED / 'receipts/r14-semantics-report-v1.json')},
+                                         'sha256': sha(SEALED / 'receipts/r14-semantics-report-v1.json'),
+                                         'source_commit': '1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec',
+                                         'source_card_db_hash': 'a06fa9566106f0ea',
+                                         'binding': 'the report reads the generated tables card_defs-1804e9f9.rs (93134803); card-db-recomputation/1804e9f9.json (993da0d9) computes a06fa9566106f0ea from the same tables'},
                     'acceptance': {'fable_verdict': 'collab/FABLE-REVIEW-20260927.md, section "## Opus lane panel-export: R14 registry-evolution import route (design and implementation review)": COUNTERSIGN (scoped) with changes 1-8',
                                    'codex_contract': 'CODEX #566 (changes 1, 2, 6, 7 countersigned as contract)',
-                                   'codex_implementation_countersign': 'pending on the amended commit (changes 1, 6, 7, 8 at 0cd213dd)',
-                                   'accepted': R14_ACCEPTED},
+                                   'codex_implementation_countersign': R14_ACCEPTANCE_NOTE + ': R14 implementation acceptance: COUNTERSIGN ' + R14_ACCEPTED_COMMIT,
+                                   'accepted': R14_ACCEPTED, 'accepted_commit': R14_ACCEPTED_COMMIT},
                     'training_format_evidence': [
                         'all seven a06fa9566106f0ea refresh-034 run.json environments record deck_ids [Rally, Rally] and no match-format field',
                         'the training-era engine had no sideboard mechanism: git grep at 1804e9f9 and 967b8efd finds sideboard only in card_def.rs comments and one rl.rs provenance string (Fable, FABLE-REVIEW-20260927 R14 point 4)',

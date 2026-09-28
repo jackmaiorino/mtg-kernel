@@ -11,16 +11,16 @@ Lane opus-panel-export (collab/GOALS/opus-panel-export-20260927.md), branch `opu
 - **Tools**: the manifest generator, the allowlist writer, the semantics report and the admission receipt (collector interface, revision 3 in the shape the collector parses: an R14 receipt names the Fable section, Codex's countersign note and the accepted commit, each verified to exist before writing, and the smoke evaluator must be built at that commit; registry_pins carries the loaded registry and namespace identity for the collector to compare), all in `python/tools/`.
 - **Sealed evidence** under `E:/mtg-line-a-panel-imports-20260927` (catalogued): bundles, descriptors, round-trip and smoke receipts, card-DB hash recomputation, lineage parents, registry linkage, the semantics report (96c027b6) and admission receipts. Binaries are pinned under `E:/pinned-binaries/<sha256>/`.
 
-## Per-member status (manifest r5)
+## Per-member status (manifest r6, 1091f7ff)
 
 | Index | Member | Status | Registry linkage | Blocking item |
 |---:|---|---|---|---|
-| 2 | refresh-034/anchor-0 | exported, awaiting R14 acceptance | card-DB hash only | Codex implementation countersign |
-| 3-6, 8-9 | refresh-034 anchor-1, historical-0/1, current-0, exploiter-0/1 | exported, awaiting R14 acceptance | execution manifest | Codex implementation countersign |
+| 2 | refresh-034/anchor-0 | playable (R14 route, admission r3 95bd6d34) | card-DB hash only | none |
+| 3-6, 8-9 | refresh-034 anchor-1, historical-0/1, current-0, exploiter-0/1 | playable (R14 route, admission r3 361610e0, 25250098, 76b8cc20, 28d6b016, b4c795ef, 9c70015e) | execution manifest | none |
 | 7 | refresh-034/current-1 | playable (strict route, admission r3 8e92ea42) | commit-recorded | none |
 | 10-15 | exploiter-v3b (six) | unresolved | build receipt | a Store authority route (later version) |
 
-The seven awaiting members were exported, round-tripped bit-exactly and smoked at 5dacb01b. After Codex's countersign, the binaries are rebuilt at the accepted commit, the round trips and Rally smokes rerun, and the admission receipts written; the bundles and descriptors stand.
+Codex accepted the R14 implementation at 34decc27 (CODEX #615). The three binaries were rebuilt there from a clean tree and pinned (exporter 5ef37191, round trip 6b01201d, evaluator 0584895f); the seven round trips passed bit-exactly and the Rally smokes completed on that evaluator (receipts under each member's accepted-34decc27/, beside the export-time ones from 5dacb01b); each admission receipt cites the Fable R14 section, CODEX #615 and 34decc27. The bundles and descriptors from 5dacb01b stand: the exporter path is byte-identical between the two commits.
 
 ## Disclosure text for the declaration (R14 verdict change 4, Codex carries it)
 
@@ -28,6 +28,5 @@ The seven awaiting members were exported, round-tripped bit-exactly and smoked a
 
 ## What remains
 
-- The collector's loaded-registry bindings (opus-search-opponent, CODEX #570), then Codex's tests and implementation countersign of the amended commits (due 2026-09-30 18:00 EDT); then the rebuild at the accepted commit, the reruns, the seven admission receipts and manifest r6.
-- v3b (later version, due 2026-10-04 18:00 EDT): no base Store authority admits these legacy-v1, non-promoted(2) stores. A probe through `load_checkpoint_v1` shows all six Store chains validate and only the authority predicate refuses them. The design entry (FABLE-QUEUE, 2026-09-27 17:47 EDT) proposes one authority variant pinned to the six endpoints and an R14 scope extension; implementation waits for the verdict and Codex's countersign.
+- v3b (later version, due 2026-10-04 18:00 EDT): no base Store authority admits these legacy-v1, non-promoted(2) stores. A probe through `load_checkpoint_v1` shows all six Store chains validate and only the authority predicate refuses them. The design review (FABLE-REVIEW-20260927, 20:00 window) countersigned one authority variant pinned to the six endpoints, with the R14 scope extension acceptable in principle. It is implemented on the side branch `opus/panel-export-v3b` (6d10810d) and lands here after this acceptance work; sealed exports wait for Codex's engine-contract and scope countersign.
 - Final review entry and closure PRUNE manifest. The PRUNE lists smoke commands, outputs and evaluator scratch as unread.

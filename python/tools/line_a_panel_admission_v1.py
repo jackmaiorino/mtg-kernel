@@ -115,6 +115,9 @@ def main():
     args = parser.parse_args()
     name = args.label.replace('/', '__')
     receipts = SEALED / 'receipts' / name
+    if args.accepted_commit:
+        # R14 evidence is the rerun at the accepted commit, sealed beside the export-time receipts.
+        receipts = receipts / ('accepted-' + args.accepted_commit[:8])
     roundtrip, smoke = json.loads((receipts / 'roundtrip.json').read_bytes()), json.loads((receipts / 'smoke.json').read_bytes())
     if not (roundtrip.get('passed') is True and smoke.get('completed') is True):
         fail('member has no passing round trip and completed smoke')
