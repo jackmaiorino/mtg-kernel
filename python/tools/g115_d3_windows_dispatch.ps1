@@ -25,6 +25,8 @@ if ($RunConfig) {
     $config = Get-Content -LiteralPath $RunConfig -Raw | ConvertFrom-Json
     $receipt = [ordered]@{ complete=$false; started_utc=[DateTime]::UtcNow.ToString('o'); owner_pid=$PID; native_dispatched_directly=$false }
     try {
+        & $config.python (Join-Path $PSScriptRoot 'g115_reserved_dispatch_v1.py') --check-owner | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Current host reservation required before native work' }
         Assert-Hash $PSCommandPath $config.transport_sha256
         Assert-Hash $config.manifest $config.manifest_sha256
         Assert-Hash $config.launcher $config.launcher_sha256
@@ -159,18 +161,6 @@ if ($cloudMode) {
 }
 $ErrorActionPreference = 'Stop'
 if ($LASTEXITCODE -ne 0) { throw 'Supported launcher preflight refused; inspect retained check-only.log' }
-$powershell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
-$command = '"' + $powershell + '" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $PSCommandPath + '" -RunConfig "' + $configPath + '"'
-$startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]0}
-$created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
-    CommandLine=$command; CurrentDirectory=$ControlRoot; ProcessStartupInformation=$startup
-}
-$dispatch = [ordered]@{ utc=[DateTime]::UtcNow.ToString('o'); return_value=$created.ReturnValue; owner_pid=$created.ProcessId; command=$command; hidden=$true; native_dispatched_directly=$false }
-if ($created.ReturnValue -eq 0) {
-    $owner = Get-CimInstance Win32_Process -Filter "ProcessId = $($created.ProcessId)"
-    if ($owner) { $dispatch.owner_created_utc=$owner.CreationDate.ToUniversalTime().ToString('o') }
-}
-Save-Json (Join-Path $ControlRoot 'dispatch.json') $dispatch
-$dispatch | ConvertTo-Json
-if ($created.ReturnValue -ne 0) { throw 'WMI dispatch refused; no retry into these roots' }
-# A receipt is not proof of continued life. Recheck actual PID/creation time and worker progress.
+# The helper acquires before WMI creation and contains the owner and descendants.
+& $Python (Join-Path $PSScriptRoot 'g115_reserved_dispatch_v1.py') --config $configPath
+if ($LASTEXITCODE -ne 0) { throw 'Reserved dispatch refused or unconfirmed; inspect dispatch.json, do not retry these roots' }
