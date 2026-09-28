@@ -24,6 +24,9 @@ const SEARCH_RECORD_SCHEMA: &str = "mtg-kernel-public-search-opponent-record/v1"
 const D3_BUDGET: (u32, u32, u16, u64) = (128, 1024, 8, 20260922);
 /// Prefix of the error string that carries a typed search failure record.
 const SEARCH_FAILURE_MARKER: &str = "search-opponent-failure/v1:";
+/// Prefix of the error string that carries a typed audit stop record
+/// (FABLE-REVIEW-20260927 22:40, change 12).
+const AUDIT_FAILURE_MARKER: &str = "search-opponent-audit-failure/v1:";
 /// Opt-in sampler dump of the full hidden state; never set while collecting.
 const HIDDEN_STATE_DUMP_ENV: &str = "MTG_V4_SEARCH_FAILURE_STATE";
 /// E:/mtg-g115-lineage-20260923/d3-search-descriptor-reviewed.json.
@@ -487,44 +490,146 @@ impl SearchOpponentV1 {
                 .map_err(|e| format!("boundary audit search: {e:?}"))
                 .and_then(|o| audit_fields(&o))
         };
-        let expected = search(session)?;
-        ensure(
-            expected["selected"] == json!(recorded),
-            &format!(
-                "boundary audit: the fresh rerun selected {} but the wrapper played {recorded} at episode {} step {}",
-                expected["selected"], self.episode_id, decision.step
-            ),
-        )?;
+        let stop = |cause: &str,
+                    variant: Option<usize>,
+                    counts: &BoundaryAuditCountsV1,
+                    detail: Value,
+                    message: String| {
+            self.audit_stop(cause, variant, decision, counts, detail, message)
+        };
+        let expected = search(session).map_err(|e| {
+            stop(
+                "audit-error",
+                None,
+                counts,
+                json!({ "error": e }),
+                e.clone(),
+            )
+        })?;
+        if expected["selected"] != json!(recorded) {
+            return Err(stop(
+                "rerun-differs-from-played",
+                None,
+                counts,
+                json!({ "played": recorded, "rerun_selected": expected["selected"] }),
+                format!(
+                    "boundary audit: the fresh rerun selected {} but the wrapper played {recorded} at episode {} step {}",
+                    expected["selected"], self.episode_id, decision.step
+                ),
+            ));
+        }
         let depth = u32::from(d.depth);
-        let key = session
-            .kernel_search_visible_key_v4(depth)
-            .map_err(|e| format!("boundary audit key: {e:?}"))?;
+        let key = session.kernel_search_visible_key_v4(depth).map_err(|e| {
+            let e = format!("boundary audit key: {e:?}");
+            stop(
+                "audit-error",
+                None,
+                counts,
+                json!({ "error": e }),
+                e.clone(),
+            )
+        })?;
         counts.roots += 1;
         for (i, variant) in variants.iter().enumerate() {
             let Some(variant) = variant.as_ref() else {
                 counts.unavailable[i] += 1;
                 continue;
             };
-            if variant.current_response() != FastActorResponseV1::Decision(decision)
-                || variant.kernel_search_visible_key_v4(depth).ok() != Some(key)
-            {
+            let binding = variant.current_response() == FastActorResponseV1::Decision(decision);
+            let visible = variant.kernel_search_visible_key_v4(depth).ok() == Some(key);
+            if !(binding && visible) {
                 counts.inadmissible[i] += 1;
-                return Err(format!(
-                    "boundary audit: {} changed the searcher's decision binding or visible key at episode {} step {}",
-                    AUDIT_VARIANTS[i], self.episode_id, decision.step
+                return Err(stop(
+                    "inadmissible-variant",
+                    Some(i),
+                    counts,
+                    json!({ "decision_binding_kept": binding, "visible_key_kept": visible }),
+                    format!(
+                        "boundary audit: {} changed the searcher's decision binding or visible key at episode {} step {}",
+                        AUDIT_VARIANTS[i], self.episode_id, decision.step
+                    ),
                 ));
             }
-            ensure(
-                search(variant)? == expected,
-                &format!(
-                    "boundary audit: {} changed the D3 decision at episode {} step {}",
-                    AUDIT_VARIANTS[i], self.episode_id, decision.step
-                ),
-            )?;
+            let fields = search(variant).map_err(|e| {
+                stop(
+                    "audit-error",
+                    Some(i),
+                    counts,
+                    json!({ "error": e }),
+                    e.clone(),
+                )
+            })?;
+            if fields != expected {
+                let differing: Vec<&String> = expected
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                    .filter(|(k, v)| fields.get(k.as_str()) != Some(*v))
+                    .map(|(k, _)| k)
+                    .collect();
+                return Err(stop(
+                    "variant-changed-decision",
+                    Some(i),
+                    counts,
+                    json!({ "differing_fields": differing }),
+                    format!(
+                        "boundary audit: {} changed the D3 decision at episode {} step {}",
+                        AUDIT_VARIANTS[i], self.episode_id, decision.step
+                    ),
+                ));
+            }
             counts.checked[i] += 1;
         }
         Ok(())
     }
+
+    /// An audit stop (FABLE-REVIEW-20260927 22:40, change 12): the error
+    /// carries a typed record with the cause, the variant, the root's public
+    /// bindings and the root's counts so far; audit_live_root adds the run's
+    /// counts before this root. Unavailable variants never stop an audit.
+    fn audit_stop(
+        &self,
+        cause: &str,
+        variant: Option<usize>,
+        decision: FastActorDecisionV1,
+        counts: &BoundaryAuditCountsV1,
+        detail: Value,
+        message: String,
+    ) -> String {
+        let record = json!({
+            "schema": "mtg-kernel-public-search-opponent-audit-failure/v1",
+            "cause": cause,
+            "variant": variant.map(|i| AUDIT_VARIANTS[i]),
+            "variant_index": variant,
+            "episode_id": self.episode_id,
+            "seat": self.seat,
+            "step": decision.step,
+            "physical_decision_id": decision.physical_decision_id,
+            "substep_index": decision.substep_index,
+            "legal_action_count": decision.legal_action_count,
+            "root_counts": counts,
+            "detail": detail,
+            "descriptor_sha256": self.descriptor_sha256,
+            "build": SearchBuildV1::current(),
+            "non_claim": "Public bindings only; no hidden state is recorded.",
+        });
+        format!("{AUDIT_FAILURE_MARKER}{record} ({message})")
+    }
+}
+
+/// Adds the run's counts before the stopping root to an audit stop record.
+pub(super) fn with_run_counts(error: String, before: &BoundaryAuditCountsV1) -> String {
+    let Some(start) = error.find(AUDIT_FAILURE_MARKER) else {
+        return error;
+    };
+    let body = start + AUDIT_FAILURE_MARKER.len();
+    let mut stream = serde_json::Deserializer::from_str(&error[body..]).into_iter::<Value>();
+    let Some(Ok(mut record)) = stream.next() else {
+        return error;
+    };
+    let rest = &error[body + stream.byte_offset()..];
+    record["run_counts_before_this_root"] = json!(before);
+    format!("{}{AUDIT_FAILURE_MARKER}{record}{rest}", &error[..start])
 }
 
 /// Run-wide audit counts. One trainer run per process; collector threads add
@@ -551,8 +656,13 @@ pub(crate) fn audit_live_root(
     recorded: u32,
 ) -> Result<(), String> {
     let mut counts = BoundaryAuditCountsV1::default();
-    search.audit_root(net, session, decision, recorded, &mut counts)?;
+    let audited = search.audit_root(net, session, decision, recorded, &mut counts);
     let mut total = AUDIT_COUNTS.lock().unwrap_or_else(|p| p.into_inner());
+    if let Err(error) = audited {
+        // The stop record carries the counts; nothing folds into the total,
+        // since no report is published after a stop.
+        return Err(with_run_counts(error, &total));
+    }
     total.roots += counts.roots;
     for i in 0..4 {
         total.checked[i] += counts.checked[i];
@@ -577,23 +687,30 @@ pub(crate) fn audit_report(every: u32) -> Result<Value, String> {
     }))
 }
 
-/// Publishes `search-failure.json` in the update directory when a collection
-/// error carries a typed search failure record, then returns the error so the
-/// run still stops. Other errors pass through unchanged.
+/// Publishes the typed record a collection error carries, then returns the
+/// error so the run still stops: `search-failure.json` for a typed search
+/// error, `search-opponent-audit-failure.json` for an audit stop. Other
+/// errors pass through unchanged.
 pub(crate) fn publish_failure(directory: &Path, error: String) -> String {
-    let Some(start) = error.find(SEARCH_FAILURE_MARKER) else {
-        return error;
-    };
-    let tail = &error[start + SEARCH_FAILURE_MARKER.len()..];
-    let parsed = serde_json::Deserializer::from_str(tail)
-        .into_iter::<Value>()
-        .next()
-        .and_then(Result::ok);
-    match parsed.map(|record| publish_json(directory, "search-failure.json", &record)) {
-        Some(Ok(_)) => error,
-        Some(Err(publish)) => format!("{error}; failure receipt not written: {publish}"),
-        None => format!("{error}; failure record unreadable"),
+    for (marker, name) in [
+        (SEARCH_FAILURE_MARKER, "search-failure.json"),
+        (AUDIT_FAILURE_MARKER, "search-opponent-audit-failure.json"),
+    ] {
+        let Some(start) = error.find(marker) else {
+            continue;
+        };
+        let tail = &error[start + marker.len()..];
+        let parsed = serde_json::Deserializer::from_str(tail)
+            .into_iter::<Value>()
+            .next()
+            .and_then(Result::ok);
+        return match parsed.map(|record| publish_json(directory, name, &record)) {
+            Some(Ok(_)) => error,
+            Some(Err(publish)) => format!("{error}; failure receipt not written: {publish}"),
+            None => format!("{error}; failure record unreadable"),
+        };
     }
+    error
 }
 
 /// Byte copy of the reviewed D3 descriptor,
