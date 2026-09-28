@@ -312,7 +312,7 @@ def chain(args, directory):
         "backend": backend,
         "chains": {},
     }
-    for arm in ARMS:
+    for arm in args.arms:
         for replay in "ab"[: args.replays]:
             # The control arm's second replay is its serial replay (one
             # collection worker); treatment replays repeat the same settings.
@@ -344,7 +344,7 @@ def chain(args, directory):
             record["chains"][f"{arm}-{replay}"] = steps
             (directory / "receipt.json").write_text(json.dumps(record, indent=1))
     found = {}
-    for arm in ARMS:
+    for arm in args.arms:
         runs = [record["chains"].get(f"{arm}-{replay}") for replay in "ab"[: args.replays]]
         if len(runs) > 1 and all(runs):
             # Control: parallel run against its serial replay; treatment:
@@ -539,6 +539,7 @@ def main():
     parser.add_argument("--replays", type=int, default=2)
     parser.add_argument("--backends", nargs="+", default=["cuda1", "cpu"])
     parser.add_argument("--serial-collect", action="store_true")
+    parser.add_argument("--arms", nargs="+", choices=ARMS, default=list(ARMS), help="chain only")
     parser.add_argument(
         "--affinity-mask",
         type=lambda text: int(text, 0),
