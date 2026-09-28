@@ -170,4 +170,4 @@ Fable lane verdict (FABLE-REVIEW-20260927 exit-teacher required changes) and lin
 - 8 disclosures: done (sections 1 and 3).
 - Line (b) changes: 1 telemetry emission, 2 envelope receipt and 3 learner-seat rollout sampler pin: done.
 
-Goal receipts: acceptance packet, identity smokes, throughput receipt and non-outcome diagnostics done (section 6); then the release suite, a merge of Codex's newest head and the final review entry.
+Goal receipts: acceptance packet, identity smokes, throughput receipt and non-outcome diagnostics done (section 6). Release suite at 10181834 (Codex's head d3250f99 merged in): 2,996 passed, 10 failed, 109 ignored, doc tests 62 passed; the 8 library failures are the pre-existing witnesses listed in docs/g115_d3_review_revision_20260923.md (base values for the three ordinary-trainer goldens), the 2 integration failures run code this branch does not change in non-test builds; the ignored line (b) CUDA, CUDA golden and D3 replay tests pass (docs/reports/line_b_teacher_v1/suite-001/summary.md). Remaining: the final review entry.
