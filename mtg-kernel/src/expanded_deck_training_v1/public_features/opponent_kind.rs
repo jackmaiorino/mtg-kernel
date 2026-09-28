@@ -622,6 +622,7 @@ impl OpponentRecordV1 {
                                 && r.legal_action_count == 1
                                 && row.selected == 0
                                 && row.logits.is_empty()
+                                && row.value == 0f32.to_bits()
                                 && row.tensor.is_empty()
                                 && row.sampler_identity.as_deref()
                                     == Some(V3_FORCED_SINGLETON_SAMPLER),

@@ -337,17 +337,29 @@ impl SearchTrajectoryV1 {
 /// Identity receipt for a run whose schedule contains search-opponent games:
 /// descriptor and checkpoint pins, build and executable. None when the run
 /// has no such game, so ordinary runs publish nothing new.
-pub(crate) fn run_receipt(config: &Config, config_sha256: &str) -> Result<Option<Value>, String> {
-    let ids: Vec<&str> = config
-        .updates
-        .iter()
-        .flatten()
-        .filter(|e| e.opponent_search.is_some())
-        .map(|e| e.id.as_str())
-        .collect();
-    if ids.is_empty() {
+pub(crate) fn run_receipt(
+    config: &Config,
+    config_sha256: &str,
+    invocation: std::ops::Range<usize>,
+) -> Result<Option<Value>, String> {
+    let search_ids = |updates: &[Vec<ExpandedEpisodeV1>]| -> Vec<String> {
+        updates
+            .iter()
+            .flatten()
+            .filter(|e| e.opponent_search.is_some())
+            .map(|e| e.id.clone())
+            .collect()
+    };
+    let scheduled = search_ids(&config.updates);
+    if scheduled.is_empty() {
         return Ok(None);
     }
+    let played = search_ids(
+        config
+            .updates
+            .get(invocation.clone())
+            .ok_or("receipt update range exceeds the schedule")?,
+    );
     for episode in config.updates.iter().flatten() {
         if let Some(pin) = &episode.opponent_search {
             ensure(
@@ -363,11 +375,15 @@ pub(crate) fn run_receipt(config: &Config, config_sha256: &str) -> Result<Option
     }
     let executable = std::env::current_exe().map_err(err)?;
     Ok(Some(json!({
-        "schema": "mtg-kernel-public-search-opponent-run-receipt/v1",
+        "schema": "mtg-kernel-public-search-opponent-run-receipt/v2",
         "config_sha256": config_sha256,
         "descriptor_sha256": REVIEWED_DESCRIPTOR_SHA256,
         "opponent_checkpoint_sha256": G115_CHECKPOINT_SHA256,
-        "search_episode_ids": ids,
+        "scheduled_search_episode_ids": scheduled,
+        // The updates this invocation plays; completion.json records how far
+        // it got.
+        "invocation_updates": [invocation.start, invocation.end],
+        "invocation_search_episode_ids": played,
         "build": SearchBuildV1::current(),
         "executable_sha256": sha(&fs::read(executable).map_err(err)?),
         "non_claim": "Engineering identity only; no strength or promotion claim.",
@@ -383,13 +399,17 @@ const AUDIT_VARIANTS: [&str; 4] = [
     "future randomness",
 ];
 
-/// Counts of one boundary audit. Observational and deterministic.
+/// Counts of one boundary audit. Observational and deterministic. A variant
+/// is unavailable when it cannot be built at that root; a built variant that
+/// changes the searcher's decision binding or visible key is inadmissible and
+/// stops collection, since availability implies invariance by construction.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BoundaryAuditCountsV1 {
     pub(crate) roots: u64,
     pub(crate) checked: [u64; 4],
-    pub(crate) skipped: [u64; 4],
+    pub(crate) unavailable: [u64; 4],
+    pub(crate) inadmissible: [u64; 4],
 }
 
 /// The decision part of a search outcome: everything but node keys, whose
@@ -413,16 +433,43 @@ fn audit_fields(outcome: &crate::model_guided_search_core_v4::Outcome) -> Result
 }
 
 impl SearchOpponentV1 {
-    /// Reruns the unchanged D3 search on each available perturbation of a
-    /// live root and requires the same decision fields. A fresh fork of the
-    /// net searches; the wrapper, its records and the session are untouched.
-    /// A perturbation that is unavailable, or that would change the searcher's
-    /// decision binding or visible key, is counted as skipped.
+    /// Reruns the unchanged D3 search on each perturbation of a live root.
+    /// A fresh fork of the net searches; the wrapper, its records and the
+    /// session are untouched. The rerun of the root must select the action
+    /// the wrapper played (`recorded`); each built perturbation must keep the
+    /// searcher's decision binding and visible key and give the same decision
+    /// fields. A perturbation that cannot be built is counted as unavailable.
     pub(crate) fn audit_root(
         &self,
         net: &FrozenPlayPolicyV1,
         session: &FastActorSessionV1,
         decision: FastActorDecisionV1,
+        recorded: u32,
+        counts: &mut BoundaryAuditCountsV1,
+    ) -> Result<(), String> {
+        let (learner, searcher) = (PlayerId(1 - self.seat), PlayerId(self.seat));
+        let variants = [
+            session.diagnostic_draw_consistent_swap_clone_v1(learner),
+            session
+                .diagnostic_certificate_perturbed_clone_v1(Some(learner.index()), false)
+                .ok(),
+            session
+                .diagnostic_certificate_perturbed_clone_v1(Some(searcher.index()), false)
+                .ok(),
+            session
+                .diagnostic_certificate_perturbed_clone_v1(None, true)
+                .ok(),
+        ];
+        self.audit_variants(net, session, decision, recorded, variants, counts)
+    }
+
+    pub(super) fn audit_variants(
+        &self,
+        net: &FrozenPlayPolicyV1,
+        session: &FastActorSessionV1,
+        decision: FastActorDecisionV1,
+        recorded: u32,
+        variants: [Option<FastActorSessionV1>; 4],
         counts: &mut BoundaryAuditCountsV1,
     ) -> Result<(), String> {
         use crate::model_guided_search_core_v4::Limits;
@@ -441,33 +488,32 @@ impl SearchOpponentV1 {
                 .and_then(|o| audit_fields(&o))
         };
         let expected = search(session)?;
+        ensure(
+            expected["selected"] == json!(recorded),
+            &format!(
+                "boundary audit: the fresh rerun selected {} but the wrapper played {recorded} at episode {} step {}",
+                expected["selected"], self.episode_id, decision.step
+            ),
+        )?;
         let depth = u32::from(d.depth);
         let key = session
             .kernel_search_visible_key_v4(depth)
             .map_err(|e| format!("boundary audit key: {e:?}"))?;
-        let (learner, searcher) = (PlayerId(1 - self.seat), PlayerId(self.seat));
-        let variants = [
-            session.diagnostic_draw_consistent_swap_clone_v1(learner),
-            session
-                .diagnostic_certificate_perturbed_clone_v1(Some(learner.index()), false)
-                .ok(),
-            session
-                .diagnostic_certificate_perturbed_clone_v1(Some(searcher.index()), false)
-                .ok(),
-            session
-                .diagnostic_certificate_perturbed_clone_v1(None, true)
-                .ok(),
-        ];
         counts.roots += 1;
         for (i, variant) in variants.iter().enumerate() {
-            let admissible = variant.as_ref().filter(|v| {
-                v.current_response() == FastActorResponseV1::Decision(decision)
-                    && v.kernel_search_visible_key_v4(depth).ok() == Some(key)
-            });
-            let Some(variant) = admissible else {
-                counts.skipped[i] += 1;
+            let Some(variant) = variant.as_ref() else {
+                counts.unavailable[i] += 1;
                 continue;
             };
+            if variant.current_response() != FastActorResponseV1::Decision(decision)
+                || variant.kernel_search_visible_key_v4(depth).ok() != Some(key)
+            {
+                counts.inadmissible[i] += 1;
+                return Err(format!(
+                    "boundary audit: {} changed the searcher's decision binding or visible key at episode {} step {}",
+                    AUDIT_VARIANTS[i], self.episode_id, decision.step
+                ));
+            }
             ensure(
                 search(variant)? == expected,
                 &format!(
@@ -487,7 +533,8 @@ static AUDIT_COUNTS: std::sync::Mutex<BoundaryAuditCountsV1> =
     std::sync::Mutex::new(BoundaryAuditCountsV1 {
         roots: 0,
         checked: [0; 4],
-        skipped: [0; 4],
+        unavailable: [0; 4],
+        inadmissible: [0; 4],
     });
 
 pub(crate) fn reset_audit_counts() {
@@ -501,14 +548,16 @@ pub(crate) fn audit_live_root(
     net: &FrozenPlayPolicyV1,
     session: &FastActorSessionV1,
     decision: FastActorDecisionV1,
+    recorded: u32,
 ) -> Result<(), String> {
     let mut counts = BoundaryAuditCountsV1::default();
-    search.audit_root(net, session, decision, &mut counts)?;
+    search.audit_root(net, session, decision, recorded, &mut counts)?;
     let mut total = AUDIT_COUNTS.lock().unwrap_or_else(|p| p.into_inner());
     total.roots += counts.roots;
     for i in 0..4 {
         total.checked[i] += counts.checked[i];
-        total.skipped[i] += counts.skipped[i];
+        total.unavailable[i] += counts.unavailable[i];
+        total.inadmissible[i] += counts.inadmissible[i];
     }
     Ok(())
 }
@@ -519,11 +568,11 @@ pub(crate) fn audit_report(every: u32) -> Result<Value, String> {
         .unwrap_or_else(|p| p.into_inner())
         .clone();
     Ok(json!({
-        "schema": "mtg-kernel-public-search-opponent-boundary-audit/v1",
+        "schema": "mtg-kernel-public-search-opponent-boundary-audit/v2",
         "every": every,
         "variants": AUDIT_VARIANTS,
         "counts": counts,
-        "assertion": "each checked variant gave the same D3 decision fields as the live root (selected actions, root estimates, visits, value sums, priors, root work, nodes, simulations, transitions, headroom, census); node keys and outcome digests are not compared",
+        "assertion": "at each audited root a fresh rerun selected the action the wrapper played; each built variant kept the searcher's decision binding and visible key (a built variant that changes either stops collection) and gave the same D3 decision fields as the rerun (selected actions, root estimates, visits, value sums, priors, root work, nodes, simulations, transitions, headroom, census); a variant that cannot be built at a root is counted as unavailable; node keys and outcome digests are not compared",
         "non_claim": "Engineering boundary audit; no strength claim.",
     }))
 }

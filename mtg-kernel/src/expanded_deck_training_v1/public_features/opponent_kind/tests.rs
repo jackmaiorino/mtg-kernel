@@ -58,6 +58,17 @@ fn episode(learner_seat: u8, kind: Option<ExpandedOpponentKindV1>) -> ExpandedEp
     }
 }
 
+/// An unknown opponent-kind tag cannot parse, alone or inside an episode.
+#[test]
+fn unknown_opponent_kind_tag_is_refused() {
+    let unknown = json!({"kind": "search", "config": {"path": "a.json", "sha256": "17".repeat(32)},
+        "checkpoint": {"path": "c.json", "sha256": "57".repeat(32)}});
+    assert!(serde_json::from_value::<ExpandedOpponentKindV1>(unknown.clone()).is_err());
+    let mut value = serde_json::to_value(episode(0, Some(recent_kind()))).unwrap();
+    value["opponent_kind"] = unknown;
+    assert!(serde_json::from_value::<ExpandedEpisodeV1>(value).is_err());
+}
+
 fn learner() -> PublicInputPlayPolicyV1 {
     PublicInputPlayPolicyV1::new(
         FrozenPlayPolicyV1::training_fixture_v4(),
@@ -330,6 +341,21 @@ fn legacy_v3_games_record_singletons_unscored_validate_and_refuse_tampering() {
                     assert!(record
                         .validate(&a.episode, &hashes, &fabricated, &a.terminal)
                         .is_err());
+                    // A singleton row cannot hide a value either.
+                    let mut valued = a.decisions.clone();
+                    let row = valued
+                        .iter_mut()
+                        .find(|r| {
+                            r.sampler_identity.as_deref() == Some(V3_FORCED_SINGLETON_SAMPLER)
+                        })
+                        .unwrap();
+                    row.value = 1f32.to_bits();
+                    assert_eq!(
+                        record
+                            .validate(&a.episode, &hashes, &valued, &a.terminal)
+                            .unwrap_err(),
+                        "unscored singleton row differs from its record"
+                    );
                     // So is a consistent forgery: the singleton rewritten as a
                     // scored V3 row in both the decision and its record (the
                     // draw count is the same either way).

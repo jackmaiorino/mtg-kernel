@@ -384,7 +384,7 @@ fn collect_with_opponent(
                             if audit_every
                                 .is_some_and(|n| search.decisions() % u64::from(n.max(1)) == 0)
                             {
-                                search_opponent::audit_live_root(search, net, &session, d)?;
+                                search_opponent::audit_live_root(search, net, &session, d, selected)?;
                             }
                             auxiliary.push(None);
                             sampler_identity =
@@ -655,7 +655,7 @@ pub fn run(command: Command) -> Result<Value, String> {
     fs::create_dir(&command.output_directory).map_err(err)?;
     publish_json(&command.output_directory, "config.json", config)?;
     search_opponent::reset_audit_counts();
-    if let Some(receipt) = search_opponent::run_receipt(config, &config_hash)? {
+    if let Some(receipt) = search_opponent::run_receipt(config, &config_hash, first_update..last)? {
         publish_json(
             &command.output_directory,
             "search-opponent-receipt.json",

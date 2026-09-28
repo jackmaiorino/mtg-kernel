@@ -290,29 +290,38 @@ fn typed_search_failure_publishes_a_public_failure_record() {
 }
 
 /// FABLE-REVIEW-20260927 change 2, the audit core on a live fixture root:
-/// every perturbation is available here and none moves the D3 decision.
+/// every perturbation is built here and none moves the D3 decision; the
+/// fresh rerun selects the action the wrapper played. Power: a wrong recorded
+/// action is refused, and a built variant whose visible key differs stops
+/// the audit instead of being skipped (review 20:00, change 2).
 #[test]
 fn boundary_audit_checks_every_available_perturbation_of_a_live_root() {
     use crate::policy_observation_v6::tests::{put, ready_state};
     use crate::state::Zone;
     let (searcher, learner) = (crate::ids::PlayerId::P0, crate::ids::PlayerId::P1);
-    let mut state = ready_state();
-    put(&mut state, searcher, "Lightning Bolt", Zone::Hand);
-    state.players[searcher.index()].mana_pool[crate::mana::ManaColor::R.pool_index()] = 3;
-    for name in ["Gut Shot", "Lotus Petal"] {
-        let id = put(&mut state, learner, name, Zone::Hand);
-        state.objects.get_mut(id).zone_change_count = 1;
-    }
-    for owner in [searcher, learner] {
-        for name in ["Forest", "Mountain", "Island", "Swamp", "Counterspell"] {
-            put(&mut state, owner, name, Zone::Library);
+    let fixture = |searcher_life: Option<i32>| {
+        let mut state = ready_state();
+        put(&mut state, searcher, "Lightning Bolt", Zone::Hand);
+        state.players[searcher.index()].mana_pool[crate::mana::ManaColor::R.pool_index()] = 3;
+        for name in ["Gut Shot", "Lotus Petal"] {
+            let id = put(&mut state, learner, name, Zone::Hand);
+            state.objects.get_mut(id).zone_change_count = 1;
         }
-    }
-    let session = FastActorSessionV1::from_v3_fixture_state(state);
+        for owner in [searcher, learner] {
+            for name in ["Forest", "Mountain", "Island", "Swamp", "Counterspell"] {
+                put(&mut state, owner, name, Zone::Library);
+            }
+        }
+        if let Some(life) = searcher_life {
+            state.players[searcher.index()].life = life;
+        }
+        FastActorSessionV1::from_v3_fixture_state(state)
+    };
+    let session = fixture(None);
     let FastActorResponseV1::Decision(decision) = session.current_response() else {
         panic!("fixture has no live decision");
     };
-    let net = FrozenPlayPolicyV1::training_fixture_v4();
+    let mut net = FrozenPlayPolicyV1::training_fixture_v4();
     let mut search = SearchOpponentV1::new(
         &net,
         fixture_descriptor(&net),
@@ -321,16 +330,50 @@ fn boundary_audit_checks_every_available_perturbation_of_a_live_root() {
     )
     .unwrap();
     search.reset_for_game([1, 2], "audit-fixture").unwrap();
+    let (played, _, _) = search.select(&mut net, &session, decision).unwrap();
     let mut counts = BoundaryAuditCountsV1::default();
     search
-        .audit_root(&net, &session, decision, &mut counts)
+        .audit_root(&net, &session, decision, played, &mut counts)
         .unwrap();
     assert_eq!(
         counts,
         BoundaryAuditCountsV1 {
             roots: 1,
             checked: [1; 4],
-            skipped: [0; 4]
+            unavailable: [0; 4],
+            inadmissible: [0; 4],
         }
+    );
+    let wrong = (played + 1) % decision.legal_action_count;
+    let error = search
+        .audit_root(
+            &net,
+            &session,
+            decision,
+            wrong,
+            &mut BoundaryAuditCountsV1::default(),
+        )
+        .unwrap_err();
+    assert!(error.contains("but the wrapper played"), "{error}");
+    // A built variant with a visible change is a leak, not a skip.
+    let visible = fixture(Some(7));
+    let mut counts = BoundaryAuditCountsV1::default();
+    let error = search
+        .audit_variants(
+            &net,
+            &session,
+            decision,
+            played,
+            [None, None, None, Some(visible)],
+            &mut counts,
+        )
+        .unwrap_err();
+    assert!(
+        error.contains("changed the searcher's decision binding or visible key"),
+        "{error}"
+    );
+    assert_eq!(
+        (counts.unavailable, counts.inadmissible),
+        ([1, 1, 1, 0], [0, 0, 0, 1])
     );
 }

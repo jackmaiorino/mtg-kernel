@@ -103,10 +103,10 @@ fn run_receipt_binds_frozen_identities_and_is_absent_for_ordinary_runs() {
         projection_mode: ProjectionMode::StateOnly,
         entropy_coefficient: 0.0,
     };
-    assert!(run_receipt(&config(vec![episode(false)]), "c")
+    assert!(run_receipt(&config(vec![episode(false)]), "c", 0..1)
         .unwrap()
         .is_none());
-    let receipt = run_receipt(&config(vec![episode(false), episode(true)]), "c")
+    let receipt = run_receipt(&config(vec![episode(false), episode(true)]), "c", 0..1)
         .unwrap()
         .unwrap();
     assert_eq!(receipt["descriptor_sha256"], REVIEWED_DESCRIPTOR_SHA256);
@@ -114,7 +114,31 @@ fn run_receipt_binds_frozen_identities_and_is_absent_for_ordinary_runs() {
         receipt["opponent_checkpoint_sha256"],
         G115_CHECKPOINT_SHA256
     );
-    assert_eq!(receipt["search_episode_ids"], json!(["search-contract"]));
+    assert_eq!(
+        receipt["scheduled_search_episode_ids"],
+        json!(["search-contract"])
+    );
+    assert_eq!(
+        receipt["invocation_search_episode_ids"],
+        json!(["search-contract"])
+    );
+    // A run stopping after the first of two updates lists both scheduled
+    // search episodes but plays only the first.
+    let mut later = episode(true);
+    later.id = "search-contract-later".into();
+    let mut two = config(vec![episode(true)]);
+    two.updates.push(vec![later]);
+    let partial = run_receipt(&two, "c", 0..1).unwrap().unwrap();
+    assert_eq!(
+        partial["scheduled_search_episode_ids"],
+        json!(["search-contract", "search-contract-later"])
+    );
+    assert_eq!(
+        partial["invocation_search_episode_ids"],
+        json!(["search-contract"])
+    );
+    assert_eq!(partial["invocation_updates"], json!([0, 1]));
+    assert!(run_receipt(&two, "c", 0..3).is_err());
     assert_eq!(
         receipt["build"]["git_head"],
         env!("MTG_KERNEL_BUILD_GIT_HEAD")
@@ -122,11 +146,11 @@ fn run_receipt_binds_frozen_identities_and_is_absent_for_ordinary_runs() {
     assert_eq!(receipt["executable_sha256"].as_str().unwrap().len(), 64);
     let mut other = episode(true);
     other.opponent_search = Some(pin("other.json", &"00".repeat(32)));
-    assert!(run_receipt(&config(vec![other]), "c").is_err());
+    assert!(run_receipt(&config(vec![other]), "c", 0..1).is_err());
     let mut other = episode(true);
     other.opponent = Some(ExpandedModelSourceV1 {
         checkpoint: None,
         ..g115()
     });
-    assert!(run_receipt(&config(vec![other]), "c").is_err());
+    assert!(run_receipt(&config(vec![other]), "c", 0..1).is_err());
 }
