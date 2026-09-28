@@ -35,6 +35,10 @@ use crate::rl_session::{
     RL_SESSION_SCHEMA_VERSION,
 };
 use crate::sideboard::{DeckConfigurationV1, RegisteredDeckV1};
+use crate::sideboard_play_policy_v1::registry_evolution_v1::{
+    FrozenPlayPolicyRegistryEvolutionImportV1, REGISTRY_EVOLUTION_IMPORT_SCHEMA_V1,
+    REGISTRY_EVOLUTION_LEARNER_REFUSAL_V1,
+};
 use crate::sideboard_play_policy_v1::{
     FreshLineageGenerationV1, FrozenPlayObservationTransferV3, FrozenPlayPolicyImportV1,
     FrozenPlayPolicyV1, PlayModelIdentityV1, PlayPolicyOriginV1,
@@ -381,6 +385,27 @@ pub fn load_expanded_inference_v1(
         == Some(stack_features::terminal_tactics::learning::campaign::TEACHER_INFERENCE_SCHEMA)
     {
         return stack_features::terminal_tactics::learning::campaign::load_teacher_inference(source);
+    }
+    if probe.get("schema").and_then(Value::as_str) == Some(REGISTRY_EVOLUTION_IMPORT_SCHEMA_V1) {
+        // R14 archival imports are inference-only opponents: no successor
+        // checkpoint, and learner initialization refuses the schema.
+        ensure(
+            source.checkpoint.is_none(),
+            "registry evolution imports admit no successor checkpoint",
+        )?;
+        let descriptor: FrozenPlayPolicyRegistryEvolutionImportV1 =
+            serde_json::from_slice(&bytes).map_err(err)?;
+        let policy =
+            FrozenPlayPolicyV1::load_registry_evolution_v3(&descriptor, &source.feature_transfer)?;
+        let mut model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .map_err(err)?;
+        model
+            .replace_parameter_snapshot_v1(&policy.training_parameters_v3())
+            .map_err(err)?;
+        let state = NativePolicyValueTrainStateV1::new_v1(model).map_err(err)?;
+        let receipt = inference_identity_v1(source, &policy, &state)?;
+        return Ok((policy, receipt));
     }
     let (policy, state) = initialize(source)?;
     let receipt = inference_identity_v1(source, &policy, &state)?;
@@ -901,6 +926,9 @@ fn initialize_with_transfer_context(
     {
         let (policy, state, context) = fresh_registry_transfer_source::initialize(source, &bytes)?;
         return Ok((policy, state, context.map(TransferContextV1::Fresh)));
+    }
+    if probe.get("schema").and_then(Value::as_str) == Some(REGISTRY_EVOLUTION_IMPORT_SCHEMA_V1) {
+        return Err(REGISTRY_EVOLUTION_LEARNER_REFUSAL_V1.into());
     }
     let mut policy = load_ordinary_policy_v1(source, &bytes)?;
     let mut model =
@@ -2852,6 +2880,9 @@ fn publish_json<T: Serialize>(
 
 #[cfg(test)]
 mod cuda_probe_tests;
+
+#[cfg(test)]
+mod registry_evolution_dispatch_tests;
 
 #[cfg(test)]
 mod warm_cuda_timing_tests;

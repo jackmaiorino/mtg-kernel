@@ -5,11 +5,21 @@ use crate::model_guided_search_authority_v1::authorized_seed_block_v1;
 use crate::model_guided_search_contract_digests_v1::MODEL_GUIDED_SEARCH_WRAPPER_VALUE_DOMAIN_V1;
 use crate::native_checkpoint_shadow_stdio_v1::BoundModelGuidedSearchV1;
 use crate::native_flat_tensorizer_v3::{FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3};
+use crate::sideboard_play_policy_v1::registry_evolution_v1::{
+    pinned_allowlist_sha256_v1, FrozenPlayPolicyRegistryEvolutionImportV1,
+    REGISTRY_EVOLUTION_IMPORT_SCHEMA_V1,
+};
 use crate::sideboard_play_policy_v1::{
     FrozenPlayObservationTransferV3, FrozenPlayPolicyImportV1, FrozenPlayPolicyV1,
 };
 
 const DESTINATION_REGISTRY_V1: &[u8] = include_bytes!("../../data/cards_v1.json");
+const SOURCE_REGISTRY_16D308DA_V1: &[u8] = include_bytes!(
+    "../../data/line_a_source_registries/16d308da032026442994649291453846e2c857842542795092df12530011fd77.json"
+);
+const R14_ALLOWLIST_V1: &[u8] = include_bytes!(
+    "../../data/line_a_source_registries/allowlists/r14-16d308da03202644-to-ef738001c3730760.json"
+);
 
 /// Synthetic metadata/model fixture, never a claim of an actual Store export.
 fn fixture_with_run_v1(
@@ -363,5 +373,99 @@ fn inference_export_imports_through_unchanged_v1_reader_and_v3_transfer_v1() {
     fs::remove_dir(&export_directory).unwrap();
     fs::remove_file(run_path).unwrap();
     fs::remove_file(registry_path).unwrap();
+    fs::remove_dir(root).unwrap();
+}
+
+/// R14: a bundle whose training registry is the pinned 1804e9f9-era bytes loads
+/// only through the registry-evolution route; the unchanged V1 route refuses it.
+#[test]
+fn registry_evolution_route_admits_the_pinned_pair_and_v1_still_refuses_it_v1() {
+    let card_db_hash = format!("{KERNEL_CARDDB_HASH:016x}");
+    let run = json!({
+        "contracts": {
+            "model": {"architecture_identity": MODEL_ARCHITECTURE_VERSION_V1},
+            "tensorizer": {"feature_contract_digest": FEATURE_CONTRACT_DIGEST_V1,
+                "feature_encoding_digest": FEATURE_ENCODING_DIGEST_V1}
+        },
+        "environment": {"deck_ids": ["Rally", "Rally"], "card_db_hash_u64_hex": "a06fa9566106f0ea"}
+    });
+    let run_bytes = serde_json::to_vec(&run).unwrap();
+    let (original, source) =
+        fixture_with_run_v1(ExportStoreKindV1::Population, sha256_v1(&run_bytes));
+    let root = unique_directory_v1("registry-evolution-import-test");
+    fs::create_dir(&root).unwrap();
+    let export_directory = root.join("export");
+    let run_path = root.join("run.json");
+    let registry_path = root.join("registry.json");
+    let allowlist_path = root.join("allowlist.json");
+    fs::write(&run_path, &run_bytes).unwrap();
+    fs::write(&registry_path, SOURCE_REGISTRY_16D308DA_V1).unwrap();
+    fs::write(&allowlist_path, R14_ALLOWLIST_V1).unwrap();
+    let build = current_build_v1().unwrap();
+    write_loaded_v1(&original, &source, &export_directory, build.clone()).unwrap();
+    let metadata = fs::read(export_directory.join(METADATA_FILENAME_V1)).unwrap();
+    let parameters = fs::read(export_directory.join(MODEL_FILENAME_V1)).unwrap();
+    let commit = build["source_git_commit"].as_str().unwrap().to_owned();
+    let transfer = FrozenPlayObservationTransferV3 {
+        expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
+        expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
+    };
+    let strict = FrozenPlayPolicyImportV1 {
+        export_directory: export_directory.clone(),
+        expected_metadata_sha256: hash_v1(&metadata),
+        expected_model_parameter_sha256: original.identity.model_parameter_sha256.clone(),
+        source_run_path: run_path.clone(),
+        source_registry_path: registry_path.clone(),
+        expected_source_registry_sha256: hash_v1(SOURCE_REGISTRY_16D308DA_V1),
+        source_registry_git_commit: commit.clone(),
+        expected_destination_card_db_hash: card_db_hash.clone(),
+    };
+    assert!(FrozenPlayPolicyV1::load_feature_transfer_v3(&strict, &transfer).is_err());
+    let evolution = FrozenPlayPolicyRegistryEvolutionImportV1 {
+        schema: REGISTRY_EVOLUTION_IMPORT_SCHEMA_V1.into(),
+        export_directory: export_directory.clone(),
+        expected_metadata_sha256: hash_v1(&metadata),
+        expected_model_parameter_sha256: original.identity.model_parameter_sha256.clone(),
+        source_run_path: run_path.clone(),
+        source_registry_path: registry_path.clone(),
+        expected_source_registry_sha256: hash_v1(SOURCE_REGISTRY_16D308DA_V1),
+        source_registry_git_commit: commit,
+        expected_destination_card_db_hash: card_db_hash,
+        allowlist_path: allowlist_path.clone(),
+        expected_allowlist_sha256: pinned_allowlist_sha256_v1(),
+    };
+    let policy = FrozenPlayPolicyV1::load_registry_evolution_v3(&evolution, &transfer).unwrap();
+    let actual = policy.actual_model_identity_v1();
+    assert_eq!(
+        actual.model_parameter_sha256,
+        original.identity.model_parameter_sha256
+    );
+    assert_eq!(actual.weights_sha256, hash_v1(&parameters));
+    let crate::sideboard_play_policy_v1::PlayPolicyOriginV1::Imported(identity) =
+        policy.identity_v1()
+    else {
+        panic!("registry evolution import must keep imported ancestry")
+    };
+    assert_eq!(
+        identity.schema,
+        "mtg-kernel-frozen-sideboard-play-registry-evolution-transfer/v1"
+    );
+    assert!(identity
+        .namespace_rule
+        .contains(&pinned_allowlist_sha256_v1()));
+    assert_eq!(
+        (identity.source_card_count, identity.destination_card_count),
+        (136, 192)
+    );
+    let mut unpinned = evolution.clone();
+    unpinned.expected_allowlist_sha256 = "0".repeat(64);
+    assert!(FrozenPlayPolicyV1::load_registry_evolution_v3(&unpinned, &transfer).is_err());
+    // Only the unique fixture files created by this test are removed.
+    fs::remove_file(export_directory.join(MODEL_FILENAME_V1)).unwrap();
+    fs::remove_file(export_directory.join(METADATA_FILENAME_V1)).unwrap();
+    fs::remove_dir(&export_directory).unwrap();
+    for path in [run_path, registry_path, allowlist_path] {
+        fs::remove_file(path).unwrap();
+    }
     fs::remove_dir(root).unwrap();
 }

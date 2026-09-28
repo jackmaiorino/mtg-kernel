@@ -1,7 +1,7 @@
 {
   "schema": "mtg-kernel-line-a-panel-imports/v1",
-  "revision": 2,
-  "status": "1 playable, 0 pending, 13 unresolved of 14 archival members",
+  "revision": 6,
+  "status": "8 playable, 0 exported awaiting R14 acceptance, 0 pending, 6 unresolved of 14 archival members",
   "producer": "Opus lane panel-export (collab/GOALS/opus-panel-export-20260927.md), branch opus/panel-export-v1, python/tools/line_a_panel_imports_v1.py",
   "roster": "proposal v0.2 (collab/CODEX-G115-OPPONENT-PORTFOLIO-PROPOSAL-20260926.md, 2026-09-27 10:18 EDT): 0 V3 and 1 D3 wrapper are outside this manifest; 2-9 refresh-034 slots 0-7; 10-12 v3b arm1 runs 0-2; 13-15 v3b arm2 runs 0-2",
   "nonclaims": [
@@ -16,48 +16,182 @@
     },
     "v3b_archive_root": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726",
     "sealed_root": "E:/mtg-line-a-panel-imports-20260927",
+    "dependency_closure": {
+      "path": "E:/mtg-line-a-panel-imports-20260927/receipts/dependency-closure-v2.json",
+      "sha256": "da97d563307cb0c791da517028890782481a5d387d29377813570e5b3a55a4fb",
+      "supersedes": "dependency-closure-v1.json (983b47ff)"
+    },
     "rulings": "collab/DIRECTOR-RULINGS-20260927.md R3, R10, R11, R14; collab/FABLE-REVIEW-20260927.md (panel-export verdict)"
   },
   "toolchain": {
-    "exporter": {
-      "path": "E:/pinned-binaries/7bb1bba3490cff7199e6be8dd60283958034c4f4033fecc98b82de4a5b1056d6/native_checkpoint_export_v1.exe",
-      "sha256": "7bb1bba3490cff7199e6be8dd60283958034c4f4033fecc98b82de4a5b1056d6",
-      "pinned_name_matches": true,
-      "build_identity": {
-        "build_profile": "release",
-        "cargo_lock_sha256": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
-        "crate_manifest_sha256": "2d5223bad6b9c6f9cf7ebd120579425c54ff113f94a698173121ae4982d4f24e",
-        "enabled_features": [
-          "experimental-burn-net8-packed-cuda-v1",
-          "native-training-store-v2-production"
-        ],
-        "host_triple": "x86_64-pc-windows-msvc",
-        "llvm_version": "21.1.8",
-        "package_name": "mtg-kernel",
-        "package_version": "0.0.4",
-        "rustc_commit_date": "2026-03-25",
-        "rustc_commit_hash": "e408947bfd200af42db322daf0fadfe7e26d3bd1",
-        "rustc_release": "1.94.1",
-        "rustc_verbose_version_sha256": "9a8a529345c2377f0558d65a1327aa81c7f327e88bdfaade069e0d5f73e82064",
-        "schema": "mtg-kernel-launcher-build-identity/v2",
-        "source_git_commit": "40b06e6636da78ac95b72ddcd8d640923198731a",
-        "source_tree_recipe_sha256": "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece",
-        "source_tree_sha256": "09de18454d921b7b609d03c27f5e38b3916441ace9bbe8c3fb63748dbc886cf5",
-        "target_triple": "x86_64-pc-windows-msvc",
-        "workspace_manifest_sha256": "2bd87d9ae7f248602055053216d273f523c1087c57f19ef8dbe76aab19ba5677"
+    "40b06e66 (strict route: refresh-034/current-1)": {
+      "exporter": {
+        "path": "E:/pinned-binaries/7bb1bba3490cff7199e6be8dd60283958034c4f4033fecc98b82de4a5b1056d6/native_checkpoint_export_v1.exe",
+        "sha256": "7bb1bba3490cff7199e6be8dd60283958034c4f4033fecc98b82de4a5b1056d6",
+        "pinned_name_matches": true,
+        "build_identity": {
+          "build_profile": "release",
+          "cargo_lock_sha256": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
+          "crate_manifest_sha256": "2d5223bad6b9c6f9cf7ebd120579425c54ff113f94a698173121ae4982d4f24e",
+          "enabled_features": [
+            "experimental-burn-net8-packed-cuda-v1",
+            "native-training-store-v2-production"
+          ],
+          "host_triple": "x86_64-pc-windows-msvc",
+          "llvm_version": "21.1.8",
+          "package_name": "mtg-kernel",
+          "package_version": "0.0.4",
+          "rustc_commit_date": "2026-03-25",
+          "rustc_commit_hash": "e408947bfd200af42db322daf0fadfe7e26d3bd1",
+          "rustc_release": "1.94.1",
+          "rustc_verbose_version_sha256": "9a8a529345c2377f0558d65a1327aa81c7f327e88bdfaade069e0d5f73e82064",
+          "schema": "mtg-kernel-launcher-build-identity/v2",
+          "source_git_commit": "40b06e6636da78ac95b72ddcd8d640923198731a",
+          "source_tree_recipe_sha256": "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece",
+          "source_tree_sha256": "09de18454d921b7b609d03c27f5e38b3916441ace9bbe8c3fb63748dbc886cf5",
+          "target_triple": "x86_64-pc-windows-msvc",
+          "workspace_manifest_sha256": "2bd87d9ae7f248602055053216d273f523c1087c57f19ef8dbe76aab19ba5677"
+        },
+        "clean_tree_attestation": "the production build capture refuses a dirty build: validate_build_capture_constants requires NATIVE_STORE_BUILD_SOURCE_WORKTREE_CLEAN_V1 and an empty git-status digest (native_store_production_capture_v2.rs:512-517), and the export succeeded"
       },
-      "clean_tree_attestation": "the production build capture refuses a dirty build: validate_build_capture_constants requires NATIVE_STORE_BUILD_SOURCE_WORKTREE_CLEAN_V1 and an empty git-status digest (native_store_production_capture_v2.rs:512-517), and the export succeeded"
+      "roundtrip": {
+        "path": "E:/pinned-binaries/3956dda1cbb066f90ec20dc7c8ca7f04d5e2bfea7b2900714160b8311001a024/native_inference_export_roundtrip_v1.exe",
+        "sha256": "3956dda1cbb066f90ec20dc7c8ca7f04d5e2bfea7b2900714160b8311001a024",
+        "pinned_name_matches": true
+      },
+      "evaluator": {
+        "path": "E:/pinned-binaries/90457897e9b9a11c80214645e7d301c4b30036b539ad4022207c89ef859b6771/public_feature_evaluation_v1.exe",
+        "sha256": "90457897e9b9a11c80214645e7d301c4b30036b539ad4022207c89ef859b6771",
+        "pinned_name_matches": true
+      }
     },
-    "roundtrip": {
-      "path": "E:/pinned-binaries/3956dda1cbb066f90ec20dc7c8ca7f04d5e2bfea7b2900714160b8311001a024/native_inference_export_roundtrip_v1.exe",
-      "sha256": "3956dda1cbb066f90ec20dc7c8ca7f04d5e2bfea7b2900714160b8311001a024",
-      "pinned_name_matches": true
+    "5dacb01b (R14 route: the seven a06fa9566106f0ea refresh-034 members)": {
+      "exporter": {
+        "path": "E:/pinned-binaries/6a5a229cad98fde27789fe2f915f5e3917c586c8038788db30cffe1fd2f7dd58/native_checkpoint_export_v1.exe",
+        "sha256": "6a5a229cad98fde27789fe2f915f5e3917c586c8038788db30cffe1fd2f7dd58",
+        "pinned_name_matches": true,
+        "build_identity": {
+          "build_profile": "release",
+          "cargo_lock_sha256": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
+          "crate_manifest_sha256": "2d5223bad6b9c6f9cf7ebd120579425c54ff113f94a698173121ae4982d4f24e",
+          "enabled_features": [
+            "experimental-burn-net8-packed-cuda-v1",
+            "native-training-store-v2-production"
+          ],
+          "host_triple": "x86_64-pc-windows-msvc",
+          "llvm_version": "21.1.8",
+          "package_name": "mtg-kernel",
+          "package_version": "0.0.4",
+          "rustc_commit_date": "2026-03-25",
+          "rustc_commit_hash": "e408947bfd200af42db322daf0fadfe7e26d3bd1",
+          "rustc_release": "1.94.1",
+          "rustc_verbose_version_sha256": "9a8a529345c2377f0558d65a1327aa81c7f327e88bdfaade069e0d5f73e82064",
+          "schema": "mtg-kernel-launcher-build-identity/v2",
+          "source_git_commit": "5dacb01b12dce9c8c5aa963137d342b017fb40d1",
+          "source_tree_recipe_sha256": "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece",
+          "source_tree_sha256": "921caeab7c1e2ee282bf08d81ec0855cc9f17e6b823c60ced8f7eddcacc6d01f",
+          "target_triple": "x86_64-pc-windows-msvc",
+          "workspace_manifest_sha256": "2bd87d9ae7f248602055053216d273f523c1087c57f19ef8dbe76aab19ba5677"
+        },
+        "clean_tree_attestation": "the production build capture refuses a dirty build: validate_build_capture_constants requires NATIVE_STORE_BUILD_SOURCE_WORKTREE_CLEAN_V1 and an empty git-status digest (native_store_production_capture_v2.rs:512-517), and the export succeeded"
+      },
+      "roundtrip": {
+        "path": "E:/pinned-binaries/3fe7a162a2dc573d6acdaf6100e8840ff7fca633ac88ef787f3f5c447aa90f9a/native_inference_export_roundtrip_v1.exe",
+        "sha256": "3fe7a162a2dc573d6acdaf6100e8840ff7fca633ac88ef787f3f5c447aa90f9a",
+        "pinned_name_matches": true
+      },
+      "evaluator": {
+        "path": "E:/pinned-binaries/020873c27eee82acfc66ed27510cf8bdb86b48dbad9d6720821e6d9663630fcd/public_feature_evaluation_v1.exe",
+        "sha256": "020873c27eee82acfc66ed27510cf8bdb86b48dbad9d6720821e6d9663630fcd",
+        "pinned_name_matches": true
+      }
     },
-    "evaluator": {
-      "path": "E:/pinned-binaries/90457897e9b9a11c80214645e7d301c4b30036b539ad4022207c89ef859b6771/public_feature_evaluation_v1.exe",
-      "sha256": "90457897e9b9a11c80214645e7d301c4b30036b539ad4022207c89ef859b6771",
-      "pinned_name_matches": true
+    "34decc27 (R14 accepted: round trips and smokes of the seven; their bundles stand from 5dacb01b, whose exporter path is byte-identical)": {
+      "roundtrip": {
+        "path": "E:/pinned-binaries/6b01201d36312f9b16c59a8e4ca9b796655b2458613429ca257116a3e9496bea/native_inference_export_roundtrip_v1.exe",
+        "sha256": "6b01201d36312f9b16c59a8e4ca9b796655b2458613429ca257116a3e9496bea",
+        "pinned_name_matches": true
+      },
+      "evaluator": {
+        "path": "E:/pinned-binaries/0584895f40bc60d4bd746592e4269484e961e8ab4a824eb70208c0eba2c530bb/public_feature_evaluation_v1.exe",
+        "sha256": "0584895f40bc60d4bd746592e4269484e961e8ab4a824eb70208c0eba2c530bb",
+        "pinned_name_matches": true
+      }
     }
+  },
+  "r14_route": {
+    "ruling": "collab/DIRECTOR-RULINGS-20260927.md R14",
+    "allowlist": {
+      "path": "data/line_a_source_registries/allowlists/r14-16d308da03202644-to-ef738001c3730760.json",
+      "sha256": "2f883b5eeb029af8a7b46b19f4f9dfd08f1e78a084b282d21a75fcf0ecf5dcde",
+      "source_registry_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
+      "source_card_db_hash": "a06fa9566106f0ea",
+      "destination_registry_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14"
+    },
+    "semantics_report": {
+      "path": "E:/mtg-line-a-panel-imports-20260927/receipts/r14-semantics-report-v1.json",
+      "sha256": "96c027b6a161cd24cee0c184da48f29ad6527f211472129b3f6c1f29feb42ddd",
+      "source_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+      "source_card_db_hash": "a06fa9566106f0ea",
+      "binding": "the report reads the generated tables card_defs-1804e9f9.rs (93134803); card-db-recomputation/1804e9f9.json (993da0d9) computes a06fa9566106f0ea from the same tables"
+    },
+    "acceptance": {
+      "fable_verdict": "collab/FABLE-REVIEW-20260927.md, section \"## Opus lane panel-export: R14 registry-evolution import route (design and implementation review)\": COUNTERSIGN (scoped) with changes 1-8",
+      "codex_contract": "CODEX #566 (changes 1, 2, 6, 7 countersigned as contract)",
+      "codex_implementation_countersign": "CODEX #615: R14 implementation acceptance: COUNTERSIGN 34decc2779d566616752f64ec63ab4823fff293c",
+      "accepted": true,
+      "accepted_commit": "34decc2779d566616752f64ec63ab4823fff293c"
+    },
+    "training_format_evidence": [
+      "all seven a06fa9566106f0ea refresh-034 run.json environments record deck_ids [Rally, Rally] and no match-format field",
+      "the training-era engine had no sideboard mechanism: git grep at 1804e9f9 and 967b8efd finds sideboard only in card_def.rs comments and one rl.rs provenance string (Fable, FABLE-REVIEW-20260927 R14 point 4)",
+      "the Rally .dek at 1804e9f9 lists Cast into the Fire (3) and Relic of Progenitus (4) only as Sideboard; the other 16 Rally cards are full in 16d308da",
+      "card_def.rs is identical to 1804e9f9 at the training commits 967b8efd, ccd93bda, 8c8d645d, 99986ce2, 614d6985 and 9e25d72d (only build.rs differs, 17+/3-), and the shared card-DB hash fixes the generated tables (Fable addendum M5); engine.rs and effect.rs differences stay unaudited and do not bear on NoEffect cards",
+      "the V3 tensorizer and V6 observation read no keyword or color field outside tests, so the admitted differences act only through engine behaviour; the 14 admitted lands were unplayable in the training-era engine (is_playable_land requires is_executable)"
+    ],
+    "admission": {
+      "tool": "python/tools/line_a_panel_admission_v1.py revision 3 (schema mtg-kernel-line-a-panel-admission/v1, the shape the collector parses: LegacyAdmissionV1 at 634426da, CLAUDE #483, CODEX #570)",
+      "receipts_dir": "E:/mtg-line-a-panel-imports-20260927/admission/r3",
+      "receipts": [
+        [
+          "refresh-034__anchor-0.json",
+          "95bd6d343dca0631b38c704b0060c68ac7e81cb9eea7d5e1097e09221cfacd00"
+        ],
+        [
+          "refresh-034__anchor-1.json",
+          "361610e05b3aea444c6ad7ff5503a7857a4a067bd68ed2120c2fea55d6ae2b1b"
+        ],
+        [
+          "refresh-034__current-0.json",
+          "28d6b0160b5eac463edec180ec45d670a33ecb80533e6cf6ee105c08a70871f3"
+        ],
+        [
+          "refresh-034__current-1.json",
+          "8e92ea42bfec09b90a3b99aa34c2de7fada5994beffda15a00d0f013451d92aa"
+        ],
+        [
+          "refresh-034__exploiter-0.json",
+          "b4c795ef0cfa90e5ce1538db6ab833aac906bdae6f14b963197a2386635bfad2"
+        ],
+        [
+          "refresh-034__exploiter-1.json",
+          "9c70015e39149839340438049ad5bb2789a8923ea47b2ad4c1e8579029c921b0"
+        ],
+        [
+          "refresh-034__historical-0.json",
+          "252500983d4564de4fcab63083547e8fa2454c9dc0a37ccdd533e772e1c20154"
+        ],
+        [
+          "refresh-034__historical-1.json",
+          "76b8cc206ccdf9e4692a3a8152dc4b69e94c3a2a9c8765d295b436a643fdae54"
+        ]
+      ],
+      "superseded": [
+        "admission/refresh-034__current-1.json (revision 1, e4d848ac): no registry bindings",
+        "admission/v2/refresh-034__current-1.json (revision 2, 6018ee0b): a shape the collector does not parse; never announced or pinned"
+      ]
+    },
+    "receipt_schemas": "round-trip receipts are mtg-kernel-line-a-panel-roundtrip/v1 for current-1 (40b06e66 toolchain) and v2 for the R14 members (v2 records import_route for either route); smoke receipts are mtg-kernel-line-a-panel-smoke/v1"
   },
   "destination": {
     "registry": "data/cards_v1.json",
@@ -108,7 +242,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -134,27 +268,143 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
         "class": "card-db-hash-only",
-        "scope": "no build receipt or execution manifest located yet for this lineage (to search: 971221, 971222, 971223 and the anchors)"
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [],
+        "all_named_blobs_equal_pinned": false
       },
       "training_provenance": {
         "status": "unresolved",
         "reason": "run.json carries sentinel provenance and no archived build receipt was located for this store"
       },
-      "parent_ref": {
-        "status": "pending",
-        "requested_by": "CODEX #526 (direct initialization or resume parent ref and hash)"
+      "lineage": {
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/lineage-parents-v1.json",
+        "receipt_sha256": "d9d8d59bf2f6ad308f8071d69babe6f18a4e9bb77ef52a446a7ca357c759c8f4",
+        "direct_parent": {
+          "source_run_sha256": "8bc06b6cf2e26df8002b5cece2784e0cd165cdd6bbd199a835e06c17e8d5de5c",
+          "generation": 512,
+          "checkpoint_sha256": "03f0e226f884f51bf7128f70bec189bd6ac2c8f231ced8886f2cb7d3e936cc90",
+          "sidecar_sha256": "c56a8ba1361ab172c669307084c4522ee06ac79e39b7cf4a306f11effe36b031",
+          "state_sha256": "2904dd7b899c21234c64925440277dbfa8d6f552d8f620b153bc8d16c44f523a",
+          "derived_model_parameter_sha256": "0635d2defb8facd700ede34789434956fc4a2fd3b5058cc2df5dd820398b4c22"
+        },
+        "relation": "separate branch: new run and base seed; genesis model equals the parent checkpoint model; fresh optimizer state",
+        "chain": [
+          {
+            "run_sha256": "2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae",
+            "base_seed": 920012
+          },
+          {
+            "run_sha256": "8bc06b6cf2e26df8002b5cece2784e0cd165cdd6bbd199a835e06c17e8d5de5c",
+            "base_seed": 920005
+          }
+        ]
       },
-      "status": "unresolved",
+      "export": {
+        "sealed_directory": "E:/mtg-line-a-panel-imports-20260927/exports/refresh-034__anchor-0",
+        "metadata_sha256": "446f7e604412302ed970366d1840263667cf6ac45bb3beda2b9a388884ca4cdf",
+        "parameter_section_sha256": "895a034ba57e6d35903d77e55a88a8a98b220b064320ff3e694eabcfed4c8224",
+        "exporter_build": {
+          "build_profile": "release",
+          "cargo_lock_sha256": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
+          "crate_manifest_sha256": "2d5223bad6b9c6f9cf7ebd120579425c54ff113f94a698173121ae4982d4f24e",
+          "enabled_features": [
+            "experimental-burn-net8-packed-cuda-v1",
+            "native-training-store-v2-production"
+          ],
+          "host_triple": "x86_64-pc-windows-msvc",
+          "llvm_version": "21.1.8",
+          "package_name": "mtg-kernel",
+          "package_version": "0.0.4",
+          "rustc_commit_date": "2026-03-25",
+          "rustc_commit_hash": "e408947bfd200af42db322daf0fadfe7e26d3bd1",
+          "rustc_release": "1.94.1",
+          "rustc_verbose_version_sha256": "9a8a529345c2377f0558d65a1327aa81c7f327e88bdfaade069e0d5f73e82064",
+          "schema": "mtg-kernel-launcher-build-identity/v2",
+          "source_git_commit": "5dacb01b12dce9c8c5aa963137d342b017fb40d1",
+          "source_tree_recipe_sha256": "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece",
+          "source_tree_sha256": "921caeab7c1e2ee282bf08d81ec0855cc9f17e6b823c60ced8f7eddcacc6d01f",
+          "target_triple": "x86_64-pc-windows-msvc",
+          "workspace_manifest_sha256": "2bd87d9ae7f248602055053216d273f523c1087c57f19ef8dbe76aab19ba5677"
+        },
+        "completion_receipt_sha256": "3af5cf3307be765b0efa766e99f3275eeb892f5d9b64db049b1d4931a65b5395"
+      },
+      "import_descriptor": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__anchor-0/play-import.json",
+        "sha256": "df55c24640464561046a8986a7b754b6af0a0a0d3c9755eb94a45b2d8eaadb6b"
+      },
+      "model_source": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__anchor-0/model-source.json",
+        "sha256": "75730df694a95149b25ed78251622955cec6068fc43b9d1136b7426270918220"
+      },
+      "roundtrip": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__anchor-0/accepted-34decc27/roundtrip.json",
+          "sha256": "27ed7ec99b8f05ef254cc330eeffc2a8d87d697d5d61d75930df34c932dee07b"
+        },
+        "passed": true,
+        "tensor_count": 33,
+        "checks": {
+          "imported_model_parameter_sha256_equals_reference": true,
+          "imported_weights_sha256_equals_parameter_section_sha256": true,
+          "raw_bundle_equals_store_parameter_section": true,
+          "store_model_parameter_sha256_equals_reference": true,
+          "tensors_bit_identical_bundle_vs_store": true,
+          "tensors_bit_identical_imported_vs_store": true,
+          "tensors_bit_identical_payload_section_vs_store": true
+        }
+      },
+      "smoke": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__anchor-0/accepted-34decc27/smoke.json",
+          "sha256": "1f1bbc6f6da24b4881924aff351c97bbd5a13be2be829ededb231c6b75124af3"
+        },
+        "completed": true,
+        "command_sha256": "c875ee459da56c967fd502b7d6aa06a57ee3309fb627dfec09c84fdb4dcd9545",
+        "deck_pair": [
+          "Rally",
+          "Rally"
+        ],
+        "registered_sha256": "78969c2e29e53fddb732bc8555ea3cd585b3159460b2292f03c0a33f5fc2cfe4",
+        "postboard_sha256": "e1348875fc94de22a7744aa80754d11eb2e0992221e1c693cbaacd71b0c2172b",
+        "max_physical_games": 3,
+        "evaluator_sha256": "0584895f40bc60d4bd746592e4269484e961e8ab4a824eb70208c0eba2c530bb",
+        "evaluator_git_head": "34decc2779d566616752f64ec63ab4823fff293c"
+      },
+      "legacy_adapter_flags": {
+        "v3_forced_actions": true,
+        "v3_spell_target_reference_adapter": true,
+        "source": "smoke receipt seat models"
+      },
+      "export_time_roundtrip_receipt": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__anchor-0/roundtrip.json",
+        "sha256": "27ed7ec99b8f05ef254cc330eeffc2a8d87d697d5d61d75930df34c932dee07b"
+      },
+      "export_time_smoke_receipt": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__anchor-0/smoke.json",
+        "sha256": "c08a6f74370c621ff82b29fc09322ebc725b2f9f14350f1a7a694d8e0a7aad05"
+      },
+      "admission": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/admission/r3/refresh-034__anchor-0.json",
+        "sha256": "95bd6d343dca0631b38c704b0060c68ac7e81cb9eea7d5e1097e09221cfacd00",
+        "route": "r14"
+      },
+      "status": "playable",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
-        "parent ref: CODEX #526 requests the direct initialization or resume parent ref and hash",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit",
         "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store"
       ]
     },
@@ -200,7 +450,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -226,27 +476,149 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
-        "class": "card-db-hash-only",
-        "scope": "no build receipt or execution manifest located yet for this lineage (to search: 971221, 971222, 971223 and the anchors)"
+        "class": "execution-manifest-clean-commit",
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "unresolved",
         "reason": "run.json carries sentinel provenance and no archived build receipt was located for this store"
       },
-      "parent_ref": {
-        "status": "pending",
-        "requested_by": "CODEX #526 (direct initialization or resume parent ref and hash)"
+      "lineage": {
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/lineage-parents-v1.json",
+        "receipt_sha256": "d9d8d59bf2f6ad308f8071d69babe6f18a4e9bb77ef52a446a7ca357c759c8f4",
+        "direct_parent": {
+          "source_run_sha256": "2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae",
+          "generation": 384,
+          "checkpoint_sha256": "4bd38cf3a9af3fb03fb04428fbc4286d4635007e848c7b9f0740122e430cbba8",
+          "sidecar_sha256": "7511c0377edd4e8d918fa5843f89a0270a8264e5466c329f6b4ef18bbf9e76bb",
+          "state_sha256": "a6c87366b2da9fc33923abab3c0e22d70c884cd9420477df3a475117be6beb99",
+          "derived_model_parameter_sha256": "db58dbe3f1f76b5bdf3bae4de657711dc818393b2bf1eeae88c02d8866b4d01d"
+        },
+        "relation": "separate branch: new run and base seed; genesis model equals the parent checkpoint model; fresh optimizer state",
+        "chain": [
+          {
+            "run_sha256": "dc171fe72549154e533e337bc39884faa76811809abc0bc573bb975cea500a42",
+            "base_seed": 970002
+          },
+          {
+            "run_sha256": "2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae",
+            "base_seed": 920012
+          },
+          {
+            "run_sha256": "8bc06b6cf2e26df8002b5cece2784e0cd165cdd6bbd199a835e06c17e8d5de5c",
+            "base_seed": 920005
+          }
+        ]
       },
-      "status": "unresolved",
+      "export": {
+        "sealed_directory": "E:/mtg-line-a-panel-imports-20260927/exports/refresh-034__anchor-1",
+        "metadata_sha256": "35f8b76239aa6665b8716bd3d627520c1c759a2877a7f1bf650d6eb775764b43",
+        "parameter_section_sha256": "000fdb9de3d64e1245142e1d3fc0f23bb9dc850a10c503483e3c05af8a9e5e35",
+        "exporter_build": {
+          "build_profile": "release",
+          "cargo_lock_sha256": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
+          "crate_manifest_sha256": "2d5223bad6b9c6f9cf7ebd120579425c54ff113f94a698173121ae4982d4f24e",
+          "enabled_features": [
+            "experimental-burn-net8-packed-cuda-v1",
+            "native-training-store-v2-production"
+          ],
+          "host_triple": "x86_64-pc-windows-msvc",
+          "llvm_version": "21.1.8",
+          "package_name": "mtg-kernel",
+          "package_version": "0.0.4",
+          "rustc_commit_date": "2026-03-25",
+          "rustc_commit_hash": "e408947bfd200af42db322daf0fadfe7e26d3bd1",
+          "rustc_release": "1.94.1",
+          "rustc_verbose_version_sha256": "9a8a529345c2377f0558d65a1327aa81c7f327e88bdfaade069e0d5f73e82064",
+          "schema": "mtg-kernel-launcher-build-identity/v2",
+          "source_git_commit": "5dacb01b12dce9c8c5aa963137d342b017fb40d1",
+          "source_tree_recipe_sha256": "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece",
+          "source_tree_sha256": "921caeab7c1e2ee282bf08d81ec0855cc9f17e6b823c60ced8f7eddcacc6d01f",
+          "target_triple": "x86_64-pc-windows-msvc",
+          "workspace_manifest_sha256": "2bd87d9ae7f248602055053216d273f523c1087c57f19ef8dbe76aab19ba5677"
+        },
+        "completion_receipt_sha256": "18894407021a5b4c8de89db5cb6be735d21f985c99ff1fc84019fbd7f32198c4"
+      },
+      "import_descriptor": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__anchor-1/play-import.json",
+        "sha256": "64054be0703e33b652d311b97a266c6091f21928fc85fba95f3c96eaa39db218"
+      },
+      "model_source": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__anchor-1/model-source.json",
+        "sha256": "f058354f37b92f3d0205a27ce76f1a80fbe50469905b9483de2e09bff3255077"
+      },
+      "roundtrip": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__anchor-1/accepted-34decc27/roundtrip.json",
+          "sha256": "cac72dbcfc95a92414e432f08c45ba309b93cd883830b8263e14e9f8f5d4259a"
+        },
+        "passed": true,
+        "tensor_count": 33,
+        "checks": {
+          "imported_model_parameter_sha256_equals_reference": true,
+          "imported_weights_sha256_equals_parameter_section_sha256": true,
+          "raw_bundle_equals_store_parameter_section": true,
+          "store_model_parameter_sha256_equals_reference": true,
+          "tensors_bit_identical_bundle_vs_store": true,
+          "tensors_bit_identical_imported_vs_store": true,
+          "tensors_bit_identical_payload_section_vs_store": true
+        }
+      },
+      "smoke": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__anchor-1/accepted-34decc27/smoke.json",
+          "sha256": "83dc416dc9b94e503b99118c70c7e11021eda91bf48bc5d2fc75adf74c340549"
+        },
+        "completed": true,
+        "command_sha256": "77c876ab9bd5e725ac4d810b1b11d0dadd109a718204fff03ea871500288bea4",
+        "deck_pair": [
+          "Rally",
+          "Rally"
+        ],
+        "registered_sha256": "78969c2e29e53fddb732bc8555ea3cd585b3159460b2292f03c0a33f5fc2cfe4",
+        "postboard_sha256": "e1348875fc94de22a7744aa80754d11eb2e0992221e1c693cbaacd71b0c2172b",
+        "max_physical_games": 3,
+        "evaluator_sha256": "0584895f40bc60d4bd746592e4269484e961e8ab4a824eb70208c0eba2c530bb",
+        "evaluator_git_head": "34decc2779d566616752f64ec63ab4823fff293c"
+      },
+      "legacy_adapter_flags": {
+        "v3_forced_actions": true,
+        "v3_spell_target_reference_adapter": true,
+        "source": "smoke receipt seat models"
+      },
+      "export_time_roundtrip_receipt": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__anchor-1/roundtrip.json",
+        "sha256": "cac72dbcfc95a92414e432f08c45ba309b93cd883830b8263e14e9f8f5d4259a"
+      },
+      "export_time_smoke_receipt": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__anchor-1/smoke.json",
+        "sha256": "c26a8d1b16fc734b51df288038d16fce8438d923afd4195600d83842372e7cd0"
+      },
+      "admission": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/admission/r3/refresh-034__anchor-1.json",
+        "sha256": "361610e05b3aea444c6ad7ff5503a7857a4a067bd68ed2120c2fea55d6ae2b1b",
+        "route": "r14"
+      },
+      "status": "playable",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
-        "parent ref: CODEX #526 requests the direct initialization or resume parent ref and hash",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit",
         "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store"
       ]
     },
@@ -292,7 +664,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -318,22 +690,134 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
-        "class": "card-db-hash-only",
-        "scope": "no build receipt or execution manifest located yet for this lineage (to search: 971221, 971222, 971223 and the anchors)"
+        "class": "execution-manifest-clean-commit",
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "unresolved",
         "reason": "run.json carries sentinel provenance and no archived build receipt was located for this store"
       },
-      "status": "unresolved",
+      "lineage": {
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/lineage-parents-v1.json",
+        "receipt_sha256": "d9d8d59bf2f6ad308f8071d69babe6f18a4e9bb77ef52a446a7ca357c759c8f4",
+        "direct_parent": null,
+        "relation": "de novo: no initialization parent; common model snapshot",
+        "chain": [
+          {
+            "run_sha256": "7d111d855c09858cbc8404152cdf8878af3d8d5244dc3983ac25ddb2fe566232",
+            "base_seed": 971221
+          }
+        ]
+      },
+      "export": {
+        "sealed_directory": "E:/mtg-line-a-panel-imports-20260927/exports/refresh-034__historical-0",
+        "metadata_sha256": "b95345b0abff60453a4563c4dafcf6a1620f3b0a9de3b0048d5062a9ff13d799",
+        "parameter_section_sha256": "5b85de0082d1b620b80d6accac2f4751f583f8ff91cccb8601730aeed7dd47e1",
+        "exporter_build": {
+          "build_profile": "release",
+          "cargo_lock_sha256": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
+          "crate_manifest_sha256": "2d5223bad6b9c6f9cf7ebd120579425c54ff113f94a698173121ae4982d4f24e",
+          "enabled_features": [
+            "experimental-burn-net8-packed-cuda-v1",
+            "native-training-store-v2-production"
+          ],
+          "host_triple": "x86_64-pc-windows-msvc",
+          "llvm_version": "21.1.8",
+          "package_name": "mtg-kernel",
+          "package_version": "0.0.4",
+          "rustc_commit_date": "2026-03-25",
+          "rustc_commit_hash": "e408947bfd200af42db322daf0fadfe7e26d3bd1",
+          "rustc_release": "1.94.1",
+          "rustc_verbose_version_sha256": "9a8a529345c2377f0558d65a1327aa81c7f327e88bdfaade069e0d5f73e82064",
+          "schema": "mtg-kernel-launcher-build-identity/v2",
+          "source_git_commit": "5dacb01b12dce9c8c5aa963137d342b017fb40d1",
+          "source_tree_recipe_sha256": "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece",
+          "source_tree_sha256": "921caeab7c1e2ee282bf08d81ec0855cc9f17e6b823c60ced8f7eddcacc6d01f",
+          "target_triple": "x86_64-pc-windows-msvc",
+          "workspace_manifest_sha256": "2bd87d9ae7f248602055053216d273f523c1087c57f19ef8dbe76aab19ba5677"
+        },
+        "completion_receipt_sha256": "f61e9f918c977facfe0c53b6418b38e0197fa9fb25e1ef6db3c7c0a4c5e37eb9"
+      },
+      "import_descriptor": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__historical-0/play-import.json",
+        "sha256": "fe3d3571afff7c3d6aaebc353b157e248c1518323edf487b9dc2f573fffa3f6b"
+      },
+      "model_source": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__historical-0/model-source.json",
+        "sha256": "a554c719d502a9fd08a04095678db3c1b0b1a8d8abec65d4eb36f00b82fd425f"
+      },
+      "roundtrip": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__historical-0/accepted-34decc27/roundtrip.json",
+          "sha256": "4f5aabb379fd6279b747eadf0150e5d845f051c6ebe19645848b1c643d792f77"
+        },
+        "passed": true,
+        "tensor_count": 33,
+        "checks": {
+          "imported_model_parameter_sha256_equals_reference": true,
+          "imported_weights_sha256_equals_parameter_section_sha256": true,
+          "raw_bundle_equals_store_parameter_section": true,
+          "store_model_parameter_sha256_equals_reference": true,
+          "tensors_bit_identical_bundle_vs_store": true,
+          "tensors_bit_identical_imported_vs_store": true,
+          "tensors_bit_identical_payload_section_vs_store": true
+        }
+      },
+      "smoke": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__historical-0/accepted-34decc27/smoke.json",
+          "sha256": "53acf5771454f8071588f07ebbc4a066774b92a37294c98d9c20aaf5b3abedfe"
+        },
+        "completed": true,
+        "command_sha256": "7ffcfdb515b4908627319d6c35bac4809c4c81d7f7107ccb9d5293bdbb24c5d3",
+        "deck_pair": [
+          "Rally",
+          "Rally"
+        ],
+        "registered_sha256": "78969c2e29e53fddb732bc8555ea3cd585b3159460b2292f03c0a33f5fc2cfe4",
+        "postboard_sha256": "e1348875fc94de22a7744aa80754d11eb2e0992221e1c693cbaacd71b0c2172b",
+        "max_physical_games": 3,
+        "evaluator_sha256": "0584895f40bc60d4bd746592e4269484e961e8ab4a824eb70208c0eba2c530bb",
+        "evaluator_git_head": "34decc2779d566616752f64ec63ab4823fff293c"
+      },
+      "legacy_adapter_flags": {
+        "v3_forced_actions": true,
+        "v3_spell_target_reference_adapter": true,
+        "source": "smoke receipt seat models"
+      },
+      "export_time_roundtrip_receipt": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__historical-0/roundtrip.json",
+        "sha256": "4f5aabb379fd6279b747eadf0150e5d845f051c6ebe19645848b1c643d792f77"
+      },
+      "export_time_smoke_receipt": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__historical-0/smoke.json",
+        "sha256": "940453f506e33b38ef567fcd25e872d0d1d3a5aa3e3c8eb0f1e4544558e54788"
+      },
+      "admission": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/admission/r3/refresh-034__historical-0.json",
+        "sha256": "252500983d4564de4fcab63083547e8fa2454c9dc0a37ccdd533e772e1c20154",
+        "route": "r14"
+      },
+      "status": "playable",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit",
         "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store"
       ]
     },
@@ -379,7 +863,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -405,22 +889,134 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
-        "class": "card-db-hash-only",
-        "scope": "no build receipt or execution manifest located yet for this lineage (to search: 971221, 971222, 971223 and the anchors)"
+        "class": "execution-manifest-clean-commit",
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "unresolved",
         "reason": "run.json carries sentinel provenance and no archived build receipt was located for this store"
       },
-      "status": "unresolved",
+      "lineage": {
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/lineage-parents-v1.json",
+        "receipt_sha256": "d9d8d59bf2f6ad308f8071d69babe6f18a4e9bb77ef52a446a7ca357c759c8f4",
+        "direct_parent": null,
+        "relation": "de novo: no initialization parent; common model snapshot",
+        "chain": [
+          {
+            "run_sha256": "31dec27f24885c1fc657403f217591b03f4c5ff7f279988cbd54392d45450178",
+            "base_seed": 971223
+          }
+        ]
+      },
+      "export": {
+        "sealed_directory": "E:/mtg-line-a-panel-imports-20260927/exports/refresh-034__historical-1",
+        "metadata_sha256": "0cd8d1a9c66dff0ab17d75efb189623f54d844b3bcb0819f853032b449abe81a",
+        "parameter_section_sha256": "2b89a53e97a8466e43f5061cfd62d5469d4fb95c23e5dab3b14c235116cb6a15",
+        "exporter_build": {
+          "build_profile": "release",
+          "cargo_lock_sha256": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
+          "crate_manifest_sha256": "2d5223bad6b9c6f9cf7ebd120579425c54ff113f94a698173121ae4982d4f24e",
+          "enabled_features": [
+            "experimental-burn-net8-packed-cuda-v1",
+            "native-training-store-v2-production"
+          ],
+          "host_triple": "x86_64-pc-windows-msvc",
+          "llvm_version": "21.1.8",
+          "package_name": "mtg-kernel",
+          "package_version": "0.0.4",
+          "rustc_commit_date": "2026-03-25",
+          "rustc_commit_hash": "e408947bfd200af42db322daf0fadfe7e26d3bd1",
+          "rustc_release": "1.94.1",
+          "rustc_verbose_version_sha256": "9a8a529345c2377f0558d65a1327aa81c7f327e88bdfaade069e0d5f73e82064",
+          "schema": "mtg-kernel-launcher-build-identity/v2",
+          "source_git_commit": "5dacb01b12dce9c8c5aa963137d342b017fb40d1",
+          "source_tree_recipe_sha256": "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece",
+          "source_tree_sha256": "921caeab7c1e2ee282bf08d81ec0855cc9f17e6b823c60ced8f7eddcacc6d01f",
+          "target_triple": "x86_64-pc-windows-msvc",
+          "workspace_manifest_sha256": "2bd87d9ae7f248602055053216d273f523c1087c57f19ef8dbe76aab19ba5677"
+        },
+        "completion_receipt_sha256": "391ef9396b147f95e4bc60a91d119012373d787c21a47aac30649a6031255275"
+      },
+      "import_descriptor": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__historical-1/play-import.json",
+        "sha256": "0e1b94a4c2bf3445770fbf200192e555308c5b8fde8c6148fe793b42e4fc634a"
+      },
+      "model_source": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__historical-1/model-source.json",
+        "sha256": "0bbf0feffd52aac92d0da848aafec88665855e7a7af11c35101d6710fa8df792"
+      },
+      "roundtrip": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__historical-1/accepted-34decc27/roundtrip.json",
+          "sha256": "4f332d43a9dc927c9c54fdd80b8712e7b0a39d7a57d7e0c6dedc7cd8ea50b9d2"
+        },
+        "passed": true,
+        "tensor_count": 33,
+        "checks": {
+          "imported_model_parameter_sha256_equals_reference": true,
+          "imported_weights_sha256_equals_parameter_section_sha256": true,
+          "raw_bundle_equals_store_parameter_section": true,
+          "store_model_parameter_sha256_equals_reference": true,
+          "tensors_bit_identical_bundle_vs_store": true,
+          "tensors_bit_identical_imported_vs_store": true,
+          "tensors_bit_identical_payload_section_vs_store": true
+        }
+      },
+      "smoke": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__historical-1/accepted-34decc27/smoke.json",
+          "sha256": "afc4ded86ab592a5478110c34a6b9ac233f4413693c5eb6011c658377460b032"
+        },
+        "completed": true,
+        "command_sha256": "374ab66f3a914a63ebe9f342e7c26254313e901a8cad24d9ae2a0e1184794c3a",
+        "deck_pair": [
+          "Rally",
+          "Rally"
+        ],
+        "registered_sha256": "78969c2e29e53fddb732bc8555ea3cd585b3159460b2292f03c0a33f5fc2cfe4",
+        "postboard_sha256": "e1348875fc94de22a7744aa80754d11eb2e0992221e1c693cbaacd71b0c2172b",
+        "max_physical_games": 3,
+        "evaluator_sha256": "0584895f40bc60d4bd746592e4269484e961e8ab4a824eb70208c0eba2c530bb",
+        "evaluator_git_head": "34decc2779d566616752f64ec63ab4823fff293c"
+      },
+      "legacy_adapter_flags": {
+        "v3_forced_actions": true,
+        "v3_spell_target_reference_adapter": true,
+        "source": "smoke receipt seat models"
+      },
+      "export_time_roundtrip_receipt": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__historical-1/roundtrip.json",
+        "sha256": "4f332d43a9dc927c9c54fdd80b8712e7b0a39d7a57d7e0c6dedc7cd8ea50b9d2"
+      },
+      "export_time_smoke_receipt": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__historical-1/smoke.json",
+        "sha256": "1b935006c926a6141a15869a62341d3ffce13234e4ba794f9391d3dd8d32005f"
+      },
+      "admission": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/admission/r3/refresh-034__historical-1.json",
+        "sha256": "76b8cc206ccdf9e4692a3a8152dc4b69e94c3a2a9c8765d295b436a643fdae54",
+        "route": "r14"
+      },
+      "status": "playable",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit",
         "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store"
       ]
     },
@@ -466,7 +1062,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -492,27 +1088,157 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
-        "class": "card-db-hash-only",
-        "scope": "no build receipt or execution manifest located yet for this lineage (to search: 971221, 971222, 971223 and the anchors)"
+        "class": "execution-manifest-clean-commit",
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "unresolved",
         "reason": "run.json carries sentinel provenance and no archived build receipt was located for this store"
       },
-      "parent_ref": {
-        "status": "pending",
-        "requested_by": "CODEX #526 (direct initialization or resume parent ref and hash)"
+      "lineage": {
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/lineage-parents-v1.json",
+        "receipt_sha256": "d9d8d59bf2f6ad308f8071d69babe6f18a4e9bb77ef52a446a7ca357c759c8f4",
+        "direct_parent": {
+          "source_run_sha256": "405bbc2ece626c186ad35837ff0437c01f7ff5b9665f2815f67ce5b7ade5c4f7",
+          "generation": 256,
+          "checkpoint_sha256": "0b6d798afef4ee4fa37107b0de55b56a645ad6d3d0cc0e2809bb2e934db1dc6c",
+          "sidecar_sha256": "b1bf239290634135050ed60449d39fe4a8fc920238cb7eae16d8b13fe1ef0591",
+          "state_sha256": "9f0705c936a597367fb1b97fd9cd170618a3096e50f33560519cee485681166a",
+          "derived_model_parameter_sha256": "0efd6de962aeb6208133a88627d2d4be502e084c0f129f27824bbba852dda7c9"
+        },
+        "relation": "separate branch: new run and base seed; genesis model equals the parent checkpoint model; fresh optimizer state",
+        "chain": [
+          {
+            "run_sha256": "ed2fa4ddfe259ecae0e82206d0560bfefbf789baca86a15bb92c58f0b268f902",
+            "base_seed": 975001
+          },
+          {
+            "run_sha256": "405bbc2ece626c186ad35837ff0437c01f7ff5b9665f2815f67ce5b7ade5c4f7",
+            "base_seed": 972001
+          },
+          {
+            "run_sha256": "3d41a6ddd18383e104563cc0c1d29011466961e54662df2aef89a64338dd0f81",
+            "base_seed": 970001
+          },
+          {
+            "run_sha256": "2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae",
+            "base_seed": 920012
+          },
+          {
+            "run_sha256": "8bc06b6cf2e26df8002b5cece2784e0cd165cdd6bbd199a835e06c17e8d5de5c",
+            "base_seed": 920005
+          }
+        ]
       },
-      "status": "unresolved",
+      "export": {
+        "sealed_directory": "E:/mtg-line-a-panel-imports-20260927/exports/refresh-034__current-0",
+        "metadata_sha256": "85ea6ce6b37c4d0c11184868bba56defb3b5baa25864c049ca6f470674c6bda2",
+        "parameter_section_sha256": "bd154667f1a6bcd0ec02f95d553dcd3e4fa3447922f505f44d9ad1e89cbf2bf3",
+        "exporter_build": {
+          "build_profile": "release",
+          "cargo_lock_sha256": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
+          "crate_manifest_sha256": "2d5223bad6b9c6f9cf7ebd120579425c54ff113f94a698173121ae4982d4f24e",
+          "enabled_features": [
+            "experimental-burn-net8-packed-cuda-v1",
+            "native-training-store-v2-production"
+          ],
+          "host_triple": "x86_64-pc-windows-msvc",
+          "llvm_version": "21.1.8",
+          "package_name": "mtg-kernel",
+          "package_version": "0.0.4",
+          "rustc_commit_date": "2026-03-25",
+          "rustc_commit_hash": "e408947bfd200af42db322daf0fadfe7e26d3bd1",
+          "rustc_release": "1.94.1",
+          "rustc_verbose_version_sha256": "9a8a529345c2377f0558d65a1327aa81c7f327e88bdfaade069e0d5f73e82064",
+          "schema": "mtg-kernel-launcher-build-identity/v2",
+          "source_git_commit": "5dacb01b12dce9c8c5aa963137d342b017fb40d1",
+          "source_tree_recipe_sha256": "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece",
+          "source_tree_sha256": "921caeab7c1e2ee282bf08d81ec0855cc9f17e6b823c60ced8f7eddcacc6d01f",
+          "target_triple": "x86_64-pc-windows-msvc",
+          "workspace_manifest_sha256": "2bd87d9ae7f248602055053216d273f523c1087c57f19ef8dbe76aab19ba5677"
+        },
+        "completion_receipt_sha256": "51539880df73d28155898db60782561395e09bafee305dfce01e9bc7152a8f62"
+      },
+      "import_descriptor": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__current-0/play-import.json",
+        "sha256": "0f891887ace8305f4c6eab12bc4738ea33813bf867084547fa94197147990390"
+      },
+      "model_source": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__current-0/model-source.json",
+        "sha256": "c1c0a93954e9a81ebf53722a5044a3cb4684390397272dbef5e4d02473e8dca8"
+      },
+      "roundtrip": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__current-0/accepted-34decc27/roundtrip.json",
+          "sha256": "d138dddf4f67fd9f464ec47c665d600a6b25d61dfe014c2670e4aef9ff08c233"
+        },
+        "passed": true,
+        "tensor_count": 33,
+        "checks": {
+          "imported_model_parameter_sha256_equals_reference": true,
+          "imported_weights_sha256_equals_parameter_section_sha256": true,
+          "raw_bundle_equals_store_parameter_section": true,
+          "store_model_parameter_sha256_equals_reference": true,
+          "tensors_bit_identical_bundle_vs_store": true,
+          "tensors_bit_identical_imported_vs_store": true,
+          "tensors_bit_identical_payload_section_vs_store": true
+        }
+      },
+      "smoke": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__current-0/accepted-34decc27/smoke.json",
+          "sha256": "0baea7d784c3cbc3f4bc0c2f6ac3d4a1752a4e7bd80683d093982beb25a32fc4"
+        },
+        "completed": true,
+        "command_sha256": "98d54cce2b2611a9118aee822e237e5e700db6bf1eb074bcdbc239b716d5b2d1",
+        "deck_pair": [
+          "Rally",
+          "Rally"
+        ],
+        "registered_sha256": "78969c2e29e53fddb732bc8555ea3cd585b3159460b2292f03c0a33f5fc2cfe4",
+        "postboard_sha256": "e1348875fc94de22a7744aa80754d11eb2e0992221e1c693cbaacd71b0c2172b",
+        "max_physical_games": 3,
+        "evaluator_sha256": "0584895f40bc60d4bd746592e4269484e961e8ab4a824eb70208c0eba2c530bb",
+        "evaluator_git_head": "34decc2779d566616752f64ec63ab4823fff293c"
+      },
+      "legacy_adapter_flags": {
+        "v3_forced_actions": true,
+        "v3_spell_target_reference_adapter": true,
+        "source": "smoke receipt seat models"
+      },
+      "export_time_roundtrip_receipt": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__current-0/roundtrip.json",
+        "sha256": "d138dddf4f67fd9f464ec47c665d600a6b25d61dfe014c2670e4aef9ff08c233"
+      },
+      "export_time_smoke_receipt": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__current-0/smoke.json",
+        "sha256": "2d19d20290152bcb98cf138647e32a44f658f3b7cbdb5136059f165fe0b7e2e8"
+      },
+      "admission": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/admission/r3/refresh-034__current-0.json",
+        "sha256": "28d6b0160b5eac463edec180ec45d670a33ecb80533e6cf6ee105c08a70871f3",
+        "route": "r14"
+      },
+      "status": "playable",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
-        "parent ref: CODEX #526 requests the direct initialization or resume parent ref and hash",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit",
         "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store"
       ]
     },
@@ -558,12 +1284,18 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "af9d725658d238a6a1b0c99b52c12ff6823bdcaf8147a77556ee2e3b0b67d6bc",
         "candidate_card_count": 162,
-        "linkage": "cycle-3 training commits 162b7579 and b01afb52 (EVIDENCE-NOTES.md) and search_authority.engine_commit a7043e30 (refresh manifests) all carry these registry bytes; the commit for generations 0-256 is not recorded",
+        "linkage": "the registry revision whose bytes (af9d7256) the strict route pins; member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 0,
         "namespace_mismatch_fields": [],
         "namespace_mismatch_examples": [],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/18f4ca51.json",
+          "sha256": "b28c1aafd109c7885b9b4cb4a42cd35eaf3185ce78670d6b7c4c6df9ee3b0c1e",
+          "training_commit": "18f4ca51419d215370d539cef726edd7f8e7ae0b",
+          "computed": "64c82a261e078f1a",
+          "matches_recorded": true
+        },
         "namespace_v1": "passes",
         "status": "passes-v1",
         "snapshot_repo_path": "data/line_a_source_registries/af9d725658d238a6a1b0c99b52c12ff6823bdcaf8147a77556ee2e3b0b67d6bc.json",
@@ -571,16 +1303,12 @@
       },
       "registry_linkage": {
         "class": "commit-recorded",
-        "scope": "generations 256-2048; the commit for generations 0-256 and the executable are not recorded; no build receipt",
-        "training_commit_registry_sha256": {
-          "162b7579f899c3df76910be59a9a076d14adfd5e": "af9d725658d238a6a1b0c99b52c12ff6823bdcaf8147a77556ee2e3b0b67d6bc",
-          "b01afb528d27ffed942a06a4ab9f606edfb6258c": "af9d725658d238a6a1b0c99b52c12ff6823bdcaf8147a77556ee2e3b0b67d6bc",
-          "a7043e3044d38f20dbb95afbc430af74d2f11ec8": "af9d725658d238a6a1b0c99b52c12ff6823bdcaf8147a77556ee2e3b0b67d6bc"
-        },
-        "evidence": {
-          "path": "E:/mtg-kernel-population-v2-cycle3/lineage/real-attempt-003/EVIDENCE-NOTES.md",
-          "sha256": "4e3b4112aaa0260581b8c0db9b289a2e3a5ca645693648f3fcd1027f3a725f1e"
-        }
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "af9d725658d238a6a1b0c99b52c12ff6823bdcaf8147a77556ee2e3b0b67d6bc"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "partial",
@@ -592,9 +1320,44 @@
         ],
         "reason": "engine commits recorded for generations 256-2048 only; executable identity not recorded"
       },
-      "parent_ref": {
-        "status": "pending",
-        "requested_by": "CODEX #526 (direct initialization or resume parent ref and hash)"
+      "lineage": {
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/lineage-parents-v1.json",
+        "receipt_sha256": "d9d8d59bf2f6ad308f8071d69babe6f18a4e9bb77ef52a446a7ca357c759c8f4",
+        "direct_parent": {
+          "source_run_sha256": "8d9a8287ef57651d5744d26275d2a8c0dc74cfb69cb7e1b2dd22691b5bd8a504",
+          "generation": 2048,
+          "checkpoint_sha256": "5e1ff645091bfacdade2a3e06b47c3cd71c96ed1c9fee4dd9756b343d7c834fd",
+          "sidecar_sha256": "81ab98f52c37cb14a8305f48674133148ac0d06df516c1a12510e5350bb62133",
+          "state_sha256": "e4aa3172bf3962af1498028f19649a85424d0e30f226b5c1f6722160fb24a2d4",
+          "derived_model_parameter_sha256": "67c5d0a2c506c0514623f3f4ea0f273b904662cbdae4f6ddc89c44e255b9a70d"
+        },
+        "relation": "separate branch: new run and base seed; genesis model equals the parent checkpoint model; fresh optimizer state",
+        "chain": [
+          {
+            "run_sha256": "f25a63d0a2968016c2d44220b02d46b642fad5c4d524cd7ed82d699dbfda83a1",
+            "base_seed": 977002
+          },
+          {
+            "run_sha256": "8d9a8287ef57651d5744d26275d2a8c0dc74cfb69cb7e1b2dd22691b5bd8a504",
+            "base_seed": 975002
+          },
+          {
+            "run_sha256": "fd634e085a7a82786caa9ffff64d19d99a780aaaeac4d3f46cd1171eef3589e9",
+            "base_seed": 972002
+          },
+          {
+            "run_sha256": "5816d5d3cca083e47dd4bf63245035f222e2d5edce778091a75d191cd8722e3a",
+            "base_seed": 970003
+          },
+          {
+            "run_sha256": "2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae",
+            "base_seed": 920012
+          },
+          {
+            "run_sha256": "8bc06b6cf2e26df8002b5cece2784e0cd165cdd6bbd199a835e06c17e8d5de5c",
+            "base_seed": 920005
+          }
+        ]
       },
       "export": {
         "sealed_directory": "E:/mtg-line-a-panel-imports-20260927/exports/refresh-034__current-1",
@@ -633,10 +1396,6 @@
         "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__current-1/model-source.json",
         "sha256": "468fc3046f639981a852fea81fde1e7ba47a246fd145ec356b7109ef432f148a"
       },
-      "legacy_adapter_flags": {
-        "v3_forced_actions": true,
-        "v3_spell_target_reference_adapter": true
-      },
       "roundtrip": {
         "receipt": {
           "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__current-1/roundtrip.json",
@@ -671,9 +1430,18 @@
         "evaluator_sha256": "90457897e9b9a11c80214645e7d301c4b30036b539ad4022207c89ef859b6771",
         "evaluator_git_head": "40b06e6636da78ac95b72ddcd8d640923198731a"
       },
+      "legacy_adapter_flags": {
+        "v3_forced_actions": true,
+        "v3_spell_target_reference_adapter": true,
+        "source": "smoke receipt seat models"
+      },
+      "admission": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/admission/r3/refresh-034__current-1.json",
+        "sha256": "8e92ea42bfec09b90a3b99aa34c2de7fada5994beffda15a00d0f013451d92aa",
+        "route": "strict"
+      },
       "status": "playable",
       "open_items": [
-        "parent ref: CODEX #526 requests the direct initialization or resume parent ref and hash",
         "training provenance: engine commits recorded for generations 256-2048 only; executable identity not recorded"
       ]
     },
@@ -719,7 +1487,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -745,22 +1513,134 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
-        "class": "card-db-hash-only",
-        "scope": "no build receipt or execution manifest located yet for this lineage (to search: 971221, 971222, 971223 and the anchors)"
+        "class": "execution-manifest-clean-commit",
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "unresolved",
         "reason": "run.json carries sentinel provenance and no archived build receipt was located for this store"
       },
-      "status": "unresolved",
+      "lineage": {
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/lineage-parents-v1.json",
+        "receipt_sha256": "d9d8d59bf2f6ad308f8071d69babe6f18a4e9bb77ef52a446a7ca357c759c8f4",
+        "direct_parent": null,
+        "relation": "de novo: no initialization parent; common model snapshot",
+        "chain": [
+          {
+            "run_sha256": "c9bd4a75d9ac8b73951e5d681295bfb3b8d468f5e00775535b69e3cd05a963f1",
+            "base_seed": 971222
+          }
+        ]
+      },
+      "export": {
+        "sealed_directory": "E:/mtg-line-a-panel-imports-20260927/exports/refresh-034__exploiter-0",
+        "metadata_sha256": "7c0be37b24a7a798c9548c49bada5cf8d19dc43972148d8a476c7ebce0111ba9",
+        "parameter_section_sha256": "e668926271d15f800fd06df9a18d233bf74d568a57776773497ade9dbbd8f469",
+        "exporter_build": {
+          "build_profile": "release",
+          "cargo_lock_sha256": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
+          "crate_manifest_sha256": "2d5223bad6b9c6f9cf7ebd120579425c54ff113f94a698173121ae4982d4f24e",
+          "enabled_features": [
+            "experimental-burn-net8-packed-cuda-v1",
+            "native-training-store-v2-production"
+          ],
+          "host_triple": "x86_64-pc-windows-msvc",
+          "llvm_version": "21.1.8",
+          "package_name": "mtg-kernel",
+          "package_version": "0.0.4",
+          "rustc_commit_date": "2026-03-25",
+          "rustc_commit_hash": "e408947bfd200af42db322daf0fadfe7e26d3bd1",
+          "rustc_release": "1.94.1",
+          "rustc_verbose_version_sha256": "9a8a529345c2377f0558d65a1327aa81c7f327e88bdfaade069e0d5f73e82064",
+          "schema": "mtg-kernel-launcher-build-identity/v2",
+          "source_git_commit": "5dacb01b12dce9c8c5aa963137d342b017fb40d1",
+          "source_tree_recipe_sha256": "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece",
+          "source_tree_sha256": "921caeab7c1e2ee282bf08d81ec0855cc9f17e6b823c60ced8f7eddcacc6d01f",
+          "target_triple": "x86_64-pc-windows-msvc",
+          "workspace_manifest_sha256": "2bd87d9ae7f248602055053216d273f523c1087c57f19ef8dbe76aab19ba5677"
+        },
+        "completion_receipt_sha256": "0ce1838b975826eccac4001815c2dd071bed80afe05e0247489e5dbdbcada8e4"
+      },
+      "import_descriptor": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__exploiter-0/play-import.json",
+        "sha256": "d7b4d745addbee1bd51ce7b5fe59377ac183189f1ca21bf3d0c023c66cd5fa08"
+      },
+      "model_source": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__exploiter-0/model-source.json",
+        "sha256": "414f521130a430878b784a12ed314e5dbc51e9cfb6965776345fb3010be587f9"
+      },
+      "roundtrip": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__exploiter-0/accepted-34decc27/roundtrip.json",
+          "sha256": "60793a54a895e6b30ef0c269735bddccc4842172f1457f72e7774ad48ee645d1"
+        },
+        "passed": true,
+        "tensor_count": 33,
+        "checks": {
+          "imported_model_parameter_sha256_equals_reference": true,
+          "imported_weights_sha256_equals_parameter_section_sha256": true,
+          "raw_bundle_equals_store_parameter_section": true,
+          "store_model_parameter_sha256_equals_reference": true,
+          "tensors_bit_identical_bundle_vs_store": true,
+          "tensors_bit_identical_imported_vs_store": true,
+          "tensors_bit_identical_payload_section_vs_store": true
+        }
+      },
+      "smoke": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__exploiter-0/accepted-34decc27/smoke.json",
+          "sha256": "f42c82244c3ba7b50e4bc3cd5dfc49f37a1b1a7c8b72c380c8c91e0ae6407a09"
+        },
+        "completed": true,
+        "command_sha256": "1a0f50217a9091a34d6eca167ee23481d1d1caa82c9d06099bc2d32a0ba511a7",
+        "deck_pair": [
+          "Rally",
+          "Rally"
+        ],
+        "registered_sha256": "78969c2e29e53fddb732bc8555ea3cd585b3159460b2292f03c0a33f5fc2cfe4",
+        "postboard_sha256": "e1348875fc94de22a7744aa80754d11eb2e0992221e1c693cbaacd71b0c2172b",
+        "max_physical_games": 3,
+        "evaluator_sha256": "0584895f40bc60d4bd746592e4269484e961e8ab4a824eb70208c0eba2c530bb",
+        "evaluator_git_head": "34decc2779d566616752f64ec63ab4823fff293c"
+      },
+      "legacy_adapter_flags": {
+        "v3_forced_actions": true,
+        "v3_spell_target_reference_adapter": true,
+        "source": "smoke receipt seat models"
+      },
+      "export_time_roundtrip_receipt": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__exploiter-0/roundtrip.json",
+        "sha256": "60793a54a895e6b30ef0c269735bddccc4842172f1457f72e7774ad48ee645d1"
+      },
+      "export_time_smoke_receipt": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__exploiter-0/smoke.json",
+        "sha256": "384d3fb6ee8a0c4ee6145d769ca95a5e1a60b7841b53651ca062dbb29d3d9b1b"
+      },
+      "admission": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/admission/r3/refresh-034__exploiter-0.json",
+        "sha256": "b4c795ef0cfa90e5ce1538db6ab833aac906bdae6f14b963197a2386635bfad2",
+        "route": "r14"
+      },
+      "status": "playable",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit",
         "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store"
       ]
     },
@@ -806,7 +1686,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -832,22 +1712,134 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
-        "class": "card-db-hash-only",
-        "scope": "no build receipt or execution manifest located yet for this lineage (to search: 971221, 971222, 971223 and the anchors)"
+        "class": "execution-manifest-clean-commit",
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "unresolved",
         "reason": "run.json carries sentinel provenance and no archived build receipt was located for this store"
       },
-      "status": "unresolved",
+      "lineage": {
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/lineage-parents-v1.json",
+        "receipt_sha256": "d9d8d59bf2f6ad308f8071d69babe6f18a4e9bb77ef52a446a7ca357c759c8f4",
+        "direct_parent": null,
+        "relation": "de novo: no initialization parent; common model snapshot",
+        "chain": [
+          {
+            "run_sha256": "7d111d855c09858cbc8404152cdf8878af3d8d5244dc3983ac25ddb2fe566232",
+            "base_seed": 971221
+          }
+        ]
+      },
+      "export": {
+        "sealed_directory": "E:/mtg-line-a-panel-imports-20260927/exports/refresh-034__exploiter-1",
+        "metadata_sha256": "3c7bc8577206d1771d3cb803b9f820407e4b0c4fed1c9d1a685e043408b10b47",
+        "parameter_section_sha256": "1dfc14eb759c7930e0546334cbc8663a69a550f741578995ed6cf5b20b8d89f4",
+        "exporter_build": {
+          "build_profile": "release",
+          "cargo_lock_sha256": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
+          "crate_manifest_sha256": "2d5223bad6b9c6f9cf7ebd120579425c54ff113f94a698173121ae4982d4f24e",
+          "enabled_features": [
+            "experimental-burn-net8-packed-cuda-v1",
+            "native-training-store-v2-production"
+          ],
+          "host_triple": "x86_64-pc-windows-msvc",
+          "llvm_version": "21.1.8",
+          "package_name": "mtg-kernel",
+          "package_version": "0.0.4",
+          "rustc_commit_date": "2026-03-25",
+          "rustc_commit_hash": "e408947bfd200af42db322daf0fadfe7e26d3bd1",
+          "rustc_release": "1.94.1",
+          "rustc_verbose_version_sha256": "9a8a529345c2377f0558d65a1327aa81c7f327e88bdfaade069e0d5f73e82064",
+          "schema": "mtg-kernel-launcher-build-identity/v2",
+          "source_git_commit": "5dacb01b12dce9c8c5aa963137d342b017fb40d1",
+          "source_tree_recipe_sha256": "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece",
+          "source_tree_sha256": "921caeab7c1e2ee282bf08d81ec0855cc9f17e6b823c60ced8f7eddcacc6d01f",
+          "target_triple": "x86_64-pc-windows-msvc",
+          "workspace_manifest_sha256": "2bd87d9ae7f248602055053216d273f523c1087c57f19ef8dbe76aab19ba5677"
+        },
+        "completion_receipt_sha256": "2f20e252eb9a6294739e0c5be767d99bd9cdc402e6ef54d965e2c63e5be245ba"
+      },
+      "import_descriptor": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__exploiter-1/play-import.json",
+        "sha256": "1dedfa83c57f0cf77ad0fe02337563554ed23dc8b26c0f872fec96944ab01c6a"
+      },
+      "model_source": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/descriptors/refresh-034__exploiter-1/model-source.json",
+        "sha256": "68e84a44e7748df87d64856b7036a9ffc369cf293a7600a0d283e28db70e5f1c"
+      },
+      "roundtrip": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__exploiter-1/accepted-34decc27/roundtrip.json",
+          "sha256": "ff1e17a4a0efc3d8c6391a49efb9fedf067b19260ec7ee7dfff0ddc9a290bddd"
+        },
+        "passed": true,
+        "tensor_count": 33,
+        "checks": {
+          "imported_model_parameter_sha256_equals_reference": true,
+          "imported_weights_sha256_equals_parameter_section_sha256": true,
+          "raw_bundle_equals_store_parameter_section": true,
+          "store_model_parameter_sha256_equals_reference": true,
+          "tensors_bit_identical_bundle_vs_store": true,
+          "tensors_bit_identical_imported_vs_store": true,
+          "tensors_bit_identical_payload_section_vs_store": true
+        }
+      },
+      "smoke": {
+        "receipt": {
+          "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__exploiter-1/accepted-34decc27/smoke.json",
+          "sha256": "ef29555eb412c5e40e74e50d41823c690514caefb635abe7f5727bb43e08cd4d"
+        },
+        "completed": true,
+        "command_sha256": "335a0d7c776efee894ff2a36526630347f5265ec0649413d0adb20dc8d66938b",
+        "deck_pair": [
+          "Rally",
+          "Rally"
+        ],
+        "registered_sha256": "78969c2e29e53fddb732bc8555ea3cd585b3159460b2292f03c0a33f5fc2cfe4",
+        "postboard_sha256": "e1348875fc94de22a7744aa80754d11eb2e0992221e1c693cbaacd71b0c2172b",
+        "max_physical_games": 3,
+        "evaluator_sha256": "0584895f40bc60d4bd746592e4269484e961e8ab4a824eb70208c0eba2c530bb",
+        "evaluator_git_head": "34decc2779d566616752f64ec63ab4823fff293c"
+      },
+      "legacy_adapter_flags": {
+        "v3_forced_actions": true,
+        "v3_spell_target_reference_adapter": true,
+        "source": "smoke receipt seat models"
+      },
+      "export_time_roundtrip_receipt": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__exploiter-1/roundtrip.json",
+        "sha256": "ff1e17a4a0efc3d8c6391a49efb9fedf067b19260ec7ee7dfff0ddc9a290bddd"
+      },
+      "export_time_smoke_receipt": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/receipts/refresh-034__exploiter-1/smoke.json",
+        "sha256": "1aa9b6f85c5fb1a2c1b7e05344103d6b9ed3bfe97a458cb31f01ffc5db3737e6"
+      },
+      "admission": {
+        "path": "E:/mtg-line-a-panel-imports-20260927/admission/r3/refresh-034__exploiter-1.json",
+        "sha256": "9c70015e39149839340438049ad5bb2789a8923ea47b2ad4c1e8579029c921b0",
+        "route": "r14"
+      },
+      "status": "playable",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit",
         "training provenance: run.json carries sentinel provenance and no archived build receipt was located for this store"
       ]
     },
@@ -893,7 +1885,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -919,17 +1911,25 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
         "class": "build-receipt",
-        "receipt_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/build/build-receipt.json",
-        "receipt_sha256": "117632ee8a4e94f7866a55e41d0ec8629ec9b4868e18c00eb67f4d40366a723f",
-        "clean_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
-        "registry_blob_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "resolved",
@@ -946,7 +1946,7 @@
       },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit",
         "store authority: legacy-v1 Store that is not the promoted(2) run; no base load_checkpoint_v1 authority admits it"
       ]
     },
@@ -992,7 +1992,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -1018,17 +2018,25 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
         "class": "build-receipt",
-        "receipt_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/build/build-receipt.json",
-        "receipt_sha256": "117632ee8a4e94f7866a55e41d0ec8629ec9b4868e18c00eb67f4d40366a723f",
-        "clean_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
-        "registry_blob_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "resolved",
@@ -1045,7 +2053,7 @@
       },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit",
         "store authority: legacy-v1 Store that is not the promoted(2) run; no base load_checkpoint_v1 authority admits it"
       ]
     },
@@ -1091,7 +2099,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -1117,17 +2125,25 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
         "class": "build-receipt",
-        "receipt_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/build/build-receipt.json",
-        "receipt_sha256": "117632ee8a4e94f7866a55e41d0ec8629ec9b4868e18c00eb67f4d40366a723f",
-        "clean_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
-        "registry_blob_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "resolved",
@@ -1144,7 +2160,7 @@
       },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit",
         "store authority: legacy-v1 Store that is not the promoted(2) run; no base load_checkpoint_v1 authority admits it"
       ]
     },
@@ -1190,7 +2206,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -1216,17 +2232,25 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
         "class": "build-receipt",
-        "receipt_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/build/build-receipt.json",
-        "receipt_sha256": "117632ee8a4e94f7866a55e41d0ec8629ec9b4868e18c00eb67f4d40366a723f",
-        "clean_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
-        "registry_blob_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "resolved",
@@ -1243,7 +2267,7 @@
       },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit",
         "store authority: legacy-v1 Store that is not the promoted(2) run; no base load_checkpoint_v1 authority admits it"
       ]
     },
@@ -1289,7 +2313,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -1315,17 +2339,25 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
         "class": "build-receipt",
-        "receipt_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/build/build-receipt.json",
-        "receipt_sha256": "117632ee8a4e94f7866a55e41d0ec8629ec9b4868e18c00eb67f4d40366a723f",
-        "clean_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
-        "registry_blob_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "resolved",
@@ -1342,7 +2374,7 @@
       },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit",
         "store authority: legacy-v1 Store that is not the promoted(2) run; no base load_checkpoint_v1 authority admits it"
       ]
     },
@@ -1388,7 +2420,7 @@
         "candidate_path": "data/cards_v1.json",
         "candidate_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
         "candidate_card_count": 136,
-        "linkage": "v3b build receipt git_head; the card-DB hash covers colors, keyword tables and engine_capability (build.rs 3987-4057 at 1804e9f9), so every run recording it shares these card definitions",
+        "linkage": "the registry revision whose bytes (16d308da) the R14 allowlist pins; its card-DB hash is reproduced from those bytes by the 1804e9f9 recipe (recomputation receipt); member-specific training linkage is the typed registry_linkage class",
         "destination_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
         "namespace_mismatch_count": 87,
         "namespace_mismatch_fields": [
@@ -1414,17 +2446,25 @@
             ]
           }
         ],
-        "card_db_hash_recomputation": "pending: rerun the training commit build.rs card-DB recipe on the pinned bytes (FABLE-REVIEW-20260927 panel-export change 2)",
+        "card_db_hash_recomputation": {
+          "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/card-db-recomputation/1804e9f9.json",
+          "sha256": "993da0d95c69ad910f7f785bd19c2850609ccd7f94d305d700cfe528e193b600",
+          "training_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+          "computed": "a06fa9566106f0ea",
+          "matches_recorded": true
+        },
         "namespace_v1": "fails",
         "status": "unresolved",
-        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT"
+        "reason": "validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit"
       },
       "registry_linkage": {
         "class": "build-receipt",
-        "receipt_path": "E:/archive-d/mtg-kernel-exploiter-v3b-20260726/build/build-receipt.json",
-        "receipt_sha256": "117632ee8a4e94f7866a55e41d0ec8629ec9b4868e18c00eb67f4d40366a723f",
-        "clean_commit": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
-        "registry_blob_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        "receipt": "E:/mtg-line-a-panel-imports-20260927/receipts/registry-linkage-v1.json",
+        "receipt_sha256": "d72403752b25b5854d3d56b6c2e1a31f6740d2b6b7fe1e443ffeed9890fca1d2",
+        "registry_blobs_named": [
+          "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+        ],
+        "all_named_blobs_equal_pinned": true
       },
       "training_provenance": {
         "status": "resolved",
@@ -1441,7 +2481,7 @@
       },
       "status": "unresolved",
       "open_items": [
-        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) is the planned remedy, design entry due 2026-09-28 18:00 EDT",
+        "registry: validate_card_namespace (sideboard_play_policy_v1.rs:1416) rejects this registry against the destination; the R14 versioned allowlist route (DIRECTOR-RULINGS-20260927.md R14) admits it: Fable COUNTERSIGN (scoped), verdict changes 1, 6, 7 and 8 at 0cd213dd; admission waits for Codex's implementation countersign of the amended commit",
         "store authority: legacy-v1 Store that is not the promoted(2) run; no base load_checkpoint_v1 authority admits it"
       ]
     }
