@@ -340,3 +340,25 @@ impl ExperimentalDeviceTrainStateV1 {
         ))
     }
 }
+
+impl ExperimentalDeviceTrainStateV1 {
+    /// Packs the roots' encoded views into their own batch, builds the loss
+    /// plan and runs [`Self::line_b_root_backward_v1`]; also returns the
+    /// batch's action offsets so the caller can split the root-row logits.
+    pub(crate) fn line_b_root_term_v1(
+        &self,
+        accumulator: &mut burn::optim::GradientsAccumulator<ProductionNet8<CudaAutodiffBackendV1>>,
+        views: &[crate::native_policy_value_net_v1::NativeEncodedDecisionViewV1<'_>],
+        targets: &[(Vec<f64>, Vec<f64>)],
+        direction: LineBDivergenceV1,
+        scale: f64,
+    ) -> Result<(LineBRootBackwardOutputsV1, Vec<usize>), Box<dyn Error>> {
+        let mut workspace = HostPackingWorkspace::default();
+        workspace.pack_views(views)?;
+        let plan =
+            build_line_b_root_loss_plan_v1(&workspace, targets, direction, scale, &self.device)?;
+        let batch = DevicePackedBatch::upload_feature_transfer_v3(&self.device, &workspace);
+        let outputs = self.line_b_root_backward_v1(accumulator, &batch, &plan)?;
+        Ok((outputs, workspace.action_offsets.clone()))
+    }
+}

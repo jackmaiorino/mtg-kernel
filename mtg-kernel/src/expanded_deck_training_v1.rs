@@ -2557,10 +2557,6 @@ fn execute_update_v1(
                 gae_targets.is_some(),
                 "the line (b) teacher requires gae_advantage_value/v1",
             )?;
-            ensure(
-                matches!(update_backend, ExpandedUpdateBackendV1::Cpu),
-                "the line (b) teacher runs on the CPU update backend until its CUDA path lands",
-            )?;
             let packet =
                 line_b_teacher_packet_v1::line_b_teach_v1(&episodes, &policy, &before, teacher)?;
             let input =
@@ -2584,6 +2580,11 @@ fn execute_update_v1(
     };
     let learner_started = std::time::Instant::now();
     let mut line_b_auxiliary = None;
+    #[cfg_attr(
+        not(feature = "experimental-burn-net8-packed-cuda-v1"),
+        allow(unused_mut)
+    )]
+    let mut line_b_envelope: Option<Value> = None;
     let update = match &loss_selection {
         ExpandedLossSelectionV1::TerminalReinforceValueV3 => match (update_backend, generation) {
             (ExpandedUpdateBackendV1::Cpu, FreshLineageGenerationV1::V3) => state
@@ -2708,6 +2709,47 @@ fn execute_update_v1(
                                 fixed_partition_backward_worker_limit_v1(),
                             )
                             .map_err(err)?,
+                    }
+                }
+                (ExpandedUpdateBackendV1::Cuda { device_ordinal }, _)
+                    if matches!(line_b_teacher, Some((_, Some(_)))) =>
+                {
+                    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+                    {
+                        let Some((_, Some(input))) = &line_b_teacher else {
+                            unreachable!("guarded by the arm")
+                        };
+                        let (result, cuda) = state
+                            .train_step_cuda_gae_feature_transfer_line_b_v1(
+                                generation,
+                                &groups,
+                                &gae.value_targets,
+                                &gae.advantages,
+                                value_coefficient,
+                                learning_rate,
+                                device_ordinal,
+                                input,
+                            )
+                            .map_err(err)?;
+                        let max_discrepancy = cuda
+                            .envelope
+                            .iter()
+                            .map(|root| root.max_abs_log_probability_discrepancy)
+                            .fold(0.0_f64, f64::max);
+                        let within_bound = cuda
+                            .envelope
+                            .iter()
+                            .all(|root| root.max_abs_log_probability_discrepancy <= root.bound);
+                        line_b_envelope = Some(json!({"roots": cuda.envelope,
+                            "max_abs_log_probability_discrepancy": max_discrepancy,
+                            "within_bound": within_bound}));
+                        line_b_auxiliary = Some(cuda.auxiliary);
+                        result
+                    }
+                    #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
+                    {
+                        let _ = device_ordinal;
+                        return Err("CUDA update backend was not compiled".into());
                     }
                 }
                 (
@@ -2866,6 +2908,9 @@ fn execute_update_v1(
             line_b_auxiliary.as_ref(),
             teacher_seconds,
         );
+        if let Some(envelope) = line_b_envelope {
+            result["line_b"]["teacher"]["cuda_envelope"] = envelope;
+        }
     }
     // Advantage statistics (design section 3), gated on the new loss
     // identity only: a v3 update's `gae_targets` is always `None`, so v3
@@ -7214,10 +7259,28 @@ pub(crate) mod tests {
     /// trajectory; seed entries that do not match the batch are refused.
     #[test]
     fn line_b_teacher_update_publishes_packet_and_telemetry() {
+        assert_line_b_teacher_update_v1("cpu", ExpandedUpdateBackendV1::Cpu);
+    }
+
+    /// The same treatment updates through the CUDA device-1 path: the
+    /// auxiliary term runs on the device and the receipt adds the envelope
+    /// (device root-row log-probabilities against the collection softmax).
+    #[test]
+    #[ignore = "requires the real GPU1 (RTX 3050); explicit GPU execution only"]
+    fn line_b_teacher_cuda_update_publishes_packet_telemetry_and_envelope() {
+        assert_line_b_teacher_update_v1(
+            "cuda",
+            ExpandedUpdateBackendV1::Cuda { device_ordinal: 1 },
+        );
+    }
+
+    fn assert_line_b_teacher_update_v1(label: &str, update_backend: ExpandedUpdateBackendV1) {
         use crate::line_b_teacher_target_v1::LineBDivergenceV1;
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
-        let root =
-            std::env::temp_dir().join(format!("line-b-teacher-update-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "line-b-teacher-update-{label}-{}",
+            std::process::id()
+        ));
         let source_struct =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
                 &root.join("source"),
@@ -7281,7 +7344,7 @@ pub(crate) mod tests {
                 trajectories: trajectories.clone(),
                 learning_rate: 0.0003,
                 value_coefficient: 0.5,
-                update_backend: ExpandedUpdateBackendV1::Cpu,
+                update_backend,
                 update_backward_execution: UpdateBackwardExecutionV1::Sequential,
                 loss_selection: gae_loss_selection_v1(),
                 line_b: Some(LineBUpdateOptionsV1 {
@@ -7317,6 +7380,17 @@ pub(crate) mod tests {
             assert_eq!(taught["census"]["selected_roots"], 1);
             let telemetry = &taught["telemetry"];
             assert_eq!(telemetry["roots"].as_array().unwrap().len(), 1);
+            if matches!(update_backend, ExpandedUpdateBackendV1::Cpu) {
+                assert!(taught.get("cuda_envelope").is_none());
+            } else {
+                let envelope = &taught["cuda_envelope"];
+                assert_eq!(envelope["within_bound"], true, "{envelope}");
+                assert!(envelope["max_abs_log_probability_discrepancy"]
+                    .as_f64()
+                    .unwrap()
+                    .is_finite());
+                eprintln!("{label} {direction:?} envelope {envelope} telemetry {telemetry}");
+            }
             let auxiliary = telemetry["auxiliary_head_l2"].as_f64().unwrap();
             if taught["census"]["complete_roots"] == 1 {
                 assert!(telemetry["roots"][0]["divergence_before"].is_number());

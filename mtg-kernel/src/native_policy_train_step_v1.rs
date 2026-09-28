@@ -1594,6 +1594,43 @@ impl NativePolicyValueTrainStateV1 {
         )
     }
 
+    /// Line (b) CUDA GAE update for either fresh-lineage generation: the
+    /// auxiliary term on the device, its telemetry and envelope receipt.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn train_step_cuda_gae_feature_transfer_line_b_v1(
+        &mut self,
+        generation: crate::sideboard_play_policy_v1::FreshLineageGenerationV1,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        device_ordinal: usize,
+        line_b: &LineBAuxiliaryInputV1,
+    ) -> Result<
+        (
+            NativePolicyTrainStepResultV1,
+            crate::experimental_burn_net8_packed_v1::bridge::line_b_cuda::LineBCudaAuxiliaryV1,
+        ),
+        NativePolicyTrainErrorV1,
+    > {
+        crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_gae_feature_transfer_line_b_v1(
+            self,
+            matches!(
+                generation,
+                crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V4
+            ),
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            device_ordinal,
+            line_b,
+        )
+    }
+
     /// Production entry point for bounded independent packed-tape
     /// recomputation. The scalar entry point above remains the numerical
     /// reference. Every worker result is consumed at its original ordinal
@@ -2661,6 +2698,33 @@ impl ScorerBiasGaugeAccumulatorV1 {
             .checked_mul(2)
             .and_then(|value| value.checked_add(8))
             .ok_or(NativePolicyTrainErrorV1::GaugeBoundOverflow)?;
+        self.observe_line_b_auxiliary_operations_v1(d_logits, exact, operation_count)
+    }
+
+    /// Device sibling: the CUDA term forms its logit gradients in binary32
+    /// through the log-softmax chain, so its per-term error allows more
+    /// operations (8n + 32) than one rounding plus the accumulation. `d_logits`
+    /// and `exact` are the host's model of those gradients from the device
+    /// root-row logits.
+    pub(crate) fn observe_line_b_auxiliary_device_v1(
+        &mut self,
+        d_logits: &[f32],
+        exact: &[f64],
+    ) -> Result<(), NativePolicyTrainErrorV1> {
+        let operation_count = d_logits
+            .len()
+            .checked_mul(8)
+            .and_then(|value| value.checked_add(32))
+            .ok_or(NativePolicyTrainErrorV1::GaugeBoundOverflow)?;
+        self.observe_line_b_auxiliary_operations_v1(d_logits, exact, operation_count)
+    }
+
+    fn observe_line_b_auxiliary_operations_v1(
+        &mut self,
+        d_logits: &[f32],
+        exact: &[f64],
+        operation_count: usize,
+    ) -> Result<(), NativePolicyTrainErrorV1> {
         let mut magnitude = 0.0_f64;
         for value in d_logits {
             magnitude += f64::from(*value).abs();
