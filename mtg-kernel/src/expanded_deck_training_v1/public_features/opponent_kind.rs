@@ -642,7 +642,54 @@ impl OpponentRecordV1 {
                 Some((self.seat, check)),
             )?;
         }
-        ensure(rows.next().is_none(), "opponent record has no row")
+        ensure(rows.next().is_none(), "opponent record has no row")?;
+        self.replay_menus(episode, decisions)
+    }
+
+    /// Replays the recorded actions in a fresh session, as the collector
+    /// started it, and recomputes each opponent row's ordered-menu hash, so
+    /// the record's menu hash is checked, not only its format (CODEX #558;
+    /// FABLE-REVIEW-20260927 20:00, opponent kinds change 2).
+    fn replay_menus(
+        &self,
+        episode: &ExpandedEpisodeV1,
+        decisions: &[DecisionRecordV1],
+    ) -> Result<(), String> {
+        let configs = episode.configurations_for_public_collector_v1()?;
+        let mut session = FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
+            1,
+            episode.seed,
+            episode.max_physical_decisions,
+            episode.max_policy_steps,
+            episode.selected.each_ref().map(|d| d.label.clone()),
+            configs.each_ref().map(|c| c.mainboard().to_vec()),
+            PlayerId(episode.starting_player),
+        )
+        .map_err(err)?;
+        let mut records = self.rows.iter();
+        for row in decisions {
+            let FastActorResponseV1::Decision(d) = session.current_response() else {
+                return Err("opponent record replay ended early".into());
+            };
+            ensure(
+                (d.step, seat(d.acting_player)) == (row.step, row.actor),
+                "opponent record replay diverged",
+            )?;
+            if row.actor == self.seat {
+                let r = records.next().ok_or("opponent row has no record")?;
+                ensure(
+                    menu_sha256(&session, d)? == r.menu_sha256,
+                    "opponent menu hash differs from the replayed menu",
+                )?;
+            }
+            session
+                .step(d.episode_id, d.step, row.selected)
+                .map_err(err)?;
+        }
+        ensure(
+            matches!(session.current_response(), FastActorResponseV1::Terminal(_)),
+            "opponent record replay did not reach the terminal",
+        )
     }
 }
 

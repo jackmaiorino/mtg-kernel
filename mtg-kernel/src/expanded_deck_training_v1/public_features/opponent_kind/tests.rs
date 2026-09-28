@@ -319,6 +319,15 @@ fn legacy_v3_games_record_singletons_unscored_validate_and_refuse_tampering() {
                 record
                     .validate(&a.episode, &hashes, &a.decisions, &a.terminal)
                     .unwrap();
+                // A well-formed but wrong menu hash is refused by the replay.
+                let mut forged_menu = record.clone();
+                forged_menu.rows[0].menu_sha256 = "ab".repeat(32);
+                assert_eq!(
+                    forged_menu
+                        .validate(&a.episode, &hashes, &a.decisions, &a.terminal)
+                        .unwrap_err(),
+                    "opponent menu hash differs from the replayed menu"
+                );
                 let mut tampered = a.decisions.clone();
                 let row = tampered
                     .iter_mut()
