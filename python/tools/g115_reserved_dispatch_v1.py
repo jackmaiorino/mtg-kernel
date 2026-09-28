@@ -1,4 +1,5 @@
 """Reservation entry for the shared g115 Windows transport; native guards stay in the owner."""
+import ctypes
 import argparse
 import hashlib
 import json
@@ -16,16 +17,53 @@ def check_owner():
     return token
 
 
+def cleanup_auxiliary(config):
+    check_owner()
+    ref = config.get('compiler_auxiliary')
+    if not ref:
+        return []
+    expected = Path(ref['path']).resolve(strict=True)
+    if expected.name.lower() != 'vctip.exe' or hashlib.sha256(expected.read_bytes()).hexdigest() != ref['sha256']:
+        raise RuntimeError('Compiler auxiliary pin differs')
+    query = ctypes.WinDLL('kernel32', use_last_error=True).QueryFullProcessImageNameW
+    query.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_ulong)]
+    query.restype = ctypes.c_int
+    results = []
+    for pid in reservation.job_members(None):
+        handle = reservation._OpenProcess(reservation.PROCESS_QUERY_LIMITED_INFORMATION | reservation.PROCESS_TERMINATE, False, pid)
+        if not handle:
+            continue
+        try:
+            creation = reservation._creation_of(handle)
+            size = ctypes.c_ulong(32768); image = ctypes.create_unicode_buffer(size.value)
+            if not query(handle, 0, image, ctypes.byref(size)):
+                continue
+            if Path(image.value).resolve() != expected or creation is None:
+                continue
+            # Same open handle binds the queried image and termination identity.
+            if pid not in reservation.job_members(None):
+                continue
+            stopped = bool(reservation._TerminateProcess(handle, 0))
+            results.append(dict(pid=pid, creation_time=creation, path=str(expected), terminated=stopped))
+        finally:
+            reservation._CloseHandle(handle)
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--check-owner', action='store_true')
     parser.add_argument('--config')
+    parser.add_argument('--cleanup-auxiliary', action='store_true')
     args = parser.parse_args()
     if args.check_owner:
         print(check_owner())
         return
     config_path = Path(args.config).resolve(strict=True)
     config = json.loads(config_path.read_text(encoding='utf-8-sig'))
+    if args.cleanup_auxiliary:
+        print(json.dumps(cleanup_auxiliary(config)))
+        return
     transport = Path(__file__).with_name('g115_d3_windows_dispatch.ps1')
     if hashlib.sha256(transport.read_bytes()).hexdigest() != config['transport_sha256']:
         raise RuntimeError('Transport hash differs')

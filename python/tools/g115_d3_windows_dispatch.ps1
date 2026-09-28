@@ -61,8 +61,14 @@ if ($RunConfig) {
             & $config.python -u $config.launcher --manifest $config.manifest --host $config.host_name --root $config.worker_root > (Join-Path $config.control_root 'worker.log') 2>&1
         }
         $ErrorActionPreference = 'Stop'
-        $receipt.exit_code = $LASTEXITCODE
-        $receipt.complete = ($LASTEXITCODE -eq 0)
+        $workerExit = $LASTEXITCODE
+        if ($config.compiler_auxiliary) {
+            $cleanup = & $config.python (Join-Path $PSScriptRoot 'g115_reserved_dispatch_v1.py') --config $RunConfig --cleanup-auxiliary
+            if ($LASTEXITCODE -ne 0) { throw 'Compiler auxiliary cleanup refused' }
+            $receipt.compiler_auxiliary_cleanup = @($cleanup | ConvertFrom-Json)
+        }
+        $receipt.exit_code = $workerExit
+        $receipt.complete = ($workerExit -eq 0)
         # The launcher's original completion.json remains the authoritative shard result.
     } catch {
         $receipt.error = $_.Exception.Message
@@ -151,6 +157,12 @@ if ($cloudMode) {
     $config.cloud_package_sha256 = $plan.transport.cloud_package.sha256
     $config.cloud_control = $CloudControl
     $config.cloud_lease_sha256 = (Get-FileHash -LiteralPath (Join-Path $CloudControl 'lease/lease.json')).Hash.ToLowerInvariant()
+}
+if ($launcherName -in @('g115_d4_build_launch_v1.py','g115_r14_test_launch_v1.py')) {
+    $auxiliary = Join-Path (Split-Path $plan.tools.linker.path) 'VCTIP.EXE'
+    if (Test-Path -LiteralPath $auxiliary) {
+        $config.compiler_auxiliary = @{ path=$auxiliary; sha256=(Get-FileHash -LiteralPath $auxiliary).Hash.ToLowerInvariant() }
+    }
 }
 $configPath = Join-Path $ControlRoot 'config.json'
 Save-Json $configPath $config
