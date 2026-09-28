@@ -17,6 +17,7 @@ import time
 SCHEMA = 'g115-r14-windows-tests/v1'
 SUITES = {'panel': ['registry_evolution', 'native_checkpoint_export_v1', 'sideboard_play_policy_v1', 'expanded_deck_training_v1', 'this_build_carries_no_forbidden_build_flag_override_v1'],
           'collector': ['opponent_kind', '--include-ignored'],
+          'collector-public-features': ['public_features', '--include-ignored'],
           'collector-lib': [], 'collector-integration': []}
 FEATURES = 'native-training-store-v2-production,experimental-burn-net8-packed-cuda-v1'
 ENV_KEYS = {'PATH', 'INCLUDE', 'LIB', 'LIBPATH', 'CUDA_PATH', 'CUDA_PATH_V12_8'}
@@ -53,6 +54,38 @@ def structural(plan, host):
     require(0 < plan['additional_growth_bytes'] <= 32 * GIB, 'Explicit bounded build growth required')
     require(set(plan['environment']) <= ENV_KEYS, 'Unsupported build environment override')
     require(plan['source_commit'] and len(plan['source_commit']) == 40, 'Full source commit required')
+
+
+def helper_environment(plan):
+    keys = {'MTG_LEGACY_PROBE_SOURCE', 'MTG_LEGACY_CHECK_SOURCE',
+            'MTG_LEGACY_CHECK_ADMISSION', 'MTG_LEGACY_CHECK_ADMISSION_SHA256'}
+    ref = plan.get('helper_inputs')
+    if plan['suite'] not in ('collector', 'collector-public-features'):
+        require(ref is None, 'Helper inputs only belong to ignored collector suites')
+        return {}
+    require(ref is not None, 'Ignored collector suites require pinned helper inputs')
+    record = json.loads(pinned(ref).read_text(encoding='utf-8-sig'))
+    require(record['schema'] == 'opus-search-opponent-helper-inputs/v1', 'Helper schema differs')
+    require(record['v3_destination_build_git_head'] == plan['source_commit'], 'Helper build differs')
+    values = record['environment']
+    require(set(values) == keys, 'Exact helper variables required')
+    for name in keys - {'MTG_LEGACY_CHECK_ADMISSION_SHA256'}:
+        item = record['files'][name]
+        pinned(item)
+        require(values[name] == item['path'], 'Helper path differs')
+    require(values['MTG_LEGACY_CHECK_ADMISSION_SHA256'] ==
+            record['files']['MTG_LEGACY_CHECK_ADMISSION']['sha256'], 'Admission hash differs')
+    def verify_refs(value):
+        if isinstance(value, dict):
+            if 'path' in value and 'sha256' in value:
+                pinned(value)
+            for child in value.values():
+                verify_refs(child)
+        elif isinstance(value, list):
+            for child in value:
+                verify_refs(child)
+    verify_refs(record['references'])
+    return values
 
 
 def e_path(value):
@@ -96,7 +129,11 @@ def admission(plan, host):
     for name in ('RUSTC', 'RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER',
                  'CARGO_BUILD_RUSTC_WRAPPER', 'CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER'):
         env.pop(name, None)
+    for name in tuple(env):
+        if name.startswith('MTG_LEGACY_'):
+            env.pop(name)
     env.update(plan['environment'])
+    env.update(helper_environment(plan))
     env.update(CARGO_TARGET_DIR=str(target), TEMP=str(temporary), TMP=str(temporary),
                CARGO_BUILD_JOBS=str(plan['jobs']), CARGO_INCREMENTAL='0',
                CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=str(linker))
@@ -121,6 +158,7 @@ def admission(plan, host):
     else:
         command += ['--lib', '--', *SUITES[plan['suite']]]
     return repo, target, temporary, env, command, {
+        'helper_inputs': plan.get('helper_inputs'),
         'source_commit': plan['source_commit'], 'versions': versions, 'tools': plan['tools'],
         'command': command, 'E_free_bytes': free, 'available_memory_bytes': memory,
         'additional_growth_bytes': plan['additional_growth_bytes'], 'formal_measurement': False}
