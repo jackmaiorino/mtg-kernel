@@ -355,6 +355,16 @@ fn boundary_audit_checks_every_available_perturbation_of_a_live_root() {
         )
         .unwrap_err();
     assert!(error.contains("but the wrapper played"), "{error}");
+    let record = sealed_audit_stop(error);
+    assert_eq!(record["cause"], "rerun-differs-from-played");
+    assert_eq!(record["variant"], Value::Null);
+    assert_eq!(
+        (
+            record["detail"]["played"].clone(),
+            record["detail"]["rerun_selected"].clone()
+        ),
+        (json!(wrong), json!(played))
+    );
     // A built variant with a visible change is a leak, not a skip.
     let visible = fixture(Some(7));
     let mut counts = BoundaryAuditCountsV1::default();
@@ -376,4 +386,60 @@ fn boundary_audit_checks_every_available_perturbation_of_a_live_root() {
         (counts.unavailable, counts.inadmissible),
         ([1, 1, 1, 0], [0, 0, 0, 1])
     );
+    // Change 12: the stop is sealed as a typed record with the run's counts
+    // before this root, published by the collector's failure path.
+    let before = BoundaryAuditCountsV1 {
+        roots: 5,
+        checked: [4, 5, 5, 5],
+        unavailable: [1, 0, 0, 0],
+        inadmissible: [0; 4],
+    };
+    let record = sealed_audit_stop(with_run_counts(error, &before));
+    assert_eq!(
+        record["schema"],
+        "mtg-kernel-public-search-opponent-audit-failure/v1"
+    );
+    assert_eq!(record["cause"], "inadmissible-variant");
+    assert_eq!(
+        (record["variant"].clone(), record["variant_index"].clone()),
+        (json!("future randomness"), json!(3))
+    );
+    assert_eq!(
+        (
+            record["episode_id"].clone(),
+            record["step"].clone(),
+            record["seat"].clone()
+        ),
+        (json!("audit-fixture"), json!(decision.step), json!(0))
+    );
+    assert_eq!(record["root_counts"], json!(counts));
+    assert_eq!(record["run_counts_before_this_root"], json!(before));
+    assert_eq!(
+        record["detail"],
+        json!({ "decision_binding_kept": true, "visible_key_kept": false })
+    );
+    assert!(record.get("state").is_none());
+}
+
+/// Publishes an audit stop error the way the collector does and returns the
+/// sealed record; the error itself passes through unchanged.
+fn sealed_audit_stop(error: String) -> Value {
+    assert!(error.contains(AUDIT_FAILURE_MARKER), "{error}");
+    let directory = std::env::temp_dir().join(format!(
+        "mtg-audit-failure-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    assert_eq!(publish_failure(&directory, error.clone()), error);
+    let record: Value = serde_json::from_slice(
+        &std::fs::read(directory.join("search-opponent-audit-failure.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(!directory.join("search-failure.json").exists());
+    std::fs::remove_dir_all(&directory).unwrap();
+    record
 }
