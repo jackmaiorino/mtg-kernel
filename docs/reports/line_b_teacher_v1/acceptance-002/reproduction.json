@@ -1,0 +1,91 @@
+{
+ "schema": "line-b-engineering-reproduction-check/v1",
+ "claim": "review change 9: the change 9 executable reproduces acceptance-001 (packets and snapshots); engineering only",
+ "reference": {
+  "receipt": "docs/reports/line_b_teacher_v1/acceptance-001/receipt.json",
+  "binary_sha256": "822d04268cce1601d2c938cd7fa40f69bcbc46a137bce60c21e3fb59eb946628"
+ },
+ "candidate": {
+  "receipt": "docs/reports/line_b_teacher_v1/acceptance-002/receipt.json",
+  "binary_sha256": "1823e77a570171d44aeb16d6b10154cc4730775315e89de85bef836d7b3acec9",
+  "source_commit": "d3349e98 (code; this lane's attestation)",
+  "seed_name": "acceptance-001"
+ },
+ "collect_trajectories_equal": true,
+ "frozen_tensor_sha256_equal": true,
+ "updates": [
+  {
+   "update": "cuda1-control-a",
+   "after_state_sha256_equal": true,
+   "after_state_sha256": "7e14ba8cca8dbd13617dd29b068d9f9ee8442060b0d13cb678327f6a28026625",
+   "packet_sha256_equal": true
+  },
+  {
+   "update": "cuda1-control-b",
+   "after_state_sha256_equal": true,
+   "after_state_sha256": "7e14ba8cca8dbd13617dd29b068d9f9ee8442060b0d13cb678327f6a28026625",
+   "packet_sha256_equal": true
+  },
+  {
+   "update": "cuda1-reverse-kl-a",
+   "after_state_sha256_equal": true,
+   "after_state_sha256": "6d5b034202e454bca137d06d5dc0e673127432a281c844f32903486880c5f58a",
+   "packet_sha256_equal": true
+  },
+  {
+   "update": "cuda1-reverse-kl-b",
+   "after_state_sha256_equal": true,
+   "after_state_sha256": "6d5b034202e454bca137d06d5dc0e673127432a281c844f32903486880c5f58a",
+   "packet_sha256_equal": true
+  },
+  {
+   "update": "cuda1-forward-kl-a",
+   "after_state_sha256_equal": true,
+   "after_state_sha256": "83802b8b8e83e179c1b21a985fa9b0848011dbe3a47f24729d3cdd3a2612391a",
+   "packet_sha256_equal": true
+  },
+  {
+   "update": "cuda1-forward-kl-b",
+   "after_state_sha256_equal": true,
+   "after_state_sha256": "83802b8b8e83e179c1b21a985fa9b0848011dbe3a47f24729d3cdd3a2612391a",
+   "packet_sha256_equal": true
+  },
+  {
+   "update": "cpu-control-a",
+   "after_state_sha256_equal": true,
+   "after_state_sha256": "68c49454e2b9a094654e7f0bd923beb15ba99a679da645c69a2eaf2e9385a72b",
+   "packet_sha256_equal": true
+  },
+  {
+   "update": "cpu-control-b",
+   "after_state_sha256_equal": true,
+   "after_state_sha256": "68c49454e2b9a094654e7f0bd923beb15ba99a679da645c69a2eaf2e9385a72b",
+   "packet_sha256_equal": true
+  },
+  {
+   "update": "cpu-reverse-kl-a",
+   "after_state_sha256_equal": true,
+   "after_state_sha256": "b240f95f235957b55887b89ed3943f79f6995abf466bb06d0ca0413099fb6356",
+   "packet_sha256_equal": true
+  },
+  {
+   "update": "cpu-reverse-kl-b",
+   "after_state_sha256_equal": true,
+   "after_state_sha256": "b240f95f235957b55887b89ed3943f79f6995abf466bb06d0ca0413099fb6356",
+   "packet_sha256_equal": true
+  },
+  {
+   "update": "cpu-forward-kl-a",
+   "after_state_sha256_equal": true,
+   "after_state_sha256": "55e4fec4a513123dec588b6513e440ccbcfc316f9332c8003ff5a6e5fa0e9dd1",
+   "packet_sha256_equal": true
+  },
+  {
+   "update": "cpu-forward-kl-b",
+   "after_state_sha256_equal": true,
+   "after_state_sha256": "55e4fec4a513123dec588b6513e440ccbcfc316f9332c8003ff5a6e5fa0e9dd1",
+   "packet_sha256_equal": true
+  }
+ ],
+ "all_equal": true
+}
