@@ -109,6 +109,7 @@ fn inference_only_episode() -> Result<ExpandedEpisodeV1, String> {
         starting_player: 0,
         learner_seat: 0,
         opponent: None,
+        opponent_kind: None,
         opponent_search: None,
         registered: [list.clone(), list.clone()],
         selected: [list.clone(), list],

@@ -67,6 +67,7 @@ fn episode(learner_seat: u8) -> ExpandedEpisodeV1 {
         starting_player: 1 - learner_seat,
         learner_seat,
         opponent: Some(source(G115_CHECKPOINT_SHA256)),
+        opponent_kind: None,
         opponent_search: Some(pin("d3.json", REVIEWED_DESCRIPTOR_SHA256)),
         registered: [deck.clone(), deck.clone()],
         selected: [deck.clone(), deck],
@@ -99,8 +100,12 @@ fn play(episode: &ExpandedEpisodeV1) -> Result<Trajectory, String> {
         "config",
         "state",
         false,
-        (net, id),
-        search,
+        None,
+        super::super::opponent_kind::OpponentSeatV1::Net {
+            net,
+            identity: id,
+            search,
+        },
     )
 }
 
@@ -214,4 +219,161 @@ fn loader_enforces_reviewed_descriptor_and_g115_before_reading() {
     );
     // Both pins pass; the descriptor bytes are then read and fail closed.
     assert!(SearchOpponentV1::load(&reviewed, &episode, &net, &g115).is_err());
+}
+
+/// FABLE-REVIEW-20260927 change 4: a typed search error stops collection
+/// and leaves a failure receipt with public bindings only.
+#[test]
+fn typed_search_failure_publishes_a_public_failure_record() {
+    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::state::Zone;
+    let mut state = ready_state();
+    put(
+        &mut state,
+        crate::ids::PlayerId::P0,
+        "Lightning Bolt",
+        Zone::Hand,
+    );
+    for name in ["Forest", "Mountain", "Island"] {
+        put(&mut state, crate::ids::PlayerId::P0, name, Zone::Library);
+        put(&mut state, crate::ids::PlayerId::P1, name, Zone::Library);
+    }
+    let session = FastActorSessionV1::from_v3_fixture_state(state);
+    let FastActorResponseV1::Decision(mut stale) = session.current_response() else {
+        panic!("fixture has no live decision");
+    };
+    stale.step += 1;
+    // The wrapper plays whichever seat holds this fixture's first decision.
+    let searcher = seat(stale.acting_player);
+    let mut net = FrozenPlayPolicyV1::training_fixture_v4();
+    let mut search = SearchOpponentV1::new(
+        &net,
+        fixture_descriptor(&net),
+        REVIEWED_DESCRIPTOR_SHA256.into(),
+        searcher,
+    )
+    .unwrap();
+    search.reset_for_game([1, 2], "failure-fixture").unwrap();
+    net.reset_sampling_v1([1, 2]);
+    let error = search
+        .select(&mut net, &session, stale)
+        .err()
+        .expect("typed failure");
+    assert!(error.contains(SEARCH_FAILURE_MARKER), "{error}");
+    let directory = std::env::temp_dir().join(format!(
+        "mtg-search-failure-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    assert_eq!(publish_failure(&directory, error.clone()), error);
+    let record: Value =
+        serde_json::from_slice(&std::fs::read(directory.join("search-failure.json")).unwrap())
+            .unwrap();
+    std::fs::remove_dir_all(&directory).unwrap();
+    assert_eq!(
+        record["schema"],
+        "mtg-kernel-public-search-opponent-failure/v1"
+    );
+    assert_eq!(record["episode_id"], "failure-fixture");
+    assert_eq!(record["seat"], searcher);
+    assert_eq!(record["step"], stale.step);
+    assert_eq!(record["error"], "InvalidAdapterBinding");
+    assert!(record.get("state").is_none());
+    assert_eq!(
+        publish_failure(&directory, "ordinary error".into()),
+        "ordinary error"
+    );
+}
+
+/// FABLE-REVIEW-20260927 change 2, the audit core on a live fixture root:
+/// every perturbation is built here and none moves the D3 decision; the
+/// fresh rerun selects the action the wrapper played. Power: a wrong recorded
+/// action is refused, and a built variant whose visible key differs stops
+/// the audit instead of being skipped (review 20:00, change 2).
+#[test]
+fn boundary_audit_checks_every_available_perturbation_of_a_live_root() {
+    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::state::Zone;
+    let (searcher, learner) = (crate::ids::PlayerId::P0, crate::ids::PlayerId::P1);
+    let fixture = |searcher_life: Option<i32>| {
+        let mut state = ready_state();
+        put(&mut state, searcher, "Lightning Bolt", Zone::Hand);
+        state.players[searcher.index()].mana_pool[crate::mana::ManaColor::R.pool_index()] = 3;
+        for name in ["Gut Shot", "Lotus Petal"] {
+            let id = put(&mut state, learner, name, Zone::Hand);
+            state.objects.get_mut(id).zone_change_count = 1;
+        }
+        for owner in [searcher, learner] {
+            for name in ["Forest", "Mountain", "Island", "Swamp", "Counterspell"] {
+                put(&mut state, owner, name, Zone::Library);
+            }
+        }
+        if let Some(life) = searcher_life {
+            state.players[searcher.index()].life = life;
+        }
+        FastActorSessionV1::from_v3_fixture_state(state)
+    };
+    let session = fixture(None);
+    let FastActorResponseV1::Decision(decision) = session.current_response() else {
+        panic!("fixture has no live decision");
+    };
+    let mut net = FrozenPlayPolicyV1::training_fixture_v4();
+    let mut search = SearchOpponentV1::new(
+        &net,
+        fixture_descriptor(&net),
+        REVIEWED_DESCRIPTOR_SHA256.into(),
+        0,
+    )
+    .unwrap();
+    search.reset_for_game([1, 2], "audit-fixture").unwrap();
+    let (played, _, _) = search.select(&mut net, &session, decision).unwrap();
+    let mut counts = BoundaryAuditCountsV1::default();
+    search
+        .audit_root(&net, &session, decision, played, &mut counts)
+        .unwrap();
+    assert_eq!(
+        counts,
+        BoundaryAuditCountsV1 {
+            roots: 1,
+            checked: [1; 4],
+            unavailable: [0; 4],
+            inadmissible: [0; 4],
+        }
+    );
+    let wrong = (played + 1) % decision.legal_action_count;
+    let error = search
+        .audit_root(
+            &net,
+            &session,
+            decision,
+            wrong,
+            &mut BoundaryAuditCountsV1::default(),
+        )
+        .unwrap_err();
+    assert!(error.contains("but the wrapper played"), "{error}");
+    // A built variant with a visible change is a leak, not a skip.
+    let visible = fixture(Some(7));
+    let mut counts = BoundaryAuditCountsV1::default();
+    let error = search
+        .audit_variants(
+            &net,
+            &session,
+            decision,
+            played,
+            [None, None, None, Some(visible)],
+            &mut counts,
+        )
+        .unwrap_err();
+    assert!(
+        error.contains("changed the searcher's decision binding or visible key"),
+        "{error}"
+    );
+    assert_eq!(
+        (counts.unavailable, counts.inadmissible),
+        ([1, 1, 1, 0], [0, 0, 0, 1])
+    );
 }

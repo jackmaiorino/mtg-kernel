@@ -519,6 +519,32 @@ impl ExpandedDeckListV1 {
     }
 }
 
+/// Opt-in opponent kinds of the public-feature collector beyond ordinary V4
+/// and the D3 wrapper, in the evaluator's `ModelSource` JSON shape so a
+/// launcher can copy an evaluation source (opponent kinds interface v1).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ExpandedOpponentKindV1 {
+    /// A recent public-input training checkpoint.
+    PublicCheckpoint {
+        config: PinnedFileV1,
+        checkpoint: PinnedFileV1,
+    },
+    /// Frozen V3 or a declared V3-transfer import, played through the
+    /// evaluator's adapters and admitted only against its receipt.
+    Legacy {
+        source: ExpandedModelSourceV1,
+        v3_forced_actions: bool,
+        #[serde(default, skip_serializing_if = "is_false_v1")]
+        v3_spell_target_reference_adapter: bool,
+        admission: PinnedFileV1,
+    },
+}
+
+fn is_false_v1(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExpandedEpisodeV1 {
@@ -536,6 +562,12 @@ pub struct ExpandedEpisodeV1 {
     /// None keeps every prior serialized byte.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opponent_search: Option<PinnedFileV1>,
+    /// Some declares an opt-in opponent kind (a recent public-input
+    /// checkpoint or Legacy V3) in place of `opponent` and `opponent_search`.
+    /// Only the public-feature collector admits it. None keeps every prior
+    /// serialized byte.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opponent_kind: Option<ExpandedOpponentKindV1>,
     /// Configuration identity is metadata only, never opponent model input.
     pub registered: [ExpandedDeckListV1; 2],
     pub selected: [ExpandedDeckListV1; 2],
@@ -550,14 +582,25 @@ impl ExpandedEpisodeV1 {
             self.opponent_search.is_none(),
             "search opponent is admitted only by the public-feature collector",
         )?;
-        self.configurations_admitting_search_v1()
+        ensure(
+            self.opponent_kind.is_none(),
+            "opt-in opponent kinds are admitted only by the public-feature collector",
+        )?;
+        self.configurations_for_public_collector_v1()
     }
 
-    /// Search-aware validation for the public-feature collector only.
-    fn configurations_admitting_search_v1(&self) -> Result<[DeckConfigurationV1; 2], String> {
+    /// Validation for the public-feature collector only, which admits the D3
+    /// search pin and the opt-in opponent kinds. Conflicting opponent fields
+    /// fail closed before collection.
+    fn configurations_for_public_collector_v1(&self) -> Result<[DeckConfigurationV1; 2], String> {
         ensure(
             self.opponent_search.is_none() || self.opponent.is_some(),
             "search opponent requires an explicit opponent model",
+        )?;
+        ensure(
+            self.opponent_kind.is_none()
+                || (self.opponent.is_none() && self.opponent_search.is_none()),
+            "an opponent kind excludes opponent and opponent_search",
         )?;
         ensure(
             !self.id.is_empty() && self.id.len() <= 128,
@@ -619,6 +662,41 @@ fn floats(values: &[u32]) -> Vec<f32> {
     values.iter().map(|x| f32::from_bits(*x)).collect()
 }
 impl TensorBitsV1 {
+    /// No tensor at all: an unscored V3 forced singleton records none.
+    fn empty() -> Self {
+        Self {
+            state: Vec::new(),
+            object_features: Vec::new(),
+            object_card_ids: Vec::new(),
+            object_groups: Vec::new(),
+            object_node_ids: Vec::new(),
+            edge_features: Vec::new(),
+            edge_source_indices: Vec::new(),
+            edge_target_indices: Vec::new(),
+            action_features: Vec::new(),
+            action_ref_features: Vec::new(),
+            action_ref_card_ids: Vec::new(),
+            action_ref_action_indices: Vec::new(),
+            action_ref_node_indices: Vec::new(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.state.is_empty()
+            && self.object_features.is_empty()
+            && self.object_card_ids.is_empty()
+            && self.object_groups.is_empty()
+            && self.object_node_ids.is_empty()
+            && self.edge_features.is_empty()
+            && self.edge_source_indices.is_empty()
+            && self.edge_target_indices.is_empty()
+            && self.action_features.is_empty()
+            && self.action_ref_features.is_empty()
+            && self.action_ref_card_ids.is_empty()
+            && self.action_ref_action_indices.is_empty()
+            && self.action_ref_node_indices.is_empty()
+    }
+
     /// Generic over the shared inner tensor, not `NativeFlatDecisionTensorV3`
     /// specifically: `NativeFlatDecisionTensorV3` and `NativeFlatDecisionTensorV4`
     /// are both byte-identical `{ common: NativeFlatDecisionTensorV2 }`
@@ -1627,8 +1705,19 @@ fn validate_episode_records_v1(
     )
 }
 
-/// A search-seat row check, called in order for each row of that seat.
-type SearchRowCheckV1<'a> = &'a mut dyn FnMut(&DecisionRecordV1) -> Result<(), String>;
+/// How the validator replays a row after its seat's kind check passes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SeatRowDrawV1 {
+    /// Chosen without the seat stream (the D3 wrapper): no draw.
+    None,
+    /// Sampled from the stored logits: one draw, as for any ordinary row.
+    Logits,
+    /// V3 forced singleton, unscored: one draw over a single logit, action 0.
+    Singleton,
+}
+
+/// A seat row check, called in order for each row of the hooked seat.
+type SeatRowCheckV1<'a> = &'a mut dyn FnMut(&DecisionRecordV1) -> Result<SeatRowDrawV1, String>;
 
 /// `search` names the physical seat whose rows the D3 wrapper chose and the
 /// check that binds each such row to its search record. Those rows draw
@@ -1640,7 +1729,7 @@ fn validate_episode_records_with_search_v1(
     configuration_sha256: &[String; 2],
     decisions: &[DecisionRecordV1],
     terminal: &RlSessionTerminalV1,
-    mut search: Option<(u8, SearchRowCheckV1<'_>)>,
+    mut search: Option<(u8, SeatRowCheckV1<'_>)>,
 ) -> Result<(), String> {
     ensure(
         *configuration_sha256 == configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1())),
@@ -1711,23 +1800,40 @@ fn validate_episode_records_with_search_v1(
                     && row.actor == first.actor,
                 "physical decision grouping or step sequence differs",
             )?;
-            ensure(
-                !row.logits.is_empty()
-                    && (row.selected as usize) < row.logits.len()
-                    && f32::from_bits(row.value).is_finite()
-                    && row.logits.iter().all(|v| f32::from_bits(*v).is_finite()),
-                "invalid captured outputs",
-            )?;
-            if let Some((_, check)) = search.as_mut().filter(|(seat, _)| *seat == row.actor) {
-                check(row)?;
-                continue;
-            }
-            ensure(
-                row.sampler_identity.as_deref() == decision_sampler_identity_v1(row.logits.len()),
-                "stored decision sampler identity differs from action width",
-            )?;
+            let captured = |row: &DecisionRecordV1| {
+                ensure(
+                    !row.logits.is_empty()
+                        && (row.selected as usize) < row.logits.len()
+                        && f32::from_bits(row.value).is_finite()
+                        && row.logits.iter().all(|v| f32::from_bits(*v).is_finite()),
+                    "invalid captured outputs",
+                )
+            };
+            let draw = match search.as_mut().filter(|(seat, _)| *seat == row.actor) {
+                Some((_, check)) => {
+                    let draw = check(row)?;
+                    if draw != SeatRowDrawV1::Singleton {
+                        captured(row)?;
+                    }
+                    draw
+                }
+                None => {
+                    captured(row)?;
+                    ensure(
+                        row.sampler_identity.as_deref()
+                            == decision_sampler_identity_v1(row.logits.len()),
+                        "stored decision sampler identity differs from action width",
+                    )?;
+                    SeatRowDrawV1::Logits
+                }
+            };
+            let logits = match draw {
+                SeatRowDrawV1::None => continue,
+                SeatRowDrawV1::Logits => floats(&row.logits),
+                SeatRowDrawV1::Singleton => vec![0.0],
+            };
             let selected = sampler
-                .sample(&floats(&row.logits), rng[row.actor as usize].next_u64())
+                .sample(&logits, rng[row.actor as usize].next_u64())
                 .map_err(err)?;
             ensure(
                 selected == row.selected as usize,
@@ -2966,6 +3072,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat,
             opponent,
+            opponent_kind: None,
             opponent_search: None,
             registered: [list("Affinity"), list("Terror")],
             selected: [list("Affinity"), list("Terror")],
@@ -3446,6 +3553,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 0,
             opponent: None,
+            opponent_kind: None,
             opponent_search: None,
             registered: [deck.clone(), list("Terror")],
             selected: [deck, list("Terror")],
@@ -3550,6 +3658,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 0,
             opponent: None,
+            opponent_kind: None,
             opponent_search: None,
             registered: [deck.clone(), deck.clone()],
             selected: [deck.clone(), deck.clone()],
@@ -3681,6 +3790,7 @@ pub(crate) mod tests {
             starting_player: 1,
             learner_seat: 0,
             opponent: Some(opponent.behavior.source.clone()),
+            opponent_kind: None,
             opponent_search: None,
             registered: [wildfire.clone(), faeries.clone()],
             selected: [wildfire, faeries],
@@ -3814,6 +3924,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 0,
             opponent: Some(opponent.behavior.source.clone()),
+            opponent_kind: None,
             opponent_search: None,
             registered: [faeries.clone(), elves.clone()],
             selected: [faeries, elves],
@@ -3946,6 +4057,7 @@ pub(crate) mod tests {
             starting_player: 1,
             learner_seat: 1,
             opponent: Some(opponent.behavior.source.clone()),
+            opponent_kind: None,
             opponent_search: None,
             registered: [faeries.clone(), burn.clone()],
             selected: [faeries, burn],
@@ -4061,6 +4173,7 @@ pub(crate) mod tests {
             starting_player: 1,
             learner_seat: 0,
             opponent: Some(opponent.behavior.source.clone()),
+            opponent_kind: None,
             opponent_search: None,
             registered: [burn.clone(), faeries.clone()],
             selected: [burn, faeries],
@@ -4189,6 +4302,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 1,
             opponent: Some(opponent.behavior.source.clone()),
+            opponent_kind: None,
             opponent_search: None,
             registered: [caw_gates.clone(), spy.clone()],
             selected: [caw_gates, spy],
@@ -4325,6 +4439,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 1,
             opponent: Some(opponent.behavior.source.clone()),
+            opponent_kind: None,
             opponent_search: None,
             registered: [caw_gates.clone(), rally.clone()],
             selected: [caw_gates, rally],
@@ -4451,6 +4566,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 0,
             opponent: Some(opponent.behavior.source.clone()),
+            opponent_kind: None,
             opponent_search: None,
             registered: [caw_gates.clone(), rally.clone()],
             selected: [caw_gates, rally],
@@ -4596,6 +4712,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 0,
             opponent: Some(opponent.behavior.source.clone()),
+            opponent_kind: None,
             opponent_search: None,
             registered: [elves.clone(), spy.clone()],
             selected: [elves, spy],
@@ -4744,6 +4861,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 1,
             opponent: Some(opponent.behavior.source.clone()),
+            opponent_kind: None,
             opponent_search: None,
             registered: [burn.clone(), caw_gates.clone()],
             selected: [burn, caw_gates],
@@ -4781,6 +4899,7 @@ pub(crate) mod tests {
             starting_player: slot_hint % 2,
             learner_seat: 0,
             opponent: None,
+            opponent_kind: None,
             opponent_search: None,
             registered: [list("Affinity"), list("Terror")],
             selected: [list("Affinity"), list("Terror")],
@@ -5261,6 +5380,7 @@ pub(crate) mod tests {
                 starting_player: (game_index % 2) as u8,
                 learner_seat: 0,
                 opponent: None,
+                opponent_kind: None,
                 opponent_search: None,
                 registered: [list(deck_a_id), list(deck_b_id)],
                 selected: [list(deck_a_id), list(deck_b_id)],
@@ -5316,6 +5436,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 0,
             opponent: None,
+            opponent_kind: None,
             opponent_search: None,
             registered: [list("CawGates"), list("Burn")],
             selected: [list("CawGates"), list("Burn")],
@@ -5354,6 +5475,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 0,
             opponent: None,
+            opponent_kind: None,
             opponent_search: None,
             registered: [list("Spy"), list("SpyV2")],
             selected: [list("Spy"), list("SpyV2")],
@@ -5473,6 +5595,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 0,
             opponent: None,
+            opponent_kind: None,
             opponent_search: None,
             registered: [list("Elves"), list("Wildfire")],
             selected: [list("Elves"), list("Wildfire")],
@@ -5526,6 +5649,7 @@ pub(crate) mod tests {
             starting_player: 1,
             learner_seat: 0,
             opponent: None,
+            opponent_kind: None,
             opponent_search: None,
             registered: [faeries.clone(), affinity.clone()],
             selected: [faeries, affinity],
@@ -5565,6 +5689,7 @@ pub(crate) mod tests {
             starting_player: 1,
             learner_seat: 0,
             opponent: None,
+            opponent_kind: None,
             opponent_search: None,
             registered: [faeries.clone(), affinity.clone()],
             selected: [faeries, affinity],
@@ -5619,6 +5744,7 @@ pub(crate) mod tests {
                 starting_player,
                 learner_seat: 0,
                 opponent: None,
+                opponent_kind: None,
                 opponent_search: None,
                 registered: decks.clone(),
                 selected: decks,
@@ -5688,6 +5814,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 1,
             opponent: None,
+            opponent_kind: None,
             opponent_search: None,
             registered: [list("Wildfire"), list("Terror")],
             selected: [list("Wildfire"), list("Terror")],
@@ -5719,6 +5846,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 1,
             opponent: None,
+            opponent_kind: None,
             opponent_search: None,
             registered: [list("Wildfire"), list("Terror")],
             selected: [list("Wildfire"), list("Terror")],
@@ -5768,6 +5896,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 1,
             opponent: None,
+            opponent_kind: None,
             opponent_search: None,
             registered: [list("Wildfire"), list("Terror")],
             selected: [list("Wildfire"), list("Terror")],
@@ -5800,6 +5929,7 @@ pub(crate) mod tests {
             starting_player: 0,
             learner_seat: 1,
             opponent: None,
+            opponent_kind: None,
             opponent_search: None,
             registered: [list("Wildfire"), list("Terror")],
             selected: [list("Wildfire"), list("Terror")],
@@ -5881,6 +6011,7 @@ pub(crate) mod tests {
                 starting_player: 0,
                 learner_seat: 0,
                 opponent: None,
+                opponent_kind: None,
                 opponent_search: None,
                 registered: decks.clone(),
                 selected: decks.clone(),

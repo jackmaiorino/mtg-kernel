@@ -43,6 +43,8 @@ def run(root, source):
         assert pin(old_path)["sha256"] == source_result["fingerprints"][old_path.name]
         scored = read(old_path)
         original = read(checked(item["trajectory"]))
+        # Public rows are learner-only in this schema; other opponent schemas also fill opponent rows.
+        assert original["schema"] == "mtg-kernel-public-input-trajectory/v1"
         chosen = [r for r in scored["rows"] if any(original["auxiliary"][r["archive_row"]]["state"])]
         if not chosen: continue
         assert len(chosen) <= 64
