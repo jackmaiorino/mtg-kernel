@@ -249,6 +249,7 @@ def acceptance(args, directory):
     record = {
         "schema": "line-b-engineering-acceptance-receipt/v1",
         "name": args.name,
+        "provenance": args.provenance,
         "claim": "engineering receipt: identity, determinism and telemetry only; no outcome claim",
         "template": {"path": str(TEMPLATE), "sha256": TEMPLATE_SHA256, "iteration": args.iteration},
         "student": initial,
@@ -305,6 +306,7 @@ def chain(args, directory):
     record = {
         "schema": "line-b-engineering-chain-receipt/v1",
         "name": args.name,
+        "provenance": args.provenance,
         "claim": "engineering receipt: identity and determinism only; no outcome claim",
         "template": {"path": str(TEMPLATE), "sha256": TEMPLATE_SHA256},
         "rollouts": args.rollouts,
@@ -427,6 +429,7 @@ def throughput(args, directory):
     record = {
         "schema": "line-b-engineering-throughput-receipt/v1",
         "name": args.name,
+        "provenance": args.provenance,
         "claim": "engineering timing of the teach step on one fixed batch; no outcome claim",
         "template": {"path": str(TEMPLATE), "sha256": TEMPLATE_SHA256},
         "roots_requested": args.roots,
@@ -485,6 +488,7 @@ def diagnostics(args, directory):
     record = {
         "schema": "line-b-engineering-diagnostics-receipt/v1",
         "name": args.name,
+        "provenance": args.provenance,
         "claim": "non-outcome diagnostics of the teacher at engineering roots; no outcome claim",
         "template": {"path": str(TEMPLATE), "sha256": TEMPLATE_SHA256},
         "rollouts": args.rollouts,
@@ -548,6 +552,15 @@ def main():
     )
     args = parser.parse_args()
     directory = args.root / args.name
+    args.provenance = {
+        "binary": str(BIN),
+        "binary_sha256": hashlib.sha256(BIN.read_bytes()).hexdigest(),
+        "tool_head": subprocess.run(
+            ["git", "-C", str(Path(__file__).resolve().parent), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+        ).stdout.strip(),
+    }
     if directory.exists():
         raise SystemExit(f"{directory} exists; receipts never overwrite")
     directory.mkdir(parents=True)
