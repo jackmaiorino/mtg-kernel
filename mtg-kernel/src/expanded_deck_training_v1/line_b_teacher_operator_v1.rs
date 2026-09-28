@@ -82,7 +82,14 @@ pub(super) fn line_b_policy_seeds_v1(
 pub(super) enum LineBCensorV1 {
     /// A rollout cap or the inherited episode headroom ran out.
     CapExhausted,
-    /// The host or process interrupted the rollout (set by the driver).
+    /// Reserved for a driver; no in-process event produces it (review change
+    /// 11 of FABLE-REVIEW-20260928). Inside the operator every failure is
+    /// typed: a truncation or cap is `CapExhausted`, and a halted state, a
+    /// step or policy error or a worker panic (joined as a step error) is a
+    /// `LineBDefectV1`, which fails the update. An interruption of the host
+    /// or process ends the update without a packet; the launch path's rule
+    /// for a failed update (doc section 4) records it in the run's census,
+    /// not in a packet.
     EnvironmentalInterruption,
 }
 

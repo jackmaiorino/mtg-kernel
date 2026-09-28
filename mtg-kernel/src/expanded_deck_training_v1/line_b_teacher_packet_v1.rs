@@ -367,6 +367,77 @@ pub(super) fn line_b_auxiliary_input_v1(
     }))
 }
 
+/// Review change 10 (FABLE-REVIEW-20260928): the update's census per learner
+/// list, receipt only (the packet is unchanged). `lists` names each
+/// trajectory's learner list in batch order. The launcher sums these counts
+/// over a run's updates for the per-list per-run censored fractions against
+/// the 5 percent ceiling; `censored_root_fraction` is this update's share.
+pub(super) fn line_b_census_by_list_v1(packet: &LineBTeacherPacketV1, lists: &[String]) -> Value {
+    #[derive(Default)]
+    struct Counts {
+        teacher_games: u64,
+        no_eligible_root_games: u64,
+        selected_roots: u64,
+        complete_roots: u64,
+        censored_roots: u64,
+        rollouts: u64,
+        censored_rollouts: u64,
+    }
+    let mut by_list: std::collections::BTreeMap<String, Counts> = Default::default();
+    let label = |index: usize| {
+        lists
+            .get(index)
+            .cloned()
+            .unwrap_or_else(|| "<unlisted>".into())
+    };
+    for game in &packet.games {
+        match game {
+            LineBPacketGameV1::Canonical { .. } => {}
+            LineBPacketGameV1::NoEligibleRoot {
+                trajectory_index, ..
+            } => {
+                let counts = by_list.entry(label(*trajectory_index)).or_default();
+                counts.teacher_games += 1;
+                counts.no_eligible_root_games += 1;
+            }
+            LineBPacketGameV1::Root(root) => {
+                let counts = by_list.entry(label(root.trajectory_index)).or_default();
+                counts.teacher_games += 1;
+                counts.selected_roots += 1;
+                match root.status {
+                    LineBRootStatusV1::Complete { .. } => counts.complete_roots += 1,
+                    LineBRootStatusV1::Censored { .. } => counts.censored_roots += 1,
+                }
+                counts.rollouts += root.rollouts.len() as u64;
+                counts.censored_rollouts += root
+                    .rollouts
+                    .iter()
+                    .filter(|rollout| matches!(rollout.outcome, LineBRolloutOutcomeV1::Censored(_)))
+                    .count() as u64;
+            }
+        }
+    }
+    let rows: serde_json::Map<String, Value> = by_list
+        .into_iter()
+        .map(|(list, counts)| {
+            let fraction = (counts.selected_roots > 0)
+                .then(|| counts.censored_roots as f64 / counts.selected_roots as f64);
+            (
+                list,
+                json!({"teacher_games": counts.teacher_games,
+                    "no_eligible_root_games": counts.no_eligible_root_games,
+                    "selected_roots": counts.selected_roots,
+                    "complete_roots": counts.complete_roots,
+                    "censored_roots": counts.censored_roots,
+                    "rollouts": counts.rollouts,
+                    "censored_rollouts": counts.censored_rollouts,
+                    "censored_root_fraction": fraction}),
+            )
+        })
+        .collect();
+    Value::Object(rows)
+}
+
 /// `result.line_b.teacher` of the update receipt (proposal 12:51 telemetry):
 /// the published packet, the recipe values, the census with its
 /// denominators, and per root the divergence before the update (null for a

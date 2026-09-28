@@ -7,6 +7,7 @@ use super::super::training::line_b_root::LineBRootBackwardOutputsV1;
 use super::*;
 use crate::line_b_teacher_target_v1::{
     line_b_divergence_v1, line_b_softmax_v1, LineBDivergenceV1, LineBSoftmaxV1,
+    LINE_B_CUDA_ENVELOPE_V1,
 };
 use crate::native_policy_train_step_v1::{LineBAuxiliaryInputV1, LineBAuxiliaryResultV1};
 
@@ -69,6 +70,16 @@ pub(super) struct LineBCudaTermV1 {
 
 fn invalid(code: &'static str) -> NativePolicyTrainErrorV1 {
     NativePolicyTrainErrorV1::LineBAuxiliary { code }
+}
+
+/// Review change 9: a root whose device log-probabilities leave the declared
+/// envelope fails the update (a backend defect); a NaN discrepancy fails too.
+fn line_b_cuda_envelope_check_v1(discrepancy: f64) -> Result<(), NativePolicyTrainErrorV1> {
+    if discrepancy <= LINE_B_CUDA_ENVELOPE_V1 {
+        Ok(())
+    } else {
+        Err(invalid("line-b-cuda-envelope-breach"))
+    }
 }
 
 pub(super) fn line_b_cuda_plan_v1(
@@ -198,6 +209,7 @@ pub(super) fn line_b_cuda_term_v1(
         {
             discrepancy = discrepancy.max((a - b).abs());
         }
+        line_b_cuda_envelope_check_v1(discrepancy)?;
         let magnitude = collection_logits
             .iter()
             .fold(0.0_f64, |m, z| m.max(z.abs()));
@@ -270,5 +282,28 @@ pub(super) fn line_b_cuda_result_v1(
             },
             envelope: Vec::new(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn line_b_cuda_envelope_refuses_beyond_the_declared_constant() {
+        assert_eq!(LINE_B_CUDA_ENVELOPE_V1, 1e-3);
+        for inside in [0.0, 4.8e-6, LINE_B_CUDA_ENVELOPE_V1] {
+            assert!(line_b_cuda_envelope_check_v1(inside).is_ok(), "{inside}");
+        }
+        let next_up = f64::from_bits(LINE_B_CUDA_ENVELOPE_V1.to_bits() + 1);
+        for outside in [next_up, 2e-3, f64::INFINITY, f64::NAN] {
+            assert_eq!(
+                line_b_cuda_envelope_check_v1(outside),
+                Err(NativePolicyTrainErrorV1::LineBAuxiliary {
+                    code: "line-b-cuda-envelope-breach"
+                }),
+                "{outside}"
+            );
+        }
     }
 }

@@ -2624,6 +2624,17 @@ fn execute_update_v1(
         }
     };
     let teacher_seconds = teacher_started.elapsed().as_secs_f64();
+    // Each trajectory's learner list, for the receipt's census by list
+    // (review change 10).
+    let line_b_lists: Vec<String> = episodes
+        .iter()
+        .map(|trajectory| {
+            let episode = &trajectory.episode;
+            episode.selected[usize::from(episode.learner_seat)]
+                .label
+                .clone()
+        })
+        .collect();
     // Line (b) head-only mask: validate the topology and keep the pre-step
     // snapshot, whatever backend runs the step below.
     let masked_before = match &line_b {
@@ -2852,9 +2863,16 @@ fn execute_update_v1(
                             .iter()
                             .map(|root| root.host_refold_abs_discrepancy)
                             .fold(0.0_f64, f64::max);
+                        // The declared envelope (review change 9) beside the
+                        // gate-implied per-root bound; a root beyond the
+                        // declared constant already failed the update.
                         line_b_envelope = Some(json!({"roots": cuda.envelope,
                             "max_abs_log_probability_discrepancy": max_discrepancy,
                             "within_bound": within_bound,
+                            "declared_envelope":
+                                crate::line_b_teacher_target_v1::LINE_B_CUDA_ENVELOPE_V1,
+                            "within_declared_envelope": max_discrepancy
+                                <= crate::line_b_teacher_target_v1::LINE_B_CUDA_ENVELOPE_V1,
                             "max_host_refold_abs_discrepancy": max_host_refold}));
                         line_b_auxiliary = Some(cuda.auxiliary);
                         result
@@ -3046,6 +3064,8 @@ fn execute_update_v1(
             line_b_rescore.as_deref(),
             teacher_seconds,
         );
+        result["line_b"]["teacher"]["census_by_list"] =
+            line_b_teacher_packet_v1::line_b_census_by_list_v1(packet, &line_b_lists);
         if let Some(envelope) = line_b_envelope {
             result["line_b"]["teacher"]["cuda_envelope"] = envelope;
         }
@@ -7575,6 +7595,18 @@ pub(crate) mod tests {
             );
             assert_eq!(taught["census"], packet["census"]);
             assert_eq!(taught["census"]["selected_roots"], 1);
+            // Census by learner list (review change 10) sums to the census.
+            let by_list = taught["census_by_list"].as_object().unwrap();
+            for key in [
+                "selected_roots",
+                "complete_roots",
+                "censored_roots",
+                "rollouts",
+                "censored_rollouts",
+            ] {
+                let sum: u64 = by_list.values().map(|row| row[key].as_u64().unwrap()).sum();
+                assert_eq!(Some(sum), taught["census"][key].as_u64(), "{key}");
+            }
             let telemetry = &taught["telemetry"];
             assert_eq!(telemetry["roots"].as_array().unwrap().len(), 1);
             if matches!(update_backend, ExpandedUpdateBackendV1::Cpu) {
@@ -7582,6 +7614,8 @@ pub(crate) mod tests {
             } else {
                 let envelope = &taught["cuda_envelope"];
                 assert_eq!(envelope["within_bound"], true, "{envelope}");
+                assert_eq!(envelope["declared_envelope"], 1e-3, "{envelope}");
+                assert_eq!(envelope["within_declared_envelope"], true, "{envelope}");
                 assert!(envelope["max_abs_log_probability_discrepancy"]
                     .as_f64()
                     .unwrap()

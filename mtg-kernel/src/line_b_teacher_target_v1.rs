@@ -42,6 +42,15 @@ pub const LINE_B_TEACHER_TARGET_VERSION_V1: &str = "line-b-teacher-target-f64-v1
 pub const LINE_B_TEACHER_TEMPERATURE_V1: f64 = 0.25;
 pub const LINE_B_TEACHER_COEFFICIENT_V1: f64 = 0.1;
 pub const LINE_B_TEACHER_ROLLOUTS_V1: usize = 16;
+/// Declared CUDA-to-collection envelope (line (b) change 2; review change 9
+/// of FABLE-REVIEW-20260928), in log-probability units, fixed and never
+/// moved: the largest `|log p_device(a) - log p_collection(a)|` a selected
+/// root may show in a treatment update. At K = 16 and T = 0.25 the smallest
+/// non-zero return contrast (1/16) is 0.25 in target log-odds; a discrepancy
+/// `d` adds `c p_i d` of spurious logit gradient per root against `c p_i`
+/// times that contrast, so this caps the spurious share at 0.4 percent. A
+/// breach is a backend defect that fails the update.
+pub const LINE_B_CUDA_ENVELOPE_V1: f64 = 1e-3;
 
 /// fdlibm's two-part `ln 2` (the sampler's constants).
 const LN2_HI_V1: f64 = f64::from_bits(0x3fe6_2e42_fee0_0000);
