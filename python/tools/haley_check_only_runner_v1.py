@@ -1,10 +1,12 @@
-"""HaleysPC check-only runner (version 1): the launcher the supported WMI dispatcher starts on HaleysPC.
+"""HaleysPC check-only runner (version 1): the owner command the host reservation's supervisor runs on HaleysPC.
 
-Invoked by g115_d3_windows_dispatch.ps1 as: python -u haley_check_only_runner_v1.py --manifest PLAN --host haleyspc
---root WORKER_ROOT. It checks the plan (schema haley-check-only-plan/v1) and every pinned file, prepares a clean
-detached git checkout of the pinned commit from the staged bundle, and runs the one cargo command under the host
-reservation's supervisor (host_reservation_v1.py supervise --token), at BelowNormal priority, with an isolated
-target directory. The compiler is selected by --config build.rustc=<absolute rustc> with RUSTC unset (CLAUDE #526
+haley_check_only_dispatch_v1.py calls host_reservation_v1.dispatch, which acquires the HaleysPC lock and creates
+through WMI: python host_reservation_v1.py supervise --token T -- python -u haley_check_only_runner_v1.py --manifest
+PLAN --host haleyspc --root WORKER_ROOT. The supervisor's job therefore contains this runner and cargo, and the lock
+releases when they end (CLAUDE #574). The runner checks the plan (schema haley-check-only-plan/v1), every pinned
+file and that its token holds this lane's lock for this run, prepares a clean detached git checkout of the pinned
+commit from the staged bundle, and runs the one cargo command at BelowNormal priority with an isolated target
+directory. The compiler is selected by --config build.rustc=<absolute rustc> with RUSTC unset (CLAUDE #526
 S4): the native-store capture sees a drive-absolute RUSTC and the crate compile sees no build override. It writes
 WORKER_ROOT/cargo.log and WORKER_ROOT/completion.json and exits with the cargo exit code.
 
@@ -62,8 +64,9 @@ def check_plan(plan):
     require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,95}', plan.get('run_id', '')) is not None, 'plan run id')
     for key in ('source_root', 'target_dir', 'temp_dir'):
         require(under_root(plan[key]), key + ' lies outside ' + ROOT)
-    for key in ('bundle', 'helper', 'launcher'):
+    for key in ('bundle', 'helper', 'launcher', 'dispatch'):
         require(under_root(plan['files'][key]['path']), key + ' lies outside ' + ROOT)
+    require(under_root(plan['worker_root']), 'worker_root lies outside ' + ROOT)
     args = plan.get('cargo_args')
     require(isinstance(args, list) and args and all(isinstance(a, str) for a in args), 'cargo arguments')
     require(args[0] in ('test', 'build', 'check', 'clippy'), 'only test, build, check or clippy commands are admitted')
@@ -91,12 +94,29 @@ def build_environment(base, plan):
     return env
 
 
-def build_command(plan, python):
+def build_command(plan):
     cargo = str(PureWindowsPath(plan['toolchain']['cargo']['path']))
-    work = [cargo, '--config', build_rustc_config(plan['toolchain']['rustc']['path'])] + plan['cargo_args']
-    helper = str(PureWindowsPath(plan['files']['helper']['path']))
-    return [python, '-u', helper, 'supervise', '--token', plan['reservation_token'],
-            '--cwd', str(PureWindowsPath(plan['source_root'])), '--'] + work
+    return [cargo, '--config', build_rustc_config(plan['toolchain']['rustc']['path'])] + plan['cargo_args']
+
+
+def load_helper(path):
+    """The staged host_reservation_v1 module (its pin is checked before this is called)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('host_reservation_v1', str(path))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def held_reservation(plan, helper, environ):
+    """The supervisor passes its token in the environment; it must hold this lane's lock for this run."""
+    token = environ.get(helper.TOKEN_ENV)
+    require(bool(token), 'no host reservation token: the runner runs only under the reservation supervisor')
+    state = helper.status(token)
+    record = state.get('record') or {}
+    require(state.get('token_fate') == 'holds' and record.get('lane') == plan['lane']
+            and record.get('work_id') == plan['run_id'], "the token does not hold this lane's lock for this run")
+    return token
 
 
 def test_counts(log_text):
@@ -149,19 +169,22 @@ def main():
     plan = json.loads(plan_bytes)
     check_plan(plan)
     require(sha256(__file__) == plan['files']['launcher']['sha256'], 'runner differs from its plan pin')
-    for key in ('bundle', 'helper'):
+    for key in ('bundle', 'helper', 'dispatch'):
         require(sha256(plan['files'][key]['path']) == plan['files'][key]['sha256'], key + ' differs from its pin')
     for tool in ('cargo', 'rustc'):
         require(sha256(plan['toolchain'][tool]['path']) == plan['toolchain'][tool]['sha256'], tool + ' differs from its pin')
+    require(str(PureWindowsPath(args.root)) == str(PureWindowsPath(plan['worker_root'])), 'root differs from the plan')
+    token = held_reservation(plan, load_helper(plan['files']['helper']['path']), os.environ)
     root = Path(args.root)
     root.mkdir(parents=True)
     Path(plan['temp_dir']).mkdir(parents=True, exist_ok=True)
     record = {'schema': COMPLETION_SCHEMA, 'host': 'haleyspc', 'lane': plan['lane'], 'run_id': plan['run_id'],
-              'plan_sha256': hashlib.sha256(plan_bytes).hexdigest(), 'commit': plan['commit'], 'started_utc': now()}
+              'plan_sha256': hashlib.sha256(plan_bytes).hexdigest(), 'commit': plan['commit'],
+              'reservation_token': token, 'started_utc': now()}
     record['head'] = prepare_source(plan)
     record['clean'] = True
     record['toolchain'] = toolchain_record(plan)
-    command = build_command(plan, sys.executable)
+    command = build_command(plan)
     record['argv'] = command
     log_path = root / 'cargo.log'
     with open(log_path, 'wb') as log:
