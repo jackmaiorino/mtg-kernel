@@ -135,14 +135,18 @@ def batch(name, update, entries, initial, a48):
 
 
 def collect_command(student, episodes, workers, output):
-    return {
-        "mode": "collect_parallel",
+    """collect_parallel, or the serial collect command for one worker
+    (collect_parallel refuses a single worker)."""
+    command = {
+        "mode": "collect_parallel" if workers > 1 else "collect",
         "source": student,
         "episodes": episodes,
-        "workers": workers,
         "collection_sampler": SAMPLER,
         "output_directory": str(output),
     }
+    if workers > 1:
+        command["workers"] = workers
+    return command
 
 
 def teacher(direction, games, args, permuted_control=True):
@@ -290,7 +294,7 @@ def acceptance(args, directory):
             record["head_distance"][f"{backend}/{arm}"] = result
             save()
     if args.serial_collect:
-        serial = dict(collect, workers=1, output_directory=str(directory / "collect-serial"))
+        serial = collect_command(initial, episodes, 1, directory / "collect-serial")
         collected, seconds = run(serial, directory, "collect-serial")
         record["serial_collect"] = {
             "seconds": round(seconds, 3),
