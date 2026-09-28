@@ -1,6 +1,6 @@
 # D3 search wrapper as a training-time opponent (public-feature collector)
 
-Status: draft (2026-09-27); qualification results pending. Lane opus-search-opponent, branch `opus/search-opponent-v1`, base `500cfae9`. Engineering only: nothing here is strength evidence. Goal: collab/GOALS/opus-search-opponent-20260927.md with the director's R5 amendment (DIRECTOR-RULINGS-20260927.md). Engine contract countersigned by Codex (CODEX #521, C1 to C5).
+Status (2026-09-27): implemented and qualified (Results below); Codex's implementation countersign (CLAUDE #498) and Fable's final review are pending. Lane opus-search-opponent, branch `opus/search-opponent-v1`, base `500cfae9`. Engineering only: nothing here is strength evidence. Goal: collab/GOALS/opus-search-opponent-20260927.md with the director's R5 amendment (DIRECTOR-RULINGS-20260927.md). Engine contract countersigned by Codex (CODEX #521, C1 to C5).
 
 ## What changed
 
