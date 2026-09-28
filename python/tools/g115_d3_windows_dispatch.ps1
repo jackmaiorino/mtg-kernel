@@ -25,6 +25,8 @@ if ($RunConfig) {
     $config = Get-Content -LiteralPath $RunConfig -Raw | ConvertFrom-Json
     $receipt = [ordered]@{ complete=$false; started_utc=[DateTime]::UtcNow.ToString('o'); owner_pid=$PID; native_dispatched_directly=$false }
     try {
+        Assert-Hash (Join-Path $PSScriptRoot 'g115_reserved_dispatch_v1.py') $config.reservation_adapter_sha256
+        Assert-Hash (Join-Path $PSScriptRoot 'host_reservation_v1.py') $config.reservation_helper_sha256
         & $config.python (Join-Path $PSScriptRoot 'g115_reserved_dispatch_v1.py') --check-owner | Out-Null
         if ($LASTEXITCODE -ne 0) { throw 'Current host reservation required before native work' }
         Assert-Hash $PSCommandPath $config.transport_sha256
@@ -134,6 +136,8 @@ $config = [ordered]@{
     manifest=$Manifest; manifest_sha256=(Get-FileHash -LiteralPath $Manifest).Hash.ToLowerInvariant()
     launcher=$launcher; launcher_sha256=$plan.documents.launcher.sha256
     python=$Python; host_name=$HostName; worker_root=$WorkerRoot; control_root=$ControlRoot
+    reservation_adapter_sha256=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'g115_reserved_dispatch_v1.py')).Hash.ToLowerInvariant()
+    reservation_helper_sha256=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'host_reservation_v1.py')).Hash.ToLowerInvariant()
     transport_sha256=(Get-FileHash -LiteralPath $PSCommandPath).Hash.ToLowerInvariant()
 }
 if ($launcherName -eq 'g115_d4_audit_pipeline_v1.py' -and $plan.observer) {
