@@ -97,6 +97,46 @@ def host_load():
     return psutil.cpu_percent(interval=1.0)
 
 
+class PlacementSampler:
+    """Per-logical-processor busy percent sampled every two seconds while a
+    run executes, reported as the means over the P-core threads (logical
+    0 to 15 on the i7-13700K) and the E-cores (16 to 23): the record that
+    shows where the work actually ran (CLAUDE #594: hidden BelowNormal
+    processes can be confined to the E-cores)."""
+
+    def __init__(self):
+        import threading
+
+        import psutil
+
+        self._psutil = psutil
+        self._stop = threading.Event()
+        self._samples = []
+        psutil.cpu_percent(percpu=True)
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def _loop(self):
+        while not self._stop.wait(2.0):
+            self._samples.append(self._psutil.cpu_percent(percpu=True))
+
+    def finish(self):
+        self._stop.set()
+        self._thread.join()
+        if not self._samples:
+            return None
+        count = len(self._samples[0])
+        means = [sum(sample[cpu] for sample in self._samples) / len(self._samples) for cpu in range(count)]
+        p_cores = means[:16]
+        e_cores = means[16:]
+        return {
+            "samples": len(self._samples),
+            "logical_processors": count,
+            "p_core_threads_mean_busy_percent": sum(p_cores) / len(p_cores) if p_cores else None,
+            "e_cores_mean_busy_percent": sum(e_cores) / len(e_cores) if e_cores else None,
+        }
+
+
 def template():
     raw = TEMPLATE.read_bytes()
     if hashlib.sha256(raw).hexdigest() != TEMPLATE_SHA256:
@@ -519,7 +559,9 @@ def throughput(args, directory):
             initial, collected["trajectories"], args.backends[0], options, directory / label
         )
         load_before = host_load()
+        sampler = PlacementSampler()
         result, seconds = run(command, directory, label, affinity)
+        placement = sampler.finish()
         taught = result["line_b"]["teacher"]
         roots = packet_roots(taught["packet"])
         decisions = [d for root in roots for d in root["rollout_decisions"]]
@@ -531,6 +573,7 @@ def throughput(args, directory):
         record["runs"][label] = {
             "workers": workers,
             "host_cpu_percent_before": load_before,
+            "placement_during_run": placement,
             "update_seconds": round(seconds, 3),
             "teacher_seconds": teacher_seconds,
             "roots": len(roots),

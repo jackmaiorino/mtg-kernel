@@ -131,6 +131,8 @@ def throughput(record):
             r["physical_decisions_max"],
             r["census"]["censored_rollouts"] / r["census"]["rollouts"] if r["census"]["rollouts"] else None,
             r.get("host_cpu_percent_before"),
+            (r.get("placement_during_run") or {}).get("p_core_threads_mean_busy_percent"),
+            (r.get("placement_during_run") or {}).get("e_cores_mean_busy_percent"),
         ]
         for r in runs
     ]
@@ -155,6 +157,8 @@ def throughput(record):
                     "decisions per rollout (max)",
                     "censored rollout fraction",
                     "host CPU percent before the run",
+                    "P-core threads busy during the run (mean percent)",
+                    "E-cores busy during the run (mean percent)",
                 ],
                 rows,
             ),
