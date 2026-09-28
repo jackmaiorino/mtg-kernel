@@ -171,3 +171,77 @@ impl LineBAuxiliaryTermsV1 {
         })
     }
 }
+
+/// How a permuted-control root got its target.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum LineBPermutationKindV1 {
+    /// Another root of the same menu width supplied the target.
+    AcrossRoot,
+    /// The only root of its width: its own target rotated by one action.
+    WithinRoot,
+}
+
+/// The permuted-target control of an auxiliary input (CODEX 11:23 item 6;
+/// offline only, never a training target). Available roots of equal menu
+/// width, in batch order, rotate their targets (each takes the next root's);
+/// a width with a single available root rotates that root's action
+/// coordinates by one and is labeled within-root. Censored roots stay
+/// censored and every target keeps its values, so its normalization.
+pub(crate) fn line_b_permuted_input_v1(
+    input: &LineBAuxiliaryInputV1,
+) -> (LineBAuxiliaryInputV1, Vec<Option<LineBPermutationKindV1>>) {
+    let mut widths: std::collections::BTreeMap<usize, Vec<(usize, &LineBSoftmaxV1)>> =
+        Default::default();
+    for (index, root) in input.roots.iter().enumerate() {
+        if let Some(target) = &root.target {
+            widths
+                .entry(target.log_probabilities.len())
+                .or_default()
+                .push((index, target));
+        }
+    }
+    let mut targets: Vec<Option<LineBSoftmaxV1>> =
+        input.roots.iter().map(|root| root.target.clone()).collect();
+    let mut kinds = vec![None; input.roots.len()];
+    for members in widths.values() {
+        if let [(index, source)] = members.as_slice() {
+            let index = *index;
+            let rotate = |values: &[f64]| {
+                (0..values.len())
+                    .map(|action| values[(action + 1) % values.len()])
+                    .collect::<Vec<_>>()
+            };
+            targets[index] = Some(LineBSoftmaxV1 {
+                log_probabilities: rotate(&source.log_probabilities),
+                probabilities: rotate(&source.probabilities),
+                weight_sum: source.weight_sum,
+            });
+            kinds[index] = Some(LineBPermutationKindV1::WithinRoot);
+        } else {
+            for (position, (index, _)) in members.iter().enumerate() {
+                let (_, source) = members[(position + 1) % members.len()];
+                targets[*index] = Some(source.clone());
+                kinds[*index] = Some(LineBPermutationKindV1::AcrossRoot);
+            }
+        }
+    }
+    let roots = input
+        .roots
+        .iter()
+        .zip(targets)
+        .map(|(root, target)| LineBAuxiliaryRootV1 {
+            group_index: root.group_index,
+            substep_index: root.substep_index,
+            target,
+        })
+        .collect();
+    (
+        LineBAuxiliaryInputV1 {
+            direction: input.direction,
+            coefficient: input.coefficient,
+            roots,
+        },
+        kinds,
+    )
+}

@@ -520,3 +520,76 @@ fn line_b_invalid_auxiliary_inputs_reject_before_mutation() {
         assert_eq!(state_bits(&state), initial, "{code}");
     }
 }
+
+/// CODEX 11:23 item 6, the permuted-target control (offline): available
+/// roots of equal menu width rotate their targets across roots, a width with
+/// one available root rotates its own action coordinates, censored roots stay
+/// censored, and on a nondegenerate fixture (two roots with different logits
+/// and different targets) the auxiliary gradient responds to target identity.
+#[test]
+fn line_b_permuted_targets_rotate_and_move_the_auxiliary_gradient() {
+    use crate::line_b_teacher_target_v1::{line_b_teacher_target_v1, LineBDivergenceV1};
+    let model = model();
+    let fixture = Fixture::capture(&model);
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let target = |tensor: usize, pattern: [f64; 3]| {
+        let logits: Vec<f64> = fixture.logits[tensor]
+            .iter()
+            .map(|bits| f64::from(f32::from_bits(*bits)))
+            .collect();
+        let returns: Vec<f64> = (0..logits.len()).map(|i| pattern[i % 3]).collect();
+        line_b_teacher_target_v1(&logits, &returns, 0.25).unwrap()
+    };
+    let (a, b) = (target(0, [1.0, 0.0, -1.0]), target(1, [-1.0, 1.0, 0.0]));
+    assert_eq!(a.log_probabilities.len(), b.log_probabilities.len());
+    let root = |group_index: usize, target| LineBAuxiliaryRootV1 {
+        group_index,
+        substep_index: 0,
+        target,
+    };
+    let input = LineBAuxiliaryInputV1 {
+        direction: LineBDivergenceV1::Reverse,
+        coefficient: 1.0,
+        roots: vec![root(0, Some(a.clone())), root(1, Some(b.clone()))],
+    };
+    let (permuted, kinds) = line_b_permuted_input_v1(&input);
+    assert_eq!(kinds, vec![Some(LineBPermutationKindV1::AcrossRoot); 2]);
+    assert_eq!(permuted.roots[0].target.as_ref(), Some(&b));
+    assert_eq!(permuted.roots[1].target.as_ref(), Some(&a));
+    let single = LineBAuxiliaryInputV1 {
+        direction: LineBDivergenceV1::Forward,
+        coefficient: 1.0,
+        roots: vec![root(0, Some(a.clone())), root(1, None)],
+    };
+    let (within, kinds) = line_b_permuted_input_v1(&single);
+    assert_eq!(kinds, vec![Some(LineBPermutationKindV1::WithinRoot), None]);
+    assert!(within.roots[1].target.is_none());
+    let rotated = within.roots[0].target.as_ref().unwrap();
+    let width = a.log_probabilities.len();
+    for action in 0..width {
+        let source = (action + 1) % width;
+        assert_eq!(
+            rotated.log_probabilities[action].to_bits(),
+            a.log_probabilities[source].to_bits()
+        );
+        assert_eq!(
+            rotated.probabilities[action].to_bits(),
+            a.probabilities[source].to_bits()
+        );
+    }
+    let gradients = |input: &LineBAuxiliaryInputV1| {
+        let (_, result, auxiliary) = line_b_step(&model, &groups, input).unwrap();
+        (result.gradients, auxiliary.auxiliary_loss)
+    };
+    let (original, original_loss) = gradients(&input);
+    let (control, control_loss) = gradients(&permuted);
+    assert_ne!(original_loss.to_bits(), control_loss.to_bits());
+    assert_ne!(
+        original, control,
+        "the auxiliary term must respond to target identity"
+    );
+    let (_, within_loss) = gradients(&within);
+    let (_, single_loss) = gradients(&single);
+    assert_ne!(within_loss.to_bits(), single_loss.to_bits());
+}
