@@ -436,6 +436,7 @@ impl FrozenPlayPolicyV1 {
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
+            collection_sampler: None,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             successor: Some(FrozenPlaySuccessorStateV3::default()),

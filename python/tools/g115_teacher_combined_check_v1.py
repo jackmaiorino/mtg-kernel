@@ -21,7 +21,7 @@ import traceback
 
 sys.dont_write_bytecode = True
 GIB = 1024 ** 3
-WORK_ID = 'teacher-combined-check-003'
+WORK_ID = 'teacher-combined-check-004'
 SCRATCH = Path('D:/e-scratch/g115-' + WORK_ID)
 COLD = Path('E:/mtg-g115-lineage-20260923') / WORK_ID
 LINKER = Path('C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/Tools/MSVC/14.50.35717/bin/Hostx64/x64/link.exe')
