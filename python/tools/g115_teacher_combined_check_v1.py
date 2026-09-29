@@ -21,8 +21,13 @@ import traceback
 
 sys.dont_write_bytecode = True
 GIB = 1024 ** 3
-SCRATCH = Path('D:/e-scratch/g115-teacher-combined-check-001')
-COLD = Path('E:/mtg-g115-lineage-20260923/teacher-combined-check-001')
+WORK_ID = 'teacher-combined-check-002'
+SCRATCH = Path('D:/e-scratch/g115-' + WORK_ID)
+COLD = Path('E:/mtg-g115-lineage-20260923') / WORK_ID
+LINKER = Path('C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/Tools/MSVC/14.50.35717/bin/Hostx64/x64/link.exe')
+LINKER_SHA256 = 'ee9b29be652eee20affa6963a7ce54d01271b0f1b2443e315ea86469cbb95694'
+LINKER_BANNER = 'Microsoft (R) Incremental Linker Version 14.50.35725.0'
+LINKER_USAGE = 'usage: LINK [options] [files] [@commandfile]'
 TESTS = [
     'expanded_deck_training_v1::registry_evolution_dispatch_tests::' + name
     for name in (
@@ -46,6 +51,28 @@ def require(ok, message):
 def sha(path):
     with Path(path).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+def check_stage_exit(plan, label, argv, code, output):
+    if code == 0:
+        return
+    # The observed nonzero help exit is not a general linker success code.
+    # Bind the exception to the actual executable, pin and exact help argv.
+    require(code == 1100 and label == 'version-linker' and len(argv) == 2
+            and argv[1] == '/?' and Path(argv[0]).resolve() == LINKER.resolve(),
+            'Stage failed: ' + label)
+    linker = plan['tools']['linker']
+    require(Path(linker['path']).resolve() == LINKER.resolve()
+            and linker['sha256'] == LINKER_SHA256 and sha(argv[0]) == LINKER_SHA256,
+            'Linker help executable pin differs')
+    lines = output.splitlines()
+    require(bool(lines) and lines[0] == LINKER_BANNER
+            and LINKER_USAGE in [line.strip() for line in lines]
+            and 'options:' in [line.strip() for line in lines], 'Linker help output differs')
+    # MSVC diagnostics have a severity followed by a colon or diagnostic code.
+    # /ERRORREPORT and similar help option names are not error diagnostics.
+    require(not re.search(r'\b(?:fatal\s+)?error(?:\s+[A-Z]+\d+)?\s*:', output, re.I),
+            'Linker help contains an error diagnostic')
 
 
 def save(path, value):
@@ -138,6 +165,10 @@ def validate(manifest, digest):
     for key in ('target', 'temp', 'cargo_home'):
         require(Path(plan[key]).resolve().is_relative_to(scratch), 'Hot path outside owned root: ' + key)
     require(Path(plan['cold']).resolve() == COLD.resolve(), 'Wrong cold root')
+    for key, expected in [('owner_completion', COLD / 'owner-completion.json'),
+                          ('active_progress', SCRATCH / 'progress.json'),
+                          ('active_dispatch', SCRATCH / 'dispatch.json')]:
+        require(Path(plan[key]).resolve() == expected.resolve(), 'Wrong output path: ' + key)
     for ref in plan['pins']:
         require(sha(ref['path']) == ref['sha256'], 'Pin differs: ' + ref['path'])
     require(Path(plan['script']).resolve() == Path(__file__).resolve(), 'Wrong owner script')
@@ -172,7 +203,7 @@ def dispatch(plan, manifest, digest):
     result = {'manifest_sha256': digest}
     try:
         result.update(reservation.dispatch(
-            'codex-g115', 'teacher-combined-check-001',
+            'codex-g115', WORK_ID,
             'release only after worker terminal and contained job empty',
             [sys.executable, str(Path(__file__).resolve()), '--worker', '--manifest', str(manifest), '--manifest-sha256', digest],
             str(scratch), python=sys.executable, busy_pattern=plan['busy_pattern'],
@@ -245,9 +276,10 @@ def worker(plan, digest):
             row.update(exit_code=code, seconds=time.monotonic()-start, finished_utc=reservation.now_utc(),
                        log=str(cold / log_path.name), log_sha256=sha(log_path))
             save(scratch / 'progress.json', result)
-            require(code == 0, 'Stage failed: ' + label)
+            output = log_path.read_text(encoding='utf-8', errors='replace')
+            check_stage_exit(plan, label, argv, code, output)
             guard(); clean(plan)
-            return log_path.read_text(encoding='utf-8', errors='replace')
+            return output
         except BaseException:
             # Includes the first progress write and log close after spawn.
             # Only the live Popen-owned child tree, within the reserved job.

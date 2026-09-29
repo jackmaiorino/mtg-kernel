@@ -1,4 +1,4 @@
-"""Targeted ASTRA #022 failure injection; no native child or reservation."""
+"""Targeted ASTRA #022/#033 checks; no native child or reservation."""
 from contextlib import ExitStack
 import json
 from pathlib import Path
@@ -101,6 +101,10 @@ class FailurePaths(unittest.TestCase):
         self.assertEqual(json.loads(self.final.read_text()), value)
 
     def test_worker_admission_failure_uses_fixed_paths_and_starts_no_stage(self):
+        prior = self.root / 'teacher-combined-check-001'
+        prior.mkdir()
+        historical = prior / 'owner-completion.json'
+        historical.write_bytes(b'preserved failed attempt001\n')
         args = ['packet', '--worker', '--manifest', str(self.root / 'untrusted.json'), '--manifest-sha256', 'a'*64]
         with patch.object(sys, 'argv', args), patch.object(packet, 'SCRATCH', self.scratch), \
                 patch.object(packet, 'COLD', self.cold), patch.object(packet, 'validate', side_effect=RuntimeError('Pin differs')), \
@@ -115,6 +119,100 @@ class FailurePaths(unittest.TestCase):
         self.assertIn('Pin differs', receipt['error'])
         self.assertLess(self.final.stat().st_size, 16384)
         self.assertEqual(receipt, json.loads((self.scratch / 'owner-completion.json').read_text()))
+        self.assertEqual(historical.read_bytes(), b'preserved failed attempt001\n')
+
+    def test_validation_accepts_002_and_rejects_each_old_output_path(self):
+        self.assertEqual(packet.WORK_ID, 'teacher-combined-check-002')
+        self.assertEqual(packet.SCRATCH, Path('D:/e-scratch/g115-teacher-combined-check-002'))
+        self.assertEqual(packet.COLD, Path('E:/mtg-g115-lineage-20260923/teacher-combined-check-002'))
+        plan = dict(schema='g115-teacher-combined-check/v1', tests=packet.TESTS, jobs=4,
+                    cap_bytes=32*packet.GIB, reserve_bytes=60*packet.GIB,
+                    memory_reserve_bytes=32*packet.GIB, pins=[], script=packet.__file__,
+                    scratch=str(packet.SCRATCH), cold=str(packet.COLD),
+                    owner_completion=str(packet.COLD / 'owner-completion.json'),
+                    active_progress=str(packet.SCRATCH / 'progress.json'),
+                    active_dispatch=str(packet.SCRATCH / 'dispatch.json'))
+        plan.update({key: str(packet.SCRATCH / key) for key in ('target', 'temp', 'cargo_home')})
+        manifest = self.root / 'manifest.json'
+        with patch.object(packet, 'sha', return_value='fixture'), patch.object(packet, 'clean'):
+            manifest.write_text(json.dumps(plan))
+            self.assertEqual(packet.validate(manifest, 'fixture'), plan)
+            for key in ('scratch', 'cold', 'target', 'temp', 'cargo_home',
+                        'owner_completion', 'active_progress', 'active_dispatch'):
+                with self.subTest(key=key):
+                    changed = dict(plan)
+                    changed[key] = plan[key].replace('check-002', 'check-001')
+                    manifest.write_text(json.dumps(changed))
+                    with self.assertRaises(RuntimeError):
+                        packet.validate(manifest, 'fixture')
+
+    def test_dispatch_uses_new_work_id_and_paths_without_native_execution(self):
+        reservation = SimpleNamespace(TEST_ROOT_ENV='G115_OFFLINE_UNUSED', now_utc=lambda: 'fixture',
+                                      dispatch=Mock(return_value={'state': 'dispatched'}))
+        plan = dict(scratch=str(self.scratch), cold=str(self.cold), source_commit='fixture',
+                    cap_bytes=32*packet.GIB, reserve_bytes=60*packet.GIB,
+                    memory_reserve_bytes=32*packet.GIB, busy_pattern='fixture')
+        with patch.dict(sys.modules, host_reservation_v1=reservation), \
+                patch.object(packet.shutil, 'disk_usage', return_value=SimpleNamespace(free=128*packet.GIB)), \
+                patch.object(packet, 'available_memory', return_value=128*packet.GIB), \
+                patch.object(packet, 'before_cutoff'), patch('builtins.print'):
+            packet.dispatch(plan, self.cold / 'manifest.json', 'fixture')
+        args, kwargs = reservation.dispatch.call_args
+        self.assertEqual(args[1], 'teacher-combined-check-002')
+        self.assertEqual(args[4], str(self.scratch))
+        self.assertEqual(kwargs['transport_record']['owner_completion'], str(self.final))
+        self.assertIn(str(self.cold / 'manifest.json'), args[3])
+
+
+class LinkerHelpExitPolicy(unittest.TestCase):
+    def setUp(self):
+        self.plan = {'tools': {'linker': {'path': str(packet.LINKER), 'sha256': packet.LINKER_SHA256}}}
+        self.argv = [str(packet.LINKER), '/?']
+        self.help = (packet.LINKER_BANNER + '\nCopyright (C) Microsoft Corporation.\n\n '
+                     + packet.LINKER_USAGE + '\n   options:\n      /ERRORREPORT:{NONE|PROMPT|QUEUE|SEND}\n')
+
+    def check(self, **overrides):
+        args = dict(plan=self.plan, label='version-linker', argv=self.argv, code=1100, output=self.help)
+        args.update(overrides)
+        packet.check_stage_exit(**args)
+
+    def test_exact_pinned_help_allows_1100_and_other_stage_zero_is_unchanged(self):
+        with patch.object(packet, 'sha', return_value=packet.LINKER_SHA256) as digest:
+            self.check()
+            digest.assert_called_once_with(self.argv[0])
+        # No executable pin read or new output policy for ordinary exit-zero stages.
+        with patch.object(packet, 'sha', side_effect=AssertionError('unexpected pin read')):
+            for label in ('version-cargo', 'version-rustc', 'test-build', 'test-00'):
+                self.check(label=label, argv=['fixture'], code=0, output='')
+
+    def test_nonzero_exception_rejects_other_stages_executables_arguments_and_codes(self):
+        cases = ([{'label': label} for label in ('version-cargo', 'version-rustc', 'test-build', 'test-00')]
+                 + [{'argv': ['C:/other/link.exe', '/?']}, {'argv': self.argv + ['/extra']},
+                    {'argv': [self.argv[0], '/VERSION']}, {'argv': [self.argv[0]]},
+                    {'code': 1}, {'code': 1101}])
+        with patch.object(packet, 'sha', return_value=packet.LINKER_SHA256):
+            for change in cases:
+                with self.subTest(change=change), self.assertRaisesRegex(RuntimeError, 'Stage failed'):
+                    self.check(**change)
+
+    def test_exception_requires_manifest_identity_and_actual_executable_hash(self):
+        for path, pin, actual in [('C:/other/link.exe', packet.LINKER_SHA256, packet.LINKER_SHA256),
+                                  (self.argv[0], 'wrong', packet.LINKER_SHA256),
+                                  (self.argv[0], packet.LINKER_SHA256, 'wrong')]:
+            with self.subTest(path=path, pin=pin, actual=actual), patch.object(packet, 'sha', return_value=actual):
+                with self.assertRaisesRegex(RuntimeError, 'executable pin differs'):
+                    self.check(plan={'tools': {'linker': {'path': path, 'sha256': pin}}})
+
+    def test_exception_requires_complete_help_without_actual_error_diagnostics(self):
+        bad_outputs = ['', self.help.replace('14.50.35725.0', '14.50.0.0'),
+                       self.help.replace(packet.LINKER_USAGE, ''), self.help.replace('options:', '')]
+        diagnostics = ['LINK : fatal error LNK1104: cannot open file',
+                       'unit.obj : error LNK2001: unresolved external symbol',
+                       'error: invalid option', 'link : ERROR LNK9999: failed']
+        with patch.object(packet, 'sha', return_value=packet.LINKER_SHA256):
+            for output in bad_outputs + [self.help + line + '\n' for line in diagnostics]:
+                with self.subTest(output=output), self.assertRaises(RuntimeError):
+                    self.check(output=output)
 
 
 if __name__ == '__main__':
