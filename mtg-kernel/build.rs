@@ -222,15 +222,23 @@ fn git_blob_contents(repo_root: &Path, entries: &[GitTreeEntry]) -> Vec<Option<V
         .stderr(Stdio::null())
         .spawn()
         .expect("git cat-file starts for tracked-tree binding");
-    {
-        let stdin = child.stdin.as_mut().expect("git cat-file stdin is piped");
-        for entry in entries.iter().filter(|entry| entry.kind == b"blob") {
-            writeln!(stdin, "{}", entry.object_id).expect("git cat-file accepts tracked blob ids");
-        }
-    }
-    let output = child
-        .wait_with_output()
-        .expect("git cat-file completes for tracked-tree binding");
+    let mut stdin = child.stdin.take().expect("git cat-file stdin is piped");
+    // Drain responses while submitting requests: either pipe can fill first.
+    let (output, write_result) = std::thread::scope(|scope| {
+        let writer = scope.spawn(move || -> std::io::Result<()> {
+            for entry in entries.iter().filter(|entry| entry.kind == b"blob") {
+                writeln!(stdin, "{}", entry.object_id)?;
+            }
+            drop(stdin);
+            Ok(())
+        });
+        let output = child.wait_with_output();
+        (output, writer.join())
+    });
+    write_result
+        .expect("git cat-file request writer completes")
+        .expect("git cat-file accepts tracked blob ids");
+    let output = output.expect("git cat-file completes for tracked-tree binding");
     if !output.status.success() {
         panic!("git cat-file failed for tracked-tree binding");
     }

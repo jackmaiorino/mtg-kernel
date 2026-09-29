@@ -121,10 +121,10 @@ class FailurePaths(unittest.TestCase):
         self.assertEqual(receipt, json.loads((self.scratch / 'owner-completion.json').read_text()))
         self.assertEqual(historical.read_bytes(), b'preserved failed attempt001\n')
 
-    def test_validation_accepts_002_and_rejects_each_old_output_path(self):
-        self.assertEqual(packet.WORK_ID, 'teacher-combined-check-002')
-        self.assertEqual(packet.SCRATCH, Path('D:/e-scratch/g115-teacher-combined-check-002'))
-        self.assertEqual(packet.COLD, Path('E:/mtg-g115-lineage-20260923/teacher-combined-check-002'))
+    def test_validation_accepts_003_and_rejects_each_old_output_path(self):
+        self.assertEqual(packet.WORK_ID, 'teacher-combined-check-003')
+        self.assertEqual(packet.SCRATCH, Path('D:/e-scratch/g115-teacher-combined-check-003'))
+        self.assertEqual(packet.COLD, Path('E:/mtg-g115-lineage-20260923/teacher-combined-check-003'))
         plan = dict(schema='g115-teacher-combined-check/v1', tests=packet.TESTS, jobs=4,
                     cap_bytes=32*packet.GIB, reserve_bytes=60*packet.GIB,
                     memory_reserve_bytes=32*packet.GIB, pins=[], script=packet.__file__,
@@ -139,12 +139,13 @@ class FailurePaths(unittest.TestCase):
             self.assertEqual(packet.validate(manifest, 'fixture'), plan)
             for key in ('scratch', 'cold', 'target', 'temp', 'cargo_home',
                         'owner_completion', 'active_progress', 'active_dispatch'):
-                with self.subTest(key=key):
-                    changed = dict(plan)
-                    changed[key] = plan[key].replace('check-002', 'check-001')
-                    manifest.write_text(json.dumps(changed))
-                    with self.assertRaises(RuntimeError):
-                        packet.validate(manifest, 'fixture')
+                for old in ('check-001', 'check-002'):
+                    with self.subTest(key=key, old=old):
+                        changed = dict(plan)
+                        changed[key] = plan[key].replace('check-003', old)
+                        manifest.write_text(json.dumps(changed))
+                        with self.assertRaises(RuntimeError):
+                            packet.validate(manifest, 'fixture')
 
     def test_dispatch_uses_new_work_id_and_paths_without_native_execution(self):
         reservation = SimpleNamespace(TEST_ROOT_ENV='G115_OFFLINE_UNUSED', now_utc=lambda: 'fixture',
@@ -158,7 +159,7 @@ class FailurePaths(unittest.TestCase):
                 patch.object(packet, 'before_cutoff'), patch('builtins.print'):
             packet.dispatch(plan, self.cold / 'manifest.json', 'fixture')
         args, kwargs = reservation.dispatch.call_args
-        self.assertEqual(args[1], 'teacher-combined-check-002')
+        self.assertEqual(args[1], 'teacher-combined-check-003')
         self.assertEqual(args[4], str(self.scratch))
         self.assertEqual(kwargs['transport_record']['owner_completion'], str(self.final))
         self.assertIn(str(self.cold / 'manifest.json'), args[3])

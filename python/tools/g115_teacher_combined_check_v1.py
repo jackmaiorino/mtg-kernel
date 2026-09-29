@@ -21,7 +21,7 @@ import traceback
 
 sys.dont_write_bytecode = True
 GIB = 1024 ** 3
-WORK_ID = 'teacher-combined-check-002'
+WORK_ID = 'teacher-combined-check-003'
 SCRATCH = Path('D:/e-scratch/g115-' + WORK_ID)
 COLD = Path('E:/mtg-g115-lineage-20260923') / WORK_ID
 LINKER = Path('C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/Tools/MSVC/14.50.35717/bin/Hostx64/x64/link.exe')
@@ -323,6 +323,35 @@ def worker(plan, digest):
         require(versions['cargo'].startswith('cargo 1.94.1 ') and versions['rustc'].startswith('rustc 1.94.1 '), 'Toolchain version differs')
         require('14.50.35725.0' in versions['linker'], 'Linker version differs')
         result['versions'] = versions
+        # ASTRA #043: exercise both repaired readers under the same contained
+        # worker, timeout, held-spawn placement and resource guards as the build.
+        import g115_git_batch_regression_v1 as pipe_regression
+        regression_root = scratch / 'pipe-regression'
+        fixture = pipe_regression.prepare(plan['source'], regression_root)
+        copy_new(fixture, cold / 'pipe-regression-source.rs')
+        executable = regression_root / 'fixture.exe'
+        run('pipe-regression-compile', [plan['tools']['rustc']['path'], str(fixture),
+            '--edition=2021', '-C', 'linker=' + plan['tools']['linker']['path'],
+            '-o', str(executable)], 120)
+        fixture_hash = sha(executable)
+        fixture_pin = Path('E:/pinned-binaries') / fixture_hash / executable.name
+        if fixture_pin.exists():
+            require(sha(fixture_pin) == fixture_hash, 'Existing regression binary differs')
+        else:
+            copy_new(executable, fixture_pin)
+        pinned_bytes += executable.stat().st_size
+        copy_new(executable, regression_root / 'git.exe')
+        for site, outcome in pipe_regression.CASES:
+            label = site + '-' + outcome
+            run('pipe-regression-' + label,
+                [str(executable), site, outcome, str(regression_root / label)], 30)
+        result['pipe_regression'] = pipe_regression.verify(regression_root)
+        result['pipe_regression']['source_sha256'] = sha(fixture)
+        result['pipe_regression']['binary'] = {'path': str(fixture_pin), 'sha256': fixture_hash}
+        for site in ('build', 'runtime'):
+            copy_new(regression_root / (site + '-success') / 'frames.bin',
+                     cold / ('pipe-regression-' + site + '-frames.bin'))
+        save(scratch / 'pipe-regression.json', result['pipe_regression'])
         output = run('test-build', plan['build_command'], plan['build_timeout_seconds'])
         artifacts = []
         for line in output.splitlines():
@@ -337,12 +366,12 @@ def worker(plan, digest):
         require(binary.resolve().is_relative_to(Path(plan['target']).resolve()), 'Artifact outside owned target')
         binary_hash = sha(binary)
         pinned = Path('E:/pinned-binaries') / binary_hash / binary.name
-        pinned_bytes = binary.stat().st_size
+        pinned_bytes += binary.stat().st_size
         if pinned.exists():
             require(sha(pinned) == binary_hash, 'Existing immutable binary differs')
         else:
             copy_new(binary, pinned)
-        result['binary'] = {'path': str(pinned), 'sha256': binary_hash, 'bytes': pinned_bytes}
+        result['binary'] = {'path': str(pinned), 'sha256': binary_hash, 'bytes': binary.stat().st_size}
         for index, name in enumerate(TESTS):
             output = run(f'test-{index:02}', [str(pinned), name, '--exact', '--include-ignored', '--test-threads=1', '--color', 'never', '--nocapture'], plan['test_timeout_seconds'])
             found = re.findall(r'^test (\S+) \.\.\. (ok|FAILED|ignored)\s*$', output, re.M)
