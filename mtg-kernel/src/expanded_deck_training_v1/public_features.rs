@@ -103,6 +103,10 @@ struct Trajectory {
     opponent: Option<ExpandedInferenceIdentityV1>,
     configuration_sha256: [String; 2],
     decisions: Vec<DecisionRecordV1>,
+    /// Absent on the existing public collector, which uses legacy draws.
+    /// Replay must carry the recorded identity through both opponent hooks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    learner_sampler: Option<String>,
     auxiliary: Vec<Option<PublicFeatureRowsV1>>,
     terminal: RlSessionTerminalV1,
     /// Present only when the D3 wrapper played the opponent seat.
@@ -111,6 +115,36 @@ struct Trajectory {
     /// Present only for an opt-in opponent kind (opponent kinds interface v1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     opponent_record: Option<opponent_kind::OpponentRecordV1>,
+}
+
+impl Trajectory {
+    fn validate_records(&self) -> Result<(), String> {
+        let sampler = self.learner_sampler.as_deref();
+        match (&self.search, &self.opponent_record) {
+            (None, None) => validate_episode_records_with_learner_sampler_v1(
+                &self.episode,
+                &self.configuration_sha256,
+                &self.decisions,
+                &self.terminal,
+                sampler,
+            ),
+            (Some(record), None) => record.validate(
+                &self.episode,
+                &self.configuration_sha256,
+                &self.decisions,
+                &self.terminal,
+                sampler,
+            ),
+            (None, Some(record)) => record.validate(
+                &self.episode,
+                &self.configuration_sha256,
+                &self.decisions,
+                &self.terminal,
+                sampler,
+            ),
+            (Some(_), Some(_)) => Err("two opponent records".into()),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -333,19 +367,7 @@ fn collect_with_opponent(
                         )),
                     ),
                 };
-                match (&search, &opponent_record) {
-                    (None, None) => {
-                        validate_episode_records_v1(episode, &hashes, &decisions, &terminal)?
-                    }
-                    (Some(record), None) => {
-                        record.validate(episode, &hashes, &decisions, &terminal)?
-                    }
-                    (None, Some(record)) => {
-                        record.validate(episode, &hashes, &decisions, &terminal)?
-                    }
-                    (Some(_), Some(_)) => return Err("two opponent records".into()),
-                }
-                return Ok(Trajectory {
+                let trajectory = Trajectory {
                     schema: schema.into(),
                     config_sha256: config_hash.into(),
                     optimizer_state_sha256: state_hash.into(),
@@ -354,11 +376,14 @@ fn collect_with_opponent(
                     opponent: identity,
                     configuration_sha256: hashes,
                     decisions,
+                    learner_sampler: None,
                     auxiliary,
                     terminal,
                     search,
                     opponent_record,
-                });
+                };
+                trajectory.validate_records()?;
+                return Ok(trajectory);
             }
             FastActorResponseV1::Decision(d) => {
                 ensure(
@@ -384,7 +409,9 @@ fn collect_with_opponent(
                             if audit_every
                                 .is_some_and(|n| search.decisions() % u64::from(n.max(1)) == 0)
                             {
-                                search_opponent::audit_live_root(search, net, &session, d, selected)?;
+                                search_opponent::audit_live_root(
+                                    search, net, &session, d, selected,
+                                )?;
                             }
                             auxiliary.push(None);
                             sampler_identity =
@@ -405,7 +432,13 @@ fn collect_with_opponent(
                                 policy.select_with_scores(&input).map_err(err)?;
                             let (tensor, public_rows) = policy.captured()?;
                             auxiliary.push(Some(public_rows.clone()));
-                            Seat::push_public_row(rows, &session, d, selected, scores.logits.len())?;
+                            Seat::push_public_row(
+                                rows,
+                                &session,
+                                d,
+                                selected,
+                                scores.logits.len(),
+                            )?;
                             (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
                         }
                         Seat::Legacy {
@@ -602,7 +635,10 @@ pub fn run(command: Command) -> Result<Value, String> {
     let config = &command.config;
     validate_entropy(config)?;
     let execution_gpu_ordinal = command.execution_gpu_ordinal.unwrap_or(config.gpu_ordinal);
-    ensure(execution_gpu_ordinal < 16, "execution GPU ordinal outside bounds")?;
+    ensure(
+        execution_gpu_ordinal < 16,
+        "execution GPU ordinal outside bounds",
+    )?;
     ensure(
         (1..=64).contains(&command.collector_workers),
         "public collector count outside bounds",
@@ -848,7 +884,10 @@ pub fn run(command: Command) -> Result<Value, String> {
             .iter()
             .map(|substeps| PublicTrainingGroup { substeps })
             .collect();
-        stage_seconds.insert("replay_targets_and_grouping", replay_started.elapsed().as_secs_f64());
+        stage_seconds.insert(
+            "replay_targets_and_grouping",
+            replay_started.elapsed().as_secs_f64(),
+        );
         let update_started = std::time::Instant::now();
         device
             .update_groups(
@@ -866,7 +905,10 @@ pub fn run(command: Command) -> Result<Value, String> {
         stage_seconds.insert("device_update_call", update_started.elapsed().as_secs_f64());
         let snapshot_started = std::time::Instant::now();
         (legacy, public) = device.snapshot().map_err(err)?;
-        stage_seconds.insert("device_snapshot_call", snapshot_started.elapsed().as_secs_f64());
+        stage_seconds.insert(
+            "device_snapshot_call",
+            snapshot_started.elapsed().as_secs_f64(),
+        );
         let install_started = std::time::Instant::now();
         validate_projection_mode(config, &public)?;
         ensure(
@@ -889,13 +931,19 @@ pub fn run(command: Command) -> Result<Value, String> {
             )?;
         }
         policy.install(&legacy.parameters, weights(&public)?)?;
-        stage_seconds.insert("validate_and_install", install_started.elapsed().as_secs_f64());
+        stage_seconds.insert(
+            "validate_and_install",
+            install_started.elapsed().as_secs_f64(),
+        );
         let encode_started = std::time::Instant::now();
         let optimizer = public_training::snapshot::encode(&legacy, &public).map_err(err)?;
         stage_seconds.insert("optimizer_encoding", encode_started.elapsed().as_secs_f64());
         let publish_started = std::time::Instant::now();
         let optimizer_hash = publish_bytes(&directory, "optimizer.json", &optimizer)?;
-        stage_seconds.insert("optimizer_publication", publish_started.elapsed().as_secs_f64());
+        stage_seconds.insert(
+            "optimizer_publication",
+            publish_started.elapsed().as_secs_f64(),
+        );
         let checkpoint_started = std::time::Instant::now();
         let checkpoint = Checkpoint {
             schema: "mtg-kernel-public-input-checkpoint/v1".into(),
@@ -906,7 +954,10 @@ pub fn run(command: Command) -> Result<Value, String> {
             trajectory_sha256: trajectory_hashes,
         };
         publish_json(&directory, "checkpoint.json", &checkpoint)?;
-        stage_seconds.insert("checkpoint_publication", checkpoint_started.elapsed().as_secs_f64());
+        stage_seconds.insert(
+            "checkpoint_publication",
+            checkpoint_started.elapsed().as_secs_f64(),
+        );
         let receipt = json!({"update":update,"execution_gpu_ordinal":execution_gpu_ordinal,"collector_workers":command.collector_workers,"episodes":trajectories.len(),"natural_games":trajectories.len(),"learner_groups":groups.len(),"learner_substeps":steps.iter().map(Vec::len).sum::<usize>(),
             "physical_decisions":trajectories.iter().map(|t|t.terminal.physical_decision_count).sum::<u64>(),"before_state_sha256":before,"after_state_sha256":optimizer_hash,
             "legacy_adam_step":legacy.adam_step,"public_adam_step":public.adam_step,"advantage_statistics":statistics,"collection_seconds":collection_seconds,"seconds":started.elapsed().as_secs_f64(),

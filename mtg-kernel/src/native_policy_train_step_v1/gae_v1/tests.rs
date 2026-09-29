@@ -274,3 +274,322 @@ fn phase1_gae_invalid_inputs_reject_before_mutation() {
 
     assert_eq!(model.parameter_snapshot_v1(), before.parameter_snapshot_v1());
 }
+
+fn line_b_target(fixture: &Fixture) -> crate::line_b_teacher_target_v1::LineBSoftmaxV1 {
+    let logits: Vec<f64> = fixture.logits[1]
+        .iter()
+        .map(|bits| f64::from(f32::from_bits(*bits)))
+        .collect();
+    let returns: Vec<f64> = (0..logits.len()).map(|i| [1.0, 0.0, -1.0][i % 3]).collect();
+    crate::line_b_teacher_target_v1::line_b_teacher_target_v1(&logits, &returns, 0.25).unwrap()
+}
+
+/// Two selected roots on tensor 1 (group 0 substep 1 and group 1 substep 0);
+/// N = 2 whatever their availability.
+fn line_b_input(
+    direction: crate::line_b_teacher_target_v1::LineBDivergenceV1,
+    coefficient: f64,
+    targets: [Option<crate::line_b_teacher_target_v1::LineBSoftmaxV1>; 2],
+) -> LineBAuxiliaryInputV1 {
+    let [first, second] = targets;
+    LineBAuxiliaryInputV1 {
+        direction,
+        coefficient,
+        roots: vec![
+            LineBAuxiliaryRootV1 {
+                group_index: 0,
+                substep_index: 1,
+                target: first,
+            },
+            LineBAuxiliaryRootV1 {
+                group_index: 1,
+                substep_index: 0,
+                target: second,
+            },
+        ],
+    }
+}
+
+const LINE_B_TARGETS: [f32; 2] = [0.3, -0.2];
+const LINE_B_ADVANTAGES: [f32; 2] = [0.15, -0.4];
+
+fn line_b_step(
+    model: &NativePolicyValueNetV1,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    input: &LineBAuxiliaryInputV1,
+) -> Result<
+    (
+        NativePolicyValueTrainStateV1,
+        NativePolicyTrainStepResultV1,
+        LineBAuxiliaryResultV1,
+    ),
+    NativePolicyTrainErrorV1,
+> {
+    let mut state = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
+    let config = state.model.feature_transfer_config_v3();
+    let (result, auxiliary) = state.train_step_gae_line_b_v1(
+        groups,
+        &LINE_B_TARGETS,
+        &LINE_B_ADVANTAGES,
+        VC,
+        LR,
+        None,
+        config,
+        input,
+    )?;
+    Ok((state, result, auxiliary))
+}
+
+/// Line (b) with every selected root censored, or with c = 0, is the
+/// ordinary GAE update bit for bit (result, gauge record and state).
+#[test]
+fn line_b_censored_roots_and_zero_coefficient_leave_the_gae_update_unchanged() {
+    use crate::line_b_teacher_target_v1::LineBDivergenceV1;
+    let model = model();
+    let fixture = Fixture::capture(&model);
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let mut ordinary = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
+    let expected = ordinary
+        .train_step_gae_feature_transfer_v3(&groups, &LINE_B_TARGETS, &LINE_B_ADVANTAGES, VC, LR)
+        .unwrap();
+    for input in [
+        line_b_input(LineBDivergenceV1::Reverse, 0.1, [None, None]),
+        line_b_input(
+            LineBDivergenceV1::Forward,
+            0.0,
+            [Some(line_b_target(&fixture)), None],
+        ),
+    ] {
+        let (state, result, auxiliary) = line_b_step(&model, &groups, &input).unwrap();
+        assert_eq!(result.gradients, expected.gradients);
+        assert_eq!(result.scorer_bias_gauge, expected.scorer_bias_gauge);
+        assert_eq!(state_bits(&state), state_bits(&ordinary));
+        assert_eq!(auxiliary.auxiliary_head_l2, 0.0);
+        assert_eq!(auxiliary.auxiliary_loss, 0.0);
+        assert!(auxiliary.ordinary_head_l2 > 0.0);
+    }
+}
+
+/// The auxiliary gradient (combined minus ordinary) matches central
+/// differences of (c/N) KL computed from the model's own forward, for both
+/// directions, through the scorer, the trunk and the embeddings; a censored
+/// root stays in N; the gauge passes with the auxiliary term present.
+#[test]
+fn line_b_auxiliary_gradients_match_central_differences_in_both_directions() {
+    use crate::line_b_teacher_target_v1::{line_b_divergence_v1, LineBDivergenceV1};
+    let model = model();
+    let fixture = Fixture::capture(&model);
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let target = line_b_target(&fixture);
+    let mut ordinary = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
+    let base = ordinary
+        .train_step_gae_feature_transfer_v3(&groups, &LINE_B_TARGETS, &LINE_B_ADVANTAGES, VC, LR)
+        .unwrap();
+    let mut norms = Vec::new();
+    for direction in [LineBDivergenceV1::Reverse, LineBDivergenceV1::Forward] {
+        let input = line_b_input(direction, 1.0, [Some(target.clone()), None]);
+        let (_, result, auxiliary) = line_b_step(&model, &groups, &input).unwrap();
+        assert!(auxiliary.divergences_before[0].is_some());
+        assert!(auxiliary.divergences_before[1].is_none());
+        assert!(auxiliary.auxiliary_head_l2 > 0.0);
+        norms.push(auxiliary.auxiliary_head_l2);
+        let oracle = |model: &NativePolicyValueNetV1| {
+            let NativePolicyForwardInputV1::Encoded(view) = &groups[0].substeps[1].forward else {
+                unreachable!()
+            };
+            let output = model.forward_feature_transfer_v3(**view).unwrap();
+            let logits: Vec<f64> = output.logits.iter().map(|&v| f64::from(v)).collect();
+            // c / N with c = 1 and N = 2 (the censored root counts).
+            0.5 * line_b_divergence_v1(direction, &logits, &target)
+                .unwrap()
+                .divergence
+        };
+        let before = oracle(&model);
+        assert_eq!(auxiliary.auxiliary_loss.to_bits(), before.to_bits());
+        let epsilon = 2e-3f32;
+        for name in [
+            "scorer.2.weight",
+            "scorer.0.weight",
+            "card_embedding.weight",
+        ] {
+            let combined = result.gradients.iter().find(|p| p.name == name).unwrap();
+            let plain = base.gradients.iter().find(|p| p.name == name).unwrap();
+            let extra: Vec<f32> = combined
+                .values
+                .iter()
+                .zip(&plain.values)
+                .map(|(a, b)| a - b)
+                .collect();
+            let (index, analytic) = extra
+                .iter()
+                .copied()
+                .enumerate()
+                .max_by(|a, b| a.1.abs().total_cmp(&b.1.abs()))
+                .unwrap();
+            assert!(
+                analytic.abs() > 1e-7,
+                "{name} has no auxiliary derivative witness"
+            );
+            let numerical = (oracle(&perturbed_model(&model, name, index, epsilon))
+                - oracle(&perturbed_model(&model, name, index, -epsilon)))
+                / (2.0 * f64::from(epsilon));
+            let tolerance = 3e-3 + 3e-2 * f64::from(analytic.abs());
+            assert!(
+                (numerical - f64::from(analytic)).abs() <= tolerance,
+                "{direction:?} {name}[{index}]: numerical={numerical}, analytic={analytic}"
+            );
+        }
+        assert!(auxiliary.auxiliary_bias_residual.abs() < 1e-5);
+        assert!(
+            result.scorer_bias_gauge.substep_bounds.len()
+                > base.scorer_bias_gauge.substep_bounds.len()
+        );
+    }
+    assert_ne!(norms[0], norms[1], "the two directions must differ");
+}
+
+#[test]
+fn line_b_invalid_auxiliary_inputs_reject_before_mutation() {
+    use crate::line_b_teacher_target_v1::LineBDivergenceV1;
+    let model = model();
+    let fixture = Fixture::capture(&model);
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let target = line_b_target(&fixture);
+    let wide = {
+        let mut logits: Vec<f64> = fixture.logits[1]
+            .iter()
+            .map(|bits| f64::from(f32::from_bits(*bits)))
+            .collect();
+        logits.push(0.0);
+        let returns = vec![0.0; logits.len()];
+        crate::line_b_teacher_target_v1::line_b_teacher_target_v1(&logits, &returns, 0.25).unwrap()
+    };
+    let mut duplicate = line_b_input(
+        LineBDivergenceV1::Reverse,
+        0.1,
+        [Some(target.clone()), None],
+    );
+    duplicate.roots[1].group_index = 0;
+    duplicate.roots[1].substep_index = 1;
+    let mut outside = line_b_input(LineBDivergenceV1::Reverse, 0.1, [None, None]);
+    outside.roots[1].group_index = 7;
+    let cases = [
+        (
+            LineBAuxiliaryInputV1 {
+                direction: LineBDivergenceV1::Reverse,
+                coefficient: 0.1,
+                roots: Vec::new(),
+            },
+            "line-b-auxiliary-no-roots",
+        ),
+        (
+            line_b_input(LineBDivergenceV1::Reverse, -0.1, [None, None]),
+            "line-b-auxiliary-coefficient",
+        ),
+        (
+            line_b_input(LineBDivergenceV1::Reverse, f64::NAN, [None, None]),
+            "line-b-auxiliary-coefficient",
+        ),
+        (duplicate, "line-b-auxiliary-duplicate-root"),
+        (outside, "line-b-auxiliary-root-outside-batch"),
+        (
+            line_b_input(LineBDivergenceV1::Forward, 0.1, [Some(wide), None]),
+            "line-b-auxiliary-divergence",
+        ),
+    ];
+    let initial = state_bits(&NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap());
+    for (input, code) in cases {
+        let mut state = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
+        let config = state.model.feature_transfer_config_v3();
+        let error = state
+            .train_step_gae_line_b_v1(
+                &groups,
+                &LINE_B_TARGETS,
+                &LINE_B_ADVANTAGES,
+                VC,
+                LR,
+                None,
+                config,
+                &input,
+            )
+            .unwrap_err();
+        assert_eq!(error, NativePolicyTrainErrorV1::LineBAuxiliary { code });
+        assert_eq!(state_bits(&state), initial, "{code}");
+    }
+}
+
+/// CODEX 11:23 item 6, the permuted-target control (offline): available
+/// roots of equal menu width rotate their targets across roots, a width with
+/// one available root rotates its own action coordinates, censored roots stay
+/// censored, and on a nondegenerate fixture (two roots with different logits
+/// and different targets) the auxiliary gradient responds to target identity.
+#[test]
+fn line_b_permuted_targets_rotate_and_move_the_auxiliary_gradient() {
+    use crate::line_b_teacher_target_v1::{line_b_teacher_target_v1, LineBDivergenceV1};
+    let model = model();
+    let fixture = Fixture::capture(&model);
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let target = |tensor: usize, pattern: [f64; 3]| {
+        let logits: Vec<f64> = fixture.logits[tensor]
+            .iter()
+            .map(|bits| f64::from(f32::from_bits(*bits)))
+            .collect();
+        let returns: Vec<f64> = (0..logits.len()).map(|i| pattern[i % 3]).collect();
+        line_b_teacher_target_v1(&logits, &returns, 0.25).unwrap()
+    };
+    let (a, b) = (target(0, [1.0, 0.0, -1.0]), target(1, [-1.0, 1.0, 0.0]));
+    assert_eq!(a.log_probabilities.len(), b.log_probabilities.len());
+    let root = |group_index: usize, target| LineBAuxiliaryRootV1 {
+        group_index,
+        substep_index: 0,
+        target,
+    };
+    let input = LineBAuxiliaryInputV1 {
+        direction: LineBDivergenceV1::Reverse,
+        coefficient: 1.0,
+        roots: vec![root(0, Some(a.clone())), root(1, Some(b.clone()))],
+    };
+    let (permuted, kinds) = line_b_permuted_input_v1(&input);
+    assert_eq!(kinds, vec![Some(LineBPermutationKindV1::AcrossRoot); 2]);
+    assert_eq!(permuted.roots[0].target.as_ref(), Some(&b));
+    assert_eq!(permuted.roots[1].target.as_ref(), Some(&a));
+    let single = LineBAuxiliaryInputV1 {
+        direction: LineBDivergenceV1::Forward,
+        coefficient: 1.0,
+        roots: vec![root(0, Some(a.clone())), root(1, None)],
+    };
+    let (within, kinds) = line_b_permuted_input_v1(&single);
+    assert_eq!(kinds, vec![Some(LineBPermutationKindV1::WithinRoot), None]);
+    assert!(within.roots[1].target.is_none());
+    let rotated = within.roots[0].target.as_ref().unwrap();
+    let width = a.log_probabilities.len();
+    for action in 0..width {
+        let source = (action + 1) % width;
+        assert_eq!(
+            rotated.log_probabilities[action].to_bits(),
+            a.log_probabilities[source].to_bits()
+        );
+        assert_eq!(
+            rotated.probabilities[action].to_bits(),
+            a.probabilities[source].to_bits()
+        );
+    }
+    let gradients = |input: &LineBAuxiliaryInputV1| {
+        let (_, result, auxiliary) = line_b_step(&model, &groups, input).unwrap();
+        (result.gradients, auxiliary.auxiliary_loss)
+    };
+    let (original, original_loss) = gradients(&input);
+    let (control, control_loss) = gradients(&permuted);
+    assert_ne!(original_loss.to_bits(), control_loss.to_bits());
+    assert_ne!(
+        original, control,
+        "the auxiliary term must respond to target identity"
+    );
+    let (_, within_loss) = gradients(&within);
+    let (_, single_loss) = gradients(&single);
+    assert_ne!(within_loss.to_bits(), single_loss.to_bits());
+}

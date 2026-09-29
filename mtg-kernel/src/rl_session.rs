@@ -4284,6 +4284,105 @@ impl FastActorSessionV1 {
         Ok(copy)
     }
 
+    /// Test-only: `owner`'s objects unseen by `observer`, in the V4 search
+    /// sampler's slot order (the hand unless `owner` is the observer, then the
+    /// library), skipping every object the observer knows.
+    #[cfg(test)]
+    fn diagnostic_unseen_objects_v1(&self, observer: PlayerId, owner: PlayerId) -> Vec<ObjectId> {
+        let state = &self.state;
+        let mut unseen = Vec::new();
+        if owner != observer {
+            for &id in &state.players[owner.index()].hand {
+                let generation = state.objects.get(id).zone_change_count;
+                if !state
+                    .known_hand_cards(observer, owner)
+                    .iter()
+                    .any(|k| k.object == id && k.zone_change_count == generation)
+                {
+                    unseen.push(id);
+                }
+            }
+        }
+        for (position, &id) in state.players[owner.index()].library.iter().enumerate() {
+            let generation = state.objects.get(id).zone_change_count;
+            if !state.known_library_cards(observer, owner).iter().any(|k| {
+                k.position as usize == position
+                    && k.object == id
+                    && k.zone_change_count == generation
+            }) {
+                unseen.push(id);
+            }
+        }
+        unseen
+    }
+
+    /// Test-only different-shuffle partner (FABLE-REVIEW-20260927 exit-teacher
+    /// change 5c): the card identities of the first two unseen `owner` objects
+    /// holding different cards are exchanged. The observer's information set
+    /// is unchanged; the (object id, card) assignment is not.
+    #[cfg(test)]
+    pub(crate) fn diagnostic_exchanged_unseen_cards_clone_v1(
+        &self,
+        observer: PlayerId,
+        owner: PlayerId,
+    ) -> Result<Self, String> {
+        let unseen = self.diagnostic_unseen_objects_v1(observer, owner);
+        let first = *unseen.first().ok_or("no unseen object")?;
+        let card = self.state.objects.get(first).card_def;
+        let second = *unseen
+            .iter()
+            .find(|&&id| self.state.objects.get(id).card_def != card)
+            .ok_or("every unseen object holds one card")?;
+        let mut copy = self.clone();
+        for (target, source) in [(first, second), (second, first)] {
+            let (card_def, name) = {
+                let from = self.state.objects.get(source);
+                (from.card_def, from.name.clone())
+            };
+            let object = copy.state.objects.get_mut(target);
+            if object.v4 != crate::state::ObjectStateV4::from_card_def(object.card_def) {
+                return Err("unseen object is not pristine".into());
+            }
+            object.card_def = card_def;
+            object.name = name;
+            object.v4 = crate::state::ObjectStateV4::from_card_def(card_def);
+        }
+        Ok(copy)
+    }
+
+    /// Test-only power partner: every unseen `owner` object takes the first
+    /// one's card, so the owner's hidden card multiset changes.
+    #[cfg(test)]
+    pub(crate) fn diagnostic_uniform_unseen_cards_clone_v1(
+        &self,
+        observer: PlayerId,
+        owner: PlayerId,
+    ) -> Result<Self, String> {
+        let unseen = self.diagnostic_unseen_objects_v1(observer, owner);
+        let first = *unseen.first().ok_or("no unseen object")?;
+        let (card_def, name) = {
+            let from = self.state.objects.get(first);
+            (from.card_def, from.name.clone())
+        };
+        let mut copy = self.clone();
+        for id in unseen {
+            let object = copy.state.objects.get_mut(id);
+            object.card_def = card_def;
+            object.name = name.clone();
+            object.v4 = crate::state::ObjectStateV4::from_card_def(card_def);
+        }
+        Ok(copy)
+    }
+
+    /// Test-only: the card on top of `owner`'s library (the next draw).
+    #[cfg(test)]
+    pub(crate) fn diagnostic_library_top_card_v1(&self, owner: PlayerId) -> Option<u16> {
+        self.state.players[owner.index()]
+            .library
+            .first()
+            .map(|&id| self.state.objects.get(id).card_def)
+    }
+
     /// Summary hook over the exact currently offered actions. Returns only
     /// card identities already known to the acting player in their own hand.
     pub(crate) fn current_offered_hand_cast_ids_v1(&self) -> Vec<u16> {

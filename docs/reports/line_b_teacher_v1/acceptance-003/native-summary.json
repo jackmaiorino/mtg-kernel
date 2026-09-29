@@ -1,0 +1,105 @@
+{
+  "source_commit": "c3e949af5321c2679e79b7210db072a1114bbd46",
+  "completed_utc": "2026-09-29T00:07:24.049+00:00",
+  "cli": {
+    "path": "E:\\pinned-binaries\\467114faaeef3b38a0f4ca4aaf9df2fb7a2ab0e54697b251349c1da761c37920\\expanded_deck_training_v1.exe",
+    "sha256": "467114faaeef3b38a0f4ca4aaf9df2fb7a2ab0e54697b251349c1da761c37920",
+    "bytes": 30641664
+  },
+  "tests": [
+    {
+      "filter": "unclamped_learner_collection_is_serial_parallel_identical_and_keeps_opponents_legacy",
+      "passed": 1,
+      "failed": 0,
+      "log": "E:\\mtg-astra-exit-teacher-20260928\\native-check-002\\test-00.log",
+      "log_sha256": "de41fefea9137164044d7850bba3facefbddea1011bb32e48b28c5c5e3b5b650"
+    },
+    {
+      "filter": "line_b_teacher_rollouts_are_worker_invariant_fresh_and_seeded",
+      "passed": 1,
+      "failed": 0,
+      "log": "E:\\mtg-astra-exit-teacher-20260928\\native-check-002\\test-01.log",
+      "log_sha256": "59830a51a47df5bde67f358451aad0db8676272b4b9bd116c5403e85bc3e5c89"
+    },
+    {
+      "filter": "public_features::search_opponent::boundary_tests",
+      "passed": 6,
+      "failed": 0,
+      "log": "E:\\mtg-astra-exit-teacher-20260928\\native-check-002\\test-02.log",
+      "log_sha256": "5e15a51b10624fa91123107bf2d82a34f5f790983fa6db633b2d614e5972814e"
+    },
+    {
+      "filter": "public_features::search_opponent::collect_tests",
+      "passed": 5,
+      "failed": 0,
+      "log": "E:\\mtg-astra-exit-teacher-20260928\\native-check-002\\test-03.log",
+      "log_sha256": "a9b908cb513dff41edbfdb9b0b324efb4ed6a1c8e4ad05b8165c4f9b5d513f8d"
+    },
+    {
+      "filter": "public_features::search_opponent::contract_tests",
+      "passed": 3,
+      "failed": 0,
+      "log": "E:\\mtg-astra-exit-teacher-20260928\\native-check-002\\test-04.log",
+      "log_sha256": "14a3415fcb156e25bb5c1bd7a0870b186705e4d00d883262256289262d43e172"
+    },
+    {
+      "filter": "legacy_v3_games_record_singletons_unscored_validate_and_refuse_tampering",
+      "passed": 1,
+      "failed": 0,
+      "log": "E:\\mtg-astra-exit-teacher-20260928\\native-check-002\\test-05.log",
+      "log_sha256": "7e61733ebedf9ae532d59bb5dba6494a4ab6c890c5fd6f1fbd7f8cb89e4ebb3b"
+    },
+    {
+      "filter": "unclamped_learner_rows_replay_with_legacy_singletons_and_refuse_tampering",
+      "passed": 1,
+      "failed": 0,
+      "log": "E:\\mtg-astra-exit-teacher-20260928\\native-check-002\\test-06.log",
+      "log_sha256": "ffc6e87ce790a325993487fc577a9fcfde17e4cde20dc0e1116d9265b4ba9317"
+    },
+    {
+      "filter": "census_refuses_missing_or_empty_trajectory_list",
+      "passed": 1,
+      "failed": 0,
+      "log": "E:\\mtg-astra-exit-teacher-20260928\\native-check-002\\test-07.log",
+      "log_sha256": "dafaffb5f6c5e91027f12717d70a5f434612d577c1b77955b938af9d57e4b99d"
+    },
+    {
+      "filter": "public_checkpoint_games_validate_replay_and_refuse_tampering",
+      "passed": 1,
+      "failed": 0,
+      "log": "E:\\mtg-astra-exit-teacher-20260928\\native-check-002\\test-08.log",
+      "log_sha256": "9bf0b60bfd52f7accb70631687b1931a77310a6f229fa4f7176aa96f72acbbff"
+    }
+  ],
+  "passed": 20,
+  "failed": 0,
+  "canonical_release": {
+    "observed_utc": "2026-09-29T00:08:56.707174+00:00",
+    "completed_token": "86aa2fa904e245e883f053d49a2ada83",
+    "status": {
+      "boot_id": "bootid:144",
+      "host": "DESKTOP-DJ1C40R",
+      "root": "C:\\mtg-node\\host-lock",
+      "state": "free",
+      "test_root": false
+    }
+  },
+  "cold_native_record": "E:\\mtg-astra-exit-teacher-20260928\\native-check-002",
+  "cold_acceptance": "E:\\mtg-astra-exit-teacher-20260928\\acceptance-003",
+  "acceptance_bytes": 380105150,
+  "acceptance_files": 127,
+  "pins": {
+    "completion.json": "f2833d3fc2fd868742294f2028d52fa939d04c7cdf569b85c4dcd583610dcffc",
+    "manifest.json": "6def655476e74a03cbf3fc632add5d34f28eadbd0d9f267449f14912e140be15",
+    "test-build.log": "6a949a32358b9bbcae50408a730d0bd85b348e037ed3f804ebec06730df24802",
+    "cli-build.log": "309c2ed69a209f38195662dac322848f57ca157b0bc0d6e167cb11844da54c00",
+    "acceptance-inventory.json": "a46a95ff4c9186eff056927d3614a164f9246b1032a1c776f2e11a98393205c7",
+    "g115-artifacts.json": "7468afcd5dd2618a39360fb889bbe8587cc09e06510cd9ceeba4d0417fefd041",
+    "artifacts.json": "520d03ecf19a27dd6e4c8ceab543895cccd2375e0ae262e8b095e57c97747c43",
+    "release-observed.json": "9f6c27a2a80d1632179a62e2474a1be34c535c8e28b7ada99a7aa877b058d2cd",
+    "comparison-001-003.json": "f019ed5e7737e9a9483492090e7b6603a99588d1c6771c5ba481e9ad86fd4e2b",
+    "comparison-002-003.json": "25c3820f49e0406ae0bcc5d3379907a9c8452be5af9fad40ecb20f2a256aa14d"
+  },
+  "acceptance_receipt_sha256": "2e17de502e24e73e251b959fdaaaece5629695e4d97ace1c01afe99443142dbf",
+  "nonclaim": "Engineering reproduction only. Independent revision/results review and g115 same-build witness remain open. No merge or launcher clearance."
+}

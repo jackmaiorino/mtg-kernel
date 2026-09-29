@@ -141,6 +141,7 @@ pub(super) fn collect_parallel_v1(
     episodes: Vec<ExpandedEpisodeV1>,
     workers: usize,
     max_non_natural_episode_fraction: f32,
+    collection_sampler: CollectionSamplerV1,
     output_directory: PathBuf,
 ) -> Result<Value, String> {
     let started = Instant::now();
@@ -160,7 +161,8 @@ pub(super) fn collect_parallel_v1(
         !output_directory.exists(),
         "output directory already exists",
     )?;
-    let (policy, state, transfer) = initialize_with_transfer_context(&source)?;
+    let (mut policy, state, transfer) = initialize_with_transfer_context(&source)?;
+    collection_sampler.apply_to_learner_v1(&mut policy);
     if let Some(context) = &transfer {
         context.validate_batch(&episodes)?;
     }
@@ -208,8 +210,14 @@ pub(super) fn collect_parallel_v1(
                     .as_ref()
                     .is_some_and(|entry| entry.behavior.source == source)
             {
+                // A frozen opponent keeps its production sampler even when
+                // it shares the learner's source (for example `initial`
+                // at the first update), exactly as the serial loader does.
                 collector.opponent_cache.entry = Some(LoadedOpponentV1 {
-                    policy: collector.policy.fork_for_collection_v3()?,
+                    policy: collector
+                        .policy
+                        .fork_for_collection_v3()?
+                        .with_legacy_collection_sampler_v1(),
                     behavior: learner.clone(),
                 });
             }
@@ -256,7 +264,11 @@ pub(super) fn collect_parallel_v1(
             schema: NON_NATURAL_LEDGER_SCHEMA_V1.into(),
             entries: ledger_entries,
         };
-        Some(publish_json(&output_directory, "non-natural.json", &document)?)
+        Some(publish_json(
+            &output_directory,
+            "non-natural.json",
+            &document,
+        )?)
     } else {
         None
     };
@@ -283,6 +295,7 @@ pub(super) fn collect_parallel_v1(
         "collection_elapsed_seconds":started.elapsed().as_secs_f64(),
         "collection_worker_timings":worker_timings,
     });
+    collection_sampler.record_v1(&mut result);
     if let Some(pin) = non_natural_ledger_pin {
         result["non_natural_ledger"] = json!(pin);
     }
@@ -457,6 +470,7 @@ mod tests {
             episodes: episodes.clone(),
             workers: 2,
             max_non_natural_episode_fraction: 0.5,
+            collection_sampler: CollectionSamplerV1::Legacy,
             output_directory: root.join("collect-admitted"),
         });
         clear_force_non_natural_seeds_for_test_v1([episodes[1].seed]);
@@ -484,6 +498,7 @@ mod tests {
             episodes,
             workers: 2,
             max_non_natural_episode_fraction: 0.1,
+            collection_sampler: CollectionSamplerV1::Legacy,
             output_directory: root.join("collect-fraction-capped"),
         })
         .unwrap_err();
@@ -575,6 +590,230 @@ mod tests {
             let (parallel, _) =
                 ordered_parallel_jobs_v1(contexts, episodes.len(), collect).unwrap();
             assert_eq!(parallel, serial, "worker count {workers}");
+        }
+    }
+
+    /// Line (b) collection sampler end to end through the real commands:
+    /// serial Collect and CollectParallel publish byte-identical trajectories.
+    /// Learner rows carry the unclamped identity at every width; opponent
+    /// rows keep the legacy samplers, including a current-self opponent (the
+    /// `initial` assignment at the first update, forked from the learner in
+    /// the parallel path). Tampered identities or selections fail
+    /// validation, and the legacy default publishes no new key.
+    #[test]
+    fn unclamped_learner_collection_is_serial_parallel_identical_and_keeps_opponents_legacy() {
+        let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
+        let root =
+            std::env::temp_dir().join(format!("expanded-collect-unclamped-{}", std::process::id()));
+        let source_struct =
+            fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
+                &root.join("source"),
+                feature_identity,
+                |_parameters| {},
+            );
+        let descriptor_path = root.join("descriptor.json");
+        let descriptor_bytes = serde_json::to_vec(&source_struct).unwrap();
+        fs::write(&descriptor_path, &descriptor_bytes).unwrap();
+        let source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: descriptor_path.canonicalize().unwrap(),
+                sha256: sha(&descriptor_bytes),
+            },
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: feature_identity.feature_contract_digest.into(),
+                expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
+            },
+            checkpoint: None,
+        };
+        let deck = |id: &str| {
+            let registration =
+                crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(id).unwrap();
+            let cards = registration.registered_configuration();
+            ExpandedDeckListV1 {
+                label: id.into(),
+                mainboard: cards.mainboard().to_vec(),
+                sideboard: cards.sideboard().to_vec(),
+            }
+        };
+        let decks = [deck("Burn"), deck("Faeries")];
+        let episodes: Vec<_> = (0..4u64)
+            .map(|index| ExpandedEpisodeV1 {
+                id: format!("unclamped-{index}"),
+                seed: 2_026_092_701 + index,
+                starting_player: (index % 2) as u8,
+                learner_seat: (index % 2) as u8,
+                opponent: (index >= 2).then(|| source.clone()),
+                opponent_search: None,
+                opponent_kind: None,
+                registered: decks.clone(),
+                selected: decks.clone(),
+                postboard: false,
+                max_physical_decisions: 100_000,
+                max_policy_steps: 1_000_000,
+            })
+            .collect();
+        let run = |label: &str, sampler: CollectionSamplerV1, workers: usize| {
+            let output_directory = root.join(label);
+            let command = if workers == 1 {
+                ExpandedTrainingCommandV1::Collect {
+                    source: source.clone(),
+                    episodes: episodes.clone(),
+                    max_non_natural_episode_fraction: 0.0,
+                    collection_sampler: sampler,
+                    output_directory,
+                }
+            } else {
+                ExpandedTrainingCommandV1::CollectParallel {
+                    source: source.clone(),
+                    episodes: episodes.clone(),
+                    workers,
+                    max_non_natural_episode_fraction: 0.0,
+                    collection_sampler: sampler,
+                    output_directory,
+                }
+            };
+            let result = execute_v1(command).unwrap();
+            assert_eq!(
+                result.get("collection_sampler").and_then(Value::as_str),
+                sampler.identity_v1()
+            );
+            let pins: Vec<PinnedFileV1> =
+                serde_json::from_value(result["trajectories"].clone()).unwrap();
+            pins.iter()
+                .map(|pin| read_pinned_bytes(pin).unwrap())
+                .collect::<Vec<_>>()
+        };
+        let unclamped = CollectionSamplerV1::UnclampedSoftmaxF64IcdfU53V1;
+        let serial = run("serial-unclamped", unclamped, 1);
+        assert_eq!(run("parallel-unclamped", unclamped, 2), serial);
+        let legacy_serial = run("serial-legacy", CollectionSamplerV1::Legacy, 1);
+        assert_eq!(
+            run("parallel-legacy", CollectionSamplerV1::Legacy, 2),
+            legacy_serial
+        );
+        let (mut learner_rows, mut opponent_rows) = (0, 0);
+        for (index, (bytes, legacy_bytes)) in serial.iter().zip(&legacy_serial).enumerate() {
+            let legacy_text = String::from_utf8(legacy_bytes.clone()).unwrap();
+            assert!(!legacy_text.contains("learner_sampler"));
+            assert!(!legacy_text.contains(UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1));
+            let trajectory: ExpandedTrajectoryV1 = serde_json::from_slice(bytes).unwrap();
+            assert_eq!(
+                trajectory.learner_sampler.as_deref(),
+                Some(UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1)
+            );
+            let episode = &episodes[index];
+            for row in &trajectory.decisions {
+                if episode.opponent.is_none() || row.actor == episode.learner_seat {
+                    learner_rows += 1;
+                    assert_eq!(
+                        row.sampler_identity.as_deref(),
+                        Some(UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1)
+                    );
+                } else {
+                    opponent_rows += 1;
+                    assert_eq!(
+                        row.sampler_identity.as_deref(),
+                        decision_sampler_identity_v1(row.logits.len())
+                    );
+                }
+            }
+            let mut changed = trajectory.clone();
+            changed.learner_sampler = None;
+            assert!(validate_trajectory(&changed).is_err());
+            let mut changed = trajectory.clone();
+            changed.learner_sampler = Some("unknown-sampler".into());
+            assert!(validate_trajectory(&changed).is_err());
+            let learner_choice = trajectory
+                .decisions
+                .iter()
+                .position(|row| {
+                    row.logits.len() > 1
+                        && (episode.opponent.is_none() || row.actor == episode.learner_seat)
+                })
+                .unwrap();
+            let mut changed = trajectory.clone();
+            changed.decisions[learner_choice].sampler_identity = None;
+            assert_eq!(
+                validate_trajectory(&changed).unwrap_err(),
+                "stored decision sampler identity differs from action width"
+            );
+            let mut changed = trajectory.clone();
+            let row = &mut changed.decisions[learner_choice];
+            row.selected = (row.selected + 1) % row.logits.len() as u32;
+            assert_eq!(
+                validate_trajectory(&changed).unwrap_err(),
+                "stored action differs from recorded behavior sampler"
+            );
+            // A hook cannot silently override the recorded learner sampler.
+            let mut hook = |_: &DecisionRecordV1| Ok(SeatRowDrawV1::None);
+            assert_eq!(
+                validate_episode_records_with_search_v1(
+                    episode.configurations().unwrap(),
+                    episode,
+                    &trajectory.configuration_sha256,
+                    &trajectory.decisions,
+                    &trajectory.terminal,
+                    trajectory.learner_sampler.as_deref(),
+                    Some((episode.learner_seat, &mut hook)),
+                )
+                .unwrap_err(),
+                "hooked seat conflicts with learner collection sampler or is invalid"
+            );
+            if episode.opponent.is_some() {
+                // Hooked logits stay legacy even with an unclamped learner.
+                let mut hook = |row: &DecisionRecordV1| {
+                    assert_eq!(
+                        row.sampler_identity.as_deref(),
+                        decision_sampler_identity_v1(row.logits.len())
+                    );
+                    Ok(SeatRowDrawV1::Logits)
+                };
+                validate_episode_records_with_search_v1(
+                    episode.configurations().unwrap(),
+                    episode,
+                    &trajectory.configuration_sha256,
+                    &trajectory.decisions,
+                    &trajectory.terminal,
+                    trajectory.learner_sampler.as_deref(),
+                    Some((1 - episode.learner_seat, &mut hook)),
+                )
+                .unwrap();
+            }
+        }
+        assert!(learner_rows > 0 && opponent_rows > 0);
+    }
+
+    #[test]
+    fn collection_sampler_is_omitted_when_legacy_and_named_by_version_otherwise() {
+        assert_eq!(
+            serde_json::to_value(CollectionSamplerV1::UnclampedSoftmaxF64IcdfU53V1).unwrap(),
+            json!(UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1)
+        );
+        let source = json!({
+            "play_import":{"path":"unused-import.json", "sha256":"a".repeat(64)},
+            "feature_transfer":{
+                "expected_feature_contract_digest":FEATURE_CONTRACT_DIGEST_V3,
+                "expected_feature_encoding_digest":FEATURE_ENCODING_DIGEST_V3
+            },
+            "checkpoint":null
+        });
+        for mode in ["collect", "collect_parallel"] {
+            let mut legacy = json!({"mode":mode, "source":source, "episodes":[],
+                "output_directory":"unused-collection"});
+            if mode == "collect_parallel" {
+                legacy["workers"] = json!(2);
+            }
+            let command: ExpandedTrainingCommandV1 =
+                serde_json::from_value(legacy.clone()).unwrap();
+            assert_eq!(serde_json::to_value(command).unwrap(), legacy);
+            let mut unclamped = legacy.clone();
+            unclamped["collection_sampler"] = json!(UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1);
+            let command: ExpandedTrainingCommandV1 =
+                serde_json::from_value(unclamped.clone()).unwrap();
+            assert_eq!(serde_json::to_value(command).unwrap(), unclamped);
+            let mut unknown = legacy;
+            unknown["collection_sampler"] = json!("f32-q8-expq63-hamilton-splitmix64-v1");
+            assert!(serde_json::from_value::<ExpandedTrainingCommandV1>(unknown).is_err());
         }
     }
 }

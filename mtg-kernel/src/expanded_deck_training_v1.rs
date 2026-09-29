@@ -19,6 +19,7 @@ use crate::native_flat_tensorizer_v3::{FEATURES_SOURCE_SHA256_V3, FEATURE_DESCRI
 use crate::native_flat_tensorizer_v4::{
     NativeFlatDecisionTensorV4, FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4,
 };
+use crate::native_policy_train_step_v1::{HeadOnlyMaskV1, HEAD_ONLY_MASK_VERSION_V1};
 use crate::native_policy_train_step_v1::{
     NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
     NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1,
@@ -44,6 +45,9 @@ use crate::sideboard_play_policy_v1::{
     FrozenPlayPolicyV1, PlayModelIdentityV1, PlayPolicyOriginV1,
 };
 use crate::state::SplitMix64;
+use crate::unclamped_softmax_sampler_v1::{
+    UnclampedSoftmaxScratchV1, UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -85,6 +89,10 @@ fn is_default_max_prepared_tensor_mebibytes(value: &usize) -> bool {
 }
 mod fresh_initialization_source;
 mod fresh_registry_transfer_source;
+mod line_b_root_selection_v1;
+mod line_b_teacher_operator_v1;
+mod line_b_teacher_packet_v1;
+pub use line_b_teacher_packet_v1::{LineBGameSeedsV1, LineBTeacherOptionsV1};
 mod registry_transfer_source;
 #[cfg(test)]
 pub(crate) use fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1;
@@ -384,7 +392,9 @@ pub fn load_expanded_inference_v1(
     if probe.get("schema").and_then(Value::as_str)
         == Some(stack_features::terminal_tactics::learning::campaign::TEACHER_INFERENCE_SCHEMA)
     {
-        return stack_features::terminal_tactics::learning::campaign::load_teacher_inference(source);
+        return stack_features::terminal_tactics::learning::campaign::load_teacher_inference(
+            source,
+        );
     }
     if probe.get("schema").and_then(Value::as_str) == Some(REGISTRY_EVOLUTION_IMPORT_SCHEMA_V1) {
         // R14 archival imports are inference-only opponents: no successor
@@ -785,6 +795,76 @@ fn decision_sampler_identity_v1(width: usize) -> Option<&'static str> {
     (width > FAST_CATEGORICAL_MAX_ACTIONS).then_some(WIDE_CATEGORICAL_SAMPLER_VERSION_V1)
 }
 
+/// Learner behavior sampler for collection (g115 line (b)). The legacy
+/// default is omitted from every command, config and receipt, so existing
+/// bytes and identities are unchanged. Opponents keep their production
+/// samplers whatever this says.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CollectionSamplerV1 {
+    #[default]
+    #[serde(rename = "legacy")]
+    Legacy,
+    #[serde(rename = "unclamped-softmax-f64-icdf-u53-v1")]
+    UnclampedSoftmaxF64IcdfU53V1,
+}
+
+impl CollectionSamplerV1 {
+    pub(crate) fn is_legacy(&self) -> bool {
+        *self == Self::Legacy
+    }
+
+    pub(crate) fn identity_v1(&self) -> Option<&'static str> {
+        match self {
+            Self::Legacy => None,
+            Self::UnclampedSoftmaxF64IcdfU53V1 => Some(UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1),
+        }
+    }
+
+    /// Applies the mode to the learner policy only.
+    pub(crate) fn apply_to_learner_v1(&self, policy: &mut FrozenPlayPolicyV1) {
+        if *self == Self::UnclampedSoftmaxF64IcdfU53V1 {
+            policy.enable_unclamped_collection_sampler_v1();
+        }
+    }
+
+    /// Writes the mode into a receipt exactly when it is not legacy.
+    pub(crate) fn record_v1(&self, document: &mut Value) {
+        if let Some(identity) = self.identity_v1() {
+            document["collection_sampler"] = json!(identity);
+        }
+    }
+}
+
+/// Optimizer mask for a line (b) update; one value today.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OptimizerMaskV1 {
+    /// `line-b-head-only-mask-v1`: only the seven scorer and value-head
+    /// tensors change; the 26 frozen tensors and their Adam moments are
+    /// restored bit for bit after every step.
+    #[serde(rename = "line-b-head-only-mask-v1")]
+    LineBHeadOnlyV1,
+}
+
+/// G115 line (b) update options. Absent for every existing update,
+/// command and run config, which keep their bytes and arithmetic.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LineBUpdateOptionsV1 {
+    pub optimizer_mask: OptimizerMaskV1,
+    /// The treatment slot's teacher; `None` for the matched control.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub teacher: Option<LineBTeacherOptionsV1>,
+}
+
+/// Frozen-tensor digest of `source` under the line (b) mask: every masked
+/// update of a run must repeat its initial source's value.
+pub(crate) fn line_b_frozen_sha256_v1(source: &ExpandedModelSourceV1) -> Result<String, String> {
+    let (_, state) = initialize(source)?;
+    let snapshot = state.snapshot_v1().map_err(err)?;
+    let mask = HeadOnlyMaskV1::for_snapshot_v1(&snapshot).map_err(err)?;
+    Ok(hex(&mask.frozen_sha256_v1(&snapshot)))
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ExpandedTrajectoryV1 {
@@ -800,6 +880,10 @@ struct ExpandedTrajectoryV1 {
     configuration_sha256: [String; 2],
     decisions: Vec<DecisionRecordV1>,
     terminal: RlSessionTerminalV1,
+    /// The learner policy's collection sampler (`CollectionSamplerV1`);
+    /// absent for the legacy samplers, preserving archived bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    learner_sampler: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1219,6 +1303,17 @@ impl From<CollectEpisodeErrorV1> for String {
     }
 }
 
+/// The collection session for `episode`. The line (b) root replay builds its
+/// game through this same call.
+fn episode_session_v1(
+    episode: &ExpandedEpisodeV1,
+    configs: &[DeckConfigurationV1; 2],
+) -> Result<FastActorSessionV1, String> {
+    FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
+        1, episode.seed, episode.max_physical_decisions, episode.max_policy_steps,
+        episode.selected.each_ref().map(|d| d.label.clone()), configs.each_ref().map(|d| d.mainboard().to_vec()), PlayerId(episode.starting_player)).map_err(err)
+}
+
 fn collect_episode(
     policy: &mut FrozenPlayPolicyV1,
     learner: &ExpandedSeatBehaviorV1,
@@ -1251,9 +1346,7 @@ fn collect_episode(
         })
     });
     let config_hashes = configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1()));
-    let mut session = FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
-        1, episode.seed, episode.max_physical_decisions, episode.max_policy_steps,
-        episode.selected.each_ref().map(|d| d.label.clone()), configs.each_ref().map(|d| d.mainboard().to_vec()), PlayerId(episode.starting_player)).map_err(err)?;
+    let mut session = episode_session_v1(episode, &configs)?;
     let seeds = paired_policy_seeds_v1(episode.seed);
     policy.reset_sampling_v1(seeds);
     if let Some(other) = opponent.as_mut() {
@@ -1285,6 +1378,7 @@ fn collect_episode(
                     configuration_sha256: config_hashes,
                     decisions,
                     terminal,
+                    learner_sampler: policy.collection_sampler_identity_v1().map(str::to_owned),
                 };
                 validate_trajectory(&result)?;
                 return Ok(result);
@@ -1306,6 +1400,7 @@ fn collect_episode(
                 // is generation-agnostic (both wrappers share the same inner
                 // `NativeFlatDecisionTensorV2`), so only this selection point
                 // differs.
+                let acting_sampler = acting.collection_sampler_identity_v1();
                 let (selected, scores, tensor_bits) =
                     if acting.feature_identity_v1().generation == FreshLineageGenerationV1::V4 {
                         let (selected, scores, tensor) =
@@ -1326,7 +1421,8 @@ fn collect_episode(
                     logits: bits(&scores.logits),
                     value: scores.value.to_bits(),
                     tensor: tensor_bits,
-                    sampler_identity: decision_sampler_identity_v1(scores.logits.len())
+                    sampler_identity: acting_sampler
+                        .or_else(|| decision_sampler_identity_v1(scores.logits.len()))
                         .map(str::to_owned),
                 };
                 session.step(d.episode_id, d.step, selected).map_err(err)?;
@@ -1709,19 +1805,40 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
         &t.feature_encoding_digest,
         &t.card_db_hash,
     )?;
-    validate_episode_records_v1(
+    validate_episode_records_with_learner_sampler_v1(
         &t.episode,
         &t.configuration_sha256,
         &t.decisions,
         &t.terminal,
+        t.learner_sampler.as_deref(),
     )
 }
 
+/// Legacy-sampler record validation, unchanged for every existing caller.
 fn validate_episode_records_v1(
     episode: &ExpandedEpisodeV1,
     configuration_sha256: &[String; 2],
     decisions: &[DecisionRecordV1],
     terminal: &RlSessionTerminalV1,
+) -> Result<(), String> {
+    validate_episode_records_with_learner_sampler_v1(
+        episode,
+        configuration_sha256,
+        decisions,
+        terminal,
+        None,
+    )
+}
+
+/// Rows the learner policy sampled carry `learner_sampler` (every width);
+/// opponent rows keep the legacy width rule. Each row is replayed with the
+/// sampler its identity names, from one draw of the acting seat's stream.
+fn validate_episode_records_with_learner_sampler_v1(
+    episode: &ExpandedEpisodeV1,
+    configuration_sha256: &[String; 2],
+    decisions: &[DecisionRecordV1],
+    terminal: &RlSessionTerminalV1,
+    learner_sampler: Option<&str>,
 ) -> Result<(), String> {
     validate_episode_records_with_search_v1(
         episode.configurations()?,
@@ -1729,6 +1846,7 @@ fn validate_episode_records_v1(
         configuration_sha256,
         decisions,
         terminal,
+        learner_sampler,
         None,
     )
 }
@@ -1747,18 +1865,29 @@ pub(crate) enum SeatRowDrawV1 {
 /// A seat row check, called in order for each row of the hooked seat.
 type SeatRowCheckV1<'a> = &'a mut dyn FnMut(&DecisionRecordV1) -> Result<SeatRowDrawV1, String>;
 
-/// `search` names the physical seat whose rows the D3 wrapper chose and the
-/// check that binds each such row to its search record. Those rows draw
-/// nothing from that seat's stream; every other row replays the recorded
-/// behavior sampler exactly as before.
+/// `search` names the physical seat and its record check. The hook chooses
+/// no draw (D3), a legacy logits draw, or one unscored singleton draw.
+/// Unhooked learner rows use the recorded learner sampler; other rows use
+/// the legacy width rule. A hooked learner cannot also name a learner sampler.
 fn validate_episode_records_with_search_v1(
     configs: [DeckConfigurationV1; 2],
     episode: &ExpandedEpisodeV1,
     configuration_sha256: &[String; 2],
     decisions: &[DecisionRecordV1],
     terminal: &RlSessionTerminalV1,
+    learner_sampler: Option<&str>,
     mut search: Option<(u8, SeatRowCheckV1<'_>)>,
 ) -> Result<(), String> {
+    ensure(
+        learner_sampler.is_none_or(|identity| identity == UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1),
+        "unsupported learner collection sampler",
+    )?;
+    ensure(
+        search.as_ref().is_none_or(|(seat, _)| {
+            *seat < 2 && !(learner_sampler.is_some() && *seat == episode.learner_seat)
+        }),
+        "hooked seat conflicts with learner collection sampler or is invalid",
+    )?;
     ensure(
         *configuration_sha256 == configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1())),
         "selected deck hash differs",
@@ -1806,6 +1935,7 @@ fn validate_episode_records_with_search_v1(
     let mut index = 0usize;
     let mut rng = paired_policy_seeds_v1(episode.seed).map(SplitMix64::seed);
     let mut sampler = WideCategoricalScratchV1::default();
+    let mut unclamped = UnclampedSoftmaxScratchV1::default();
     while index < decisions.len() {
         let first = &decisions[index];
         ensure(
@@ -1837,6 +1967,7 @@ fn validate_episode_records_with_search_v1(
                     "invalid captured outputs",
                 )
             };
+            let mut use_unclamped = false;
             let draw = match search.as_mut().filter(|(seat, _)| *seat == row.actor) {
                 Some((_, check)) => {
                     let draw = check(row)?;
@@ -1847,11 +1978,16 @@ fn validate_episode_records_with_search_v1(
                 }
                 None => {
                     captured(row)?;
+                    let learner_policy_row =
+                        episode.opponent.is_none() || row.actor == episode.learner_seat;
+                    let expected_identity = learner_sampler
+                        .filter(|_| learner_policy_row)
+                        .or_else(|| decision_sampler_identity_v1(row.logits.len()));
                     ensure(
-                        row.sampler_identity.as_deref()
-                            == decision_sampler_identity_v1(row.logits.len()),
+                        row.sampler_identity.as_deref() == expected_identity,
                         "stored decision sampler identity differs from action width",
                     )?;
+                    use_unclamped = expected_identity == Some(UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1);
                     SeatRowDrawV1::Logits
                 }
             };
@@ -1860,9 +1996,12 @@ fn validate_episode_records_with_search_v1(
                 SeatRowDrawV1::Logits => floats(&row.logits),
                 SeatRowDrawV1::Singleton => vec![0.0],
             };
-            let selected = sampler
-                .sample(&logits, rng[row.actor as usize].next_u64())
-                .map_err(err)?;
+            let bits = rng[row.actor as usize].next_u64();
+            let selected = if use_unclamped {
+                unclamped.sample(&logits, bits).map_err(err)?
+            } else {
+                sampler.sample(&logits, bits).map_err(err)?
+            };
             ensure(
                 selected == row.selected as usize,
                 "stored action differs from recorded behavior sampler",
@@ -2011,6 +2150,9 @@ pub enum ExpandedTrainingCommandV1 {
         /// `collect_episode_tolerant_v1`.
         #[serde(default, skip_serializing_if = "is_zero_non_natural_fraction_v1")]
         max_non_natural_episode_fraction: f32,
+        /// Learner collection sampler; omitted when legacy.
+        #[serde(default, skip_serializing_if = "CollectionSamplerV1::is_legacy")]
+        collection_sampler: CollectionSamplerV1,
         output_directory: PathBuf,
     },
     /// Explicit execution-only successor. The legacy Collect command and its
@@ -2021,6 +2163,9 @@ pub enum ExpandedTrainingCommandV1 {
         workers: usize,
         #[serde(default, skip_serializing_if = "is_zero_non_natural_fraction_v1")]
         max_non_natural_episode_fraction: f32,
+        /// Learner collection sampler; omitted when legacy.
+        #[serde(default, skip_serializing_if = "CollectionSamplerV1::is_legacy")]
+        collection_sampler: CollectionSamplerV1,
         output_directory: PathBuf,
     },
     Update {
@@ -2045,6 +2190,10 @@ pub enum ExpandedTrainingCommandV1 {
             skip_serializing_if = "ExpandedLossSelectionV1::is_terminal_reinforce_value_v3"
         )]
         loss_selection: ExpandedLossSelectionV1,
+        /// G115 line (b) options (head-only optimizer mask); omitted when
+        /// absent, so every existing command keeps its bytes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        line_b: Option<LineBUpdateOptionsV1>,
         output_directory: PathBuf,
     },
     /// Explicit execution-only preparation. The old Update wire shape and
@@ -2075,29 +2224,45 @@ pub enum ExpandedTrainingCommandV1 {
             skip_serializing_if = "is_default_max_prepared_tensor_mebibytes"
         )]
         max_prepared_tensor_mebibytes: usize,
+        /// G115 line (b) options (head-only optimizer mask); omitted when
+        /// absent, so every existing command keeps its bytes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        line_b: Option<LineBUpdateOptionsV1>,
         output_directory: PathBuf,
+    },
+    /// Line (b) end-of-run head distance between a treatment and its matched
+    /// control (proposal 12:51); reads both sources, writes nothing.
+    LineBHeadDistance {
+        treatment: ExpandedModelSourceV1,
+        control: ExpandedModelSourceV1,
     },
 }
 
 pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
     match command {
+        ExpandedTrainingCommandV1::LineBHeadDistance { treatment, control } => {
+            line_b_teacher_packet_v1::line_b_head_distance_v1(&treatment, &control)
+        }
         ExpandedTrainingCommandV1::CollectParallel {
             source,
             episodes,
             workers,
             max_non_natural_episode_fraction,
+            collection_sampler,
             output_directory,
         } => phase1_parallel_collection::collect_parallel_v1(
             source,
             episodes,
             workers,
             max_non_natural_episode_fraction,
+            collection_sampler,
             output_directory,
         ),
         ExpandedTrainingCommandV1::Collect {
             source,
             episodes,
             max_non_natural_episode_fraction,
+            collection_sampler,
             output_directory,
         } => {
             let collection_started = std::time::Instant::now();
@@ -2115,6 +2280,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             if let Some(context) = &transfer {
                 context.validate_batch(&episodes)?;
             }
+            collection_sampler.apply_to_learner_v1(&mut policy);
             let state_hash = hex(&state.state_sha256_v1().map_err(err)?);
             let learner = ExpandedSeatBehaviorV1 {
                 source: source.clone(),
@@ -2190,6 +2356,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             let mut result = json!({"schema":"mtg-kernel-expanded-deck-collection/v1", "complete":true, "source": source, "behavior_state_sha256": state_hash, "trajectories": outputs,
                 "collection_elapsed_seconds":collection_started.elapsed().as_secs_f64(),
                 "collection_initialization_seconds":initialization_seconds});
+            collection_sampler.record_v1(&mut result);
             if let Some(pin) = non_natural_ledger_pin {
                 result["non_natural_ledger"] = json!(pin);
             }
@@ -2204,6 +2371,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             update_backend,
             update_backward_execution,
             loss_selection,
+            line_b,
             output_directory,
         } => execute_update_v1(
             source,
@@ -2216,6 +2384,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             output_directory,
             None,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            line_b,
         ),
         ExpandedTrainingCommandV1::UpdatePrepared {
             source,
@@ -2227,6 +2396,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             loss_selection,
             preparation_workers,
             max_prepared_tensor_mebibytes,
+            line_b,
             output_directory,
         } => {
             validate_preparation_workers_v1(preparation_workers)?;
@@ -2242,6 +2412,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 output_directory,
                 Some(preparation_workers),
                 max_prepared_tensor_mebibytes,
+                line_b,
             )
         }
     }
@@ -2379,6 +2550,7 @@ fn execute_update_v1(
     output_directory: PathBuf,
     preparation_workers: Option<usize>,
     max_prepared_tensor_mebibytes: usize,
+    line_b: Option<LineBUpdateOptionsV1>,
 ) -> Result<Value, String> {
     let update_started = std::time::Instant::now();
     update_backend.require_compiled_v1()?;
@@ -2454,6 +2626,11 @@ fn execute_update_v1(
             .map(|trajectory| trajectory.episode.clone())
             .collect();
         context.validate_batch(&batch)?;
+    }
+    // One line (b) seed entry per trajectory in batch order (CODEX #572),
+    // refused before any replay or teacher work.
+    if let Some(teacher) = line_b.as_ref().and_then(|options| options.teacher.as_ref()) {
+        teacher.validate_v1(episodes.len())?;
     }
     let input_read_seconds = update_started.elapsed().as_secs_f64();
     let replay_started = std::time::Instant::now();
@@ -2570,7 +2747,111 @@ fn execute_update_v1(
         ),
     };
     let behavior_replay_seconds = replay_started.elapsed().as_secs_f64();
+    // Line (b) teach step (treatment slots): the start-of-update student,
+    // after collection and before the update; the packet is published with
+    // the receipt. A batch without a selected root trains ordinarily.
+    let teacher_started = std::time::Instant::now();
+    let line_b_teacher = match line_b.as_ref().and_then(|options| options.teacher.as_ref()) {
+        None => None,
+        Some(teacher) => {
+            ensure(
+                gae_targets.is_some(),
+                "the line (b) teacher requires gae_advantage_value/v1",
+            )?;
+            let packet =
+                line_b_teacher_packet_v1::line_b_teach_v1(&episodes, &policy, &before, teacher)?;
+            let input =
+                line_b_teacher_packet_v1::line_b_auxiliary_input_v1(&packet, &tensor_groups)?;
+            Some((packet, input))
+        }
+    };
+    let teacher_seconds = teacher_started.elapsed().as_secs_f64();
+    // Each trajectory's learner list, for the receipt's census by list
+    // (review change 10).
+    let line_b_lists: Vec<String> = episodes
+        .iter()
+        .map(|trajectory| {
+            let episode = &trajectory.episode;
+            episode.selected[usize::from(episode.learner_seat)]
+                .label
+                .clone()
+        })
+        .collect();
+    // Refuse an unbound census before optimizer work or publication.
+    let line_b_census = line_b_teacher
+        .as_ref()
+        .map(|(packet, _)| {
+            line_b_teacher_packet_v1::line_b_census_by_list_v1(packet, &line_b_lists)
+        })
+        .transpose()?;
+    // Line (b) head-only mask: validate the topology and keep the pre-step
+    // snapshot, whatever backend runs the step below.
+    let masked_before = match &line_b {
+        Some(LineBUpdateOptionsV1 {
+            optimizer_mask: OptimizerMaskV1::LineBHeadOnlyV1,
+            ..
+        }) => {
+            let before = state.snapshot_v1().map_err(err)?;
+            let mask = HeadOnlyMaskV1::for_snapshot_v1(&before).map_err(err)?;
+            Some((mask, before))
+        }
+        None => None,
+    };
+    // Line (b) permuted-target control (receipt only, CODEX 11:23 item 6):
+    // the same update on a CPU shadow of the start-of-update state with the
+    // permuted targets, restored by the mask; the receipt records its term
+    // and the real targets' rescore after it. Nothing of it is published.
+    let line_b_permuted = match (&line_b_teacher, &masked_before, &gae_targets) {
+        (Some((_, Some(input))), Some((mask, snapshot_before)), Some(gae))
+            if line_b
+                .as_ref()
+                .and_then(|options| options.teacher.as_ref())
+                .is_some_and(|teacher| teacher.permuted_control) =>
+        {
+            let (permuted, kinds) =
+                crate::native_policy_train_step_v1::line_b_permuted_input_v1(input);
+            let mut shadow = state.clone();
+            let (_, auxiliary) = shadow
+                .train_step_gae_feature_transfer_line_b_v1(
+                    generation,
+                    &groups,
+                    &gae.value_targets,
+                    &gae.advantages,
+                    value_coefficient,
+                    learning_rate,
+                    None,
+                    &permuted,
+                )
+                .map_err(err)?;
+            let mut after = shadow.snapshot_v1().map_err(err)?;
+            mask.restore_frozen_v1(snapshot_before, &mut after)
+                .map_err(err)?;
+            let shadow =
+                NativePolicyValueTrainStateV1::from_snapshot_v1(shadow.model_v1().clone(), &after)
+                    .map_err(err)?;
+            let rescore = line_b_teacher_packet_v1::line_b_rescore_v1(
+                input,
+                &groups,
+                shadow.model_v1(),
+                generation,
+            )?;
+            Some(json!({"backend": "cpu", "kinds": kinds,
+                "divergences_before": auxiliary.divergences_before,
+                "auxiliary_loss": auxiliary.auxiliary_loss,
+                "auxiliary_head_l2": auxiliary.auxiliary_head_l2,
+                "after_state_sha256": hex(&after.state_sha256_v1().map_err(err)?),
+                "rescore_after": rescore.iter().map(|value| value.map(|(_, after)| after))
+                    .collect::<Vec<_>>()}))
+        }
+        _ => None,
+    };
     let learner_started = std::time::Instant::now();
+    let mut line_b_auxiliary = None;
+    #[cfg_attr(
+        not(feature = "experimental-burn-net8-packed-cuda-v1"),
+        allow(unused_mut)
+    )]
+    let mut line_b_envelope: Option<Value> = None;
     let update = match &loss_selection {
         ExpandedLossSelectionV1::TerminalReinforceValueV3 => match (update_backend, generation) {
             (ExpandedUpdateBackendV1::Cpu, FreshLineageGenerationV1::V3) => state
@@ -2639,6 +2920,32 @@ fn execute_update_v1(
                 .as_ref()
                 .expect("computed above whenever loss_selection is gae_advantage_value/v1");
             match (update_backend, generation) {
+                (ExpandedUpdateBackendV1::Cpu, _)
+                    if matches!(line_b_teacher, Some((_, Some(_)))) =>
+                {
+                    let Some((_, Some(input))) = &line_b_teacher else {
+                        unreachable!("guarded by the arm")
+                    };
+                    let (result, auxiliary) = state
+                        .train_step_gae_feature_transfer_line_b_v1(
+                            generation,
+                            &groups,
+                            &gae.value_targets,
+                            &gae.advantages,
+                            value_coefficient,
+                            learning_rate,
+                            match backward_execution {
+                                UpdateBackwardExecutionV1::Sequential => None,
+                                UpdateBackwardExecutionV1::FixedPartition4 => {
+                                    Some(fixed_partition_backward_worker_limit_v1())
+                                }
+                            },
+                            input,
+                        )
+                        .map_err(err)?;
+                    line_b_auxiliary = Some(auxiliary);
+                    result
+                }
                 (ExpandedUpdateBackendV1::Cpu, FreshLineageGenerationV1::V3) => state
                     .train_step_gae_feature_transfer_v3(
                         &groups,
@@ -2669,6 +2976,60 @@ fn execute_update_v1(
                                 fixed_partition_backward_worker_limit_v1(),
                             )
                             .map_err(err)?,
+                    }
+                }
+                (ExpandedUpdateBackendV1::Cuda { device_ordinal }, _)
+                    if matches!(line_b_teacher, Some((_, Some(_)))) =>
+                {
+                    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+                    {
+                        let Some((_, Some(input))) = &line_b_teacher else {
+                            unreachable!("guarded by the arm")
+                        };
+                        let (result, cuda) = state
+                            .train_step_cuda_gae_feature_transfer_line_b_v1(
+                                generation,
+                                &groups,
+                                &gae.value_targets,
+                                &gae.advantages,
+                                value_coefficient,
+                                learning_rate,
+                                device_ordinal,
+                                input,
+                            )
+                            .map_err(err)?;
+                        let max_discrepancy = cuda
+                            .envelope
+                            .iter()
+                            .map(|root| root.max_abs_log_probability_discrepancy)
+                            .fold(0.0_f64, f64::max);
+                        let within_bound = cuda
+                            .envelope
+                            .iter()
+                            .all(|root| root.max_abs_log_probability_discrepancy <= root.bound);
+                        let max_host_refold = cuda
+                            .envelope
+                            .iter()
+                            .map(|root| root.host_refold_abs_discrepancy)
+                            .fold(0.0_f64, f64::max);
+                        // The declared envelope (review change 9) beside the
+                        // gate-implied per-root bound; a root beyond the
+                        // declared constant already failed the update.
+                        line_b_envelope = Some(json!({"roots": cuda.envelope,
+                            "max_abs_log_probability_discrepancy": max_discrepancy,
+                            "within_bound": within_bound,
+                            "declared_envelope":
+                                crate::line_b_teacher_target_v1::LINE_B_CUDA_ENVELOPE_V1,
+                            "within_declared_envelope": max_discrepancy
+                                <= crate::line_b_teacher_target_v1::LINE_B_CUDA_ENVELOPE_V1,
+                            "max_host_refold_abs_discrepancy": max_host_refold}));
+                        line_b_auxiliary = Some(cuda.auxiliary);
+                        result
+                    }
+                    #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
+                    {
+                        let _ = device_ordinal;
+                        return Err("CUDA update backend was not compiled".into());
                     }
                 }
                 (
@@ -2721,6 +3082,35 @@ fn execute_update_v1(
         }
     };
     let learner_update_seconds = learner_started.elapsed().as_secs_f64();
+    // Restore every frozen tensor and its moments before any publication;
+    // from_snapshot_v1 revalidates the manifest and the canonical gauge.
+    let frozen_tensor_sha256 = match masked_before {
+        Some((mask, before)) => {
+            let mut after = state.snapshot_v1().map_err(err)?;
+            mask.restore_frozen_v1(&before, &mut after).map_err(err)?;
+            state =
+                NativePolicyValueTrainStateV1::from_snapshot_v1(state.model_v1().clone(), &after)
+                    .map_err(err)?;
+            let frozen = hex(&mask.frozen_sha256_v1(&after));
+            ensure(
+                frozen == hex(&mask.frozen_sha256_v1(&before)),
+                "head-only mask left a frozen tensor changed",
+            )?;
+            Some(frozen)
+        }
+        None => None,
+    };
+    // Line (b) rescore (proposal 12:51): the same roots before and after this
+    // update with the frozen targets, from the published parameters.
+    let line_b_rescore = match &line_b_teacher {
+        Some((_, Some(input))) => Some(line_b_teacher_packet_v1::line_b_rescore_v1(
+            input,
+            &groups,
+            state.model_v1(),
+            generation,
+        )?),
+        _ => None,
+    };
     let checkpoint_started = std::time::Instant::now();
     let snapshot = state.snapshot_v1().map_err(err)?;
     let after = hex(&snapshot.state_sha256_v1().map_err(err)?);
@@ -2797,6 +3187,40 @@ fn execute_update_v1(
     )?;
     let mut result = json!({"schema":"mtg-kernel-expanded-deck-update/v1", "complete":true, "source":source, "trajectories":trajectories, "checkpoint":checkpoint_pin, "before_state_sha256":before, "after_state_sha256":after, "adam_step":update.adam_step, "physical_decisions":groups.len(), "policy_substeps":update.selected_outputs.len(), "loss":update.loss, "policy_sum":update.policy_sum, "value_sum":update.value_sum, "checkpoint_readback":true, "numerical_backend":"native-cpu-sequential", "loss_identity":loss_selection.loss_identity_v1(), "claim":"engineering update only; no playing-strength or production-throughput claim"});
     update_backend.record_update_execution_v1(&mut result);
+    if let Some(frozen) = frozen_tensor_sha256 {
+        // The update's scorer-bias gauge (the step refuses a residual beyond
+        // its derived bound, so a published update is within it).
+        let gauge = &update.scorer_bias_gauge;
+        result["line_b"] = json!({"optimizer_mask": HEAD_ONLY_MASK_VERSION_V1,
+            "frozen_tensor_sha256": frozen,
+            "scorer_bias_gauge": {"substep_count": gauge.substep_count,
+                "raw_gradient_residual": gauge.raw_gradient_residual,
+                "high_precision_residual": gauge.high_precision_residual,
+                "per_substep_bound_sum": gauge.per_substep_bound_sum,
+                "cross_substep_bound": gauge.cross_substep_bound,
+                "derived_absolute_bound": gauge.derived_absolute_bound,
+                "within_bound": f64::from(gauge.raw_gradient_residual).abs()
+                    <= gauge.derived_absolute_bound
+                    && gauge.high_precision_residual.abs() <= gauge.derived_absolute_bound,
+                "anchor_preserved": gauge.parameter_after_bits == gauge.parameter_before_bits}});
+    }
+    if let Some((packet, _)) = &line_b_teacher {
+        let packet_pin = publish_json(&output_directory, "line-b-teacher-packet.json", packet)?;
+        result["line_b"]["teacher"] = line_b_teacher_packet_v1::line_b_teacher_receipt_v1(
+            packet,
+            &packet_pin,
+            line_b_auxiliary.as_ref(),
+            line_b_rescore.as_deref(),
+            teacher_seconds,
+        );
+        result["line_b"]["teacher"]["census_by_list"] = line_b_census.unwrap();
+        if let Some(envelope) = line_b_envelope {
+            result["line_b"]["teacher"]["cuda_envelope"] = envelope;
+        }
+        if let Some(permuted) = line_b_permuted {
+            result["line_b"]["teacher"]["permuted_control"] = permuted;
+        }
+    }
     // Advantage statistics (design section 3), gated on the new loss
     // identity only: a v3 update's `gae_targets` is always `None`, so v3
     // receipts gain zero new keys.
@@ -3177,6 +3601,7 @@ pub(crate) mod tests {
             source_import: learner.identity_v1().clone(),
             behavior_state_sha256: learner_behavior.identity.state_sha256.clone(),
             seat_behaviors,
+            learner_sampler: None,
             configuration_sha256: configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1())),
             terminal: RlSessionTerminalV1 {
                 schema_version: RL_SESSION_SCHEMA_VERSION,
@@ -3947,7 +4372,9 @@ pub(crate) mod tests {
                 108, 108, 108, 108, 108, 108, 108, 108, 108, 108, 119, 119, 119, 119, 129, 129,
                 130, 130, 130, 130,
             ],
-            sideboard: vec![43, 74, 74, 74, 74, 89, 89, 89, 111, 111, 111, 126, 126, 126, 126],
+            sideboard: vec![
+                43, 74, 74, 74, 74, 89, 89, 89, 111, 111, 111, 126, 126, 126, 126,
+            ],
         };
         let episode = ExpandedEpisodeV1 {
             id: "breadth-3da0216e51fb249275cc26ab-b0-i95-s2".into(),
@@ -4462,7 +4889,9 @@ pub(crate) mod tests {
                 44, 45, 45, 45, 45, 48, 48, 48, 48, 66, 66, 66, 66, 76, 76, 76, 76, 76, 76, 76, 76,
                 76, 76, 76, 76, 76, 76, 92, 92, 92, 92, 93, 93, 93, 93, 127, 127, 127, 127,
             ],
-            sideboard: vec![12, 12, 12, 27, 27, 95, 95, 95, 97, 97, 97, 97, 101, 101, 101],
+            sideboard: vec![
+                12, 12, 12, 27, 27, 95, 95, 95, 97, 97, 97, 97, 101, 101, 101,
+            ],
         };
         let episode = ExpandedEpisodeV1 {
             id: "breadth-8f6cf0203feebd1abbd5726e-b1-i2-s7".into(),
@@ -4589,7 +5018,9 @@ pub(crate) mod tests {
                 44, 45, 45, 45, 45, 48, 48, 48, 48, 66, 66, 66, 66, 76, 76, 76, 76, 76, 76, 76, 76,
                 76, 76, 76, 76, 76, 76, 92, 92, 92, 92, 93, 93, 93, 93, 127, 127, 127, 127,
             ],
-            sideboard: vec![12, 12, 12, 27, 27, 95, 95, 95, 97, 97, 97, 97, 101, 101, 101],
+            sideboard: vec![
+                12, 12, 12, 27, 27, 95, 95, 95, 97, 97, 97, 97, 101, 101, 101,
+            ],
         };
         let episode = ExpandedEpisodeV1 {
             id: "breadth-1e5a1ccd4a462cd1fe3cb4f8-b1-i2-s0".into(),
@@ -5297,6 +5728,7 @@ pub(crate) mod tests {
             source: source.clone(),
             episodes: episodes.clone(),
             max_non_natural_episode_fraction: 0.5,
+            collection_sampler: CollectionSamplerV1::Legacy,
             output_directory: root.join("collect-admitted"),
         });
         clear_force_non_natural_seeds_for_test_v1([episodes[1].seed]);
@@ -5327,6 +5759,7 @@ pub(crate) mod tests {
             source,
             episodes,
             max_non_natural_episode_fraction: 0.1,
+            collection_sampler: CollectionSamplerV1::Legacy,
             output_directory: root.join("collect-fraction-capped"),
         })
         .unwrap_err();
@@ -6054,11 +6487,13 @@ pub(crate) mod tests {
                 source: source.clone(),
                 episodes: vec![episode],
                 max_non_natural_episode_fraction: 0.0,
+                collection_sampler: CollectionSamplerV1::Legacy,
                 output_directory: root.join(format!("collect-{iteration}")),
             })?;
             let trajectories: Vec<PinnedFileV1> =
                 serde_json::from_value(collect_result["trajectories"].clone()).unwrap();
             let update_result = execute_v1(ExpandedTrainingCommandV1::Update {
+                line_b: None,
                 source: source.clone(),
                 trajectories,
                 learning_rate: 0.0003,
@@ -6485,6 +6920,988 @@ pub(crate) mod tests {
             gamma: 1.0,
             lambda: 0.9,
             entropy_coefficient: 0.0,
+        }
+    }
+
+    /// Line (b) head-only mask (`line-b-head-only-mask-v1`) through the real
+    /// Collect and Update commands with the production GAE loss on real
+    /// games: after every one of four updates each frozen tensor's parameter
+    /// and both Adam moments are byte-identical to the initial state, the
+    /// receipt repeats the initial frozen digest, the Adam age advances once
+    /// per update, the gauge keeps its anchor, and all seven head tensors
+    /// move. The play policy's copied embedding table is unchanged. Without
+    /// the mask the same schedule moves the trunk (power check).
+    #[test]
+    fn line_b_head_only_mask_freezes_trunk_bytes_across_real_updates() {
+        assert_line_b_mask_fixture_v1("cpu", ExpandedUpdateBackendV1::Cpu);
+    }
+
+    /// The same four-update mask fixture through the production CUDA bridge
+    /// on device 1: the restore runs after the device step and the next step
+    /// re-imports the restored host snapshot.
+    #[test]
+    #[ignore = "requires the real GPU1 (RTX 3050); explicit GPU execution only"]
+    fn line_b_head_only_mask_freezes_trunk_bytes_across_real_cuda_updates() {
+        assert_line_b_mask_fixture_v1("cuda", ExpandedUpdateBackendV1::Cuda { device_ordinal: 1 });
+    }
+
+    fn assert_line_b_mask_fixture_v1(backend_label: &str, update_backend: ExpandedUpdateBackendV1) {
+        let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
+        let run = |label: &str, line_b: Option<LineBUpdateOptionsV1>, updates: u64| {
+            let root = std::env::temp_dir().join(format!(
+                "line-b-mask-{backend_label}-{label}-{}",
+                std::process::id()
+            ));
+            let source_struct =
+                fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
+                    &root.join("source"),
+                    feature_identity,
+                    |_parameters| {},
+                );
+            let descriptor_path = root.join("descriptor.json");
+            let descriptor_bytes = serde_json::to_vec(&source_struct).unwrap();
+            std::fs::write(&descriptor_path, &descriptor_bytes).unwrap();
+            let mut source = ExpandedModelSourceV1 {
+                play_import: PinnedFileV1 {
+                    path: descriptor_path.canonicalize().unwrap(),
+                    sha256: sha(&descriptor_bytes),
+                },
+                feature_transfer: FrozenPlayObservationTransferV3 {
+                    expected_feature_contract_digest: feature_identity
+                        .feature_contract_digest
+                        .into(),
+                    expected_feature_encoding_digest: feature_identity
+                        .feature_encoding_digest
+                        .into(),
+                },
+                checkpoint: None,
+            };
+            let initial_source = source.clone();
+            let decks = [list("Affinity"), list("Terror")];
+            let mut outputs = Vec::new();
+            for iteration in 0..updates {
+                let episode = ExpandedEpisodeV1 {
+                    id: format!("line-b-mask-{label}-{iteration}"),
+                    seed: 2_026_092_711 + iteration,
+                    starting_player: (iteration % 2) as u8,
+                    learner_seat: 0,
+                    opponent: None,
+                    opponent_search: None,
+                    opponent_kind: None,
+                    registered: decks.clone(),
+                    selected: decks.clone(),
+                    postboard: false,
+                    max_physical_decisions: 100_000,
+                    max_policy_steps: 1_000_000,
+                };
+                let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
+                    source: source.clone(),
+                    episodes: vec![episode],
+                    max_non_natural_episode_fraction: 0.0,
+                    collection_sampler: CollectionSamplerV1::Legacy,
+                    output_directory: root.join(format!("collect-{iteration}")),
+                })
+                .unwrap();
+                let receipt = execute_v1(ExpandedTrainingCommandV1::Update {
+                    source: source.clone(),
+                    trajectories: serde_json::from_value(collected["trajectories"].clone())
+                        .unwrap(),
+                    learning_rate: 0.0003,
+                    value_coefficient: 0.5,
+                    update_backend,
+                    update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+                    loss_selection: gae_loss_selection_v1(),
+                    line_b: line_b.clone(),
+                    output_directory: root.join(format!("update-{iteration}")),
+                })
+                .unwrap();
+                let pin: PinnedFileV1 =
+                    serde_json::from_value(receipt["checkpoint"].clone()).unwrap();
+                let checkpoint: ExpandedCheckpointV1 = read_pinned(&pin).unwrap();
+                source.checkpoint = Some(pin);
+                outputs.push((checkpoint, receipt));
+            }
+            (initial_source, source, outputs)
+        };
+        let bits_of = |tensors: &[NativeNamedParameterV1]| -> Vec<Vec<u32>> {
+            tensors.iter().map(|t| bits(&t.values)).collect()
+        };
+        let saved_bits = |tensors: &[ParameterBitsV1]| -> Vec<Vec<u32>> {
+            tensors.iter().map(|t| t.values.clone()).collect()
+        };
+        let options = LineBUpdateOptionsV1 {
+            optimizer_mask: OptimizerMaskV1::LineBHeadOnlyV1,
+            teacher: None,
+        };
+        let (initial_source, final_source, masked) = run("masked", Some(options), 4);
+        let (initial_policy, initial_state) = initialize(&initial_source).unwrap();
+        let initial = initial_state.snapshot_v1().unwrap();
+        let mask = HeadOnlyMaskV1::for_snapshot_v1(&initial).unwrap();
+        let initial_frozen = line_b_frozen_sha256_v1(&initial_source).unwrap();
+        let (initial_parameters, initial_first, initial_second) = (
+            bits_of(&initial.parameters),
+            bits_of(&initial.first_moments),
+            bits_of(&initial.second_moments),
+        );
+        for (update, (checkpoint, receipt)) in masked.iter().enumerate() {
+            assert_eq!(checkpoint.adam_step, initial.adam_step + update as u64 + 1);
+            assert_eq!(
+                checkpoint.scorer_bias_anchor_bits,
+                initial.scorer_bias_anchor_bits
+            );
+            assert_eq!(
+                receipt["line_b"]["optimizer_mask"],
+                HEAD_ONLY_MASK_VERSION_V1
+            );
+            assert_eq!(
+                receipt["line_b"]["frozen_tensor_sha256"],
+                initial_frozen.as_str()
+            );
+            let (parameters, first, second) = (
+                saved_bits(&checkpoint.parameters),
+                saved_bits(&checkpoint.first_moments),
+                saved_bits(&checkpoint.second_moments),
+            );
+            for index in 0..initial_parameters.len() {
+                if mask.is_trainable_v1(index) {
+                    continue;
+                }
+                assert_eq!(
+                    parameters[index], initial_parameters[index],
+                    "update {update}"
+                );
+                assert_eq!(first[index], initial_first[index], "update {update}");
+                assert_eq!(second[index], initial_second[index], "update {update}");
+            }
+        }
+        let last = saved_bits(&masked.last().unwrap().0.parameters);
+        let moved = (0..initial_parameters.len())
+            .filter(|&index| mask.is_trainable_v1(index))
+            .filter(|&index| last[index] != initial_parameters[index])
+            .count();
+        assert_eq!(moved, 7, "every head tensor must move on this fixture");
+        let (final_policy, _) = initialize(&final_source).unwrap();
+        assert_eq!(
+            final_policy
+                .actual_model_identity_v1()
+                .embedding_table_sha256,
+            initial_policy
+                .actual_model_identity_v1()
+                .embedding_table_sha256
+        );
+        let (_, _, unmasked) = run("unmasked", None, 2);
+        assert!(unmasked
+            .iter()
+            .all(|(_, receipt)| receipt.get("line_b").is_none()));
+        let trunk = saved_bits(&unmasked.last().unwrap().0.parameters);
+        assert!(
+            (0..initial_parameters.len())
+                .filter(|&index| !mask.is_trainable_v1(index))
+                .any(|index| trunk[index] != initial_parameters[index]),
+            "without the mask the same schedule must move the trunk"
+        );
+    }
+
+    /// Line (b) root selection on one real self-play game: the replayed root
+    /// is the minimum-rank eligible learner decision, repeats exactly, moves
+    /// with the root seed, and an altered trajectory fails the replay.
+    #[test]
+    fn line_b_root_selection_replays_a_real_game_and_takes_the_minimum_rank() {
+        use line_b_root_selection_v1::{
+            line_b_learner_row_v1, line_b_root_eligible_v1, line_b_root_rank_v1,
+            select_line_b_root_v1,
+        };
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v4();
+        let learner = test_behavior(&policy, false);
+        let registered =
+            crate::sideboard::checked_in_pauper_registered_deck_by_id_v1("Burn").unwrap();
+        let deck = ExpandedDeckListV1 {
+            label: "Burn".into(),
+            mainboard: registered.registered_configuration().mainboard().to_vec(),
+            sideboard: registered.registered_configuration().sideboard().to_vec(),
+        };
+        let episode = ExpandedEpisodeV1 {
+            id: "line-b-root-fixture".into(),
+            seed: 2_026_092_701,
+            starting_player: 1,
+            learner_seat: 0,
+            opponent: None,
+            opponent_search: None,
+            opponent_kind: None,
+            registered: [deck.clone(), deck.clone()],
+            selected: [deck.clone(), deck],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 1_000_000,
+        };
+        let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
+
+        // Independent replay: the visible key of every eligible decision.
+        let configs = trajectory.episode.configurations().unwrap();
+        let mut session = episode_session_v1(&trajectory.episode, &configs).unwrap();
+        let mut eligible = Vec::new();
+        for (index, row) in trajectory.decisions.iter().enumerate() {
+            let FastActorResponseV1::Decision(d) = session.current_response() else {
+                panic!("replay ended early");
+            };
+            if line_b_root_eligible_v1(&d, line_b_learner_row_v1(&trajectory.episode, row.actor)) {
+                let key = session.kernel_search_visible_key_v4(0).unwrap();
+                eligible.push((key, d.physical_decision_id, index));
+            }
+            session.step(d.episode_id, d.step, row.selected).unwrap();
+        }
+        assert!(
+            eligible.len() >= 8,
+            "fixture needs several eligible decisions"
+        );
+        let mut chosen = std::collections::BTreeSet::new();
+        for root_seed in 11_u64..=18 {
+            let root = select_line_b_root_v1(&trajectory, root_seed)
+                .unwrap()
+                .expect("the fixture has eligible roots");
+            let minimum = eligible
+                .iter()
+                .map(|(key, id, index)| (line_b_root_rank_v1(root_seed, key), *id, *index))
+                .min()
+                .unwrap();
+            assert_eq!(
+                (root.rank, root.physical_decision_id, root.decision_index),
+                minimum
+            );
+            assert_eq!(root.eligible_decisions, eligible.len());
+            let row = &trajectory.decisions[root.decision_index];
+            let FastActorResponseV1::Decision(d) = root.session.current_response() else {
+                panic!("the root session must be live at the root decision");
+            };
+            assert_eq!(
+                (d.step, d.physical_decision_id, root.actor),
+                (row.step, row.physical_decision_id, row.actor)
+            );
+            assert_eq!(
+                root.session.kernel_search_visible_key_v4(0).unwrap(),
+                root.visible_key
+            );
+            // A fresh fork of the collection policy scores the replayed root
+            // exactly as collection did: the rollouts can start from it.
+            let mut fork = policy.fork_for_collection_v3().unwrap();
+            fork.reset_sampling_v1([0, 0]);
+            let scores = fork.score_fast_session_v1(&root.session).unwrap();
+            assert_eq!(bits(&scores.logits), row.logits);
+            assert_eq!(scores.value.to_bits(), row.value);
+            chosen.insert(root.decision_index);
+        }
+        assert!(chosen.len() >= 2, "the root seed must move the root");
+        let first = select_line_b_root_v1(&trajectory, 11).unwrap().unwrap();
+        let again = select_line_b_root_v1(&trajectory, 11).unwrap().unwrap();
+        assert_eq!(
+            (
+                first.decision_index,
+                first.rank,
+                first.session.diagnostic_state_hash()
+            ),
+            (
+                again.decision_index,
+                again.rank,
+                again.session.diagnostic_state_hash()
+            )
+        );
+
+        // Altered trajectories fail the replay instead of yielding a root.
+        let mut truncated = trajectory.clone();
+        truncated.decisions.pop();
+        assert!(select_line_b_root_v1(&truncated, 11).is_err());
+        let mut reseeded = trajectory.clone();
+        reseeded.episode.seed ^= 1;
+        assert!(select_line_b_root_v1(&reseeded, 11).is_err());
+        let mut widened = trajectory.clone();
+        widened.decisions[0].logits.push(0);
+        assert!(select_line_b_root_v1(&widened, 11).is_err());
+
+        // Learner rows: both seats in self-play, only the learner seat otherwise.
+        assert!(line_b_learner_row_v1(&episode, 0) && line_b_learner_row_v1(&episode, 1));
+        let against = ExpandedEpisodeV1 {
+            opponent: Some(test_behavior(&policy, true).source),
+            learner_seat: 1,
+            ..episode.clone()
+        };
+        assert!(!line_b_learner_row_v1(&against, 0) && line_b_learner_row_v1(&against, 1));
+    }
+
+    /// One real self-play game (Burn mirror, fixture V4 policy) collected
+    /// with the line (b) unclamped learner sampler.
+    fn line_b_operator_fixture_v1() -> (FrozenPlayPolicyV1, ExpandedTrajectoryV1) {
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v4();
+        policy.enable_unclamped_collection_sampler_v1();
+        let learner = test_behavior(&policy, false);
+        let registered =
+            crate::sideboard::checked_in_pauper_registered_deck_by_id_v1("Burn").unwrap();
+        let deck = ExpandedDeckListV1 {
+            label: "Burn".into(),
+            mainboard: registered.registered_configuration().mainboard().to_vec(),
+            sideboard: registered.registered_configuration().sideboard().to_vec(),
+        };
+        let episode = ExpandedEpisodeV1 {
+            id: "line-b-operator-fixture".into(),
+            seed: 2_026_092_702,
+            starting_player: 0,
+            learner_seat: 0,
+            opponent: None,
+            opponent_search: None,
+            opponent_kind: None,
+            registered: [deck.clone(), deck.clone()],
+            selected: [deck.clone(), deck],
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 1_000_000,
+        };
+        let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
+        assert_eq!(
+            trajectory.learner_sampler.as_deref(),
+            Some(UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1)
+        );
+        (policy, trajectory)
+    }
+
+    fn line_b_root_input_v1<'a>(
+        root: &'a line_b_root_selection_v1::LineBRootV1,
+        policy: &'a FrozenPlayPolicyV1,
+        teacher_seed: u64,
+        learner_sampler: Option<&'static str>,
+    ) -> line_b_teacher_operator_v1::LineBTeacherRootInputV1<'a> {
+        line_b_teacher_operator_v1::LineBTeacherRootInputV1 {
+            root,
+            teacher_seed,
+            learner_sampler,
+            policies: line_b_teacher_operator_v1::LineBRolloutPoliciesV1 {
+                student: policy,
+                opponent: None,
+                learner_seat: 0,
+            },
+        }
+    }
+
+    /// Line (b) rollouts from the replayed root of the fixture game: no
+    /// defect in the census, records identical for one and three workers,
+    /// fork reuse equal to brand-new forks, the teacher seed changes the
+    /// records, and a legacy-sampler trajectory is refused.
+    #[test]
+    fn line_b_teacher_rollouts_are_worker_invariant_fresh_and_seeded() {
+        use line_b_root_selection_v1::select_line_b_root_v1;
+        use line_b_teacher_operator_v1::{
+            line_b_rollout_with_new_forks_v1, line_b_root_status_v1, line_b_teacher_rollouts_v1,
+            LineBRolloutOutcomeV1, LineBRootStatusV1,
+        };
+        let (policy, trajectory) = line_b_operator_fixture_v1();
+        let root = select_line_b_root_v1(&trajectory, 11)
+            .unwrap()
+            .expect("the fixture has eligible roots");
+        let unclamped = Some(UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1);
+        let input = |seed: u64, sampler| line_b_root_input_v1(&root, &policy, seed, sampler);
+        let rollouts = 2_u32;
+        let width = trajectory.decisions[root.decision_index].logits.len() as u32;
+        let serial = line_b_teacher_rollouts_v1(&[input(21, unclamped)], rollouts, 1).unwrap();
+        assert_eq!(serial.len(), 1);
+        let records = &serial[0];
+        assert_eq!(records.len(), (rollouts * width) as usize);
+        for (index, record) in records.iter().enumerate() {
+            let index = index as u32;
+            assert_eq!(
+                (record.ordinal, record.action),
+                (index / width, index % width)
+            );
+            assert!(
+                !matches!(record.outcome, LineBRolloutOutcomeV1::Defect(_)),
+                "defect in the census: {record:?}"
+            );
+        }
+        assert_eq!(
+            line_b_teacher_rollouts_v1(&[input(21, unclamped)], rollouts, 3).unwrap(),
+            serial
+        );
+        // The ordinal's last action ran on the most reused fork pair.
+        for ordinal in 0..rollouts {
+            let index = (ordinal * width + width - 1) as usize;
+            assert_eq!(
+                line_b_rollout_with_new_forks_v1(&input(21, unclamped), ordinal, width - 1)
+                    .unwrap(),
+                records[index]
+            );
+        }
+        let reseeded = line_b_teacher_rollouts_v1(&[input(22, unclamped)], 1, 1).unwrap();
+        assert_ne!(
+            reseeded[0].as_slice(),
+            &records[..width as usize],
+            "the teacher seed must change the rollouts"
+        );
+        assert!(line_b_teacher_rollouts_v1(&[input(21, None)], rollouts, 1).is_err());
+        let logits: Vec<f32> = trajectory.decisions[root.decision_index]
+            .logits
+            .iter()
+            .map(|bits| f32::from_bits(*bits))
+            .collect();
+        match line_b_root_status_v1(records, rollouts, &logits, 0.25).unwrap() {
+            LineBRootStatusV1::Complete {
+                mean_returns,
+                log_target,
+            } => {
+                assert_eq!(mean_returns.len(), width as usize);
+                assert_eq!(log_target.len(), width as usize);
+                assert!(mean_returns
+                    .iter()
+                    .all(|m| [-1.0, -0.5, 0.0, 0.5, 1.0].contains(m)));
+            }
+            LineBRootStatusV1::Censored { censored_rollouts } => assert!(censored_rollouts > 0),
+        }
+    }
+
+    /// Fable change 5, construction stated. Root pairs in one actor
+    /// information set that hold the same (object id, card) objects give
+    /// byte-identical rollout records: a FutureChanceV3 redeterminized clone
+    /// of the root (hidden hand and library placement and engine randomness
+    /// all differ), the root with an unobserved library reversed, and the
+    /// root with its engine randomness replaced. The Legacy sample mode keeps
+    /// the true engine randomness, so the replaced-randomness pair must
+    /// differ there (power).
+    #[test]
+    fn line_b_teacher_rollouts_are_invariant_to_hidden_placement_and_engine_rng() {
+        use crate::rl_session::V4SearchSampleMode;
+        use line_b_root_selection_v1::{select_line_b_root_v1, LineBRootV1};
+        use line_b_teacher_operator_v1::line_b_teacher_rollouts_mode_v1;
+        let (policy, trajectory) = line_b_operator_fixture_v1();
+        let root = select_line_b_root_v1(&trajectory, 11).unwrap().unwrap();
+        let unclamped = Some(UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1);
+        let run = |root: &LineBRootV1, mode: V4SearchSampleMode| {
+            line_b_teacher_rollouts_mode_v1(
+                &[line_b_root_input_v1(root, &policy, 21, unclamped)],
+                1,
+                1,
+                mode,
+            )
+            .unwrap()
+        };
+        let base = run(&root, V4SearchSampleMode::FutureChanceV3);
+        let mut pairs = vec![
+            (
+                "redeterminized clone",
+                root.session
+                    .kernel_search_redeterminized_clone_mode_v4(
+                        0x5eed,
+                        V4SearchSampleMode::FutureChanceV3,
+                    )
+                    .unwrap(),
+            ),
+            (
+                "engine randomness",
+                root.session
+                    .diagnostic_certificate_perturbed_clone_v1(None, true)
+                    .unwrap(),
+            ),
+        ];
+        for owner in 0..2 {
+            if let Ok(session) = root
+                .session
+                .diagnostic_certificate_perturbed_clone_v1(Some(owner), false)
+            {
+                pairs.push(("library order", session));
+            }
+        }
+        assert!(
+            pairs.len() >= 3,
+            "the fixture root needs an unobserved library"
+        );
+        for (label, session) in pairs {
+            assert_ne!(
+                session.diagnostic_state_hash(),
+                root.session.diagnostic_state_hash(),
+                "{label}"
+            );
+            assert_eq!(
+                session.kernel_search_visible_key_v4(0).unwrap(),
+                root.visible_key,
+                "{label}"
+            );
+            let other = LineBRootV1 {
+                session,
+                ..root.clone()
+            };
+            assert_eq!(
+                run(&other, V4SearchSampleMode::FutureChanceV3),
+                base,
+                "{label}"
+            );
+        }
+        let replaced = LineBRootV1 {
+            session: root
+                .session
+                .diagnostic_certificate_perturbed_clone_v1(None, true)
+                .unwrap(),
+            ..root.clone()
+        };
+        assert_ne!(
+            run(&replaced, V4SearchSampleMode::Legacy),
+            run(&root, V4SearchSampleMode::Legacy),
+            "Legacy keeps the true engine randomness"
+        );
+    }
+
+    /// Fable change 5c, distribution level; statistic and bound declared
+    /// before any run. A different-shuffle partner of the fixture root (the
+    /// card identities of two unseen opponent objects exchanged: the same
+    /// actor information set, another (object id, card) assignment) gives
+    /// different worlds at a fixed seed and the same distribution over seeds.
+    /// Statistic: the card on top of the opponent's library in the
+    /// FutureChanceV3 world, 400 seeds per root from disjoint ranges; the
+    /// total variation distance between the two empirical distributions must
+    /// be at most 0.2 (about five standard deviations above its null mean for
+    /// a Burn library). Power: a partner whose unseen opponent objects all
+    /// hold one card must exceed the bound.
+    #[test]
+    fn line_b_teacher_worlds_of_different_shuffles_agree_in_distribution() {
+        use crate::rl_session::{FastActorSessionV1, V4SearchSampleMode};
+        use line_b_root_selection_v1::select_line_b_root_v1;
+        use std::collections::BTreeMap;
+        let (_, trajectory) = line_b_operator_fixture_v1();
+        let root = select_line_b_root_v1(&trajectory, 11).unwrap().unwrap();
+        let (actor, opponent) = (PlayerId(root.actor), PlayerId(1 - root.actor));
+        let partner = root
+            .session
+            .diagnostic_exchanged_unseen_cards_clone_v1(actor, opponent)
+            .unwrap();
+        assert_eq!(
+            partner.kernel_search_visible_key_v4(0).unwrap(),
+            root.visible_key
+        );
+        assert_ne!(
+            partner.diagnostic_state_hash(),
+            root.session.diagnostic_state_hash()
+        );
+        let uniform = root
+            .session
+            .diagnostic_uniform_unseen_cards_clone_v1(actor, opponent)
+            .unwrap();
+        let world = |session: &FastActorSessionV1, seed: u64| {
+            session
+                .kernel_search_redeterminized_clone_mode_v4(
+                    seed,
+                    V4SearchSampleMode::FutureChanceV3,
+                )
+                .unwrap()
+        };
+        for seed in 0..8 {
+            assert_ne!(
+                world(&root.session, seed).diagnostic_state_hash(),
+                world(&partner, seed).diagnostic_state_hash(),
+                "a different shuffle gives a different world at seed {seed}"
+            );
+        }
+        let distribution = |session: &FastActorSessionV1, first: u64| {
+            let mut counts = BTreeMap::<Option<u16>, f64>::new();
+            for seed in first..first + 400 {
+                let top = world(session, seed).diagnostic_library_top_card_v1(opponent);
+                *counts.entry(top).or_default() += 1.0 / 400.0;
+            }
+            counts
+        };
+        let distance = |a: &BTreeMap<Option<u16>, f64>, b: &BTreeMap<Option<u16>, f64>| {
+            let keys: std::collections::BTreeSet<_> = a.keys().chain(b.keys()).collect();
+            0.5 * keys
+                .into_iter()
+                .map(|key| {
+                    (a.get(key).copied().unwrap_or(0.0) - b.get(key).copied().unwrap_or(0.0)).abs()
+                })
+                .sum::<f64>()
+        };
+        let base = distribution(&root.session, 0);
+        assert!(base.len() >= 3, "the statistic needs several cards");
+        let shuffled = distance(&base, &distribution(&partner, 10_000));
+        let power = distance(&base, &distribution(&uniform, 20_000));
+        eprintln!(
+            "top-card categories {}; different-shuffle TVD {shuffled:.4}; one-card TVD {power:.4}",
+            base.len()
+        );
+        assert!(shuffled <= 0.2, "different-shuffle TVD {shuffled}");
+        assert!(power > 0.2, "one-card TVD {power}");
+    }
+
+    /// Line (b) teach step on the fixture game, entered twice: once as a
+    /// teacher game and once as a canonical game. The packet's games and
+    /// census are identical for one and three workers, the census counts
+    /// match the records, and invalid options are refused.
+    #[test]
+    fn line_b_teach_step_builds_a_worker_invariant_packet() {
+        use crate::line_b_teacher_target_v1::LineBDivergenceV1;
+        use line_b_teacher_operator_v1::{LineBRolloutOutcomeV1, LineBRootStatusV1};
+        use line_b_teacher_packet_v1::{
+            line_b_teach_v1, LineBGameSeedsV1, LineBPacketGameV1, LineBTeacherOptionsV1,
+            LINE_B_TEACHER_PACKET_SCHEMA_V1,
+        };
+        let (policy, trajectory) = line_b_operator_fixture_v1();
+        let trajectories = [trajectory.clone(), trajectory];
+        let options = |workers: usize| LineBTeacherOptionsV1 {
+            direction: LineBDivergenceV1::Reverse,
+            coefficient: 0.1,
+            temperature: 0.25,
+            rollouts: 2,
+            workers,
+            games: vec![
+                Some(LineBGameSeedsV1 {
+                    root_seed: 11,
+                    teacher_seed: 21,
+                }),
+                None,
+            ],
+            permuted_control: false,
+        };
+        let student = "0".repeat(64);
+        let serial = line_b_teach_v1(&trajectories, &policy, &student, &options(1)).unwrap();
+        let pooled = line_b_teach_v1(&trajectories, &policy, &student, &options(3)).unwrap();
+        assert_eq!(serial.games, pooled.games);
+        assert_eq!(serial.census, pooled.census);
+        // The published bytes too: the packet records no execution setting.
+        assert_eq!(
+            serde_json::to_vec(&serial).unwrap(),
+            serde_json::to_vec(&pooled).unwrap()
+        );
+        assert!(matches!(
+            serial.games[1],
+            LineBPacketGameV1::Canonical {
+                trajectory_index: 1
+            }
+        ));
+        let LineBPacketGameV1::Root(root) = &serial.games[0] else {
+            panic!("the fixture game has an eligible root");
+        };
+        let width = root.collection_logits.len();
+        assert_eq!(root.rollouts.len(), 2 * width);
+        let census = &serial.census;
+        assert_eq!(
+            (census.teacher_games, census.selected_roots, census.rollouts),
+            (1, 1, 2 * width)
+        );
+        assert_eq!(census.complete_roots + census.censored_roots, 1);
+        let censored = root
+            .rollouts
+            .iter()
+            .filter(|record| matches!(record.outcome, LineBRolloutOutcomeV1::Censored(_)))
+            .count();
+        assert_eq!(census.censored_rollouts, censored);
+        assert_eq!(
+            census.physical_decisions,
+            root.rollouts
+                .iter()
+                .map(|r| r.physical_decisions)
+                .sum::<u64>()
+        );
+        match &root.status {
+            LineBRootStatusV1::Complete { log_target, .. } => {
+                assert_eq!((census.complete_roots, log_target.len()), (1, width))
+            }
+            LineBRootStatusV1::Censored { censored_rollouts } => {
+                assert_eq!((census.censored_roots, *censored_rollouts), (1, censored))
+            }
+        }
+        let json = serde_json::to_value(&serial).unwrap();
+        assert_eq!(json["schema"], LINE_B_TEACHER_PACKET_SCHEMA_V1);
+        assert_eq!(json["games"][0]["kind"], "root");
+        assert_eq!(json["games"][1]["kind"], "canonical");
+        assert_eq!(
+            serde_json::to_vec(&serial).unwrap(),
+            serde_json::to_vec(
+                &line_b_teach_v1(&trajectories, &policy, &student, &options(1)).unwrap()
+            )
+            .unwrap(),
+            "the packet bytes repeat"
+        );
+        let mut refused = Vec::new();
+        let mut short = options(1);
+        short.games.pop();
+        refused.push(short);
+        for change in 0..4 {
+            let mut bad = options(1);
+            match change {
+                0 => bad.rollouts = 0,
+                1 => bad.temperature = 0.0,
+                2 => bad.coefficient = -1.0,
+                _ => bad.workers = 0,
+            }
+            refused.push(bad);
+        }
+        for bad in refused {
+            assert!(line_b_teach_v1(&trajectories, &policy, &student, &bad).is_err());
+        }
+    }
+
+    /// Line (b) treatment through the real Collect and Update commands on the
+    /// CPU reference: the learner collects with the unclamped sampler; the
+    /// update runs the teach step, trains with the auxiliary term, keeps the
+    /// frozen digest, and publishes the packet (SHA-256 bound) and the
+    /// telemetry. Control, reverse and forward start from the same source and
+    /// trajectory; seed entries that do not match the batch are refused.
+    #[test]
+    fn line_b_teacher_update_publishes_packet_and_telemetry() {
+        assert_line_b_teacher_update_v1("cpu", ExpandedUpdateBackendV1::Cpu);
+    }
+
+    /// The same treatment updates through the CUDA device-1 path: the
+    /// auxiliary term runs on the device and the receipt adds the envelope
+    /// (device root-row log-probabilities against the collection softmax).
+    #[test]
+    #[ignore = "requires the real GPU1 (RTX 3050); explicit GPU execution only"]
+    fn line_b_teacher_cuda_update_publishes_packet_telemetry_and_envelope() {
+        assert_line_b_teacher_update_v1(
+            "cuda",
+            ExpandedUpdateBackendV1::Cuda { device_ordinal: 1 },
+        );
+    }
+
+    /// The published state after the reverse and after the forward treatment
+    /// update of this fixture (FABLE-REVIEW-20260927 change 4), pinned from
+    /// the runs of 2026-09-27 at dbab4cd0; the CUDA values are GPU 1's (RTX
+    /// 3050). Each backend is deterministic run to run (acceptance-001).
+    const LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1: [&str; 2] = [
+        "e60b46a397f917cfadfbb87cd36fdac9d0a11187cc81fe04edbabf50db8d9926",
+        "73e13d2db04664ce76d984966763f27318c6bd3dd17ffe2b5e0981b833b4fe64",
+    ];
+    const LINE_B_TEACHER_UPDATE_GOLDEN_CUDA_V1: [&str; 2] = [
+        "4ec11a5c9df8bf98cecd3f72a72fa39906377489945aa6d8be77822624f4cd92",
+        "d91b7ceacffea8eeff1ef90970efc568028d34ca47270d0d18f48d1551da2fbd",
+    ];
+
+    fn assert_line_b_teacher_update_v1(label: &str, update_backend: ExpandedUpdateBackendV1) {
+        use crate::line_b_teacher_target_v1::LineBDivergenceV1;
+        let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
+        let root = std::env::temp_dir().join(format!(
+            "line-b-teacher-update-{label}-{}",
+            std::process::id()
+        ));
+        let source_struct =
+            fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
+                &root.join("source"),
+                feature_identity,
+                |_parameters| {},
+            );
+        let descriptor_path = root.join("descriptor.json");
+        let descriptor_bytes = serde_json::to_vec(&source_struct).unwrap();
+        std::fs::write(&descriptor_path, &descriptor_bytes).unwrap();
+        let source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: descriptor_path.canonicalize().unwrap(),
+                sha256: sha(&descriptor_bytes),
+            },
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: feature_identity.feature_contract_digest.into(),
+                expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
+            },
+            checkpoint: None,
+        };
+        let decks = [list("Affinity"), list("Terror")];
+        let episode = ExpandedEpisodeV1 {
+            id: "line-b-teacher-update".into(),
+            seed: 2_026_092_721,
+            starting_player: 0,
+            learner_seat: 0,
+            opponent: None,
+            opponent_search: None,
+            opponent_kind: None,
+            registered: decks.clone(),
+            selected: decks.clone(),
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 1_000_000,
+        };
+        let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
+            source: source.clone(),
+            episodes: vec![episode],
+            max_non_natural_episode_fraction: 0.0,
+            collection_sampler: CollectionSamplerV1::UnclampedSoftmaxF64IcdfU53V1,
+            output_directory: root.join("collect"),
+        })
+        .unwrap();
+        let trajectories: Vec<PinnedFileV1> =
+            serde_json::from_value(collected["trajectories"].clone()).unwrap();
+        let teacher = |direction, games: Vec<Option<LineBGameSeedsV1>>| LineBTeacherOptionsV1 {
+            direction,
+            coefficient: 0.1,
+            temperature: 0.25,
+            rollouts: 2,
+            workers: 2,
+            games,
+            permuted_control: true,
+        };
+        let seeds = || {
+            vec![Some(LineBGameSeedsV1 {
+                root_seed: 11,
+                teacher_seed: 21,
+            })]
+        };
+        let update = |label: &str, teacher: Option<LineBTeacherOptionsV1>| {
+            execute_v1(ExpandedTrainingCommandV1::Update {
+                source: source.clone(),
+                trajectories: trajectories.clone(),
+                learning_rate: 0.0003,
+                value_coefficient: 0.5,
+                update_backend,
+                update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+                loss_selection: gae_loss_selection_v1(),
+                line_b: Some(LineBUpdateOptionsV1 {
+                    optimizer_mask: OptimizerMaskV1::LineBHeadOnlyV1,
+                    teacher,
+                }),
+                output_directory: root.join(format!("update-{label}")),
+            })
+        };
+        let control = update("control", None).unwrap();
+        assert!(control["line_b"].get("teacher").is_none());
+        let assert_gauge = |receipt: &Value| {
+            let gauge = &receipt["line_b"]["scorer_bias_gauge"];
+            assert_eq!(gauge["within_bound"], true, "{gauge}");
+            assert_eq!(gauge["anchor_preserved"], true, "{gauge}");
+        };
+        assert_gauge(&control);
+        let initial_frozen = line_b_frozen_sha256_v1(&source).unwrap();
+        let mut moved = Vec::new();
+        let mut checkpoints = Vec::new();
+        for (label, direction) in [
+            ("reverse", LineBDivergenceV1::Reverse),
+            ("forward", LineBDivergenceV1::Forward),
+        ] {
+            let receipt = update(label, Some(teacher(direction, seeds()))).unwrap();
+            assert_eq!(
+                receipt["line_b"]["frozen_tensor_sha256"],
+                initial_frozen.as_str()
+            );
+            let taught = &receipt["line_b"]["teacher"];
+            let pin: PinnedFileV1 = serde_json::from_value(taught["packet"].clone()).unwrap();
+            let bytes = std::fs::read(&pin.path).unwrap();
+            assert_eq!(sha(&bytes), pin.sha256);
+            let packet: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                packet["options"]["direction"],
+                serde_json::to_value(direction).unwrap()
+            );
+            assert_eq!(taught["census"], packet["census"]);
+            assert_eq!(taught["census"]["selected_roots"], 1);
+            // Census by learner list (review change 10) sums to the census.
+            let by_list = taught["census_by_list"].as_object().unwrap();
+            for key in [
+                "selected_roots",
+                "complete_roots",
+                "censored_roots",
+                "rollouts",
+                "censored_rollouts",
+            ] {
+                let sum: u64 = by_list.values().map(|row| row[key].as_u64().unwrap()).sum();
+                assert_eq!(Some(sum), taught["census"][key].as_u64(), "{key}");
+            }
+            let telemetry = &taught["telemetry"];
+            assert_eq!(telemetry["roots"].as_array().unwrap().len(), 1);
+            if matches!(update_backend, ExpandedUpdateBackendV1::Cpu) {
+                assert!(taught.get("cuda_envelope").is_none());
+            } else {
+                let envelope = &taught["cuda_envelope"];
+                assert_eq!(envelope["within_bound"], true, "{envelope}");
+                assert_eq!(envelope["declared_envelope"], 1e-3, "{envelope}");
+                assert_eq!(envelope["within_declared_envelope"], true, "{envelope}");
+                assert!(envelope["max_abs_log_probability_discrepancy"]
+                    .as_f64()
+                    .unwrap()
+                    .is_finite());
+                // The host refold is binary32 arithmetic on the same logits:
+                // rounding-scale on the fixture's small logits.
+                let refold = envelope["max_host_refold_abs_discrepancy"]
+                    .as_f64()
+                    .unwrap();
+                assert!(refold.is_finite() && refold < 1e-5, "{envelope}");
+                eprintln!("{label} {direction:?} envelope {envelope} telemetry {telemetry}");
+            }
+            eprintln!(
+                "{label} {direction:?} after_state_sha256 {}",
+                receipt["after_state_sha256"]
+            );
+            assert_gauge(&receipt);
+            let permuted = &taught["permuted_control"];
+            assert_eq!(permuted["backend"], "cpu");
+            let auxiliary = telemetry["auxiliary_head_l2"].as_f64().unwrap();
+            let root = &telemetry["roots"][0];
+            if taught["census"]["complete_roots"] == 1 {
+                // A single root is its width's only member: its own target
+                // rotated by one action, so a different divergence.
+                assert_eq!(permuted["kinds"], json!(["within_root"]));
+                assert_ne!(permuted["divergences_before"][0], root["divergence_before"]);
+                assert!(permuted["rescore_after"][0].as_f64().unwrap().is_finite());
+                assert_ne!(
+                    permuted["after_state_sha256"],
+                    receipt["after_state_sha256"]
+                );
+                eprintln!("{label} {direction:?} permuted control {permuted}");
+                let before = root["divergence_before"].as_f64().unwrap();
+                let rescore_before = root["rescore_before"].as_f64().unwrap();
+                let rescore_after = root["rescore_after"].as_f64().unwrap();
+                assert_eq!(
+                    root["signed_difference"].as_f64().unwrap(),
+                    rescore_after - rescore_before
+                );
+                if matches!(update_backend, ExpandedUpdateBackendV1::Cpu) {
+                    // The CPU tape is the recorded collection forward.
+                    assert_eq!(rescore_before.to_bits(), before.to_bits());
+                } else {
+                    assert!((rescore_before - before).abs() < 1e-6);
+                }
+            } else {
+                assert!(root["divergence_before"].is_null());
+                assert!(root["rescore_after"].is_null());
+                assert_eq!(auxiliary, 0.0);
+                assert_eq!(permuted["kinds"], json!([null]));
+            }
+            moved.push((auxiliary > 0.0, receipt["after_state_sha256"].clone()));
+            checkpoints.push(receipt["checkpoint"].clone());
+        }
+        // Pinned treatment goldens (FABLE-REVIEW-20260927 change 4).
+        let goldens = match update_backend {
+            ExpandedUpdateBackendV1::Cpu => LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1,
+            ExpandedUpdateBackendV1::Cuda { .. } => LINE_B_TEACHER_UPDATE_GOLDEN_CUDA_V1,
+        };
+        for ((_, state), golden) in moved.iter().zip(goldens) {
+            assert_eq!(
+                state.as_str(),
+                Some(golden),
+                "{label}: pinned line (b) golden"
+            );
+        }
+        // End-of-run head distance (proposal 12:51) through the command.
+        let checkpoint_source = |pin: &Value| ExpandedModelSourceV1 {
+            checkpoint: Some(serde_json::from_value(pin.clone()).unwrap()),
+            ..source.clone()
+        };
+        let distance = |treatment: &Value, control_pin: &Value| {
+            execute_v1(ExpandedTrainingCommandV1::LineBHeadDistance {
+                treatment: checkpoint_source(treatment),
+                control: checkpoint_source(control_pin),
+            })
+            .unwrap()
+        };
+        let same = distance(&control["checkpoint"], &control["checkpoint"]);
+        assert_eq!(same["l2"], 0.0);
+        assert_eq!(same["relative_l2"], 0.0);
+        let treated = distance(&checkpoints[0], &control["checkpoint"]);
+        let (l2, reference) = (
+            treated["l2"].as_f64().unwrap(),
+            treated["reference_l2"].as_f64().unwrap(),
+        );
+        assert!(reference > 0.0);
+        assert_eq!(treated["relative_l2"].as_f64().unwrap(), l2 / reference);
+        if moved[0].0 {
+            assert!(l2 > 0.0, "the teacher must move the heads");
+        }
+        if moved.iter().all(|(nonzero, _)| *nonzero) {
+            assert_ne!(
+                moved[0].1, control["after_state_sha256"],
+                "the teacher must change the update"
+            );
+            assert_ne!(moved[0].1, moved[1].1, "the directions must differ");
+        }
+        for games in [Vec::new(), vec![None, None]] {
+            assert!(update("refused", Some(teacher(LineBDivergenceV1::Reverse, games))).is_err());
         }
     }
 

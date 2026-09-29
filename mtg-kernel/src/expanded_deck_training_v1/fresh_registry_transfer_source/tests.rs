@@ -286,6 +286,7 @@ fn phase1_fresh_registry_trainer_real_update_reloads_exact_adam_and_transfer_pro
     let trajectory_pin = pin_json(&f.root, "batch-0.json", &first);
     apply(&mut expected, &policy, &first);
     let result = execute_v1(ExpandedTrainingCommandV1::Update {
+        line_b: None,
         source: f.source.clone(),
         trajectories: vec![trajectory_pin],
         learning_rate: LR,
@@ -330,6 +331,7 @@ fn phase1_fresh_registry_trainer_real_update_reloads_exact_adam_and_transfer_pro
     let mut resumed_state = resumed;
     apply(&mut resumed_state, &resumed_policy, &second);
     let second_result = execute_v1(ExpandedTrainingCommandV1::Update {
+        line_b: None,
         source: source.clone(),
         trajectories: vec![pin],
         learning_rate: LR,
@@ -359,6 +361,7 @@ fn phase1_fresh_registry_trainer_rejects_wrong_scalars_before_publication() {
     let pin = pin_json(&f.root, "trajectory.json", &first);
     let output = f.root.join("wrong-lr");
     let error = execute_v1(ExpandedTrainingCommandV1::Update {
+        line_b: None,
         source: f.source.clone(),
         trajectories: vec![pin],
         learning_rate: LR * 2.0,

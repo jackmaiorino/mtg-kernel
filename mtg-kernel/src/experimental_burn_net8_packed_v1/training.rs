@@ -30,6 +30,7 @@ use std::process::Command;
 pub(crate) mod public_inputs;
 pub(crate) mod stack_inputs;
 pub(crate) mod entropy;
+pub(crate) mod line_b_root;
 
 type CudaAutodiffBackendV1 = Autodiff<CudaBackendV1>;
 

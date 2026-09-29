@@ -546,6 +546,7 @@ impl OpponentRecordV1 {
         configuration_sha256: &[String; 2],
         decisions: &[DecisionRecordV1],
         terminal: &RlSessionTerminalV1,
+        learner_sampler: Option<&str>,
     ) -> Result<(), String> {
         let (kind, generation, singletons) = match &episode.opponent_kind {
             Some(ExpandedOpponentKindV1::PublicCheckpoint { .. }) => {
@@ -637,6 +638,7 @@ impl OpponentRecordV1 {
                 configuration_sha256,
                 decisions,
                 terminal,
+                learner_sampler,
                 Some((self.seat, check)),
             )?;
         }

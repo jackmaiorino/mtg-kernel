@@ -186,7 +186,13 @@ fn public_checkpoint_games_validate_replay_and_refuse_tampering() {
         assert!(a.auxiliary.iter().all(Option::is_some));
         let hashes = a.configuration_sha256.clone();
         record
-            .validate(&a.episode, &hashes, &a.decisions, &a.terminal)
+            .validate(
+                &a.episode,
+                &hashes,
+                &a.decisions,
+                &a.terminal,
+                a.learner_sampler.as_deref(),
+            )
             .unwrap();
         for seat in [1 - learner_seat, learner_seat] {
             let mut tampered = a.decisions.clone();
@@ -196,7 +202,13 @@ fn public_checkpoint_games_validate_replay_and_refuse_tampering() {
                 .expect("a decision with a choice");
             row.selected = (row.selected + 1) % row.logits.len() as u32;
             assert!(record
-                .validate(&a.episode, &hashes, &tampered, &a.terminal)
+                .validate(
+                    &a.episode,
+                    &hashes,
+                    &tampered,
+                    &a.terminal,
+                    a.learner_sampler.as_deref()
+                )
                 .is_err());
         }
     }
@@ -381,14 +393,26 @@ fn legacy_v3_games_record_singletons_unscored_validate_and_refuse_tampering() {
                 }
                 let hashes = a.configuration_sha256.clone();
                 record
-                    .validate(&a.episode, &hashes, &a.decisions, &a.terminal)
+                    .validate(
+                        &a.episode,
+                        &hashes,
+                        &a.decisions,
+                        &a.terminal,
+                        a.learner_sampler.as_deref(),
+                    )
                     .unwrap();
                 // A well-formed but wrong menu hash is refused by the replay.
                 let mut forged_menu = record.clone();
                 forged_menu.rows[0].menu_sha256 = "ab".repeat(32);
                 assert_eq!(
                     forged_menu
-                        .validate(&a.episode, &hashes, &a.decisions, &a.terminal)
+                        .validate(
+                            &a.episode,
+                            &hashes,
+                            &a.decisions,
+                            &a.terminal,
+                            a.learner_sampler.as_deref()
+                        )
                         .unwrap_err(),
                     "opponent menu hash differs from the replayed menu"
                 );
@@ -399,7 +423,13 @@ fn legacy_v3_games_record_singletons_unscored_validate_and_refuse_tampering() {
                     .expect("a scored opponent choice");
                 row.selected = (row.selected + 1) % row.logits.len() as u32;
                 assert!(record
-                    .validate(&a.episode, &hashes, &tampered, &a.terminal)
+                    .validate(
+                        &a.episode,
+                        &hashes,
+                        &tampered,
+                        &a.terminal,
+                        a.learner_sampler.as_deref()
+                    )
                     .is_err());
                 if singletons > 0 {
                     // A fabricated scored singleton is refused.
@@ -412,7 +442,13 @@ fn legacy_v3_games_record_singletons_unscored_validate_and_refuse_tampering() {
                         .unwrap();
                     row.logits = vec![0f32.to_bits()];
                     assert!(record
-                        .validate(&a.episode, &hashes, &fabricated, &a.terminal)
+                        .validate(
+                            &a.episode,
+                            &hashes,
+                            &fabricated,
+                            &a.terminal,
+                            a.learner_sampler.as_deref()
+                        )
                         .is_err());
                     // A singleton row cannot hide a value either.
                     let mut valued = a.decisions.clone();
@@ -425,7 +461,13 @@ fn legacy_v3_games_record_singletons_unscored_validate_and_refuse_tampering() {
                     row.value = 1f32.to_bits();
                     assert_eq!(
                         record
-                            .validate(&a.episode, &hashes, &valued, &a.terminal)
+                            .validate(
+                                &a.episode,
+                                &hashes,
+                                &valued,
+                                &a.terminal,
+                                a.learner_sampler.as_deref()
+                            )
                             .unwrap_err(),
                         "unscored singleton row differs from its record"
                     );
@@ -459,13 +501,65 @@ fn legacy_v3_games_record_singletons_unscored_validate_and_refuse_tampering() {
                     row.sampler_identity = None;
                     assert_eq!(
                         forged_record
-                            .validate(&a.episode, &hashes, &forged, &a.terminal)
+                            .validate(
+                                &a.episode,
+                                &hashes,
+                                &forged,
+                                &a.terminal,
+                                a.learner_sampler.as_deref()
+                            )
                             .unwrap_err(),
                         "opponent row differs from its record"
                     );
                 }
             }
         }
+    }
+}
+
+/// Synthetic replay rows isolate sampler routing, preserving the game's
+/// actual selected actions and opponent rows. This is not a collection or
+/// model-output receipt: one learner logit has all representable mass.
+#[test]
+fn unclamped_learner_rows_replay_with_legacy_singletons_and_refuse_tampering() {
+    for learner_seat in [0, 1] {
+        let (_, mut trajectory) = legacy_games(learner_seat, true, true)
+            .into_iter()
+            .find(|(_, t)| t.decisions.iter().any(|r| r.logits.is_empty()))
+            .expect("fixture contains an unscored opponent singleton");
+        assert!(serde_json::to_value(&trajectory)
+            .unwrap()
+            .get("learner_sampler")
+            .is_none());
+        trajectory.learner_sampler = Some(UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1.into());
+        for row in trajectory
+            .decisions
+            .iter_mut()
+            .filter(|r| r.actor == learner_seat)
+        {
+            row.logits.fill((-1000f32).to_bits());
+            row.logits[row.selected as usize] = 0f32.to_bits();
+            row.sampler_identity = trajectory.learner_sampler.clone();
+        }
+        trajectory.validate_records().unwrap();
+        let index = trajectory
+            .decisions
+            .iter()
+            .position(|r| r.actor == learner_seat && r.logits.len() > 1)
+            .unwrap();
+        let original = trajectory.decisions[index].clone();
+        trajectory.decisions[index].sampler_identity = None;
+        assert_eq!(
+            trajectory.validate_records().unwrap_err(),
+            "stored decision sampler identity differs from action width"
+        );
+        trajectory.decisions[index] = original.clone();
+        trajectory.decisions[index].selected =
+            (original.selected + 1) % original.logits.len() as u32;
+        assert_eq!(
+            trajectory.validate_records().unwrap_err(),
+            "stored action differs from recorded behavior sampler"
+        );
     }
 }
 
