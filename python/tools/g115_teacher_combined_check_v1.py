@@ -1,7 +1,7 @@
-"""ASTRA #077 three-stage configuration validation packet, dispatched only after parent handoff.
+"""ASTRA #080 three-stage configuration validation packet, dispatched only after parent handoff.
 
 Canonical WMI transport owns the job. Hot writes stay in one fresh SSD root;
-sealed logs/receipts go to E:; build outputs remain in the retained fresh D: root. Resource
+sealed logs/receipts and hash-pinned executables go to E:. Resource
 checks are conservative accounting, not an operating-system disk quota.
 """
 import argparse
@@ -24,6 +24,7 @@ GIB = 1024 ** 3
 WORK_ID = 'teacher-combined-check-006'
 SCRATCH = Path('D:/e-scratch/g115-' + WORK_ID)
 COLD = Path('E:/mtg-g115-lineage-20260923') / WORK_ID
+PIN_ROOT = Path('E:/pinned-binaries')
 CODE_UNDER_CHECK = '27122ce62b44576707321b265e4736f19a3f0c4c'
 PREPARATION_CHANGED_PATHS = {
     'python/tools/g115_teacher_combined_check_v1.py',
@@ -33,7 +34,7 @@ CACHE_ROOT = Path('D:/e-scratch/g115-teacher-combined-check-004')
 CARGO_CONFIG = '[profile.release.package.mtg-kernel]\ncodegen-units = 4\n'
 AFFECTED_TEST = 'expanded_deck_training_v1::tests::line_b_teacher_rollouts_are_invariant_to_hidden_placement_and_engine_rng'
 STAGE_ARGS = [
-    ('default-invariance', ['test', '--release', '--locked', '--offline', '-p', 'mtg-kernel', '--lib', AFFECTED_TEST, '--', '--exact']),
+    ('default-invariance', ['test', '--release', '--locked', '--offline', '-p', 'mtg-kernel', '--lib', '--no-run', '--message-format=json-render-diagnostics']),
     ('default-jsonl', ['build', '--release', '--locked', '--offline', '-p', 'mtg-kernel', '--bin', 'kernel_rl_env']),
     ('cuda-compile', ['check', '--release', '--locked', '--offline', '-p', 'mtg-kernel', '--lib', '--features', 'experimental-burn-net8-packed-cuda-v1']),
 ]
@@ -56,6 +57,53 @@ def require(ok, message):
 def sha(path):
     with Path(path).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+def publish_binary(src, root, publications, guard, allowance):
+    """Charge the full staged/retained allocation before writing; never replace a pin."""
+    count, digest = src.stat().st_size, sha(src)
+    allocated = (count + 4095) // 4096 * 4096
+    destination = root / digest / src.name
+    row = {'source_path': str(src), 'path': str(destination), 'bytes': count,
+           'sha256': digest, 'accounted_bytes': 0, 'phase': 'planned'}
+    publications.append(row)
+    require(sum(r['accounted_bytes'] for r in publications) + allocated <= allowance,
+            'Pinned publication allowance reached')
+    guard(allocated)
+    # This reservation also covers partial files on any failure. Rename uses
+    # the same allocation, not a second copy. Existing pins count in retention.
+    row['accounted_bytes'] = allocated
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    require(not root.is_symlink() and not root.is_junction()
+            and not destination.parent.is_symlink() and not destination.parent.is_junction()
+            and not destination.is_symlink(), 'Linked binary pin path')
+    if destination.exists():
+        require(destination.stat().st_size == count and sha(destination) == digest,
+                'Existing binary pin differs')
+        row.update(phase='published', reused=True)
+    else:
+        with tempfile.NamedTemporaryFile(mode='wb', dir=destination.parent,
+                                         prefix='.g115-006-', suffix='.pending', delete=False) as stream:
+            staged = Path(stream.name)
+            row.update(phase='staging', staging_path=str(staged), reused=False)
+            checked = time.monotonic()
+            with src.open('rb') as source:
+                while chunk := source.read(1024 * 1024):
+                    stream.write(chunk)
+                    if time.monotonic() - checked >= 2:
+                        guard()
+                        checked = time.monotonic()
+            stream.flush()
+            os.fsync(stream.fileno())
+        require(staged.stat().st_size == count and sha(staged) == digest,
+                'Binary publication staging differs')
+        # Windows rename refuses an existing destination, including a racer.
+        staged.rename(destination)
+        row['phase'] = 'published'
+    require(destination.stat().st_size == count and sha(destination) == digest,
+            'Published binary differs')
+    guard()
+    return destination
 
 
 def check_stage_exit(plan, label, argv, code, output):
@@ -184,6 +232,9 @@ def validate(manifest, digest):
         require(Path(plan[key]).resolve() == expected.resolve(), 'Wrong output path: ' + key)
     require(plan['code_under_check'] == CODE_UNDER_CHECK, 'Code under check differs')
     require(plan['cargo_config'] == CARGO_CONFIG, 'Build configuration differs')
+    require(Path(plan['pin_root']).resolve() == PIN_ROOT.resolve()
+            and plan['publication_allowance_bytes'] == 2 * GIB,
+            'Binary publication scope differs')
     expected = [(CACHE_ROOT / 'target', 'target'), (CACHE_ROOT / 'cargo-home' / 'registry', 'cargo-home/registry')]
     require(len(plan['caches']) == len(expected), 'Cache scope differs')
     for ref, (root, destination) in zip(plan['caches'], expected):
@@ -253,13 +304,13 @@ def worker(plan, digest):
     result = {'complete': False, 'source_commit': plan['source_commit'], 'merge_commit': plan['merge_commit'],
               'manifest_sha256': digest, 'started_utc': reservation.now_utc(), 'steps': [], 'gpu_tests': False,
               'code_under_check': plan['code_under_check'], 'cargo_config': plan['cargo_config']}
-    pinned_bytes = 0
+    result['publications'] = []
     copy_checked = time.monotonic()
 
     def guard(extra=0, terminal=False):
         free = {d: shutil.disk_usage(d).free for d in start_free}
         require(all(v - extra >= plan['reserve_bytes'] for v in free.values()), 'Disk reserve reached')
-        used = size(scratch) + size(cold) + pinned_bytes
+        used = size(scratch) + size(cold) + sum(r['accounted_bytes'] for r in result['publications'])
         ceiling = plan['cap_bytes'] - (0 if terminal else plan['closure_headroom_bytes'])
         require(used + extra <= ceiling, 'Total cache/target/staging/evidence cap reached')
         require(sum(max(0, start_free[d] - free[d]) for d in free) + extra <= ceiling, 'Observed volume growth cap reached')
@@ -354,15 +405,18 @@ def worker(plan, digest):
         for stage in plan['stages']:
             output = run(stage['label'], stage['argv'], plan['stage_timeout_seconds'])
             if stage['label'] == 'default-invariance':
-                found = re.findall(r'^test (\S+) \.\.\. (ok|FAILED|ignored)\s*$', output, re.M)
-                require(found == [(AFFECTED_TEST, 'ok')], 'Affected exact test name/outcome differs')
-                require(len(re.findall(r'^test result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured; \d+ filtered out;', output, re.M)) == 1,
-                        'Affected test summary differs')
-                result['selected_test_names'] = [AFFECTED_TEST]
-                result['selected_passed'] = 1
-                paths = re.findall(r'^\s*Running unittests src[\\/]lib\.rs \((.+\.exe)\)\s*$', output, re.M)
-                require(len(paths) == 1, 'Expected Cargo library-test executable path')
-                binary = Path(paths[0])
+                paths = []
+                for line in output.splitlines():
+                    try:
+                        message = json.loads(line)
+                    except ValueError:
+                        continue
+                    if (message.get('reason') == 'compiler-artifact' and message.get('executable')
+                            and message.get('profile', {}).get('test')
+                            and message.get('target', {}).get('name') == 'mtg_kernel'):
+                        paths.append(Path(message['executable']))
+                require(len(paths) == 1, 'Expected one Cargo library-test executable')
+                binary = paths[0]
                 if not binary.is_absolute():
                     binary = Path(plan['source']) / binary
             elif stage['label'] == 'default-jsonl':
@@ -370,8 +424,20 @@ def worker(plan, digest):
             else:
                 continue  # cargo check produces no runnable CUDA library artifact.
             require(binary.resolve().is_relative_to(Path(plan['target']).resolve()), 'Build output outside owned target')
-            result['build_outputs'].append({'stage': stage['label'], 'path': str(binary),
-                                           'bytes': binary.stat().st_size, 'sha256': sha(binary)})
+            pinned = publish_binary(binary, Path(plan['pin_root']), result['publications'], guard,
+                                    plan['publication_allowance_bytes'])
+            result['build_outputs'].append({'stage': stage['label'], 'path': str(pinned),
+                                           'bytes': pinned.stat().st_size, 'sha256': sha(pinned)})
+            save(scratch / 'progress.json', result)
+            if stage['label'] == 'default-invariance':
+                output = run('default-invariance-exact', [str(pinned), AFFECTED_TEST, '--exact'],
+                             plan['stage_timeout_seconds'])
+                found = re.findall(r'^test (\S+) \.\.\. (ok|FAILED|ignored)\s*$', output, re.M)
+                require(found == [(AFFECTED_TEST, 'ok')], 'Affected exact test name/outcome differs')
+                require(len(re.findall(r'^test result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured; \d+ filtered out;', output, re.M)) == 1,
+                        'Affected test summary differs')
+                result['selected_test_names'] = [AFFECTED_TEST]
+                result['selected_passed'] = 1
         result['stages_passed'] = 3
         result['final_resources'] = guard()
         result['complete'] = True

@@ -29,6 +29,7 @@ class FailurePaths(unittest.TestCase):
     def build_plan(self, plan):
         plan.update(code_under_check=packet.CODE_UNDER_CHECK, cargo_config=packet.CARGO_CONFIG,
                     caches=[], stage_timeout_seconds=3600,
+                    pin_root=str(self.root / 'pins'), publication_allowance_bytes=2*packet.GIB,
                     target=str(self.scratch / 'target'), cargo_home=str(self.scratch / 'cargo-home'),
                     tools={n: {'path': str(self.root / (n + '.exe'))} for n in ('cargo','rustc','linker')})
         plan['stages'] = packet.stages(plan['tools']['cargo']['path'])
@@ -75,6 +76,12 @@ class FailurePaths(unittest.TestCase):
         self.assertEqual(len(receipt['steps']), 1)
 
     def test_three_stage_worker_preserves_default_features_and_capture(self):
+        self.worker_fixture()
+
+    def test_publication_failure_seals_failure_before_test_or_later_builds(self):
+        self.worker_fixture(fail_publication=True)
+
+    def worker_fixture(self, fail_publication=False):
         plan = dict(scratch=str(self.scratch), cold=str(self.cold), source_commit='helper-fixture',
                     merge_commit='fixture',
                     source=str(self.root), reserve_bytes=60*packet.GIB, memory_reserve_bytes=32*packet.GIB,
@@ -87,21 +94,31 @@ class FailurePaths(unittest.TestCase):
         calls = []
 
         def spawn(argv, executable, **kwargs):
-            name = packet.AFFECTED_TEST
-            self.assertEqual(argv, plan['stages'][len(calls)]['argv'])
+            index = len(calls)
+            if index == 1:
+                self.assertEqual(argv[1:], [packet.AFFECTED_TEST, '--exact'])
+                pinned = Path(argv[0])
+                self.assertEqual(pinned.parent.parent, Path(plan['pin_root']))
+                self.assertEqual(packet.sha(pinned), pinned.parent.name)
+                self.assertEqual(pinned.read_bytes(), b'mocked library test')
+                output = ('running 1 test\ntest ' + packet.AFFECTED_TEST + ' ... ok\n'
+                          'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2513 filtered out; finished in 0.01s\n')
+            else:
+                stage_index = 0 if index == 0 else index - 1
+                self.assertEqual(argv, plan['stages'][stage_index]['argv'])
+                output = ''
+                if index in (0, 2):
+                    binary = Path(plan['target']) / 'release' / ('test.exe' if index == 0 else 'kernel_rl_env.exe')
+                    binary.parent.mkdir(parents=True, exist_ok=True)
+                    binary.write_bytes(b'mocked library test' if index == 0 else b'mocked JSONL')
+                    output = json.dumps({'reason': 'compiler-artifact', 'executable': str(binary),
+                                         'profile': {'test': index == 0}, 'target': {'name': 'mtg_kernel'}}) + '\n'
+                if index == 3:
+                    # JSONL is already durable before the CUDA check starts.
+                    jsonl = list(Path(plan['pin_root']).glob('*/kernel_rl_env.exe'))
+                    self.assertEqual(len(jsonl), 1)
+                    self.assertEqual(jsonl[0].parent.name, packet.sha(jsonl[0]))
             calls.append((argv, kwargs['env'].copy()))
-            prefix = 'test ' + name + ' ... '
-            capture_disabled = '--nocapture' in argv or bool(kwargs['env'].get('RUST_TEST_NOCAPTURE'))
-            progress = ''
-            if len(calls) == 1 and capture_disabled:
-                # Retained004 shape: eprintln progress splits name and outcome.
-                progress = ''.join(f'collect {kind}episode {i+1}/4 unclamped-{i}\n'
-                                   for kind in ('', 'parallel ', '', 'parallel ') for i in range(4))
-            binary = Path(plan['target']) / 'release' / ('test.exe' if len(calls) == 1 else 'kernel_rl_env.exe')
-            binary.parent.mkdir(parents=True, exist_ok=True)
-            binary.write_bytes(b'mocked build artifact')
-            output = (f'Running unittests src/lib.rs ({binary})\n\nrunning 1 test\n' + prefix + progress + 'ok\n\n'
-                      'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2513 filtered out; finished in 0.01s\n')
             kwargs['stdout'].write(output.encode())
             child = Mock(pid=12345)
             child.wait.return_value = 0
@@ -117,20 +134,74 @@ class FailurePaths(unittest.TestCase):
             stack.enter_context(patch.object(packet, 'available_memory', return_value=128*packet.GIB))
             stack.enter_context(patch.object(packet, 'clean'))
             stack.enter_context(patch.object(packet, 'before_cutoff'))
-            self.assertEqual(packet.worker(plan, 'fixture'), 0)
-        self.assertEqual(len(calls), 3)
+            if fail_publication:
+                actual_publish = packet.publish_binary
+                def fail_copy(*args):
+                    with patch.object(packet.os, 'fsync', side_effect=OSError('injected binary flush failure')):
+                        return actual_publish(*args)
+                stack.enter_context(patch.object(packet, 'publish_binary', side_effect=fail_copy))
+            self.assertEqual(packet.worker(plan, 'fixture'), 1 if fail_publication else 0)
+        receipt = json.loads(self.final.read_text())
+        if fail_publication:
+            self.assertFalse(receipt['complete'])
+            self.assertEqual(len(calls), 1)
+            self.assertIn('injected binary flush failure', receipt['error'])
+            publication = receipt['publications'][0]
+            self.assertEqual(publication['accounted_bytes'], 4096)
+            self.assertTrue(Path(publication['staging_path']).is_file())
+            self.assertFalse(Path(publication['path']).exists())
+            return
+        self.assertEqual(len(calls), 4)
         for index, (argv, env) in enumerate(calls):
-            self.assertEqual('--features' in argv, index == 2)
+            self.assertEqual('--features' in argv, index == 3)
             self.assertEqual(env['CARGO_BUILD_JOBS'], '4')
             self.assertEqual(env['CARGO_HOME'], plan['cargo_home'])
             self.assertNotIn('RUST_TEST_NOCAPTURE', env)
-        receipt = json.loads(self.final.read_text())
         self.assertTrue(receipt['complete'])
         self.assertEqual(receipt['selected_passed'], 1)
         self.assertEqual(receipt['stages_passed'], 3)
         self.assertEqual(len(receipt['build_outputs']), 2)
         self.assertEqual(receipt['selected_test_names'], [packet.AFFECTED_TEST])
-        self.assertEqual([r['label'] for r in receipt['steps']], [stage['label'] for stage in plan['stages']])
+        self.assertEqual([r['label'] for r in receipt['steps']],
+                         ['default-invariance', 'default-invariance-exact', 'default-jsonl', 'cuda-compile'])
+        self.assertEqual(sum(r['accounted_bytes'] for r in receipt['publications']), 8192)
+        self.assertGreaterEqual(receipt['final_resources']['accounted_bytes'],
+                                packet.size(self.scratch / 'target') + 8192)
+
+    def test_existing_pin_reused_without_write_and_mismatch_refused(self):
+        binary = self.root / 'example.exe'
+        binary.write_bytes(b'fixture')
+        root = self.root / 'pins'
+        rows, guard = [], Mock()
+        pinned = packet.publish_binary(binary, root, rows, guard, 8192)
+        before = pinned.stat().st_mtime_ns
+        with patch.object(packet.tempfile, 'NamedTemporaryFile', side_effect=AssertionError('must reuse')):
+            reused = []
+            self.assertEqual(packet.publish_binary(binary, root, reused, guard, 8192), pinned)
+        self.assertEqual(pinned.stat().st_mtime_ns, before)
+        self.assertTrue(reused[0]['reused'])
+        self.assertEqual(reused[0]['accounted_bytes'], 4096)
+        pinned.write_bytes(b'corrupt')
+        with self.assertRaisesRegex(RuntimeError, 'Existing binary pin differs'):
+            packet.publish_binary(binary, root, [], guard, 8192)
+        self.assertEqual(pinned.read_bytes(), b'corrupt')
+
+    def test_publication_charged_before_staging_and_budget_refuses(self):
+        binary = self.root / 'example.exe'
+        binary.write_bytes(b'x'*5000)
+        root, rows = self.root / 'pins', []
+        calls = []
+        def guard(extra=0):
+            calls.append((extra, sum(r['accounted_bytes'] for r in rows)))
+        packet.publish_binary(binary, root, rows, guard, 8192)
+        self.assertEqual(calls[0], (8192, 0))
+        self.assertTrue(all(charge == 8192 for _, charge in calls[1:]))
+        with self.assertRaisesRegex(RuntimeError, 'publication allowance'):
+            packet.publish_binary(binary, root, rows, guard, 8192)
+        other = self.root / 'refused'
+        with self.assertRaisesRegex(RuntimeError, 'reserve'):
+            packet.publish_binary(binary, other, [], Mock(side_effect=RuntimeError('reserve')), 8192)
+        self.assertFalse(other.exists())
 
     def test_interrupted_staging_never_publishes_success_or_failure(self):
         for complete in (True, False):
@@ -200,6 +271,7 @@ class FailurePaths(unittest.TestCase):
                     active_progress=str(packet.SCRATCH / 'progress.json'),
                     active_dispatch=str(packet.SCRATCH / 'dispatch.json'))
         self.build_plan(plan)
+        plan['pin_root'] = str(packet.PIN_ROOT)
         plan['caches']=[{'path': str(packet.CACHE_ROOT / a), 'destination': b, 'inventory': inventory}
                        for a,b in [('target','target'),('cargo-home/registry','cargo-home/registry')]]
         plan.update({key: str(packet.SCRATCH / suffix) for key,suffix in
