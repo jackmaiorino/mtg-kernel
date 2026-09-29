@@ -44,3 +44,6 @@ The compiler errors in the doc-test section (for example "cannot construct Nativ
 - `expanded_deck_training_v1::public_features::search_opponent::collect_tests::search_opponent_games_replay_validate_and_refuse_tampering` (Codex's D3 replay and tamper test, which exercises the merged trajectory validation with search rows)
 
 Durability (Astra takeover, 2026-09-28): the 3,442-byte record above is a byte-identical copy of the search-opponent author's sealed scratch record, SHA-256 11c02cb8825354be0459a57a1a4a7e25586ed7033efaa9bb2938f4c15b3353c4. Astra copied it without changing its content or claiming to have rerun its tests. Change 14(iv) still requires an independent merged-head witness against these full values.
+
+
+Independent g115 witness (written at 2026-09-28 21:28:10 -0400): change 14(iv) is countersigned in FABLE-REVIEW-20260928 at 21:05:10 EDT. Separate generation16 execution at c3e949af yielded flat_policy_v1 6 pass/1 fail and rl_contract 55 pass/1 fail, both exit101, no filtered tests. Every failure value and panic location equals the sealed 11c02cb8 baseline. Evidence: E:/mtg-g115-lineage-20260923/teacher-merged-witness-001/comparison.json, SHA-256 0f1a20234ca2c776f4d1033e545d1e48288b625b987691e2f58a4e3e7879d857. This supersedes the pending-witness status above for c3e949af only; the later g115 integration tree has not been executed.
