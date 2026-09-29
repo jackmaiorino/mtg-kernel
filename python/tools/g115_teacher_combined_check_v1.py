@@ -15,11 +15,14 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import traceback
 
 sys.dont_write_bytecode = True
 GIB = 1024 ** 3
+SCRATCH = Path('D:/e-scratch/g115-teacher-combined-check-001')
+COLD = Path('E:/mtg-g115-lineage-20260923/teacher-combined-check-001')
 TESTS = [
     'expanded_deck_training_v1::registry_evolution_dispatch_tests::' + name
     for name in (
@@ -49,6 +52,44 @@ def save(path, value):
     temporary = path.with_suffix(path.suffix + '.tmp')
     temporary.write_text(json.dumps(value, indent=2) + '\n', encoding='utf-8')
     temporary.replace(path)
+
+
+def publish_receipt(path, value):
+    """Stage and verify before the Windows atomic, non-replacing rename."""
+    require(not path.exists(), 'Terminal receipt already sealed: ' + str(path))
+    payload = (json.dumps(value, indent=2) + '\n').encode('utf-8')
+    with tempfile.NamedTemporaryFile(mode='wb', dir=path.parent,
+                                     prefix='.completion-', suffix='.pending', delete=False) as stream:
+        staged = Path(stream.name)
+        stream.write(payload)
+        stream.flush()
+        os.fsync(stream.fileno())
+    require(staged.read_bytes() == payload, 'Terminal receipt staging differs')
+    json.loads(staged.read_text(encoding='utf-8'))
+    # On Windows rename fails if the destination exists, including a racing
+    # publisher. Failed staging stays nonterminal for recovery; never expose
+    # an unfinished owner-completion.json or overwrite a sealed receipt.
+    staged.rename(path)
+
+
+def admission_failure(digest):
+    # Validation did not establish any manifest paths. Use only fixed owned
+    # roots, bounded diagnostics and an empty step list; never start a stage.
+    result = {'complete': False, 'phase': 'worker-admission', 'steps': [],
+              'manifest_sha256': digest[:64], 'error': traceback.format_exc()[-8192:],
+              'finished_utc': datetime.datetime.now(datetime.timezone.utc).isoformat()}
+    try:
+        SCRATCH.mkdir(parents=True, exist_ok=True)
+        publish_receipt(SCRATCH / 'owner-completion.json', result)
+    except BaseException:
+        result['local_receipt_error'] = traceback.format_exc()[-2048:]
+    try:
+        COLD.mkdir(parents=True, exist_ok=True)
+        publish_receipt(COLD / 'owner-completion.json', result)
+    except BaseException:
+        result['publication_error'] = traceback.format_exc()[-2048:]
+        print(json.dumps(result), file=sys.stderr)
+    return 1
 
 
 def files(root):
@@ -93,10 +134,10 @@ def validate(manifest, digest):
     require(plan['reserve_bytes'] == 60 * GIB and plan['memory_reserve_bytes'] == 32 * GIB,
             'Reserve scope differs')
     scratch = Path(plan['scratch']).resolve()
-    require(scratch == Path('D:/e-scratch/g115-teacher-combined-check-001').resolve(), 'Wrong SSD root')
+    require(scratch == SCRATCH.resolve(), 'Wrong SSD root')
     for key in ('target', 'temp', 'cargo_home'):
         require(Path(plan[key]).resolve().is_relative_to(scratch), 'Hot path outside owned root: ' + key)
-    require(Path(plan['cold']).resolve() == Path('E:/mtg-g115-lineage-20260923/teacher-combined-check-001').resolve(), 'Wrong cold root')
+    require(Path(plan['cold']).resolve() == COLD.resolve(), 'Wrong cold root')
     for ref in plan['pins']:
         require(sha(ref['path']) == ref['sha256'], 'Pin differs: ' + ref['path'])
     require(Path(plan['script']).resolve() == Path(__file__).resolve(), 'Wrong owner script')
@@ -186,13 +227,14 @@ def worker(plan, digest):
         result['steps'].append(row)
         log_path = scratch / (label + '.log')
         start = time.monotonic()
-        with log_path.open('xb') as log:
-            child, placement = spawn_held(argv, argv[0], cwd=plan['source'], env=env,
-                stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                creationflags=subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW)
-            row.update(pid=child.pid, placement=placement)
-            save(scratch / 'progress.json', result)
-            try:
+        child = None
+        try:
+            with log_path.open('xb') as log:
+                child, placement = spawn_held(argv, argv[0], cwd=plan['source'], env=env,
+                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                    creationflags=subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW)
+                row.update(pid=child.pid, placement=placement)
+                save(scratch / 'progress.json', result)
                 while True:
                     try:
                         code = child.wait(timeout=5)
@@ -200,19 +242,20 @@ def worker(plan, digest):
                     except subprocess.TimeoutExpired:
                         guard()
                         require(time.monotonic() - start < timeout, 'Stage time bound: ' + label)
-            except BaseException:
-                # Only the live Popen-owned child tree, within the reserved job.
-                if child.poll() is None:
-                    subprocess.run(['C:/Windows/System32/taskkill.exe', '/PID', str(child.pid), '/T', '/F'],
-                                   capture_output=True, timeout=30)
-                    child.wait(timeout=30)
-                raise
-        row.update(exit_code=code, seconds=time.monotonic()-start, finished_utc=reservation.now_utc(),
-                   log=str(cold / log_path.name), log_sha256=sha(log_path))
-        save(scratch / 'progress.json', result)
-        require(code == 0, 'Stage failed: ' + label)
-        guard(); clean(plan)
-        return log_path.read_text(encoding='utf-8', errors='replace')
+            row.update(exit_code=code, seconds=time.monotonic()-start, finished_utc=reservation.now_utc(),
+                       log=str(cold / log_path.name), log_sha256=sha(log_path))
+            save(scratch / 'progress.json', result)
+            require(code == 0, 'Stage failed: ' + label)
+            guard(); clean(plan)
+            return log_path.read_text(encoding='utf-8', errors='replace')
+        except BaseException:
+            # Includes the first progress write and log close after spawn.
+            # Only the live Popen-owned child tree, within the reserved job.
+            if child is not None and child.poll() is None:
+                subprocess.run(['C:/Windows/System32/taskkill.exe', '/PID', str(child.pid), '/T', '/F'],
+                               capture_output=True, timeout=30)
+                child.wait(timeout=30)
+            raise
 
     try:
         require(not os.environ.get(reservation.TEST_ROOT_ENV), 'Canonical reservation only')
@@ -288,24 +331,24 @@ def worker(plan, digest):
                 result['complete'] = False
         result['finished_utc'] = reservation.now_utc()
         result['scope'] = 'Seven combined-source CPU correctness checks; no real R14 inference, throughput, adoption or strength evidence.'
-        save(scratch / 'owner-completion.json', result)
         # Terminal receipt last, so file-driven wakeup observes sealed logs.
         try:
+            save(scratch / 'owner-completion.json', result)
             for src in sorted(scratch.iterdir()):
                 if src.is_file() and src.name != 'owner-completion.json':
                     copy_new(src, cold / src.name, terminal=True)
-            copy_new(scratch / 'owner-completion.json', cold / 'owner-completion.json', terminal=True)
+            guard((scratch / 'owner-completion.json').stat().st_size, terminal=True)
+            publish_receipt(cold / 'owner-completion.json', result)
         except BaseException:
             result['complete'] = False
             result['seal_error'] = traceback.format_exc()
             result['recovery_root'] = str(scratch)
-            save(scratch / 'owner-completion.json', result)
-            # Preserve a small terminal failure even if resource accounting
-            # stopped full sealing. Never overwrite an already sealed receipt.
-            destination = cold / 'owner-completion.json'
-            if not destination.exists():
-                with destination.open('x', encoding='utf-8') as stream:
-                    json.dump(result, stream, indent=2)
+            try:
+                save(scratch / 'owner-completion.json', result)
+            except BaseException:
+                result['local_receipt_error'] = traceback.format_exc()[-2048:]
+            # Failure uses the same verified atomic publication as success.
+            publish_receipt(cold / 'owner-completion.json', result)
     return 0 if result['complete'] else 1
 
 
@@ -318,13 +361,17 @@ def main():
     parser.add_argument('--manifest', type=Path, required=True)
     parser.add_argument('--manifest-sha256', required=True)
     args = parser.parse_args()
+    if args.worker:
+        try:
+            plan = validate(args.manifest, args.manifest_sha256)
+        except BaseException:
+            return admission_failure(args.manifest_sha256)
+        return worker(plan, args.manifest_sha256)
     plan = validate(args.manifest, args.manifest_sha256)
     if args.check_only:
         print(json.dumps({'static_pins_verified': len(plan['pins']), 'source_commit': plan['source_commit'], 'selected_tests': len(TESTS), 'dispatched': False}))
     elif args.dispatch:
         dispatch(plan, args.manifest.resolve(), args.manifest_sha256)
-    else:
-        return worker(plan, args.manifest_sha256)
     return 0
 
 
