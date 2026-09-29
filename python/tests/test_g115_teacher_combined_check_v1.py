@@ -1,6 +1,7 @@
 """Targeted ASTRA #022/#033 checks; no native child or reservation."""
 from contextlib import ExitStack
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -32,12 +33,15 @@ class FailurePaths(unittest.TestCase):
         spawn = Mock(return_value=(child, {'placement': 'fixture'}))
         reservation = SimpleNamespace(TEST_ROOT_ENV='G115_OFFLINE_UNUSED', now_utc=lambda: 'fixture')
         adapter = SimpleNamespace(check_owner=Mock(return_value='fixture-token'), cleanup_auxiliary=Mock(return_value={}))
+        binary = self.root / 'test.exe'
+        binary.write_bytes(b'mocked executable')
         plan = dict(scratch=str(self.scratch), cold=str(self.cold), source_commit='fixture', merge_commit='fixture',
+                    compiled_source_commit='fixture', build_evidence=[],
+                    reused_binary={'path': str(binary), 'sha256': packet.sha(binary), 'bytes': binary.stat().st_size},
                     source=str(self.root), reserve_bytes=60*packet.GIB, memory_reserve_bytes=32*packet.GIB,
-                    cap_bytes=32*packet.GIB, closure_headroom_bytes=256*1024**2, cache_staging_estimate_bytes=0,
-                    registry_source=str(self.root / 'no-cache'), environment={'PATH': ''}, auxiliary={},
-                    tools={name: {'path': str(self.root / (name + '.exe'))} for name in ('cargo', 'rustc', 'linker')})
-        plan.update({key: str(self.scratch / key) for key in ('target', 'temp', 'cargo_home')})
+                    cap_bytes=32*packet.GIB, closure_headroom_bytes=256*1024**2,
+                    environment={'PATH': ''}, auxiliary={}, test_timeout_seconds=600,
+                    temp=str(self.scratch / 'temp'))
         real_save = packet.save
 
         def fail_progress(path, value):
@@ -64,6 +68,59 @@ class FailurePaths(unittest.TestCase):
         self.assertFalse(receipt['complete'])
         self.assertIn('injected first progress write failure', receipt['error'])
         self.assertEqual(len(receipt['steps']), 1)
+
+    def test_inherited_nocapture_is_cleared_and_worker_reaches_seventh_test(self):
+        binary = self.root / 'test.exe'
+        binary.write_bytes(b'mocked executable')
+        plan = dict(scratch=str(self.scratch), cold=str(self.cold), source_commit='helper-fixture',
+                    compiled_source_commit='compiled-fixture', merge_commit='fixture', build_evidence=[],
+                    reused_binary={'path': str(binary), 'sha256': packet.sha(binary), 'bytes': binary.stat().st_size},
+                    source=str(self.root), reserve_bytes=60*packet.GIB, memory_reserve_bytes=32*packet.GIB,
+                    cap_bytes=32*packet.GIB, closure_headroom_bytes=256*1024**2,
+                    environment={'PATH': '', 'RUST_TEST_NOCAPTURE': '1'}, auxiliary={},
+                    test_timeout_seconds=600, temp=str(self.scratch / 'temp'))
+        reservation = SimpleNamespace(TEST_ROOT_ENV='G115_OFFLINE_UNUSED', now_utc=lambda: 'fixture')
+        adapter = SimpleNamespace(check_owner=Mock(return_value='fixture-token'), cleanup_auxiliary=Mock(return_value=[]))
+        calls = []
+
+        def spawn(argv, executable, **kwargs):
+            name = argv[1]
+            self.assertEqual(name, packet.TESTS[len(calls)])
+            calls.append((argv, kwargs['env'].copy()))
+            prefix = 'test ' + name + ' ... '
+            capture_disabled = '--nocapture' in argv or bool(kwargs['env'].get('RUST_TEST_NOCAPTURE'))
+            progress = ''
+            if name == packet.TESTS[5] and capture_disabled:
+                # Retained004 shape: eprintln progress splits name and outcome.
+                progress = ''.join(f'collect {kind}episode {i+1}/4 unclamped-{i}\n'
+                                   for kind in ('', 'parallel ', '', 'parallel ') for i in range(4))
+            output = ('\nrunning 1 test\n' + prefix + progress + 'ok\n\n'
+                      'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2513 filtered out; finished in 0.01s\n')
+            kwargs['stdout'].write(output.encode())
+            child = Mock(pid=12345)
+            child.wait.return_value = 0
+            child.poll.return_value = 0
+            return child, {'placement': 'fixture'}
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.dict(os.environ, RUST_TEST_NOCAPTURE='1'))
+            stack.enter_context(patch.dict(sys.modules, host_reservation_v1=reservation,
+                                          g115_reserved_dispatch_v1=adapter,
+                                          windows_held_spawn_v1=SimpleNamespace(spawn_held=spawn)))
+            stack.enter_context(patch.object(packet.shutil, 'disk_usage', return_value=SimpleNamespace(free=128*packet.GIB)))
+            stack.enter_context(patch.object(packet, 'available_memory', return_value=128*packet.GIB))
+            stack.enter_context(patch.object(packet, 'clean'))
+            stack.enter_context(patch.object(packet, 'before_cutoff'))
+            self.assertEqual(packet.worker(plan, 'fixture'), 0)
+        self.assertEqual(len(calls), 7)
+        for argv, env in calls:
+            self.assertEqual(argv[2:], ['--exact', '--include-ignored', '--test-threads=1', '--color', 'never'])
+            self.assertNotIn('RUST_TEST_NOCAPTURE', env)
+        receipt = json.loads(self.final.read_text())
+        self.assertTrue(receipt['complete'])
+        self.assertEqual(receipt['selected_passed'], 7)
+        self.assertEqual(receipt['selected_test_names'], packet.TESTS)
+        self.assertEqual([r['label'] for r in receipt['steps']], [f'test-{i:02}' for i in range(7)])
 
     def test_interrupted_staging_never_publishes_success_or_failure(self):
         for complete in (True, False):
@@ -121,28 +178,32 @@ class FailurePaths(unittest.TestCase):
         self.assertEqual(receipt, json.loads((self.scratch / 'owner-completion.json').read_text()))
         self.assertEqual(historical.read_bytes(), b'preserved failed attempt001\n')
 
-    def test_validation_accepts_004_and_rejects_each_old_output_path(self):
-        self.assertEqual(packet.WORK_ID, 'teacher-combined-check-004')
-        self.assertEqual(packet.SCRATCH, Path('D:/e-scratch/g115-teacher-combined-check-004'))
-        self.assertEqual(packet.COLD, Path('E:/mtg-g115-lineage-20260923/teacher-combined-check-004'))
+    def test_validation_accepts_005_and_rejects_each_old_output_path(self):
+        self.assertEqual(packet.WORK_ID, 'teacher-combined-check-005')
+        self.assertEqual(packet.SCRATCH, Path('D:/e-scratch/g115-teacher-combined-check-005'))
+        self.assertEqual(packet.COLD, Path('E:/mtg-g115-lineage-20260923/teacher-combined-check-005'))
         plan = dict(schema='g115-teacher-combined-check/v1', tests=packet.TESTS, jobs=4,
                     cap_bytes=32*packet.GIB, reserve_bytes=60*packet.GIB,
                     memory_reserve_bytes=32*packet.GIB, pins=[], script=packet.__file__,
+                    compiled_source_commit=packet.COMPILED_SOURCE, reused_binary={'path': str(self.root / 'pin'), 'sha256': 'fixture', 'bytes': 0}, build_evidence=[],
+                    test_flags=packet.TEST_FLAGS, auxiliary={},
                     scratch=str(packet.SCRATCH), cold=str(packet.COLD),
                     owner_completion=str(packet.COLD / 'owner-completion.json'),
                     active_progress=str(packet.SCRATCH / 'progress.json'),
                     active_dispatch=str(packet.SCRATCH / 'dispatch.json'))
-        plan.update({key: str(packet.SCRATCH / key) for key in ('target', 'temp', 'cargo_home')})
+        plan.update({key: str(packet.SCRATCH / key) for key in ('temp',)})
+        (self.root / 'pin').write_bytes(b'')
         manifest = self.root / 'manifest.json'
-        with patch.object(packet, 'sha', return_value='fixture'), patch.object(packet, 'clean'):
+        with patch.object(packet, 'sha', return_value='fixture'), patch.object(packet, 'clean'), \
+                patch.object(packet, 'REUSED_BINARY', plan['reused_binary']), patch.object(packet, 'BUILD_EVIDENCE', []):
             manifest.write_text(json.dumps(plan))
             self.assertEqual(packet.validate(manifest, 'fixture'), plan)
-            for key in ('scratch', 'cold', 'target', 'temp', 'cargo_home',
+            for key in ('scratch', 'cold', 'temp',
                         'owner_completion', 'active_progress', 'active_dispatch'):
-                for old in ('check-001', 'check-002', 'check-003'):
+                for old in ('check-001', 'check-002', 'check-003', 'check-004'):
                     with self.subTest(key=key, old=old):
                         changed = dict(plan)
-                        changed[key] = plan[key].replace('check-004', old)
+                        changed[key] = plan[key].replace('check-005', old)
                         manifest.write_text(json.dumps(changed))
                         with self.assertRaises(RuntimeError):
                             packet.validate(manifest, 'fixture')
@@ -159,7 +220,7 @@ class FailurePaths(unittest.TestCase):
                 patch.object(packet, 'before_cutoff'), patch('builtins.print'):
             packet.dispatch(plan, self.cold / 'manifest.json', 'fixture')
         args, kwargs = reservation.dispatch.call_args
-        self.assertEqual(args[1], 'teacher-combined-check-004')
+        self.assertEqual(args[1], 'teacher-combined-check-005')
         self.assertEqual(args[4], str(self.scratch))
         self.assertEqual(kwargs['transport_record']['owner_completion'], str(self.final))
         self.assertIn(str(self.cold / 'manifest.json'), args[3])

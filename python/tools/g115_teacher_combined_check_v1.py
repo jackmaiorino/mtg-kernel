@@ -1,4 +1,4 @@
-"""ASTRA #020 seven-test correctness packet, dispatched only after parent handoff.
+"""ASTRA #067 pinned-binary seven-test correctness packet, dispatched only after parent handoff.
 
 Canonical WMI transport owns the job. Hot writes stay in one fresh SSD root;
 sealed evidence and the immutable test executable go to E:. Periodic resource
@@ -21,9 +21,29 @@ import traceback
 
 sys.dont_write_bytecode = True
 GIB = 1024 ** 3
-WORK_ID = 'teacher-combined-check-004'
+WORK_ID = 'teacher-combined-check-005'
 SCRATCH = Path('D:/e-scratch/g115-' + WORK_ID)
 COLD = Path('E:/mtg-g115-lineage-20260923') / WORK_ID
+COMPILED_SOURCE = '60556fb05fed133d3864e7d67bb961633e8a5960'
+REUSED_BINARY = {
+    'path': 'E:/pinned-binaries/2d9b32a83f1906829af42e6895840dde526beec67c46db84f46f607b9c562eea/mtg_kernel-73164b849c0d4084.exe',
+    'sha256': '2d9b32a83f1906829af42e6895840dde526beec67c46db84f46f607b9c562eea',
+    'bytes': 90917888,
+}
+BUILD_EVIDENCE = [
+    {'path': 'E:/mtg-g115-lineage-20260923/teacher-combined-check-004/' + name,
+     'sha256': digest, 'bytes': count}
+    for name, digest, count in (
+        ('manifest.json', 'f25128c7365a5c58517771ceabb4faf32a53405c8d8d01d5027a5dc93e7c6088', 20989),
+        ('owner-completion.json', '6113b6f1a788502780731b77f8c40e0ec32f7153e47537a059429d2cc66a664d', 34069),
+        ('test-build.log', 'e9ef4af3f6681d69bc2e2b59a68601c5adf628445b35de0d557cfc3a55a27b9f', 285395),
+    )
+]
+REUSE_CHANGED_PATHS = {
+    'python/tools/g115_teacher_combined_check_v1.py',
+    'python/tests/test_g115_teacher_combined_check_v1.py',
+}
+TEST_FLAGS = ['--exact', '--include-ignored', '--test-threads=1', '--color', 'never']
 LINKER = Path('C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/Tools/MSVC/14.50.35717/bin/Hostx64/x64/link.exe')
 LINKER_SHA256 = 'ee9b29be652eee20affa6963a7ce54d01271b0f1b2443e315ea86469cbb95694'
 LINKER_BANNER = 'Microsoft (R) Incremental Linker Version 14.50.35725.0'
@@ -162,15 +182,20 @@ def validate(manifest, digest):
             'Reserve scope differs')
     scratch = Path(plan['scratch']).resolve()
     require(scratch == SCRATCH.resolve(), 'Wrong SSD root')
-    for key in ('target', 'temp', 'cargo_home'):
-        require(Path(plan[key]).resolve().is_relative_to(scratch), 'Hot path outside owned root: ' + key)
+    require(Path(plan['temp']).resolve().is_relative_to(scratch), 'Temp outside owned root')
     require(Path(plan['cold']).resolve() == COLD.resolve(), 'Wrong cold root')
     for key, expected in [('owner_completion', COLD / 'owner-completion.json'),
                           ('active_progress', SCRATCH / 'progress.json'),
                           ('active_dispatch', SCRATCH / 'dispatch.json')]:
         require(Path(plan[key]).resolve() == expected.resolve(), 'Wrong output path: ' + key)
-    for ref in plan['pins']:
-        require(sha(ref['path']) == ref['sha256'], 'Pin differs: ' + ref['path'])
+    require(plan['compiled_source_commit'] == COMPILED_SOURCE, 'Compiled source differs')
+    require(plan['reused_binary'] == REUSED_BINARY and plan['build_evidence'] == BUILD_EVIDENCE,
+            'Reviewed004 binary/build evidence differs')
+    require(plan['test_flags'] == TEST_FLAGS, 'Captured test flags differ')
+    require(plan['auxiliary'] == {}, 'No compiler auxiliary in binary-reuse mode')
+    for ref in plan['pins'] + [REUSED_BINARY] + BUILD_EVIDENCE:
+        require(Path(ref['path']).stat().st_size == ref['bytes'] and sha(ref['path']) == ref['sha256'],
+                'Pin differs: ' + ref['path'])
     require(Path(plan['script']).resolve() == Path(__file__).resolve(), 'Wrong owner script')
     clean(plan)
     return plan
@@ -181,6 +206,9 @@ def clean(plan):
         return subprocess.check_output(['git', '-C', plan['source'], *args], text=True).strip()
     require(git('rev-parse', 'HEAD') == plan['source_commit'], 'Source head differs')
     require(not git('status', '--porcelain'), 'Source worktree is dirty')
+    require(git('merge-base', COMPILED_SOURCE, 'HEAD') == COMPILED_SOURCE, 'Compiled source is not ancestor')
+    changed = set(git('diff', '--name-only', COMPILED_SOURCE, 'HEAD').splitlines())
+    require(changed <= REUSE_CHANGED_PATHS, 'Binary reuse requires unchanged Rust/build inputs')
 
 
 def before_cutoff(plan):
@@ -223,8 +251,9 @@ def worker(plan, digest):
     scratch, cold = Path(plan['scratch']), Path(plan['cold'])
     start_free = {d: shutil.disk_usage(d).free for d in ('D:/', 'E:/')}
     result = {'complete': False, 'source_commit': plan['source_commit'], 'merge_commit': plan['merge_commit'],
-              'manifest_sha256': digest, 'started_utc': reservation.now_utc(), 'steps': [], 'gpu_tests': False}
-    pinned_bytes = 0
+              'manifest_sha256': digest, 'started_utc': reservation.now_utc(), 'steps': [], 'gpu_tests': False,
+              'compiled_source_commit': plan['compiled_source_commit'], 'build_evidence': plan['build_evidence']}
+    pinned_bytes = plan['reused_binary']['bytes']
     copy_checked = time.monotonic()
 
     def guard(extra=0, terminal=False):
@@ -294,86 +323,26 @@ def worker(plan, digest):
         result['reservation_token'] = adapter.check_owner()
         before_cutoff(plan)
         result['initial_resources'] = guard()
-        for key in ('target', 'temp', 'cargo_home'):
-            Path(plan[key]).mkdir(parents=True, exist_ok=False)
-        cache_copied = 0
-        guard(plan['cache_staging_estimate_bytes'])
-        # Copy only registry archive/index inputs. The source cache is never
-        # written; extraction, cache locks and Cargo metadata use owned SSD.
-        for name in ('cache', 'index'):
-            origin = Path(plan['registry_source']) / name
-            for src in files(origin):
-                dest = Path(plan['cargo_home']) / 'registry' / name / src.relative_to(origin)
-                copy_new(src, dest, staged_cache=True)
-                cache_copied += src.stat().st_size
-        result['cache_staged_bytes'] = cache_copied
+        Path(plan['temp']).mkdir(parents=True, exist_ok=False)
         env = os.environ.copy()
         for key in list(env):
             if key in ('RUSTFLAGS', 'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER') or key.startswith(('MTG_', 'CARGO_')):
                 env.pop(key)
         env.update(plan['environment'])
-        env.update(CARGO_HOME=plan['cargo_home'], CARGO_TARGET_DIR=plan['target'], TEMP=plan['temp'], TMP=plan['temp'],
-                   CARGO_BUILD_JOBS='4', CARGO_INCREMENTAL='0', RUSTC=plan['tools']['rustc']['path'],
-                   CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=plan['tools']['linker']['path'],
-                   RUST_TEST_THREADS='1', RUST_BACKTRACE='0', PYTHONDONTWRITEBYTECODE='1')
-        env['PATH'] = str(Path(plan['tools']['rustc']['path']).parent) + os.pathsep + env['PATH']
-        versions = {}
-        for tool, flag in [('cargo', '--version'), ('rustc', '-vV'), ('linker', '/?')]:
-            versions[tool] = run('version-' + tool, [plan['tools'][tool]['path'], flag], 60).splitlines()[0]
-        require(versions['cargo'].startswith('cargo 1.94.1 ') and versions['rustc'].startswith('rustc 1.94.1 '), 'Toolchain version differs')
-        require('14.50.35725.0' in versions['linker'], 'Linker version differs')
-        result['versions'] = versions
-        # ASTRA #043: exercise both repaired readers under the same contained
-        # worker, timeout, held-spawn placement and resource guards as the build.
-        import g115_git_batch_regression_v1 as pipe_regression
-        regression_root = scratch / 'pipe-regression'
-        fixture = pipe_regression.prepare(plan['source'], regression_root)
-        copy_new(fixture, cold / 'pipe-regression-source.rs')
-        executable = regression_root / 'fixture.exe'
-        run('pipe-regression-compile', [plan['tools']['rustc']['path'], str(fixture),
-            '--edition=2021', '-C', 'linker=' + plan['tools']['linker']['path'],
-            '-o', str(executable)], 120)
-        fixture_hash = sha(executable)
-        fixture_pin = Path('E:/pinned-binaries') / fixture_hash / executable.name
-        if fixture_pin.exists():
-            require(sha(fixture_pin) == fixture_hash, 'Existing regression binary differs')
-        else:
-            copy_new(executable, fixture_pin)
-        pinned_bytes += executable.stat().st_size
-        copy_new(executable, regression_root / 'git.exe')
-        for site, outcome in pipe_regression.CASES:
-            label = site + '-' + outcome
-            run('pipe-regression-' + label,
-                [str(executable), site, outcome, str(regression_root / label)], 30)
-        result['pipe_regression'] = pipe_regression.verify(regression_root)
-        result['pipe_regression']['source_sha256'] = sha(fixture)
-        result['pipe_regression']['binary'] = {'path': str(fixture_pin), 'sha256': fixture_hash}
-        for site in ('build', 'runtime'):
-            copy_new(regression_root / (site + '-success') / 'frames.bin',
-                     cold / ('pipe-regression-' + site + '-frames.bin'))
-        save(scratch / 'pipe-regression.json', result['pipe_regression'])
-        output = run('test-build', plan['build_command'], plan['build_timeout_seconds'])
-        artifacts = []
-        for line in output.splitlines():
-            try:
-                obj = json.loads(line)
-            except ValueError:
-                continue
-            if obj.get('reason') == 'compiler-artifact' and obj.get('executable') and obj.get('profile', {}).get('test') and obj['target']['name'] == 'mtg_kernel':
-                artifacts.append(Path(obj['executable']))
-        require(len(artifacts) == 1, 'Expected exactly one library-test executable')
-        binary = artifacts[0]
-        require(binary.resolve().is_relative_to(Path(plan['target']).resolve()), 'Artifact outside owned target')
-        binary_hash = sha(binary)
-        pinned = Path('E:/pinned-binaries') / binary_hash / binary.name
-        pinned_bytes += binary.stat().st_size
-        if pinned.exists():
-            require(sha(pinned) == binary_hash, 'Existing immutable binary differs')
-        else:
-            copy_new(binary, pinned)
-        result['binary'] = {'path': str(pinned), 'sha256': binary_hash, 'bytes': binary.stat().st_size}
+        env.update(TEMP=plan['temp'], TMP=plan['temp'], RUST_TEST_THREADS='1',
+                   RUST_BACKTRACE='0', PYTHONDONTWRITEBYTECODE='1')
+        # Clear after all overlays, including inherited or manifest settings.
+        for key in list(env):
+            if key.upper() == 'RUST_TEST_NOCAPTURE':
+                env.pop(key)
+        ref = plan['reused_binary']
+        pinned = Path(ref['path'])
+        require(pinned.stat().st_size == ref['bytes'] and sha(pinned) == ref['sha256'],
+                'Reused test binary differs')
+        result['binary'] = ref
+        result['capture'] = 'libtest default; RUST_TEST_NOCAPTURE removed'
         for index, name in enumerate(TESTS):
-            output = run(f'test-{index:02}', [str(pinned), name, '--exact', '--include-ignored', '--test-threads=1', '--color', 'never', '--nocapture'], plan['test_timeout_seconds'])
+            output = run(f'test-{index:02}', [str(pinned), name, *TEST_FLAGS], plan['test_timeout_seconds'])
             found = re.findall(r'^test (\S+) \.\.\. (ok|FAILED|ignored)\s*$', output, re.M)
             require(found == [(name, 'ok')], 'Selected test name/outcome differs: ' + name)
             require(len(re.findall(r'^test result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured; \d+ filtered out;', output, re.M)) == 1, 'Test summary differs')
