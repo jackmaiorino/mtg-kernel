@@ -12,10 +12,6 @@ use crate::fast_sampler::{
     FAST_CATEGORICAL_SAMPLER_VERSION, WIDE_CATEGORICAL_MAX_ACTIONS_V1,
     WIDE_CATEGORICAL_SAMPLER_VERSION_V1,
 };
-use crate::unclamped_softmax_sampler_v1::{
-    UnclampedSoftmaxScratchV1, UNCLAMPED_SOFTMAX_MAX_ACTIONS_V1,
-    UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1,
-};
 use crate::flat_policy_v2::{
     FlatCompletedDungeonV2, FlatContextPathElementV2, FlatDecisionEncoderV2,
     FlatEffectSubtypeChangeV2, FlatGlobalsV2, FlatObjectAbilityUseV2, FlatObjectCoreV2,
@@ -55,6 +51,10 @@ use crate::rl_session::{
     FastActorResponseV1, FastActorSessionV1, RlSessionError, RlSessionErrorCode,
 };
 use crate::state::SplitMix64;
+use crate::unclamped_softmax_sampler_v1::{
+    UnclampedSoftmaxScratchV1, UNCLAMPED_SOFTMAX_MAX_ACTIONS_V1,
+    UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -1670,7 +1670,10 @@ mod tests {
             };
             let expected = reference.sample(logits, stream[index].next_u64()).unwrap() as u32;
             let width = logits.len() as u32;
-            assert_eq!(unclamped.sample_scores(logits, seat, width).unwrap(), expected);
+            assert_eq!(
+                unclamped.sample_scores(logits, seat, width).unwrap(),
+                expected
+            );
             legacy.sample_scores(logits, seat, width).unwrap();
         }
         // One draw per decision per seat, exactly as the legacy sampler takes.

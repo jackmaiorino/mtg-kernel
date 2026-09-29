@@ -1801,8 +1801,8 @@ fn runtime_git_blob_contents(entries: &[GitTreeEntryV3]) -> Result<Vec<Option<Ve
     write_result
         .map_err(|_| "git cat-file request writer panicked".to_string())?
         .map_err(|_| "failed to request a tracked blob".to_string())?;
-    let output = output
-        .map_err(|_| "git cat-file did not complete for tracked tree".to_string())?;
+    let output =
+        output.map_err(|_| "git cat-file did not complete for tracked tree".to_string())?;
     if !output.status.success() {
         return Err("git cat-file failed for tracked tree".into());
     }

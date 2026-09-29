@@ -4268,8 +4268,8 @@ impl FastActorSessionV1 {
         Some(copy)
     }
 
-    /// Feature-gated offline invariance perturbation; no live session mutation.
-    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    /// Test/feature-gated offline invariance perturbation; no live session mutation.
+    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
     pub(crate) fn diagnostic_certificate_perturbed_clone_v1(&self,library:Option<usize>,rng:bool)->Result<Self,String> {
         if library.is_some()==rng {return Err("choose exactly one certificate perturbation".into());}
         let mut copy=self.clone();

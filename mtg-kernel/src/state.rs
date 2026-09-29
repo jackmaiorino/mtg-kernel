@@ -2074,7 +2074,7 @@ impl GameState {
     /// tests that genuinely need to perturb the RNG mutate the private enum
     /// directly.
     /// Offline certificate-invariance diagnostic. Returns a private copy only.
-    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
     pub(crate) fn diagnostic_certificate_rng_clone_v1(&self) -> Self {
         let mut copy=self.clone();
         match &mut copy.randomness {

@@ -389,6 +389,7 @@ pub fn load_expanded_inference_v1(
     {
         return crate::phase1_bo3_learning_v1::load_bo3_inference_v1(source);
     }
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     if probe.get("schema").and_then(Value::as_str)
         == Some(stack_features::terminal_tactics::learning::campaign::TEACHER_INFERENCE_SCHEMA)
     {
