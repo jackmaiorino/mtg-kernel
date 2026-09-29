@@ -1,7 +1,7 @@
-"""ASTRA #067 pinned-binary seven-test correctness packet, dispatched only after parent handoff.
+"""ASTRA #077 three-stage configuration validation packet, dispatched only after parent handoff.
 
 Canonical WMI transport owns the job. Hot writes stay in one fresh SSD root;
-sealed evidence and the immutable test executable go to E:. Periodic resource
+sealed logs/receipts go to E:; build outputs remain in the retained fresh D: root. Resource
 checks are conservative accounting, not an operating-system disk quota.
 """
 import argparse
@@ -21,46 +21,31 @@ import traceback
 
 sys.dont_write_bytecode = True
 GIB = 1024 ** 3
-WORK_ID = 'teacher-combined-check-005'
+WORK_ID = 'teacher-combined-check-006'
 SCRATCH = Path('D:/e-scratch/g115-' + WORK_ID)
 COLD = Path('E:/mtg-g115-lineage-20260923') / WORK_ID
-COMPILED_SOURCE = '60556fb05fed133d3864e7d67bb961633e8a5960'
-REUSED_BINARY = {
-    'path': 'E:/pinned-binaries/2d9b32a83f1906829af42e6895840dde526beec67c46db84f46f607b9c562eea/mtg_kernel-73164b849c0d4084.exe',
-    'sha256': '2d9b32a83f1906829af42e6895840dde526beec67c46db84f46f607b9c562eea',
-    'bytes': 90917888,
-}
-BUILD_EVIDENCE = [
-    {'path': 'E:/mtg-g115-lineage-20260923/teacher-combined-check-004/' + name,
-     'sha256': digest, 'bytes': count}
-    for name, digest, count in (
-        ('manifest.json', 'f25128c7365a5c58517771ceabb4faf32a53405c8d8d01d5027a5dc93e7c6088', 20989),
-        ('owner-completion.json', '6113b6f1a788502780731b77f8c40e0ec32f7153e47537a059429d2cc66a664d', 34069),
-        ('test-build.log', 'e9ef4af3f6681d69bc2e2b59a68601c5adf628445b35de0d557cfc3a55a27b9f', 285395),
-    )
-]
-REUSE_CHANGED_PATHS = {
+CODE_UNDER_CHECK = '27122ce62b44576707321b265e4736f19a3f0c4c'
+PREPARATION_CHANGED_PATHS = {
     'python/tools/g115_teacher_combined_check_v1.py',
     'python/tests/test_g115_teacher_combined_check_v1.py',
 }
-TEST_FLAGS = ['--exact', '--include-ignored', '--test-threads=1', '--color', 'never']
+CACHE_ROOT = Path('D:/e-scratch/g115-teacher-combined-check-004')
+CARGO_CONFIG = '[profile.release.package.mtg-kernel]\ncodegen-units = 4\n'
+AFFECTED_TEST = 'expanded_deck_training_v1::tests::line_b_teacher_rollouts_are_invariant_to_hidden_placement_and_engine_rng'
+STAGE_ARGS = [
+    ('default-invariance', ['test', '--release', '--locked', '--offline', '-p', 'mtg-kernel', '--lib', AFFECTED_TEST, '--', '--exact']),
+    ('default-jsonl', ['build', '--release', '--locked', '--offline', '-p', 'mtg-kernel', '--bin', 'kernel_rl_env']),
+    ('cuda-compile', ['check', '--release', '--locked', '--offline', '-p', 'mtg-kernel', '--lib', '--features', 'experimental-burn-net8-packed-cuda-v1']),
+]
+
+
+def stages(cargo):
+    return [{'label': label, 'argv': [cargo, *args]} for label, args in STAGE_ARGS]
+
 LINKER = Path('C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/Tools/MSVC/14.50.35717/bin/Hostx64/x64/link.exe')
 LINKER_SHA256 = 'ee9b29be652eee20affa6963a7ce54d01271b0f1b2443e315ea86469cbb95694'
 LINKER_BANNER = 'Microsoft (R) Incremental Linker Version 14.50.35725.0'
 LINKER_USAGE = 'usage: LINK [options] [files] [@commandfile]'
-TESTS = [
-    'expanded_deck_training_v1::registry_evolution_dispatch_tests::' + name
-    for name in (
-        'learner_initialization_refuses_registry_evolution_descriptors',
-        'inference_refuses_registry_evolution_with_a_successor_checkpoint',
-        'unknown_schemas_are_refused_without_fallback',
-        'bo3_transition_admission_refuses_registry_evolution_descriptors',
-    )
-] + [
-    'expanded_deck_training_v1::public_features::search_opponent::collect_tests::boundary_audit_checks_every_available_perturbation_of_a_live_root',
-    'expanded_deck_training_v1::phase1_parallel_collection::tests::unclamped_learner_collection_is_serial_parallel_identical_and_keeps_opponents_legacy',
-    'expanded_deck_training_v1::public_features::opponent_kind::tests::unclamped_learner_rows_replay_with_legacy_singletons_and_refuse_tampering',
-]
 
 
 def require(ok, message):
@@ -172,28 +157,43 @@ def available_memory():
     return value.available
 
 
+def cache_inventory(root):
+    rows = sorted((p.relative_to(root).as_posix(), p.stat().st_size) for p in files(root))
+    require(bool(rows), 'Empty build cache: ' + str(root))
+    return {'files': len(rows), 'allocated_bytes': sum((n + 4095) // 4096 * 4096 for _, n in rows),
+            'inventory_sha256': hashlib.sha256(json.dumps(rows, separators=(',', ':')).encode()).hexdigest()}
+
+
 def validate(manifest, digest):
     require(sha(manifest) == digest, 'Manifest hash differs')
     plan = json.loads(manifest.read_text(encoding='utf-8'))
     require(plan['schema'] == 'g115-teacher-combined-check/v1', 'Wrong packet')
-    require(plan['tests'] == TESTS, 'Seven-test scope differs')
+    require(plan['work_id'] == WORK_ID, 'Work identity differs')
+    require(plan['stages'] == stages(plan['tools']['cargo']['path']), 'Three-stage scope differs')
     require(plan['jobs'] == 4 and plan['cap_bytes'] == 32 * GIB, 'Build/cap scope differs')
     require(plan['reserve_bytes'] == 60 * GIB and plan['memory_reserve_bytes'] == 32 * GIB,
             'Reserve scope differs')
     scratch = Path(plan['scratch']).resolve()
     require(scratch == SCRATCH.resolve(), 'Wrong SSD root')
-    require(Path(plan['temp']).resolve().is_relative_to(scratch), 'Temp outside owned root')
+    for key, suffix in [('temp', 'temp'), ('target', 'target'), ('cargo_home', 'cargo-home')]:
+        require(Path(plan[key]).resolve() == scratch / suffix, 'Wrong owned build path: ' + key)
     require(Path(plan['cold']).resolve() == COLD.resolve(), 'Wrong cold root')
     for key, expected in [('owner_completion', COLD / 'owner-completion.json'),
                           ('active_progress', SCRATCH / 'progress.json'),
                           ('active_dispatch', SCRATCH / 'dispatch.json')]:
         require(Path(plan[key]).resolve() == expected.resolve(), 'Wrong output path: ' + key)
-    require(plan['compiled_source_commit'] == COMPILED_SOURCE, 'Compiled source differs')
-    require(plan['reused_binary'] == REUSED_BINARY and plan['build_evidence'] == BUILD_EVIDENCE,
-            'Reviewed004 binary/build evidence differs')
-    require(plan['test_flags'] == TEST_FLAGS, 'Captured test flags differ')
-    require(plan['auxiliary'] == {}, 'No compiler auxiliary in binary-reuse mode')
-    for ref in plan['pins'] + [REUSED_BINARY] + BUILD_EVIDENCE:
+    require(plan['code_under_check'] == CODE_UNDER_CHECK, 'Code under check differs')
+    require(plan['cargo_config'] == CARGO_CONFIG, 'Build configuration differs')
+    expected = [(CACHE_ROOT / 'target', 'target'), (CACHE_ROOT / 'cargo-home' / 'registry', 'cargo-home/registry')]
+    require(len(plan['caches']) == len(expected), 'Cache scope differs')
+    for ref, (root, destination) in zip(plan['caches'], expected):
+        require(Path(ref['path']).resolve() == root.resolve() and ref['destination'] == destination,
+                'Cache source/destination differs')
+        require(ref['inventory'] == cache_inventory(root), 'Cache inventory changed')
+    require(plan['closure_headroom_bytes'] == 256 * 1024**2
+            and 0 < plan['projected_bytes'] <= plan['cap_bytes']
+            and plan['stage_timeout_seconds'] == 3600, 'Budget/time bounds differ')
+    for ref in plan['pins']:
         require(Path(ref['path']).stat().st_size == ref['bytes'] and sha(ref['path']) == ref['sha256'],
                 'Pin differs: ' + ref['path'])
     require(Path(plan['script']).resolve() == Path(__file__).resolve(), 'Wrong owner script')
@@ -206,9 +206,9 @@ def clean(plan):
         return subprocess.check_output(['git', '-C', plan['source'], *args], text=True).strip()
     require(git('rev-parse', 'HEAD') == plan['source_commit'], 'Source head differs')
     require(not git('status', '--porcelain'), 'Source worktree is dirty')
-    require(git('merge-base', COMPILED_SOURCE, 'HEAD') == COMPILED_SOURCE, 'Compiled source is not ancestor')
-    changed = set(git('diff', '--name-only', COMPILED_SOURCE, 'HEAD').splitlines())
-    require(changed <= REUSE_CHANGED_PATHS, 'Binary reuse requires unchanged Rust/build inputs')
+    require(git('merge-base', CODE_UNDER_CHECK, 'HEAD') == CODE_UNDER_CHECK, 'Checked code is not ancestor')
+    changed = set(git('diff', '--name-only', CODE_UNDER_CHECK, 'HEAD').splitlines())
+    require(changed <= PREPARATION_CHANGED_PATHS, 'Preparation changed reviewed Rust/build inputs')
 
 
 def before_cutoff(plan):
@@ -252,8 +252,8 @@ def worker(plan, digest):
     start_free = {d: shutil.disk_usage(d).free for d in ('D:/', 'E:/')}
     result = {'complete': False, 'source_commit': plan['source_commit'], 'merge_commit': plan['merge_commit'],
               'manifest_sha256': digest, 'started_utc': reservation.now_utc(), 'steps': [], 'gpu_tests': False,
-              'compiled_source_commit': plan['compiled_source_commit'], 'build_evidence': plan['build_evidence']}
-    pinned_bytes = plan['reused_binary']['bytes']
+              'code_under_check': plan['code_under_check'], 'cargo_config': plan['cargo_config']}
+    pinned_bytes = 0
     copy_checked = time.monotonic()
 
     def guard(extra=0, terminal=False):
@@ -323,31 +323,56 @@ def worker(plan, digest):
         result['reservation_token'] = adapter.check_owner()
         before_cutoff(plan)
         result['initial_resources'] = guard()
-        Path(plan['temp']).mkdir(parents=True, exist_ok=False)
+        for key in ('temp', 'target', 'cargo_home'):
+            Path(plan[key]).mkdir(parents=True, exist_ok=False)
+        guard(sum(ref['inventory']['allocated_bytes'] for ref in plan['caches']))
+        for ref in plan['caches']:
+            root = Path(ref['path'])
+            require(cache_inventory(root) == ref['inventory'], 'Cache changed before staging')
+            for src in files(root):
+                copy_new(src, scratch / ref['destination'] / src.relative_to(root), staged_cache=True)
+            require(cache_inventory(root) == ref['inventory'], 'Cache changed during staging')
+        (Path(plan['cargo_home']) / 'config.toml').write_text(plan['cargo_config'], encoding='utf-8')
+        result['cache_staged_bytes'] = sum(ref['inventory']['allocated_bytes'] for ref in plan['caches'])
         env = os.environ.copy()
         for key in list(env):
             if key in ('RUSTFLAGS', 'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER') or key.startswith(('MTG_', 'CARGO_')):
                 env.pop(key)
         env.update(plan['environment'])
-        env.update(TEMP=plan['temp'], TMP=plan['temp'], RUST_TEST_THREADS='1',
+        env.update(CARGO_HOME=plan['cargo_home'], CARGO_TARGET_DIR=plan['target'],
+                   CARGO_BUILD_JOBS='4', CARGO_INCREMENTAL='0', RUSTC=plan['tools']['rustc']['path'],
+                   CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=plan['tools']['linker']['path'],
+                   TEMP=plan['temp'], TMP=plan['temp'], CARGO_TERM_COLOR='never', RUST_TEST_THREADS='1',
                    RUST_BACKTRACE='0', PYTHONDONTWRITEBYTECODE='1')
         # Clear after all overlays, including inherited or manifest settings.
         for key in list(env):
             if key.upper() == 'RUST_TEST_NOCAPTURE':
                 env.pop(key)
-        ref = plan['reused_binary']
-        pinned = Path(ref['path'])
-        require(pinned.stat().st_size == ref['bytes'] and sha(pinned) == ref['sha256'],
-                'Reused test binary differs')
-        result['binary'] = ref
+        env['PATH'] = str(Path(plan['tools']['rustc']['path']).parent) + os.pathsep + env['PATH']
         result['capture'] = 'libtest default; RUST_TEST_NOCAPTURE removed'
-        for index, name in enumerate(TESTS):
-            output = run(f'test-{index:02}', [str(pinned), name, *TEST_FLAGS], plan['test_timeout_seconds'])
-            found = re.findall(r'^test (\S+) \.\.\. (ok|FAILED|ignored)\s*$', output, re.M)
-            require(found == [(name, 'ok')], 'Selected test name/outcome differs: ' + name)
-            require(len(re.findall(r'^test result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured; \d+ filtered out;', output, re.M)) == 1, 'Test summary differs')
-        result['selected_test_names'] = TESTS
-        result['selected_passed'] = 7
+        result['build_outputs'] = []
+        for stage in plan['stages']:
+            output = run(stage['label'], stage['argv'], plan['stage_timeout_seconds'])
+            if stage['label'] == 'default-invariance':
+                found = re.findall(r'^test (\S+) \.\.\. (ok|FAILED|ignored)\s*$', output, re.M)
+                require(found == [(AFFECTED_TEST, 'ok')], 'Affected exact test name/outcome differs')
+                require(len(re.findall(r'^test result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured; \d+ filtered out;', output, re.M)) == 1,
+                        'Affected test summary differs')
+                result['selected_test_names'] = [AFFECTED_TEST]
+                result['selected_passed'] = 1
+                paths = re.findall(r'^\s*Running unittests src[\\/]lib\.rs \((.+\.exe)\)\s*$', output, re.M)
+                require(len(paths) == 1, 'Expected Cargo library-test executable path')
+                binary = Path(paths[0])
+                if not binary.is_absolute():
+                    binary = Path(plan['source']) / binary
+            elif stage['label'] == 'default-jsonl':
+                binary = Path(plan['target']) / 'release' / 'kernel_rl_env.exe'
+            else:
+                continue  # cargo check produces no runnable CUDA library artifact.
+            require(binary.resolve().is_relative_to(Path(plan['target']).resolve()), 'Build output outside owned target')
+            result['build_outputs'].append({'stage': stage['label'], 'path': str(binary),
+                                           'bytes': binary.stat().st_size, 'sha256': sha(binary)})
+        result['stages_passed'] = 3
         result['final_resources'] = guard()
         result['complete'] = True
     except BaseException:
@@ -360,7 +385,7 @@ def worker(plan, digest):
                 result['cleanup_error'] = traceback.format_exc()
                 result['complete'] = False
         result['finished_utc'] = reservation.now_utc()
-        result['scope'] = 'Seven combined-source CPU correctness checks; no real R14 inference, throughput, adoption or strength evidence.'
+        result['scope'] = 'Default library-test compilation and one exact invariance test, default JSONL build, CUDA-feature library check only; no CUDA linking/GPU behavior, broader suite, adoption or strength evidence.'
         # Terminal receipt last, so file-driven wakeup observes sealed logs.
         try:
             save(scratch / 'owner-completion.json', result)
@@ -399,7 +424,7 @@ def main():
         return worker(plan, args.manifest_sha256)
     plan = validate(args.manifest, args.manifest_sha256)
     if args.check_only:
-        print(json.dumps({'static_pins_verified': len(plan['pins']), 'source_commit': plan['source_commit'], 'selected_tests': len(TESTS), 'dispatched': False}))
+        print(json.dumps({'static_pins_verified': len(plan['pins']), 'source_commit': plan['source_commit'], 'code_under_check': CODE_UNDER_CHECK, 'stages': len(STAGE_ARGS), 'dispatched': False}))
     elif args.dispatch:
         dispatch(plan, args.manifest.resolve(), args.manifest_sha256)
     return 0
