@@ -7859,13 +7859,15 @@ pub(crate) mod tests {
             ExpandedUpdateBackendV1::Cpu => LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1,
             ExpandedUpdateBackendV1::Cuda { .. } => LINE_B_TEACHER_UPDATE_GOLDEN_CUDA_V1,
         };
-        for ((_, state), golden) in moved.iter().zip(goldens) {
-            assert_eq!(
-                state.as_str(),
-                Some(golden),
-                "{label}: pinned line (b) golden"
-            );
-        }
+        let observed: Vec<&str> = moved
+            .iter()
+            .map(|(_, state)| state.as_str().unwrap())
+            .collect();
+        assert_eq!(
+            observed.as_slice(),
+            goldens,
+            "{label}: pinned line (b) goldens"
+        );
         // End-of-run head distance (proposal 12:51) through the command.
         let checkpoint_source = |pin: &Value| ExpandedModelSourceV1 {
             checkpoint: Some(serde_json::from_value(pin.clone()).unwrap()),
