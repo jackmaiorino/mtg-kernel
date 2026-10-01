@@ -294,12 +294,13 @@ pub(crate) use flat_action_v3::{
     shuffle_trigger_source_into_library_v1,
 };
 pub use flat_action_v3::{FlatActionDecisionBindingV3, FlatActionDecisionSliceV3};
+pub(crate) use flat_action_v4::V4SearchSampleMode;
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+pub(crate) use flat_action_v4::V4SearchStateErrorV1;
 #[cfg(test)]
 pub(crate) use flat_action_v4::{
     hidden_order_triggers_shared_source_state_v1, hidden_order_triggers_state_v1,
 };
-#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
-pub(crate) use flat_action_v4::{V4SearchSampleMode, V4SearchStateErrorV1};
 
 pub const FLAT_ACTION_FLAG_PAY_V1: u16 = 1 << 0;
 pub const FLAT_ACTION_FLAG_CHANGE_TARGET_V1: u16 = 1 << 1;

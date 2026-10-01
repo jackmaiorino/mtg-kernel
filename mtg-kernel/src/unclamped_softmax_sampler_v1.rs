@@ -530,7 +530,7 @@ mod tests {
             let logits = (0..width)
                 .map(|_| {
                     let value = values.next_u64();
-                    if value % 7 == 0 {
+                    if value.is_multiple_of(7) {
                         -1.25
                     } else {
                         -(((value >> 8) % 4_001) as f32) / 100.0
