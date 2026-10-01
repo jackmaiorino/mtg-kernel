@@ -663,7 +663,6 @@ fn overrun_grants_real_trample_after_blocker_declaration() {
                 continue;
             }
             SurfaceDecision::Decision(decision) => decision,
-            other => panic!("unexpected combat surface: {other:?}"),
         };
         match decision {
             Decision::DeclareBlockers { .. } => apply(
