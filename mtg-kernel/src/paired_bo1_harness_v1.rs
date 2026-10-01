@@ -546,7 +546,6 @@ pub struct PairedTrialOutcomeV1 {
     clippy::too_many_arguments,
     reason = "keeps the existing explicit input contract"
 )]
-
 pub fn run_paired_bo1_trial_v1(
     candidate_mainboard: &[u16],
     incumbent_mainboard: &[u16],

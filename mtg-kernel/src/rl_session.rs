@@ -282,7 +282,6 @@ pub enum FlatActionObjectGroupV1 {
 }
 
 mod flat_action_v3;
-#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 mod v3_spell_target_adapter_v1;
 #[cfg(test)]
 pub(crate) use v3_spell_target_adapter_v1::pyroblast_target_fixture_v1;
@@ -299,6 +298,7 @@ pub use flat_action_v3::{FlatActionDecisionBindingV3, FlatActionDecisionSliceV3}
 pub(crate) use flat_action_v4::{
     hidden_order_triggers_shared_source_state_v1, hidden_order_triggers_state_v1,
 };
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub(crate) use flat_action_v4::{V4SearchSampleMode, V4SearchStateErrorV1};
 
 pub const FLAT_ACTION_FLAG_PAY_V1: u16 = 1 << 0;

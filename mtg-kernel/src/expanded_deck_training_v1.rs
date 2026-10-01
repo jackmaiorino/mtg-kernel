@@ -2549,7 +2549,6 @@ fn compute_gae_targets_v1(
     clippy::too_many_arguments,
     reason = "keeps the existing explicit input contract"
 )]
-
 fn execute_update_v1(
     source: ExpandedModelSourceV1,
     trajectories: Vec<PinnedFileV1>,

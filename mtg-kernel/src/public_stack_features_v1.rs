@@ -1,8 +1,11 @@
 //! Ordered, per-instance public stack rows alongside unchanged V4 tensors.
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 use crate::flat_policy_v2::{
     FlatRelationPayloadV2, FlatRelationRoleV2, FlatRelativePlayerV2, FlatTargetKindV2,
 };
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 use crate::flat_policy_v4::FlatScoringDecisionViewV4;
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 use crate::native_flat_tensorizer_v2::{
     fill_native_flat_decision_tensors_v4, stack_node_map_v4, NativeFlatTensorErrorV2,
 };
