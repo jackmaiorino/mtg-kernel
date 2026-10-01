@@ -70,15 +70,15 @@ impl ActivationSink {
             config == &archive.config,
             "activation configuration differs from archive",
         )?;
-        for i in 0..2 {
+        for (i, package) in packages.iter().enumerate() {
             ensure(
-                matches!(packages[i].search, AgentSearchPolicyV1::Disabled),
+                matches!(package.search, AgentSearchPolicyV1::Disabled),
                 "activation requires ordinary base packages",
             )?;
             let mut expected = archive.packages[i].clone();
-            expected.runtime = packages[i].runtime.clone();
+            expected.runtime = package.runtime.clone();
             ensure(
-                expected == *packages[i],
+                expected == **package,
                 "activation package differs beyond runtime",
             )?;
         }

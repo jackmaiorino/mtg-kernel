@@ -60,6 +60,7 @@ pub fn run_gradient_probe() -> Result<serde_json::Value, Box<dyn Error>> {
     let targets = [0.5_f32, -0.1];
     let advantages = [0.3_f32, -0.7];
     let values = [0.2_f32, 999.0, -0.4];
+    type LossAndGradientsV1 = (f32, Vec<f32>, Vec<f32>);
     let evaluate = |raw: &[f32],
                     off: &[usize],
                     sel: &[usize],
@@ -70,7 +71,7 @@ pub fn run_gradient_probe() -> Result<serde_json::Value, Box<dyn Error>> {
                     advantage: &[f32],
                     beta: f32,
                     old: bool|
-     -> Result<(f32, Vec<f32>, Vec<f32>), Box<dyn Error>> {
+     -> Result<LossAndGradientsV1, Box<dyn Error>> {
         let host = HostPackingWorkspace {
             action_offsets: off.to_vec(),
             ..Default::default()
@@ -148,15 +149,14 @@ pub fn run_gradient_probe() -> Result<serde_json::Value, Box<dyn Error>> {
                 beta,
                 false,
             )?;
-            if beta == 0.0 {
-                if actual.0.to_bits() != original.0.to_bits()
+            if beta == 0.0
+                && (actual.0.to_bits() != original.0.to_bits()
                     || actual.1.iter().map(|x| x.to_bits()).collect::<Vec<_>>()
                         != original.1.iter().map(|x| x.to_bits()).collect::<Vec<_>>()
                     || actual.2.iter().map(|x| x.to_bits()).collect::<Vec<_>>()
-                        != original.2.iter().map(|x| x.to_bits()).collect::<Vec<_>>()
-                {
-                    return Err(training_error("zero entropy changed the old loss/gradient"));
-                }
+                        != original.2.iter().map(|x| x.to_bits()).collect::<Vec<_>>())
+            {
+                return Err(training_error("zero entropy changed the old loss/gradient"));
             }
             let mut loss = 0.0_f64;
             let mut gradient = Vec::new();

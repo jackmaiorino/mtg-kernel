@@ -240,6 +240,10 @@ impl StackDeviceTrainState {
         stack.validate()?;
         Ok((self.legacy.export_snapshot_v1()?, stack))
     }
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "preserves the explicit numerical and collection input contract"
+    )]
     fn chunk_backward_gae(
         &self,
         accumulator: &mut StackGradientAccumulator,

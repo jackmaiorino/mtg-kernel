@@ -94,7 +94,7 @@ class RunnerTests(unittest.TestCase):
         for name in ("RUSTC", "rustflags", "RUSTC_WRAPPER", "CARGO_PROFILE_RELEASE_LTO",
                      "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER"):
             self.assertNotIn(name, env)
-        self.assertEqual(env["PATH"].split(os.pathsep)[0], TC)
+        self.assertEqual(env["PATH"], TC + os.pathsep + base["PATH"])
         self.assertEqual(env["CARGO_TARGET_DIR"], "C:\\mtg-line-a\\check-only\\target\\opus-panel-export")
         self.assertEqual(env["TEMP"], env["TMP"])
         self.assertEqual(env["CARGO_INCREMENTAL"], "0")

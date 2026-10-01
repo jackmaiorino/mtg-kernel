@@ -234,6 +234,7 @@ fn node(k: [u8; 32], actor: PlayerId, f: &Forward, witness: Option<[u8; 32]>) ->
         witness,
     })
 }
+#[cfg(test)]
 fn score(n: &Node, root: PlayerId, i: usize, policy: InteriorBonus) -> Result<i64> {
     score_estimated(n, root, i, policy, None)
 }
@@ -260,6 +261,7 @@ fn score_estimated(
         base - bonus
     })
 }
+#[cfg(test)]
 fn choose(n: &Node, root: PlayerId, policy: InteriorBonus) -> Result<usize> {
     choose_estimated(n, root, policy, None)
 }
@@ -290,6 +292,7 @@ fn witness(w: &mut Witness<'_>, s: &FastActorSessionV1, n: u32) -> Result<Option
         .transpose()
 }
 
+#[cfg(test)]
 pub(crate) fn search<E: Evaluator>(
     session: &FastActorSessionV1,
     limits: Limits,

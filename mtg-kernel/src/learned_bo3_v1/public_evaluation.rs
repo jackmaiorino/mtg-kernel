@@ -82,6 +82,10 @@ pub struct Command {
     pub output_directory: PathBuf,
 }
 
+#[allow(
+    clippy::large_enum_variant,
+    reason = "retains the existing inline policy and report layout during merge preparation"
+)]
 enum Play {
     Search(Box<SearchPlayV3>),
     Legacy {
@@ -605,7 +609,6 @@ pub fn run(command: Command) -> Result<Value, String> {
                 Ok(played) => played,
                 Err(message) => {
                     drop(trace);
-                    drop(router);
                     let records = [p0.search_records(), p1.search_records()];
                     if records.iter().any(Option::is_some) {
                         save(
@@ -635,7 +638,6 @@ pub fn run(command: Command) -> Result<Value, String> {
                 result["terminal_audit_v1"] = json!({"counts":trace.terminal_counts,"branches":trace.terminal_branches,"roots":trace.terminal_roots});
             }
             drop(trace);
-            drop(router);
             let records = [p0.search_records(), p1.search_records()];
             if records.iter().any(Option::is_some) {
                 result["information_set_search_v3"] = json!(records);

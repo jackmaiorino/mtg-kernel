@@ -12,6 +12,10 @@ pub(crate) struct StackTrainingGroup<'a> {
 }
 
 impl StackDeviceTrainState {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "preserves the explicit numerical and collection input contract"
+    )]
     pub(crate) fn update_groups(
         &mut self,
         groups: &[StackTrainingGroup<'_>],

@@ -153,6 +153,10 @@ pub(crate) struct LegacyAdmissionV1 {
 }
 
 /// The opponent seat of one public-collector game.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "retains the existing inline policy and report layout during merge preparation"
+)]
 pub(crate) enum OpponentSeatV1 {
     /// Ordinary V4 net, or the unchanged D3 wrapper around it.
     Net {
