@@ -31,8 +31,8 @@ that order and reports their separate SHA-256s. Build the gameplay binary with
 `cargo build --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_env`.
 Default builds retain the original Pauper catalog and its v32 identity; the
 Limited feature selects the appended definitions and their v35 identity.
-The older v33 batch A and v34 batch B profiles remain readable and is rejected for mutation
-when it does not match the actual build.
+The older v33 batch A and v34 batch B profiles remain readable and are rejected for mutation
+when they do not match the actual build.
 
 `kernel_limited_env --foundations-combat-v1` selects custom-game schema 3,
 with full priority windows, damage assignment choices and trample. The
