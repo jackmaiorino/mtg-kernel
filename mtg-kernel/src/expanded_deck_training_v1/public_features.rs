@@ -89,7 +89,7 @@ fn default_collector_workers() -> usize {
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Trajectory {
+pub(super) struct Trajectory {
     schema: String,
     config_sha256: String,
     optimizer_state_sha256: String,
@@ -484,18 +484,15 @@ fn publish_bytes(directory: &Path, name: &str, bytes: &[u8]) -> Result<String, S
 /// The update's input from one trajectory: the learner's physical-decision
 /// groups in order, each row with its tensor and public row. The learner
 /// filter comes first, so no opponent row, record or auxiliary row enters.
+type LearnerPublicGroupV1<'a> = Vec<(
+    &'a DecisionRecordV1,
+    NativeFlatDecisionTensorV4,
+    &'a PublicFeatureRowsV1,
+)>;
+
 pub(super) fn learner_groups(
     trajectory: &Trajectory,
-) -> Result<
-    Vec<
-        Vec<(
-            &DecisionRecordV1,
-            NativeFlatDecisionTensorV4,
-            &PublicFeatureRowsV1,
-        )>,
-    >,
-    String,
-> {
+) -> Result<Vec<LearnerPublicGroupV1<'_>>, String> {
     let mut groups = Vec::new();
     let mut index = 0;
     while index < trajectory.decisions.len() {
@@ -522,6 +519,10 @@ pub(super) fn learner_groups(
 
 /// All collectors use the current batch's parameters. Results are ordered by
 /// the original schedule before publication and the single learning update.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "preserves the explicit numerical and collection input contract"
+)]
 fn collect_parallel(
     policy: &PublicInputPlayPolicyV1,
     episodes: &[ExpandedEpisodeV1],

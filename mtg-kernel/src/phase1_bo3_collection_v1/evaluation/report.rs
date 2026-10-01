@@ -86,6 +86,10 @@ enum Receipt {
 }
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "retains the existing inline policy and report layout during merge preparation"
+)]
 enum Observation {
     Missing,
     FrameMismatch,
@@ -146,13 +150,13 @@ impl ReportSink {
                 && (1..=32).contains(&options.depth),
             "invalid Report search limits",
         )?;
-        for i in 0..2 {
+        for (i, package) in packages.iter().enumerate() {
             ensure(
-                matches!(packages[i].search, AgentSearchPolicyV1::Disabled),
+                matches!(package.search, AgentSearchPolicyV1::Disabled),
                 "Report observer requires both Disabled packages",
             )?;
             ensure(
-                equal_package_except_runtime(packages[i], &archive.packages[i]),
+                equal_package_except_runtime(package, &archive.packages[i]),
                 "Report package differs beyond runtime",
             )?;
         }

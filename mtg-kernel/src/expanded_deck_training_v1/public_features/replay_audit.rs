@@ -53,6 +53,10 @@ struct Loaded {
     identity: Value,
 }
 
+#[allow(
+    clippy::large_enum_variant,
+    reason = "retains the existing inline policy and report layout during merge preparation"
+)]
 enum AuditPolicy {
     Public(PublicInputPlayPolicyV1),
     Native(FrozenPlayPolicyV1),

@@ -823,29 +823,6 @@ impl ExperimentalDeviceTrainStateV1 {
         })
     }
 
-    /// GAE sibling of `chunk_backward_v1` (design section 2): runs one
-    /// chunk's forward, the GAE dense group loss, and backward, folding
-    /// gradients into `accumulator`. No test-only capture path exists here:
-    /// unlike the v3 chunk, GAE has no existing numerical-evidence probe to
-    /// preserve, so this is the one and only body in every build.
-    pub(crate) fn chunk_backward_gae_v1(
-        &self,
-        accumulator: &mut burn::optim::GradientsAccumulator<ProductionNet8<CudaAutodiffBackendV1>>,
-        batch: &DevicePackedBatch<CudaAutodiffBackendV1>,
-        plan: &DenseGroupLossPlanGaeV1,
-        value_coefficient: f32,
-        normalization_group_count: f32,
-    ) -> Result<ChunkBackwardOutputsV1, Box<dyn Error>> {
-        self.chunk_backward_coefficients_v1(
-            accumulator,
-            batch,
-            plan,
-            value_coefficient,
-            normalization_group_count,
-            false,
-        )
-    }
-
     pub(crate) fn chunk_backward_coefficients_v1(
         &self,
         accumulator: &mut burn::optim::GradientsAccumulator<ProductionNet8<CudaAutodiffBackendV1>>,

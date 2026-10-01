@@ -1383,6 +1383,10 @@ fn train_step_cuda_burn_dense_inner_v1(
 /// wide net8 width, matching `train_step_cuda_burn_dense_feature_transfer_v3`/
 /// `_v4`'s own hardcoded `false`) and no test-only numerical-capture
 /// instrumentation (new work, no existing probe to preserve).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "preserves the explicit numerical and collection input contract"
+)]
 fn train_step_cuda_burn_dense_gae_inner_v1(
     snapshot: NativePolicyValueTrainSnapshotV1,
     device_ordinal: usize,
@@ -2004,26 +2008,6 @@ pub(crate) fn train_step_cuda_burn_dense_feature_transfer_v4(
     Ok(result)
 }
 
-/// Same V3 update with a read-only, pre-Adam gradient export for explicit
-/// numerical qualification. It does not exist in production builds.
-#[cfg(test)]
-pub(crate) fn train_step_cuda_burn_dense_feature_transfer_capture_v3(
-    state: &mut NativePolicyValueTrainStateV1,
-    groups: &[NativePolicyPhysicalDecisionV1<'_>],
-    value_coefficient: f32,
-    learning_rate: f32,
-    device_ordinal: usize,
-) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
-    train_step_cuda_burn_dense_feature_transfer_inner_v3(
-        state,
-        groups,
-        value_coefficient,
-        learning_rate,
-        device_ordinal,
-        true,
-    )
-}
-
 /// Opt-in numerical evidence from the same V3 update's device forward and
 /// backward loss, plus all 33 pre-Adam named gradients. Host assignment is
 /// last: readback, capture validation or reimport failure leaves it intact.
@@ -2070,9 +2054,8 @@ pub(crate) fn train_step_cuda_burn_dense_feature_transfer_capture_numerics_v3(
         })?;
         Ok((candidate, device))
     })();
-    let (candidate, device) = candidate.map_err(|error| {
+    let (candidate, device) = candidate.inspect_err(|_| {
         *resident_device_state_slot_v1() = None;
-        error
     })?;
     *state = candidate;
     Ok(V3CudaNumericalCaptureV1 { result, device })

@@ -304,6 +304,361 @@ fn report_search_observation_mode(
     result
 }
 
+/// Report-only fixed work on a consumed archive root. No action override.
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+pub(crate) fn core_diagnostic_report(
+    policy: &FrozenPlayPolicyV1,
+    session: &FastActorSessionV1,
+) -> Result<serde_json::Value, String> {
+    use crate::model_guided_search_core_v4::{search_inner, Limits};
+    use serde_json::json;
+    crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().map_err(|e| format!("{e:?}"))?;
+    let FastActorResponseV1::Decision(d) = session.current_response() else {
+        return Err("core diagnostic requires live root".into());
+    };
+    require(
+        d.legal_action_count <= 64,
+        "fixed diagnostic supports at most64rootactions",
+    )?;
+    let before = session.diagnostic_state_hash();
+    let rng = policy.seat_rng;
+    let capture = |t: &NativeFlatDecisionTensorV4| {
+        crate::phase1_bo3_learning_v1::Bo3CapturedTensorBitsV1::from_tensor(
+            &NativeFlatDecisionTensorV3 {
+                common: t.common.clone(),
+            },
+        )
+    };
+    let retained = capture(policy.last_scored_training_tensor_v4()?);
+    let e = V4SearchLeafEvaluatorV1::new(policy)?;
+    let limits = Limits {
+        simulations: 64,
+        transitions: 512,
+        depth: 8,
+        seed: 20260922,
+    };
+    let mut witness = |s: &FastActorSessionV1, n| e.tensor_digest(s, n);
+    let first = search_inner(session, limits, &e, Some(&mut witness));
+    let second = search_inner(session, limits, &e, Some(&mut witness));
+    require(first == second, "core diagnostic repeat differs")?;
+    require(
+        before == session.diagnostic_state_hash(),
+        "core diagnostic mutated original",
+    )?;
+    require(
+        rng == policy.seat_rng && retained == capture(policy.last_scored_training_tensor_v4()?),
+        "core diagnostic mutated policy scratch",
+    )?;
+    let result = match first {
+        Ok(o) => json!({"status":"available","outcome":o}),
+        Err(err) => json!({"status":"unavailable","error":format!("{err:?}")}),
+    };
+    Ok(
+        json!({"schema":"v4-search-core-diagnostic/v1","result":result,"limits":{"simulations":64,"transitions":512,"depth":8,"seed":20260922},
+        "tensor_witness":true,"repeat_exact":true,"original_unchanged":true,"policy_unchanged":true,"non_claim":"Consumed-root correctness only; no action override or strength estimate."}),
+    )
+}
+
+/// Follow one already-certified strategy path; opponent responses are passes.
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+pub(crate) fn certificate_prior_report(
+    policy: &FrozenPlayPolicyV1,
+    session: &FastActorSessionV1,
+    hand: bool,
+) -> Result<serde_json::Value, String> {
+    use crate::expanded_deck_training_v1::stack_features::terminal_tactics::{
+        public_burn_tree, public_hand_burn_tree,
+    };
+    use crate::model_guided_search_prior_quantization_v1::{
+        prior_expansion_order_v1, quantize_prior_v1,
+    };
+    use serde_json::json;
+    crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().map_err(|e| format!("{e:?}"))?;
+    let FastActorResponseV1::Decision(root) = session.current_response() else {
+        return Err("certificate probe root not live".into());
+    };
+    let before = session.diagnostic_state_hash();
+    let rng = policy.seat_rng;
+    let capture = |t: &NativeFlatDecisionTensorV4| {
+        crate::phase1_bo3_learning_v1::Bo3CapturedTensorBitsV1::from_tensor(
+            &NativeFlatDecisionTensorV3 {
+                common: t.common.clone(),
+            },
+        )
+    };
+    let retained = capture(policy.last_scored_training_tensor_v4()?);
+    let audit = if hand {
+        public_hand_burn_tree::audit(session, root)?
+    } else {
+        public_burn_tree::audit(session, root)?
+    };
+    let winning = audit["outcomes"]
+        .as_array()
+        .ok_or("certificate probe audit unavailable")?
+        .iter()
+        .find(|x| x["tree"][0].as_i64() == Some(1))
+        .ok_or("certificate probe has no winning action")?;
+    let root_action = winning["index"].as_u64().ok_or("root index missing")? as u32;
+    let mut tree = &winning["tree"];
+    let mut sample = session.clone();
+    let e = V4SearchLeafEvaluatorV1::new(policy)?;
+    let mut rows = Vec::new();
+    let mut terminal = false;
+    for depth in 0..=32u32 {
+        let d = match sample.current_response() {
+            FastActorResponseV1::Terminal(t) => {
+                require(
+                    tree[2].as_u64() == Some(2)
+                        && tree[0].as_i64() == Some(1)
+                        && t.terminal_classification
+                            == crate::rl::TerminalClassificationV1::Natural
+                        && t.winner == Some(root.acting_player),
+                    "certificate path did not reach natural root win",
+                )?;
+                terminal = true;
+                break;
+            }
+            FastActorResponseV1::Decision(d) => d,
+        };
+        require(depth < 32, "certificate path exceeds declared depth")?;
+        let (_, actions) = crate::paired_bo1_harness_v1::PairedBo1PolicyInputV1::new(&sample, d)
+            .diagnostic_visible_v4()?;
+        let (action, next) = if depth == 0 {
+            (root_action, tree)
+        } else {
+            let branches = tree[3].as_array().ok_or("certificate branches missing")?;
+            require(
+                branches.len() == actions.len()
+                    && branches
+                        .iter()
+                        .enumerate()
+                        .all(|(i, x)| x[0].as_u64() == Some(i as u64)),
+                "certificate menu shape differs",
+            )?;
+            let own = d.acting_player == root.acting_player;
+            require(
+                tree[2].as_u64() == Some(if own { 7 } else { 8 }),
+                "certificate actor reason differs",
+            )?;
+            let chosen = if own {
+                branches.iter().find(|x| x[1][0].as_i64() == Some(1))
+            } else {
+                branches.iter().find(|x| {
+                    x[0].as_u64().is_some_and(|i| {
+                        matches!(
+                            actions.get(i as usize),
+                            Some(crate::rl::ActionSemanticV1::Pass { .. })
+                        )
+                    })
+                })
+            };
+            let chosen = chosen.ok_or("certificate own winning branch or opponent pass missing")?;
+            (
+                chosen[0].as_u64().ok_or("certificate action missing")? as u32,
+                &chosen[1],
+            )
+        };
+        require(
+            (action as usize) < actions.len(),
+            "certificate index outside current menu",
+        )?;
+        let key = sample
+            .kernel_search_visible_key_v4(32 - depth)
+            .map_err(|e| format!("{e:?}"))?;
+        let f = e
+            .evaluate_leaf_v1(
+                &sample,
+                key,
+                d.legal_action_count,
+                ModelGuidedSearchLeafSiteV1::NewlyExpandedNode,
+            )
+            .map_err(|e| format!("{e:?}"))?;
+        let priors = quantize_prior_v1(&f.legal_action_weights).map_err(|e| format!("{e:?}"))?;
+        let rank = prior_expansion_order_v1(&priors)
+            .iter()
+            .position(|i| *i == action as usize)
+            .ok_or("prior rank missing")?;
+        rows.push(json!({"depth":depth,"actor":d.acting_player,"own":d.acting_player==root.acting_player,
+            "selected":action,"selected_action":actions[action as usize],"prior_rank_zero_based":rank,
+            "priors":priors,"raw_value":f.v_raw,"tensor_sha256":e.tensor_digest(&sample,d.legal_action_count)?.iter().map(|b|format!("{b:02x}")).collect::<String>()}));
+        let token = sample
+            .kernel_search_action_token_v4(d)
+            .map_err(|e| format!("{e:?}"))?;
+        sample
+            .kernel_search_consume_v4(d, token, action)
+            .map_err(|e| format!("{e:?}"))?;
+        tree = next;
+    }
+    require(terminal, "certificate path missing terminal")?;
+    require(
+        before == session.diagnostic_state_hash()
+            && rng == policy.seat_rng
+            && retained == capture(policy.last_scored_training_tensor_v4()?),
+        "certificate probe changed original or policy",
+    )?;
+    Ok(
+        json!({"schema":"v4-certificate-prior-path/v1","root_action":root_action,"decision_depth":rows.len(),"rows":rows,
+        "natural_root_win":true,"original_unchanged":true,"policy_unchanged":true,"scope":"One certified path with opponent passes; not worst-case depth or strength."}),
+    )
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+pub(crate) fn allocation_diagnostic_report(
+    policy: &FrozenPlayPolicyV1,
+    session: &FastActorSessionV1,
+) -> Result<serde_json::Value, String> {
+    use crate::model_guided_search_core_v4::{
+        search_with_policies, InteriorBonus, Limits, RootAllocation,
+    };
+    use serde_json::json;
+    crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().map_err(|e| format!("{e:?}"))?;
+    let FastActorResponseV1::Decision(d) = session.current_response() else {
+        return Err("allocation probe root not live".into());
+    };
+    require(
+        [4, 8].contains(&d.legal_action_count),
+        "allocation diagnostic requires the declared4/8actionroots",
+    )?;
+    let before = session.diagnostic_state_hash();
+    let rng = policy.seat_rng;
+    let capture = |t: &NativeFlatDecisionTensorV4| {
+        crate::phase1_bo3_learning_v1::Bo3CapturedTensorBitsV1::from_tensor(
+            &NativeFlatDecisionTensorV3 {
+                common: t.common.clone(),
+            },
+        )
+    };
+    let retained = capture(policy.last_scored_training_tensor_v4()?);
+    let e = V4SearchLeafEvaluatorV1::new(policy)?;
+    let mut witness = |s: &FastActorSessionV1, n| e.tensor_digest(s, n);
+    let simulations = 16 * d.legal_action_count;
+    let transitions = 8 * simulations;
+    let limits = Limits {
+        simulations,
+        transitions,
+        depth: 8,
+        seed: 20260922,
+    };
+    let mut arms = Vec::new();
+    for (allocation, interior_bonus) in [
+        (RootAllocation::Puct, InteriorBonus::PriorWeighted),
+        (RootAllocation::RoundRobin, InteriorBonus::PriorWeighted),
+        (RootAllocation::RoundRobin, InteriorBonus::PriorFree),
+    ] {
+        let first = search_with_policies(
+            session,
+            limits,
+            &e,
+            allocation,
+            interior_bonus,
+            Some(&mut witness),
+        );
+        let repeat = search_with_policies(
+            session,
+            limits,
+            &e,
+            allocation,
+            interior_bonus,
+            Some(&mut witness),
+        );
+        require(first == repeat, "allocation diagnostic repeat differs")?;
+        arms.push(match first {Ok(outcome)=>json!({"allocation":allocation,"interior_bonus":interior_bonus,"status":"available","outcome":outcome}),
+            Err(e)=>json!({"allocation":allocation,"interior_bonus":interior_bonus,"status":"unavailable","error":format!("{e:?}")})});
+    }
+    require(
+        before == session.diagnostic_state_hash()
+            && rng == policy.seat_rng
+            && retained == capture(policy.last_scored_training_tensor_v4()?),
+        "allocation diagnostic mutated original or policy",
+    )?;
+    Ok(
+        json!({"schema":"v4-root-interior-allocation-diagnostic/v2","limits":{"simulations":simulations,"transitions":transitions,"depth":8,"seed":20260922},
+        "arms":arms,"repeat_exact":true,"tensor_witness":true,"original_unchanged":true,"policy_unchanged":true,"non_claim":"Two consumed roots only; no playing override or strength estimate."}),
+    )
+}
+
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+pub(crate) fn backup_diagnostic_report(
+    policy: &FrozenPlayPolicyV1,
+    session: &FastActorSessionV1,
+) -> Result<serde_json::Value, String> {
+    use crate::model_guided_search_core_v4::{
+        search_with_backup, BackupMode, InteriorBonus, Limits, RootAllocation,
+    };
+    use serde_json::json;
+    crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().map_err(|e| format!("{e:?}"))?;
+    let FastActorResponseV1::Decision(d) = session.current_response() else {
+        return Err("allocation probe root not live".into());
+    };
+    require(
+        [4, 8].contains(&d.legal_action_count),
+        "allocation diagnostic requires the declared4/8actionroots",
+    )?;
+    let before = session.diagnostic_state_hash();
+    let rng = policy.seat_rng;
+    let capture = |t: &NativeFlatDecisionTensorV4| {
+        crate::phase1_bo3_learning_v1::Bo3CapturedTensorBitsV1::from_tensor(
+            &NativeFlatDecisionTensorV3 {
+                common: t.common.clone(),
+            },
+        )
+    };
+    let retained = capture(policy.last_scored_training_tensor_v4()?);
+    let e = V4SearchLeafEvaluatorV1::new(policy)?;
+    let mut witness = |s: &FastActorSessionV1, n| e.tensor_digest(s, n);
+    let simulations = 16 * d.legal_action_count;
+    let transitions = 8 * simulations;
+    let limits = Limits {
+        simulations,
+        transitions,
+        depth: 8,
+        seed: 20260922,
+    };
+    let mut arms = Vec::new();
+    for mode in [BackupMode::Off, BackupMode::Report, BackupMode::Blend] {
+        let start = std::time::Instant::now();
+        let first = search_with_backup(
+            session,
+            limits,
+            &e,
+            RootAllocation::RoundRobin,
+            InteriorBonus::PriorFree,
+            mode,
+            Some(&mut witness),
+        );
+        let first_ns = start.elapsed().as_nanos();
+        let start = std::time::Instant::now();
+        let repeat = search_with_backup(
+            session,
+            limits,
+            &e,
+            RootAllocation::RoundRobin,
+            InteriorBonus::PriorFree,
+            mode,
+            Some(&mut witness),
+        );
+        eprintln!(
+            "V4_BACKUP_TIMING {}",
+            json!({"mode":mode,"first_ns":first_ns,"repeat_ns":start.elapsed().as_nanos()})
+        );
+        require(first == repeat, "allocation diagnostic repeat differs")?;
+        arms.push(match first {
+            Ok(outcome) => json!({"mode":mode,"status":"available","outcome":outcome}),
+            Err(e) => json!({"mode":mode,"status":"unavailable","error":format!("{e:?}")}),
+        });
+    }
+    require(
+        before == session.diagnostic_state_hash()
+            && rng == policy.seat_rng
+            && retained == capture(policy.last_scored_training_tensor_v4()?),
+        "allocation diagnostic mutated original or policy",
+    )?;
+    Ok(
+        json!({"schema":"v4-backup-diagnostic/v1","limits":{"simulations":simulations,"transitions":transitions,"depth":8,"seed":20260922},
+        "arms":arms,"repeat_exact":true,"tensor_witness":true,"original_unchanged":true,"policy_unchanged":true,"non_claim":"Two consumed roots only; no playing override or strength estimate."}),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -807,359 +1162,4 @@ mod tests {
         );
         assert_eq!(first, second);
     }
-}
-
-/// Report-only fixed work on a consumed archive root. No action override.
-#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-pub(crate) fn core_diagnostic_report(
-    policy: &FrozenPlayPolicyV1,
-    session: &FastActorSessionV1,
-) -> Result<serde_json::Value, String> {
-    use crate::model_guided_search_core_v4::{search_inner, Limits};
-    use serde_json::json;
-    crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().map_err(|e| format!("{e:?}"))?;
-    let FastActorResponseV1::Decision(d) = session.current_response() else {
-        return Err("core diagnostic requires live root".into());
-    };
-    require(
-        d.legal_action_count <= 64,
-        "fixed diagnostic supports at most64rootactions",
-    )?;
-    let before = session.diagnostic_state_hash();
-    let rng = policy.seat_rng;
-    let capture = |t: &NativeFlatDecisionTensorV4| {
-        crate::phase1_bo3_learning_v1::Bo3CapturedTensorBitsV1::from_tensor(
-            &NativeFlatDecisionTensorV3 {
-                common: t.common.clone(),
-            },
-        )
-    };
-    let retained = capture(policy.last_scored_training_tensor_v4()?);
-    let e = V4SearchLeafEvaluatorV1::new(policy)?;
-    let limits = Limits {
-        simulations: 64,
-        transitions: 512,
-        depth: 8,
-        seed: 20260922,
-    };
-    let mut witness = |s: &FastActorSessionV1, n| e.tensor_digest(s, n);
-    let first = search_inner(session, limits, &e, Some(&mut witness));
-    let second = search_inner(session, limits, &e, Some(&mut witness));
-    require(first == second, "core diagnostic repeat differs")?;
-    require(
-        before == session.diagnostic_state_hash(),
-        "core diagnostic mutated original",
-    )?;
-    require(
-        rng == policy.seat_rng && retained == capture(policy.last_scored_training_tensor_v4()?),
-        "core diagnostic mutated policy scratch",
-    )?;
-    let result = match first {
-        Ok(o) => json!({"status":"available","outcome":o}),
-        Err(err) => json!({"status":"unavailable","error":format!("{err:?}")}),
-    };
-    Ok(
-        json!({"schema":"v4-search-core-diagnostic/v1","result":result,"limits":{"simulations":64,"transitions":512,"depth":8,"seed":20260922},
-        "tensor_witness":true,"repeat_exact":true,"original_unchanged":true,"policy_unchanged":true,"non_claim":"Consumed-root correctness only; no action override or strength estimate."}),
-    )
-}
-
-/// Follow one already-certified strategy path; opponent responses are passes.
-#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-pub(crate) fn certificate_prior_report(
-    policy: &FrozenPlayPolicyV1,
-    session: &FastActorSessionV1,
-    hand: bool,
-) -> Result<serde_json::Value, String> {
-    use crate::expanded_deck_training_v1::stack_features::terminal_tactics::{
-        public_burn_tree, public_hand_burn_tree,
-    };
-    use crate::model_guided_search_prior_quantization_v1::{
-        prior_expansion_order_v1, quantize_prior_v1,
-    };
-    use serde_json::json;
-    crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().map_err(|e| format!("{e:?}"))?;
-    let FastActorResponseV1::Decision(root) = session.current_response() else {
-        return Err("certificate probe root not live".into());
-    };
-    let before = session.diagnostic_state_hash();
-    let rng = policy.seat_rng;
-    let capture = |t: &NativeFlatDecisionTensorV4| {
-        crate::phase1_bo3_learning_v1::Bo3CapturedTensorBitsV1::from_tensor(
-            &NativeFlatDecisionTensorV3 {
-                common: t.common.clone(),
-            },
-        )
-    };
-    let retained = capture(policy.last_scored_training_tensor_v4()?);
-    let audit = if hand {
-        public_hand_burn_tree::audit(session, root)?
-    } else {
-        public_burn_tree::audit(session, root)?
-    };
-    let winning = audit["outcomes"]
-        .as_array()
-        .ok_or("certificate probe audit unavailable")?
-        .iter()
-        .find(|x| x["tree"][0].as_i64() == Some(1))
-        .ok_or("certificate probe has no winning action")?;
-    let root_action = winning["index"].as_u64().ok_or("root index missing")? as u32;
-    let mut tree = &winning["tree"];
-    let mut sample = session.clone();
-    let e = V4SearchLeafEvaluatorV1::new(policy)?;
-    let mut rows = Vec::new();
-    let mut terminal = false;
-    for depth in 0..=32u32 {
-        let d = match sample.current_response() {
-            FastActorResponseV1::Terminal(t) => {
-                require(
-                    tree[2].as_u64() == Some(2)
-                        && tree[0].as_i64() == Some(1)
-                        && t.terminal_classification
-                            == crate::rl::TerminalClassificationV1::Natural
-                        && t.winner == Some(root.acting_player),
-                    "certificate path did not reach natural root win",
-                )?;
-                terminal = true;
-                break;
-            }
-            FastActorResponseV1::Decision(d) => d,
-        };
-        require(depth < 32, "certificate path exceeds declared depth")?;
-        let (_, actions) = crate::paired_bo1_harness_v1::PairedBo1PolicyInputV1::new(&sample, d)
-            .diagnostic_visible_v4()?;
-        let (action, next) = if depth == 0 {
-            (root_action, tree)
-        } else {
-            let branches = tree[3].as_array().ok_or("certificate branches missing")?;
-            require(
-                branches.len() == actions.len()
-                    && branches
-                        .iter()
-                        .enumerate()
-                        .all(|(i, x)| x[0].as_u64() == Some(i as u64)),
-                "certificate menu shape differs",
-            )?;
-            let own = d.acting_player == root.acting_player;
-            require(
-                tree[2].as_u64() == Some(if own { 7 } else { 8 }),
-                "certificate actor reason differs",
-            )?;
-            let chosen = if own {
-                branches.iter().find(|x| x[1][0].as_i64() == Some(1))
-            } else {
-                branches.iter().find(|x| {
-                    x[0].as_u64().is_some_and(|i| {
-                        matches!(
-                            actions.get(i as usize),
-                            Some(crate::rl::ActionSemanticV1::Pass { .. })
-                        )
-                    })
-                })
-            };
-            let chosen = chosen.ok_or("certificate own winning branch or opponent pass missing")?;
-            (
-                chosen[0].as_u64().ok_or("certificate action missing")? as u32,
-                &chosen[1],
-            )
-        };
-        require(
-            (action as usize) < actions.len(),
-            "certificate index outside current menu",
-        )?;
-        let key = sample
-            .kernel_search_visible_key_v4(32 - depth)
-            .map_err(|e| format!("{e:?}"))?;
-        let f = e
-            .evaluate_leaf_v1(
-                &sample,
-                key,
-                d.legal_action_count,
-                ModelGuidedSearchLeafSiteV1::NewlyExpandedNode,
-            )
-            .map_err(|e| format!("{e:?}"))?;
-        let priors = quantize_prior_v1(&f.legal_action_weights).map_err(|e| format!("{e:?}"))?;
-        let rank = prior_expansion_order_v1(&priors)
-            .iter()
-            .position(|i| *i == action as usize)
-            .ok_or("prior rank missing")?;
-        rows.push(json!({"depth":depth,"actor":d.acting_player,"own":d.acting_player==root.acting_player,
-            "selected":action,"selected_action":actions[action as usize],"prior_rank_zero_based":rank,
-            "priors":priors,"raw_value":f.v_raw,"tensor_sha256":e.tensor_digest(&sample,d.legal_action_count)?.iter().map(|b|format!("{b:02x}")).collect::<String>()}));
-        let token = sample
-            .kernel_search_action_token_v4(d)
-            .map_err(|e| format!("{e:?}"))?;
-        sample
-            .kernel_search_consume_v4(d, token, action)
-            .map_err(|e| format!("{e:?}"))?;
-        tree = next;
-    }
-    require(terminal, "certificate path missing terminal")?;
-    require(
-        before == session.diagnostic_state_hash()
-            && rng == policy.seat_rng
-            && retained == capture(policy.last_scored_training_tensor_v4()?),
-        "certificate probe changed original or policy",
-    )?;
-    Ok(
-        json!({"schema":"v4-certificate-prior-path/v1","root_action":root_action,"decision_depth":rows.len(),"rows":rows,
-        "natural_root_win":true,"original_unchanged":true,"policy_unchanged":true,"scope":"One certified path with opponent passes; not worst-case depth or strength."}),
-    )
-}
-
-#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-pub(crate) fn allocation_diagnostic_report(
-    policy: &FrozenPlayPolicyV1,
-    session: &FastActorSessionV1,
-) -> Result<serde_json::Value, String> {
-    use crate::model_guided_search_core_v4::{
-        search_with_policies, InteriorBonus, Limits, RootAllocation,
-    };
-    use serde_json::json;
-    crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().map_err(|e| format!("{e:?}"))?;
-    let FastActorResponseV1::Decision(d) = session.current_response() else {
-        return Err("allocation probe root not live".into());
-    };
-    require(
-        [4, 8].contains(&d.legal_action_count),
-        "allocation diagnostic requires the declared4/8actionroots",
-    )?;
-    let before = session.diagnostic_state_hash();
-    let rng = policy.seat_rng;
-    let capture = |t: &NativeFlatDecisionTensorV4| {
-        crate::phase1_bo3_learning_v1::Bo3CapturedTensorBitsV1::from_tensor(
-            &NativeFlatDecisionTensorV3 {
-                common: t.common.clone(),
-            },
-        )
-    };
-    let retained = capture(policy.last_scored_training_tensor_v4()?);
-    let e = V4SearchLeafEvaluatorV1::new(policy)?;
-    let mut witness = |s: &FastActorSessionV1, n| e.tensor_digest(s, n);
-    let simulations = 16 * d.legal_action_count;
-    let transitions = 8 * simulations;
-    let limits = Limits {
-        simulations,
-        transitions,
-        depth: 8,
-        seed: 20260922,
-    };
-    let mut arms = Vec::new();
-    for (allocation, interior_bonus) in [
-        (RootAllocation::Puct, InteriorBonus::PriorWeighted),
-        (RootAllocation::RoundRobin, InteriorBonus::PriorWeighted),
-        (RootAllocation::RoundRobin, InteriorBonus::PriorFree),
-    ] {
-        let first = search_with_policies(
-            session,
-            limits,
-            &e,
-            allocation,
-            interior_bonus,
-            Some(&mut witness),
-        );
-        let repeat = search_with_policies(
-            session,
-            limits,
-            &e,
-            allocation,
-            interior_bonus,
-            Some(&mut witness),
-        );
-        require(first == repeat, "allocation diagnostic repeat differs")?;
-        arms.push(match first {Ok(outcome)=>json!({"allocation":allocation,"interior_bonus":interior_bonus,"status":"available","outcome":outcome}),
-            Err(e)=>json!({"allocation":allocation,"interior_bonus":interior_bonus,"status":"unavailable","error":format!("{e:?}")})});
-    }
-    require(
-        before == session.diagnostic_state_hash()
-            && rng == policy.seat_rng
-            && retained == capture(policy.last_scored_training_tensor_v4()?),
-        "allocation diagnostic mutated original or policy",
-    )?;
-    Ok(
-        json!({"schema":"v4-root-interior-allocation-diagnostic/v2","limits":{"simulations":simulations,"transitions":transitions,"depth":8,"seed":20260922},
-        "arms":arms,"repeat_exact":true,"tensor_witness":true,"original_unchanged":true,"policy_unchanged":true,"non_claim":"Two consumed roots only; no playing override or strength estimate."}),
-    )
-}
-
-#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-pub(crate) fn backup_diagnostic_report(
-    policy: &FrozenPlayPolicyV1,
-    session: &FastActorSessionV1,
-) -> Result<serde_json::Value, String> {
-    use crate::model_guided_search_core_v4::{
-        search_with_backup, BackupMode, InteriorBonus, Limits, RootAllocation,
-    };
-    use serde_json::json;
-    crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().map_err(|e| format!("{e:?}"))?;
-    let FastActorResponseV1::Decision(d) = session.current_response() else {
-        return Err("allocation probe root not live".into());
-    };
-    require(
-        [4, 8].contains(&d.legal_action_count),
-        "allocation diagnostic requires the declared4/8actionroots",
-    )?;
-    let before = session.diagnostic_state_hash();
-    let rng = policy.seat_rng;
-    let capture = |t: &NativeFlatDecisionTensorV4| {
-        crate::phase1_bo3_learning_v1::Bo3CapturedTensorBitsV1::from_tensor(
-            &NativeFlatDecisionTensorV3 {
-                common: t.common.clone(),
-            },
-        )
-    };
-    let retained = capture(policy.last_scored_training_tensor_v4()?);
-    let e = V4SearchLeafEvaluatorV1::new(policy)?;
-    let mut witness = |s: &FastActorSessionV1, n| e.tensor_digest(s, n);
-    let simulations = 16 * d.legal_action_count;
-    let transitions = 8 * simulations;
-    let limits = Limits {
-        simulations,
-        transitions,
-        depth: 8,
-        seed: 20260922,
-    };
-    let mut arms = Vec::new();
-    for mode in [BackupMode::Off, BackupMode::Report, BackupMode::Blend] {
-        let start = std::time::Instant::now();
-        let first = search_with_backup(
-            session,
-            limits,
-            &e,
-            RootAllocation::RoundRobin,
-            InteriorBonus::PriorFree,
-            mode,
-            Some(&mut witness),
-        );
-        let first_ns = start.elapsed().as_nanos();
-        let start = std::time::Instant::now();
-        let repeat = search_with_backup(
-            session,
-            limits,
-            &e,
-            RootAllocation::RoundRobin,
-            InteriorBonus::PriorFree,
-            mode,
-            Some(&mut witness),
-        );
-        eprintln!(
-            "V4_BACKUP_TIMING {}",
-            json!({"mode":mode,"first_ns":first_ns,"repeat_ns":start.elapsed().as_nanos()})
-        );
-        require(first == repeat, "allocation diagnostic repeat differs")?;
-        arms.push(match first {
-            Ok(outcome) => json!({"mode":mode,"status":"available","outcome":outcome}),
-            Err(e) => json!({"mode":mode,"status":"unavailable","error":format!("{e:?}")}),
-        });
-    }
-    require(
-        before == session.diagnostic_state_hash()
-            && rng == policy.seat_rng
-            && retained == capture(policy.last_scored_training_tensor_v4()?),
-        "allocation diagnostic mutated original or policy",
-    )?;
-    Ok(
-        json!({"schema":"v4-backup-diagnostic/v1","limits":{"simulations":simulations,"transitions":transitions,"depth":8,"seed":20260922},
-        "arms":arms,"repeat_exact":true,"tensor_witness":true,"original_unchanged":true,"policy_unchanged":true,"non_claim":"Two consumed roots only; no playing override or strength estimate."}),
-    )
 }

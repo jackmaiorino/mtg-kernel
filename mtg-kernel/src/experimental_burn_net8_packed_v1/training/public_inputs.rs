@@ -153,20 +153,11 @@ impl ProjectionSnapshot {
     }
 }
 
+#[derive(Default)]
 pub(crate) struct PublicGradientAccumulator {
     base: burn::optim::GradientsAccumulator<ProductionNet8<CudaAutodiffBackendV1>>,
     object: Option<Tensor<CudaBackendV1, 2>>,
     state: Option<Tensor<CudaBackendV1, 2>>,
-}
-
-impl Default for PublicGradientAccumulator {
-    fn default() -> Self {
-        Self {
-            base: Default::default(),
-            object: None,
-            state: None,
-        }
-    }
 }
 
 pub(crate) struct PublicDeviceTrainState {
@@ -233,6 +224,10 @@ impl PublicDeviceTrainState {
         Ok((legacy, public))
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "preserves the explicit numerical and collection input contract"
+    )]
     fn chunk_backward_gae(
         &self,
         accumulator: &mut PublicGradientAccumulator,

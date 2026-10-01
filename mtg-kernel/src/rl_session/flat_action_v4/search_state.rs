@@ -174,7 +174,7 @@ fn validate_library_origin_candidates_v4(
 }
 
 impl FastActorSessionV1 {
-    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+    #[cfg(test)]
     pub(crate) fn kernel_search_redeterminized_clone_v4(&self, seed: u64) -> Result<Self, Error> {
         self.search_clone_v4_inner(seed, |_, _| {})
     }
@@ -185,14 +185,14 @@ impl FastActorSessionV1 {
     ) -> Result<Self, Error> {
         self.search_clone_v4_mode_inner(seed, mode, |_, _| {})
     }
-    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+    #[cfg(test)]
     pub(crate) fn kernel_search_redeterminized_clone_library_v2(
         &self,
         seed: u64,
     ) -> Result<Self, Error> {
         self.kernel_search_redeterminized_clone_mode_v4(seed, V4SearchSampleMode::LibraryChoiceV2)
     }
-    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+    #[cfg(test)]
     fn search_clone_v4_inner(
         &self,
         seed: u64,

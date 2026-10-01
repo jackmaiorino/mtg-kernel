@@ -203,8 +203,7 @@ fn run_warm_timing_v1(plan: WarmTimingPlanV1) -> Result<Value, String> {
     // `NativePolicyPhysicalDecisionV1` is `Copy` (a slice reference plus two
     // small scalars), so this aliases the already-loaded substep rows rather
     // than duplicating trajectory data on disk or re-parsing anything.
-    let groups: Vec<_> = std::iter::repeat(base_groups.as_slice())
-        .take(plan.batch_repeat)
+    let groups: Vec<_> = std::iter::repeat_n(base_groups.as_slice(), plan.batch_repeat)
         .flatten()
         .copied()
         .collect();

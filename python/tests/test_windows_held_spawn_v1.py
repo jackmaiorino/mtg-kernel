@@ -117,7 +117,7 @@ class HeldTests(unittest.TestCase):
             events.append('readback')
             if fail: raise ValueError('injected policy failure')
             return {'verified': True}
-        with patch.dict(sys.modules, {'_winapi': api}), patch.object(held, '_install'), patch.object(held, '_HeldPopen', side_effect=popen), patch.object(held, 'configure_owned_child', side_effect=policy), patch('ctypes.WinDLL', return_value=kernel, create=True):
+        with patch.dict(sys.modules, {'_winapi': api}), patch.object(held.os, 'name', 'nt'), patch.object(held, '_install'), patch.object(held, '_HeldPopen', side_effect=popen), patch.object(held, 'configure_owned_child', side_effect=policy), patch('ctypes.WinDLL', return_value=kernel, create=True):
             if fail:
                 with self.assertRaises(ValueError): held.spawn_held(['fixture'], 'fixture')
                 child.kill.assert_called_once(); child.wait.assert_called_once()
