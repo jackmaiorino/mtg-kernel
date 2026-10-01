@@ -152,9 +152,12 @@ jobs:
           exit $LASTEXITCODE
 
       - name: Validate native Store production feature boundary
+        shell: pwsh
         run: |
           cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --lib native_store_production_capture_v2::
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --test native_cli_platform_stub_v2
+          exit $LASTEXITCODE
 
       - name: Test host-safe experimental CUDA feature surface
         run: |
