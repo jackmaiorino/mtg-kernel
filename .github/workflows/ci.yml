@@ -137,7 +137,7 @@ jobs:
             cargo-registry-tests-${{ matrix.os }}-
 
       - name: Run Rust release tests
-        run: cargo test --release --locked --workspace --all-targets
+        run: cargo test --release --locked --workspace --all-targets --no-fail-fast
 
       - name: Validate native Store production feature boundary
         run: |

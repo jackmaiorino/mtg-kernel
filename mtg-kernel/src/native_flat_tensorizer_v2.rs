@@ -874,6 +874,7 @@ pub(crate) fn fill_native_flat_decision_tensors_v3(
         Some(&objects.projection),
         &mut scratch,
         true,
+        None,
     )?;
     let output = NativeFlatDecisionTensorV2 {
         state,
@@ -1113,6 +1114,7 @@ pub(crate) fn fill_native_flat_decision_tensors_v4(
         Some(&objects.projection),
         &mut scratch,
         true,
+        None,
     )?;
     let output = NativeFlatDecisionTensorV2 {
         state,
@@ -6166,13 +6168,14 @@ fn encode_action_half_with_projection_and_scratch_v2(
     decision: FlatScoringDecisionViewV1<'_>,
     projection: Option<&ObjectProjectionV2>,
     canonical_json: &mut Vec<u8>,
-    mut deferred: Option<DeferredActionJsonV1<'_>>,
+    deferred: Option<DeferredActionJsonV1<'_>>,
 ) -> Result<ActionHalfV1, NativeFlatTensorErrorV1> {
     encode_action_half_with_projection_and_scratch_contract_v3(
         decision,
         projection,
         canonical_json,
         false,
+        deferred,
     )
 }
 
@@ -6181,6 +6184,7 @@ fn encode_action_half_with_projection_and_scratch_contract_v3(
     projection: Option<&ObjectProjectionV2>,
     canonical_json: &mut Vec<u8>,
     allow_chosen_creature_cost_v3: bool,
+    mut deferred: Option<DeferredActionJsonV1<'_>>,
 ) -> Result<ActionHalfV1, NativeFlatTensorErrorV1> {
     if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
         return Err(NativeFlatTensorErrorV1::ActingPlayerNotRelativeSelf);
