@@ -25,11 +25,12 @@ class LimitedDeckTest(unittest.TestCase):
         ))
 
     def test_real_decks_are_40_cards_and_report_missing_behavior(self) -> None:
-        for filename, supported_copies in [
-            ("FDN_top_04956_UG.dck", 17),
-            ("FDN_top_20626_WG.dck", 8),
+        for filename, supported_copies, source_sha256 in [
+            ("FDN_top_04956_UG.dck", 17, "bb618d6eaddf04b0a9e51e9a88cd512a04635e99ebca91b11ace4c305d634c86"),
+            ("FDN_top_20626_WG.dck", 8, "be026f1c86e3aabcb294517188d0c5f4f0cdfa3c5e95ee9dedfc51d3cdf814f7"),
         ]:
             with self.subTest(filename=filename):
+                self.assertEqual(hashlib.sha256((FIXTURES / filename).read_bytes()).hexdigest(), source_sha256)
                 deck = limited.parse_dck((FIXTURES / filename).read_text(encoding="utf-8"))
                 report = limited.inspect_deck(deck, self.registry)
                 self.assertEqual(report["mainboard"]["copies"], 40)
