@@ -579,10 +579,10 @@ fn execute(
             // and every requested static row before the first episode.
             for config in matches {
                 validate_match(config)?;
-                for seat in 0..2 {
+                for (seat, policy) in prepared.iter().enumerate() {
                     checked_in_pauper_registered_deck_by_id_v1(&config.deck_ids[seat])
                         .map_err(|e| e.to_string())?;
-                    let _ = prepared[seat].bind(config, seat, embeddings)?;
+                    let _ = policy.bind(config, seat, embeddings)?;
                 }
             }
             write_json(&output.join("inputs.json"), &inputs)?;
@@ -689,9 +689,8 @@ fn execute(
                 .map(ExpandedBo3MatchV1::registrations)
                 .collect::<Result<Vec<_>, _>>()?;
             for (item, registered) in matches.iter().zip(&registrations) {
-                for seat in 0..2 {
-                    let _ =
-                        prepared[seat].bind_explicit(&item.config, registered, seat, embeddings)?;
+                for (seat, policy) in prepared.iter().enumerate() {
+                    let _ = policy.bind_explicit(&item.config, registered, seat, embeddings)?;
                 }
             }
             write_json(&output.join("inputs.json"), &inputs)?;
