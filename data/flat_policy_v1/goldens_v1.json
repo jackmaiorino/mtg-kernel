@@ -320,7 +320,7 @@
   },
   "inventory_sha256": "fc3df2927fd6430e38fb65d879d3a77deef78ef4757f904d5dca780ec4d46a47",
   "mapping_sha256": "bf0347ab442bd1c81cade03899b0c1af93d9bc26468b1e8139dbfc562fa4c4b6",
-  "payload_sha256": "5abc2fcfd3d7c9862450f6e252b70264d85fa655433f279cc362ea96e7071020",
+  "payload_sha256": "50ffcbaeb0179759fe65d9e6c0bc6e5011ccf6ae26ab708412ac199743eab2d3",
   "producer_parent_commit": "3de6d2c450d4d32f120f70034324bfc72e1e3339",
   "runtime_fixture_cases": [
     {
