@@ -2101,7 +2101,6 @@ impl GameState {
     /// disposable clone. The sole production caller is the additive V3 search
     /// sampler. Never derive `seed` from this state's real random stream.
     /// Preserve mode and past physical-owner shuffle counters.
-    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
     pub(crate) fn resample_future_randomness_for_search_v3(&mut self, seed: u64) {
         match &mut self.randomness {
             GameRandomnessState::Legacy(rng) => *rng = SplitMix64::seed(seed),
