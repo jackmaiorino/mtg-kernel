@@ -1937,6 +1937,9 @@ fn decision_texts(
         }
         // Not in the Burn corpus this walker replays (Chain Lightning is
         // Rally-only).
+        // This walker consumes frozen reference-AI corpora, which do not
+        // activate the custom Foundations assignment protocol.
+        SurfaceDecision::Decision(Decision::ChooseCombatDamageRange { .. }) => None,
         SurfaceDecision::Decision(Decision::Halted { .. }) => None,
         SurfaceDecision::Decision(Decision::GameOver { .. }) => None,
         SurfaceDecision::Decision(Decision::DeclareBlockers { .. }) => None,
@@ -2130,6 +2133,9 @@ fn apply_by_indices(
                 SurfaceAction::Action(Action::ChooseSpellCopyRetarget(i0 == 0)),
             )
             .map_err(|e| format!("engine-step-error:walk:ChooseSpellCopyRetarget:{e}")),
+        SurfaceDecision::Decision(Decision::ChooseCombatDamageRange { .. }) => {
+            Err("apply_by_indices:unsupported-foundations-combat-protocol".to_string())
+        }
         SurfaceDecision::Decision(Decision::GameOver { .. })
         | SurfaceDecision::Decision(Decision::DeclareBlockers { .. })
         | SurfaceDecision::Decision(Decision::Halted { .. }) => {

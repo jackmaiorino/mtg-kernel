@@ -3,20 +3,21 @@ use std::io::{self, BufRead, Read, Write};
 
 fn main() -> io::Result<()> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
-    let engine_priority = match args.as_slice() {
-        [] => false,
-        [flag] if flag == "--engine-priority-v1" => true,
+    let mode = match args.as_slice() {
+        [] => 1,
+        [flag] if flag == "--engine-priority-v1" => 2,
+        [flag] if flag == "--foundations-combat-v1" => 3,
         _ => {
-            eprintln!("usage: kernel_limited_env [--engine-priority-v1]");
+            eprintln!("usage: kernel_limited_env [--engine-priority-v1 | --foundations-combat-v1]");
             std::process::exit(2);
         }
     };
     let mut input = io::stdin().lock();
     let mut output = io::stdout().lock();
-    let mut server = if engine_priority {
-        LimitedJsonlServerV1::new_with_engine_priority_v1()
-    } else {
-        LimitedJsonlServerV1::new()
+    let mut server = match mode {
+        3 => LimitedJsonlServerV1::new_with_foundations_combat_v1(),
+        2 => LimitedJsonlServerV1::new_with_engine_priority_v1(),
+        _ => LimitedJsonlServerV1::new(),
     };
     loop {
         let mut line = Vec::new();

@@ -32,6 +32,12 @@ Limited feature selects the appended definitions and their v34 identity.
 The older v33 batch A profile remains readable and is rejected for mutation
 when it does not match the actual build.
 
+`kernel_limited_env --foundations-combat-v1` selects custom-game schema 3,
+with full priority windows, damage assignment choices and trample. The
+Python client/tool accepts the matching `--foundations-combat-v1` option.
+See `docs/design/fdn_combat_damage_v1.md` for the rules and compatibility
+boundary. Mulligans and the remaining fixture cards still need implementation.
+
 From the repository root, no dependencies or engine build are needed for inspection:
 
 ```powershell

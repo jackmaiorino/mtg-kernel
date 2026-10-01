@@ -59,6 +59,7 @@ use crate::state::{
 };
 use crate::trigger::{self, PendingTrigger};
 use serde::{Deserialize, Serialize};
+use std::hash::Hash;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EngineState {
@@ -932,7 +933,7 @@ pub enum OptionalCostChoice {
 /// then). An attacker with no entry in `blocked_by` is unblocked; one whose
 /// entry lists no blockers stays blocked (509.1h). A permanent leaves these
 /// lists the moment it leaves the battlefield (`remove_from_combat`, 506.4).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CombatState {
     pub attackers_declared: bool,
     pub blockers_declared: bool,
@@ -944,12 +945,37 @@ pub struct CombatState {
     /// lethal from first to last. The replay trace's ordered
     /// `chosen_indices` therefore already carries the reference's effective
     /// damage-assignment order; sorting these ids changes combat outcomes.
-    /// This is reference-AI behavior, not a rules-level ordering guarantee;
-    /// a future surface can carry an explicit damage allocation instead.
+    /// This is reference-AI behavior, not a rules-level ordering guarantee.
+    /// Foundations custom games traverse this list for presentation but
+    /// expose arbitrary legal allocations through `foundations_v1`.
     pub blocked_by: Vec<(ObjectId, Vec<ObjectId>)>,
+    /// Explicit custom-game rules. Absent in frozen Pauper sessions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foundations_v1: Option<crate::combat_damage_v1::FoundationsCombatV1>,
+}
+
+// Preserve the original derived field sequence when the extension is absent.
+impl std::hash::Hash for CombatState {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.attackers_declared.hash(state);
+        self.blockers_declared.hash(state);
+        self.attackers.hash(state);
+        self.blocked_by.hash(state);
+        if let Some(rules) = &self.foundations_v1 {
+            "foundations_combat/v1".hash(state);
+            rules.hash(state);
+        }
+    }
 }
 
 impl CombatState {
+    fn reset_preserving_rules(&mut self) {
+        let enabled = self.foundations_v1.is_some();
+        *self = Self::default();
+        if enabled {
+            self.foundations_v1 = Some(Default::default());
+        }
+    }
     /// 506.4: a permanent that leaves the battlefield is removed from
     /// combat. It stops being an attacking or blocking creature, so its id
     /// (which the object arena reuses for the card's later incarnations,
@@ -1184,6 +1210,17 @@ pub enum Decision {
         default: Option<bool>,
         purpose: effect::EffectBooleanChoicePurpose,
     },
+    /// Refine the amount assigned to one recipient. There are exactly two
+    /// answers: [minimum, split_at] and [split_at + 1, maximum]. No player
+    /// receives priority until all assignments in the wave are complete.
+    ChooseCombatDamageRange {
+        player: PlayerId,
+        source: ObjectId,
+        recipient: Target,
+        minimum: i32,
+        maximum: i32,
+        split_at: i32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1260,6 +1297,9 @@ pub enum Action {
     /// battlefield object, currently Saruli Caretaker's other untapped
     /// controlled creature. Appended for action identity stability.
     ActivateManaAbilityWithCostTarget(ObjectId, ManaColor, ObjectId),
+    ChooseCombatDamageRange {
+        upper_half: bool,
+    },
 }
 
 const CHAIN_COPY_COST: Cost = Cost {
@@ -5504,6 +5544,18 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
             return Decision::Halted { mechanic, source };
         }
 
+        if crate::combat_damage_v1::has_pending_assignment(state) {
+            match crate::combat_damage_v1::drain_or_decide(state) {
+                Ok(Some(decision)) => return decision,
+                Ok(None) => continue,
+                Err(_) => {
+                    state.engine.halted =
+                        Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                    continue;
+                }
+            }
+        }
+
         if let Some(pending) = state.engine.pending_land_play.as_ref() {
             if validate_pending_land_play(state, pending).is_err() {
                 state.engine.halted = Some((
@@ -9619,6 +9671,13 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
 /// obviously-combat-shaped divergence. See `Decision::DeclareAttackers`'s
 /// doc and the replay comparator's handling of an empty `eligible`.
 fn advance_step(state: &mut GameState) {
+    if state.step == Step::CombatDamage && crate::combat_damage_v1::needs_normal_wave(state) {
+        state.players[0].mana_pool = [0; 6];
+        state.players[1].mana_pool = [0; 6];
+        crate::combat_damage_v1::start_normal_wave(state);
+        reset_priority(state);
+        return;
+    }
     let cur_idx = STEP_ORDER
         .iter()
         .position(|&s| s == state.step)
@@ -9675,7 +9734,7 @@ fn advance_step(state: &mut GameState) {
     // combat. Without this the record of this combat's attackers and
     // blockers survived into the second main phase and the next turn.
     if state.step == Step::EndCombat {
-        state.engine.combat = CombatState::default();
+        state.engine.combat.reset_preserving_rules();
     }
 
     state.step = next;
@@ -9850,10 +9909,14 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             collect_and_queue_triggers(state);
         }
         Step::BeginCombat => {
-            state.engine.combat = CombatState::default();
+            state.engine.combat.reset_preserving_rules();
         }
         Step::CombatDamage => {
-            deal_combat_damage(state);
+            if state.engine.combat.foundations_v1.is_some() {
+                crate::combat_damage_v1::start_first_wave(state);
+            } else {
+                deal_combat_damage(state);
+            }
         }
         Step::Cleanup => {
             // 514.1/514.2: reset damage, "until end of turn" effects end,
@@ -10385,6 +10448,10 @@ fn combat_damage_wave(state: &mut GameState, first_strike_wave: bool) {
         }
     }
 
+    commit_combat_damage_events(state, events);
+}
+
+pub(crate) fn commit_combat_damage_events(state: &mut GameState, events: Vec<ProposedEvent>) {
     let event_start = state.engine.event_log.len();
     event::propose_and_commit_batch(state, events);
     let combat_player_damage = state.engine.event_log[event_start..]
@@ -10515,7 +10582,7 @@ pub(crate) fn put_ninjutsu_source_onto_battlefield_attacking(
 /// except the last, which absorbs whatever power remains. A single
 /// blocker just gets it all directly.
 ///
-/// Known gap (pool-reachable): CR 702.19 trample is not implemented,
+/// Legacy behavior (pool-reachable): CR 702.19 trample is not implemented,
 /// though this pool grants TRAMPLE to Spinewoods Paladin and Avenging
 /// Hunter. Excess power is never assigned to the defending player once
 /// the attacker is blocked, and under CR 702.19d a trampler whose
@@ -10787,6 +10854,14 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    if crate::combat_damage_v1::has_pending_assignment(state) {
+        return match action {
+            Action::ChooseCombatDamageRange { upper_half } => {
+                crate::combat_damage_v1::answer_range(state, upper_half)
+            }
+            _ => Err("only a combat damage answer may be taken during assignment".to_string()),
+        };
+    }
     if state.engine.pending_land_play.is_some() && !matches!(&action, Action::ChooseEffectOption(_))
     {
         return Err(
@@ -10829,6 +10904,7 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
         }
     }
     match action {
+        Action::ChooseCombatDamageRange { .. } => Err("no combat damage choice is pending".to_string()),
         Action::Pass => {
             let p = state.priority_player;
             state.engine.priority_passes[p.index()] = true;

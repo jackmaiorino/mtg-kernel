@@ -29,6 +29,12 @@ for line in sys.stdin:
             reply["priority_mode"] = "harness_v2"
         elif request["schema_version"] != 2:
             raise RuntimeError("schema-2 request required")
+    if mode.startswith("foundations"):
+        reply["schema_version"] = 3
+        reply["priority_mode"] = "engine_windows_v1"
+        reply["combat_rules"] = "wrong" if mode == "foundations-wrong" else "foundations_v1"
+        if request["schema_version"] != 3:
+            raise RuntimeError("schema-3 request required")
     if request["request_type"] == "reset":
         if request["decks"][1]["cards"][0]["name"] == "Missing":
             reply.update(response_type="error", error={"code":"unsupported_deck","message":"seat 1"})
@@ -106,6 +112,19 @@ class LimitedClientTest(unittest.TestCase):
                               ("engine-priority", False)):
             with self.subTest(mode=mode, enabled=enabled):
                 with LimitedClientV1(self.command(mode), engine_priority=enabled) as client:
+                    with self.assertRaises(LimitedSessionError):
+                        client.reset(self.decks)
+                    self.assertTrue(client.closed)
+
+    def test_foundations_requires_matching_schema_and_combat_identity(self) -> None:
+        first = smoke(self.command("foundations"), self.decks, foundations_combat=True)
+        second = smoke(self.command("foundations"), self.decks, foundations_combat=True)
+        self.assertEqual(first, second)
+        self.assertEqual(first["schema"], "kernel_limited_smoke/v3")
+        for mode, enabled in (("engine-priority", True), ("foundations-wrong", True),
+                              ("foundations", False)):
+            with self.subTest(mode=mode, enabled=enabled):
+                with LimitedClientV1(self.command(mode), foundations_combat=enabled) as client:
                     with self.assertRaises(LimitedSessionError):
                         client.reset(self.decks)
                     self.assertTrue(client.closed)

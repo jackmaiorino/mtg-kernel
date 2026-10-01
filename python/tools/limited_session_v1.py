@@ -34,13 +34,13 @@ def _uint(value: Any, field: str) -> int:
 
 class LimitedClientV1:
     def __init__(self, command: Sequence[str], *, timeout_s: float = 10.0,
-                 engine_priority: bool = False) -> None:
+                 engine_priority: bool = False, foundations_combat: bool = False) -> None:
         if timeout_s <= 0:
             raise ValueError("timeout_s must be positive")
         self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE)
         self.timeout_s = timeout_s
-        self.schema_version = 2 if engine_priority else 1
+        self.schema_version = 3 if foundations_combat else (2 if engine_priority else 1)
         self.lines: queue.Queue[bytes | None] = queue.Queue()
         self.stderr: deque[bytes] = deque(maxlen=20)
         self.next_request = 0
@@ -85,10 +85,14 @@ class LimitedClientV1:
             reply = load_json(line)
             if reply.get("protocol") != "kernel_limited_jsonl" or type(reply.get("schema_version")) is not int or reply["schema_version"] != self.schema_version:
                 raise LimitedSessionError("unexpected Limited protocol identity")
-            if self.schema_version == 2 and reply.get("priority_mode") != "engine_windows_v1":
+            if self.schema_version >= 2 and reply.get("priority_mode") != "engine_windows_v1":
                 raise LimitedSessionError("unexpected Limited priority mode")
             if self.schema_version == 1 and "priority_mode" in reply:
                 raise LimitedSessionError("unexpected priority mode in schema 1")
+            if self.schema_version == 3 and reply.get("combat_rules") != "foundations_v1":
+                raise LimitedSessionError("unexpected Limited combat rules")
+            if self.schema_version < 3 and "combat_rules" in reply:
+                raise LimitedSessionError("unexpected combat rules in earlier schema")
             if reply.get("request_id") != request["request_id"]:
                 raise LimitedSessionError("response request_id mismatch")
             _uint(reply.get("card_db_hash"), "card_db_hash")
@@ -171,8 +175,10 @@ class LimitedClientV1:
 
 
 def smoke(command: Sequence[str], decks: tuple[ImportedDeck, ImportedDeck], *, seed: int = 1,
-          max_steps: int = 4096, engine_priority: bool = False) -> dict[str, Any]:
-    with LimitedClientV1(command, engine_priority=engine_priority) as client:
+          max_steps: int = 4096, engine_priority: bool = False,
+          foundations_combat: bool = False) -> dict[str, Any]:
+    with LimitedClientV1(command, engine_priority=engine_priority,
+                         foundations_combat=foundations_combat) as client:
         reply = client.reset(decks, env_seed=seed, max_steps=max_steps)
         for _ in range(max_steps):
             if reply["response_type"] == "terminal":
@@ -194,7 +200,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--deck", type=Path, action="append", required=True)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--max-steps", type=int, default=4096)
-    parser.add_argument("--engine-priority-v1", action="store_true",
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--foundations-combat-v1", action="store_true",
+                       help="opt into schema 3, combat damage choices and trample")
+    modes.add_argument("--engine-priority-v1", action="store_true",
                         help="opt into schema 2 and expose engine priority windows")
     args = parser.parse_args(argv)
     try:
@@ -202,10 +211,12 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("provide two --deck paths, a u64 seed and a positive step bound")
         decks = tuple(parse_dck(path.read_text(encoding="utf-8-sig")) for path in args.deck)
         command = [str(args.binary.resolve())]
-        if args.engine_priority_v1:
+        if args.foundations_combat_v1:
+            command.append("--foundations-combat-v1")
+        elif args.engine_priority_v1:
             command.append("--engine-priority-v1")
         result = smoke(command, decks, seed=args.seed, max_steps=args.max_steps,
-                       engine_priority=args.engine_priority_v1)
+                       engine_priority=args.engine_priority_v1, foundations_combat=args.foundations_combat_v1)
         print(json.dumps(result, sort_keys=True, indent=2))
         return 0 if result["terminal"].get("terminal_classification") == "natural" else 2
     except (OSError, ValueError, LimitedSessionError) as exc:
