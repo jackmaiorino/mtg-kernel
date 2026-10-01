@@ -18,8 +18,13 @@ records as before.
 Verification so far: 17 Python Limited tests, 13 Pauper manifest tests and
 8 V2 feature-golden tests passed; the Pauper generator's check passed.
 The formerly failing scorer-packet, joined-record and checkpoint-evaluation
-goldens pass in the ongoing full Rust library rerun. Full-suite success is
-not yet verified. Hosted CI is rerunning on source commit `e97f8eae`.
+goldens pass. Hosted CI run `36866508690` on source commit `e97f8eae`
+completed successfully: Rust release tests on Ubuntu and Windows, formatting,
+lint and all four Python shards. The separate HaleysPC debug library rerun
+finished with 1,728 passed, three failed and 49 ignored. Two native-search
+tests exceeded their scheduler deadlines; the third rejected its rollout.
+That debug attempt is a failed full-suite check, retained in
+`C:/Users/haley/fdn-catalog-isolation-002.log`.
 CI now also builds/lints the Limited feature and runs its card, session,
 priority, catalog and incompatible-store-profile checks.
 
