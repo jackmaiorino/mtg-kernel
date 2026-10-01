@@ -28,7 +28,6 @@ use crate::state::{
     StackSourceContractV4, StackTargetContractV4, Target, UndercityRoomV1, Zone,
 };
 use serde::{Deserialize, Serialize};
-#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub(crate) mod library_choice_search_v2;
 
 /// Upper bound on `EffectOp::AddManaDynamic`'s evaluated amount, matching

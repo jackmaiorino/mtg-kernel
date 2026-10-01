@@ -51,6 +51,10 @@ use crate::rl_session::{
     FastActorResponseV1, FastActorSessionV1, RlSessionError, RlSessionErrorCode,
 };
 use crate::state::SplitMix64;
+use crate::unclamped_softmax_sampler_v1::{
+    UnclampedSoftmaxScratchV1, UNCLAMPED_SOFTMAX_MAX_ACTIONS_V1,
+    UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -191,6 +195,12 @@ pub struct FrozenPlayPolicyV1 {
     /// `Some`, matching item 16's "reachable, not yet wired to any caller"
     /// scope.
     fresh_successor: Option<FrozenPlayFreshSuccessorStateV1>,
+    /// Line (b) learner collection sampler (`unclamped_softmax_sampler_v1`).
+    /// `None` (the legacy samplers above) for every constructed policy;
+    /// only an explicit collection mode sets it, and collection forks keep
+    /// it. Every draw still consumes exactly one `next_u64` of the acting
+    /// seat's stream.
+    collection_sampler: Option<UnclampedSoftmaxScratchV1>,
 }
 
 #[derive(Default)]
@@ -438,6 +448,7 @@ impl FrozenPlayPolicyV1 {
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
+            collection_sampler: None,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             successor: Some(FrozenPlaySuccessorStateV3::default()),
@@ -473,6 +484,7 @@ impl FrozenPlayPolicyV1 {
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
+            collection_sampler: None,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             successor: None,
@@ -543,6 +555,7 @@ impl FrozenPlayPolicyV1 {
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
+            collection_sampler: None,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             successor: Some(FrozenPlaySuccessorStateV3::default()),
@@ -595,6 +608,7 @@ impl FrozenPlayPolicyV1 {
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
+            collection_sampler: None,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             successor: Some(FrozenPlaySuccessorStateV3::default()),
@@ -647,6 +661,7 @@ impl FrozenPlayPolicyV1 {
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
+            collection_sampler: None,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             successor: Some(FrozenPlaySuccessorStateV3::default()),
@@ -711,6 +726,7 @@ impl FrozenPlayPolicyV1 {
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
+            collection_sampler: None,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             successor: None,
@@ -880,6 +896,7 @@ impl FrozenPlayPolicyV1 {
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
+            collection_sampler: None,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             successor: None,
@@ -937,6 +954,10 @@ impl FrozenPlayPolicyV1 {
             tensorizer: NativeFlatTensorizerV2::new(),
             tensor: NativeFlatDecisionTensorV2::default(),
             sampler: FastCategoricalScratch::default(),
+            collection_sampler: self
+                .collection_sampler
+                .as_ref()
+                .map(|_| UnclampedSoftmaxScratchV1::default()),
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             successor: self
@@ -972,12 +993,34 @@ impl FrozenPlayPolicyV1 {
         Ok(fork)
     }
 
+    /// Switch this policy's own decisions to the line (b) collection
+    /// sampler. Collection forks inherit it; opponents never do.
+    pub(crate) fn enable_unclamped_collection_sampler_v1(&mut self) {
+        self.collection_sampler = Some(UnclampedSoftmaxScratchV1::default());
+    }
+
+    /// A fork that plays another seat as a frozen policy: its declared
+    /// production sampler, never the learner's collection mode.
+    pub(crate) fn with_legacy_collection_sampler_v1(mut self) -> Self {
+        self.collection_sampler = None;
+        self
+    }
+
+    /// The collection sampler identity when the line (b) mode is active.
+    pub(crate) fn collection_sampler_identity_v1(&self) -> Option<&'static str> {
+        self.collection_sampler
+            .as_ref()
+            .map(|_| UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1)
+    }
+
     /// Active runtime capability, separate from the historical import receipt.
     /// Narrow decisions still execute the frozen sampler verbatim. Both wide
     /// generations (V3's `successor` and V4's `fresh_successor`) share the
     /// same wide sampler identity and action bound.
     pub fn runtime_sampler_identity_v1(&self) -> &'static str {
-        if self.successor.is_some() || self.fresh_successor.is_some() {
+        if self.collection_sampler.is_some() {
+            UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1
+        } else if self.successor.is_some() || self.fresh_successor.is_some() {
             WIDE_CATEGORICAL_SAMPLER_VERSION_V1
         } else {
             FAST_CATEGORICAL_SAMPLER_VERSION
@@ -985,7 +1028,9 @@ impl FrozenPlayPolicyV1 {
     }
 
     pub fn runtime_sampler_max_actions_v1(&self) -> usize {
-        if self.successor.is_some() || self.fresh_successor.is_some() {
+        if self.collection_sampler.is_some() {
+            UNCLAMPED_SOFTMAX_MAX_ACTIONS_V1
+        } else if self.successor.is_some() || self.fresh_successor.is_some() {
             WIDE_CATEGORICAL_MAX_ACTIONS_V1
         } else {
             FAST_CATEGORICAL_MAX_ACTIONS
@@ -1322,6 +1367,11 @@ impl FrozenPlayPolicyV1 {
             PlayerSeatV1::P1 => 1,
         };
         let seed = self.seat_rng[index].next_u64();
+        if let Some(unclamped) = &mut self.collection_sampler {
+            // The seat-stream output is the draw itself: never reseeded.
+            let selected = unclamped.sample(logits, seed).map_err(|e| e.to_string())?;
+            return u32::try_from(selected).map_err(|e| e.to_string());
+        }
         let selected = if let Some(successor) = &mut self.successor {
             successor.sampler.sample(logits, seed)
         } else if let Some(fresh) = &mut self.fresh_successor {
@@ -1587,6 +1637,55 @@ impl OwnedScoringV1 {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn unclamped_collection_sampler_takes_one_seat_stream_draw_per_decision() {
+        let mut legacy = FrozenPlayPolicyV1::training_fixture_v4();
+        let mut unclamped = legacy.fork_for_collection_v3().unwrap();
+        assert_eq!(unclamped.collection_sampler_identity_v1(), None);
+        unclamped.enable_unclamped_collection_sampler_v1();
+        assert_eq!(
+            unclamped.runtime_sampler_identity_v1(),
+            UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1
+        );
+        let fork = unclamped.fork_for_collection_v3().unwrap();
+        assert_eq!(
+            fork.collection_sampler_identity_v1(),
+            Some(UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1)
+        );
+        assert_eq!(
+            fork.with_legacy_collection_sampler_v1()
+                .collection_sampler_identity_v1(),
+            None
+        );
+        legacy.reset_sampling_v1([11, 12]);
+        unclamped.reset_sampling_v1([11, 12]);
+        let mut stream = [SplitMix64::seed(11), SplitMix64::seed(12)];
+        let mut reference = UnclampedSoftmaxScratchV1::default();
+        let menus: [&[f32]; 4] = [
+            &[0.0, -19.37],
+            &[1.0, 0.5, -30.0],
+            &[0.25; 7],
+            &[3.0, -1.0, 2.0, 0.0, -17.0],
+        ];
+        for (turn, logits) in menus.iter().cycle().take(40).enumerate() {
+            let (seat, index) = if turn % 3 == 0 {
+                (PlayerSeatV1::P1, 1)
+            } else {
+                (PlayerSeatV1::P0, 0)
+            };
+            let expected = reference.sample(logits, stream[index].next_u64()).unwrap() as u32;
+            let width = logits.len() as u32;
+            assert_eq!(
+                unclamped.sample_scores(logits, seat, width).unwrap(),
+                expected
+            );
+            legacy.sample_scores(logits, seat, width).unwrap();
+        }
+        // One draw per decision per seat, exactly as the legacy sampler takes.
+        assert_eq!(unclamped.seat_rng, stream);
+        assert_eq!(unclamped.seat_rng, legacy.seat_rng);
+    }
 
     #[test]
     fn fresh_successor_is_none_for_every_existing_checkpoint_construction_path() {

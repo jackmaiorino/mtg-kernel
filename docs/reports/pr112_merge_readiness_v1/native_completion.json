@@ -1,0 +1,120 @@
+{
+  "schema": "pr112-readiness-native-completion/v1",
+  "gpu_ordinal": 1,
+  "gpu_name": "RTX 3050",
+  "driver": "596.36",
+  "rust_cargo": "1.94.1",
+  "linker": "MSVC 14.50.35725.0",
+  "current_corrected_fixture_checks_passed": true,
+  "runs": {
+    "prerequisite": {
+      "source_commit": "87c8271e031e55adb35a771fb1698f825d7b818c",
+      "finished_utc": "2026-10-01T08:06:54.192479+00:00",
+      "cold_record": "E:\\mtg-pr112-merge-readiness-20261001\\pr114-native-check-001",
+      "test_binary": {
+        "path": "E:\\pinned-binaries\\20c5037c20dff9cbb996a9d69a7ef96395c99c4a16c983c5e40f9c63e3c37c57\\mtg_kernel-c2def65f541e2de6.exe",
+        "sha256": "20c5037c20dff9cbb996a9d69a7ef96395c99c4a16c983c5e40f9c63e3c37c57"
+      },
+      "input_sha256": {
+        "Cargo.lock": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
+        "rust-toolchain.toml": "d52c5633ea77aefd345519d0a6c87e19c2636a1e90178585c30db481b3de9de0",
+        "data/cards_v1.json": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
+        "data/runtime_decks_v1.json": "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851",
+        "data/pauper_pool_v1.json": "f7d6e129a83ee32874a567b47346a66af52c7a7d98fa41cc7ce284ddff8d91c9"
+      },
+      "steps": [
+        {
+          "name": "build",
+          "exit_code": 0,
+          "seconds": 519.4961440563202,
+          "log_sha256": "a6c959b4ed937f2fb08417c80bbd56ca4f8623959db5f7636d2a1117a03354ea"
+        },
+        {
+          "name": "ordinary_trainer_two_iteration_v4_fixture_cuda_stamps_v4_and_restores_cleanly",
+          "exit_code": 0,
+          "seconds": 23.41525387763977,
+          "log_sha256": "3525e1159d8370fb415ce06eee899cb7a0852587e6d8385e388bf87e3c10eadd"
+        },
+        {
+          "name": "ordinary_trainer_two_iteration_v4_fixture_cuda_is_bit_identical_across_two_runs_in_one_process",
+          "exit_code": 0,
+          "seconds": 23.574267387390137,
+          "log_sha256": "10a847a6f276a49abe0b7cb1895c693d2a01d7902b9ef47ce06f1b29d79c9bd0"
+        },
+        {
+          "name": "ordinary_trainer_two_iteration_v4_fixture_cuda_is_bit_identical_across_two_processes",
+          "exit_code": 0,
+          "seconds": 38.159709215164185,
+          "log_sha256": "115bed9bccd937c749cd6824e8406cdfba2a1a5293060713771191bf38127533"
+        },
+        {
+          "name": "search_opponent_games_replay_validate_and_refuse_tampering",
+          "exit_code": 0,
+          "seconds": 228.91460418701172,
+          "log_sha256": "d4472890281da83a837e1c671d25a0a3b53a5d02cd3b271e0908647b1566648a"
+        }
+      ],
+      "storage_within_cap": true
+    },
+    "teacher": {
+      "source_commit": "7868e9e47b0992a1bf482d48573275e28558ed9a",
+      "finished_utc": "2026-10-01T08:20:51.251510+00:00",
+      "cold_record": "E:\\mtg-pr112-merge-readiness-20261001\\native-check-002",
+      "test_binary": {
+        "path": "E:\\pinned-binaries\\d71531c4a83602e4980b8c5b5c7c397569e8476bbe5a0cc6c28594a6a104d138\\mtg_kernel-c2def65f541e2de6.exe",
+        "sha256": "d71531c4a83602e4980b8c5b5c7c397569e8476bbe5a0cc6c28594a6a104d138"
+      },
+      "input_sha256": {
+        "Cargo.lock": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
+        "rust-toolchain.toml": "d52c5633ea77aefd345519d0a6c87e19c2636a1e90178585c30db481b3de9de0",
+        "data/cards_v1.json": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
+        "data/runtime_decks_v1.json": "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851",
+        "data/pauper_pool_v1.json": "f7d6e129a83ee32874a567b47346a66af52c7a7d98fa41cc7ce284ddff8d91c9"
+      },
+      "steps": [
+        {
+          "name": "build",
+          "exit_code": 0,
+          "seconds": 546.3718338012695,
+          "log_sha256": "e1d94dc2a5b01bed14fe45e791e0f0bb0227b337cb577e00d390995d8eb8545b"
+        },
+        {
+          "name": "line_b_teacher_cuda_update_publishes_packet_telemetry_and_envelope",
+          "exit_code": 0,
+          "seconds": 23.42755651473999,
+          "log_sha256": "df209ef3500c3ba9a821437ffc5296d5308de91018e9035fc718726f83ee68ee"
+        },
+        {
+          "name": "ordinary_trainer_two_iteration_v4_fixture_cuda_stamps_v4_and_restores_cleanly",
+          "exit_code": 0,
+          "seconds": 18.088415145874023,
+          "log_sha256": "7b574234051e9030aaf08486b57845e51d46ef4110fd270cb097dd994796407a"
+        },
+        {
+          "name": "ordinary_trainer_two_iteration_v4_fixture_cuda_is_bit_identical_across_two_runs_in_one_process",
+          "exit_code": 0,
+          "seconds": 21.69513988494873,
+          "log_sha256": "8b3955bdef70d0fa8a931f8a6c8d548b5bc5e8821399ae09845edc2f6d90876a"
+        },
+        {
+          "name": "ordinary_trainer_two_iteration_v4_fixture_cuda_is_bit_identical_across_two_processes",
+          "exit_code": 0,
+          "seconds": 35.784231185913086,
+          "log_sha256": "b5e2eb7ca3fe1629288fc87f1b947a22e7c5bc1482192713b94a957fe472965f"
+        }
+      ],
+      "storage_within_cap": true
+    }
+  },
+  "earlier_passes": {
+    "source_commit": "bba7779a13081dd150e8ea4524d50be3f3b6d519",
+    "frozen_mask": "passed",
+    "teacher_d3_replay": "passed",
+    "production_code": "unchanged by the subsequent fixture-only edits"
+  },
+  "nonclaims": [
+    "engineering correctness only",
+    "historical acceptance results remain tied to their own commits",
+    "no playing-strength claim"
+  ]
+}

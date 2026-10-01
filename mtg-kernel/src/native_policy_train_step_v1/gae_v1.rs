@@ -196,6 +196,114 @@ impl NativePolicyValueTrainStateV1 {
         input_config: NativePolicyValueModelConfigV1,
         imitation: bool,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        self.train_step_gae_core_v1(
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            backward_execution,
+            input_config,
+            imitation,
+            None,
+        )
+        .map(|(result, _)| result)
+    }
+
+    /// Line (b) CPU update: the GAE objective plus the auxiliary term,
+    /// combined before the single Adam step. `backward_worker_limit` selects
+    /// the fixed-partition backward (`None`: sequential), as the V4 wrappers do.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "keeps the existing explicit input contract"
+    )]
+    pub(crate) fn train_step_gae_line_b_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        backward_worker_limit: Option<usize>,
+        input_config: NativePolicyValueModelConfigV1,
+        line_b: &LineBAuxiliaryInputV1,
+    ) -> Result<(NativePolicyTrainStepResultV1, LineBAuxiliaryResultV1), NativePolicyTrainErrorV1>
+    {
+        let backward_execution = match backward_worker_limit {
+            None => BackwardExecutionV1::Sequential,
+            Some(worker_limit) => BackwardExecutionV1::FixedPartitions { worker_limit },
+        };
+        let (result, auxiliary) = self.train_step_gae_core_v1(
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            backward_execution,
+            input_config,
+            false,
+            Some(line_b),
+        )?;
+        let auxiliary = auxiliary.ok_or(NativePolicyTrainErrorV1::LineBAuxiliary {
+            code: "line-b-auxiliary-missing-result",
+        })?;
+        Ok((result, auxiliary))
+    }
+
+    /// The line (b) entry for an update batch of either fresh-lineage
+    /// generation (the model's input configs are private to this module).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn train_step_gae_feature_transfer_line_b_v1(
+        &mut self,
+        generation: crate::sideboard_play_policy_v1::FreshLineageGenerationV1,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        backward_worker_limit: Option<usize>,
+        line_b: &LineBAuxiliaryInputV1,
+    ) -> Result<(NativePolicyTrainStepResultV1, LineBAuxiliaryResultV1), NativePolicyTrainErrorV1>
+    {
+        let input_config = match generation {
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3 => {
+                self.model.feature_transfer_config_v3()
+            }
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V4 => {
+                self.model.feature_transfer_config_v4()
+            }
+        };
+        self.train_step_gae_line_b_v1(
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            backward_worker_limit,
+            input_config,
+            line_b,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn train_step_gae_core_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        backward_execution: BackwardExecutionV1,
+        input_config: NativePolicyValueModelConfigV1,
+        imitation: bool,
+        line_b: Option<&LineBAuxiliaryInputV1>,
+    ) -> Result<
+        (
+            NativePolicyTrainStepResultV1,
+            Option<LineBAuxiliaryResultV1>,
+        ),
+        NativePolicyTrainErrorV1,
+    > {
         validate_gae_inputs_v1(groups, value_targets, advantages)?;
         if !value_coefficient.is_finite()
             || (value_coefficient <= 0.0 && !(imitation && value_coefficient == 0.0))
@@ -290,8 +398,14 @@ impl NativePolicyValueTrainStateV1 {
         finite_scalar("gae_loss", 0, policy_sum)?;
         finite_scalar("gae_loss", 1, value_sum)?;
         finite_scalar("gae_loss", 2, loss)?;
+        // Before the ordinary backward consumes the tapes.
+        let line_b_terms = line_b
+            .map(|input| {
+                line_b_auxiliary_v1::line_b_auxiliary_terms_v1(input, &group_tapes, &parameters)
+            })
+            .transpose()?;
 
-        let (mut gradients, gauge_accumulator) = match backward_execution {
+        let (mut gradients, mut gauge_accumulator) = match backward_execution {
             BackwardExecutionV1::Sequential => {
                 let mut gradients = parameters
                     .iter()
@@ -374,6 +488,10 @@ impl NativePolicyValueTrainStateV1 {
             }
         };
         validate_finite_nested("gae_gradient", &gradients)?;
+        let line_b_result = line_b_terms
+            .map(|terms| terms.combine_v1(&parameters, &mut gradients, &mut gauge_accumulator))
+            .transpose()?;
+        validate_finite_nested("gae_line_b_gradient", &gradients)?;
         let raw_scorer_bias_residual = gradients[SCORER_SECOND_BIAS][0];
         let scorer_bias_before_bits = parameters[SCORER_SECOND_BIAS].values[0].to_bits();
         let mut scorer_bias_gauge =
@@ -414,16 +532,19 @@ impl NativePolicyValueTrainStateV1 {
         self.adam_step = next_step;
         self.first_moments = next_first_moments;
         self.second_moments = next_second_moments;
-        Ok(NativePolicyTrainStepResultV1 {
-            policy_sum,
-            value_sum,
-            loss,
-            adam_step: next_step,
-            selected_outputs,
-            physical_terms,
-            gradients: gradient_snapshot,
-            scorer_bias_gauge,
-        })
+        Ok((
+            NativePolicyTrainStepResultV1 {
+                policy_sum,
+                value_sum,
+                loss,
+                adam_step: next_step,
+                selected_outputs,
+                physical_terms,
+                gradients: gradient_snapshot,
+                scorer_bias_gauge,
+            },
+            line_b_result,
+        ))
     }
 }
 

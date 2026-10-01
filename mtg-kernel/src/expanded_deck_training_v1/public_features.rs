@@ -102,6 +102,10 @@ pub(super) struct Trajectory {
     opponent: Option<ExpandedInferenceIdentityV1>,
     configuration_sha256: [String; 2],
     decisions: Vec<DecisionRecordV1>,
+    /// Absent on the existing public collector, which uses legacy draws.
+    /// Replay must carry the recorded identity through both opponent hooks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    learner_sampler: Option<String>,
     auxiliary: Vec<Option<PublicFeatureRowsV1>>,
     terminal: RlSessionTerminalV1,
     /// Present only when the D3 wrapper played the opponent seat.
@@ -110,6 +114,36 @@ pub(super) struct Trajectory {
     /// Present only for an opt-in opponent kind (opponent kinds interface v1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     opponent_record: Option<opponent_kind::OpponentRecordV1>,
+}
+
+impl Trajectory {
+    fn validate_records(&self) -> Result<(), String> {
+        let sampler = self.learner_sampler.as_deref();
+        match (&self.search, &self.opponent_record) {
+            (None, None) => validate_episode_records_with_learner_sampler_v1(
+                &self.episode,
+                &self.configuration_sha256,
+                &self.decisions,
+                &self.terminal,
+                sampler,
+            ),
+            (Some(record), None) => record.validate(
+                &self.episode,
+                &self.configuration_sha256,
+                &self.decisions,
+                &self.terminal,
+                sampler,
+            ),
+            (None, Some(record)) => record.validate(
+                &self.episode,
+                &self.configuration_sha256,
+                &self.decisions,
+                &self.terminal,
+                sampler,
+            ),
+            (Some(_), Some(_)) => Err("two opponent records".into()),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -340,19 +374,7 @@ fn collect_with_opponent(
                         )),
                     ),
                 };
-                match (&search, &opponent_record) {
-                    (None, None) => {
-                        validate_episode_records_v1(episode, &hashes, &decisions, &terminal)?
-                    }
-                    (Some(record), None) => {
-                        record.validate(episode, &hashes, &decisions, &terminal)?
-                    }
-                    (None, Some(record)) => {
-                        record.validate(episode, &hashes, &decisions, &terminal)?
-                    }
-                    (Some(_), Some(_)) => return Err("two opponent records".into()),
-                }
-                return Ok(Trajectory {
+                let trajectory = Trajectory {
                     schema: schema.into(),
                     config_sha256: config_hash.into(),
                     optimizer_state_sha256: state_hash.into(),
@@ -361,11 +383,14 @@ fn collect_with_opponent(
                     opponent: identity,
                     configuration_sha256: hashes,
                     decisions,
+                    learner_sampler: None,
                     auxiliary,
                     terminal,
                     search,
                     opponent_record,
-                });
+                };
+                trajectory.validate_records()?;
+                return Ok(trajectory);
             }
             FastActorResponseV1::Decision(d) => {
                 ensure(

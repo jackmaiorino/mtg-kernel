@@ -236,6 +236,7 @@ fn phase1_registry_trainer_real_update_reloads_exact_adam_and_transfer_provenanc
     let trajectory_pin = pin_json(&f.root, "batch-0.json", &first);
     apply(&mut expected, &policy, &first);
     let result = execute_v1(ExpandedTrainingCommandV1::Update {
+        line_b: None,
         source: f.source.clone(),
         trajectories: vec![trajectory_pin],
         learning_rate: LR,
@@ -277,6 +278,7 @@ fn phase1_registry_trainer_real_update_reloads_exact_adam_and_transfer_provenanc
     let pin = pin_json(&f.root, "batch-1.json", &second);
     apply(&mut resumed, &resumed_policy, &second);
     let second_result = execute_v1(ExpandedTrainingCommandV1::Update {
+        line_b: None,
         source: source.clone(),
         trajectories: vec![pin],
         learning_rate: LR,
@@ -317,6 +319,7 @@ fn phase1_registry_trainer_rejects_scalars_and_serial_parallel_schedule_before_p
     let pin = pin_json(&f.root, "trajectory.json", &first);
     let output = f.root.join("wrong-lr");
     let error = execute_v1(ExpandedTrainingCommandV1::Update {
+        line_b: None,
         source: f.source.clone(),
         trajectories: vec![pin],
         learning_rate: LR * 2.0,
@@ -343,6 +346,7 @@ fn phase1_registry_trainer_rejects_scalars_and_serial_parallel_schedule_before_p
                 episodes: wrong.clone(),
                 workers: 2,
                 max_non_natural_episode_fraction: 0.0,
+                collection_sampler: CollectionSamplerV1::Legacy,
                 output_directory: output.clone(),
             }
         } else {
@@ -350,6 +354,7 @@ fn phase1_registry_trainer_rejects_scalars_and_serial_parallel_schedule_before_p
                 source: f.source.clone(),
                 episodes: wrong.clone(),
                 max_non_natural_episode_fraction: 0.0,
+                collection_sampler: CollectionSamplerV1::Legacy,
                 output_directory: output.clone(),
             }
         };

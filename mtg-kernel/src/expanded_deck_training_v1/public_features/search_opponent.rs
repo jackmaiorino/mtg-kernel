@@ -283,6 +283,7 @@ impl SearchTrajectoryV1 {
         configuration_sha256: &[String; 2],
         decisions: &[DecisionRecordV1],
         terminal: &RlSessionTerminalV1,
+        learner_sampler: Option<&str>,
     ) -> Result<(), String> {
         let d = &self.descriptor;
         ensure(
@@ -330,6 +331,7 @@ impl SearchTrajectoryV1 {
                 configuration_sha256,
                 decisions,
                 terminal,
+                learner_sampler,
                 Some((self.seat, check)),
             )?;
         }

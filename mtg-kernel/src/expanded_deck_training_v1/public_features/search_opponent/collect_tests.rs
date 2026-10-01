@@ -167,11 +167,22 @@ fn search_opponent_games_replay_validate_and_refuse_tampering() {
         );
         let hashes = a.configuration_sha256.clone();
         search
-            .validate(&a.episode, &hashes, &a.decisions, &a.terminal)
+            .validate(
+                &a.episode,
+                &hashes,
+                &a.decisions,
+                &a.terminal,
+                a.learner_sampler.as_deref(),
+            )
             .unwrap();
-        assert!(
-            validate_episode_records_v1(&a.episode, &hashes, &a.decisions, &a.terminal).is_err()
-        );
+        assert!(validate_episode_records_with_learner_sampler_v1(
+            &a.episode,
+            &hashes,
+            &a.decisions,
+            &a.terminal,
+            a.learner_sampler.as_deref()
+        )
+        .is_err());
         for seat in [1 - learner_seat, learner_seat] {
             let mut tampered = a.decisions.clone();
             let row = tampered
@@ -180,7 +191,13 @@ fn search_opponent_games_replay_validate_and_refuse_tampering() {
                 .expect("a decision with a choice");
             row.selected = (row.selected + 1) % row.logits.len() as u32;
             assert!(search
-                .validate(&a.episode, &hashes, &tampered, &a.terminal)
+                .validate(
+                    &a.episode,
+                    &hashes,
+                    &tampered,
+                    &a.terminal,
+                    a.learner_sampler.as_deref()
+                )
                 .is_err());
         }
     }

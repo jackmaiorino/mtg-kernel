@@ -33,6 +33,8 @@ use crate::native_policy_value_net_v1::NativeNamedParameterV1;
 use std::error::Error;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
+pub(crate) mod line_b_cuda;
+
 const TRANSPORTED_OUTPUT_ABSOLUTE_TOLERANCE_V1: f32 = 5.0e-3;
 const TRANSPORTED_OUTPUT_RELATIVE_TOLERANCE_V1: f32 = 5.0e-3;
 const SCORER_SECOND_BIAS_ORDINAL_V1: usize = 28;
@@ -1403,6 +1405,49 @@ fn train_step_cuda_burn_dense_gae_inner_v1(
     ),
     NativePolicyTrainErrorV1,
 > {
+    train_step_cuda_burn_dense_gae_core_v1(
+        snapshot,
+        device_ordinal,
+        groups,
+        value_targets,
+        advantages,
+        value_coefficient,
+        learning_rate,
+        imitation,
+        None,
+    )
+    .map(|(result, snapshot, _)| (result, snapshot))
+}
+
+/// The CUDA GAE update with the optional line (b) auxiliary term (unit
+/// 8d-2): a treatment update reads its chunks' head gradients back, runs the
+/// selected roots' own device term before the single Adam step and returns
+/// the term's telemetry and envelope receipt. Without `line_b` this is the
+/// production update unchanged.
+#[allow(clippy::too_many_arguments)]
+fn train_step_cuda_burn_dense_gae_core_v1(
+    snapshot: NativePolicyValueTrainSnapshotV1,
+    device_ordinal: usize,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    value_targets: &[f32],
+    advantages: &[f32],
+    value_coefficient: f32,
+    learning_rate: f32,
+    imitation: bool,
+    line_b: Option<&crate::native_policy_train_step_v1::LineBAuxiliaryInputV1>,
+) -> Result<
+    (
+        NativePolicyTrainStepResultV1,
+        NativePolicyValueTrainSnapshotV1,
+        Option<line_b_cuda::LineBCudaAuxiliaryV1>,
+    ),
+    NativePolicyTrainErrorV1,
+> {
+    if line_b.is_some() && imitation {
+        return Err(NativePolicyTrainErrorV1::LineBAuxiliary {
+            code: "line-b-cuda-imitation",
+        });
+    }
     if groups.is_empty() {
         return Err(NativePolicyTrainErrorV1::EmptyBatch);
     }
@@ -1480,6 +1525,10 @@ fn train_step_cuda_burn_dense_gae_inner_v1(
     let mut global_action_offsets = Vec::with_capacity(views.len() + 1);
     global_action_offsets.push(0_usize);
     let total_group_count = groups.len() as f32;
+    let line_b_plan = line_b
+        .map(|input| line_b_cuda::line_b_cuda_plan_v1(input, groups, &group_first_substeps))
+        .transpose()?;
+    let mut ordinary_heads: Vec<Vec<f64>> = vec![Vec::new(); 7];
     for (ordinal, chunk_start_group) in chunk_group_starts.iter().copied().enumerate() {
         let chunk_end_group = chunk_group_starts
             .get(ordinal + 1)
@@ -1513,16 +1562,30 @@ fn train_step_cuda_burn_dense_gae_inner_v1(
         )
         .map_err(bridge_error_v1)?;
         let chunk_batch = DevicePackedBatch::upload_feature_transfer_v3(&device, &chunk_workspace);
-        let chunk_outputs = device_state
-            .chunk_backward_coefficients_v1(
-                &mut accumulator,
-                &chunk_batch,
-                &chunk_plan,
-                value_coefficient,
-                total_group_count,
-                imitation,
-            )
-            .map_err(bridge_error_v1)?;
+        let chunk_outputs = if line_b_plan.is_some() {
+            let (outputs, heads) = device_state
+                .chunk_backward_coefficients_head_readback_v1(
+                    &mut accumulator,
+                    &chunk_batch,
+                    &chunk_plan,
+                    value_coefficient,
+                    total_group_count,
+                )
+                .map_err(bridge_error_v1)?;
+            line_b_cuda::add_head_gradients_v1(&mut ordinary_heads, &heads)?;
+            outputs
+        } else {
+            device_state
+                .chunk_backward_coefficients_v1(
+                    &mut accumulator,
+                    &chunk_batch,
+                    &chunk_plan,
+                    value_coefficient,
+                    total_group_count,
+                    imitation,
+                )
+                .map_err(bridge_error_v1)?
+        };
         let chunk_substep_count = substep_end - substep_begin;
         if chunk_workspace.action_offsets.len() != chunk_substep_count + 1 {
             return Err(NativePolicyTrainErrorV1::CudaBackend {
@@ -1573,6 +1636,43 @@ fn train_step_cuda_burn_dense_gae_inner_v1(
             code: "cuda-burn-dense-gae-bridge-value-cardinality",
         });
     }
+    // Line (b): the selected roots' own device term joins the accumulator
+    // before the single Adam step.
+    let line_b_term = match &line_b_plan {
+        Some(plan) if plan.active_v1() => {
+            let root_views: Vec<_> = plan
+                .roots
+                .iter()
+                .map(|root| views[root.flat_substep])
+                .collect();
+            let targets: Vec<(Vec<f64>, Vec<f64>)> = plan
+                .roots
+                .iter()
+                .map(|root| {
+                    (
+                        root.target.log_probabilities.clone(),
+                        root.target.probabilities.clone(),
+                    )
+                })
+                .collect();
+            let (outputs, action_offsets) = device_state
+                .line_b_root_term_v1(
+                    &mut accumulator,
+                    &root_views,
+                    &targets,
+                    plan.direction,
+                    plan.scale,
+                )
+                .map_err(bridge_error_v1)?;
+            raw_residual += outputs.raw_gauge_residual;
+            Some(line_b_cuda::line_b_cuda_term_v1(
+                plan,
+                &outputs,
+                &action_offsets,
+            )?)
+        }
+        _ => None,
+    };
     device_state
         .apply_accumulated_v1(accumulator, learning_rate)
         .map_err(bridge_error_v1)?;
@@ -1705,6 +1805,11 @@ fn train_step_cuda_burn_dense_gae_inner_v1(
             )?;
         }
     }
+    if let Some(term) = &line_b_term {
+        for (d_logits, exact) in &term.rows {
+            gauge_accumulator.observe_line_b_auxiliary_device_v1(d_logits, exact)?;
+        }
+    }
     let scorer_bias_gauge = gauge_accumulator.finish(raw_residual, parameter_before_bits)?;
 
     let updated_snapshot = device_state.export_snapshot_v1().map_err(bridge_error_v1)?;
@@ -1715,6 +1820,13 @@ fn train_step_cuda_burn_dense_gae_inner_v1(
         device_state,
     });
 
+    let line_b_result = line_b_plan.map(|plan| {
+        line_b_cuda::line_b_cuda_result_v1(
+            &plan,
+            line_b_term,
+            line_b_cuda::ordinary_head_l2_v1(&ordinary_heads),
+        )
+    });
     Ok((
         NativePolicyTrainStepResultV1 {
             policy_sum,
@@ -1727,7 +1839,73 @@ fn train_step_cuda_burn_dense_gae_inner_v1(
             scorer_bias_gauge,
         },
         updated_snapshot,
+        line_b_result,
     ))
+}
+
+/// Line (b) CUDA GAE update for either fresh-lineage generation: the
+/// ordinary GAE objective plus the auxiliary term on the device, one Adam
+/// step, the state re-imported from the device snapshot.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn train_step_cuda_burn_dense_gae_feature_transfer_line_b_v1(
+    state: &mut NativePolicyValueTrainStateV1,
+    v4: bool,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    value_targets: &[f32],
+    advantages: &[f32],
+    value_coefficient: f32,
+    learning_rate: f32,
+    device_ordinal: usize,
+    line_b: &crate::native_policy_train_step_v1::LineBAuxiliaryInputV1,
+) -> Result<
+    (
+        NativePolicyTrainStepResultV1,
+        line_b_cuda::LineBCudaAuxiliaryV1,
+    ),
+    NativePolicyTrainErrorV1,
+> {
+    if v4 {
+        state.validate_cuda_feature_transfer_update_v4(
+            groups,
+            value_coefficient,
+            learning_rate,
+            device_ordinal,
+        )?;
+    } else {
+        state.validate_cuda_feature_transfer_update_v3(
+            groups,
+            value_coefficient,
+            learning_rate,
+            device_ordinal,
+        )?;
+    }
+    let snapshot = state.snapshot_v1()?;
+    let (result, updated_snapshot, auxiliary) = train_step_cuda_burn_dense_gae_core_v1(
+        snapshot,
+        device_ordinal,
+        groups,
+        value_targets,
+        advantages,
+        value_coefficient,
+        learning_rate,
+        false,
+        Some(line_b),
+    )?;
+    let auxiliary = auxiliary.ok_or(NativePolicyTrainErrorV1::LineBAuxiliary {
+        code: "line-b-auxiliary-missing-result",
+    })?;
+    let candidate = NativePolicyValueTrainStateV1::from_snapshot_v1(
+        state.model_v1().clone(),
+        &updated_snapshot,
+    )
+    .map_err(|_| {
+        *resident_device_state_slot_v1() = None;
+        NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-gae-line-b-state-reimport-failure",
+        }
+    })?;
+    *state = candidate;
+    Ok((result, auxiliary))
 }
 
 /// V3 CUDA GAE update. `groups`/`value_targets`/`advantages` cardinality is
