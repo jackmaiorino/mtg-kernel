@@ -7697,9 +7697,10 @@ pub(crate) mod tests {
         "4fe193c8baaabf0fe5b4db8e09c14f165d02df67d665a336fa826b5feaf3afe3",
         "579e90b83826148aefa7c17cfae19471b6c92e151962c410792c141a8a80873e",
     ];
+    // Current GPU1 outputs: cuda_teacher_witness_bba7779a.json, 2026-10-01.
     const LINE_B_TEACHER_UPDATE_GOLDEN_CUDA_V1: [&str; 2] = [
-        "4ec11a5c9df8bf98cecd3f72a72fa39906377489945aa6d8be77822624f4cd92",
-        "d91b7ceacffea8eeff1ef90970efc568028d34ca47270d0d18f48d1551da2fbd",
+        "8c9e77a2bc923c12bd883ef45d9f96eb8efbfe9b3909fdfe8fd8a10d62ad76cd",
+        "0f04932d69bcb05687126f9c01c554039c718aefada39abc0e44b219e3566d88",
     ];
 
     fn assert_line_b_teacher_update_v1(label: &str, update_backend: ExpandedUpdateBackendV1) {

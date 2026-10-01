@@ -1,6 +1,6 @@
 # PR112 merge preparation
 
-Status: in progress, 2026-10-01. Engineering checks only.
+Source repairs and baseline witnesses, 2026-10-01. Engineering checks only. The PR bodies and current checks record final readiness.
 
 Jack assigned merge preparation for PR112 and selected a focused teacher PR with main prerequisites prepared separately. PR114 targets main; PR112 targets `codex/g115-main-prerequisites-v1`. Merge order is PR114, then retarget PR112 to main and check the resulting commit. Neither PR is authorized for merge by this preparation request.
 
@@ -20,28 +20,26 @@ Formatting applies to the Cargo workspace. Qualification dependencies and genera
 
 Windows hosted tests also exposed the virtual-environment Python redirector as a reservation-release deadlock: WMI returned the redirector pid while the supervisor adopted under its child pid. The supervisor now starts with the base interpreter, preserving the requested work interpreter. Mock regression tests cover default/explicit environment selection, foreign interpreter preservation, fallback and alias refusal; the existing real WMI lifecycle tests remain required.
 
-PR112 adds teacher-specific cleanup and portable scratch fixtures. Historical acceptance receipts remain unchanged and apply to their recorded commits. Current CPU fixture hashes were refreshed only from observed hosted failures, with source/run/log bindings in `pr112_merge_readiness_v1/golden_witness_5aff1fa9.json` and `golden_witness_4b37691e.json`. Both checkpoint episode lengths remain unchanged. CUDA fixture pins await a fresh device witness.
+PR112 adds teacher-specific cleanup and portable scratch fixtures. Historical acceptance receipts remain unchanged and apply to their recorded commits. Current CPU fixture hashes were refreshed only from observed hosted failures, with source/run/log bindings in `pr112_merge_readiness_v1/golden_witness_5aff1fa9.json` and `golden_witness_4b37691e.json`. Both checkpoint episode lengths remain unchanged. Fresh GPU1 outputs are recorded in `cuda_ordinary_witness_bba7779a.json` and `cuda_teacher_witness_bba7779a.json`. The exact pins were refreshed from those outputs. The ordinary subprocess fixture now emits its hash on a separate line because serial libtest prefixes uncaptured output with the test name. Equality and numerical bounds are unchanged.
 
-Verification so far:
+Baseline verification before the final CUDA fixture refresh:
 
 | Check | Result |
 | --- | --- |
-| Canonical manifest generator check | Pass |
-| Manifest unit tests | 17 passed |
-| Teacher combined-check offline tests | 16 passed |
-| HaleysPC check-only runner offline tests | 24 passed |
-| Held-spawn offline tests | 7 passed |
-| Card-tag generator tests | 3 passed |
-| Supervisor interpreter and alias regression checks | 3 passed |
-| Pinned Rust formatting | Pass |
-| Full hosted Linux/Windows Rust/Python matrix | Pending |
-| Default, Store-feature and CUDA-feature Clippy | Passed at prerequisite d084d172, run 36814595564 |
-| Linux Python shards | Both passed at prerequisite d084d172 |
-| Windows Python shards and real WMI lifecycle | Both passed at teacher 4b37691e, run 36812673206 |
-| Teacher CPU tests | Passed at teacher 4b37691e (Linux) |
-| Current release suite, Store boundaries and host-safe CUDA tests | Pending at prerequisite 4783460d / teacher b5ff3dd6 |
-| Teacher CUDA update, envelope and frozen-mask correctness | Pending on GPU 1 |
+| Canonical manifests and 70 focused offline Python checks | Pass |
+| Locked Python shards, both operating systems | All four passed for each PR |
+| Default, Store-feature and CUDA-feature Clippy | All passed for each PR |
+| Full release suites, Linux and Windows | Passed at prerequisite 4783460d and teacher 7fee35bd |
+| Isolated snapshot timing | Passed on both platforms, unchanged 40us limit |
+| Native Store boundaries and host-safe CUDA tests | Passed on both platforms |
+| GPU1 teacher numerical envelope | Both directions within 0.001; maximum log-probability discrepancy 9.238e-9 |
+| GPU1 frozen trunk mask | Passed |
+| GPU1 ordinary V4 restore and same-process determinism | Assertions reached; first witness then failed the historical exact pin |
+| GPU1 separate-process fixture | First worker produced the current state; marker formatting prevented the second comparison |
+| D3 replay and tamper fixture | Passed, four complete games, 227.95 seconds |
 
-Small offline tests above ran on the workstation's installed Python. Hosted CI uses the repository's locked Python/toolchain. Native builds and tests stay on hosted CI while Jack's PC has a protected throughput run and HaleysPC has another active build. The remaining native packet is limited to existing GPU-1 teacher-update/envelope and frozen-mask correctness fixtures plus the affected V4 ordinary-update determinism fixtures. Small correctness checks are allowed by the compute policy; a formal run, training campaign, model selection, promotion, trainer adoption and playing-strength claim remain outside this assignment. Hosted CUDA lint compiles the feature but cannot exercise a device.
+Hosted baselines: [PR114 run 36815972214](https://github.com/jackmaiorino/mtg-kernel/actions/runs/36815972214) and [PR112 run 36816903403](https://github.com/jackmaiorino/mtg-kernel/actions/runs/36816903403). Native witness: source bba7779a, Rust/Cargo 1.94.1, MSVC 14.50.35725.0, GPU1 RTX 3050, driver 596.36. The failed first device check is preserved at `E:/mtg-pr112-merge-readiness-20261001/native-check-001` with its exact binary under `E:/pinned-binaries/9bfeda6b0a490584f17d2e4a1aade177bbb7b1f2b99630121df11f2271c79762/`.
 
-At 2026-10-01 00:45 EDT, Jack's protected run-s3 window remains active until about 03:35. HaleysPC has an active CUDA build and only 55.4 GiB free on C, below the 60 GiB reserve. No native build or GPU test was dispatched by this lane.
+Final validation requires fresh native repeats on the committed prerequisite and teacher branches plus hosted CI for the final heads. The PR bodies publish those completion identities and results. Current CI runs each Store command with explicit exit propagation and reuses the full-suite library binary for the isolated timing check.
+
+The active protected throughput run was allowed to release generation 40 before this lane dispatched generation 41 through `host_reservation_v1.dispatch`. Builds use four BelowNormal jobs and private SSD scratch. Small correctness checks are allowed by the compute policy; formal experiments, training campaigns, model selection, promotion, trainer adoption and playing-strength claims remain outside this assignment.
