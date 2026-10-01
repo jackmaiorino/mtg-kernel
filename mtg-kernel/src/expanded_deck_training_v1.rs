@@ -381,6 +381,7 @@ pub fn load_expanded_inference_v1(
     {
         return crate::phase1_bo3_learning_v1::load_bo3_inference_v1(source);
     }
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     if probe.get("schema").and_then(Value::as_str)
         == Some(stack_features::terminal_tactics::learning::campaign::TEACHER_INFERENCE_SCHEMA)
     {
@@ -1721,7 +1722,6 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
     )
 }
 
-#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 fn validate_episode_records_v1(
     episode: &ExpandedEpisodeV1,
     configuration_sha256: &[String; 2],
@@ -2379,7 +2379,6 @@ fn compute_gae_targets_v1(
     clippy::too_many_arguments,
     reason = "keeps the existing explicit input contract"
 )]
-
 fn execute_update_v1(
     source: ExpandedModelSourceV1,
     trajectories: Vec<PinnedFileV1>,

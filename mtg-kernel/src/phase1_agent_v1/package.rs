@@ -9,6 +9,7 @@ use crate::learned_bo3_v1::Bo3OpeningProtocolV1;
 use crate::learned_sideboard_v1::{
     FrozenSideboardEmbeddingsV1, LearnedSideboardModelV1, SideboardPlayIdentityV1,
 };
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 use crate::paired_bo1_harness_v1::{PairedBo1PolicyV1, PlayPolicyGenerationV1};
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
 use serde::{Deserialize, Serialize};

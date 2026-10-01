@@ -1,6 +1,7 @@
 //! Explicit evaluation-only extension of V3's previously rejected spell targets.
 //! No rollout is performed. Only actor-visible encoder rows leave this module.
 use super::*;
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 use crate::policy_observation_v6::ObservationV6;
 
 pub(super) fn visible_spell_target(
@@ -50,6 +51,7 @@ pub(super) fn visible_spell_target(
     })
 }
 
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 impl FastActorSessionV1 {
     /// The original scorer remains the first path. Only a rejected action
     /// reference can enter the explicitly identified adapter. The copy never
