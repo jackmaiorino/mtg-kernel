@@ -139,9 +139,17 @@ jobs:
       - name: Run Rust release tests
         run: cargo test --release --locked --workspace --all-targets --no-fail-fast
 
-      # Preserve the design's 40us budget without concurrent neural tests.
+      # Reuse the release test binary from the full suite. Calling Cargo with
+      # --lib changes feature unification and needlessly rebuilds the library.
+      # The existing 40us check still runs alone in its own test process.
       - name: Check snapshot clone budget on an idle test process
-        run: cargo test --release --locked -p mtg-kernel --lib snapshot::tests::snapshot_clone_cost_is_bounded -- --exact --ignored --test-threads=1
+        shell: pwsh
+        run: |
+          $testBinaries = @(Get-ChildItem -LiteralPath target/release/deps -File | Where-Object { $_.Name -match '^mtg_kernel-[0-9a-f]+(?:\.exe)?$' })
+          if ($testBinaries.Count -ne 1) { throw "Expected one release library test binary, found $($testBinaries.Count)" }
+          $testBinary = $testBinaries[0].FullName
+          & $testBinary snapshot::tests::snapshot_clone_cost_is_bounded --exact --ignored --test-threads=1
+          exit $LASTEXITCODE
 
       - name: Validate native Store production feature boundary
         run: |
