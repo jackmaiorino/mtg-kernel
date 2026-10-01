@@ -2,20 +2,19 @@ use cubecl::{calculate_cube_count_elemwise, prelude::*, std::FastDivmod};
 use cubek::convolution::components::ConvSetupError;
 
 use burn_backend::{
-    ops::{conv::calculate_conv_output_size, DeformConvOptions},
     Shape,
+    ops::{DeformConvOptions, conv::calculate_conv_output_size},
 };
 
 use crate::{
+    CubeRuntime,
     kernel::{
-        into_contiguous_aligned, launch_binop,
-        matmul::{matmul, MatmulStrategy},
+        AddOp, into_contiguous_aligned, launch_binop,
+        matmul::{MatmulStrategy, matmul},
         utils::address_type,
-        AddOp,
     },
     ops::{numeric::zeros_client, reshape, swap_dims},
     tensor::CubeTensor,
-    CubeRuntime,
 };
 
 #[derive(CubeLaunch, CubeType)]

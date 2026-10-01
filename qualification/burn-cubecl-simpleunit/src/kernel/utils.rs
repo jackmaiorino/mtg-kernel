@@ -4,12 +4,12 @@ use cubecl::{
     ir::{UIntKind, VectorSize},
     prelude::*,
     std::{
-        tensor::layout::linear::{LinearLayoutLaunch, LinearViewLayoutLaunch},
         FastDivmod, FastDivmodInt,
+        tensor::layout::linear::{LinearLayoutLaunch, LinearViewLayoutLaunch},
     },
 };
 
-use crate::{tensor::CubeTensor, CubeRuntime};
+use crate::{CubeRuntime, tensor::CubeTensor};
 
 pub fn shape_divmod<R: CubeRuntime>(tensor: &CubeTensor<R>) -> SequenceArg<R, FastDivmod<usize>> {
     let mut arg = SequenceArg::new();

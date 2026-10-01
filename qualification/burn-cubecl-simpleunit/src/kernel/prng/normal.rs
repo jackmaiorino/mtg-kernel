@@ -1,4 +1,4 @@
-use crate::{ops::numeric::empty_device_dtype, tensor::CubeTensor, CubeRuntime};
+use crate::{CubeRuntime, ops::numeric::empty_device_dtype, tensor::CubeTensor};
 use burn_backend::{DType, Shape};
 
 /// Pseudo-random generator with uniform distribution

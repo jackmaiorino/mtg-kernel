@@ -2,7 +2,7 @@ use burn_backend::{DType, QTensorPrimitive, TensorMetadata};
 use cubecl::quant::scheme::{QuantStore, QuantValue};
 use cubecl::server::MemoryLayoutStrategy;
 
-use crate::{ops::empty_qtensor, tensor::CubeTensor, CubeRuntime};
+use crate::{CubeRuntime, ops::empty_qtensor, tensor::CubeTensor};
 
 /// Make a jit tensor contiguous.
 pub fn into_contiguous<R: CubeRuntime>(tensor: CubeTensor<R>) -> CubeTensor<R> {

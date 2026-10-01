@@ -1,22 +1,22 @@
 use burn_backend::{
-    ops::QTensorOps,
-    quantization::{
-        params_shape, QParamTensor, QuantLevel, QuantMode, QuantParam, QuantPropagation,
-        QuantScheme, QuantValue, QuantizationParametersPrimitive,
-    },
-    tensor::{Device, FloatTensor, IntTensor, QuantizedTensor},
     Bytes, DType, ExecutionError, QTensorPrimitive, Shape, Slice, TensorData, TensorMetadata,
     TensorPrimitive,
+    ops::QTensorOps,
+    quantization::{
+        QParamTensor, QuantLevel, QuantMode, QuantParam, QuantPropagation, QuantScheme, QuantValue,
+        QuantizationParametersPrimitive, params_shape,
+    },
+    tensor::{Device, FloatTensor, IntTensor, QuantizedTensor},
 };
 use burn_std::{FloatDType, Metadata};
 use cubecl::server::{MemoryLayout, MemoryLayoutDescriptor, MemoryLayoutStrategy};
 use cubecl::{e2m1x2, quant::scheme::QuantStore};
 
 use crate::{
+    CubeBackend, CubeRuntime, FloatElement, IntElement,
     element::BoolElement,
     kernel::{self, matmul::MatmulStrategy},
     tensor::{CubeTensor, QParams},
-    CubeBackend, CubeRuntime, FloatElement, IntElement,
 };
 
 use super::{into_data, permute, swap_dims};

@@ -1,21 +1,21 @@
 use super::pool2d::{
-    pool2d_direct, Pool2dDirectArgsLaunch, Pool2dDirectStrategy, Pool2dDirectStrategyFamily,
+    Pool2dDirectArgsLaunch, Pool2dDirectStrategy, Pool2dDirectStrategyFamily, pool2d_direct,
 };
 use crate::{
+    CubeRuntime,
     kernel::{
         into_contiguous_aligned,
-        pool::pool2d::{view4d, Position},
+        pool::pool2d::{Position, view4d},
         utils::{address_type, shape_divmod},
     },
     ops::{
         max_vector_size, numeric::empty_device_dtype, permute_nchw_to_nhwc, permute_nhwc_to_nchw,
     },
     tensor::CubeTensor,
-    CubeRuntime,
 };
-use burn_backend::{ops::conv::calculate_pool_output_size, DType, Shape};
+use burn_backend::{DType, Shape, ops::conv::calculate_pool_output_size};
 use cubecl::{
-    calculate_cube_count_elemwise, num_traits::Zero, prelude::*, std::tensor::View, CubeDim,
+    CubeDim, calculate_cube_count_elemwise, num_traits::Zero, prelude::*, std::tensor::View,
 };
 
 struct MaxPoolStrategy;

@@ -1,15 +1,15 @@
 use burn_backend::{
-    ops::{conv::calculate_padding_out, ConvOptions, ConvTransposeOptions},
     TensorMetadata,
+    ops::{ConvOptions, ConvTransposeOptions, conv::calculate_padding_out},
 };
 use burn_std::Shape;
 use cubek::convolution::components::ConvSetupError;
 
 use crate::{
+    CubeRuntime,
     kernel::conv::{conv_transpose2d, conv_transpose3d},
     ops::{permute_nchw_to_nhwc, permute_nhwc_to_nchw, reshape},
     tensor::CubeTensor,
-    CubeRuntime,
 };
 
 pub(crate) fn conv_data_backward_fallback<R: CubeRuntime, const N_DIM: usize>(

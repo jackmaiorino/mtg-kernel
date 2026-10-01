@@ -1,23 +1,23 @@
 use crate::{
+    CubeRuntime,
     kernel::{
         conv::batches_per_run,
         into_contiguous_aligned,
-        matmul::{matmul, MatmulStrategy},
+        matmul::{MatmulStrategy, matmul},
         slice,
         utils::{address_type, decompose_linear, shape_divmod},
     },
     ops::{numeric::empty_device_dtype, reshape, swap_dims},
     tensor::CubeTensor,
-    CubeRuntime,
 };
 use burn_backend::{
-    ops::{conv::calculate_conv_transpose_output_size, ConvTransposeOptions},
     Shape,
+    ops::{ConvTransposeOptions, conv::calculate_conv_transpose_output_size},
 };
 use cubecl::{
     calculate_cube_count_elemwise,
     prelude::*,
-    std::{tensor::layout::linear::LinearView, FastDivmod},
+    std::{FastDivmod, tensor::layout::linear::LinearView},
 };
 use cubek::convolution::components::ConvSetupError;
 

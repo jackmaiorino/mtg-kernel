@@ -1,14 +1,14 @@
 use crate::{
+    CubeRuntime,
     kernel::utils::address_type,
     ops::{max_vector_size, numeric::empty_device_dtype},
     tensor::CubeTensor,
-    CubeRuntime,
 };
 use burn_backend::TensorMetadata;
 use burn_std::DType;
 use cubecl::{
-    calculate_cube_count_elemwise, num_traits::One, prelude::*,
-    std::tensor::layout::linear::LinearView, CubeDim,
+    CubeDim, calculate_cube_count_elemwise, num_traits::One, prelude::*,
+    std::tensor::layout::linear::LinearView,
 };
 
 #[cube(launch_unchecked, address_type = "dynamic")]

@@ -1,16 +1,16 @@
 #![allow(missing_docs)]
 
 use super::SumAutotuneKey;
-use crate::{tensor::CubeTensor, CubeAutotuneKey, CubeRuntime, CubeTuneId};
+use crate::{CubeAutotuneKey, CubeRuntime, CubeTuneId, tensor::CubeTensor};
 use cubecl::{
     client::ComputeClient,
-    tune::{local_tuner, LocalTuner, Tunable, TunableSet, TuneGroup},
+    tune::{LocalTuner, Tunable, TunableSet, TuneGroup, local_tuner},
 };
 use cubek::reduce::{
-    components::instructions::ReduceOperationConfig,
-    launch::{tune_key::ReduceAutotuneKey, RoutineStrategy, VectorizationStrategy},
-    routines::{cube::CubeStrategy, plane::PlaneStrategy, unit::UnitStrategy, BlueprintStrategy},
     ReduceDtypes, ReduceStrategy,
+    components::instructions::ReduceOperationConfig,
+    launch::{RoutineStrategy, VectorizationStrategy, tune_key::ReduceAutotuneKey},
+    routines::{BlueprintStrategy, cube::CubeStrategy, plane::PlaneStrategy, unit::UnitStrategy},
 };
 
 /// Executes autotune on reduce operations.

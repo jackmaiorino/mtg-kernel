@@ -1,11 +1,11 @@
 use crate::{
+    CubeRuntime,
     kernel::{
         into_contiguous,
         utils::{address_type, broadcast_shape},
     },
     ops::{numeric::empty_device_dtype, swap_dims},
     tensor::CubeTensor,
-    CubeRuntime,
 };
 use cubecl::std::tensor::layout::linear::LinearView;
 use cubecl::{calculate_cube_count_elemwise, prelude::*};

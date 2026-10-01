@@ -1,7 +1,7 @@
-use crate::{kernel::utils::address_type, tensor::CubeTensor, CubeRuntime};
+use crate::{CubeRuntime, kernel::utils::address_type, tensor::CubeTensor};
 use crate::{kernel::utils::shape_divmod, ops::numeric::empty_device_dtype};
 use burn_backend::TensorMetadata;
-use cubecl::{calculate_cube_count_elemwise, std::tensor::layout::linear::LinearView, CubeDim};
+use cubecl::{CubeDim, calculate_cube_count_elemwise, std::tensor::layout::linear::LinearView};
 use cubecl::{prelude::*, std::FastDivmod};
 
 #[cube(launch_unchecked, address_type = "dynamic")]

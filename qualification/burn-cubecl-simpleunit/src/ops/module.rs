@@ -1,15 +1,15 @@
 use crate::{
+    CubeBackend, CubeRuntime, FloatElement, IntElement,
     element::BoolElement,
     kernel::{self, conv::ConvTranspose2dStrategy},
-    CubeBackend, CubeRuntime, FloatElement, IntElement,
 };
 use burn_backend::tensor::{BoolTensor, FloatTensor, IntTensor};
 use burn_backend::{
+    TensorMetadata,
     ops::{
         AttentionModuleOptions, ConvOptions, ConvTransposeOptions, DeformConv2dBackward,
         DeformConvOptions, InterpolateOptions, MaxPool2dBackward, MaxPool2dWithIndices, ModuleOps,
     },
-    TensorMetadata,
 };
 
 impl<R, F, I, BT> ModuleOps<Self> for CubeBackend<R, F, I, BT>
