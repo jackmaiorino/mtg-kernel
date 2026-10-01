@@ -6782,13 +6782,13 @@ pub(crate) mod tests {
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     const V4_CUDA_DEVICE_ORDINAL_V1: usize = 1;
 
-    /// Pinned against the value the V4 two-iteration ordinary-trainer
-    /// fixture actually produced running it end to end through the real
-    /// `execute_v1`/`execute_update_v1` production path on the CUDA
-    /// backend, device ordinal 1 (RTX 3050, driver 596.36), 2026-09-16.
+    /// Refreshed from the current-rules merge-preparation witness at
+    /// bba7779a, GPU1 (RTX 3050, driver 596.36), 2026-10-01, through
+    /// the real `execute_v1`/`execute_update_v1` production path.
+    /// See docs/reports/pr112_merge_readiness_v1/cuda_ordinary_witness_bba7779a.json.
     /// Deliberately NOT equal to
     /// `ordinary_trainer_two_iteration_v4_fixture_stamps_v4_and_restores_cleanly`'s
-    /// CPU-sequential pin (`28faac998142e07ddc5368238f45ff05e6a0578140d0e490a24daefe95fff878`):
+    /// platform-specific CPU-sequential pin:
     /// CUDA is tolerance-bounded against the CPU reference and run-to-run
     /// bit-deterministic on one device, but never bit-identical to the CPU
     /// identities (`CUDA_BURN_DENSE_NUMERICAL_BACKEND_IDENTITY_V1`'s own
@@ -6797,7 +6797,7 @@ pub(crate) mod tests {
     /// makes that an explicit, checked property rather than only prose.
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     const V4_CUDA_GOLDEN_STATE_SHA256_V1: &str =
-        "059a4b805466577ebb5385b5e5fd122a18ff2bb75c7e587a775702b5370d476a";
+        "b3ec22aa8823e6e51d30acdac6b69883eb4a737eb57b55f0b7e2405d26242892";
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     fn run_v4_cuda_fixture_v1(label: &str) -> (String, String, String) {
@@ -6931,7 +6931,9 @@ pub(crate) mod tests {
         let (contract, encoding, state) = run_v4_cuda_fixture_v1("v4-cuda-det-subprocess");
         assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V4);
         assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V4);
-        println!("{V4_CUDA_SUBPROCESS_HASH_PREFIX_V1}{state}");
+        // Serial libtest writes its test-name prefix without a newline.
+        // Keep the worker marker on its own line for the strict parent reader.
+        println!("\n{V4_CUDA_SUBPROCESS_HASH_PREFIX_V1}{state}");
     }
 
     // --- Task 3 (`TRAINING-SIGNAL-DESIGN-001.md` section 5): new hermetic
