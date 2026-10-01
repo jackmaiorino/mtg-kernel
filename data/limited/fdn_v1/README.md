@@ -16,9 +16,11 @@ statistics omitted. The two deck files are unchanged copies.
 
 The 286 reference names are an observed gameplay dataset, not a complete
 booster manifest. The inventory tool adds all five basic lands and any
-additional fixture cards. After fixture batches A and B, 21 reference names
-are registered and 265 remain missing. UG resolves 23/40 mainboard copies;
-WG resolves 25/40. The fixtures still need 22 distinct card names.
+additional fixture cards. After fixture batches A and B and the first combat-card slice, 23 reference
+names are fully supported, one is partial and 262 remain missing. UG resolves
+25/40 mainboard copies and WG 26/40. The fixtures still need 20 distinct
+fully supported card names. Dwynen has tested Elf bonuses and an attack
+trigger, but remains partial until the legend-rule choice is implemented.
 Printed collector numbers are not a safe
 filter for draft availability: these real decks also use alternate printings.
 The full target pool, including any Special Guests, needs a separate manifest.
@@ -28,8 +30,8 @@ unchanged 162-definition Pauper registry. The importer combines both files in
 that order and reports their separate SHA-256s. Build the gameplay binary with
 `cargo build --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_env`.
 Default builds retain the original Pauper catalog and its v32 identity; the
-Limited feature selects the appended definitions and their v34 identity.
-The older v33 batch A profile remains readable and is rejected for mutation
+Limited feature selects the appended definitions and their v35 identity.
+The older v33 batch A and v34 batch B profiles remain readable and is rejected for mutation
 when it does not match the actual build.
 
 `kernel_limited_env --foundations-combat-v1` selects custom-game schema 3,

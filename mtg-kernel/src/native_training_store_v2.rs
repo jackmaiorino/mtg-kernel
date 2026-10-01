@@ -677,7 +677,8 @@ fn publish_generation_v2(
         }
         NativeRunCatalogProfileV1::Current
         | NativeRunCatalogProfileV1::FdnFixtureBatchA
-        | NativeRunCatalogProfileV1::FdnFixtureBatchB => {
+        | NativeRunCatalogProfileV1::FdnFixtureBatchB
+        | NativeRunCatalogProfileV1::FdnCombatCards => {
             if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
                 return Err(publisher_error_v2(
                     NativeTrainingStorePublisherV2ErrorKind::CurrentCatalogProfileLiveMismatch,
@@ -2032,7 +2033,7 @@ mod windows_publisher_tests {
         assert_eq!(
             run.catalog_profile_v1(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnFixtureBatchB
+                NativeRunCatalogProfileV1::FdnCombatCards
             } else {
                 NativeRunCatalogProfileV1::Current
             }
@@ -2106,6 +2107,37 @@ mod windows_publisher_tests {
     /// in-memory record, and fully validate the resulting store -- the whole
     /// construct/seal/decode/validate cycle, not just a bare decode.
     #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn publish_rejects_prior_fdn_batch_before_mutating_any_store_files_b() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_batch_b_v1;
+        let store = TestStoreV2::with_skeleton("prior-fdn-batch-b");
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_batch_b_v1()).unwrap();
+        assert_eq!(
+            run.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnFixtureBatchB
+        );
+        let live = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        let executor = fresh_executor_v2(&live);
+        let genesis = genesis_authorities_v2(&live, &executor);
+        let result = publish_genesis_v2(&root, &run, &genesis);
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStorePublisherV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+        assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Run).exists());
+        assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Latest).exists());
+    }
+
+    /// Dual-Profile Catalog Successor (collab CLAUDE #220) acceptance
+    /// evidence: construct an FDN-profile record (the default
+    /// `test_fixture_bytes_v2()` fixture, which embeds the live nine-deck
+    /// catalog identity), seal it to a temp store through the real genesis
+    /// publisher, decode `run.json` back off disk independent of the
+    /// in-memory record, and fully validate the resulting store -- the whole
+    /// construct/seal/decode/validate cycle, not just a bare decode.
+
+    #[test]
     fn fdn_profile_record_round_trips_through_construct_seal_decode_validate() {
         use crate::native_training_store_resume_v2::validate_native_training_store_v2;
 
@@ -2115,7 +2147,7 @@ mod windows_publisher_tests {
         assert_eq!(
             run.catalog_profile_v1(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnFixtureBatchB
+                NativeRunCatalogProfileV1::FdnCombatCards
             } else {
                 NativeRunCatalogProfileV1::Current
             }
@@ -2133,7 +2165,7 @@ mod windows_publisher_tests {
         assert_eq!(
             redecoded.catalog_profile_v1(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnFixtureBatchB
+                NativeRunCatalogProfileV1::FdnCombatCards
             } else {
                 NativeRunCatalogProfileV1::Current
             }

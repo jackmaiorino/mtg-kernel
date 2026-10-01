@@ -838,6 +838,27 @@ pub enum EffectOp {
     PutPlusOnePlusOneCounterOnTriggerEventObject {
         object: EffectObjectBinding,
     },
+    /// Trigger collection binds this template to the source incarnation.
+    BindTemporaryBoostToTriggerSource {
+        power: i32,
+        toughness: i32,
+    },
+    BoostBoundObjectUntilEndOfTurn {
+        object: EffectObjectBinding,
+        power: i32,
+        toughness: i32,
+    },
+    /// Snapshot current creatures at resolution, retaining each incarnation.
+    BoostControlledCreaturesUntilEndOfTurn {
+        power: i32,
+        toughness: i32,
+        keywords: Keywords,
+    },
+    /// Sample the current attacking set, not the declaration-time count.
+    GainLifeByAttackingSubtypeCount {
+        player: PlayerRef,
+        subtype: Subtype,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -1558,6 +1579,51 @@ pub struct ExecCtx {
     /// contexts retain zero.
     #[serde(default, skip_serializing_if = "is_zero_u16")]
     pub x_value: u16,
+}
+
+fn install_temporary_boost(
+    state: &mut GameState,
+    binding: EffectObjectBinding,
+    power: i32,
+    toughness: i32,
+    keywords: Keywords,
+) {
+    let Some(object) = state.objects.try_get(binding.object) else {
+        return;
+    };
+    if object.zone != Zone::Battlefield
+        || binding.expected_zone != Zone::Battlefield
+        || object.zone_change_count != binding.expected_zone_change_count
+    {
+        return;
+    }
+    let timestamp = crate::engine::next_timestamp(state);
+    if power != 0 || toughness != 0 {
+        state.engine.until_end_of_turn.push(
+            crate::engine::UntilEndOfTurnEffect::ResolvedObjectEffect {
+                object_id: binding.object,
+                object_zone_change_count: binding.expected_zone_change_count,
+                layer: crate::engine::Layers::POWER_TOUGHNESS,
+                timestamp,
+                duration: crate::engine::EffectDuration::EndOfTurn,
+                power,
+                toughness,
+                grant_haste: false,
+            },
+        );
+    }
+    if keywords != Keywords::NONE {
+        state.engine.until_end_of_turn.push(
+            crate::engine::UntilEndOfTurnEffect::ResolvedObjectKeywordEffect {
+                object_id: binding.object,
+                object_zone_change_count: binding.expected_zone_change_count,
+                layer: crate::engine::Layers::ABILITY_ADDING,
+                timestamp,
+                duration: crate::engine::EffectDuration::EndOfTurn,
+                keywords,
+            },
+        );
+    }
 }
 
 fn is_zero_u16(value: &u16) -> bool {
@@ -10281,6 +10347,59 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 .map(|object| event::ProposedEvent::zone_change(object, Zone::Exile))
                 .collect();
             event::propose_and_commit_batch(state, events);
+        }
+        EffectOp::BindTemporaryBoostToTriggerSource { .. } => {
+            panic!("unmaterialized temporary source boost");
+        }
+        EffectOp::BoostBoundObjectUntilEndOfTurn {
+            object,
+            power,
+            toughness,
+        } => {
+            install_temporary_boost(state, *object, *power, *toughness, Keywords::NONE);
+        }
+        EffectOp::BoostControlledCreaturesUntilEndOfTurn {
+            power,
+            toughness,
+            keywords,
+        } => {
+            let objects: Vec<_> = state.players[ctx.controller.index()]
+                .battlefield
+                .iter()
+                .copied()
+                .filter(|&id| crate::engine::object_has_type(state, id, CardType::Creature))
+                .map(|object| EffectObjectBinding {
+                    object,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: state.objects.get(object).zone_change_count,
+                })
+                .collect();
+            for object in objects {
+                install_temporary_boost(state, object, *power, *toughness, *keywords);
+            }
+        }
+        EffectOp::GainLifeByAttackingSubtypeCount { player, subtype } => {
+            let player = ctx.resolve_player(*player, state);
+            let count = state
+                .engine
+                .combat
+                .attackers
+                .iter()
+                .copied()
+                .filter(|&object| {
+                    let live = state.objects.get(object);
+                    live.zone == Zone::Battlefield
+                        && live.controller == player
+                        && subtype
+                            .is_in_subtype_ids(&crate::engine::effective_subtype_ids(state, object))
+                })
+                .count();
+            if count > 0 {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::life_gain(player, count as i32),
+                );
+            }
         }
         EffectOp::PumpControlled {
             filter,

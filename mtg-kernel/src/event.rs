@@ -424,6 +424,12 @@ pub enum CommittedEvent {
     InitiativeTrigger {
         binding: crate::state::InitiativeTriggerBindingV1,
     },
+    /// Exact declaration-time source for an attack trigger.
+    DeclaredAttacker {
+        source: ObjectId,
+        source_zone_change_count: u32,
+        controller: PlayerId,
+    },
 }
 
 /// Runs the replace/prevent pass to a fixed point: repeatedly finds an

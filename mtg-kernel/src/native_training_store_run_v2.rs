@@ -176,6 +176,11 @@ const FROZEN_CARD_DB_HASH_U64_HEX_FDN_BATCH_B_V1: &str = "d2b479e9d5990f07";
 const FROZEN_RUNTIME_CATALOG_SHA256_FDN_BATCH_B_V1: &str =
     "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
+// v35 appends the first combat-card slice. Earlier profiles retain their literals.
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_COMBAT_CARDS_V1: &str = "633a324030f31c47";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_COMBAT_CARDS_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
 const FROZEN_PROTOCOL_V2: &str = "kernel_rl_jsonl";
 const FROZEN_PROTOCOL_VERSION_V2: u32 = 5;
 const FROZEN_SCHEMA_VERSION_V2: u32 = 5;
@@ -1817,7 +1822,7 @@ pub(crate) enum NativeRunEnvironmentTrajectoryContractV1 {
 /// rev3 two-deck catalog forever, byte-identical, and stays readable: a
 /// historical record decodes and validates cleanly. `Current` pins the live
 /// nine-deck catalog as of the runtime-decks-nine landing. `FdnFixtureBatchA`
-/// adds the v33 card registry; `FdnFixtureBatchB` adds v34 with the same
+/// adds the v33 card registry; `FdnFixtureBatchB` adds v34; `FdnCombatCards` adds v35, each with the same
 /// nine-deck runtime catalog. Callers that must
 /// admit only live science-loop authority (science-loop use, publication,
 /// resume) reject `Historical` with a specific error at their own boundary;
@@ -1828,6 +1833,7 @@ pub(crate) enum NativeRunCatalogProfileV1 {
     Current,
     FdnFixtureBatchA,
     FdnFixtureBatchB,
+    FdnCombatCards,
 }
 
 impl ValidatedTrainRunV2 {
@@ -2329,13 +2335,13 @@ fn environment_randomization_section_is_exact_v2(
 /// The one closed catalog-identity profile classifier (Dual-Profile Catalog
 /// Successor, collab CLAUDE #220).
 ///
-/// Exactly four complete tuples are admissible: the record's own
+/// Exactly five complete tuples are admissible: the record's own
 /// `card_db_hash_u64_hex` and `runtime_catalog_sha256` fields must equal
 /// EITHER both HISTORICAL frozen rev3 literals (`FROZEN_CARD_DB_HASH_U64_HEX_V2`,
 /// `FROZEN_RUNTIME_CATALOG_SHA256_V2`, byte-identical forever) OR both CURRENT
 /// frozen literals (`FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1`,
 /// `FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1`, pinned to the nine-deck
-/// catalog as of the runtime-decks-nine landing), or either FDN batch A v33 or batch B v34 pair;
+/// catalog as of the runtime-decks-nine landing), or FDN batch A v33, batch B v34, or combat-card v35 pair;
 /// every other combination,
 /// including a hybrid that matches one field's literal from one tuple and the
 /// other field's literal from the other tuple, is rejected. This mirrors
@@ -2354,11 +2360,15 @@ fn classify_catalog_profile_v1(
         && environment.runtime_catalog_sha256 == FROZEN_RUNTIME_CATALOG_SHA256_FDN_BATCH_A_V1;
     let fdn_b = environment.card_db_hash_u64_hex == FROZEN_CARD_DB_HASH_U64_HEX_FDN_BATCH_B_V1
         && environment.runtime_catalog_sha256 == FROZEN_RUNTIME_CATALOG_SHA256_FDN_BATCH_B_V1;
-    match (historical, current, fdn, fdn_b) {
-        (true, false, false, false) => Ok(NativeRunCatalogProfileV1::Historical),
-        (false, true, false, false) => Ok(NativeRunCatalogProfileV1::Current),
-        (false, false, true, false) => Ok(NativeRunCatalogProfileV1::FdnFixtureBatchA),
-        (false, false, false, true) => Ok(NativeRunCatalogProfileV1::FdnFixtureBatchB),
+    let fdn_combat = environment.card_db_hash_u64_hex
+        == FROZEN_CARD_DB_HASH_U64_HEX_FDN_COMBAT_CARDS_V1
+        && environment.runtime_catalog_sha256 == FROZEN_RUNTIME_CATALOG_SHA256_FDN_COMBAT_CARDS_V1;
+    match (historical, current, fdn, fdn_b, fdn_combat) {
+        (true, false, false, false, false) => Ok(NativeRunCatalogProfileV1::Historical),
+        (false, true, false, false, false) => Ok(NativeRunCatalogProfileV1::Current),
+        (false, false, true, false, false) => Ok(NativeRunCatalogProfileV1::FdnFixtureBatchA),
+        (false, false, false, true, false) => Ok(NativeRunCatalogProfileV1::FdnFixtureBatchB),
+        (false, false, false, false, true) => Ok(NativeRunCatalogProfileV1::FdnCombatCards),
         _ => Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral)),
     }
 }
@@ -4211,6 +4221,12 @@ pub(crate) fn test_fixture_bytes_fdn_batch_a_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_batch_a()
 }
 
+#[cfg(all(test, feature = "limited-fdn-fixtures"))]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn test_fixture_bytes_fdn_batch_b_v1() -> Vec<u8> {
+    tests::fixture_bytes_fdn_batch_b()
+}
+
 /// The HISTORICAL-profile sibling of [`test_fixture_bytes_v2`]: a coherent
 /// record carrying the frozen rev3 catalog literals instead of the live
 /// nine-deck ones. Test-only: used by the dual-profile decode-acceptance and
@@ -4996,7 +5012,7 @@ mod tests {
                 // below overrides these two fields back to the HISTORICAL
                 // (rev3) literals for the dedicated dual-profile tests.
                 "card_db_hash_u64_hex": if cfg!(feature = "limited-fdn-fixtures") {
-                    FROZEN_CARD_DB_HASH_U64_HEX_FDN_BATCH_B_V1
+                    FROZEN_CARD_DB_HASH_U64_HEX_FDN_COMBAT_CARDS_V1
                 } else {
                     FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
                 },
@@ -5230,6 +5246,16 @@ mod tests {
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_BATCH_A_V1.to_owned();
         record.environment.runtime_catalog_sha256 =
             FROZEN_RUNTIME_CATALOG_SHA256_FDN_BATCH_A_V1.to_owned();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(super) fn fixture_bytes_fdn_batch_b() -> Vec<u8> {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_BATCH_B_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_BATCH_B_V1.to_owned();
         refresh_derived(&mut record);
         to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
     }
@@ -6583,16 +6609,16 @@ mod tests {
     /// the frozen literals were typed wrong when this successor landed.
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn fdn_batch_b_frozen_literal_matches_the_live_build_constant() {
+    fn fdn_combat_cards_frozen_literal_matches_the_live_build_constant() {
         use crate::card_def::KERNEL_CARDDB_HASH;
         use crate::runtime_decks::RUNTIME_DECK_CATALOG_FILE_SHA256;
         assert_eq!(
             format!("{KERNEL_CARDDB_HASH:016x}"),
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_BATCH_B_V1
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_COMBAT_CARDS_V1
         );
         assert_eq!(
             RUNTIME_DECK_CATALOG_FILE_SHA256,
-            FROZEN_RUNTIME_CATALOG_SHA256_FDN_BATCH_B_V1
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_COMBAT_CARDS_V1
         );
     }
 
@@ -6691,22 +6717,22 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn fdn_batch_b_fixture_decodes_with_its_own_profile_and_live_identity() {
+    fn fdn_combat_cards_fixture_decodes_with_its_own_profile_and_live_identity() {
         let validated = decode_train_run_v2(&fixture_bytes()).unwrap();
         assert_eq!(
             validated.catalog_profile_v1(),
-            NativeRunCatalogProfileV1::FdnFixtureBatchB
+            NativeRunCatalogProfileV1::FdnCombatCards
         );
         assert!(current_profile_matches_live_build_identity_v1(
             validated.record().environment()
         ));
         assert_ne!(
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_BATCH_B_V1,
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_COMBAT_CARDS_V1,
             FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
         );
         assert_eq!(
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_BATCH_B_V1,
-            "d2b479e9d5990f07"
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_COMBAT_CARDS_V1,
+            "633a324030f31c47"
         );
     }
 
@@ -6727,6 +6753,29 @@ mod tests {
         assert_eq!(
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_BATCH_A_V1,
             "ff4b98347ca4ef1d"
+        );
+        assert!(!current_profile_matches_live_build_identity_v1(
+            validated.record().environment()
+        ));
+    }
+
+    #[test]
+    fn fdn_batch_b_profile_remains_readable_but_is_not_live() {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_BATCH_B_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_BATCH_B_V1.to_owned();
+        refresh_derived(&mut record);
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnFixtureBatchB
+        );
+        assert_eq!(
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_BATCH_B_V1,
+            "d2b479e9d5990f07"
         );
         assert!(!current_profile_matches_live_build_identity_v1(
             validated.record().environment()

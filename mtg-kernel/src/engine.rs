@@ -8798,7 +8798,9 @@ fn triggered_stack_item_expected_target_spec(
     {
         return Err("attached-source trigger lost its host LKI".to_string());
     }
-    if let EffectOp::PutPlusOnePlusOneCounterOnBoundObject { object } = inline_effect {
+    if let EffectOp::PutPlusOnePlusOneCounterOnBoundObject { object }
+    | EffectOp::BoostBoundObjectUntilEndOfTurn { object, .. } = inline_effect
+    {
         let Some(source_contract) = ability_source_contract else {
             return Err("bound-source trigger lost its historical source contract".to_string());
         };
@@ -9981,6 +9983,56 @@ pub struct StaticSelfBoostDef {
     pub grant_haste: bool,
 }
 
+/// A continuously recomputed bonus from a controlled subtype lord.
+pub struct StaticControlledSubtypeBoostDef {
+    pub subtype: card_def::Subtype,
+    pub exclude_source: bool,
+    pub power: i32,
+    pub toughness: i32,
+}
+
+pub(crate) fn static_controlled_subtype_boost_for(
+    name: &str,
+) -> Option<StaticControlledSubtypeBoostDef> {
+    match name {
+        "Dwynen, Gilt-Leaf Daen" => Some(StaticControlledSubtypeBoostDef {
+            subtype: card_def::Subtype::Elf,
+            exclude_source: true,
+            power: 1,
+            toughness: 1,
+        }),
+        _ => None,
+    }
+}
+
+fn controlled_subtype_boost(state: &GameState, recipient: ObjectId) -> (i32, i32) {
+    if !cfg!(feature = "limited-fdn-fixtures") {
+        return (0, 0);
+    }
+    let object = state.objects.get(recipient);
+    if object.zone != Zone::Battlefield || !object_has_type(state, recipient, CardType::Creature) {
+        return (0, 0);
+    }
+    let subtypes = effective_subtype_ids(state, recipient);
+    state.players[object.controller.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter_map(|source| {
+            let definition = &card_def::CARD_DEFS[state.objects.get(source).card_def as usize];
+            if !definition.is_executable() {
+                return None;
+            }
+            let boost = static_controlled_subtype_boost_for(definition.name)?;
+            ((!boost.exclude_source || source != recipient)
+                && boost.subtype.is_in_subtype_ids(&subtypes))
+            .then_some((boost.power, boost.toughness))
+        })
+        .fold((0, 0), |(power, toughness), (p, t)| {
+            (power + p, toughness + t)
+        })
+}
+
 fn controls_an_artifact(controller: PlayerId, state: &GameState) -> bool {
     state.players[controller.index()]
         .battlefield
@@ -10091,6 +10143,7 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
         + obj.counters.plus1_plus1 as i32
         - obj.counters.minus1_minus1 as i32;
     power += bestow_host_counter_bonus(state, id);
+    power += controlled_subtype_boost(state, id).0;
     if def.is_executable() {
         if let Some(boost) = static_self_boost_for(def.name) {
             if (boost.condition)(obj.controller, state) {
@@ -10139,6 +10192,7 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
         - obj.counters.minus1_minus1 as i32
         - obj.counters.minus0_minus1 as i32;
     toughness += bestow_host_counter_bonus(state, id);
+    toughness += controlled_subtype_boost(state, id).1;
     if def.is_executable() {
         if let Some(boost) = static_self_boost_for(def.name) {
             if (boost.condition)(obj.controller, state) {
@@ -12524,6 +12578,21 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
     }
     state.engine.combat.attackers = attackers;
     state.engine.combat.attackers_declared = true;
+    for &source in &state.engine.combat.attackers {
+        let object = state.objects.get(source);
+        if trigger::triggers_for(object.card_def)
+            .iter()
+            .any(|def| matches!(def.condition, trigger::TriggerCondition::Attacks))
+        {
+            let event = CommittedEvent::DeclaredAttacker {
+                source,
+                source_zone_change_count: object.zone_change_count,
+                controller: object.controller,
+            };
+            state.engine.event_log.push(event.clone());
+            state.engine.event_history.push(event);
+        }
+    }
     collect_and_queue_triggers(state);
     reset_priority(state);
     Ok(())
