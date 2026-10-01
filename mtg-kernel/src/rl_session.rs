@@ -14002,12 +14002,14 @@ mod tests {
         // at this first decision (P1's turn 1 main phase) P0's finished
         // combat no longer leaves attackers_declared set (the only state
         // difference), which both the policy and the core hash cover.
+        // Current merged-rule values observed in CI run 36812673206
+        // (Linux job 110211057207); full and fast core paths agree exactly.
         assert_eq!(
             v2_policy, 0x5c21_da67_5bad_fa2a,
             "final-pool-v9 environment-v2 policy environment golden"
         );
         assert_eq!(
-            v2_full_core, 0x5719_0d4d_4093_f99f,
+            v2_full_core, 0x8d0b_adfb_fe88_c092,
             "final-pool-v9 environment-v2 core environment golden"
         );
         assert_eq!(
@@ -14623,12 +14625,12 @@ mod tests {
         );
         assert_eq!(
             full.privileged_core_environment_hash(),
-            0x5719_0d4d_4093_f99f,
+            0x8d0b_adfb_fe88_c092,
             "pre-constructor core pin is reused, not minted"
         );
         assert_eq!(
             fast.privileged_core_environment_hash(),
-            0x5719_0d4d_4093_f99f,
+            0x8d0b_adfb_fe88_c092,
             "full and fast v2 core hashes are equal and equal the pin"
         );
 
@@ -14670,7 +14672,7 @@ mod tests {
         );
         assert_ne!(
             full_100.privileged_core_environment_hash(),
-            0x5719_0d4d_4093_f99f
+            0x8d0b_adfb_fe88_c092
         );
 
         // Root u64::MAX succeeds and stays exact full-width in both.

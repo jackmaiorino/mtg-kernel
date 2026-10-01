@@ -1509,9 +1509,12 @@ mod tests {
         // bindings[0]'s own step/decision counts, are confirmed unaffected.
         // New value is this test's own live-computed digest, read directly
         // from a failing run (never hand-typed).
+        // Main rules fixes changed observation bytes again. CI run
+        // 36812673206 (Linux job 110211057207) confirms both episodes
+        // retain every existing policy and physical decision count.
         assert_eq!(
             lower_hex_raw32_v1(bindings[1].trajectory_sha256()),
-            "abc61dcc821c145ca28feb251c481b95058fd7311a8a644069edbce38a9d1c9c"
+            "e8f3ae4f0b90a8d3184bb0f1f916461cddc64ef04a9e76d2ee178ae68b64837e"
         );
         assert_eq!(bindings[1].outer_trajectory_sha256_v2(), None);
         // Re-baselined once per the owner ruling on record (collab CLAUDE
