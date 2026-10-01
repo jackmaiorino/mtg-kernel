@@ -62,6 +62,8 @@ class FailurePaths(unittest.TestCase):
             stack.enter_context(patch.object(packet, 'available_memory', return_value=128*packet.GIB))
             stack.enter_context(patch.object(packet, 'clean'))
             stack.enter_context(patch.object(packet, 'before_cutoff'))
+            stack.enter_context(patch.object(packet.subprocess, 'BELOW_NORMAL_PRIORITY_CLASS', 0x4000, create=True))
+            stack.enter_context(patch.object(packet.subprocess, 'CREATE_NO_WINDOW', 0x08000000, create=True))
             stack.enter_context(patch.object(packet, 'save', side_effect=fail_progress))
             kill = stack.enter_context(patch.object(packet.subprocess, 'run'))
             self.assertEqual(packet.worker(plan, 'fixture'), 1)
@@ -133,6 +135,8 @@ class FailurePaths(unittest.TestCase):
             stack.enter_context(patch.object(packet, 'available_memory', return_value=128*packet.GIB))
             stack.enter_context(patch.object(packet, 'clean'))
             stack.enter_context(patch.object(packet, 'before_cutoff'))
+            stack.enter_context(patch.object(packet.subprocess, 'BELOW_NORMAL_PRIORITY_CLASS', 0x4000, create=True))
+            stack.enter_context(patch.object(packet.subprocess, 'CREATE_NO_WINDOW', 0x08000000, create=True))
             if fail_publication:
                 actual_publish = packet.publish_binary
                 def fail_copy(*args):
