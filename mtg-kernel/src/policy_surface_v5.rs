@@ -1011,6 +1011,40 @@ mod tests {
         (state, ids)
     }
 
+    /// Sources of this game's committed combat damage to a player, in
+    /// commit order. The combat record is cleared as the end of combat step
+    /// ends (511.3), so a test whose commit auto-advanced past combat reads
+    /// what its declarations did from the permanent event history instead.
+    fn combat_damage_to_player_sources(state: &GameState) -> Vec<ObjectId> {
+        state
+            .engine
+            .event_history
+            .iter()
+            .filter_map(|event| match event {
+                crate::event::CommittedEvent::CombatDamageToPlayer { source, .. } => Some(*source),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Sources of the committed damage dealt to one creature, in commit
+    /// order (in these combat-only fixtures, exactly its combat opponents).
+    fn damage_sources_to(state: &GameState, target: ObjectId) -> Vec<ObjectId> {
+        state
+            .engine
+            .event_history
+            .iter()
+            .filter_map(|event| match event {
+                crate::event::CommittedEvent::Damage {
+                    source,
+                    target: crate::state::Target::Object(id),
+                    amount,
+                } if *id == target && *amount > 0 => Some(*source),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn blocker_state(count: usize) -> (GameState, ObjectId, Vec<ObjectId>) {
         let (mut state, attackers) = attacker_state(1);
         let attacker = attackers[0];
@@ -1116,24 +1150,33 @@ mod tests {
     #[test]
     fn zero_candidate_combat_inherits_h2_silent_commit_without_policy_microstep() {
         let (mut attack_state, _) = attacker_state(0);
+        let attack_turn = attack_state.turn;
         let mut attack_surface = PolicySurfaceV5::new();
         let attack_next = attack_surface.next_decision(&mut attack_state).unwrap();
         assert!(!matches!(
             attack_next,
             PolicyDecisionV5::AttackerInclusion { .. }
         ));
-        assert!(attack_state.engine.combat.attackers_declared);
-        assert!(attack_state.engine.combat.attackers.is_empty());
+        // The silent commit auto-advances past combat, whose record is
+        // cleared as the end of combat step ends (511.3): the empty
+        // declaration shows as having left the declare attackers step with
+        // no combat damage dealt.
+        assert!(attack_state.turn != attack_turn || attack_state.step != Step::DeclareAttackers);
+        assert!(combat_damage_to_player_sources(&attack_state).is_empty());
 
-        let (mut block_state, _, _) = blocker_state(0);
+        let (mut block_state, attacker, _) = blocker_state(0);
         let mut block_surface = PolicySurfaceV5::new();
         let block_next = block_surface.next_decision(&mut block_state).unwrap();
         assert!(!matches!(
             block_next,
             PolicyDecisionV5::BlockerInclusion { .. }
         ));
-        assert!(block_state.engine.combat.blockers_declared);
-        assert!(block_state.engine.combat.blocked_by.is_empty());
+        // The empty block declaration left the attacker unblocked.
+        assert_eq!(
+            combat_damage_to_player_sources(&block_state),
+            vec![attacker]
+        );
+        assert!(damage_sources_to(&block_state, attacker).is_empty());
     }
 
     #[test]
@@ -1197,7 +1240,7 @@ mod tests {
         state.step = Step::DeclareBlockers;
         state.priority_player = PlayerId::P1;
         state.engine.combat.attackers_declared = true;
-        state.engine.combat.attackers = attackers;
+        state.engine.combat.attackers = attackers.clone();
         let card_def = card_id_by_name("Voldaren Epicure").unwrap();
         let blocker = state.objects.push(GameObject {
             card_def,
@@ -1228,8 +1271,11 @@ mod tests {
             PolicyDecisionV5::BlockerInclusion { blocker: candidate, .. }
                 if candidate == blocker
         ));
-        assert!(state.engine.combat.blockers_declared);
-        assert_eq!(state.engine.combat.blocked_by[0].1, vec![blocker]);
+        // Combat has ended (511.3 cleared its record): the blocker blocked
+        // only the first attacker, and the second went unblocked.
+        assert_eq!(damage_sources_to(&state, blocker), vec![attackers[0]]);
+        assert_eq!(damage_sources_to(&state, attackers[0]), vec![blocker]);
+        assert_eq!(combat_damage_to_player_sources(&state), vec![attackers[1]]);
     }
 
     #[test]

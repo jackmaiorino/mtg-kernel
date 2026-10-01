@@ -65,10 +65,16 @@ pub(crate) const NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2: &str =
 // native_training_store_run_v2.rs; see
 // `tensorizer_authority_triple_is_known_v1` there for the accepting
 // classifier.
+//
+// Regenerated again after the CR 608.2 / 511.3 rules fixes (a resolving spell stays
+// on the stack during its choices; the combat record is cleared at end of
+// combat) changed the golden's real-replay observations; features.py and
+// the source hash above are unchanged. The previous values are preserved as
+// `FROZEN_TENSORIZER_FIXTURE_*_CURRENT_V1` in native_training_store_run_v2.rs.
 pub(crate) const NATIVE_FLAT_TENSORIZER_FIXTURE_SHA256_V2: &str =
-    "edd8c255d65b0f1eba17b029da2d0e4aa5f9600243e9e390cd105c0b32b92812";
+    "508490d5c2954e08abdc2fbaa1376cdf5bac38a1df7c52dde6b730108d8a122f";
 pub(crate) const NATIVE_FLAT_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2: &str =
-    "728a702e364a83b14f539c0fc9441aac5d272be4a776cbee9a08d343ed4cf69c";
+    "ced890541cdad069b15f39d4a4708b52f1702a60a801256b0e1da7ca3d2ae5e9";
 
 // The action encoder below was mechanically migrated from the reviewed V1
 // implementation. These private aliases keep that byte-sensitive logic small

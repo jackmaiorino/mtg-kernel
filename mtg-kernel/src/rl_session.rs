@@ -1140,6 +1140,9 @@ fn flat_stack_action_object_ordinal_v1(
 
     match (stack_ordinal, detached_matches) {
         (Some(ordinal), 0) => Ok(ordinal),
+        // 608.2: a spell whose optional cost suspends its resolution stays
+        // on the stack, as its top item, until the deferred zone change.
+        (Some(ordinal), 1) if ordinal + 1 == state.stack.len() => Ok(ordinal),
         (None, 1) => {
             let appears_in_an_ordinary_zone =
                 [PlayerId::P0, PlayerId::P1].into_iter().any(|player| {
@@ -7176,6 +7179,43 @@ mod tests {
         state
     }
 
+    /// Sources of this game's committed combat damage to a player, in
+    /// commit order. The combat record is cleared as the end of combat step
+    /// ends (511.3), so a test whose commit auto-advanced past combat reads
+    /// what its declarations did from the permanent event history instead.
+    fn combat_damage_to_player_sources(state: &GameState) -> Vec<crate::ids::ObjectId> {
+        state
+            .engine
+            .event_history
+            .iter()
+            .filter_map(|event| match event {
+                crate::event::CommittedEvent::CombatDamageToPlayer { source, .. } => Some(*source),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Sources of the committed damage dealt to one creature, in commit
+    /// order (in these combat-only fixtures, exactly its combat opponents).
+    fn damage_sources_to(
+        state: &GameState,
+        target: crate::ids::ObjectId,
+    ) -> Vec<crate::ids::ObjectId> {
+        state
+            .engine
+            .event_history
+            .iter()
+            .filter_map(|event| match event {
+                crate::event::CommittedEvent::Damage {
+                    source,
+                    target: crate::state::Target::Object(id),
+                    amount,
+                } if *id == target && *amount > 0 => Some(*source),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn blocker_state(count: usize) -> GameState {
         let mut state = attacker_state(1);
         let attacker = state.players[0].battlefield[0];
@@ -7720,7 +7760,12 @@ mod tests {
         let response = step_include(&mut session, true);
         assert_eq!(offered_includes(&response), vec![false, true]);
         step_include(&mut session, false);
-        assert_eq!(session.state.engine.combat.attackers, vec![goaded]);
+        // Combat has ended (511.3 cleared its record): only the goaded
+        // creature attacked.
+        assert_eq!(
+            combat_damage_to_player_sources(&session.state),
+            vec![goaded]
+        );
     }
 
     /// A minimum-two attacker: after one blocker is included the last answer
@@ -7739,14 +7784,23 @@ mod tests {
         let response = step_include(&mut include_first, true);
         assert_eq!(offered_includes(&response), vec![true]);
         step_include(&mut include_first, true);
-        assert_eq!(include_first.state.engine.combat.blocked_by.len(), 1);
-        assert_eq!(include_first.state.engine.combat.blocked_by[0].1.len(), 2);
+        // Combat has ended (511.3 cleared its record): both blockers
+        // blocked the attacker, which dealt no damage to the player.
+        assert_eq!(
+            damage_sources_to(&include_first.state, attacker),
+            state.players[1].battlefield
+        );
+        assert!(combat_damage_to_player_sources(&include_first.state).is_empty());
 
         let mut decline_first = session_from_state(state);
         let response = step_include(&mut decline_first, false);
         assert_eq!(offered_includes(&response), vec![false]);
         step_include(&mut decline_first, false);
-        assert!(decline_first.state.engine.combat.blocked_by.is_empty());
+        assert!(damage_sources_to(&decline_first.state, attacker).is_empty());
+        assert_eq!(
+            combat_damage_to_player_sources(&decline_first.state),
+            vec![attacker]
+        );
     }
 
     /// Takes every offered answer of every combat scan step: the offer must be
@@ -7890,7 +7944,12 @@ mod tests {
         assert!(session.terminal.is_none());
         session.step(23, 0, 1).unwrap();
         session.step(23, 1, 0).unwrap();
-        assert_eq!(session.state.engine.combat.attackers, vec![goaded]);
+        // Combat has ended (511.3 cleared its record): only the goaded
+        // creature attacked.
+        assert_eq!(
+            combat_damage_to_player_sources(&session.state),
+            vec![goaded]
+        );
     }
 
     #[test]
@@ -11996,12 +12055,16 @@ mod tests {
             "captured legacy fast-session core golden equals the full one"
         );
 
+        // Re-baselined for the end-of-combat clear (CR 511.3 rules fix):
+        // at this first decision (P1's turn 1 main phase) P0's finished
+        // combat no longer leaves attackers_declared set (the only state
+        // difference), which both the policy and the core hash cover.
         assert_eq!(
-            v2_policy, 0x9ed7_895c_1f47_82ca,
+            v2_policy, 0x39df_062b_9cf3_71ef,
             "final-pool-v9 environment-v2 policy environment golden"
         );
         assert_eq!(
-            v2_full_core, 0xf69d_f52f_fdd0_564e,
+            v2_full_core, 0x5719_0d4d_4093_f99f,
             "final-pool-v9 environment-v2 core environment golden"
         );
         assert_eq!(
@@ -12416,19 +12479,21 @@ mod tests {
         use crate::environment_randomization_v2::PhysicalOwnerV2;
         let full = canonical_v2_full_reset(99);
         let fast = canonical_v2_fast_reset(99);
+        // Re-baselined with `environment_hashes_are_diagnostic_dispatched_with_exact_goldens`
+        // for the end-of-combat clear (CR 511.3 rules fix).
         assert_eq!(
             full.privileged_environment_hash(),
-            0x9ed7_895c_1f47_82ca,
+            0x39df_062b_9cf3_71ef,
             "pre-constructor policy pin is reused, not minted"
         );
         assert_eq!(
             full.privileged_core_environment_hash(),
-            0xf69d_f52f_fdd0_564e,
+            0x5719_0d4d_4093_f99f,
             "pre-constructor core pin is reused, not minted"
         );
         assert_eq!(
             fast.privileged_core_environment_hash(),
-            0xf69d_f52f_fdd0_564e,
+            0x5719_0d4d_4093_f99f,
             "full and fast v2 core hashes are equal and equal the pin"
         );
 
@@ -12466,11 +12531,11 @@ mod tests {
         );
         assert_ne!(
             full_100.privileged_environment_hash(),
-            0x9ed7_895c_1f47_82ca
+            0x39df_062b_9cf3_71ef
         );
         assert_ne!(
             full_100.privileged_core_environment_hash(),
-            0xf69d_f52f_fdd0_564e
+            0x5719_0d4d_4093_f99f
         );
 
         // Root u64::MAX succeeds and stays exact full-width in both.

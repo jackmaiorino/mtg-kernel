@@ -1372,16 +1372,11 @@ pub fn collect_and_process(state: &mut GameState) -> Vec<PendingTrigger> {
     // 603.3d: a triggered ability requiring targets is removed from the
     // stack-placement queue when no complete legal target assignment exists.
     // This check belongs after the SBA fixed point, at the actual placement
-    // checkpoint, rather than at the earlier event-matching snapshot.
-    new_triggers.retain(|pending| {
-        pending.target_spec == TargetSpec::None
-            || crate::engine::target_prefix_can_complete_for_controller(
-                pending.target_spec,
-                &pending.targets,
-                pending.controller,
-                state,
-            )
-    });
+    // checkpoint, rather than at the earlier event-matching snapshot. The
+    // targets must be legal for the trigger's own source (protection,
+    // "other than this"), the same set its target decision will offer.
+    new_triggers
+        .retain(|pending| crate::engine::pending_trigger_targets_can_complete(pending, state));
 
     order_apnap(new_triggers, state.active_player)
 }
@@ -1810,16 +1805,14 @@ fn trigger_matches(
             if *object != source {
                 return false;
             }
-            let subtype_id = subtype.stable_id();
             let count = state.players[controller.index()]
                 .battlefield
                 .iter()
                 .copied()
                 .filter(|candidate| *candidate != source)
                 .filter(|candidate| {
-                    crate::engine::effective_subtype_ids(state, *candidate)
-                        .binary_search(&subtype_id)
-                        .is_ok()
+                    subtype
+                        .is_in_subtype_ids(&crate::engine::effective_subtype_ids(state, *candidate))
                 })
                 .count();
             count >= usize::from(minimum_count)
@@ -1890,9 +1883,7 @@ fn trigger_matches(
         ) => {
             *object != source
                 && *controller_before == controller
-                && effective_subtype_ids_before
-                    .binary_search(&subtype.stable_id())
-                    .is_ok()
+                && subtype.is_in_subtype_ids(effective_subtype_ids_before)
         }
         _ => false,
     }

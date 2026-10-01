@@ -15,3 +15,11 @@ MTG_KERNEL_TENSORIZE_GOLDEN_SEARCH_WRITE=<out> mtg_kernel.exe native_flat_tensor
 - Output: rollup `4a51c9db4d3b27a0b0451d8ef243355ad6b2ab4491f108e4eb1ed480f795e2d7`, 1,114 decisions (575/539 by seat), file SHA-256 `708a7b57e49035f5893ae1e5f6ad846439c4e0df3b67e59e98920c2c26ce7229`, identical to the committed golden (`cmp`).
 
 The header field `recorded_at=d17bd867...` names the commit at which the 8 search matches were recorded, not the fingerprint source; both are `d17bd867`. The golden test reads this file and compares the full text, rollup included.
+
+## Regeneration for the CR 608.2 / 511.3 rules fixes
+
+Both fingerprint goldens were regenerated with the same ignored tests (`MTG_KERNEL_TENSORIZE_GOLDEN_SEARCH_WRITE` and `MTG_KERNEL_TENSORIZE_GOLDEN_WRITE`) after two engine rules fixes changed the observations of the same decisions: a resolving spell now stays on the stack during its own choices (CR 608.2), and the combat record is cleared as the end of combat step ends and loses permanents that leave the battlefield (CR 511.3, 506.4). The replay input and the recorded root actions are unchanged, every decision replays, and the per-line decision and action counts are unchanged.
+
+- Search golden: rollup `e8e2eaa77814b939f2113ea968d45557346acd4531e2400dcef6934f2de5ab20`, 1,114 decisions (575/539 by seat), file SHA-256 `4a71bbd2d9dd2ced142020c461a7a4ca85739b475f3e07c463fb0e27fc9ed70e`.
+- D5 golden: rollup `1d95d9f8702ef455886144539c5daaad282dac470944fc9fa524b646d768cff1`, 10,051 decisions, file SHA-256 `7bf36f6e62db98297ddc46ba787aa82a150d39455bf1aac61cf52c6068c3b9cb`.
+- Before regenerating, the old goldens were reproduced byte-identically from the base commit, and every changed line was decoded: each differing decision differs only in the resolving spell's stack presence and the stack-length flags derived from it, or in the removal of a finished or departed combat's attackers, blockers and declared flags.

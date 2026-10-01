@@ -5302,6 +5302,54 @@ fn continuous_effects_public_v2(
             }
         }
     }
+    // Keyword grants lasting until their holder's next turn (Undercity's
+    // Throne of the Dead Three: "It gains hexproof until your next turn").
+    // They change the affected object's projected keywords, so an observer
+    // must be able to see which effect grants them and for how long.
+    for effect in &state.engine.until_next_turn_keywords {
+        let Some(object) = state.objects.try_get(effect.object_id) else {
+            continue;
+        };
+        if object.zone != Zone::Battlefield
+            || object.zone_change_count != effect.object_zone_change_count
+        {
+            continue;
+        }
+        let affected_objects = visible_card_refs(state, &[effect.object_id], acting_player)?;
+        if affected_objects.is_empty() {
+            continue;
+        }
+        out.push(ContinuousEffectPublicV2 {
+            source: None,
+            controller: Some(effect.holder.into()),
+            affected_objects,
+            affected_players: Vec::new(),
+            global: false,
+            layers: engine::Layers::ABILITY_ADDING.0,
+            // The stored grant has no engine timestamp; like an attached
+            // equipment profile, key it by the exact affected incarnation.
+            timestamp: (u64::from(effect.object_id.0) << 32)
+                | u64::from(effect.object_zone_change_count),
+            duration: EffectDurationV2::UntilControllersNextTurn,
+            power_delta: 0,
+            toughness_delta: 0,
+            grants_haste: effect.keywords.has(Keywords::HASTE),
+            set_power: None,
+            set_toughness: None,
+            add_color_mask: 0,
+            remove_color_mask: 0,
+            add_subtype_ids: Vec::new(),
+            remove_subtype_ids: Vec::new(),
+            add_keyword_mask: effect.keywords.0,
+            remove_keyword_mask: 0,
+            ward_generic_delta: 0,
+            minimum_blockers: None,
+            add_landwalk_mask: 0,
+            remove_landwalk_mask: 0,
+            prevent_damage_from_color_mask: 0,
+            damage_cannot_be_prevented: false,
+        });
+    }
     Ok(out)
 }
 
@@ -5761,14 +5809,17 @@ fn pending_discard_semantic_v2(
     engine::validate_pending_discard_binding(state, p)
         .map_err(|(_, error)| RlContractError(format!("invalid pending discard: {error}")))?;
     let (resume_stage, resume_source) = match &p.resume {
-        engine::DiscardResume::None => (DiscardResumeSemanticV2::None, None),
+        // The resolving ability itself stays on the public stack.
+        engine::DiscardResume::None | engine::DiscardResume::FinishAbilityResolution { .. } => {
+            (DiscardResumeSemanticV2::None, None)
+        }
         engine::DiscardResume::FinishCast { .. } => (DiscardResumeSemanticV2::FinishCast, None),
         engine::DiscardResume::FinishActivation { .. } => {
             (DiscardResumeSemanticV2::FinishActivation, None)
         }
-        // These sources were public stack objects before resolution popped
-        // them. The choice remains inside that uninterrupted resolution, so
-        // preserve the historical public incarnation while it is detached.
+        // These sources are the spell still resolving on the stack (608.2);
+        // the choice remains inside that uninterrupted resolution, so they
+        // keep the spell's public stack incarnation.
         engine::DiscardResume::FinishSpellResolution { source, .. } => (
             DiscardResumeSemanticV2::FinishSpellResolution,
             Some(detached_resolving_source_ref(

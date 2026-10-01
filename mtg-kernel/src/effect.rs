@@ -8663,7 +8663,7 @@ fn library_filter_matches(
     }
     Ok(match filter {
         LibraryCardFilter::LandWithSubtype(subtype) => {
-            def.has_type(CardType::Land) && subtype_ids.binary_search(&subtype.stable_id()).is_ok()
+            def.has_type(CardType::Land) && subtype.is_in_subtype_ids(subtype_ids)
         }
         LibraryCardFilter::BasicLand => {
             def.has_type(CardType::Land)
@@ -9468,7 +9468,9 @@ fn creature_matches_filter(state: &GameState, object: ObjectId, filter: &Creatur
     }
     match filter {
         CreatureFilter::AnyControlled => true,
-        CreatureFilter::ControlledWithSubtype(subtype) => def.subtypes.contains(subtype),
+        CreatureFilter::ControlledWithSubtype(subtype) => {
+            crate::engine::has_effective_subtype(state, object, *subtype)
+        }
         CreatureFilter::WithoutKeyword(keyword) => {
             !crate::engine::has_effective_keyword(state, object, *keyword)
         }
@@ -9853,9 +9855,8 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     let object = state.objects.get(id);
                     let def = &crate::card_def::CARD_DEFS[object.card_def as usize];
                     (def.has_type(crate::card_def::CardType::Creature)
-                        && crate::engine::effective_subtype_ids(state, id)
-                            .binary_search(&excluded_subtype.stable_id())
-                            .is_err())
+                        && !excluded_subtype
+                            .is_in_subtype_ids(&crate::engine::effective_subtype_ids(state, id)))
                     .then(|| event::ProposedEvent::damage(ctx.source, Target::Object(id), *amount))
                 })
                 .collect();
@@ -10359,9 +10360,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     .battlefield
                     .iter()
                     .filter(|&&id| {
-                        crate::engine::effective_subtype_ids(state, id)
-                            .binary_search(&subtype.stable_id())
-                            .is_ok()
+                        subtype.is_in_subtype_ids(&crate::engine::effective_subtype_ids(state, id))
                     })
                     .count()
                     .try_into()
@@ -11004,16 +11003,13 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
             subtype,
             minimum_count,
         } => {
-            let subtype_id = subtype.stable_id();
             let count = state.players[ctx.controller.index()]
                 .battlefield
                 .iter()
                 .copied()
                 .filter(|id| *id != ctx.source)
                 .filter(|id| {
-                    crate::engine::effective_subtype_ids(state, *id)
-                        .binary_search(&subtype_id)
-                        .is_ok()
+                    subtype.is_in_subtype_ids(&crate::engine::effective_subtype_ids(state, *id))
                 })
                 .count();
             count >= usize::from(*minimum_count)

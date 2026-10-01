@@ -998,6 +998,10 @@ fn commit_zone_change(
     remove_from_zone(state, owner, id, from_zone);
     state.forget_hand_object(id);
     state.clear_object_relations(id);
+    if from_zone == Zone::Battlefield {
+        // 506.4: leaving the battlefield removes it from combat.
+        state.engine.combat.remove_from_combat(id);
+    }
 
     match to_zone {
         Zone::Library => {
