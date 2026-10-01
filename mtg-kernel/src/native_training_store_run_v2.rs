@@ -6646,7 +6646,7 @@ mod tests {
     // Dual-Profile Catalog Successor (collab CLAUDE #220)
     // ------------------------------------------------------------------
 
-    /// Canary: the new CURRENT-profile frozen literals must equal today's
+    /// Canary: the latest admitted catalog literals must equal today's
     /// live build constants exactly. If this ever fails, either the crate's
     /// card database/runtime catalog changed again (needs a new profile) or
     /// the frozen literals were typed wrong when this successor landed.
@@ -6656,7 +6656,7 @@ mod tests {
         use crate::runtime_decks::RUNTIME_DECK_CATALOG_FILE_SHA256;
         assert_eq!(
             format!("{KERNEL_CARDDB_HASH:016x}"),
-            FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
+            FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1
         );
         assert_eq!(
             RUNTIME_DECK_CATALOG_FILE_SHA256,
