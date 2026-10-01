@@ -4,7 +4,7 @@ use crate::human_bo3_v1::project_recorded_decision_v1;
 use crate::phase1_agent_v1::{
     ActorVisibleDecisionV1, Bo3TrainingTrajectoryV1, CompleteAgentPackageV1,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 pub const MAX_RECORDED_REPLAY_INPUT_BYTES_V2: usize = 256 * 1024 * 1024;

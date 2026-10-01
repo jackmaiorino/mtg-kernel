@@ -61,10 +61,10 @@ pub mod effect;
 pub mod engine;
 pub mod event;
 pub mod expanded_deck_training_v1;
-pub mod human_opening_v1;
-pub mod native_expanded_training_run_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 mod experimental_burn_net8_packed_v1;
+pub mod human_opening_v1;
+pub mod native_expanded_training_run_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 pub use experimental_burn_net8_packed_v1::run_public_entropy_gradient_probe_v1;
 pub mod fast_sampler;
@@ -75,12 +75,12 @@ pub mod flat_policy_v3;
 pub mod flat_policy_v4;
 pub mod ids;
 pub mod line_b_teacher_target_v1;
-pub mod policy_observation_v6;
-pub mod policy_observation_v7;
 pub mod phase1_agent_v1;
 pub mod phase1_bo3_collection_v1;
 pub mod phase1_bo3_learning_v1;
 pub mod phase1_registry_transfer_v1;
+pub mod policy_observation_v6;
+pub mod policy_observation_v7;
 pub mod unclamped_softmax_sampler_v1;
 // Calibration-only harness for the kernel-native search opponent: every
 // function in this module either is, or exists only to call,
@@ -197,6 +197,8 @@ pub mod native_flat_tensorizer_diagnostic_v1;
 pub(crate) mod native_flat_tensorizer_v2;
 pub(crate) mod native_flat_tensorizer_v3;
 pub(crate) mod native_flat_tensorizer_v4;
+// Multi-buffer SHA-512 for the tensorizer digest tails (byte-identical to sha2).
+pub(crate) mod sha512_multi_v1;
 // Deterministic-CPU-forward audit probe (model-guided-searcher design v1,
 // Section 1.5 / Section 5.3 item 3). Test-only, `#[ignore]`d: requires the
 // real de-novo screen checkpoint store on D:, which does not exist in a
@@ -382,6 +384,11 @@ pub mod native_cycle4_m3_audit_v1;
 // reason as the module above: `src/bin/cycle4_routing_v1.rs` calls it.
 pub mod native_cycle4_routing_v1;
 pub mod native_science_loop_v1;
+// Launch-ticket gate the `multirun_pilot_v1` harness applies before a
+// substantial run (COMPUTE-POLICY item 5); tickets come from
+// python/tools/multirun_launcher_v1.py. Test-only like its one caller.
+#[cfg(test)]
+mod multirun_launch_ticket_v1;
 // Store-wide currentness validation and resume orchestration: shared-lock
 // full-chain walk, exclusive-lock recognized-stage cleanup, the exact P=N
 // no-op, and latest-checkpoint executor reconstruction.
@@ -406,11 +413,11 @@ pub mod human_match_v1;
 pub mod human_match_v2;
 pub mod learned_bo3_v1;
 pub mod learned_sideboard_v1;
-pub mod phase1_w8a_live_swap_self_play_v1;
 #[cfg(test)]
 mod native_gate3_terminal_blind_coefficient_screen_v1;
 pub mod native_training_store_v2;
 pub mod paired_bo1_harness_v1;
+pub mod phase1_w8a_live_swap_self_play_v1;
 pub mod sideboard_play_policy_v1;
 pub mod sideboard_search_campaign_v1;
 // MEASUREMENT HARNESS ONLY (throughput remeasure task, 2026-08-25): times

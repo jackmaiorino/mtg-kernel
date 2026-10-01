@@ -65,7 +65,8 @@ mod tests {
                     recording_cap: false,
                     rejected_selections: 0,
                     capture: None,
-                    combat: Some(&mut sink), continuation: None,
+                    combat: Some(&mut sink),
+                    continuation: None,
                 };
                 recorder.reset_for_game_v1([7, 11]).unwrap();
                 let selected = recorder

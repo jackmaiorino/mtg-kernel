@@ -227,7 +227,12 @@ pub(crate) mod tests {
     use crate::engine::{self, Decision};
     use crate::state::{Counters, GameObject, ObjectStateV4, Zone};
 
-    pub(crate) fn put(state: &mut GameState, owner: PlayerId, name: &str, zone: Zone) -> crate::ids::ObjectId {
+    pub(crate) fn put(
+        state: &mut GameState,
+        owner: PlayerId,
+        name: &str,
+        zone: Zone,
+    ) -> crate::ids::ObjectId {
         let card_def =
             card_id_by_name(name).unwrap_or_else(|| panic!("missing fixture card {name}"));
         let id = state.objects.push(GameObject {

@@ -539,7 +539,7 @@ fn tinder_wall_rechecks_its_combat_target_restriction_on_resolution() {
     let attacker = put_object_for(
         &mut state,
         PlayerId::P1,
-        "Elvish Mystic",
+        "Balustrade Spy",
         Zone::Battlefield,
         true,
         false,
@@ -562,8 +562,10 @@ fn tinder_wall_rechecks_its_combat_target_restriction_on_resolution() {
     assert_eq!(state.stack.len(), 1);
 
     // Model an effect removing the attacker from combat while the ability is
-    // on the stack. The target is still the same battlefield incarnation, but
-    // no longer satisfies Tinder Wall's printed target restriction.
+    // on the stack. Tinder Wall sacrificed itself as the activation cost, so
+    // the resolution-time recheck uses the source's last known information
+    // (CR 608.2b, 113.7a): the target validated at activation still satisfies
+    // "target creature it's blocking", and the damage is dealt.
     state.engine.combat.blocked_by.clear();
     for _ in 0..4 {
         if state.stack.is_empty() {
@@ -575,7 +577,15 @@ fn tinder_wall_rechecks_its_combat_target_restriction_on_resolution() {
         }
     }
     assert!(state.stack.is_empty());
-    assert_eq!(state.objects.get(attacker).damage, 0);
+    assert_eq!(state.objects.get(attacker).damage, 2);
+    assert!(state.engine.event_history.iter().any(|event| matches!(
+        event,
+        CommittedEvent::Damage {
+            source,
+            target: mtg_kernel::state::Target::Object(object),
+            amount: 2,
+        } if *source == tinder && *object == attacker
+    )));
 }
 
 #[test]

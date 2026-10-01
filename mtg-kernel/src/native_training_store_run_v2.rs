@@ -319,12 +319,28 @@ const FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V1: &str =
 const FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V1: &str =
     "728a702e364a83b14f539c0fc9441aac5d272be4a776cbee9a08d343ed4cf69c";
 
+// CURRENT_V2 tensorizer-authority triple (CR 608.2 / 511.3 rules fixes): features.py
+// is unchanged, so the source hash equals CURRENT_V1's, but the golden's
+// real-replay cases were regenerated
+// (`python/tools/generate_python_full_features_v2_goldens.py`) after two
+// engine rules fixes changed what those replays observe: a resolving spell
+// stays on the stack during its own choices (CR 608.2), and the combat
+// record is cleared as the end of combat step ends (CR 511.3). Added as a
+// new frozen profile beside CURRENT_V1, which stays untouched, per the
+// tripwire's "add a new frozen profile" rule.
+const FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V2: &str =
+    "5d82f5b87a6819076c903390230015da456f914828890d9c5384af410f21be1c";
+const FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V2: &str =
+    "508490d5c2954e08abdc2fbaa1376cdf5bac38a1df7c52dde6b730108d8a122f";
+const FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V2: &str =
+    "ced890541cdad069b15f39d4a4708b52f1702a60a801256b0e1da7ca3d2ae5e9";
+
 /// The one closed tensorizer-authority classifier (Feature-Encoder
 /// Successor), mirroring `classify_catalog_profile_v1`'s shape exactly:
-/// exactly two complete triples are admissible (all-HISTORICAL or
-/// all-CURRENT); every hybrid, including a triple that matches one field's
-/// literal from one profile and another field's literal from the other, is
-/// rejected. The three fields move together because the fixture and its
+/// exactly three complete triples are admissible (all-HISTORICAL,
+/// all-CURRENT_V1 or all-CURRENT_V2); every hybrid, including a triple that
+/// matches one field's literal from one profile and another field's literal
+/// from another, is rejected. The three fields move together because the fixture and its
 /// payload hash are both generated FROM the source the source-hash field
 /// names, so a coherent record's triple is never partial.
 fn tensorizer_authority_triple_is_known_v1(
@@ -340,7 +356,11 @@ fn tensorizer_authority_triple_is_known_v1(
         == FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1
         && fixture_sha256 == FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V1
         && fixture_payload_sha256 == FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V1;
-    historical || current
+    let current_v2 = authoritative_features_source_sha256
+        == FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V2
+        && fixture_sha256 == FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V2
+        && fixture_payload_sha256 == FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V2;
+    historical || current || current_v2
 }
 
 const FROZEN_LOSS_IDENTITY_V2: &str = "terminal_reinforce_value/v3";
@@ -2427,9 +2447,7 @@ fn classify_catalog_profile_from_identity_v1(
 pub(crate) fn live_catalog_profile_v1() -> NativeRunCatalogProfileV1 {
     let (card_db_hash_u64_hex, runtime_catalog_sha256) = live_catalog_build_identity_v1();
     classify_catalog_profile_from_identity_v1(&card_db_hash_u64_hex, &runtime_catalog_sha256)
-        .expect(
-            "the crate's live catalog build identity must classify as a known frozen profile",
-        )
+        .expect("the crate's live catalog build identity must classify as a known frozen profile")
 }
 
 /// The crate's actual live catalog-identity build constants, read fresh each
@@ -6899,7 +6917,7 @@ mod tests {
     fn tensorizer_current_frozen_triple_matches_the_live_golden() {
         assert_eq!(
             crate::native_flat_tensorizer_v2::NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2,
-            FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1
+            FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V2
         );
         let golden_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../data/flat_policy_v2/python_full_features_v2.json");
@@ -6907,12 +6925,12 @@ mod tests {
             .unwrap_or_else(|error| panic!("failed to read {}: {error}", golden_path.display()));
         assert_eq!(
             sha256_hex(&golden_bytes),
-            FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V1
+            FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V2
         );
         let golden: serde_json::Value = serde_json::from_slice(&golden_bytes).unwrap();
         assert_eq!(
             golden["payload_sha256"].as_str().unwrap(),
-            FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V1
+            FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V2
         );
     }
 
@@ -6945,6 +6963,38 @@ mod tests {
             FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V1,
             "728a702e364a83b14f539c0fc9441aac5d272be4a776cbee9a08d343ed4cf69c",
             "FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V1 was overwritten in place; add a \
+             new frozen profile instead of moving this one"
+        );
+    }
+
+    /// CURRENT_V2-pin tripwire, same discipline as
+    /// `tensorizer_current_triple_is_not_silently_overwritten_in_place`: the
+    /// three literals below are typed independently of the constants' own
+    /// definitions, so this cannot pass by self-reference. CURRENT_V2 was
+    /// added beside CURRENT_V1 when the CR 608.2 / 511.3 rules fixes moved
+    /// the regenerated golden (the source hash matches V1's because
+    /// features.py did not change), and the maintainer ratified the profile
+    /// on PR #111. A future regeneration must add a fourth
+    /// tensorizer-authority triple alongside these, never overwrite V2 in
+    /// place.
+    #[test]
+    fn tensorizer_current_v2_triple_is_not_silently_overwritten_in_place() {
+        assert_eq!(
+            FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V2,
+            "5d82f5b87a6819076c903390230015da456f914828890d9c5384af410f21be1c",
+            "FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V2 was overwritten in place; add a \
+             new frozen profile instead of moving this one"
+        );
+        assert_eq!(
+            FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V2,
+            "508490d5c2954e08abdc2fbaa1376cdf5bac38a1df7c52dde6b730108d8a122f",
+            "FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V2 was overwritten in place; add a new \
+             frozen profile instead of moving this one"
+        );
+        assert_eq!(
+            FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V2,
+            "ced890541cdad069b15f39d4a4708b52f1702a60a801256b0e1da7ca3d2ae5e9",
+            "FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V2 was overwritten in place; add a \
              new frozen profile instead of moving this one"
         );
     }
@@ -7025,6 +7075,39 @@ mod tests {
                 .tensorizer
                 .authoritative_features_source_sha256,
             FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1
+        );
+    }
+
+    /// The CURRENT_V2 triple (the golden regenerated after the rules fixes)
+    /// decodes clean, and a hybrid of CURRENT_V2's fixture hash with
+    /// CURRENT_V1's payload hash is rejected.
+    #[test]
+    fn current_v2_tensorizer_authority_triple_decodes_clean_and_rejects_hybrids() {
+        let mut record = fixture_record();
+        record
+            .contracts
+            .tensorizer
+            .authoritative_features_source_sha256 =
+            FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V2.to_owned();
+        record.contracts.tensorizer.fixture_sha256 =
+            FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V2.to_owned();
+        record.contracts.tensorizer.fixture_payload_sha256 =
+            FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V2.to_owned();
+        refresh_derived(&mut record);
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(
+            validated.record().contracts.tensorizer.fixture_sha256,
+            FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V2
+        );
+
+        record.contracts.tensorizer.fixture_payload_sha256 =
+            FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V1.to_owned();
+        refresh_derived(&mut record);
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        assert_eq!(
+            decode_train_run_v2(&bytes).unwrap_err().kind(),
+            TrainRunV2ErrorKind::InvalidLiteral
         );
     }
 

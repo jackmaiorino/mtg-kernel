@@ -214,7 +214,8 @@ impl Handles {
         }
         keyed.sort_by(|a, b| a.0.cmp(&b.0));
         for pair in keyed.windows(2) {
-            if pair[0].0 == pair[1].0 && (pair[0].1 || pair[1].1)
+            if pair[0].0 == pair[1].0
+                && (pair[0].1 || pair[1].1)
                 && !interchangeable_effect_targets(state, &pair[0].3.handle, &pair[1].3.handle)
             {
                 // Equal membership in every unordered effect set permits
@@ -234,8 +235,12 @@ impl Handles {
 
 fn interchangeable_effect_targets(state: &HumanVisibleStateV1, left: &str, right: &str) -> bool {
     let is_pair = |card: &HumanCardRefV1| card.handle == left || card.handle == right;
-    for card in state.public.battlefield.iter()
-        .chain(state.public.graveyards.iter()).flatten()
+    for card in state
+        .public
+        .battlefield
+        .iter()
+        .chain(state.public.graveyards.iter())
+        .flatten()
         .chain(state.public.exile.iter())
     {
         if (is_pair(&card.stable) && !card.attachments.is_empty())
@@ -246,7 +251,10 @@ fn interchangeable_effect_targets(state: &HumanVisibleStateV1, left: &str, right
     }
     for relation in &state.public.object_relations {
         let references = match relation {
-            HumanObjectRelationV1::AttachedTo { object, attached_to } => [object, attached_to],
+            HumanObjectRelationV1::AttachedTo {
+                object,
+                attached_to,
+            } => [object, attached_to],
             HumanObjectRelationV1::ExiledBy { object, exiled_by } => [object, exiled_by],
         };
         if references.into_iter().any(&is_pair) {
@@ -257,8 +265,13 @@ fn interchangeable_effect_targets(state: &HumanVisibleStateV1, left: &str, right
         if effect.source.as_ref().is_some_and(&is_pair) {
             return false;
         }
-        let membership = |handle: &str| effect.affected_objects.iter()
-            .filter(|card| card.handle == handle).count();
+        let membership = |handle: &str| {
+            effect
+                .affected_objects
+                .iter()
+                .filter(|card| card.handle == handle)
+                .count()
+        };
         if membership(left) != membership(right) {
             return false;
         }
@@ -941,14 +954,38 @@ pub(super) fn project_decision(
     if actions.is_empty() {
         return Err(Error::UnsupportedPrompt);
     }
-    let mut handles = Handles::new(observation).map_err(|error| projection_diagnostic_error("handles_init", error, observation, actions, human, None))?;
-    let initial = project_state(observation, &mut handles).map_err(|error| projection_diagnostic_error("initial_state", error, observation, actions, human, None))?;
-    handles.canonicalize(&initial).map_err(|error| projection_diagnostic_error("canonical_handles", error, observation, actions, human, None))?;
-    let state = project_state(observation, &mut handles).map_err(|error| projection_diagnostic_error("final_state", error, observation, actions, human, None))?;
+    let mut handles = Handles::new(observation).map_err(|error| {
+        projection_diagnostic_error("handles_init", error, observation, actions, human, None)
+    })?;
+    let initial = project_state(observation, &mut handles).map_err(|error| {
+        projection_diagnostic_error("initial_state", error, observation, actions, human, None)
+    })?;
+    handles.canonicalize(&initial).map_err(|error| {
+        projection_diagnostic_error(
+            "canonical_handles",
+            error,
+            observation,
+            actions,
+            human,
+            None,
+        )
+    })?;
+    let state = project_state(observation, &mut handles).map_err(|error| {
+        projection_diagnostic_error("final_state", error, observation, actions, human, None)
+    })?;
     let mut choices = Vec::with_capacity(actions.len());
     for (index, action) in actions.iter().enumerate() {
-        let label = super::labels::label(action, observation, &handles, human)
-            .map_err(|error| projection_diagnostic_error("action_label", error, observation, actions, human, Some(&choices)))?;
+        let label =
+            super::labels::label(action, observation, &handles, human).map_err(|error| {
+                projection_diagnostic_error(
+                    "action_label",
+                    error,
+                    observation,
+                    actions,
+                    human,
+                    Some(&choices),
+                )
+            })?;
         choices.push((
             label,
             u32::try_from(index).map_err(|_| Error::InvalidAction)?,
@@ -956,7 +993,14 @@ pub(super) fn project_decision(
     }
     choices.sort_by(|a, b| a.0.cmp(&b.0));
     if choices.windows(2).any(|pair| pair[0].0 == pair[1].0) {
-        return Err(projection_diagnostic_error("duplicate_labels", Error::UnsupportedPrompt, observation, actions, human, Some(&choices)));
+        return Err(projection_diagnostic_error(
+            "duplicate_labels",
+            Error::UnsupportedPrompt,
+            observation,
+            actions,
+            human,
+            Some(&choices),
+        ));
     }
     let engine_indexes = choices
         .iter()
@@ -985,18 +1029,29 @@ pub(super) fn project_decision(
 }
 
 fn projection_diagnostic_error(
-    stage: &str, error: Error, observation: &v6::ObservationV6,
-    actions: &[ActionSemanticV1], human: PlayerSeatV1, labels: Option<&[(String, u32)]>,
+    stage: &str,
+    error: Error,
+    observation: &v6::ObservationV6,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    labels: Option<&[(String, u32)]>,
 ) -> Error {
     // Opt-in backend-only preflight diagnostic, never a human response.
     // The first failure owns a fresh path; prior evidence is never overwritten.
     if let Some(path) = std::env::var_os("MTG_KERNEL_HUMAN_LABEL_DIAGNOSTIC") {
-        if let Ok(mut file) = std::fs::OpenOptions::new().write(true).create_new(true).open(path) {
-            let _ = serde_json::to_writer(&mut file, &serde_json::json!({
-                "schema":"mtg-kernel-human-projection-preflight-diagnostic/v1",
-                "stage":stage,"error":error,"human_seat":human,"actions":actions,
-                "labels":labels,"actor_visible_observation":observation,
-            }));
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+        {
+            let _ = serde_json::to_writer(
+                &mut file,
+                &serde_json::json!({
+                    "schema":"mtg-kernel-human-projection-preflight-diagnostic/v1",
+                    "stage":stage,"error":error,"human_seat":human,"actions":actions,
+                    "labels":labels,"actor_visible_observation":observation,
+                }),
+            );
             let _ = file.sync_all();
         }
     }

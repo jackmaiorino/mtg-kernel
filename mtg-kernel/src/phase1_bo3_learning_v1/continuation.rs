@@ -1,16 +1,16 @@
 //! Explicit CPU BO3 objective transition and immutable attempted-batch progress.
 use super::preparation::{read_bytes, strict_json};
 use super::{
-    Bo3GameplayPreparationRequestV1, PreparedBo3GameplayBatchV1, prepare_bo3_gameplay_batch_v1,
-    require,
+    prepare_bo3_gameplay_batch_v1, require, Bo3GameplayPreparationRequestV1,
+    PreparedBo3GameplayBatchV1,
 };
 use crate::durable_publication_v1::{
-    DurableFileExpectationV1, capture_existing_publication_parent_v1, publish_new_file_v1,
-    verify_existing_publication_v1,
+    capture_existing_publication_parent_v1, publish_new_file_v1, verify_existing_publication_v1,
+    DurableFileExpectationV1,
 };
 use crate::expanded_deck_training_v1::{
-    ExpandedInferenceIdentityV1, ExpandedModelSourceV1, ExpandedSeatBehaviorV1, PinnedFileV1,
-    UpdateBackwardExecutionV1, inference_identity_v1, load_ordinary_bo3_parent_v1,
+    inference_identity_v1, load_ordinary_bo3_parent_v1, ExpandedInferenceIdentityV1,
+    ExpandedModelSourceV1, ExpandedSeatBehaviorV1, PinnedFileV1, UpdateBackwardExecutionV1,
 };
 use crate::native_policy_train_step_v1::{
     NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1,
@@ -20,7 +20,7 @@ use crate::rl::PlayerSeatV1;
 use crate::sideboard_play_policy_v1::{
     FreshLineageGenerationV1, FrozenPlayObservationTransferV3, FrozenPlayPolicyV1,
 };
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::io::Write;
@@ -62,7 +62,10 @@ pub struct Bo3GameplayUpdateRequestV1 {
     pub value_coefficient_bits: u32,
     /// Config-driven; default `Sequential` keeps every existing request and
     /// the V3 lineage byte-identical. See `UpdateBackwardExecutionV1`.
-    #[serde(default, skip_serializing_if = "UpdateBackwardExecutionV1::is_sequential")]
+    #[serde(
+        default,
+        skip_serializing_if = "UpdateBackwardExecutionV1::is_sequential"
+    )]
     pub update_backward_execution: UpdateBackwardExecutionV1,
     /// The caller supplies the latest immutable tip, including after NoUpdate.
     /// None opens a deliberate new ordinary-origin chain, not a global claim.

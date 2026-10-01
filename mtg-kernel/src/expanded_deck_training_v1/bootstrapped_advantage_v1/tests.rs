@@ -22,8 +22,7 @@ fn gae_one_decision_episode_hand_computed_golden() {
 /// arithmetic; every value is dyadic, so this is exact).
 #[test]
 fn gae_two_decision_episode_hand_computed_golden() {
-    let outputs =
-        gae_episode_advantages_v1(&[(0.25, false), (-0.5, true)], 1.0, 0.5, 0.5).unwrap();
+    let outputs = gae_episode_advantages_v1(&[(0.25, false), (-0.5, true)], 1.0, 0.5, 0.5).unwrap();
     // g=1 (final): delta_1 = 1.0 + 0.5*0 - (-0.5) = 1.5; A_1 = 1.5; vt_1 = 1.0
     // g=0: delta_0 = 0 + 0.5*(-0.5) - 0.25 = -0.5; A_0 = -0.5 + 0.5*0.5*1.5 = -0.125
     //      vt_0 = -0.125 + 0.25 = 0.125
@@ -73,8 +72,7 @@ fn gae_reduces_to_terminal_reinforce_value_v3_at_gamma_lambda_one() {
             .enumerate()
             .map(|(index, value)| (*value, index == n - 1))
             .collect();
-        let outputs =
-            gae_episode_advantages_v1(&decisions, terminal_return, 1.0, 1.0).unwrap();
+        let outputs = gae_episode_advantages_v1(&decisions, terminal_return, 1.0, 1.0).unwrap();
         for (index, (advantage, value_target)) in outputs.iter().enumerate() {
             assert_eq!(
                 *advantage,

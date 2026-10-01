@@ -17,11 +17,11 @@ use crate::learned_sideboard_v1::{
     SideboardGameResourceV1, SideboardOpponentEvidenceV1, SideboardOwnCardOutcomeV1,
     VisibleEvidenceZoneV1,
 };
+#[cfg(test)]
+use crate::paired_bo1_harness_v1::PlayPolicyGenerationV1;
 use crate::paired_bo1_harness_v1::{
     paired_policy_seeds_v1, PairedBo1PolicyInputV1, PairedBo1PolicyV1,
 };
-#[cfg(test)]
-use crate::paired_bo1_harness_v1::PlayPolicyGenerationV1;
 use crate::rl_session::{FastActorSessionV1, RlSessionError};
 use crate::sideboard::{DeckConfigurationV1, RegisteredDeckV1};
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
@@ -468,9 +468,9 @@ pub fn run_learned_bo3_with_registrations_v1(
 /// passes this per-seat gate.
 fn recognized_population_feature_contract_v1(model: &ExpandedInferenceIdentityV1) -> bool {
     let matches_contract = |schema_version: &str,
-                             registry_version: &str,
-                             features_source_sha256: &str,
-                             feature_descriptor_sha256: &str| {
+                            registry_version: &str,
+                            features_source_sha256: &str,
+                            feature_descriptor_sha256: &str| {
         model.feature_schema_version == schema_version
             && model.feature_registry_version == registry_version
             && model.features_source_sha256 == features_source_sha256
@@ -928,7 +928,10 @@ mod tests {
             let Err(error) = SeatRoutedBo3PlayPolicyV1::new_v1(policies) else {
                 panic!("expected the default constructor to reject a mixed V3/V4 pair")
             };
-            assert_eq!(error, "per-seat BO3 policies require the same feature generation");
+            assert_eq!(
+                error,
+                "per-seat BO3 policies require the same feature generation"
+            );
         }
         assert!(v3.resets.is_empty());
         assert!(v4.resets.is_empty());
@@ -941,10 +944,9 @@ mod tests {
         let seeds = paired_policy_seeds_v1(4343);
         {
             let policies: [&mut dyn PairedBo1PolicyV1; 2] = [&mut v3, &mut v4];
-            let mut router = SeatRoutedBo3PlayPolicyV1::new_cross_generation_evaluation_v1(
-                policies,
-            )
-            .expect("the evaluation-only opt-in must accept a mixed V3/V4 pair");
+            let mut router =
+                SeatRoutedBo3PlayPolicyV1::new_cross_generation_evaluation_v1(policies)
+                    .expect("the evaluation-only opt-in must accept a mixed V3/V4 pair");
             router.reset_for_game_v1(seeds).unwrap();
             for actor in [P0, P1, P0] {
                 let decision = crate::rl_session::FastActorDecisionV1 {
@@ -1110,10 +1112,7 @@ mod tests {
             encoded["cross_generation_evaluation"],
             serde_json::json!(true)
         );
-        assert_eq!(
-            encoded["seat_generations"],
-            serde_json::json!(["v3", "v4"])
-        );
+        assert_eq!(encoded["seat_generations"], serde_json::json!(["v3", "v4"]));
     }
 
     #[test]

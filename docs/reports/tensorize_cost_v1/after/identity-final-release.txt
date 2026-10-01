@@ -1,0 +1,19 @@
+exe sha256 5d73a2eba527f31db548b4801a9bb16d164a3b9f1d0efb8b9f996db008843169
+test sha512_multi_v1::tests::multi_buffer_throughput_probe_v1 ... ignored, timing probe: run explicitly
+test sha512_multi_v1::tests::known_answer_matches_fips_vector ... ok
+test sha512_multi_v1::tests::every_mode_handles_partial_groups ... ok
+test sha512_multi_v1::tests::checkpoints_resume_exactly_in_every_mode ... ok
+test sha512_multi_v1::tests::every_mode_matches_sha2_on_every_length_boundary ... ok
+test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 1759 filtered out; finished in 0.00s
+# tensorize-cost-v1 golden: d5 target=10000 scenarios=106 decisions=10051 rollup_sha256=7a6844264843b2c34c88660a631d71040ce0613fa0c6cd31d567a3d2b3578d63
+golden identical: D:\mtg-kernel-tensorize-cost-v1\mtg-kernel\../docs/reports/tensorize_cost_v1/goldens/d5-corpus-fingerprints-v1.txt
+test native_flat_tensorizer_v2::cost_tests_v1::tensorize_cost_d5_golden_v1 ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1763 filtered out; finished in 1.83s
+# tensorize-cost-v1 golden: search-replay matches=8 recorded_at=d17bd86762d6450cd013981d7c0737a620548533 seat0=575 seat1=539 decisions=1114 rollup_sha256=4a51c9db4d3b27a0b0451d8ef243355ad6b2ab4491f108e4eb1ed480f795e2d7
+golden identical: D:\mtg-kernel-tensorize-cost-v1\mtg-kernel\../docs/reports/tensorize_cost_v1/goldens/search-corpus-fingerprints-v1.txt
+test native_flat_tensorizer_v2::cost_tests_v1::tensorize_cost_search_golden_v1 ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1763 filtered out; finished in 0.25s
+concurrent shuffled identity: 8 threads x 10051 decisions
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1763 filtered out; finished in 2.18s
+leaf differential: roots=164 decisions=5158 all identical to the reference encoder
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1763 filtered out; finished in 28.90s

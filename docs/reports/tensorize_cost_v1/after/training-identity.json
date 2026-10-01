@@ -1,0 +1,92 @@
+{
+ "schema": "tensorize-cost-v1/training-identity",
+ "serial_golden": {
+  "base-s0": {
+   "base_root": "D:\\multirun-qualified-v1-work\\q6\\qualification\\serial-golden\\base-s0",
+   "new_root": "D:\\tensorize-cost-v1-work\\launcher\\q-final\\serial-golden\\base-s0",
+   "outputs": 30,
+   "identical": true,
+   "differing": []
+  },
+  "base-s1": {
+   "base_root": "D:\\multirun-qualified-v1-work\\q6\\qualification\\serial-golden\\base-s1",
+   "new_root": "D:\\tensorize-cost-v1-work\\launcher\\q-final\\serial-golden\\base-s1",
+   "outputs": 30,
+   "identical": true,
+   "differing": []
+  },
+  "base-s2": {
+   "base_root": "D:\\multirun-qualified-v1-work\\q6\\qualification\\serial-golden\\base-s2",
+   "new_root": "D:\\tensorize-cost-v1-work\\launcher\\q-final\\serial-golden\\base-s2",
+   "outputs": 30,
+   "identical": true,
+   "differing": []
+  },
+  "base-s3": {
+   "base_root": "D:\\multirun-qualified-v1-work\\q6\\qualification\\serial-golden\\base-s3",
+   "new_root": "D:\\tensorize-cost-v1-work\\launcher\\q-final\\serial-golden\\base-s3",
+   "outputs": 30,
+   "identical": true,
+   "differing": []
+  },
+  "base-s4": {
+   "base_root": "D:\\multirun-qualified-v1-work\\q6\\qualification\\serial-golden\\base-s4",
+   "new_root": "D:\\tensorize-cost-v1-work\\launcher\\q-final\\serial-golden\\base-s4",
+   "outputs": 30,
+   "identical": true,
+   "differing": []
+  },
+  "envrand-s0": {
+   "base_root": "D:\\multirun-qualified-v1-work\\q6\\qualification\\serial-golden\\envrand-s0",
+   "new_root": "D:\\tensorize-cost-v1-work\\launcher\\q-final\\serial-golden\\envrand-s0",
+   "outputs": 30,
+   "identical": true,
+   "differing": []
+  },
+  "envrand-s1": {
+   "base_root": "D:\\multirun-qualified-v1-work\\q6\\qualification\\serial-golden\\envrand-s1",
+   "new_root": "D:\\tensorize-cost-v1-work\\launcher\\q-final\\serial-golden\\envrand-s1",
+   "outputs": 30,
+   "identical": true,
+   "differing": []
+  },
+  "envrand-s2": {
+   "base_root": "D:\\multirun-qualified-v1-work\\q6\\qualification\\serial-golden\\envrand-s2",
+   "new_root": "D:\\tensorize-cost-v1-work\\launcher\\q-final\\serial-golden\\envrand-s2",
+   "outputs": 30,
+   "identical": true,
+   "differing": []
+  },
+  "envrand-s3": {
+   "base_root": "D:\\multirun-qualified-v1-work\\q6\\qualification\\serial-golden\\envrand-s3",
+   "new_root": "D:\\tensorize-cost-v1-work\\launcher\\q-final\\serial-golden\\envrand-s3",
+   "outputs": 30,
+   "identical": true,
+   "differing": []
+  },
+  "envrand-s4": {
+   "base_root": "D:\\multirun-qualified-v1-work\\q6\\qualification\\serial-golden\\envrand-s4",
+   "new_root": "D:\\tensorize-cost-v1-work\\launcher\\q-final\\serial-golden\\envrand-s4",
+   "outputs": 30,
+   "identical": true,
+   "differing": []
+  }
+ },
+ "sentinel_serial": {
+  "base-s0": {
+   "base_root": "D:\\multirun-qualified-v1-work\\q6\\qualification\\sentinel-serial\\base-s0",
+   "new_root": "D:\\tensorize-cost-v1-work\\launcher\\q-final\\sentinel-serial\\base-s0",
+   "outputs": 233,
+   "identical": true,
+   "differing": []
+  },
+  "envrand-s0": {
+   "base_root": "D:\\multirun-qualified-v1-work\\q6\\qualification\\sentinel-serial\\envrand-s0",
+   "new_root": "D:\\tensorize-cost-v1-work\\launcher\\q-final\\sentinel-serial\\envrand-s0",
+   "outputs": 233,
+   "identical": true,
+   "differing": []
+  }
+ },
+ "all_identical": true
+}

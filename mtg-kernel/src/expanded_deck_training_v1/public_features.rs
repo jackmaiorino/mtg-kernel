@@ -56,8 +56,7 @@ fn entropy_is_zero(value: &f32) -> bool {
 
 fn validate_entropy(config: &Config) -> Result<(), String> {
     ensure(
-        config.entropy_coefficient.is_finite()
-            && (0.0..=1.0).contains(&config.entropy_coefficient),
+        config.entropy_coefficient.is_finite() && (0.0..=1.0).contains(&config.entropy_coefficient),
         "public entropy coefficient must be finite in [0,1]",
     )
 }
@@ -165,14 +164,22 @@ fn weights(public: &ProjectionSnapshot) -> Result<PublicInputWeightsV1, String> 
 fn validate_projection_mode(config: &Config, public: &ProjectionSnapshot) -> Result<(), String> {
     if !config.inputs_enabled || config.projection_mode == ProjectionMode::StateOnly {
         ensure(
-            public.object.iter().chain(&public.object_first).chain(&public.object_second)
+            public
+                .object
+                .iter()
+                .chain(&public.object_first)
+                .chain(&public.object_second)
                 .all(|v| f32::from_bits(*v) == 0.0),
             "disabled public cost projection acquired weights or moments",
         )?;
     }
     if !config.inputs_enabled {
         ensure(
-            public.state.iter().chain(&public.state_first).chain(&public.state_second)
+            public
+                .state
+                .iter()
+                .chain(&public.state_first)
+                .chain(&public.state_second)
                 .all(|v| f32::from_bits(*v) == 0.0),
             "disabled public state projection acquired weights or moments",
         )?;
@@ -831,8 +838,7 @@ pub fn run(command: Command) -> Result<Value, String> {
                 for (row, tensor, auxiliary) in &group {
                     let output = policy.replay(tensor, auxiliary)?;
                     ensure(
-                        bits(&output.logits) == row.logits
-                            && output.value.to_bits() == row.value,
+                        bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
                         "public rollout replay differs from current learner",
                     )?;
                 }

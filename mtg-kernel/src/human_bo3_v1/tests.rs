@@ -23,32 +23,66 @@ fn human_v4_shared_source_stack_projects_submits_and_replays_each_target() {
         for _ in 0..2 {
             let mut session = FastActorSessionV1::from_v3_fixture_state(state.clone());
             let expected = decision(&session);
-            assert_eq!(HumanDecisionProjectorV1::new(expected.acting_player)
-                .project_current(&session, expected), Err(HumanDecisionErrorV1::StaleDecision));
+            assert_eq!(
+                HumanDecisionProjectorV1::new(expected.acting_player)
+                    .project_current(&session, expected),
+                Err(HumanDecisionErrorV1::StaleDecision)
+            );
             let mut adapter = HumanDecisionProjectorV1::new_v4(expected.acting_player);
             let before = session.privileged_core_environment_hash();
             let visible = adapter.project_current(&session, expected).unwrap();
-            assert_eq!(visible, adapter.project_current(&session, expected).unwrap());
+            assert_eq!(
+                visible,
+                adapter.project_current(&session, expected).unwrap()
+            );
             assert_eq!(session.privileged_core_environment_hash(), before);
             assert_eq!(visible.actions.len(), 2);
             assert_no_private_keys(&serde_json::to_value(&visible).unwrap());
-            let choice = visible.actions.iter().find(|a| a.label.contains(label)).unwrap();
-            let request = HumanActionRequestV1 { prompt_seq: visible.prompt_seq, action_index: choice.action_index };
+            let choice = visible
+                .actions
+                .iter()
+                .find(|a| a.label.contains(label))
+                .unwrap();
+            let request = HumanActionRequestV1 {
+                prompt_seq: visible.prompt_seq,
+                action_index: choice.action_index,
+            };
             let mut direct = session.clone();
             // Independent fixture oracle: engine targets are Chrysalis then
             // Counterspell, regardless of the human menu's public sorting.
-            direct.step(expected.episode_id, expected.step, engine_index).unwrap();
+            direct
+                .step(expected.episode_id, expected.step, engine_index)
+                .unwrap();
             let receipt = adapter.submit(&mut session, request.clone()).unwrap();
-            assert_eq!(session.game_state().stack.last().unwrap().targets, vec![Target::Object(target)]);
+            assert_eq!(
+                session.game_state().stack.last().unwrap().targets,
+                vec![Target::Object(target)]
+            );
             let after = session.privileged_core_environment_hash();
             assert_eq!(after, direct.privileged_core_environment_hash());
-            assert_eq!(adapter.submit(&mut session, request.clone()).unwrap(), receipt);
-            assert_eq!(adapter.submit(&mut session, HumanActionRequestV1 {
-                action_index: 1 - request.action_index, ..request
-            }), Err(HumanDecisionErrorV1::ConflictingRetry));
+            assert_eq!(
+                adapter.submit(&mut session, request.clone()).unwrap(),
+                receipt
+            );
+            assert_eq!(
+                adapter.submit(
+                    &mut session,
+                    HumanActionRequestV1 {
+                        action_index: 1 - request.action_index,
+                        ..request
+                    }
+                ),
+                Err(HumanDecisionErrorV1::ConflictingRetry)
+            );
             assert_eq!(session.privileged_core_environment_hash(), after);
-            let output = (serde_json::to_vec(&visible).unwrap(), serde_json::to_vec(&receipt).unwrap(), after);
-            if let Some(previous) = &replay { assert_eq!(&output, previous); }
+            let output = (
+                serde_json::to_vec(&visible).unwrap(),
+                serde_json::to_vec(&receipt).unwrap(),
+                after,
+            );
+            if let Some(previous) = &replay {
+                assert_eq!(&output, previous);
+            }
             replay = Some(output);
         }
     }
@@ -59,17 +93,34 @@ fn human_v4_hidden_state_and_renumbering_preserve_prompt_and_legacy_choices() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut prompts = Vec::new();
         for permuted in [false, true] {
-            let mut session = FastActorSessionV1::from_v3_fixture_state(basic_state(actor, permuted, true));
+            let mut session =
+                FastActorSessionV1::from_v3_fixture_state(basic_state(actor, permuted, true));
             let mut legacy = session.clone();
             let mut v4 = HumanDecisionProjectorV1::new_v4(actor.into());
             let mut v3 = HumanDecisionProjectorV1::new(actor.into());
             let visible = v4.project_current(&session, decision(&session)).unwrap();
-            assert_eq!(visible, v3.project_current(&legacy, decision(&legacy)).unwrap());
+            assert_eq!(
+                visible,
+                v3.project_current(&legacy, decision(&legacy)).unwrap()
+            );
             assert_no_private_keys(&serde_json::to_value(&visible).unwrap());
-            let land = visible.actions.iter().find(|a| a.label.starts_with("Play Mountain")).unwrap();
-            let command = HumanActionRequestV1 { prompt_seq: visible.prompt_seq, action_index: land.action_index };
-            assert_eq!(v4.submit(&mut session, command.clone()).unwrap(), v3.submit(&mut legacy, command).unwrap());
-            assert_eq!(session.privileged_core_environment_hash(), legacy.privileged_core_environment_hash());
+            let land = visible
+                .actions
+                .iter()
+                .find(|a| a.label.starts_with("Play Mountain"))
+                .unwrap();
+            let command = HumanActionRequestV1 {
+                prompt_seq: visible.prompt_seq,
+                action_index: land.action_index,
+            };
+            assert_eq!(
+                v4.submit(&mut session, command.clone()).unwrap(),
+                v3.submit(&mut legacy, command).unwrap()
+            );
+            assert_eq!(
+                session.privileged_core_environment_hash(),
+                legacy.privileged_core_environment_hash()
+            );
             prompts.push(visible);
         }
         assert_eq!(prompts[0], prompts[1]);
@@ -83,28 +134,60 @@ fn human_v4_rejects_invalid_stale_forged_and_wrong_seat_without_mutation() {
     let expected = decision(&session);
     let before = session.privileged_core_environment_hash();
     let mut wrong_seat = HumanDecisionProjectorV1::new_v4(PlayerSeatV1::P1);
-    assert_eq!(wrong_seat.project_current(&session, expected), Err(HumanDecisionErrorV1::NotHumanTurn));
+    assert_eq!(
+        wrong_seat.project_current(&session, expected),
+        Err(HumanDecisionErrorV1::NotHumanTurn)
+    );
     let mut forged = expected;
     forged.acting_player = PlayerSeatV1::P1;
-    assert_eq!(wrong_seat.project_current(&session, forged), Err(HumanDecisionErrorV1::StaleDecision));
+    assert_eq!(
+        wrong_seat.project_current(&session, forged),
+        Err(HumanDecisionErrorV1::StaleDecision)
+    );
     let mut adapter = HumanDecisionProjectorV1::new_v4(expected.acting_player);
     let visible = adapter.project_current(&session, expected).unwrap();
-    let command = HumanActionRequestV1 { prompt_seq: visible.prompt_seq, action_index: 0 };
-    assert_eq!(adapter.submit(&mut session, HumanActionRequestV1 {
-        action_index: u32::MAX, ..command.clone()
-    }), Err(HumanDecisionErrorV1::InvalidAction));
-    assert_eq!(adapter.submit(&mut session, HumanActionRequestV1 {
-        prompt_seq: visible.prompt_seq + 1, ..command.clone()
-    }), Err(HumanDecisionErrorV1::StaleDecision));
+    let command = HumanActionRequestV1 {
+        prompt_seq: visible.prompt_seq,
+        action_index: 0,
+    };
+    assert_eq!(
+        adapter.submit(
+            &mut session,
+            HumanActionRequestV1 {
+                action_index: u32::MAX,
+                ..command.clone()
+            }
+        ),
+        Err(HumanDecisionErrorV1::InvalidAction)
+    );
+    assert_eq!(
+        adapter.submit(
+            &mut session,
+            HumanActionRequestV1 {
+                prompt_seq: visible.prompt_seq + 1,
+                ..command.clone()
+            }
+        ),
+        Err(HumanDecisionErrorV1::StaleDecision)
+    );
     let original = adapter.pending.as_ref().unwrap().binding;
     let other = FastActorSessionV1::from_v3_fixture_state(basic_state(PlayerId::P0, false, false));
-    adapter.pending.as_mut().unwrap().binding = other.human_current_decision_input_v4(decision(&other), PlayerSeatV1::P0).unwrap().2;
-    assert_eq!(adapter.submit(&mut session, command.clone()), Err(HumanDecisionErrorV1::StaleDecision));
+    adapter.pending.as_mut().unwrap().binding = other
+        .human_current_decision_input_v4(decision(&other), PlayerSeatV1::P0)
+        .unwrap()
+        .2;
+    assert_eq!(
+        adapter.submit(&mut session, command.clone()),
+        Err(HumanDecisionErrorV1::StaleDecision)
+    );
     assert_eq!(session.privileged_core_environment_hash(), before);
     adapter.pending.as_mut().unwrap().binding = original;
     session.step(expected.episode_id, expected.step, 0).unwrap();
     let advanced = session.privileged_core_environment_hash();
-    assert_eq!(adapter.submit(&mut session, command), Err(HumanDecisionErrorV1::StaleDecision));
+    assert_eq!(
+        adapter.submit(&mut session, command),
+        Err(HumanDecisionErrorV1::StaleDecision)
+    );
     assert_eq!(session.privileged_core_environment_hash(), advanced);
 }
 
@@ -242,7 +325,11 @@ fn human_impulse_exile_state(
     put(&mut state, actor, "Forest", Zone::Hand);
     put(&mut state, actor, "Lightning Bolt", Zone::Hand);
     let mut cards = Vec::new();
-    for first in if reverse { [false, true] } else { [true, false] } {
+    for first in if reverse {
+        [false, true]
+    } else {
+        [true, false]
+    } {
         let card = put(&mut state, holder, "Mountain", Zone::Hand);
         event::propose_and_commit(&mut state, ProposedEvent::zone_change(card, Zone::Exile));
         if reverse {
@@ -251,7 +338,9 @@ fn human_impulse_exile_state(
         let expiry = if first {
             first_expiry
         } else {
-            Some(PlayPermissionExpiry::UntilHoldersNextTurn { holder_turn_started: false })
+            Some(PlayPermissionExpiry::UntilHoldersNextTurn {
+                holder_turn_started: false,
+            })
         };
         if let Some(expiry) = expiry {
             state.engine.exile_play_permissions.push(PlayPermission {
@@ -277,10 +366,13 @@ fn human_expired_impulse_copy_is_distinguished_and_exact_live_land_is_played() {
         for holder in [actor, actor.opponent()] {
             let mut expected = None;
             for reverse in [false, true] {
-                let (state, expired, live) = human_impulse_exile_state(actor, holder, reverse, None);
+                let (state, expired, live) =
+                    human_impulse_exile_state(actor, holder, reverse, None);
                 let mut session = FastActorSessionV1::from_v3_fixture_state(state);
                 let mut adapter = HumanDecisionProjectorV1::new(actor.into());
-                let visible = adapter.project_current(&session, decision(&session)).unwrap();
+                let visible = adapter
+                    .project_current(&session, decision(&session))
+                    .unwrap();
                 assert_eq!(visible.state.public.exile.len(), 2);
                 assert_eq!(visible.state.public.exile_play_permissions.len(), 1);
                 assert_no_private_keys(&serde_json::to_value(&visible).unwrap());
@@ -289,18 +381,31 @@ fn human_expired_impulse_copy_is_distinguished_and_exact_live_land_is_played() {
                 } else {
                     expected = Some(visible.clone());
                 }
-                let choices: Vec<_> = visible.actions.iter()
-                    .filter(|action| action.label.starts_with("Play Mountain ")).collect();
+                let choices: Vec<_> = visible
+                    .actions
+                    .iter()
+                    .filter(|action| action.label.starts_with("Play Mountain "))
+                    .collect();
                 assert_eq!(choices.len(), usize::from(holder == actor));
                 if holder == actor {
                     let permission = &visible.state.public.exile_play_permissions[0];
-                    assert!(choices[0].label.contains(&format!("[{}]", permission.object.handle)));
-                    adapter.submit(&mut session, HumanActionRequestV1 {
-                        prompt_seq: visible.prompt_seq,
-                        action_index: choices[0].action_index,
-                    }).unwrap();
+                    assert!(choices[0]
+                        .label
+                        .contains(&format!("[{}]", permission.object.handle)));
+                    adapter
+                        .submit(
+                            &mut session,
+                            HumanActionRequestV1 {
+                                prompt_seq: visible.prompt_seq,
+                                action_index: choices[0].action_index,
+                            },
+                        )
+                        .unwrap();
                     assert_eq!(session.game_state().objects.get(expired).zone, Zone::Exile);
-                    assert_eq!(session.game_state().objects.get(live).zone, Zone::Battlefield);
+                    assert_eq!(
+                        session.game_state().objects.get(live).zone,
+                        Zone::Battlefield
+                    );
                 }
             }
         }
@@ -312,22 +417,34 @@ fn human_equal_and_distinct_impulse_expiries_are_invariant_under_permission_reor
     use crate::engine::PlayPermissionExpiry;
     for expiry in [
         PlayPermissionExpiry::EndOfTurn,
-        PlayPermissionExpiry::UntilHoldersNextTurn { holder_turn_started: false },
-        PlayPermissionExpiry::UntilHoldersNextTurn { holder_turn_started: true },
+        PlayPermissionExpiry::UntilHoldersNextTurn {
+            holder_turn_started: false,
+        },
+        PlayPermissionExpiry::UntilHoldersNextTurn {
+            holder_turn_started: true,
+        },
     ] {
-        let (first, _, _) = human_impulse_exile_state(PlayerId::P0, PlayerId::P0, false, Some(expiry));
-        let (renamed, _, _) = human_impulse_exile_state(PlayerId::P0, PlayerId::P0, true, Some(expiry));
+        let (first, _, _) =
+            human_impulse_exile_state(PlayerId::P0, PlayerId::P0, false, Some(expiry));
+        let (renamed, _, _) =
+            human_impulse_exile_state(PlayerId::P0, PlayerId::P0, true, Some(expiry));
         let first = prompt(first, PlayerSeatV1::P0);
         assert_eq!(first, prompt(renamed, PlayerSeatV1::P0));
-        let choices: Vec<_> = first.actions.iter()
-            .filter(|action| action.label.starts_with("Play Mountain ")).collect();
+        let choices: Vec<_> = first
+            .actions
+            .iter()
+            .filter(|action| action.label.starts_with("Play Mountain "))
+            .collect();
         assert_eq!(choices.len(), 2);
         assert_ne!(choices[0].label, choices[1].label);
         assert_no_private_keys(&serde_json::to_value(first).unwrap());
     }
 }
 
-fn human_team_haste_state(reverse: bool, token_count: usize) -> (GameState, Vec<crate::ids::ObjectId>) {
+fn human_team_haste_state(
+    reverse: bool,
+    token_count: usize,
+) -> (GameState, Vec<crate::ids::ObjectId>) {
     use crate::engine::{EffectDuration, Layers, UntilEndOfTurnEffect};
     let mut state = ready_state();
     put(&mut state, PlayerId::P0, "Forest", Zone::Hand);
@@ -335,25 +452,34 @@ fn human_team_haste_state(reverse: bool, token_count: usize) -> (GameState, Vec<
     put(&mut state, PlayerId::P0, "Mountain", Zone::Battlefield);
     let mut names = vec!["Human Soldier Token"; token_count];
     names.push("Voldaren Epicure");
-    if reverse { names.reverse(); }
+    if reverse {
+        names.reverse();
+    }
     let mut affected = Vec::new();
     let mut tokens = Vec::new();
     for name in names {
         let object = put(&mut state, PlayerId::P1, name, Zone::Battlefield);
         state.objects.get_mut(object).summoning_sick = true;
-        if reverse { state.objects.get_mut(object).zone_change_count += 13 + object.0; }
+        if reverse {
+            state.objects.get_mut(object).zone_change_count += 13 + object.0;
+        }
         affected.push(object);
-        if name == "Human Soldier Token" { tokens.push(object); }
+        if name == "Human Soldier Token" {
+            tokens.push(object);
+        }
     }
-    state.engine.until_end_of_turn.push(UntilEndOfTurnEffect::ResolvedSetEffect {
-        object_ids: affected,
-        layer: Layers::ABILITY_ADDING,
-        timestamp: 1,
-        duration: EffectDuration::EndOfTurn,
-        power: 0,
-        toughness: 0,
-        grant_haste: true,
-    });
+    state
+        .engine
+        .until_end_of_turn
+        .push(UntilEndOfTurnEffect::ResolvedSetEffect {
+            object_ids: affected,
+            layer: Layers::ABILITY_ADDING,
+            timestamp: 1,
+            duration: EffectDuration::EndOfTurn,
+            power: 0,
+            toughness: 0,
+            grant_haste: true,
+        });
     (state, tokens)
 }
 
@@ -365,21 +491,39 @@ fn human_equivalent_team_haste_tokens_preserve_prompt_and_distinct_target_choice
             for reverse in [false, true] {
                 let (mut state, _) = human_team_haste_state(reverse, token_count);
                 if targeting {
-                    let bolt = state.players[0].hand.iter().copied()
-                        .find(|id| state.objects.get(*id).name == "Lightning Bolt").unwrap();
-                    crate::engine::step(&mut state, crate::engine::Action::CastSpell(bolt)).unwrap();
+                    let bolt = state.players[0]
+                        .hand
+                        .iter()
+                        .copied()
+                        .find(|id| state.objects.get(*id).name == "Lightning Bolt")
+                        .unwrap();
+                    crate::engine::step(&mut state, crate::engine::Action::CastSpell(bolt))
+                        .unwrap();
                 }
                 let visible = prompt(state, PlayerSeatV1::P0);
-                let tokens: Vec<_> = visible.state.public.battlefield[1].iter()
-                    .filter(|card| card.stable.name == "Human Soldier Token").collect();
+                let tokens: Vec<_> = visible.state.public.battlefield[1]
+                    .iter()
+                    .filter(|card| card.stable.name == "Human Soldier Token")
+                    .collect();
                 assert_eq!(tokens.len(), token_count);
-                assert!(tokens.iter().all(|card| card.characteristics.effective_keywords.haste));
-                assert_eq!(visible.state.public.continuous_effects[0].affected_objects.len(), token_count + 1);
+                assert!(tokens
+                    .iter()
+                    .all(|card| card.characteristics.effective_keywords.haste));
+                assert_eq!(
+                    visible.state.public.continuous_effects[0]
+                        .affected_objects
+                        .len(),
+                    token_count + 1
+                );
                 if targeting {
-                    let choices: Vec<_> = visible.actions.iter()
-                        .filter(|action| action.label.starts_with("Target Human Soldier Token ")).collect();
+                    let choices: Vec<_> = visible
+                        .actions
+                        .iter()
+                        .filter(|action| action.label.starts_with("Target Human Soldier Token "))
+                        .collect();
                     assert_eq!(choices.len(), token_count);
-                    let unique: std::collections::BTreeSet<_> = choices.iter().map(|action| &action.label).collect();
+                    let unique: std::collections::BTreeSet<_> =
+                        choices.iter().map(|action| &action.label).collect();
                     assert_eq!(unique.len(), token_count);
                 }
                 assert_no_private_keys(&serde_json::to_value(&visible).unwrap());
@@ -398,7 +542,12 @@ fn human_same_characteristics_do_not_erase_asymmetric_effect_membership() {
     use crate::engine::UntilEndOfTurnEffect;
     let (mut state, tokens) = human_team_haste_state(false, 2);
     let mut extra = state.engine.until_end_of_turn[0].clone();
-    let UntilEndOfTurnEffect::ResolvedSetEffect { object_ids, timestamp, .. } = &mut extra else {
+    let UntilEndOfTurnEffect::ResolvedSetEffect {
+        object_ids,
+        timestamp,
+        ..
+    } = &mut extra
+    else {
         panic!("team effect fixture");
     };
     *object_ids = vec![tokens[0]];
@@ -408,7 +557,10 @@ fn human_same_characteristics_do_not_erase_asymmetric_effect_membership() {
     state.engine.until_end_of_turn.push(extra);
     let session = FastActorSessionV1::from_v3_fixture_state(state);
     let mut adapter = HumanDecisionProjectorV1::new(PlayerSeatV1::P0);
-    assert_eq!(adapter.project_current(&session, decision(&session)), Err(HumanDecisionErrorV1::UnsupportedPrompt));
+    assert_eq!(
+        adapter.project_current(&session, decision(&session)),
+        Err(HumanDecisionErrorV1::UnsupportedPrompt)
+    );
     assert!(adapter.pending.is_none());
 }
 
@@ -417,13 +569,20 @@ fn human_effect_source_is_not_interchangeable_with_an_equal_affected_card() {
     let (state, _) = human_team_haste_state(false, 2);
     let session = FastActorSessionV1::from_v3_fixture_state(state);
     let (mut observation, actions, _) = session
-        .human_current_decision_input_v1(decision(&session), PlayerSeatV1::P0).unwrap();
+        .human_current_decision_input_v1(decision(&session), PlayerSeatV1::P0)
+        .unwrap();
     let token_id = crate::card_def::card_id_by_name("Human Soldier Token").unwrap();
-    let token = observation.projection.surface.battlefield[1].iter()
-        .find(|card| card.stable.card_db_id == token_id).unwrap().stable.clone();
+    let token = observation.projection.surface.battlefield[1]
+        .iter()
+        .find(|card| card.stable.card_db_id == token_id)
+        .unwrap()
+        .stable
+        .clone();
     observation.projection.surface.continuous_effects[0].source = Some(token);
-    assert_eq!(visible::project_decision(&observation, &actions, PlayerSeatV1::P0, 1),
-        Err(HumanDecisionErrorV1::UnsupportedPrompt));
+    assert_eq!(
+        visible::project_decision(&observation, &actions, PlayerSeatV1::P0, 1),
+        Err(HumanDecisionErrorV1::UnsupportedPrompt)
+    );
 }
 
 #[test]
@@ -922,9 +1081,21 @@ fn submit_label(
     matches: impl Fn(&str) -> bool,
 ) -> HumanDecisionV1 {
     let visible = adapter.project_current(session, decision(session)).unwrap();
-    let action_index = visible.actions.iter().find(|action| matches(&action.label))
-        .unwrap_or_else(|| panic!("expected label in {:?}", visible.actions)).action_index;
-    adapter.submit(session, HumanActionRequestV1 { prompt_seq: visible.prompt_seq, action_index }).unwrap();
+    let action_index = visible
+        .actions
+        .iter()
+        .find(|action| matches(&action.label))
+        .unwrap_or_else(|| panic!("expected label in {:?}", visible.actions))
+        .action_index;
+    adapter
+        .submit(
+            session,
+            HumanActionRequestV1 {
+                prompt_seq: visible.prompt_seq,
+                action_index,
+            },
+        )
+        .unwrap();
     visible
 }
 
@@ -939,8 +1110,14 @@ fn human_blood_activation_names_all_costs_and_binds_the_discard() {
     state.players[0].mana_pool[crate::mana::ManaColor::R.pool_index()] = 1;
     let mut session = FastActorSessionV1::from_v3_fixture_state(state);
     let mut adapter = HumanDecisionProjectorV1::new(PlayerSeatV1::P0);
-    let before = submit_label(&mut session, &mut adapter, |label| label.starts_with("Activate Blood Token"));
-    let activation = before.actions.iter().find(|action| action.label.starts_with("Activate Blood Token")).unwrap();
+    let before = submit_label(&mut session, &mut adapter, |label| {
+        label.starts_with("Activate Blood Token")
+    });
+    let activation = before
+        .actions
+        .iter()
+        .find(|action| action.label.starts_with("Activate Blood Token"))
+        .unwrap();
     assert!(activation.label.contains("pay {1}"));
     assert!(activation.label.contains("tap Blood Token"));
     assert!(activation.label.contains("sacrifice Blood Token"));
@@ -948,18 +1125,33 @@ fn human_blood_activation_names_all_costs_and_binds_the_discard() {
     assert!(activation.label.contains("draws 1 cards"));
     assert!(session.game_state().engine.pending_activation.is_some());
     assert!(session.game_state().engine.pending_discard.is_some());
-    let discard = submit_label(&mut session, &mut adapter, |label| label.starts_with("Discard Mountain"));
-    assert_eq!(session.game_state().objects.get(mountain).zone, Zone::Graveyard);
-    assert_ne!(session.game_state().objects.get(blood).zone, Zone::Battlefield);
+    let discard = submit_label(&mut session, &mut adapter, |label| {
+        label.starts_with("Discard Mountain")
+    });
+    assert_eq!(
+        session.game_state().objects.get(mountain).zone,
+        Zone::Graveyard
+    );
+    assert_ne!(
+        session.game_state().objects.get(blood).zone,
+        Zone::Battlefield
+    );
     assert!(session.game_state().engine.pending_activation.is_none());
-    assert!(!serde_json::to_string(&discard).unwrap().contains("Fireblast"));
+    assert!(!serde_json::to_string(&discard)
+        .unwrap()
+        .contains("Fireblast"));
     assert_no_private_keys(&serde_json::to_value(&before).unwrap());
 }
 
 #[test]
 fn human_synthesizer_activation_names_payment_token_and_timing() {
     let mut state = ready_state();
-    let synth = put(&mut state, PlayerId::P0, "Experimental Synthesizer", Zone::Battlefield);
+    let synth = put(
+        &mut state,
+        PlayerId::P0,
+        "Experimental Synthesizer",
+        Zone::Battlefield,
+    );
     put(&mut state, PlayerId::P0, "Forest", Zone::Hand);
     put(&mut state, PlayerId::P0, "Mountain", Zone::Library);
     // The harness suppresses P0's fresh-own-stack priority. Give P1 a real
@@ -970,14 +1162,31 @@ fn human_synthesizer_activation_names_payment_token_and_timing() {
     state.players[0].mana_pool[crate::mana::ManaColor::R.pool_index()] = 3;
     let mut session = FastActorSessionV1::from_v3_fixture_state(state);
     let mut adapter = HumanDecisionProjectorV1::new(PlayerSeatV1::P0);
-    let visible = submit_label(&mut session, &mut adapter, |label| label.starts_with("Activate Experimental Synthesizer"));
-    let activation = visible.actions.iter().find(|action| action.label.starts_with("Activate Experimental Synthesizer")).unwrap();
+    let visible = submit_label(&mut session, &mut adapter, |label| {
+        label.starts_with("Activate Experimental Synthesizer")
+    });
+    let activation = visible
+        .actions
+        .iter()
+        .find(|action| {
+            action
+                .label
+                .starts_with("Activate Experimental Synthesizer")
+        })
+        .unwrap();
     assert!(activation.label.contains("pay {2}{R}"));
-    assert!(activation.label.contains("sacrifice Experimental Synthesizer"));
-    assert!(activation.label.contains("Samurai Token (2/2) with vigilance"));
+    assert!(activation
+        .label
+        .contains("sacrifice Experimental Synthesizer"));
+    assert!(activation
+        .label
+        .contains("Samurai Token (2/2) with vigilance"));
     assert!(activation.label.contains("only as a sorcery"));
     assert_eq!(decision(&session).acting_player, PlayerSeatV1::P1);
-    assert_eq!(session.game_state().objects.get(synth).zone, Zone::Graveyard);
+    assert_eq!(
+        session.game_state().objects.get(synth).zone,
+        Zone::Graveyard
+    );
     assert!(session.game_state().stack.iter().any(|item| matches!(&item.inline_effect,
         Some(crate::effect::EffectOp::CreateToken { token_def, .. }) if *token_def == crate::card_def::card_id_by_name("Samurai Token").unwrap())));
 }
@@ -992,10 +1201,17 @@ fn human_chain_payment_state() -> GameState {
     put(&mut state, PlayerId::P1, "Great Furnace", Zone::Battlefield);
     put(&mut state, PlayerId::P1, "Forest", Zone::Hand);
     engine::step(&mut state, Action::CastSpell(chain)).unwrap();
-    engine::step(&mut state, Action::ChooseTarget(Target::Player(PlayerId::P1))).unwrap();
+    engine::step(
+        &mut state,
+        Action::ChooseTarget(Target::Player(PlayerId::P1)),
+    )
+    .unwrap();
     for _ in 0..16 {
         match engine::advance_until_decision(&mut state) {
-            Decision::ChooseSpellCopyPayment { player: PlayerId::P1, .. } => return state,
+            Decision::ChooseSpellCopyPayment {
+                player: PlayerId::P1,
+                ..
+            } => return state,
             Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
             other => panic!("unexpected Chain payment path: {other:?}"),
         }
@@ -1008,19 +1224,48 @@ fn human_chain_copy_payment_and_retarget_are_distinct_bound_choices() {
     for pay in [false, true] {
         let mut session = FastActorSessionV1::from_v3_fixture_state(human_chain_payment_state());
         let mut adapter = HumanDecisionProjectorV1::new(PlayerSeatV1::P1);
-        let visible = submit_label(&mut session, &mut adapter, |label|
-            label.starts_with(if pay { "Attempt to pay {R}{R}" } else { "Decline to pay {R}{R}" }));
-        assert!(visible.actions.iter().all(|action| action.label.contains("inherited target: you")));
+        let visible = submit_label(&mut session, &mut adapter, |label| {
+            label.starts_with(if pay {
+                "Attempt to pay {R}{R}"
+            } else {
+                "Decline to pay {R}{R}"
+            })
+        });
+        assert!(visible
+            .actions
+            .iter()
+            .all(|action| action.label.contains("inherited target: you")));
         assert_eq!(visible.state.public.life_totals[1], 17);
         if pay {
-            let retarget = adapter.project_current(&session, decision(&session)).unwrap();
-            assert!(retarget.actions.iter().any(|action| action.label.starts_with("Keep the inherited target")));
-            assert!(retarget.actions.iter().any(|action| action.label.starts_with("Choose a new target")));
-            assert!(session.game_state().engine.pending_spell_copy.as_ref().unwrap().copy_source.is_some());
-            assert!(session.game_state().players[1].battlefield.iter().all(|id| session.game_state().objects.get(*id).tapped));
+            let retarget = adapter
+                .project_current(&session, decision(&session))
+                .unwrap();
+            assert!(retarget
+                .actions
+                .iter()
+                .any(|action| action.label.starts_with("Keep the inherited target")));
+            assert!(retarget
+                .actions
+                .iter()
+                .any(|action| action.label.starts_with("Choose a new target")));
+            assert!(session
+                .game_state()
+                .engine
+                .pending_spell_copy
+                .as_ref()
+                .unwrap()
+                .copy_source
+                .is_some());
+            assert!(session.game_state().players[1]
+                .battlefield
+                .iter()
+                .all(|id| session.game_state().objects.get(*id).tapped));
         } else {
             assert!(session.game_state().engine.pending_spell_copy.is_none());
-            assert!(session.game_state().players[1].battlefield.iter().all(|id| !session.game_state().objects.get(*id).tapped));
+            assert!(session.game_state().players[1]
+                .battlefield
+                .iter()
+                .all(|id| !session.game_state().objects.get(*id).tapped));
         }
         assert_no_private_keys(&serde_json::to_value(visible).unwrap());
     }
@@ -1031,11 +1276,19 @@ fn human_trigger_order_state(repeated_source: bool) -> GameState {
     let mut state = ready_state();
     put(&mut state, PlayerId::P0, "Forest", Zone::Hand);
     let first = put(&mut state, PlayerId::P0, "Voldaren Epicure", Zone::Hand);
-    let second = put(&mut state, PlayerId::P0, "Burning-Tree Emissary", Zone::Hand);
-    event::propose_and_commit_batch(&mut state, vec![
-        ProposedEvent::zone_change(first, Zone::Battlefield),
-        ProposedEvent::zone_change(second, Zone::Battlefield),
-    ]);
+    let second = put(
+        &mut state,
+        PlayerId::P0,
+        "Burning-Tree Emissary",
+        Zone::Hand,
+    );
+    event::propose_and_commit_batch(
+        &mut state,
+        vec![
+            ProposedEvent::zone_change(first, Zone::Battlefield),
+            ProposedEvent::zone_change(second, Zone::Battlefield),
+        ],
+    );
     state.engine.pending_triggers = crate::trigger::collect_and_process(&mut state);
     if repeated_source {
         let repeated = state.engine.pending_triggers[0].clone();
@@ -1054,19 +1307,43 @@ fn human_trigger_order_uses_neutral_named_sources_and_exact_bottom_to_top_order(
     put(&mut state, PlayerId::P1, "Mountain", Zone::Battlefield);
     let mut session = FastActorSessionV1::from_v3_fixture_state(state);
     let mut adapter = HumanDecisionProjectorV1::new(PlayerSeatV1::P0);
-    let visible = submit_label(&mut session, &mut adapter, |label|
-        label.find("Burning-Tree Emissary").zip(label.find("Voldaren Epicure")).is_some_and(|(a, b)| a < b));
-    assert!(visible.actions.iter().all(|action| action.label.contains("last resolves first")));
+    let visible = submit_label(&mut session, &mut adapter, |label| {
+        label
+            .find("Burning-Tree Emissary")
+            .zip(label.find("Voldaren Epicure"))
+            .is_some_and(|(a, b)| a < b)
+    });
+    assert!(visible
+        .actions
+        .iter()
+        .all(|action| action.label.contains("last resolves first")));
     assert_eq!(decision(&session).acting_player, PlayerSeatV1::P1);
     assert_eq!(session.game_state().stack.len(), 2);
-    assert_eq!(session.game_state().objects.get(session.game_state().stack[0].source).name, "Burning-Tree Emissary");
-    assert_eq!(session.game_state().objects.get(session.game_state().stack[1].source).name, "Voldaren Epicure");
+    assert_eq!(
+        session
+            .game_state()
+            .objects
+            .get(session.game_state().stack[0].source)
+            .name,
+        "Burning-Tree Emissary"
+    );
+    assert_eq!(
+        session
+            .game_state()
+            .objects
+            .get(session.game_state().stack[1].source)
+            .name,
+        "Voldaren Epicure"
+    );
 }
 
 #[test]
 fn human_repeated_unlabeled_triggers_from_one_source_are_rejected() {
     let session = FastActorSessionV1::from_v3_fixture_state(human_trigger_order_state(true));
     let mut adapter = HumanDecisionProjectorV1::new(PlayerSeatV1::P0);
-    assert_eq!(adapter.project_current(&session, decision(&session)), Err(HumanDecisionErrorV1::UnsupportedPrompt));
+    assert_eq!(
+        adapter.project_current(&session, decision(&session)),
+        Err(HumanDecisionErrorV1::UnsupportedPrompt)
+    );
     assert!(adapter.pending.is_none());
 }

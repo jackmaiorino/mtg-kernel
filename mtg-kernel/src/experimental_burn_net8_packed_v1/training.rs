@@ -27,10 +27,11 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::process::Command;
 
-pub(crate) mod public_inputs;
-pub(crate) mod stack_inputs;
+pub(crate) mod entropy;
 pub(crate) mod entropy;
 pub(crate) mod line_b_root;
+pub(crate) mod public_inputs;
+pub(crate) mod stack_inputs;
 
 type CudaAutodiffBackendV1 = Autodiff<CudaBackendV1>;
 
@@ -837,7 +838,14 @@ impl ExperimentalDeviceTrainStateV1 {
         value_coefficient: f32,
         normalization_group_count: f32,
     ) -> Result<ChunkBackwardOutputsV1, Box<dyn Error>> {
-        self.chunk_backward_coefficients_v1(accumulator,batch,plan,value_coefficient,normalization_group_count,false)
+        self.chunk_backward_coefficients_v1(
+            accumulator,
+            batch,
+            plan,
+            value_coefficient,
+            normalization_group_count,
+            false,
+        )
     }
 
     pub(crate) fn chunk_backward_coefficients_v1(
@@ -2135,10 +2143,7 @@ pub(crate) fn build_dense_group_loss_plan_gae_v1(
             TensorData::new(value_targets.to_vec(), [group_count]),
             device,
         ),
-        advantages: Tensor::from_data(
-            TensorData::new(advantages.to_vec(), [group_count]),
-            device,
-        ),
+        advantages: Tensor::from_data(TensorData::new(advantages.to_vec(), [group_count]), device),
         substeps,
         group_count,
         max_actions,
@@ -2257,7 +2262,14 @@ fn dense_group_loss_gae_v1(
     value_coefficient: f32,
     normalization_group_count: f32,
 ) -> Result<Tensor<CudaAutodiffBackendV1, 1>, Box<dyn Error>> {
-    dense_group_loss_coefficients_v1(logits,values,plan,value_coefficient,normalization_group_count,false)
+    dense_group_loss_coefficients_v1(
+        logits,
+        values,
+        plan,
+        value_coefficient,
+        normalization_group_count,
+        false,
+    )
 }
 
 fn dense_group_loss_coefficients_v1(
@@ -2270,11 +2282,13 @@ fn dense_group_loss_coefficients_v1(
 ) -> Result<Tensor<CudaAutodiffBackendV1, 1>, Box<dyn Error>> {
     if values.dims()[0] != plan.substeps
         || !value_coefficient.is_finite()
-        || (value_coefficient <= 0.0 && !(imitation && value_coefficient==0.0))
+        || (value_coefficient <= 0.0 && !(imitation && value_coefficient == 0.0))
         || !normalization_group_count.is_finite()
         || normalization_group_count < plan.group_count as f32
     {
-        return Err(training_error("dense gae group loss shape/parameter mismatch"));
+        return Err(training_error(
+            "dense gae group loss shape/parameter mismatch",
+        ));
     }
     let padded = logits
         .clone()

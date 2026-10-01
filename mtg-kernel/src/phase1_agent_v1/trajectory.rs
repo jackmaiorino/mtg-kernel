@@ -249,7 +249,13 @@ impl Bo3DecisionRecordV1 {
         behavior: BehaviorDistributionV1,
         session: &FastActorSessionV1,
     ) -> Result<Self, String> {
-        Self::gameplay_from_session_generation(decision_index, behavior_package_sha256, behavior, session, false)
+        Self::gameplay_from_session_generation(
+            decision_index,
+            behavior_package_sha256,
+            behavior,
+            session,
+            false,
+        )
     }
 
     /// V4 recording validates the actual V4 actor projection, including spell
@@ -260,7 +266,13 @@ impl Bo3DecisionRecordV1 {
         behavior: BehaviorDistributionV1,
         session: &FastActorSessionV1,
     ) -> Result<Self, String> {
-        Self::gameplay_from_session_generation(decision_index, behavior_package_sha256, behavior, session, true)
+        Self::gameplay_from_session_generation(
+            decision_index,
+            behavior_package_sha256,
+            behavior,
+            session,
+            true,
+        )
     }
 
     fn gameplay_from_session_generation(
@@ -279,9 +291,11 @@ impl Bo3DecisionRecordV1 {
         let (observation, ordered_actions) = if v4 {
             session.diagnostic_current_decision_input_v4(expected)
         } else {
-            session.human_current_decision_input_v1(expected, expected.acting_player)
+            session
+                .human_current_decision_input_v1(expected, expected.acting_player)
                 .map(|(observation, actions, _)| (observation, actions))
-        }.map_err(|error| format!("actor-visible binding unavailable: {error:?}"))?;
+        }
+        .map_err(|error| format!("actor-visible binding unavailable: {error:?}"))?;
         behavior.selected_probability_v1(ordered_actions.len())?;
         require(
             hex_digest(&behavior_package_sha256, 64),

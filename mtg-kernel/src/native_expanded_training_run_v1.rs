@@ -1319,7 +1319,10 @@ mod tests {
         let mut out_of_range = schedule();
         out_of_range.preparation_workers = 4;
         out_of_range.max_prepared_tensor_mebibytes = 8192;
-        assert!(out_of_range.validate_v1().unwrap_err().contains("64..=4096"));
+        assert!(out_of_range
+            .validate_v1()
+            .unwrap_err()
+            .contains("64..=4096"));
         let mut manifest = json!({});
         record_collection_execution(&raised, &mut manifest);
         assert_eq!(manifest["max_prepared_tensor_mebibytes"], json!(1024));
@@ -1709,7 +1712,10 @@ mod tests {
         assert_ne!(identity(&legacy).unwrap(), identity(&gae).unwrap());
         let mut gae_manifest = json!({});
         record_loss_selection_execution(&gae, &mut gae_manifest);
-        assert_eq!(gae_manifest["loss_selection"]["kind"], "gae_advantage_value_v1");
+        assert_eq!(
+            gae_manifest["loss_selection"]["kind"],
+            "gae_advantage_value_v1"
+        );
         assert_eq!(gae_manifest["loss_selection"]["gamma"], 1.0);
         assert_eq!(gae_manifest["loss_selection"]["lambda"], 0.9_f32 as f64);
         assert_eq!(gae_manifest["loss_selection"]["entropy_coefficient"], 0.0);
@@ -1881,8 +1887,8 @@ mod tests {
             last_update_loss_identity_v1(&result),
             "gae_advantage_value/v1"
         );
-        let manifest: Value = read_json(&config.output_directory.join("run.json"), SMALL_CAP)
-            .unwrap();
+        let manifest: Value =
+            read_json(&config.output_directory.join("run.json"), SMALL_CAP).unwrap();
         assert_eq!(manifest["loss_selection"]["kind"], "gae_advantage_value_v1");
     }
 

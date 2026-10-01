@@ -27,11 +27,13 @@ pub(super) fn visible_spell_target(
     {
         return Err(error);
     }
-    let mut spells = state.stack.iter().enumerate().filter(|(_, item)| {
-        item.source == id && item.kind == crate::state::StackItemKind::Spell
-    });
+    let mut spells =
+        state.stack.iter().enumerate().filter(|(_, item)| {
+            item.source == id && item.kind == crate::state::StackItemKind::Spell
+        });
     let (ordinal, spell) = spells.next().ok_or(error)?;
-    if spells.next().is_some() || spell.controller != live.controller
+    if spells.next().is_some()
+        || spell.controller != live.controller
         || crate::engine::validated_stack_item_target_spec(spell, state).is_err()
     {
         return Err(error);
@@ -57,15 +59,21 @@ impl FastActorSessionV1 {
         expected: FastActorDecisionV1,
         encoder: &mut crate::flat_policy_v3::FlatDecisionEncoderV3,
         buffers: &mut crate::flat_policy_v2::FlatScoringOwnedBuffersV2<'_>,
-    ) -> Result<(crate::flat_policy_v3::FlatDecisionV3, bool), crate::flat_policy_v2::FlatDecisionErrorV2> {
+    ) -> Result<
+        (crate::flat_policy_v3::FlatDecisionV3, bool),
+        crate::flat_policy_v2::FlatDecisionErrorV2,
+    > {
         use crate::flat_policy_v2::FlatDecisionErrorV2;
         match self.encode_current_flat_scoring_decision_owned_v3(expected, encoder, buffers) {
             Ok(value) => return Ok((value, false)),
-            Err(FlatDecisionErrorV2::Action(FlatActionDecisionSliceErrorV1::InvalidActionReference)) => {}
+            Err(FlatDecisionErrorV2::Action(
+                FlatActionDecisionSliceErrorV1::InvalidActionReference,
+            )) => {}
             Err(error) => return Err(error),
         }
         let view = self.v3_spell_target_adapter_view(expected)?;
-        let value = view.encode_current_flat_scoring_decision_owned_v3(expected, encoder, buffers)?;
+        let value =
+            view.encode_current_flat_scoring_decision_owned_v3(expected, encoder, buffers)?;
         Ok((value, true))
     }
 
@@ -92,7 +100,9 @@ impl FastActorSessionV1 {
     ) -> Result<Self, FlatActionDecisionSliceErrorV1> {
         let mut view = self.clone();
         view.v3_spell_target_reference_adapter = true;
-        let mut current = view.current.take()
+        let mut current = view
+            .current
+            .take()
             .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
         flat_validate_expected_decision_v1(&view, &current, expected)?;
         let original = current.candidates.clone();
@@ -134,13 +144,20 @@ pub(crate) fn pyroblast_target_fixture_v1() -> (crate::state::GameState, ObjectI
     engine::step(&mut state, Action::Pass).unwrap();
     engine::advance_until_decision(&mut state);
     engine::step(&mut state, Action::CastSpell(pyroblast)).unwrap();
-    if matches!(engine::advance_until_decision(&mut state), Decision::ChooseSpellMode { .. }) {
+    if matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::ChooseSpellMode { .. }
+    ) {
         engine::step(&mut state, Action::ChooseSpellMode(0)).unwrap();
     }
-    let Decision::ChooseTargets { legal_targets, .. } = engine::advance_until_decision(&mut state) else {
+    let Decision::ChooseTargets { legal_targets, .. } = engine::advance_until_decision(&mut state)
+    else {
         panic!("expected Pyroblast target selection");
     };
-    assert_eq!(legal_targets, vec![Target::Object(chrysalis), Target::Object(counterspell)]);
+    assert_eq!(
+        legal_targets,
+        vec![Target::Object(chrysalis), Target::Object(counterspell)]
+    );
     (state, chrysalis, counterspell)
 }
 
@@ -150,27 +167,40 @@ mod tests {
 
     fn reference(state: &crate::state::GameState, object: ObjectId) -> CardStableRefV1 {
         let live = state.objects.get(object);
-        CardStableRefV1 { arena_id: object.0, card_db_id: live.card_def, owner: live.owner.into(),
-            controller: live.controller.into(), zone: live.zone, zone_change_count: live.zone_change_count }
+        CardStableRefV1 {
+            arena_id: object.0,
+            card_db_id: live.card_def,
+            owner: live.owner.into(),
+            controller: live.controller.into(),
+            zone: live.zone,
+            zone_change_count: live.zone_change_count,
+        }
     }
 
     #[test]
     fn v3_spell_target_adapter_resolves_real_targets_and_rejects_ambiguous_or_stale_identity() {
         let (state, chrysalis, counterspell) = pyroblast_target_fixture_v1();
         let target = reference(&state, chrysalis);
-        assert_eq!(flat_visible_action_object_v2(&state, PlayerId::P0, &target).unwrap_err(),
-            FlatActionDecisionSliceErrorV1::InvalidActionReference);
+        assert_eq!(
+            flat_visible_action_object_v2(&state, PlayerId::P0, &target).unwrap_err(),
+            FlatActionDecisionSliceErrorV1::InvalidActionReference
+        );
         let repaired = visible_spell_target(&state, PlayerId::P0, &target).unwrap();
         assert_eq!(repaired.group, FlatActionObjectGroupV1::Stack);
         assert_eq!(repaired.actor_visible_ordinal, 0);
         let other = reference(&state, counterspell);
-        assert_eq!(visible_spell_target(&state, PlayerId::P0, &other).unwrap(),
-            flat_visible_action_object_v2(&state, PlayerId::P0, &other).unwrap());
-        let mut stale = target.clone(); stale.zone_change_count += 1;
+        assert_eq!(
+            visible_spell_target(&state, PlayerId::P0, &other).unwrap(),
+            flat_visible_action_object_v2(&state, PlayerId::P0, &other).unwrap()
+        );
+        let mut stale = target.clone();
+        stale.zone_change_count += 1;
         assert!(visible_spell_target(&state, PlayerId::P0, &stale).is_err());
-        let mut wrong_card = target.clone(); wrong_card.card_db_id = other.card_db_id;
+        let mut wrong_card = target.clone();
+        wrong_card.card_db_id = other.card_db_id;
         assert!(visible_spell_target(&state, PlayerId::P0, &wrong_card).is_err());
-        let mut duplicate = state.clone(); duplicate.stack.push(duplicate.stack[0].clone());
+        let mut duplicate = state.clone();
+        duplicate.stack.push(duplicate.stack[0].clone());
         assert!(visible_spell_target(&duplicate, PlayerId::P0, &target).is_err());
         let mut no_spell = state.clone();
         no_spell.stack[0].kind = crate::state::StackItemKind::TriggeredAbility;
@@ -183,28 +213,49 @@ mod tests {
         use crate::state::Target;
         let (state, chrysalis, counterspell) = pyroblast_target_fixture_v1();
         let session = FastActorSessionV1::from_v3_fixture_state(state);
-        let FastActorResponseV1::Decision(expected) = session.current_response() else { panic!() };
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!()
+        };
         assert_eq!(expected.legal_action_count, 2);
-        let mut view = session.clone(); view.v3_spell_target_reference_adapter = true;
+        let mut view = session.clone();
+        view.v3_spell_target_reference_adapter = true;
         let mut current = view.current.take().unwrap();
         let original = current.candidates.clone();
-        let cache = super::super::flat_action_v3::prepare_and_build_v3(&view, &mut current).unwrap();
+        let cache =
+            super::super::flat_action_v3::prepare_and_build_v3(&view, &mut current).unwrap();
         assert_eq!(current.candidates, original);
-        let ordinals: Vec<_> = cache.refs.iter().filter(|r| r.role == FlatActionRefRoleV1::TargetObject)
-            .map(|r| cache.objects[usize::from(r.object_index)].actor_visible_ordinal).collect();
+        let ordinals: Vec<_> = cache
+            .refs
+            .iter()
+            .filter(|r| r.role == FlatActionRefRoleV1::TargetObject)
+            .map(|r| cache.objects[usize::from(r.object_index)].actor_visible_ordinal)
+            .collect();
         assert_eq!(ordinals, vec![0, 2]);
         for (index, target) in [chrysalis, counterspell].into_iter().enumerate() {
             let mut applied = session.clone();
-            applied.step(expected.episode_id, expected.step, index as u32).unwrap();
-            assert_eq!(applied.state.stack.last().unwrap().targets, vec![Target::Object(target)]);
+            applied
+                .step(expected.episode_id, expected.step, index as u32)
+                .unwrap();
+            assert_eq!(
+                applied.state.stack.last().unwrap().targets,
+                vec![Target::Object(target)]
+            );
             let pyroblast = applied.state.stack.last().unwrap().source;
             for _ in 0..8 {
-                if applied.state.objects.get(pyroblast).zone != Zone::Stack { break; }
-                assert!(matches!(engine::advance_until_decision(&mut applied.state), Decision::CastSpellOrPass { .. }));
+                if applied.state.objects.get(pyroblast).zone != Zone::Stack {
+                    break;
+                }
+                assert!(matches!(
+                    engine::advance_until_decision(&mut applied.state),
+                    Decision::CastSpellOrPass { .. }
+                ));
                 engine::step(&mut applied.state, Action::Pass).unwrap();
             }
             assert_eq!(applied.state.objects.get(pyroblast).zone, Zone::Graveyard);
-            assert_eq!(applied.state.objects.get(counterspell).zone == Zone::Graveyard, target == counterspell);
+            assert_eq!(
+                applied.state.objects.get(counterspell).zone == Zone::Graveyard,
+                target == counterspell
+            );
         }
     }
 }

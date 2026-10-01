@@ -1,0 +1,50 @@
+{
+ "schema": "mtg-kernel-multirun-workload/v1",
+ "adapter": "native-science-loop-pilot-v1",
+ "executable": "D:/multirun-qualified-v1-work/exe/mtg_kernel-62bf66b1a917b643.exe",
+ "executable_sha256": "62bf66b1a917b643fdd9f4ba8b1da08955b205c7c61f46b6669e1825b2975504",
+ "data_root": "D:/mtg-kernel-multirun-qualified-v1/data",
+ "remote_mirror_root": "C:/mtg-node/multirun-mirror",
+ "remote_runtime_libraries": [
+  "D:/multirun-qualified-v1-work/cuda-runtime/nvrtc64_120_0.dll",
+  "D:/multirun-qualified-v1-work/cuda-runtime/nvrtc-builtins64_128.dll",
+  "D:/multirun-qualified-v1-work/cuda-runtime/cudart64_12.dll"
+ ],
+ "planned_updates": 128,
+ "knobs": {
+  "MULTIRUN_WORKERS": "2",
+  "MULTIRUN_SESSIONS": "32",
+  "MULTIRUN_BROKER_TARGET": "16"
+ },
+ "runs": [
+  {
+   "id": "base-s0",
+   "seed": 5500001,
+   "arm": "base"
+  },
+  {
+   "id": "envrand-s0",
+   "seed": 5600001,
+   "arm": "envrand"
+  }
+ ],
+ "remote_cuda_root": "D:/multirun-qualified-v1-work/cuda-runtime",
+ "arms": {
+  "base": {
+   "knobs": {}
+  },
+  "envrand": {
+   "knobs": {
+    "MULTIRUN_ENVIRONMENT_RANDOMIZATION_V2": "1"
+   }
+  }
+ },
+ "segment": {
+  "resume_generation": 12,
+  "stop_generation": 28
+ },
+ "parents": {
+  "base-s0": "D:/multirun-qualified-v1-work/q6/qualification/serial-golden/base-s0",
+  "envrand-s0": "D:/multirun-qualified-v1-work/q6/qualification/serial-golden/envrand-s0"
+ }
+}

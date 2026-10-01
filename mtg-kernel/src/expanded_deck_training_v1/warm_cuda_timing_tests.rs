@@ -153,8 +153,9 @@ fn run_warm_timing_v1(plan: WarmTimingPlanV1) -> Result<Value, String> {
     // Same canonical fixture model the crate's own tests use (see module
     // doc comment above for why this replaces the pinned real fixture).
     let mut learner_policy = FrozenPlayPolicyV1::training_fixture_v3();
-    let mut model = NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
-        .map_err(err)?;
+    let mut model =
+        NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+            .map_err(err)?;
     model
         .replace_parameter_snapshot_v1(&learner_policy.training_parameters_v3())
         .map_err(err)?;
@@ -225,7 +226,10 @@ fn run_warm_timing_v1(plan: WarmTimingPlanV1) -> Result<Value, String> {
             .train_step_feature_transfer_v3(&groups, value_coefficient, learning_rate)
             .map_err(err)?;
         let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-        ensure(result.gradients.len() == 33, "CPU call needs all 33 gradients")?;
+        ensure(
+            result.gradients.len() == 33,
+            "CPU call needs all 33 gradients",
+        )?;
         Ok(elapsed_ms)
     })?;
 
@@ -247,8 +251,14 @@ fn run_warm_timing_v1(plan: WarmTimingPlanV1) -> Result<Value, String> {
         // gated behind a `capture_named_gradients` flag this call path
         // passes as `false`, matching what `execute_update_v1` actually
         // runs in production. Sanity-check the real result fields instead.
-        ensure(result.gradients.is_empty(), "unexpected CUDA named gradients")?;
-        ensure(result.loss.is_finite(), "CUDA call produced a non-finite loss")?;
+        ensure(
+            result.gradients.is_empty(),
+            "unexpected CUDA named gradients",
+        )?;
+        ensure(
+            result.loss.is_finite(),
+            "CUDA call produced a non-finite loss",
+        )?;
         gpu_memory_per_cuda_call.push(gpu_memory_used_mib_v1(plan.device_ordinal)?);
         Ok(elapsed_ms)
     })?;

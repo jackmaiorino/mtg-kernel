@@ -4702,8 +4702,8 @@ impl FlatDecisionEncoderV2 {
     ) -> Result<crate::flat_policy_v4::FlatScoringExtensionsV4, FlatDecisionErrorV2> {
         use crate::flat_policy_v3::{
             FlatDecisionLocalLibraryV3, FlatFinalizedChosenCreatureCostV3,
-            FlatPendingCastObjectCostV3, FlatPendingChosenCreatureCostV3,
-            FlatQueuedWardPaymentV3, FlatWardPaymentV3,
+            FlatPendingCastObjectCostV3, FlatPendingChosenCreatureCostV3, FlatQueuedWardPaymentV3,
+            FlatWardPaymentV3,
         };
         use crate::flat_policy_v4::{FlatHistoricalPublicSourceV4, FlatScoringExtensionsV4};
         use crate::policy_observation_v7::HistoricalSourceContextV7;
@@ -4843,8 +4843,11 @@ impl FlatDecisionEncoderV2 {
                         return Err(FlatDecisionErrorV2::InconsistentReference);
                     }
                     let ordinal = usize_u32(public_stack.len())?;
-                    let (model_index, appended) =
-                        self.add_validated_historical_source_v3(&historical.source, actor, ordinal)?;
+                    let (model_index, appended) = self.add_validated_historical_source_v3(
+                        &historical.source,
+                        actor,
+                        ordinal,
+                    )?;
                     if appended {
                         output.appended_object_indices.push(model_index);
                     }
@@ -4872,9 +4875,10 @@ impl FlatDecisionEncoderV2 {
                     if entry.source.is_some() || entry.controller != actor {
                         return Err(FlatDecisionErrorV2::InconsistentReference);
                     }
-                    let ordinal = crate::trigger::historical_public_source_ordinal_ceiling_v1(state)
-                        .and_then(|ceiling| ceiling.checked_add(position))
-                        .ok_or(FlatDecisionErrorV2::CheckedIntegerRange)?;
+                    let ordinal =
+                        crate::trigger::historical_public_source_ordinal_ceiling_v1(state)
+                            .and_then(|ceiling| ceiling.checked_add(position))
+                            .ok_or(FlatDecisionErrorV2::CheckedIntegerRange)?;
                     let model_index =
                         self.add_pending_trigger_row_v4(&historical.source, actor, ordinal)?;
                     output.appended_object_indices.push(model_index);
@@ -4946,7 +4950,8 @@ impl FlatDecisionEncoderV2 {
         // V4-only: this function is never called from the frozen V3 path,
         // and `register_extensions_v3` is untouched.
         for (index, record) in state.engine.linked_exile_records.iter().enumerate() {
-            let index = u32::try_from(index).map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?;
+            let index =
+                u32::try_from(index).map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?;
             let ordinal = crate::trigger::historical_public_source_ordinal_ceiling_v1(state)
                 .and_then(|ceiling| {
                     ceiling.checked_add(u32::try_from(FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1).ok()?)
@@ -5007,7 +5012,11 @@ impl FlatDecisionEncoderV2 {
                 selected_zone: cost.selected_zone,
             });
         }
-        for (index, cost) in extensions_v7.finalized_chosen_creature_costs.iter().enumerate() {
+        for (index, cost) in extensions_v7
+            .finalized_chosen_creature_costs
+            .iter()
+            .enumerate()
+        {
             let item = public_stack
                 .get(cost.stack_index as usize)
                 .ok_or(FlatDecisionErrorV2::InvalidReference)?;

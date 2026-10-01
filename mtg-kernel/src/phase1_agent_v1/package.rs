@@ -9,8 +9,8 @@ use crate::learned_bo3_v1::Bo3OpeningProtocolV1;
 use crate::learned_sideboard_v1::{
     FrozenSideboardEmbeddingsV1, LearnedSideboardModelV1, SideboardPlayIdentityV1,
 };
+use crate::paired_bo1_harness_v1::{PairedBo1PolicyV1, PlayPolicyGenerationV1};
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
-use crate::paired_bo1_harness_v1::{PairedBo1PolicyV1,PlayPolicyGenerationV1};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -228,34 +228,51 @@ pub enum AgentSearchPolicyV1 {
     },
 }
 
-pub const V4_INFORMATION_SET_SEARCH_SCHEMA_V1:&str="mtg-kernel-v4-information-set-search/v1";
-pub const V4_INFORMATION_SET_SEARCH_ALGORITHM_V1:&str="v4-depth-keyed-mean-backup/v1";
-pub const V4_INFORMATION_SET_ESTIMATE_SCHEMA_V1:&str="mtg-kernel-v4-information-set-estimate-search/v1";
-pub const V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V1:&str="v4-depth-keyed-estimate-final/v1";
+pub const V4_INFORMATION_SET_SEARCH_SCHEMA_V1: &str = "mtg-kernel-v4-information-set-search/v1";
+pub const V4_INFORMATION_SET_SEARCH_ALGORITHM_V1: &str = "v4-depth-keyed-mean-backup/v1";
+pub const V4_INFORMATION_SET_ESTIMATE_SCHEMA_V1: &str =
+    "mtg-kernel-v4-information-set-estimate-search/v1";
+pub const V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V1: &str = "v4-depth-keyed-estimate-final/v1";
 /// Reuses the strict field shape, but has distinct schema/algorithm and route.
-#[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct V4InformationSetEstimateDescriptorV1(pub V4InformationSetSearchDescriptorV1);
-pub const V4_INFORMATION_SET_ESTIMATE_SCHEMA_V2:&str="mtg-kernel-v4-information-set-estimate-search/v2";
-pub const V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V2:&str="v4-depth-keyed-estimate-library-choice/v2";
-#[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
+pub const V4_INFORMATION_SET_ESTIMATE_SCHEMA_V2: &str =
+    "mtg-kernel-v4-information-set-estimate-search/v2";
+pub const V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V2: &str =
+    "v4-depth-keyed-estimate-library-choice/v2";
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct V4InformationSetEstimateDescriptorV2(pub V4InformationSetSearchDescriptorV1);
-#[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize)]
-#[serde(rename_all="snake_case")]
-pub enum V4SearchRootAllocationV1 {Puct,RoundRobin}
-#[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize)]
-#[serde(rename_all="snake_case")]
-pub enum V4SearchInteriorBonusV1 {PriorWeighted,PriorFree}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum V4SearchRootAllocationV1 {
+    Puct,
+    RoundRobin,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum V4SearchInteriorBonusV1 {
+    PriorWeighted,
+    PriorFree,
+}
 /// Descriptive identity only. This never grants seed, compute or launch authority.
-#[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct V4InformationSetSearchDescriptorV1 {
-    pub schema:String,pub algorithm:String,
-    pub root_allocation:V4SearchRootAllocationV1,pub interior_bonus:V4SearchInteriorBonusV1,
-    pub simulations:u32,pub transitions:u32,pub depth:u16,pub experiment_seed:u64,
-    pub weights_sha256:String,pub model_parameter_sha256:String,pub embedding_table_sha256:String,
-    pub feature_contract_digest:String,pub feature_encoding_digest:String,
+    pub schema: String,
+    pub algorithm: String,
+    pub root_allocation: V4SearchRootAllocationV1,
+    pub interior_bonus: V4SearchInteriorBonusV1,
+    pub simulations: u32,
+    pub transitions: u32,
+    pub depth: u16,
+    pub experiment_seed: u64,
+    pub weights_sha256: String,
+    pub model_parameter_sha256: String,
+    pub embedding_table_sha256: String,
+    pub feature_contract_digest: String,
+    pub feature_encoding_digest: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -453,32 +470,63 @@ impl CompleteAgentPackageV1 {
                 "search descriptor runtime/budget differs",
             )?;
         }
-        let v4_descriptor=match &self.search {
-            AgentSearchPolicyV1::V4InformationSetV1{descriptor:d}=>Some((d,V4_INFORMATION_SET_SEARCH_SCHEMA_V1,V4_INFORMATION_SET_SEARCH_ALGORITHM_V1)),
-            AgentSearchPolicyV1::V4InformationSetEstimateV1{descriptor}=>{
-                let d=&descriptor.0;
-                require(d.root_allocation==V4SearchRootAllocationV1::RoundRobin && d.interior_bonus==V4SearchInteriorBonusV1::PriorFree,
-                    "V4 estimate route requires RoundRobin and PriorFree")?;
-                Some((d,V4_INFORMATION_SET_ESTIMATE_SCHEMA_V1,V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V1))
-            },
-            AgentSearchPolicyV1::V4InformationSetEstimateV2{descriptor}=>{
-                let d=&descriptor.0;
-                require(d.root_allocation==V4SearchRootAllocationV1::RoundRobin && d.interior_bonus==V4SearchInteriorBonusV1::PriorFree,
-                    "V4 estimate route requires RoundRobin and PriorFree")?;
-                Some((d,V4_INFORMATION_SET_ESTIMATE_SCHEMA_V2,V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V2))
-            },
-            _=>None,
+        let v4_descriptor = match &self.search {
+            AgentSearchPolicyV1::V4InformationSetV1 { descriptor: d } => Some((
+                d,
+                V4_INFORMATION_SET_SEARCH_SCHEMA_V1,
+                V4_INFORMATION_SET_SEARCH_ALGORITHM_V1,
+            )),
+            AgentSearchPolicyV1::V4InformationSetEstimateV1 { descriptor } => {
+                let d = &descriptor.0;
+                require(
+                    d.root_allocation == V4SearchRootAllocationV1::RoundRobin
+                        && d.interior_bonus == V4SearchInteriorBonusV1::PriorFree,
+                    "V4 estimate route requires RoundRobin and PriorFree",
+                )?;
+                Some((
+                    d,
+                    V4_INFORMATION_SET_ESTIMATE_SCHEMA_V1,
+                    V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V1,
+                ))
+            }
+            AgentSearchPolicyV1::V4InformationSetEstimateV2 { descriptor } => {
+                let d = &descriptor.0;
+                require(
+                    d.root_allocation == V4SearchRootAllocationV1::RoundRobin
+                        && d.interior_bonus == V4SearchInteriorBonusV1::PriorFree,
+                    "V4 estimate route requires RoundRobin and PriorFree",
+                )?;
+                Some((
+                    d,
+                    V4_INFORMATION_SET_ESTIMATE_SCHEMA_V2,
+                    V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V2,
+                ))
+            }
+            _ => None,
         };
-        if let Some((d,schema,algorithm))=v4_descriptor {
-            require(d.schema==schema && d.algorithm==algorithm,
-                "unknown V4 information-set search contract")?;
-            require((1..=1024).contains(&d.simulations) && (d.simulations..=16384).contains(&d.transitions) && (1..=32).contains(&d.depth),
-                "V4 information-set search limits exceed supported metadata bounds")?;
-            require(d.weights_sha256==model.weights_sha256 && d.model_parameter_sha256==model.model_parameter_sha256
-                && d.embedding_table_sha256==model.embedding_table_sha256
-                && d.feature_contract_digest==runtime.feature_contract_digest && d.feature_encoding_digest==runtime.feature_encoding_digest,
-                "V4 information-set search descriptor differs from installed model/features")?;
-            crate::sideboard_play_policy_v1::fresh_successor_identity_valid_v1(&d.feature_contract_digest,&d.feature_encoding_digest)?;
+        if let Some((d, schema, algorithm)) = v4_descriptor {
+            require(
+                d.schema == schema && d.algorithm == algorithm,
+                "unknown V4 information-set search contract",
+            )?;
+            require(
+                (1..=1024).contains(&d.simulations)
+                    && (d.simulations..=16384).contains(&d.transitions)
+                    && (1..=32).contains(&d.depth),
+                "V4 information-set search limits exceed supported metadata bounds",
+            )?;
+            require(
+                d.weights_sha256 == model.weights_sha256
+                    && d.model_parameter_sha256 == model.model_parameter_sha256
+                    && d.embedding_table_sha256 == model.embedding_table_sha256
+                    && d.feature_contract_digest == runtime.feature_contract_digest
+                    && d.feature_encoding_digest == runtime.feature_encoding_digest,
+                "V4 information-set search descriptor differs from installed model/features",
+            )?;
+            crate::sideboard_play_policy_v1::fresh_successor_identity_valid_v1(
+                &d.feature_contract_digest,
+                &d.feature_encoding_digest,
+            )?;
         }
         Ok(())
     }
@@ -530,24 +578,50 @@ impl CompleteAgentPackageV1 {
 
     /// Explicit evaluation-only loader. Existing native collection/learning
     /// callers retain their own Disabled-only gate and never call this method.
-    pub(crate) fn load_evaluation_components_v1(&self)->Result<VerifiedAgentComponentsV1,String> {
+    pub(crate) fn load_evaluation_components_v1(
+        &self,
+    ) -> Result<VerifiedAgentComponentsV1, String> {
         self.validate_metadata_v1()?;
-        require(matches!(self.opening,AgentOpeningPolicyV1::Existing{protocol:Bo3OpeningProtocolV1::KeepSevenV2})
-            && matches!(self.play_draw,AgentPlayDrawPolicyV1::Fixed{..})
-            && matches!(self.search,AgentSearchPolicyV1::Disabled|AgentSearchPolicyV1::V4InformationSetV1{..}|AgentSearchPolicyV1::V4InformationSetEstimateV1{..}|AgentSearchPolicyV1::V4InformationSetEstimateV2{..}),
-            "V4 evaluation requires KeepSevenV2, fixed play/draw and Disabled or V4 search")?;
-        require(self.gameplay_sampler_identity==WIDE_CATEGORICAL_SAMPLER_VERSION_V1,
-            "evaluation behavior records require the wide categorical sampler")?;
-        let loaded=self.load_bound_components_v1(false)?;
-        if matches!(self.search,AgentSearchPolicyV1::V4InformationSetV1{..}|AgentSearchPolicyV1::V4InformationSetEstimateV1{..}|AgentSearchPolicyV1::V4InformationSetEstimateV2{..}) {
-            require(loaded.current_runtime.generation_v1()==RuntimeContractGenerationV1::V4
-                && loaded.gameplay.feature_generation_v1()==PlayPolicyGenerationV1::V4,
-                "V4 search requires the actual V4 runtime and loaded policy")?;
+        require(
+            matches!(
+                self.opening,
+                AgentOpeningPolicyV1::Existing {
+                    protocol: Bo3OpeningProtocolV1::KeepSevenV2
+                }
+            ) && matches!(self.play_draw, AgentPlayDrawPolicyV1::Fixed { .. })
+                && matches!(
+                    self.search,
+                    AgentSearchPolicyV1::Disabled
+                        | AgentSearchPolicyV1::V4InformationSetV1 { .. }
+                        | AgentSearchPolicyV1::V4InformationSetEstimateV1 { .. }
+                        | AgentSearchPolicyV1::V4InformationSetEstimateV2 { .. }
+                ),
+            "V4 evaluation requires KeepSevenV2, fixed play/draw and Disabled or V4 search",
+        )?;
+        require(
+            self.gameplay_sampler_identity == WIDE_CATEGORICAL_SAMPLER_VERSION_V1,
+            "evaluation behavior records require the wide categorical sampler",
+        )?;
+        let loaded = self.load_bound_components_v1(false)?;
+        if matches!(
+            self.search,
+            AgentSearchPolicyV1::V4InformationSetV1 { .. }
+                | AgentSearchPolicyV1::V4InformationSetEstimateV1 { .. }
+                | AgentSearchPolicyV1::V4InformationSetEstimateV2 { .. }
+        ) {
+            require(
+                loaded.current_runtime.generation_v1() == RuntimeContractGenerationV1::V4
+                    && loaded.gameplay.feature_generation_v1() == PlayPolicyGenerationV1::V4,
+                "V4 search requires the actual V4 runtime and loaded policy",
+            )?;
         }
         Ok(loaded)
     }
 
-    fn load_bound_components_v1(&self,requires_learned_runtime:bool)->Result<VerifiedAgentComponentsV1,String> {
+    fn load_bound_components_v1(
+        &self,
+        requires_learned_runtime: bool,
+    ) -> Result<VerifiedAgentComponentsV1, String> {
         let current_runtime = self.runtime.verify_current_runtime_v1()?;
         if requires_learned_runtime {
             require(

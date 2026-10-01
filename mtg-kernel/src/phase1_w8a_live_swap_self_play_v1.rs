@@ -24,7 +24,9 @@
 //! `game_summary_v1::try_run_fast_episode_with_summary_v1`, exactly as
 //! `learned_bo3_v1::run_learned_bo3_session_v1` already does for evaluation.
 
-use crate::bo3_match::{GameOutcomeV1, GameStartV1, MatchOutcomeV1, MatchPhaseV1, PlayDrawChoiceV1};
+use crate::bo3_match::{
+    GameOutcomeV1, GameStartV1, MatchOutcomeV1, MatchPhaseV1, PlayDrawChoiceV1,
+};
 use crate::bo3_session::{
     BestOfThreeDeckMatchV1, Bo3SessionErrorV1, LiveSideboardConsultationV1,
     LiveSideboardSwapPolicyV1,
@@ -68,7 +70,11 @@ pub fn w8a_match_seed_v1(base_seed: u64, match_ordinal: u32) -> u64 {
     hasher.update(base_seed.to_be_bytes());
     hasher.update(match_ordinal.to_be_bytes());
     let digest = hasher.finalize();
-    u64::from_be_bytes(digest[0..8].try_into().expect("sha256 digest is at least 8 bytes"))
+    u64::from_be_bytes(
+        digest[0..8]
+            .try_into()
+            .expect("sha256 digest is at least 8 bytes"),
+    )
 }
 
 /// Deterministic per-decision sampler seed: domain-separated from the match
@@ -89,7 +95,11 @@ pub fn w8a_sideboard_sample_seed_v1(
     hasher.update([seat.0]);
     hasher.update(decision_ordinal.to_be_bytes());
     let digest = hasher.finalize();
-    u64::from_be_bytes(digest[0..8].try_into().expect("sha256 digest is at least 8 bytes"))
+    u64::from_be_bytes(
+        digest[0..8]
+            .try_into()
+            .expect("sha256 digest is at least 8 bytes"),
+    )
 }
 
 /// Adapts the deck model's sampler to the W8a live-policy boundary
@@ -275,7 +285,10 @@ fn run_one_self_play_match_with_observer_v1(
                     outcome,
                 })
             }
-            MatchPhaseV1::AwaitingPlayDrawChoice { game_index, chooser } => (game_index, chooser),
+            MatchPhaseV1::AwaitingPlayDrawChoice {
+                game_index,
+                chooser,
+            } => (game_index, chooser),
             _ => {
                 return Err(
                     "W8a self-play driver: match unexpectedly awaits an unrecorded game result"
@@ -318,9 +331,12 @@ fn run_one_self_play_match_with_observer_v1(
                 .prepare_game_with_live_policies_v1(chooser, PlayDrawChoiceV1::Play, live)
                 .map_err(bo3_session_error_to_string)?;
             for decision in &adapter.decisions {
-                let logits_f32: Vec<f32> = decision.logits.iter().map(|&value| value as f32).collect();
-                let behavior =
-                    BehaviorDistributionV1::hamilton_from_logits_v1(&logits_f32, decision.sampled_index)?;
+                let logits_f32: Vec<f32> =
+                    decision.logits.iter().map(|&value| value as f32).collect();
+                let behavior = BehaviorDistributionV1::hamilton_from_logits_v1(
+                    &logits_f32,
+                    decision.sampled_index,
+                )?;
                 let record = Bo3DecisionRecordV1 {
                     decision_index,
                     actor: config.learner_seat.into(),
@@ -350,7 +366,9 @@ fn run_one_self_play_match_with_observer_v1(
         // above; a real binding would derive this the same way
         // `learned_bo3_v1::run_learned_bo3_session_v1` already does.
         let environment_seed = w8a_environment_seed_v1(match_seed, game_index);
-        let mainboards = current.each_ref().map(|configuration| configuration.mainboard().to_vec());
+        let mainboards = current
+            .each_ref()
+            .map(|configuration| configuration.mainboard().to_vec());
         let summary =
             game_player.play_physical_game_v1(prepared.start(), mainboards, environment_seed)?;
         let outcome = summary
@@ -370,7 +388,11 @@ fn w8a_environment_seed_v1(match_seed: u64, game_index: u8) -> u64 {
     hasher.update(match_seed.to_be_bytes());
     hasher.update([game_index]);
     let digest = hasher.finalize();
-    u64::from_be_bytes(digest[0..8].try_into().expect("sha256 digest is at least 8 bytes"))
+    u64::from_be_bytes(
+        digest[0..8]
+            .try_into()
+            .expect("sha256 digest is at least 8 bytes"),
+    )
 }
 
 fn bo3_session_error_to_string(error: Bo3SessionErrorV1) -> String {
@@ -385,12 +407,8 @@ mod tests {
     use std::collections::{BTreeMap, VecDeque};
 
     fn alpha_deck() -> RegisteredDeckV1 {
-        RegisteredDeckV1::new_exact_v1(
-            "W8aAlpha",
-            [vec![1; 58], vec![2; 2]].concat(),
-            vec![3; 15],
-        )
-        .unwrap()
+        RegisteredDeckV1::new_exact_v1("W8aAlpha", [vec![1; 58], vec![2; 2]].concat(), vec![3; 15])
+            .unwrap()
     }
 
     fn beta_deck() -> RegisteredDeckV1 {
@@ -480,8 +498,7 @@ mod tests {
     #[test]
     fn self_play_receipts_record_sampled_probabilities_and_terminal_outcome() {
         let table = embeddings_table();
-        let embeddings =
-            FrozenSideboardEmbeddingsV1::new_v1(&table, identity()).unwrap();
+        let embeddings = FrozenSideboardEmbeddingsV1::new_v1(&table, identity()).unwrap();
         let model = LearnedSideboardModelV1::new_v1(5, &embeddings);
         let config = W8aSelfPlayConfigV1 {
             base_seed: 4242,
@@ -518,10 +535,15 @@ mod tests {
             assert_eq!(receipt.schema, W8A_SELF_PLAY_RECEIPT_SCHEMA_V1);
             assert_eq!(receipt.match_ordinal, ordinal as u32);
             assert_eq!(receipt.sampler_version, SIDEBOARD_LIVE_SAMPLER_VERSION_V1);
-            assert_eq!(receipt.deck_ids, ["W8aAlpha".to_owned(), "W8aBeta".to_owned()]);
+            assert_eq!(
+                receipt.deck_ids,
+                ["W8aAlpha".to_owned(), "W8aBeta".to_owned()]
+            );
             assert_eq!(
                 receipt.outcome,
-                MatchOutcomeV1::Winner { winner: PlayerId::P0 }
+                MatchOutcomeV1::Winner {
+                    winner: PlayerId::P0
+                }
             );
             assert_eq!(receipt.game_starts.len(), 3);
             assert_eq!(receipt.game_starts[0].game_index, 1);
@@ -530,7 +552,9 @@ mod tests {
             for (index, decision) in receipt.sideboard_decisions.iter().enumerate() {
                 assert_eq!(decision.decision_index, index as u64);
                 assert_eq!(decision.actor, PlayerSeatV1::from(PlayerId::P0));
-                let ActorVisibleDecisionV1::Sideboard { ordered_actions, .. } = &decision.visible
+                let ActorVisibleDecisionV1::Sideboard {
+                    ordered_actions, ..
+                } = &decision.visible
                 else {
                     panic!("expected a sideboard decision");
                 };
@@ -599,7 +623,9 @@ mod tests {
             &embeddings,
             &mut game_player,
             &mut |decision, record| {
-                let ActorVisibleDecisionV1::Sideboard { ordered_actions, .. } = &record.visible
+                let ActorVisibleDecisionV1::Sideboard {
+                    ordered_actions, ..
+                } = &record.visible
                 else {
                     panic!("expected a sideboard decision");
                 };
@@ -717,13 +743,17 @@ mod tests {
         assert_eq!(receipt.learner_seat, PlayerSeatV1::from(PlayerId::P1));
         assert_eq!(
             receipt.outcome,
-            MatchOutcomeV1::Winner { winner: PlayerId::P1 }
+            MatchOutcomeV1::Winner {
+                winner: PlayerId::P1
+            }
         );
         assert!(!receipt.sideboard_decisions.is_empty());
-        let beta_registered_cards =
-            beta_deck().registered_configuration().combined_card_counts_v1();
-        let alpha_registered_cards =
-            alpha_deck().registered_configuration().combined_card_counts_v1();
+        let beta_registered_cards = beta_deck()
+            .registered_configuration()
+            .combined_card_counts_v1();
+        let alpha_registered_cards = alpha_deck()
+            .registered_configuration()
+            .combined_card_counts_v1();
         assert_ne!(beta_registered_cards, alpha_registered_cards);
         for decision in &receipt.sideboard_decisions {
             assert_eq!(decision.actor, PlayerSeatV1::from(PlayerId::P1));

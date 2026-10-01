@@ -101,7 +101,9 @@ impl CardCapability {
 /// likely an ingestion artifact upstream of this codegen, not a meaningful
 /// distinction -- preserved as two distinct variants here rather than
 /// silently merged, so this table stays a faithful mirror of the source
-/// data). `build.rs::subtype_variant` panics on an unrecognized string,
+/// data). Rules queries nonetheless treat both spellings as one creature
+/// type (205.3m) through `Subtype::case_twin`. `build.rs::subtype_variant`
+/// panics on an unrecognized string,
 /// same as `card_type_variant`/`supertype_variant`/`color_variant`, since
 /// this is now a closed set the same way those are.
 #[repr(u16)]
@@ -305,6 +307,45 @@ impl Subtype {
     /// source spelling or locale-sensitive string ordering.
     pub const fn stable_id(self) -> u16 {
         self as u16
+    }
+
+    /// The other registry spelling of the same subtype, if the pool carries
+    /// it in two cases ("HUMAN" and "Human", ...). The variants stay
+    /// distinct so stable ids and observations are unchanged, but 205.3m
+    /// makes them one creature type: every rules comparison goes through
+    /// `same_subtype_as`/`is_in_subtype_ids`, never a bare id comparison.
+    pub const fn case_twin(self) -> Option<Subtype> {
+        match self {
+            Subtype::BirdAllCaps => Some(Subtype::Bird),
+            Subtype::Bird => Some(Subtype::BirdAllCaps),
+            Subtype::FaerieAllCaps => Some(Subtype::Faerie),
+            Subtype::Faerie => Some(Subtype::FaerieAllCaps),
+            Subtype::HumanAllCaps => Some(Subtype::Human),
+            Subtype::Human => Some(Subtype::HumanAllCaps),
+            Subtype::NinjaAllCaps => Some(Subtype::Ninja),
+            Subtype::Ninja => Some(Subtype::NinjaAllCaps),
+            Subtype::RogueAllCaps => Some(Subtype::Rogue),
+            Subtype::Rogue => Some(Subtype::RogueAllCaps),
+            Subtype::WizardAllCaps => Some(Subtype::Wizard),
+            Subtype::Wizard => Some(Subtype::WizardAllCaps),
+            _ => None,
+        }
+    }
+
+    /// Whether `self` and `other` name the same subtype, ignoring the
+    /// registry's case-duplicated spellings (205.3m).
+    pub fn same_subtype_as(self, other: Subtype) -> bool {
+        self == other || self.case_twin() == Some(other)
+    }
+
+    /// Whether a sorted, deduplicated effective-subtype id list (see
+    /// `ObjectStateV4::effective_subtype_ids`) contains this subtype under
+    /// either registry spelling.
+    pub fn is_in_subtype_ids(self, sorted_ids: &[u16]) -> bool {
+        sorted_ids.binary_search(&self.stable_id()).is_ok()
+            || self
+                .case_twin()
+                .is_some_and(|twin| sorted_ids.binary_search(&twin.stable_id()).is_ok())
     }
 
     /// Whether this closed-pool subtype is a creature type. Changeling

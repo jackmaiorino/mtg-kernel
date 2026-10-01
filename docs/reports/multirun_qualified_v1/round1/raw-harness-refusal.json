@@ -1,0 +1,23 @@
+{
+  "argv": [
+    "D:/multirun-qualified-v1-work/exe/mtg_kernel-ffbc5f976dc668e8.exe",
+    "--exact",
+    "native_science_loop_v1::windows_science_loop_tests::multirun_pilot_v1",
+    "--ignored",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "env": {
+    "MULTIRUN_BASE_SEED": "5",
+    "MULTIRUN_LAUNCH_TICKET": null,
+    "MULTIRUN_RUNS": "1",
+    "MULTIRUN_UPDATES": "128"
+  },
+  "executable": "D:/multirun-qualified-v1-work/exe/mtg_kernel-ffbc5f976dc668e8.exe",
+  "executable_sha256": "ffbc5f976dc668e8d82daf92eaf9bf52f2078964d03dfe7e473fade3532f6235",
+  "exit_code": 101,
+  "log": "raw-harness-refusal.txt",
+  "log_sha256": "97b164cd4ee87707f09adbe876b5643c552130f720bcc8a46af41a7df2c31f85",
+  "schema": "mtg-kernel-multirun-raw-refusal-receipt/v1",
+  "store_created": false
+}

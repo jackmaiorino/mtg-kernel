@@ -97,7 +97,9 @@ impl FastActorSessionV1 {
         encoder: &mut FlatDecisionEncoderV4,
         buffers: &mut FlatScoringOwnedBuffersV2<'_>,
     ) -> Result<FlatDecisionV4, FlatDecisionErrorV2> {
-        encoder.common.build_scoring_owned_v4(self, expected, buffers)
+        encoder
+            .common
+            .build_scoring_owned_v4(self, expected, buffers)
     }
 }
 
@@ -127,7 +129,10 @@ mod tests {
     }
 
     impl OwnedScoringV4 {
-        fn encode(&mut self, session: &FastActorSessionV1) -> Result<FlatDecisionV4, FlatDecisionErrorV2> {
+        fn encode(
+            &mut self,
+            session: &FastActorSessionV1,
+        ) -> Result<FlatDecisionV4, FlatDecisionErrorV2> {
             let FastActorResponseV1::Decision(expected) = session.current_response() else {
                 panic!(
                     "fixture is not a live decision: {:?}",
@@ -173,224 +178,488 @@ mod tests {
     }
 
     fn stack_fixture_v1(actor: PlayerId, hidden_variant: bool) -> FastActorSessionV1 {
-        use crate::engine::{self,Action,Decision};
+        use crate::engine::{self, Action, Decision};
         use crate::mana::ManaColor;
-        use crate::policy_observation_v6::tests::{put,ready_state};
-        use crate::state::{Target,Zone};
-        let opponent=if actor==PlayerId::P0 { PlayerId::P1 } else { PlayerId::P0 };
-        let mut state=ready_state();state.active_player=actor;state.priority_player=actor;
-        if hidden_variant { put(&mut state,opponent,"Gut Shot",Zone::Hand); }
-        let target=put(&mut state,opponent,"Tolarian Terror",Zone::Battlefield);
-        let spells=["Lightning Bolt","Lightning Bolt"].map(|name|put(&mut state,actor,name,Zone::Hand));
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::state::{Target, Zone};
+        let opponent = if actor == PlayerId::P0 {
+            PlayerId::P1
+        } else {
+            PlayerId::P0
+        };
+        let mut state = ready_state();
+        state.active_player = actor;
+        state.priority_player = actor;
+        if hidden_variant {
+            put(&mut state, opponent, "Gut Shot", Zone::Hand);
+        }
+        let target = put(&mut state, opponent, "Tolarian Terror", Zone::Battlefield);
+        let spells = ["Lightning Bolt", "Lightning Bolt"]
+            .map(|name| put(&mut state, actor, name, Zone::Hand));
         // Keep a real choice for this actor after both casts. The session skips
         // forced passes, which would otherwise expose the opponent's own hand.
-        put(&mut state,actor,"Lightning Bolt",Zone::Hand);
-        if !hidden_variant { put(&mut state,opponent,"Lotus Petal",Zone::Hand); }
-        for owner in [actor,opponent] {
-            for name in if hidden_variant { ["Mountain","Forest"] } else { ["Forest","Mountain"] } {
-                put(&mut state,owner,name,Zone::Library);
+        put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+        if !hidden_variant {
+            put(&mut state, opponent, "Lotus Petal", Zone::Hand);
+        }
+        for owner in [actor, opponent] {
+            for name in if hidden_variant {
+                ["Mountain", "Forest"]
+            } else {
+                ["Forest", "Mountain"]
+            } {
+                put(&mut state, owner, name, Zone::Library);
             }
         }
-        state.players[actor.index()].mana_pool[ManaColor::R.pool_index()]=8;
+        state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 8;
         for spell in spells {
-            engine::step(&mut state,Action::CastSpell(spell)).unwrap();
-            engine::step(&mut state,Action::ChooseTarget(Target::Object(target))).unwrap();
-            assert!(matches!(engine::advance_until_decision(&mut state),Decision::CastSpellOrPass {..}));
+            engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
         }
-        let session=FastActorSessionV1::from_v3_fixture_state(state);
-        let FastActorResponseV1::Decision(decision)=session.current_response() else { panic!("expected stack decision"); };
-        assert_eq!(decision.acting_player as usize,actor.index());
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            panic!("expected stack decision");
+        };
+        assert_eq!(decision.acting_player as usize, actor.index());
         session
     }
 
     #[test]
     fn public_stack_actual_v4_binding_zero_parity_and_hidden_invariance() {
-        use crate::public_stack_features_v1::*;
-        use crate::native_policy_value_net_v1::{NativePolicyValueNetV1,NativePolicyValueModelConfigV1,NativePolicyValueOutputV1};
         use crate::native_policy_value_net_v1::stack_inputs_v1::*;
-        let base=NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1()).unwrap();
-        let zero=NativeStackInputNetV1::new(base.clone(),StackInputWeightsV1::zero()).unwrap();
-        let weights=(0..64*INPUT_WIDTH).map(|i|((i*17%23) as f32-11.0)*0.003).collect();
-        let nonzero=NativeStackInputNetV1::new(base.clone(),StackInputWeightsV1::new(weights).unwrap()).unwrap();
-        let bits=|out:&NativePolicyValueOutputV1|out.logits.iter().chain(std::iter::once(&out.value)).map(|v|v.to_bits()).collect::<Vec<_>>();
-        for actor in [PlayerId::P0,PlayerId::P1] {
-            let mut previous=None;
-            for hidden in [false,true] {
-                let session=stack_fixture_v1(actor,hidden);
-                let mut owned=OwnedScoringV4::default();let decision=owned.encode(&session).unwrap();
-                let view=owned.view(&decision);
-                let encoded=encode_stack_decision_v1(view).unwrap();
-                let mut legacy=NativeFlatDecisionTensorV4::default();NativeFlatTensorizerV4::default().fill(view,&mut legacy).unwrap();
-                assert_eq!(encoded.legacy,legacy,"no change to legacy tensors or legal action references");
-                let baselines=encoded.stack.rows.iter().filter(|r|r.features[1]==1.0).collect::<Vec<_>>();
-                assert_eq!(baselines.len(),4,"two spells and their two Ward abilities");
-                let spells=baselines.iter().filter(|r|r.features[8]==1.0).collect::<Vec<_>>();
-                assert_eq!(spells.len(),2);assert_ne!(spells[0].source_node,spells[1].source_node);
-                assert_eq!(encoded.legacy.common.object_card_ids[spells[0].source_node],encoded.legacy.common.object_card_ids[spells[1].source_node]);
-                let abilities=baselines.iter().filter(|r|r.features[10]==1.0).collect::<Vec<_>>();
-                assert_eq!(abilities.len(),2);assert_eq!(abilities[0].source_node,abilities[1].source_node);
-                assert_ne!(abilities[0].features[2],abilities[1].features[2],"same-source abilities retain distinct stack positions");
-                let legacy_output=base.forward_feature_transfer_v4(encoded.view()).unwrap();
-                assert_eq!(bits(&zero.forward(&encoded).unwrap()),bits(&legacy_output));
-                let changed=bits(&nonzero.forward(&encoded).unwrap());assert_ne!(changed,bits(&legacy_output),"stack messages must reach model outputs");
-                assert_eq!(changed,bits(&nonzero.forward(&encoded).unwrap()),"deterministic replay");
-                let json=serde_json::to_string(&encoded.stack).unwrap();
-                for forbidden in ["arena_id","zone_change_count","rng"] { assert!(!json.contains(forbidden)); }
-                let decoded:StackFeatureRowsV1=serde_json::from_str(&json).unwrap();assert_eq!(decoded,encoded.stack);
-                if let Some((old,old_output))=&previous { assert_eq!(&encoded,old);assert_eq!(&changed,old_output); }
-                else { previous=Some((encoded,changed)); }
+        use crate::native_policy_value_net_v1::{
+            NativePolicyValueModelConfigV1, NativePolicyValueNetV1, NativePolicyValueOutputV1,
+        };
+        use crate::public_stack_features_v1::*;
+        let base =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let zero = NativeStackInputNetV1::new(base.clone(), StackInputWeightsV1::zero()).unwrap();
+        let weights = (0..64 * INPUT_WIDTH)
+            .map(|i| ((i * 17 % 23) as f32 - 11.0) * 0.003)
+            .collect();
+        let nonzero =
+            NativeStackInputNetV1::new(base.clone(), StackInputWeightsV1::new(weights).unwrap())
+                .unwrap();
+        let bits = |out: &NativePolicyValueOutputV1| {
+            out.logits
+                .iter()
+                .chain(std::iter::once(&out.value))
+                .map(|v| v.to_bits())
+                .collect::<Vec<_>>()
+        };
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut previous = None;
+            for hidden in [false, true] {
+                let session = stack_fixture_v1(actor, hidden);
+                let mut owned = OwnedScoringV4::default();
+                let decision = owned.encode(&session).unwrap();
+                let view = owned.view(&decision);
+                let encoded = encode_stack_decision_v1(view).unwrap();
+                let mut legacy = NativeFlatDecisionTensorV4::default();
+                NativeFlatTensorizerV4::default()
+                    .fill(view, &mut legacy)
+                    .unwrap();
+                assert_eq!(
+                    encoded.legacy, legacy,
+                    "no change to legacy tensors or legal action references"
+                );
+                let baselines = encoded
+                    .stack
+                    .rows
+                    .iter()
+                    .filter(|r| r.features[1] == 1.0)
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    baselines.len(),
+                    4,
+                    "two spells and their two Ward abilities"
+                );
+                let spells = baselines
+                    .iter()
+                    .filter(|r| r.features[8] == 1.0)
+                    .collect::<Vec<_>>();
+                assert_eq!(spells.len(), 2);
+                assert_ne!(spells[0].source_node, spells[1].source_node);
+                assert_eq!(
+                    encoded.legacy.common.object_card_ids[spells[0].source_node],
+                    encoded.legacy.common.object_card_ids[spells[1].source_node]
+                );
+                let abilities = baselines
+                    .iter()
+                    .filter(|r| r.features[10] == 1.0)
+                    .collect::<Vec<_>>();
+                assert_eq!(abilities.len(), 2);
+                assert_eq!(abilities[0].source_node, abilities[1].source_node);
+                assert_ne!(
+                    abilities[0].features[2], abilities[1].features[2],
+                    "same-source abilities retain distinct stack positions"
+                );
+                let legacy_output = base.forward_feature_transfer_v4(encoded.view()).unwrap();
+                assert_eq!(bits(&zero.forward(&encoded).unwrap()), bits(&legacy_output));
+                let changed = bits(&nonzero.forward(&encoded).unwrap());
+                assert_ne!(
+                    changed,
+                    bits(&legacy_output),
+                    "stack messages must reach model outputs"
+                );
+                assert_eq!(
+                    changed,
+                    bits(&nonzero.forward(&encoded).unwrap()),
+                    "deterministic replay"
+                );
+                let json = serde_json::to_string(&encoded.stack).unwrap();
+                for forbidden in ["arena_id", "zone_change_count", "rng"] {
+                    assert!(!json.contains(forbidden));
+                }
+                let decoded: StackFeatureRowsV1 = serde_json::from_str(&json).unwrap();
+                assert_eq!(decoded, encoded.stack);
+                if let Some((old, old_output)) = &previous {
+                    assert_eq!(&encoded, old);
+                    assert_eq!(&changed, old_output);
+                } else {
+                    previous = Some((encoded, changed));
+                }
             }
         }
     }
 
     #[test]
     fn public_stack_duplicate_card_attributes_bind_by_instance_and_reject_bad_rows() {
-        use crate::flat_policy_v2::{FlatRelationPayloadV2,FlatRelationRoleV2};
+        use crate::flat_policy_v2::{FlatRelationPayloadV2, FlatRelationRoleV2};
         use crate::public_stack_features_v1::*;
-        let session=stack_fixture_v1(PlayerId::P0,false);
-        let mut owned=OwnedScoringV4::default();let decision=owned.encode(&session).unwrap();
+        let session = stack_fixture_v1(PlayerId::P0, false);
+        let mut owned = OwnedScoringV4::default();
+        let decision = owned.encode(&session).unwrap();
         // Deliberate model-input fixtures: same-card spells with different public
         // metadata. No assertion that Lightning Bolt itself supports these costs.
-        let spell_orders:Vec<_>=owned.relations.iter().filter_map(|r|match r.payload {
-            FlatRelationPayloadV2::Stack(p) if r.secondary_order==0 && p.stack_item_kind==0=>Some(r.primary_order),_=>None }).collect();
+        let spell_orders: Vec<_> = owned
+            .relations
+            .iter()
+            .filter_map(|r| match r.payload {
+                FlatRelationPayloadV2::Stack(p)
+                    if r.secondary_order == 0 && p.stack_item_kind == 0 =>
+                {
+                    Some(r.primary_order)
+                }
+                _ => None,
+            })
+            .collect();
         for r in &mut owned.relations {
-            if r.role!=FlatRelationRoleV2::StackTarget { continue; }
-            if let FlatRelationPayloadV2::Stack(p)=&mut r.payload {
-                if r.primary_order==spell_orders[0] {p.kicked=true;p.x_value=3;p.mode_chosen=1;p.cast_method=3;p.is_flashback=true;}
-                if r.primary_order==spell_orders[1] {p.kicked=false;p.x_value=65535;p.mode_chosen=255;p.cast_method=2;p.is_copy=true;}
+            if r.role != FlatRelationRoleV2::StackTarget {
+                continue;
+            }
+            if let FlatRelationPayloadV2::Stack(p) = &mut r.payload {
+                if r.primary_order == spell_orders[0] {
+                    p.kicked = true;
+                    p.x_value = 3;
+                    p.mode_chosen = 1;
+                    p.cast_method = 3;
+                    p.is_flashback = true;
+                }
+                if r.primary_order == spell_orders[1] {
+                    p.kicked = false;
+                    p.x_value = 65535;
+                    p.mode_chosen = 255;
+                    p.cast_method = 2;
+                    p.is_copy = true;
+                }
             }
         }
-        let encoded=encode_stack_decision_v1(owned.view(&decision)).unwrap();
-        for (index,order) in spell_orders.iter().enumerate() {
-            let rows=encoded.stack.rows.iter().filter(|r|r.features[2]==*order as f32/32.0).collect::<Vec<_>>();
-            assert!(rows.len()>=2);assert!(rows.iter().all(|r|r.source_node==rows[0].source_node));
+        let encoded = encode_stack_decision_v1(owned.view(&decision)).unwrap();
+        for (index, order) in spell_orders.iter().enumerate() {
+            let rows = encoded
+                .stack
+                .rows
+                .iter()
+                .filter(|r| r.features[2] == *order as f32 / 32.0)
+                .collect::<Vec<_>>();
+            assert!(rows.len() >= 2);
+            assert!(rows.iter().all(|r| r.source_node == rows[0].source_node));
             for r in rows {
-                assert_eq!(r.features[15],f32::from(index==0));
-                assert_eq!(r.features[25+if index==0 {1}else{255}],1.0);
-                assert_eq!(r.features[16+if index==0 {3}else{2}],1.0);
-                assert_eq!(r.features[289..305].iter().enumerate().map(|(b,v)|if *v==1.0 {1u16<<b}else{0}).sum::<u16>(),if index==0 {3}else{65535});
+                assert_eq!(r.features[15], f32::from(index == 0));
+                assert_eq!(r.features[25 + if index == 0 { 1 } else { 255 }], 1.0);
+                assert_eq!(r.features[16 + if index == 0 { 3 } else { 2 }], 1.0);
+                assert_eq!(
+                    r.features[289..305]
+                        .iter()
+                        .enumerate()
+                        .map(|(b, v)| if *v == 1.0 { 1u16 << b } else { 0 })
+                        .sum::<u16>(),
+                    if index == 0 { 3 } else { 65535 }
+                );
             }
         }
-        let mut bad=encoded.stack.clone();bad.rows[0].source_node=bad.object_count;assert!(bad.validate(bad.object_count).is_err());
-        let mut bad=encoded.stack.clone();bad.rows[0].features[0]=f32::NAN;assert!(bad.validate(bad.object_count).is_err());
-        let mut bad=encoded.stack.clone();bad.rows.remove(0);assert!(bad.validate(bad.object_count).is_err());
-        let mut bad=encoded.stack.clone();bad.rows[1].features[15]=1.0-bad.rows[1].features[15];assert!(bad.validate(bad.object_count).is_err());
+        let mut bad = encoded.stack.clone();
+        bad.rows[0].source_node = bad.object_count;
+        assert!(bad.validate(bad.object_count).is_err());
+        let mut bad = encoded.stack.clone();
+        bad.rows[0].features[0] = f32::NAN;
+        assert!(bad.validate(bad.object_count).is_err());
+        let mut bad = encoded.stack.clone();
+        bad.rows.remove(0);
+        assert!(bad.validate(bad.object_count).is_err());
+        let mut bad = encoded.stack.clone();
+        bad.rows[1].features[15] = 1.0 - bad.rows[1].features[15];
+        assert!(bad.validate(bad.object_count).is_err());
     }
 
-    fn stack_simple_fixture_v1(actor:PlayerId,hidden:bool,scenario:&str)->FastActorSessionV1 {
-        use crate::engine::{self,Action,Decision};
+    fn stack_simple_fixture_v1(
+        actor: PlayerId,
+        hidden: bool,
+        scenario: &str,
+    ) -> FastActorSessionV1 {
+        use crate::engine::{self, Action, Decision};
         use crate::mana::ManaColor;
-        use crate::policy_observation_v6::tests::{put,ready_state};
-        use crate::state::{Target,Zone};
-        let opponent=if actor==PlayerId::P0 {PlayerId::P1}else{PlayerId::P0};
-        let mut state=ready_state();state.active_player=actor;state.priority_player=actor;
-        if hidden {put(&mut state,opponent,"Gut Shot",Zone::Hand);}
-        let source=put(&mut state,actor,if scenario=="kicked" {"Goblin Bushwhacker"}else{"Lightning Bolt"},Zone::Hand);
-        put(&mut state,actor,"Lightning Bolt",Zone::Hand);
-        if !hidden {put(&mut state,opponent,"Lotus Petal",Zone::Hand);}
-        for owner in [actor,opponent] {for name in if hidden {["Forest","Mountain"]}else{["Mountain","Forest"]} {put(&mut state,owner,name,Zone::Library);}}
-        state.players[actor.index()].mana_pool[ManaColor::R.pool_index()]=8;
-        match scenario {
-            "player"=>{engine::step(&mut state,Action::CastSpell(source)).unwrap();engine::step(&mut state,Action::ChooseTarget(Target::Player(opponent))).unwrap();},
-            "kicked"=>{engine::step(&mut state,Action::CastSpell(source)).unwrap();assert!(matches!(engine::advance_until_decision(&mut state),Decision::ChooseKicker {..}));engine::step(&mut state,Action::ChooseKicker(true)).unwrap();},
-            "empty"=>{},_=>panic!("unknown scenario"),
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::state::{Target, Zone};
+        let opponent = if actor == PlayerId::P0 {
+            PlayerId::P1
+        } else {
+            PlayerId::P0
+        };
+        let mut state = ready_state();
+        state.active_player = actor;
+        state.priority_player = actor;
+        if hidden {
+            put(&mut state, opponent, "Gut Shot", Zone::Hand);
         }
-        let session=FastActorSessionV1::from_v3_fixture_state(state);
-        let FastActorResponseV1::Decision(decision)=session.current_response() else {panic!("fixture skipped decision");};
-        assert_eq!(decision.acting_player as usize,actor.index());session
+        let source = put(
+            &mut state,
+            actor,
+            if scenario == "kicked" {
+                "Goblin Bushwhacker"
+            } else {
+                "Lightning Bolt"
+            },
+            Zone::Hand,
+        );
+        put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+        if !hidden {
+            put(&mut state, opponent, "Lotus Petal", Zone::Hand);
+        }
+        for owner in [actor, opponent] {
+            for name in if hidden {
+                ["Forest", "Mountain"]
+            } else {
+                ["Mountain", "Forest"]
+            } {
+                put(&mut state, owner, name, Zone::Library);
+            }
+        }
+        state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 8;
+        match scenario {
+            "player" => {
+                engine::step(&mut state, Action::CastSpell(source)).unwrap();
+                engine::step(&mut state, Action::ChooseTarget(Target::Player(opponent))).unwrap();
+            }
+            "kicked" => {
+                engine::step(&mut state, Action::CastSpell(source)).unwrap();
+                assert!(matches!(
+                    engine::advance_until_decision(&mut state),
+                    Decision::ChooseKicker { .. }
+                ));
+                engine::step(&mut state, Action::ChooseKicker(true)).unwrap();
+            }
+            "empty" => {}
+            _ => panic!("unknown scenario"),
+        }
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            panic!("fixture skipped decision");
+        };
+        assert_eq!(decision.acting_player as usize, actor.index());
+        session
     }
 
     #[test]
     #[ignore = "requires pinned g115 checkpoint and fresh MTG_STACK_EXPORT path"]
     fn public_stack_g115_zero_parity_and_export_reference() {
-        use crate::native_policy_value_net_v1::{NativePolicyValueNetV1,NativePolicyValueModelConfigV1};
         use crate::native_policy_value_net_v1::stack_inputs_v1::*;
+        use crate::native_policy_value_net_v1::{
+            NativePolicyValueModelConfigV1, NativePolicyValueNetV1,
+        };
         use crate::public_stack_features_v1::*;
-        use sha2::{Digest,Sha256};
-        use serde_json::{json,Value};
-        let path=std::env::var("MTG_STACK_CHECKPOINT").unwrap();
-        let bytes=std::fs::read(&path).unwrap();
-        let sha=format!("{:x}",Sha256::digest(&bytes));
-        assert_eq!(sha,"88c0b997708c2b5156b44f3940ad9d5d682f78ac24d346978bb3c9f34c59e8d1");
-        let source:Value=serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(source["feature_contract_digest"],crate::native_flat_tensorizer_v4::FEATURE_CONTRACT_DIGEST_V4);
-        assert_eq!(source["feature_encoding_digest"],crate::native_flat_tensorizer_v4::FEATURE_ENCODING_DIGEST_V4);
-        assert_eq!(source["card_db_hash"],"064a7c989255ab3c");
-        let mut base=NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1()).unwrap();
-        let mut parameters=base.parameter_snapshot_v1();
-        let raw=source["parameters"].as_array().unwrap();assert_eq!(parameters.len(),raw.len());
-        for (p,r) in parameters.iter_mut().zip(raw) {
-            assert_eq!(r["name"],p.name);
-            assert_eq!(serde_json::from_value::<Vec<usize>>(r["shape"].clone()).unwrap(),p.shape);
-            p.values=serde_json::from_value::<Vec<u32>>(r["values"].clone()).unwrap().into_iter().map(f32::from_bits).collect();
+        use serde_json::{json, Value};
+        use sha2::{Digest, Sha256};
+        let path = std::env::var("MTG_STACK_CHECKPOINT").unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let sha = format!("{:x}", Sha256::digest(&bytes));
+        assert_eq!(
+            sha,
+            "88c0b997708c2b5156b44f3940ad9d5d682f78ac24d346978bb3c9f34c59e8d1"
+        );
+        let source: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            source["feature_contract_digest"],
+            crate::native_flat_tensorizer_v4::FEATURE_CONTRACT_DIGEST_V4
+        );
+        assert_eq!(
+            source["feature_encoding_digest"],
+            crate::native_flat_tensorizer_v4::FEATURE_ENCODING_DIGEST_V4
+        );
+        assert_eq!(source["card_db_hash"], "064a7c989255ab3c");
+        let mut base =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut parameters = base.parameter_snapshot_v1();
+        let raw = source["parameters"].as_array().unwrap();
+        assert_eq!(parameters.len(), raw.len());
+        for (p, r) in parameters.iter_mut().zip(raw) {
+            assert_eq!(r["name"], p.name);
+            assert_eq!(
+                serde_json::from_value::<Vec<usize>>(r["shape"].clone()).unwrap(),
+                p.shape
+            );
+            p.values = serde_json::from_value::<Vec<u32>>(r["values"].clone())
+                .unwrap()
+                .into_iter()
+                .map(f32::from_bits)
+                .collect();
         }
         base.replace_parameter_snapshot_v1(&parameters).unwrap();
-        let weights:Vec<f32>=(0..64*INPUT_WIDTH).map(|i|((i*17%23) as f32-11.0)*0.003).collect();
-        let zero=NativeStackInputNetV1::new(base.clone(),StackInputWeightsV1::zero()).unwrap();
-        let nonzero=NativeStackInputNetV1::new(base.clone(),StackInputWeightsV1::new(weights.clone()).unwrap()).unwrap();
-        let bits=|o:&crate::native_policy_value_net_v1::NativePolicyValueOutputV1|o.logits.iter().chain(std::iter::once(&o.value)).map(|v|v.to_bits()).collect::<Vec<_>>();
-        let mut samples=Vec::new();
-        for actor in [PlayerId::P0,PlayerId::P1] {
-          for scenario in ["ward","player","kicked","empty"] {
-            let mut previous=None;
-            for hidden in [false,true] {
-                let session=if scenario=="ward" {stack_fixture_v1(actor,hidden)}else{stack_simple_fixture_v1(actor,hidden,scenario)};
-                let mut owned=OwnedScoringV4::default();let decision=owned.encode(&session).unwrap();
-                let mut encoded=encode_stack_decision_v1(owned.view(&decision)).unwrap();
-                if std::env::var("MTG_STACK_PERMUTED_EXPORT").is_ok() {
-                    let kind=match scenario {"ward"=>0,"player"=>1,"kicked"=>2,"empty"=>3,_=>unreachable!()};
-                    let mut rng=crate::state::SplitMix64::seed(918273+actor.index() as u64*4+kind);
-                    encoded.stack.permutation=Some(StackColumnPermutationV1::sample(&mut rng));
-                }
-                let legacy=base.forward_feature_transfer_v4(encoded.view()).unwrap();
-                let z=zero.forward(&encoded).unwrap();let n=nonzero.forward(&encoded).unwrap();
-                assert_eq!(bits(&legacy),bits(&z));
-                if scenario=="empty" {assert!(encoded.stack.rows.is_empty());assert_eq!(bits(&legacy),bits(&n));}
-                else {assert_ne!(bits(&legacy),bits(&n));}
-                if scenario=="player" {assert!(encoded.stack.rows.iter().any(|r|r.features[308]==1.0&&r.target_node.is_none()));}
-                if scenario=="kicked" {assert_eq!(encoded.stack.rows.len(),1);assert_eq!(encoded.stack.rows[0].features[15],1.0);}
-                assert_eq!(bits(&n),bits(&nonzero.forward(&encoded).unwrap()));
-                if let Some((old,output))=&previous { assert_eq!(&encoded,old);assert_eq!(&bits(&n),output); }
-                else { previous=Some((encoded.clone(),bits(&n))); }
-                let t=&encoded.legacy.common;
-                let mut native=serde_json::Map::new();
-                macro_rules! field { ($name:ident) => { native.insert(stringify!($name).into(),json!(t.$name)); }; }
-                field!(state);field!(object_features);field!(object_card_ids);field!(object_groups);field!(object_node_ids);
-                field!(edge_features);field!(edge_source_indices);field!(edge_target_indices);field!(action_features);
-                field!(action_ref_features);field!(action_ref_card_ids);field!(action_ref_action_indices);field!(action_ref_node_indices);
-                samples.push(json!({"actor":actor.index(),"scenario":scenario,"hidden_variant":hidden,"native":native,"stack":encoded.stack,
+        let weights: Vec<f32> = (0..64 * INPUT_WIDTH)
+            .map(|i| ((i * 17 % 23) as f32 - 11.0) * 0.003)
+            .collect();
+        let zero = NativeStackInputNetV1::new(base.clone(), StackInputWeightsV1::zero()).unwrap();
+        let nonzero = NativeStackInputNetV1::new(
+            base.clone(),
+            StackInputWeightsV1::new(weights.clone()).unwrap(),
+        )
+        .unwrap();
+        let bits = |o: &crate::native_policy_value_net_v1::NativePolicyValueOutputV1| {
+            o.logits
+                .iter()
+                .chain(std::iter::once(&o.value))
+                .map(|v| v.to_bits())
+                .collect::<Vec<_>>()
+        };
+        let mut samples = Vec::new();
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for scenario in ["ward", "player", "kicked", "empty"] {
+                let mut previous = None;
+                for hidden in [false, true] {
+                    let session = if scenario == "ward" {
+                        stack_fixture_v1(actor, hidden)
+                    } else {
+                        stack_simple_fixture_v1(actor, hidden, scenario)
+                    };
+                    let mut owned = OwnedScoringV4::default();
+                    let decision = owned.encode(&session).unwrap();
+                    let mut encoded = encode_stack_decision_v1(owned.view(&decision)).unwrap();
+                    if std::env::var("MTG_STACK_PERMUTED_EXPORT").is_ok() {
+                        let kind = match scenario {
+                            "ward" => 0,
+                            "player" => 1,
+                            "kicked" => 2,
+                            "empty" => 3,
+                            _ => unreachable!(),
+                        };
+                        let mut rng = crate::state::SplitMix64::seed(
+                            918273 + actor.index() as u64 * 4 + kind,
+                        );
+                        encoded.stack.permutation =
+                            Some(StackColumnPermutationV1::sample(&mut rng));
+                    }
+                    let legacy = base.forward_feature_transfer_v4(encoded.view()).unwrap();
+                    let z = zero.forward(&encoded).unwrap();
+                    let n = nonzero.forward(&encoded).unwrap();
+                    assert_eq!(bits(&legacy), bits(&z));
+                    if scenario == "empty" {
+                        assert!(encoded.stack.rows.is_empty());
+                        assert_eq!(bits(&legacy), bits(&n));
+                    } else {
+                        assert_ne!(bits(&legacy), bits(&n));
+                    }
+                    if scenario == "player" {
+                        assert!(encoded
+                            .stack
+                            .rows
+                            .iter()
+                            .any(|r| r.features[308] == 1.0 && r.target_node.is_none()));
+                    }
+                    if scenario == "kicked" {
+                        assert_eq!(encoded.stack.rows.len(), 1);
+                        assert_eq!(encoded.stack.rows[0].features[15], 1.0);
+                    }
+                    assert_eq!(bits(&n), bits(&nonzero.forward(&encoded).unwrap()));
+                    if let Some((old, output)) = &previous {
+                        assert_eq!(&encoded, old);
+                        assert_eq!(&bits(&n), output);
+                    } else {
+                        previous = Some((encoded.clone(), bits(&n)));
+                    }
+                    let t = &encoded.legacy.common;
+                    let mut native = serde_json::Map::new();
+                    macro_rules! field {
+                        ($name:ident) => {
+                            native.insert(stringify!($name).into(), json!(t.$name));
+                        };
+                    }
+                    field!(state);
+                    field!(object_features);
+                    field!(object_card_ids);
+                    field!(object_groups);
+                    field!(object_node_ids);
+                    field!(edge_features);
+                    field!(edge_source_indices);
+                    field!(edge_target_indices);
+                    field!(action_features);
+                    field!(action_ref_features);
+                    field!(action_ref_card_ids);
+                    field!(action_ref_action_indices);
+                    field!(action_ref_node_indices);
+                    samples.push(json!({"actor":actor.index(),"scenario":scenario,"hidden_variant":hidden,"native":native,"stack":encoded.stack,
                     "zero":{"logits":z.logits,"value":z.value},"nonzero":{"logits":n.logits,"value":n.value}}));
+                }
             }
         }
-          }
-        let report=json!({"schema":"public-stack-g115-reference/v1","architecture":ARCHITECTURE,"checkpoint":path,"checkpoint_sha256":sha,
+        let report = json!({"schema":"public-stack-g115-reference/v1","architecture":ARCHITECTURE,"checkpoint":path,"checkpoint_sha256":sha,
             "weights":weights,"samples":samples,"zero_native_bit_exact":true,"hidden_pairs_bit_exact":true,
             "non_claim":"Bounded engineering only; no training integration or strength evidence."});
-        let file=std::fs::OpenOptions::new().write(true).create_new(true).open(std::env::var("MTG_STACK_EXPORT").unwrap()).unwrap();
-        serde_json::to_writer_pretty(file,&report).unwrap();
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(std::env::var("MTG_STACK_EXPORT").unwrap())
+            .unwrap();
+        serde_json::to_writer_pretty(file, &report).unwrap();
     }
 
     #[test]
     fn public_stack_engine_cast_kicker_without_targets_is_present() {
-        use crate::engine::{self,Action,Decision};
+        use crate::engine::{self, Action, Decision};
         use crate::mana::ManaColor;
-        use crate::policy_observation_v6::tests::{put,ready_state};
-        use crate::state::Zone;
+        use crate::policy_observation_v6::tests::{put, ready_state};
         use crate::public_stack_features_v1::*;
-        for kicked in [false,true] {
-            let mut state=ready_state();state.players[0].mana_pool[ManaColor::R.pool_index()]=5;
-            let spell=put(&mut state,PlayerId::P0,"Goblin Bushwhacker",Zone::Hand);
-            put(&mut state,PlayerId::P0,"Lightning Bolt",Zone::Hand);
-            engine::step(&mut state,Action::CastSpell(spell)).unwrap();
-            assert!(matches!(engine::advance_until_decision(&mut state),Decision::ChooseKicker {..}));
-            engine::step(&mut state,Action::ChooseKicker(kicked)).unwrap();
-            assert!(matches!(engine::advance_until_decision(&mut state),Decision::CastSpellOrPass {..}));
-            assert_eq!(state.stack.len(),1);assert_eq!(state.stack[0].kicked,kicked);
-            let session=FastActorSessionV1::from_v3_fixture_state(state);
-            let mut owned=OwnedScoringV4::default();let decision=owned.encode(&session).unwrap();
-            let encoded=encode_stack_decision_v1(owned.view(&decision)).unwrap();
-            assert_eq!(encoded.stack.stack_items,1);assert_eq!(encoded.stack.rows.len(),1);
-            assert_eq!(encoded.stack.rows[0].features[15],f32::from(kicked));
+        use crate::state::Zone;
+        for kicked in [false, true] {
+            let mut state = ready_state();
+            state.players[0].mana_pool[ManaColor::R.pool_index()] = 5;
+            let spell = put(&mut state, PlayerId::P0, "Goblin Bushwhacker", Zone::Hand);
+            put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
+            engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::ChooseKicker { .. }
+            ));
+            engine::step(&mut state, Action::ChooseKicker(kicked)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
+            assert_eq!(state.stack.len(), 1);
+            assert_eq!(state.stack[0].kicked, kicked);
+            let session = FastActorSessionV1::from_v3_fixture_state(state);
+            let mut owned = OwnedScoringV4::default();
+            let decision = owned.encode(&session).unwrap();
+            let encoded = encode_stack_decision_v1(owned.view(&decision)).unwrap();
+            assert_eq!(encoded.stack.stack_items, 1);
+            assert_eq!(encoded.stack.rows.len(), 1);
+            assert_eq!(encoded.stack.rows[0].features[15], f32::from(kicked));
             assert!(encoded.stack.rows[0].target_node.is_none());
         }
     }
@@ -404,7 +673,11 @@ mod tests {
         use crate::state::Zone;
         let mut samples = Vec::new();
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let opponent = if actor == PlayerId::P0 { PlayerId::P1 } else { PlayerId::P0 };
+            let opponent = if actor == PlayerId::P0 {
+                PlayerId::P1
+            } else {
+                PlayerId::P0
+            };
             for colors in [vec![], vec![ManaColor::W], vec![ManaColor::B, ManaColor::R]] {
                 let mut paired = Vec::new();
                 for hidden in [false, true] {
@@ -412,37 +685,67 @@ mod tests {
                     state.active_player = actor;
                     state.priority_player = actor;
                     // Different hidden identities and allocation before visible cards.
-                    if hidden { put(&mut state, opponent, "Gut Shot", Zone::Hand); }
-                    for name in ["Island", "Counterspell", "Burning-Tree Emissary", "Nyxborn Hydra"] {
+                    if hidden {
+                        put(&mut state, opponent, "Gut Shot", Zone::Hand);
+                    }
+                    for name in [
+                        "Island",
+                        "Counterspell",
+                        "Burning-Tree Emissary",
+                        "Nyxborn Hydra",
+                    ] {
                         put(&mut state, actor, name, Zone::Hand);
                     }
                     put(&mut state, actor, "Sacred Cat", Zone::Battlefield);
                     let source = put(&mut state, actor, "Prismatic Strands", Zone::Graveyard);
-                    if !hidden { put(&mut state, opponent, "Lotus Petal", Zone::Hand); }
-                    for name in if hidden { ["Mountain", "Forest"] } else { ["Forest", "Mountain"] } {
+                    if !hidden {
+                        put(&mut state, opponent, "Lotus Petal", Zone::Hand);
+                    }
+                    for name in if hidden {
+                        ["Mountain", "Forest"]
+                    } else {
+                        ["Forest", "Mountain"]
+                    } {
                         put(&mut state, opponent, name, Zone::Library);
                     }
-                    for color in &colors { install_color_damage_prevention(&mut state, source, *color).unwrap(); }
+                    for color in &colors {
+                        install_color_damage_prevention(&mut state, source, *color).unwrap();
+                    }
                     let session = FastActorSessionV1::from_v3_fixture_state(state);
-                    let FastActorResponseV1::Decision(d) = session.current_response() else { panic!("expected live decision") };
-                    let (observation, actions) = crate::paired_bo1_harness_v1::PairedBo1PolicyInputV1::new(&session,d).diagnostic_visible_v1().unwrap();
+                    let FastActorResponseV1::Decision(d) = session.current_response() else {
+                        panic!("expected live decision")
+                    };
+                    let (observation, actions) =
+                        crate::paired_bo1_harness_v1::PairedBo1PolicyInputV1::new(&session, d)
+                            .diagnostic_visible_v1()
+                            .unwrap();
                     let mut owned = OwnedScoringV4::default();
                     let encoded = owned.encode(&session).unwrap();
                     let mut tensor = NativeFlatDecisionTensorV4::default();
-                    NativeFlatTensorizerV4::default().fill(owned.view(&encoded), &mut tensor).unwrap();
-                    let public = from_actor_v4_v1(&observation, &tensor.common.object_card_ids).unwrap();
-                    for (bit,value) in public.state.iter().enumerate().take(5) {
-                        assert_eq!(*value, f32::from(colors.iter().any(|c| c.pool_index() == bit)));
+                    NativeFlatTensorizerV4::default()
+                        .fill(owned.view(&encoded), &mut tensor)
+                        .unwrap();
+                    let public =
+                        from_actor_v4_v1(&observation, &tensor.common.object_card_ids).unwrap();
+                    for (bit, value) in public.state.iter().enumerate().take(5) {
+                        assert_eq!(
+                            *value,
+                            f32::from(colors.iter().any(|c| c.pool_index() == bit))
+                        );
                     }
                     assert_eq!(public.objects.len(), tensor.common.object_card_ids.len());
                     for forbidden in ["Gut Shot", "Lotus Petal", "Mountain", "Forest"] {
-                        let token = i64::from(crate::card_def::card_id_by_name(forbidden).unwrap()) + 1;
+                        let token =
+                            i64::from(crate::card_def::card_id_by_name(forbidden).unwrap()) + 1;
                         assert!(!tensor.common.object_card_ids.contains(&token));
                     }
                     assert!(from_actor_v4_v1(&observation, &[-1]).is_err());
                     assert!(from_actor_v4_v1(&observation, &[i64::MIN]).is_err());
                     assert!(from_actor_v4_v1(&observation, &[65536]).is_err());
-                    assert_eq!(from_actor_v4_v1(&observation, &[0]).unwrap().objects, vec![vec![0.0;32]]);
+                    assert_eq!(
+                        from_actor_v4_v1(&observation, &[0]).unwrap().objects,
+                        vec![vec![0.0; 32]]
+                    );
                     let t = &tensor.common;
                     samples.push(serde_json::json!({"actor":actor.index(),"hidden_variant":hidden,
                         "observation":observation,"actions":actions,"public":public,
@@ -454,12 +757,23 @@ mod tests {
                             "action_ref_node_indices":t.action_ref_node_indices}}));
                     paired.push(public);
                 }
-                assert_eq!(paired[0], paired[1], "hidden cards or allocation changed public features");
+                assert_eq!(
+                    paired[0], paired[1],
+                    "hidden cards or allocation changed public features"
+                );
             }
         }
         if let Ok(path) = std::env::var("MTG_PUBLIC_FEATURE_SAMPLES") {
-            let output = std::fs::OpenOptions::new().create_new(true).write(true).open(path).unwrap();
-            serde_json::to_writer(output, &serde_json::json!({"catalog":catalog_v1().unwrap(),"samples":samples})).unwrap();
+            let output = std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(path)
+                .unwrap();
+            serde_json::to_writer(
+                output,
+                &serde_json::json!({"catalog":catalog_v1().unwrap(),"samples":samples}),
+            )
+            .unwrap();
         }
     }
 
@@ -473,7 +787,11 @@ mod tests {
         use crate::policy_observation_v6::tests::{put, ready_state};
         use crate::state::{Target, Zone};
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let opponent = if actor == PlayerId::P0 { PlayerId::P1 } else { PlayerId::P0 };
+            let opponent = if actor == PlayerId::P0 {
+                PlayerId::P1
+            } else {
+                PlayerId::P0
+            };
             let mut plain = ready_state();
             plain.active_player = actor;
             plain.priority_player = actor;
@@ -487,36 +805,78 @@ mod tests {
             let mut views = Vec::new();
             for state in [plain.clone(), protected.clone()] {
                 let session = FastActorSessionV1::from_v3_fixture_state(state);
-                let FastActorResponseV1::Decision(decision) = session.current_response() else { panic!("expected live decision") };
-                views.push(crate::paired_bo1_harness_v1::PairedBo1PolicyInputV1::new(&session, decision).diagnostic_visible_v1().unwrap());
+                let FastActorResponseV1::Decision(decision) = session.current_response() else {
+                    panic!("expected live decision")
+                };
+                views.push(
+                    crate::paired_bo1_harness_v1::PairedBo1PolicyInputV1::new(&session, decision)
+                        .diagnostic_visible_v1()
+                        .unwrap(),
+                );
                 let mut owned = OwnedScoringV4::default();
                 let encoded = owned.encode(&session).unwrap();
                 let mut tensor = NativeFlatDecisionTensorV4::default();
-                NativeFlatTensorizerV4::default().fill(owned.view(&encoded), &mut tensor).unwrap();
+                NativeFlatTensorizerV4::default()
+                    .fill(owned.view(&encoded), &mut tensor)
+                    .unwrap();
                 tensors.push(tensor);
             }
-            assert_eq!(views[0].1, views[1].1, "prevention must not change legal menus");
-            assert_ne!(views[0].0, views[1].0, "public prevention must distinguish observations");
-            let shields: Vec<_> = views[1].0.projection.surface.continuous_effects.iter().filter(|e| e.prevent_damage_from_color_mask != 0).collect();
+            assert_eq!(
+                views[0].1, views[1].1,
+                "prevention must not change legal menus"
+            );
+            assert_ne!(
+                views[0].0, views[1].0,
+                "public prevention must distinguish observations"
+            );
+            let shields: Vec<_> = views[1]
+                .0
+                .projection
+                .surface
+                .continuous_effects
+                .iter()
+                .filter(|e| e.prevent_damage_from_color_mask != 0)
+                .collect();
             assert_eq!(shields.len(), 1);
             assert_eq!(shields[0].prevent_damage_from_color_mask, 8);
-            assert_ne!(tensors[0], tensors[1], "public prevention must distinguish native features");
-            propose_and_commit(&mut plain, ProposedEvent::damage(red, Target::Player(actor), 5));
-            propose_and_commit(&mut protected, ProposedEvent::damage(red, Target::Player(actor), 5));
+            assert_ne!(
+                tensors[0], tensors[1],
+                "public prevention must distinguish native features"
+            );
+            propose_and_commit(
+                &mut plain,
+                ProposedEvent::damage(red, Target::Player(actor), 5),
+            );
+            propose_and_commit(
+                &mut protected,
+                ProposedEvent::damage(red, Target::Player(actor), 5),
+            );
             assert_eq!(plain.players[actor.index()].life, 15);
             assert_eq!(protected.players[actor.index()].life, 20);
             eprintln!("seat {}: corrected visible observation and native tensors differ, legal menu unchanged; same red damage leaves life 15 versus 20", actor.index());
         }
     }
 
-    fn prevention_tensor(state: crate::state::GameState) -> (crate::policy_observation_v6::ObservationV6, NativeFlatDecisionTensorV4) {
+    fn prevention_tensor(
+        state: crate::state::GameState,
+    ) -> (
+        crate::policy_observation_v6::ObservationV6,
+        NativeFlatDecisionTensorV4,
+    ) {
         let session = FastActorSessionV1::from_v3_fixture_state(state);
-        let FastActorResponseV1::Decision(d) = session.current_response() else { panic!("expected live decision") };
-        let (observation, _) = crate::paired_bo1_harness_v1::PairedBo1PolicyInputV1::new(&session, d).diagnostic_visible_v1().unwrap();
+        let FastActorResponseV1::Decision(d) = session.current_response() else {
+            panic!("expected live decision")
+        };
+        let (observation, _) =
+            crate::paired_bo1_harness_v1::PairedBo1PolicyInputV1::new(&session, d)
+                .diagnostic_visible_v1()
+                .unwrap();
         let mut owned = OwnedScoringV4::default();
         let encoded = owned.encode(&session).unwrap();
         let mut tensor = NativeFlatDecisionTensorV4::default();
-        NativeFlatTensorizerV4::default().fill(owned.view(&encoded), &mut tensor).unwrap();
+        NativeFlatTensorizerV4::default()
+            .fill(owned.view(&encoded), &mut tensor)
+            .unwrap();
         (observation, tensor)
     }
 
@@ -545,10 +905,18 @@ mod tests {
         let (view_b, tensor_b) = prevention_tensor(b);
         assert_eq!(view_a, view_b);
         assert_eq!(tensor_a, tensor_b);
-        let effects: Vec<_> = view_a.projection.surface.continuous_effects.iter().filter(|e| e.prevent_damage_from_color_mask != 0).collect();
+        let effects: Vec<_> = view_a
+            .projection
+            .surface
+            .continuous_effects
+            .iter()
+            .filter(|e| e.prevent_damage_from_color_mask != 0)
+            .collect();
         assert_eq!(effects.len(), 1);
         assert_eq!(effects[0].prevent_damage_from_color_mask, 10);
-        assert!(effects[0].global && effects[0].source.is_none() && effects[0].controller.is_none());
+        assert!(
+            effects[0].global && effects[0].source.is_none() && effects[0].controller.is_none()
+        );
         assert!(effects[0].affected_objects.is_empty() && effects[0].affected_players.is_empty());
     }
 
@@ -558,13 +926,35 @@ mod tests {
         use crate::mana::ManaColor;
         use crate::policy_observation_v6::tests::{put, ready_state};
         use crate::state::Zone;
-        for color in [ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G] {
+        for color in [
+            ManaColor::W,
+            ManaColor::U,
+            ManaColor::B,
+            ManaColor::R,
+            ManaColor::G,
+        ] {
             let mut original = ready_state();
-            let source = put(&mut original, PlayerId::P0, "Prismatic Strands", Zone::Graveyard);
+            let source = put(
+                &mut original,
+                PlayerId::P0,
+                "Prismatic Strands",
+                Zone::Graveyard,
+            );
             put(&mut original, PlayerId::P0, "Sacred Cat", Zone::Battlefield);
             install_color_damage_prevention(&mut original, source, color).unwrap();
-            let mask = |state| prevention_tensor(state).0.projection.surface.continuous_effects.iter().fold(0, |m,e| m | e.prevent_damage_from_color_mask);
-            assert_eq!(mask(original.clone()), crate::card_def::mana_color_mask(color));
+            let mask = |state| {
+                prevention_tensor(state)
+                    .0
+                    .projection
+                    .surface
+                    .continuous_effects
+                    .iter()
+                    .fold(0, |m, e| m | e.prevent_damage_from_color_mask)
+            };
+            assert_eq!(
+                mask(original.clone()),
+                crate::card_def::mana_color_mask(color)
+            );
             let mut next_counter = original.clone();
             next_counter.turn += 1;
             assert_eq!(mask(next_counter), 0);
@@ -596,7 +986,12 @@ mod tests {
         let trigger_rows: Vec<_> = extensions_v7
             .historical_public_sources
             .iter()
-            .filter(|row| matches!(row.context, HistoricalSourceContextV7::PendingTrigger { .. }))
+            .filter(|row| {
+                matches!(
+                    row.context,
+                    HistoricalSourceContextV7::PendingTrigger { .. }
+                )
+            })
             .collect();
         assert_eq!(trigger_rows.len(), 1);
         assert_eq!(
@@ -605,7 +1000,9 @@ mod tests {
         );
 
         let mut owned = OwnedScoringV4::default();
-        let decision = owned.encode(&session).expect("V4 fixture production encoding");
+        let decision = owned
+            .encode(&session)
+            .expect("V4 fixture production encoding");
         let hist = &decision.extensions.historical_public_sources;
         assert_eq!(hist.len(), 1);
         assert!(matches!(
@@ -624,9 +1021,9 @@ mod tests {
         let (state, _sources) = hidden_order_triggers_state_v1(count);
         let session = FastActorSessionV1::from_v3_fixture_state(state);
         let mut owned = OwnedScoringV4::default();
-        let decision = owned
-            .encode(&session)
-            .unwrap_or_else(|e| panic!("V4 scoring must succeed for {count} simultaneous hidden triggers: {e:?}"));
+        let decision = owned.encode(&session).unwrap_or_else(|e| {
+            panic!("V4 scoring must succeed for {count} simultaneous hidden triggers: {e:?}")
+        });
         let hist = &decision.extensions.historical_public_sources;
         assert_eq!(hist.len(), count);
         let mut positions: Vec<u32> = hist
@@ -652,7 +1049,11 @@ mod tests {
         let mut tensor = NativeFlatDecisionTensorV4::default();
         NativeFlatTensorizerV4::default()
             .fill(view, &mut tensor)
-            .unwrap_or_else(|e| panic!("V4 tensor fill must succeed for {count} simultaneous hidden triggers: {e:?}"));
+            .unwrap_or_else(|e| {
+                panic!(
+                    "V4 tensor fill must succeed for {count} simultaneous hidden triggers: {e:?}"
+                )
+            });
     }
 
     #[test]
@@ -685,7 +1086,11 @@ mod tests {
             .encode(&session)
             .expect("both layers must agree and succeed for the shared-physical-source case");
         let hist = &decision.extensions.historical_public_sources;
-        assert_eq!(hist.len(), 2, "one row per hidden position, even though the physical card is shared");
+        assert_eq!(
+            hist.len(),
+            2,
+            "one row per hidden position, even though the physical card is shared"
+        );
         let mut positions: Vec<u32> = hist
             .iter()
             .map(|row| match row.context {
@@ -723,7 +1128,9 @@ mod tests {
     #[test]
     fn v4_and_v3_tensor_widths_are_identical_for_a_shared_fixture() {
         use crate::flat_policy_v3::{FlatDecisionEncoderV3, FlatScoringDecisionViewV3};
-        use crate::native_flat_tensorizer_v3::{NativeFlatDecisionTensorV3, NativeFlatTensorizerV3};
+        use crate::native_flat_tensorizer_v3::{
+            NativeFlatDecisionTensorV3, NativeFlatTensorizerV3,
+        };
 
         // A real, working ChooseTargets decision with actual objects and no
         // hidden/extension content -- `ready_state()` alone (no objects at
@@ -798,10 +1205,19 @@ mod tests {
             .fill(v4_view, &mut v4_tensor)
             .unwrap();
 
-        assert_eq!(v3_tensor.common.object_features.len(), v4_tensor.common.object_features.len());
-        assert_eq!(v3_tensor.common.edge_features.len(), v4_tensor.common.edge_features.len());
+        assert_eq!(
+            v3_tensor.common.object_features.len(),
+            v4_tensor.common.object_features.len()
+        );
+        assert_eq!(
+            v3_tensor.common.edge_features.len(),
+            v4_tensor.common.edge_features.len()
+        );
         assert_eq!(v3_tensor.common.state.len(), v4_tensor.common.state.len());
-        assert_eq!(v3_tensor.common.action_features.len(), v4_tensor.common.action_features.len());
+        assert_eq!(
+            v3_tensor.common.action_features.len(),
+            v4_tensor.common.action_features.len()
+        );
         assert_eq!(
             v3_tensor.common.action_ref_features.len(),
             v4_tensor.common.action_ref_features.len()
@@ -849,8 +1265,16 @@ mod tests {
         // advances its CURRENT live incarnation to Graveyard/1, unrelated to
         // the frozen Battlefield/0 identity the outstanding record and the
         // exiled card's own `exiled_by` marker still name below.
-        let fiend = put(&mut state, fiend_owner, "Tolarian Terror", Zone::Battlefield);
-        event::propose_and_commit(&mut state, ProposedEvent::zone_change(fiend, Zone::Graveyard));
+        let fiend = put(
+            &mut state,
+            fiend_owner,
+            "Tolarian Terror",
+            Zone::Battlefield,
+        );
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(fiend, Zone::Graveyard),
+        );
 
         let exiled = put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
         event::propose_and_commit(&mut state, ProposedEvent::zone_change(exiled, Zone::Exile));

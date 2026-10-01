@@ -488,7 +488,7 @@ fn rl_contract_detached_source_declassification_requires_exact_stack_binding() {
 }
 
 #[test]
-fn rl_contract_combat_projection_preserves_indexed_non_token_history() {
+fn rl_contract_combat_projection_drops_departed_non_token_combatants() {
     let mut state = empty_state();
     let attacker = make_object(
         &mut state,
@@ -508,51 +508,59 @@ fn rl_contract_combat_projection_preserves_indexed_non_token_history() {
     state.engine.combat.attackers = vec![attacker];
     state.engine.combat.blocked_by = vec![(attacker, vec![blocker])];
 
+    // CR 506.4: a permanent that leaves the battlefield is removed from
+    // combat. A departed blocker leaves the attacker blocked by no creature
+    // (CR 509.1h), so the projection keeps the live attacker with an empty
+    // blockers list.
     mtg_kernel::event::propose_and_commit(
         &mut state,
         mtg_kernel::event::ProposedEvent::zone_change(blocker, Zone::Graveyard),
     );
-    let historical_blocker = observe_for_test(&state, PlayerId::P0, 0);
+    assert_eq!(state.engine.combat.blocked_by, vec![(attacker, Vec::new())]);
+    let after_blocker_leaves = observe_for_test(&state, PlayerId::P0, 0);
     assert_eq!(
-        historical_blocker.projection.combat.ordered_attackers.len(),
+        after_blocker_leaves
+            .projection
+            .combat
+            .ordered_attackers
+            .len(),
         1
     );
     assert_eq!(
-        historical_blocker
+        after_blocker_leaves
             .projection
             .combat
             .attacker_to_ordered_blockers
             .len(),
         1
     );
-    assert_eq!(
-        historical_blocker
-            .projection
-            .combat
-            .attacker_to_ordered_blockers[0]
-            .1[0]
-            .zone,
-        Zone::Graveyard
-    );
+    assert!(after_blocker_leaves
+        .projection
+        .combat
+        .attacker_to_ordered_blockers[0]
+        .1
+        .is_empty());
 
+    // A departed attacker leaves the combat record entirely. Who attacked
+    // this turn is history, read from engine.event_history, not from the
+    // live combat record the projection exposes.
     mtg_kernel::event::propose_and_commit(
         &mut state,
         mtg_kernel::event::ProposedEvent::zone_change(attacker, Zone::Graveyard),
     );
-    let historical_pair = observe_for_test(&state, PlayerId::P0, 1);
-    assert_eq!(historical_pair.projection.combat.ordered_attackers.len(), 1);
-    assert_eq!(
-        historical_pair.projection.combat.ordered_attackers[0].zone,
-        Zone::Graveyard
-    );
-    assert_eq!(
-        historical_pair
-            .projection
-            .combat
-            .attacker_to_ordered_blockers
-            .len(),
-        1
-    );
+    assert!(state.engine.combat.attackers.is_empty());
+    assert!(state.engine.combat.blocked_by.is_empty());
+    let after_attacker_leaves = observe_for_test(&state, PlayerId::P0, 1);
+    assert!(after_attacker_leaves
+        .projection
+        .combat
+        .ordered_attackers
+        .is_empty());
+    assert!(after_attacker_leaves
+        .projection
+        .combat
+        .attacker_to_ordered_blockers
+        .is_empty());
 }
 
 #[test]

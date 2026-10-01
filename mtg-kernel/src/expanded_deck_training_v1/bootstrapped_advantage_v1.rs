@@ -116,7 +116,10 @@ pub(crate) fn normalize_advantages_v1(
     raw: &[f32],
     epsilon: f32,
 ) -> Result<(Vec<f32>, AdvantageStatisticsV1), String> {
-    ensure(!raw.is_empty(), "advantage normalization requires at least one group")?;
+    ensure(
+        !raw.is_empty(),
+        "advantage normalization requires at least one group",
+    )?;
     ensure(
         epsilon.is_finite() && epsilon > 0.0,
         "advantage normalization epsilon must be finite and positive",
@@ -126,39 +129,31 @@ pub(crate) fn normalize_advantages_v1(
     }
     let count = exact_group_count_f32_v1(raw.len())?;
     let mean = raw.iter().copied().fold(0.0f32, |sum, value| sum + value) / count;
-    let variance = raw
-        .iter()
-        .copied()
-        .fold(0.0f32, |sum, value| {
-            let deviation = value - mean;
-            sum + deviation * deviation
-        })
-        / count;
+    let variance = raw.iter().copied().fold(0.0f32, |sum, value| {
+        let deviation = value - mean;
+        sum + deviation * deviation
+    }) / count;
     let std = variance.sqrt();
     let denominator = std + epsilon;
-    let normalized: Vec<f32> = raw.iter().map(|value| (value - mean) / denominator).collect();
+    let normalized: Vec<f32> = raw
+        .iter()
+        .map(|value| (value - mean) / denominator)
+        .collect();
     for value in &normalized {
         ensure(value.is_finite(), "normalized advantage must be finite")?;
     }
-    let normalized_mean =
-        normalized.iter().copied().fold(0.0f32, |sum, value| sum + value) / count;
-    let normalized_variance = normalized
+    let normalized_mean = normalized
         .iter()
         .copied()
-        .fold(0.0f32, |sum, value| {
-            let deviation = value - normalized_mean;
-            sum + deviation * deviation
-        })
+        .fold(0.0f32, |sum, value| sum + value)
         / count;
+    let normalized_variance = normalized.iter().copied().fold(0.0f32, |sum, value| {
+        let deviation = value - normalized_mean;
+        sum + deviation * deviation
+    }) / count;
     let normalized_std = normalized_variance.sqrt();
-    let min = normalized
-        .iter()
-        .copied()
-        .fold(f32::INFINITY, f32::min);
-    let max = normalized
-        .iter()
-        .copied()
-        .fold(f32::NEG_INFINITY, f32::max);
+    let min = normalized.iter().copied().fold(f32::INFINITY, f32::min);
+    let max = normalized.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     Ok((
         normalized,
         AdvantageStatisticsV1 {

@@ -9,20 +9,22 @@ use crate::expanded_deck_training_v1::{
 };
 use crate::learned_sideboard_v1::actions_between_configurations_v1;
 use crate::native_policy_value_net_v1::public_inputs_v1::{PublicInputWeightsV1, ARCHITECTURE};
+use crate::native_policy_value_net_v1::stack_inputs_v1::{
+    StackInputWeightsV1, ARCHITECTURE as STACK_ARCHITECTURE,
+};
 use crate::paired_bo1_harness_v1::PlayPolicyGenerationV1;
+use crate::public_stack_features_v1::StackInputModeV1;
 use crate::sideboard_play_policy_v1::public_inputs::{
     select_forced_v3_for_evaluation, select_spell_adapter_v3_for_evaluation,
     PublicInputPlayPolicyV1,
 };
-use crate::native_policy_value_net_v1::stack_inputs_v1::{StackInputWeightsV1, ARCHITECTURE as STACK_ARCHITECTURE};
-use crate::public_stack_features_v1::StackInputModeV1;
 use crate::sideboard_play_policy_v1::stack_inputs::StackInputPlayPolicyV1;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 pub(crate) mod search_v3;
-use search_v3::SearchPlayV3;
 use crate::phase1_agent_v1::V4InformationSetSearchDescriptorV1;
+use search_v3::SearchPlayV3;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -31,8 +33,14 @@ pub enum ModelSource {
         source: ExpandedModelSourceV1,
         descriptor: V4InformationSetSearchDescriptorV1,
     },
-    StackWarmStart { source: ExpandedModelSourceV1, input_mode: StackInputModeV1 },
-    StackCheckpoint { config: PinnedFileV1, checkpoint: PinnedFileV1 },
+    StackWarmStart {
+        source: ExpandedModelSourceV1,
+        input_mode: StackInputModeV1,
+    },
+    StackCheckpoint {
+        config: PinnedFileV1,
+        checkpoint: PinnedFileV1,
+    },
     Legacy {
         source: ExpandedModelSourceV1,
         v3_forced_actions: bool,
@@ -109,13 +117,23 @@ impl Play {
         }
     }
     fn begin_match(&mut self) {
-        if let Self::Search(policy) = self { policy.begin_match(); }
+        if let Self::Search(policy) = self {
+            policy.begin_match();
+        }
     }
     fn search_records(&self) -> Option<Value> {
-        if let Self::Search(policy) = self { Some(policy.records()) } else { None }
+        if let Self::Search(policy) = self {
+            Some(policy.records())
+        } else {
+            None
+        }
     }
     fn search_timings(&self) -> Option<Value> {
-        if let Self::Search(policy) = self { Some(json!(policy.timings)) } else { None }
+        if let Self::Search(policy) = self {
+            Some(json!(policy.timings))
+        } else {
+            None
+        }
     }
 }
 
@@ -230,15 +248,32 @@ fn load(source: &ModelSource) -> Result<(Play, Value), String> {
         ModelSource::StackWarmStart { source, input_mode } => {
             let (base, identity) = load_expanded_inference_v1(source)?;
             let weights = StackInputWeightsV1::zero();
-            let weights_hash = hash(&serde_json::to_vec(&(STACK_ARCHITECTURE,
-                &identity.model.weights_sha256, weights.values.iter().map(|v|v.to_bits()).collect::<Vec<_>>(), input_mode)).map_err(error)?);
-            let receipt=json!({"schema":"public-stack-warm-start-model/v1","architecture":STACK_ARCHITECTURE,
+            let weights_hash = hash(
+                &serde_json::to_vec(&(
+                    STACK_ARCHITECTURE,
+                    &identity.model.weights_sha256,
+                    weights
+                        .values
+                        .iter()
+                        .map(|v| v.to_bits())
+                        .collect::<Vec<_>>(),
+                    input_mode,
+                ))
+                .map_err(error)?,
+            );
+            let receipt = json!({"schema":"public-stack-warm-start-model/v1","architecture":STACK_ARCHITECTURE,
                 "weights_sha256":weights_hash,"initial_base":identity,"input_mode":input_mode,"stack_adam_step":0});
-            Ok((Play::Stack(StackInputPlayPolicyV1::new(base,weights)?.with_mode(*input_mode)),receipt))
+            Ok((
+                Play::Stack(StackInputPlayPolicyV1::new(base, weights)?.with_mode(*input_mode)),
+                receipt,
+            ))
         }
         ModelSource::StackCheckpoint { config, checkpoint } => {
-            let (policy,identity)=crate::expanded_deck_training_v1::stack_features::load_for_evaluation(config,checkpoint)?;
-            Ok((Play::Stack(policy),identity))
+            let (policy, identity) =
+                crate::expanded_deck_training_v1::stack_features::load_for_evaluation(
+                    config, checkpoint,
+                )?;
+            Ok((Play::Stack(policy), identity))
         }
         ModelSource::PublicWarmStart { source } => {
             let (base, identity) = load_expanded_inference_v1(source)?;
@@ -282,7 +317,7 @@ struct Trace<'a> {
     rows: Vec<Value>,
     decisions: u64,
     terminal_audit: bool,
-    terminal_counts: std::collections::BTreeMap<String,u64>,
+    terminal_counts: std::collections::BTreeMap<String, u64>,
     terminal_roots: Vec<Value>,
     terminal_branches: u64,
 }
@@ -306,29 +341,46 @@ impl PairedBo1PolicyV1 for Trace<'_> {
             code: crate::rl_session::RlSessionErrorCode::StaleEnvironmentBinding,
             message,
         };
-        let root=input.decision();
-        let acting=usize::from(root.acting_player==crate::rl::PlayerSeatV1::P1);
-        let mut terminal_row=if self.terminal_audit && self.generations[acting]==PlayPolicyGenerationV1::V4 {
-            let record=input.diagnostic_terminal_targets_v1().map_err(fail)?;
-            let status=record["status"].as_str().ok_or_else(||fail("shadow status missing".into()))?;
-            *self.terminal_counts.entry(status.into()).or_default()+=1;
-            if status=="audited" {
-                self.terminal_branches+=u64::from(root.legal_action_count);
-                if self.terminal_roots.len()>=512 || self.terminal_branches>4096 {return Err(fail("shadow per-match budget exceeded".into()));}
-                Some(json!({"game_index":self.resets.len(),"step":root.step,"physical_decision_id":root.physical_decision_id,
-                    "actor":root.acting_player,"audit":record}))
-            } else {None}
-        } else {None};
+        let root = input.decision();
+        let acting = usize::from(root.acting_player == crate::rl::PlayerSeatV1::P1);
+        let mut terminal_row = if self.terminal_audit
+            && self.generations[acting] == PlayPolicyGenerationV1::V4
+        {
+            let record = input.diagnostic_terminal_targets_v1().map_err(fail)?;
+            let status = record["status"]
+                .as_str()
+                .ok_or_else(|| fail("shadow status missing".into()))?;
+            *self.terminal_counts.entry(status.into()).or_default() += 1;
+            if status == "audited" {
+                self.terminal_branches += u64::from(root.legal_action_count);
+                if self.terminal_roots.len() >= 512 || self.terminal_branches > 4096 {
+                    return Err(fail("shadow per-match budget exceeded".into()));
+                }
+                Some(
+                    json!({"game_index":self.resets.len(),"step":root.step,"physical_decision_id":root.physical_decision_id,
+                    "actor":root.acting_player,"audit":record}),
+                )
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         let mut row = if self.capture {
             let seat = usize::from(input.decision().acting_player == crate::rl::PlayerSeatV1::P1);
-            let diagnostic_error = |error: String| fail(format!(
-                "diagnostic seat={seat} generation={:?} decision={:?}: {error}",
-                self.generations[seat], input.decision()));
+            let diagnostic_error = |error: String| {
+                fail(format!(
+                    "diagnostic seat={seat} generation={:?} decision={:?}: {error}",
+                    self.generations[seat],
+                    input.decision()
+                ))
+            };
             let (observation, actions) = if self.generations[seat] == PlayPolicyGenerationV1::V4 {
                 input.diagnostic_visible_v4().map_err(diagnostic_error)?
             } else if self.spell_adapter[seat] {
-                let (observation, actions, repaired) =
-                    input.diagnostic_visible_spell_adapter_v1().map_err(diagnostic_error)?;
+                let (observation, actions, repaired) = input
+                    .diagnostic_visible_spell_adapter_v1()
+                    .map_err(diagnostic_error)?;
                 self.diagnostic_repairs[seat] += u64::from(repaired);
                 (observation, actions)
             } else {
@@ -349,8 +401,8 @@ impl PairedBo1PolicyV1 for Trace<'_> {
         if selected >= legal {
             return Err(fail("evaluation selected outside legal menu".into()));
         }
-        if let Some(ref mut r)=terminal_row {
-            r["selected"]=json!(selected);
+        if let Some(ref mut r) = terminal_row {
+            r["selected"] = json!(selected);
             self.terminal_roots.push(r.take());
         }
         self.decisions += 1;
@@ -503,8 +555,15 @@ pub fn run(command: Command) -> Result<Value, String> {
                     .map_err(error)?;
             let before = [p0.forced_count(), p1.forced_count()];
             let repairs_before = [p0.repair_count(), p1.repair_count()];
-            let spell_adapter = command.sources.each_ref().map(|source| matches!(source,
-                ModelSource::Legacy { v3_spell_target_reference_adapter: true, .. }));
+            let spell_adapter = command.sources.each_ref().map(|source| {
+                matches!(
+                    source,
+                    ModelSource::Legacy {
+                        v3_spell_target_reference_adapter: true,
+                        ..
+                    }
+                )
+            });
             let mut router = if command.cross_generation_evaluation {
                 SeatRoutedBo3PlayPolicyV1::new_cross_generation_evaluation_v1([&mut p0, &mut p1])?
             } else {
@@ -549,12 +608,18 @@ pub fn run(command: Command) -> Result<Value, String> {
                     drop(router);
                     let records = [p0.search_records(), p1.search_records()];
                     if records.iter().any(Option::is_some) {
-                        save(&command.output_directory, &format!("search-failure-{index:06}.json"),
+                        save(
+                            &command.output_directory,
+                            &format!("search-failure-{index:06}.json"),
                             &json!({"schema":"v4-information-set-evaluation-failure/v3",
                                 "match_index":index,"match":item,"models":identities,
-                                "error":message,"search":records}))?;
-                        save(&command.output_directory, &format!("search-timing-{index:06}.json"),
-                            &json!([p0.search_timings(), p1.search_timings()]))?;
+                                "error":message,"search":records}),
+                        )?;
+                        save(
+                            &command.output_directory,
+                            &format!("search-timing-{index:06}.json"),
+                            &json!([p0.search_timings(), p1.search_timings()]),
+                        )?;
                     }
                     return Err(message);
                 }
@@ -567,7 +632,7 @@ pub fn run(command: Command) -> Result<Value, String> {
                 "seed_resets":trace.resets,"decision_count":trace.decisions,"decisions":trace.rows,
                 "diagnostic_spell_target_repairs":trace.diagnostic_repairs});
             if command.terminal_audit_v1 {
-                result["terminal_audit_v1"]=json!({"counts":trace.terminal_counts,"branches":trace.terminal_branches,"roots":trace.terminal_roots});
+                result["terminal_audit_v1"] = json!({"counts":trace.terminal_counts,"branches":trace.terminal_branches,"roots":trace.terminal_roots});
             }
             drop(trace);
             drop(router);
@@ -575,8 +640,11 @@ pub fn run(command: Command) -> Result<Value, String> {
             if records.iter().any(Option::is_some) {
                 result["information_set_search_v3"] = json!(records);
                 // Wall-clock data is deliberately outside the semantic store hash.
-                save(&command.output_directory, &format!("search-timing-{index:06}.json"),
-                    &json!([p0.search_timings(), p1.search_timings()]))?;
+                save(
+                    &command.output_directory,
+                    &format!("search-timing-{index:06}.json"),
+                    &json!([p0.search_timings(), p1.search_timings()]),
+                )?;
             }
             result["v3_forced_actions"] =
                 json!([p0.forced_count() - before[0], p1.forced_count() - before[1]]);
@@ -618,27 +686,55 @@ mod tests {
     #[test]
     fn v3_spell_target_trace_requires_opt_in_and_preserves_selection() {
         use crate::paired_bo1_harness_v1::PairedBo1PolicyInputV1;
-        use crate::rl_session::{FastActorSessionV1, FastActorResponseV1};
+        use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
         let (state, _, _) = crate::rl_session::pyroblast_target_fixture_v1();
         let session = FastActorSessionV1::from_v3_fixture_state(state);
         let response = session.current_response();
-        let FastActorResponseV1::Decision(decision) = response else { panic!() };
-        let mut base = Play::Legacy { policy: FrozenPlayPolicyV1::training_fixture_v3(),
-            forced: true, count: 0, spell_adapter: true, repairs: 0 };
+        let FastActorResponseV1::Decision(decision) = response else {
+            panic!()
+        };
+        let mut base = Play::Legacy {
+            policy: FrozenPlayPolicyV1::training_fixture_v3(),
+            forced: true,
+            count: 0,
+            spell_adapter: true,
+            repairs: 0,
+        };
         let mut reference = FrozenPlayPolicyV1::training_fixture_v3();
         reference.reset_sampling_v1([123, 456]);
-        let mut trace = Trace { base: &mut base, capture: true, spell_adapter: [false; 2],
+        let mut trace = Trace {
+            base: &mut base,
+            capture: true,
+            spell_adapter: [false; 2],
             generations: [PlayPolicyGenerationV1::V3; 2],
-            diagnostic_repairs: [0; 2], resets: vec![], rows: vec![], decisions: 0,
-            terminal_audit:false, terminal_counts:Default::default(), terminal_roots:vec![],terminal_branches:0 };
+            diagnostic_repairs: [0; 2],
+            resets: vec![],
+            rows: vec![],
+            decisions: 0,
+            terminal_audit: false,
+            terminal_counts: Default::default(),
+            terminal_roots: vec![],
+            terminal_branches: 0,
+        };
         trace.reset_for_game_v1([123, 456]).unwrap();
-        assert!(trace.select_action_v1(PairedBo1PolicyInputV1::new(&session, decision)).is_err());
+        assert!(trace
+            .select_action_v1(PairedBo1PolicyInputV1::new(&session, decision))
+            .is_err());
         assert_eq!(trace.decisions, 0);
         trace.spell_adapter = [true, false];
         for _ in 0..8 {
-            let expected = select_spell_adapter_v3_for_evaluation(&mut reference,
-                &PairedBo1PolicyInputV1::new(&session, decision)).unwrap().0;
-            assert_eq!(trace.select_action_v1(PairedBo1PolicyInputV1::new(&session, decision)).unwrap(), expected);
+            let expected = select_spell_adapter_v3_for_evaluation(
+                &mut reference,
+                &PairedBo1PolicyInputV1::new(&session, decision),
+            )
+            .unwrap()
+            .0;
+            assert_eq!(
+                trace
+                    .select_action_v1(PairedBo1PolicyInputV1::new(&session, decision))
+                    .unwrap(),
+                expected
+            );
         }
         assert_eq!(trace.diagnostic_repairs, [8, 0]);
         assert_eq!(trace.rows.len(), 8);
@@ -649,14 +745,31 @@ mod tests {
         let mut v4 = FrozenPlayPolicyV1::training_fixture_v4();
         let mut reference = FrozenPlayPolicyV1::training_fixture_v4();
         reference.reset_sampling_v1([123, 456]);
-        let mut trace = Trace { base: &mut v4, capture: true, spell_adapter: [false; 2],
+        let mut trace = Trace {
+            base: &mut v4,
+            capture: true,
+            spell_adapter: [false; 2],
             generations: [PlayPolicyGenerationV1::V4; 2],
-            diagnostic_repairs: [0; 2], resets: vec![], rows: vec![], decisions: 0,
-            terminal_audit:false, terminal_counts:Default::default(), terminal_roots:vec![],terminal_branches:0 };
+            diagnostic_repairs: [0; 2],
+            resets: vec![],
+            rows: vec![],
+            decisions: 0,
+            terminal_audit: false,
+            terminal_counts: Default::default(),
+            terminal_roots: vec![],
+            terminal_branches: 0,
+        };
         trace.reset_for_game_v1([123, 456]).unwrap();
         for _ in 0..8 {
-            let expected = reference.select_action_v1(PairedBo1PolicyInputV1::new(&session, decision)).unwrap();
-            assert_eq!(trace.select_action_v1(PairedBo1PolicyInputV1::new(&session, decision)).unwrap(), expected);
+            let expected = reference
+                .select_action_v1(PairedBo1PolicyInputV1::new(&session, decision))
+                .unwrap();
+            assert_eq!(
+                trace
+                    .select_action_v1(PairedBo1PolicyInputV1::new(&session, decision))
+                    .unwrap(),
+                expected
+            );
         }
         assert_eq!(trace.rows.len(), 8);
         assert_eq!(trace.diagnostic_repairs, [0; 2]);

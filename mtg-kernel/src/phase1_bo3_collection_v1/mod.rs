@@ -4,17 +4,17 @@
 use crate::bo3_match::{GameOutcomeV1, MatchPhaseV1, PlayDrawChoiceV1};
 use crate::bo3_session::BestOfThreeDeckMatchV1;
 use crate::game_summary_v1::{
-    GameSummaryV1, RemovalCounterspellTagsV1, try_run_fast_episode_with_summary_v1,
+    try_run_fast_episode_with_summary_v1, GameSummaryV1, RemovalCounterspellTagsV1,
 };
 use crate::human_opening_v1::{HumanOpeningV1, HumanOpeningViewV1};
 use crate::ids::PlayerId;
-use crate::learned_bo3_v1::{Bo3OpeningProtocolV1, project_sideboard_input_v1};
+use crate::learned_bo3_v1::{project_sideboard_input_v1, Bo3OpeningProtocolV1};
 use crate::learned_sideboard_v1::{
     FrozenSideboardEmbeddingsV1, LearnedSideboardModelV1, SideboardActionV1,
     SideboardDeliberationStateV1,
 };
 use crate::paired_bo1_harness_v1::{
-    PairedBo1PolicyInputV1, PairedBo1PolicyV1, PlayPolicyGenerationV1, paired_policy_seeds_v1,
+    paired_policy_seeds_v1, PairedBo1PolicyInputV1, PairedBo1PolicyV1, PlayPolicyGenerationV1,
 };
 use crate::phase1_agent_v1::*;
 use crate::rl::{PlayerSeatV1, TerminalClassificationV1};
@@ -30,13 +30,22 @@ use std::collections::BTreeSet;
 
 mod combat_audit;
 mod continuation;
-#[cfg(feature="experimental-burn-net8-packed-cuda-v1")]
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 mod evaluation;
-#[cfg(feature="experimental-burn-net8-packed-cuda-v1")]
-pub use evaluation::{activate_bo3_v4,Bo3ActivationOptionsV1,Bo3ActivationResultV1,report_bo3_v4,Bo3ReportOptionsV1,Bo3ReportArchiveV1,Bo3ReportRootV1,Bo3ReportResultV1,evaluate_bo3_v4,Bo3EvaluationOptionsV1,Bo3EvaluationResultV1,BO3_EVALUATION_RESULT_SCHEMA_V1};
-pub use continuation::{collect_bo3_with_continuation_v1, continuation_record_sha256_v1, Bo3ContinuationOptionsV1, Bo3ContinuationResultV1};
-pub use combat_audit::{collect_bo3_with_combat_audit_v1, Bo3CombatAuditOptionsV1, Bo3CombatAuditResultV1};
 pub use combat_audit::{collect_bo3_with_burn_audit_v1, Bo3BurnAuditOptionsV1};
+pub use combat_audit::{
+    collect_bo3_with_combat_audit_v1, Bo3CombatAuditOptionsV1, Bo3CombatAuditResultV1,
+};
+pub use continuation::{
+    collect_bo3_with_continuation_v1, continuation_record_sha256_v1, Bo3ContinuationOptionsV1,
+    Bo3ContinuationResultV1,
+};
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+pub use evaluation::{
+    activate_bo3_v4, evaluate_bo3_v4, report_bo3_v4, Bo3ActivationOptionsV1, Bo3ActivationResultV1,
+    Bo3EvaluationOptionsV1, Bo3EvaluationResultV1, Bo3ReportArchiveV1, Bo3ReportOptionsV1,
+    Bo3ReportResultV1, Bo3ReportRootV1, BO3_EVALUATION_RESULT_SCHEMA_V1,
+};
 
 pub const BO3_COLLECTION_CONFIG_SCHEMA_V1: &str = "mtg-kernel-bo3-collection-config/v1";
 pub const BO3_COLLECTION_RESULT_SCHEMA_V1: &str = "mtg-kernel-bo3-collection-result/v1";
@@ -158,9 +167,14 @@ fn collect_public_observed(
     combat: Option<&mut combat_audit::CombatAuditSink>,
     continuation: Option<&mut continuation::ContinuationSink>,
 ) -> Result<Bo3CollectionResultV1, String> {
-    ensure(capture.is_none() || combat.is_none(), "combat audit cannot produce a learning capture")?;
-    ensure(continuation.is_none() || (capture.is_none() && combat.is_none()),
-        "continuation cannot accompany learning or combat capture")?;
+    ensure(
+        capture.is_none() || combat.is_none(),
+        "combat audit cannot produce a learning capture",
+    )?;
+    ensure(
+        continuation.is_none() || (capture.is_none() && combat.is_none()),
+        "continuation cannot accompany learning or combat capture",
+    )?;
     validate_configuration(&config, packages.each_ref())?;
     let [p0, p1] = packages
         .each_ref()
@@ -188,7 +202,11 @@ fn collect_public_observed(
 }
 
 fn seat(actor: PlayerSeatV1) -> usize {
-    if actor == PlayerSeatV1::P0 { 0 } else { 1 }
+    if actor == PlayerSeatV1::P0 {
+        0
+    } else {
+        1
+    }
 }
 fn player(actor: PlayerSeatV1) -> PlayerId {
     PlayerId(seat(actor) as u8)
@@ -385,10 +403,20 @@ fn collect_loaded_with_continuation(
     mut continuation: Option<&mut continuation::ContinuationSink>,
 ) -> Result<Bo3CollectedMatchV1, String> {
     validate_configuration(config, packages)?;
-    ensure(continuation.is_none() || policies.iter().all(|p| p.feature_generation_v1() == PlayPolicyGenerationV1::V4),
-        "continuation requires actual V4 gameplay policies")?;
-    ensure(combat.is_none() || policies.iter().all(|p| p.feature_generation_v1() == PlayPolicyGenerationV1::V4),
-        "combat audit requires both actual V4 gameplay policies")?;
+    ensure(
+        continuation.is_none()
+            || policies
+                .iter()
+                .all(|p| p.feature_generation_v1() == PlayPolicyGenerationV1::V4),
+        "continuation requires actual V4 gameplay policies",
+    )?;
+    ensure(
+        combat.is_none()
+            || policies
+                .iter()
+                .all(|p| p.feature_generation_v1() == PlayPolicyGenerationV1::V4),
+        "combat audit requires both actual V4 gameplay policies",
+    )?;
     // Strict whole-generation equality between the two seats, not just the
     // per-seat wide-vs-narrow boolean below: two different wide generations
     // (V3 and V4) both report `true` for `uses_observation_successor_v3`, so
@@ -812,12 +840,18 @@ impl RecordingPolicy<'_> {
         }
         if let Some(pending) = self.pending.take() {
             if let Some(continuation) = pending.continuation {
-                self.continuation.as_deref_mut().ok_or("continuation sink missing")?.commit(continuation)?;
+                self.continuation
+                    .as_deref_mut()
+                    .ok_or("continuation sink missing")?
+                    .commit(continuation)?;
             }
             self.budget
                 .append_checked(self.game, pending.record, pending.json_size);
             if let Some(combat) = pending.combat {
-                self.combat.as_deref_mut().expect("combat pending requires audit sink").commit(combat);
+                self.combat
+                    .as_deref_mut()
+                    .expect("combat pending requires audit sink")
+                    .commit(combat);
             }
             if let Some(native) = pending.native {
                 self.capture
@@ -858,18 +892,19 @@ impl PairedBo1PolicyV1 for RecordingPolicy<'_> {
         let behavior = BehaviorDistributionV1::hamilton_from_logits_v1(&scores.logits, selected)
             .map_err(recording_error)?;
         let capture = if self.policies[seat(decision.acting_player)].feature_generation_v1()
-            == PlayPolicyGenerationV1::V4 {
+            == PlayPolicyGenerationV1::V4
+        {
             PairedBo1PolicyInputV1::capture_bo3_gameplay_v4
         } else {
             PairedBo1PolicyInputV1::capture_bo3_gameplay_v1
         };
         let record = capture(
-                &input,
-                self.budget.count,
-                self.hashes[seat(decision.acting_player)].clone(),
-                behavior,
-            )
-            .map_err(recording_error)?;
+            &input,
+            self.budget.count,
+            self.hashes[seat(decision.acting_player)].clone(),
+            behavior,
+        )
+        .map_err(recording_error)?;
         let size = match self.budget.check(&record) {
             Ok(size) => size,
             Err(stop) => {
@@ -915,12 +950,23 @@ impl PairedBo1PolicyV1 for RecordingPolicy<'_> {
             None
         };
         let combat = if let Some(sink) = self.combat.as_deref_mut() {
-            sink.prepare(&input, &record, self.game.game_index,
-                &self.policies[seat(decision.acting_player)], &scores).map_err(recording_error)?
-        } else { None };
+            sink.prepare(
+                &input,
+                &record,
+                self.game.game_index,
+                &self.policies[seat(decision.acting_player)],
+                &scores,
+            )
+            .map_err(recording_error)?
+        } else {
+            None
+        };
         let continuation = if let Some(sink) = self.continuation.as_deref() {
-            sink.prepare(&input, &record, self.game.game_index, self.policies).map_err(recording_error)?
-        } else { None };
+            sink.prepare(&input, &record, self.game.game_index, self.policies)
+                .map_err(recording_error)?
+        } else {
+            None
+        };
         self.pending = Some(Pending {
             step: decision.step,
             record,

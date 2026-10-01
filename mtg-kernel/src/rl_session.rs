@@ -22,9 +22,10 @@ use crate::policy_surface_v5::{
 use crate::rl::{
     build_deck_pair_state, core_policy_action_candidates_v5, legal_action_candidates_v5,
     observe_policy_v5, observe_policy_v5_unhashed_for_flat_policy, parse_strict_json_value,
-    ActionSemanticV1, CardStableRefV1, CorePolicyActionCandidateV1, EpisodeTerminalSummaryV1,
-    LegalActionV5, ObservationV5, PlayerSeatV1, PolicyLegalActionCandidateV5, RlContractError,
-    TargetRefV1, TerminalClassificationV1, TerminalOutcomeV1, TerminalSafeCodeV2,
+    policy_legal_action_candidates_v5, ActionSemanticV1, CardStableRefV1,
+    CorePolicyActionCandidateV1, EpisodeTerminalSummaryV1, LegalActionV5, ObservationV5,
+    PlayerSeatV1, PolicyLegalActionCandidateV5, RlContractError, TargetRefV1,
+    TerminalClassificationV1, TerminalOutcomeV1, TerminalSafeCodeV2,
 };
 use crate::runtime_decks::{runtime_deck_by_id, RuntimeDeckDefinition, RUNTIME_DECKS};
 use crate::state::{Target, Zone};
@@ -285,7 +286,6 @@ mod v3_spell_target_adapter_v1;
 #[cfg(test)]
 pub(crate) use v3_spell_target_adapter_v1::pyroblast_target_fixture_v1;
 mod flat_action_v4;
-pub(crate) use flat_action_v4::{V4SearchStateErrorV1,V4SearchSampleMode};
 #[cfg(test)]
 pub(crate) use flat_action_v3::{
     avenging_hunter_hidden_source_with_stack_historical_rows_state_v1,
@@ -293,11 +293,12 @@ pub(crate) use flat_action_v3::{
     move_trigger_source_to_graveyard_v1, move_trigger_source_to_known_library_v1,
     shuffle_trigger_source_into_library_v1,
 };
+pub use flat_action_v3::{FlatActionDecisionBindingV3, FlatActionDecisionSliceV3};
 #[cfg(test)]
 pub(crate) use flat_action_v4::{
     hidden_order_triggers_shared_source_state_v1, hidden_order_triggers_state_v1,
 };
-pub use flat_action_v3::{FlatActionDecisionBindingV3, FlatActionDecisionSliceV3};
+pub(crate) use flat_action_v4::{V4SearchSampleMode, V4SearchStateErrorV1};
 
 pub const FLAT_ACTION_FLAG_PAY_V1: u16 = 1 << 0;
 pub const FLAT_ACTION_FLAG_CHANGE_TARGET_V1: u16 = 1 << 1;
@@ -1164,6 +1165,9 @@ fn flat_stack_action_object_ordinal_v1(
 
     match (stack_ordinal, detached_matches) {
         (Some(ordinal), 0) => Ok(ordinal),
+        // 608.2: a spell whose optional cost suspends its resolution stays
+        // on the stack, as its top item, until the deferred zone change.
+        (Some(ordinal), 1) if ordinal + 1 == state.stack.len() => Ok(ordinal),
         (None, 1) => {
             let appears_in_an_ordinary_zone =
                 [PlayerId::P0, PlayerId::P1].into_iter().any(|player| {
@@ -4159,6 +4163,16 @@ enum FastActorApplyPathV1 {
     CloneReference,
 }
 
+/// Which answers a session offers at a combat scan step. JSONL sessions keep
+/// the original `[include: false, include: true]` pair, which Python's V5
+/// encoder (`features.py`) requires; in-process sessions offer only the
+/// answers that keep a legal completion of the declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScanMenuV1 {
+    OriginalPair,
+    LegalAnswersOnly,
+}
+
 #[derive(Clone)]
 pub struct RlEpisodeSessionV1 {
     deck_ids: SessionDeckIdsV1,
@@ -4173,6 +4187,7 @@ pub struct RlEpisodeSessionV1 {
     physical_decision_count: u64,
     current: Option<CurrentDecisionV1>,
     terminal: Option<RlSessionTerminalV1>,
+    scan_menu: ScanMenuV1,
 }
 
 #[derive(Clone)]
@@ -4216,8 +4231,11 @@ impl FastActorSessionV1 {
     /// Inherited limits for coordinator continuation diagnostics. Neither
     /// constructing a fork nor querying these values changes the counters.
     pub(crate) fn diagnostic_remaining_headroom_v1(&self) -> [u64; 2] {
-        [self.max_physical_decisions.saturating_sub(self.physical_decision_count),
-         self.max_policy_steps.saturating_sub(self.policy_step_count)]
+        [
+            self.max_physical_decisions
+                .saturating_sub(self.physical_decision_count),
+            self.max_policy_steps.saturating_sub(self.policy_step_count),
+        ]
     }
 
     /// Feature-gated boundary audit of the search opponent (lane
@@ -4235,28 +4253,53 @@ impl FastActorSessionV1 {
         let p = owner.index();
         let pristine = |id: ObjectId, zone: Zone| {
             let o = s.objects.get(id);
-            o.owner == owner && o.controller == owner && o.zone == zone
-                && o.spell_copy_origin.is_none() && o.attachments.is_empty() && o.v4.attached_to.is_none()
-                && !o.tapped && !o.summoning_sick && o.damage == 0
-                && o.counters == crate::state::Counters::default() && o.plotted_turn.is_none()
-                && !o.v4.is_token && o.v4 == crate::state::ObjectStateV4::from_card_def(o.card_def)
+            o.owner == owner
+                && o.controller == owner
+                && o.zone == zone
+                && o.spell_copy_origin.is_none()
+                && o.attachments.is_empty()
+                && o.v4.attached_to.is_none()
+                && !o.tapped
+                && !o.summoning_sick
+                && o.damage == 0
+                && o.counters == crate::state::Counters::default()
+                && o.plotted_turn.is_none()
+                && !o.v4.is_token
+                && o.v4 == crate::state::ObjectStateV4::from_card_def(o.card_def)
         };
         let referenced = |id: ObjectId, slot: Option<usize>| {
             [PlayerId::P0, PlayerId::P1].iter().any(|observer| {
-                s.known_hand_cards(*observer, owner).iter().any(|k| k.object == id)
-                    || s.known_library_cards(*observer, owner).iter()
+                s.known_hand_cards(*observer, owner)
+                    .iter()
+                    .any(|k| k.object == id)
+                    || s.known_library_cards(*observer, owner)
+                        .iter()
                         .any(|k| k.object == id || Some(k.position as usize) == slot)
             })
         };
-        let (hi, hand) = s.players[p].hand.iter().copied().enumerate()
+        let (hi, hand) = s.players[p]
+            .hand
+            .iter()
+            .copied()
+            .enumerate()
             .find(|(_, id)| pristine(*id, Zone::Hand) && !referenced(*id, None))?;
         let definition = s.objects.get(hand).card_def;
-        let (li, library) = s.players[p].library.iter().copied().enumerate()
-            .find(|(i, id)| s.objects.get(*id).card_def != definition
-                && pristine(*id, Zone::Library) && !referenced(*id, Some(*i)))?;
+        let (li, library) = s.players[p]
+            .library
+            .iter()
+            .copied()
+            .enumerate()
+            .find(|(i, id)| {
+                s.objects.get(*id).card_def != definition
+                    && pristine(*id, Zone::Library)
+                    && !referenced(*id, Some(*i))
+            })?;
         let mut copy = self.clone();
         let state = &mut copy.state;
-        let (drawn, undrawn) = (state.objects.get(hand).zone_change_count, state.objects.get(library).zone_change_count);
+        let (drawn, undrawn) = (
+            state.objects.get(hand).zone_change_count,
+            state.objects.get(library).zone_change_count,
+        );
         state.players[p].hand[hi] = library;
         state.players[p].library[li] = hand;
         let moved = state.objects.get_mut(library);
@@ -4268,19 +4311,33 @@ impl FastActorSessionV1 {
         Some(copy)
     }
 
-    /// Test/feature-gated offline invariance perturbation; no live session mutation.
+    /// Feature-gated offline invariance perturbation; no live session mutation.
     #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
-    pub(crate) fn diagnostic_certificate_perturbed_clone_v1(&self,library:Option<usize>,rng:bool)->Result<Self,String> {
-        if library.is_some()==rng {return Err("choose exactly one certificate perturbation".into());}
-        let mut copy=self.clone();
-        if let Some(owner)=library {
-            if owner>1 || (0..2).any(|observer|!self.state.library_knowledge[observer][owner].is_empty()) {
+    pub(crate) fn diagnostic_certificate_perturbed_clone_v1(
+        &self,
+        library: Option<usize>,
+        rng: bool,
+    ) -> Result<Self, String> {
+        if library.is_some() == rng {
+            return Err("choose exactly one certificate perturbation".into());
+        }
+        let mut copy = self.clone();
+        if let Some(owner) = library {
+            if owner > 1
+                || (0..2).any(|observer| !self.state.library_knowledge[observer][owner].is_empty())
+            {
                 return Err("certificate permutation requires unobserved library".into());
             }
-            if self.state.players[owner].library.len()<2 {return Err("certificate permutation requires two cards".into());}
+            if self.state.players[owner].library.len() < 2 {
+                return Err("certificate permutation requires two cards".into());
+            }
             copy.state.players[owner].library.reverse();
-        } else {copy.state=copy.state.diagnostic_certificate_rng_clone_v1();}
-        if copy.diagnostic_state_hash()==self.diagnostic_state_hash() {return Err("certificate perturbation changed no state".into());}
+        } else {
+            copy.state = copy.state.diagnostic_certificate_rng_clone_v1();
+        }
+        if copy.diagnostic_state_hash() == self.diagnostic_state_hash() {
+            return Err("certificate perturbation changed no state".into());
+        }
         Ok(copy)
     }
 
@@ -4469,6 +4526,7 @@ impl RlEpisodeSessionV1 {
             max_policy_steps,
             deck_ids,
             None,
+            ScanMenuV1::LegalAnswersOnly,
         )
     }
 
@@ -4479,6 +4537,7 @@ impl RlEpisodeSessionV1 {
         max_policy_steps: u64,
         deck_ids: SessionDeckIdsV1,
         profile: Option<&mut RlPhaseProfileV1>,
+        scan_menu: ScanMenuV1,
     ) -> Result<Self, RlSessionError> {
         Self::reset_with_decks_and_limits_profiled_in_audit_mode(
             episode_id,
@@ -4488,9 +4547,11 @@ impl RlEpisodeSessionV1 {
             deck_ids,
             profile,
             SuppressionAuditMode::Off,
+            scan_menu,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn reset_with_decks_and_limits_profiled_in_audit_mode(
         episode_id: u64,
         env_seed: u64,
@@ -4499,6 +4560,7 @@ impl RlEpisodeSessionV1 {
         deck_ids: SessionDeckIdsV1,
         profile: Option<&mut RlPhaseProfileV1>,
         suppression_audit_mode: SuppressionAuditMode,
+        scan_menu: ScanMenuV1,
     ) -> Result<Self, RlSessionError> {
         Self::reset_with_decks_and_limits_profiled_in_audit_mode_with_randomization(
             episode_id,
@@ -4508,6 +4570,7 @@ impl RlEpisodeSessionV1 {
             deck_ids,
             profile,
             suppression_audit_mode,
+            scan_menu,
         )
     }
 
@@ -4531,6 +4594,7 @@ impl RlEpisodeSessionV1 {
             max_policy_steps,
             deck_ids,
             None,
+            ScanMenuV1::LegalAnswersOnly,
         )
     }
 
@@ -4544,6 +4608,7 @@ impl RlEpisodeSessionV1 {
         max_policy_steps: u64,
         deck_ids: SessionDeckIdsV1,
         profile: Option<&mut RlPhaseProfileV1>,
+        scan_menu: ScanMenuV1,
     ) -> Result<Self, RlSessionError> {
         Self::reset_with_decks_and_limits_profiled_in_audit_mode_with_randomization(
             episode_id,
@@ -4555,6 +4620,7 @@ impl RlEpisodeSessionV1 {
             deck_ids,
             profile,
             SuppressionAuditMode::Off,
+            scan_menu,
         )
     }
 
@@ -4639,6 +4705,7 @@ impl RlEpisodeSessionV1 {
         Ok(session)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn reset_with_decks_and_limits_profiled_in_audit_mode_with_randomization(
         episode_id: u64,
         randomization: ResetRandomization,
@@ -4647,6 +4714,7 @@ impl RlEpisodeSessionV1 {
         deck_ids: SessionDeckIdsV1,
         mut profile: Option<&mut RlPhaseProfileV1>,
         suppression_audit_mode: SuppressionAuditMode,
+        scan_menu: ScanMenuV1,
     ) -> Result<Self, RlSessionError> {
         let mut session = measure_optional(&mut profile, RlPhaseV1::Reset, || {
             // `RlEpisodeSessionV1` does not (yet) expose a starting-player
@@ -4671,6 +4739,7 @@ impl RlEpisodeSessionV1 {
                 physical_decision_count: 0,
                 current: None,
                 terminal: None,
+                scan_menu,
             })
         })?;
         session.advance_to_decision_or_terminal_profiled(profile);
@@ -4878,10 +4947,12 @@ impl RlEpisodeSessionV1 {
                 next_environment_revision,
             )
         })
-        .map_err(|_| {
+        .map_err(|refusal| {
             session_error(
                 RlSessionErrorCode::StaleEnvironmentBinding,
-                "selected action no longer matches the active policy environment",
+                &format!(
+                    "selected action no longer matches the active policy environment: {refusal}"
+                ),
             )
         })?;
         self.current = None;
@@ -5016,22 +5087,26 @@ impl RlEpisodeSessionV1 {
                 return;
             }
         };
-        let candidates = match measure_optional(&mut profile, RlPhaseV1::Actions, || {
-            legal_action_candidates_v5(&surfaced, &self.state)
-        }) {
-            Ok(candidates) => candidates,
-            Err(err) => {
-                self.terminal = Some(halted_terminal(
-                    &self.deck_ids,
-                    self.deck_hashes,
-                    self.episode_id,
-                    format!("fail_closed:{err}"),
-                    self.policy_step_count,
-                    self.physical_decision_count,
-                ));
-                return;
-            }
-        };
+        let candidates =
+            match measure_optional(&mut profile, RlPhaseV1::Actions, || match self.scan_menu {
+                ScanMenuV1::OriginalPair => legal_action_candidates_v5(&surfaced, &self.state),
+                ScanMenuV1::LegalAnswersOnly => {
+                    policy_legal_action_candidates_v5(&surfaced, &self.surface, &self.state)
+                }
+            }) {
+                Ok(candidates) => candidates,
+                Err(err) => {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:{err}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            };
         if candidates.is_empty() {
             self.terminal = Some(halted_terminal(
                 &self.deck_ids,
@@ -7176,6 +7251,7 @@ impl KernelRlJsonlServerV1 {
                     max_policy_steps,
                     deck_ids,
                     profile.as_deref_mut(),
+                    ScanMenuV1::OriginalPair,
                 ) {
                     Ok(session) => session,
                     Err(err) => {
@@ -7278,6 +7354,7 @@ impl KernelRlJsonlServerV1 {
                         max_policy_steps,
                         deck_ids,
                         profile.as_deref_mut(),
+                        ScanMenuV1::OriginalPair,
                     ) {
                         Ok(session) => session,
                         Err(err) => {
@@ -8168,6 +8245,43 @@ mod tests {
         state
     }
 
+    /// Sources of this game's committed combat damage to a player, in
+    /// commit order. The combat record is cleared as the end of combat step
+    /// ends (511.3), so a test whose commit auto-advanced past combat reads
+    /// what its declarations did from the permanent event history instead.
+    fn combat_damage_to_player_sources(state: &GameState) -> Vec<crate::ids::ObjectId> {
+        state
+            .engine
+            .event_history
+            .iter()
+            .filter_map(|event| match event {
+                crate::event::CommittedEvent::CombatDamageToPlayer { source, .. } => Some(*source),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Sources of the committed damage dealt to one creature, in commit
+    /// order (in these combat-only fixtures, exactly its combat opponents).
+    fn damage_sources_to(
+        state: &GameState,
+        target: crate::ids::ObjectId,
+    ) -> Vec<crate::ids::ObjectId> {
+        state
+            .engine
+            .event_history
+            .iter()
+            .filter_map(|event| match event {
+                crate::event::CommittedEvent::Damage {
+                    source,
+                    target: crate::state::Target::Object(id),
+                    amount,
+                } if *id == target && *amount > 0 => Some(*source),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn blocker_state(count: usize) -> GameState {
         let mut state = attacker_state(1);
         let attacker = state.players[0].battlefield[0];
@@ -8618,6 +8732,290 @@ mod tests {
 
         session.restore_v5(&snapshot);
         assert!(session.step(23, step, include_index, &include_id).is_ok());
+    }
+
+    /// The session error for a refused apply names the refusal instead of
+    /// only the fixed binding text.
+    #[test]
+    fn refused_apply_carries_the_surface_refusal_text() {
+        let mut session = attacker_session(1, 8, 8);
+        let response = session.current_response();
+        let (step, include_index, include_id) = action_at(&response, 1);
+        session.state.players[0].battlefield.clear();
+        let error = session
+            .step(23, step, include_index, &include_id)
+            .unwrap_err();
+        assert_eq!(error.code, RlSessionErrorCode::StaleEnvironmentBinding);
+        assert_eq!(
+            error.message,
+            "selected action no longer matches the active policy environment: \
+             one or more declared attackers is not an eligible attacker"
+        );
+    }
+
+    fn session_from_state(state: GameState) -> RlEpisodeSessionV1 {
+        let mut session = RlEpisodeSessionV1::reset_with_limits(23, 91, 8, 8);
+        session.state = state;
+        session.surface = PolicySurfaceV5::new();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.terminal = None;
+        session.advance_to_decision_or_terminal();
+        session
+    }
+
+    fn goad(state: &mut GameState, attacker: crate::ids::ObjectId) {
+        let expires_at_turn = state.turn + 1;
+        state.objects.get_mut(attacker).v4.goaded_by = vec![crate::state::GoadStateV4 {
+            player: PlayerId::P1,
+            expires_at_turn,
+        }];
+    }
+
+    fn offered_includes(response: &RlSessionResponseV1) -> Vec<bool> {
+        let RlSessionResponseV1::Decision(decision) = response else {
+            panic!("expected decision");
+        };
+        decision
+            .legal_actions
+            .iter()
+            .enumerate()
+            .map(|(index, action)| {
+                assert_eq!(action.selected_index as usize, index);
+                match &action.semantic {
+                    ActionSemanticV1::ChooseAttackerInclusion { include, .. }
+                    | ActionSemanticV1::ChooseBlockerInclusion { include, .. } => *include,
+                    other => panic!("expected a combat scan answer, got {other:?}"),
+                }
+            })
+            .collect()
+    }
+
+    fn step_include(session: &mut RlEpisodeSessionV1, include: bool) -> RlSessionResponseV1 {
+        let response = session.current_response();
+        let index = offered_includes(&response)
+            .iter()
+            .position(|offered| *offered == include)
+            .expect("answer is offered");
+        let (step, selected_index, id) = action_at(&response, index);
+        session.step(23, step, selected_index, &id).unwrap()
+    }
+
+    /// Spellbench launch-benchmark reproduction (Elves, Undercity Arena
+    /// goad): the session offered `include: false` for a goaded attacker,
+    /// which left no legal declaration.
+    #[test]
+    fn session_offers_only_the_inclusion_of_a_goaded_attacker() {
+        let mut state = attacker_state(2);
+        let goaded = state.players[0].battlefield[0];
+        goad(&mut state, goaded);
+        let mut session = session_from_state(state);
+        let response = session.current_response();
+        let RlSessionResponseV1::Decision(decision) = &response else {
+            panic!("expected the goaded attacker's scan step");
+        };
+        assert_eq!((decision.substep_index, decision.substep_count), (0, 2));
+        assert!(matches!(
+            &decision.legal_actions[0].semantic,
+            ActionSemanticV1::ChooseAttackerInclusion { attacker, .. } if attacker.arena_id == goaded.0
+        ));
+        assert_eq!(offered_includes(&response), vec![true]);
+
+        let response = step_include(&mut session, true);
+        assert_eq!(offered_includes(&response), vec![false, true]);
+        step_include(&mut session, false);
+        // Combat has ended (511.3 cleared its record): only the goaded
+        // creature attacked.
+        assert_eq!(
+            combat_damage_to_player_sources(&session.state),
+            vec![goaded]
+        );
+    }
+
+    /// A minimum-two attacker: after one blocker is included the last answer
+    /// must include, and after it is declined the last answer must decline.
+    #[test]
+    fn session_offers_only_blocker_answers_that_keep_a_legal_block() {
+        let mut state = blocker_state(2);
+        let attacker = state.engine.combat.attackers[0];
+        state.objects.get_mut(attacker).v4.minimum_blockers_override = Some(2);
+
+        let mut include_first = session_from_state(state.clone());
+        assert_eq!(
+            offered_includes(&include_first.current_response()),
+            vec![false, true]
+        );
+        let response = step_include(&mut include_first, true);
+        assert_eq!(offered_includes(&response), vec![true]);
+        step_include(&mut include_first, true);
+        // Combat has ended (511.3 cleared its record): both blockers
+        // blocked the attacker, which dealt no damage to the player.
+        assert_eq!(
+            damage_sources_to(&include_first.state, attacker),
+            state.players[1].battlefield
+        );
+        assert!(combat_damage_to_player_sources(&include_first.state).is_empty());
+
+        let mut decline_first = session_from_state(state);
+        let response = step_include(&mut decline_first, false);
+        assert_eq!(offered_includes(&response), vec![false]);
+        step_include(&mut decline_first, false);
+        assert!(damage_sources_to(&decline_first.state, attacker).is_empty());
+        assert_eq!(
+            combat_damage_to_player_sources(&decline_first.state),
+            vec![attacker]
+        );
+    }
+
+    /// Takes every offered answer of every combat scan step: the offer must be
+    /// exactly the answers with a legal completion (brute force over the
+    /// engine's aggregate validators) and each offered answer is accepted.
+    fn assert_session_offers_exactly_the_completable_answers(
+        session: &RlEpisodeSessionV1,
+        label: &str,
+    ) {
+        if !session.surface.scan_active() {
+            return;
+        }
+        let response = session.current_response();
+        let offered = offered_includes(&response);
+        let completable: Vec<bool> = [false, true]
+            .into_iter()
+            .filter(|include| {
+                crate::policy_surface_v5::scan_answer_has_legal_completion_for_test(
+                    &session.surface,
+                    &session.state,
+                    *include,
+                )
+            })
+            .collect();
+        assert_eq!(offered, completable, "{label}");
+        for index in 0..offered.len() {
+            let mut next = session.clone();
+            let (step, selected_index, id) = action_at(&response, index);
+            next.step(23, step, selected_index, &id)
+                .unwrap_or_else(|error| panic!("{label}: offered answer refused: {error}"));
+            assert_session_offers_exactly_the_completable_answers(&next, label);
+        }
+    }
+
+    #[test]
+    fn session_offers_exactly_the_scan_answers_that_keep_a_legal_completion() {
+        for count in 1..=3 {
+            for goad_mask in 0..(1usize << count) {
+                let mut state = attacker_state(count);
+                for index in 0..count {
+                    if goad_mask & (1 << index) != 0 {
+                        let id = state.players[0].battlefield[index];
+                        goad(&mut state, id);
+                    }
+                }
+                assert_session_offers_exactly_the_completable_answers(
+                    &session_from_state(state),
+                    &format!("attackers count={count} goad_mask={goad_mask:#05b}"),
+                );
+            }
+        }
+        for count in 1..=3 {
+            for minimum in 1..=3u8 {
+                let mut state = blocker_state(count);
+                let attacker = state.engine.combat.attackers[0];
+                state.objects.get_mut(attacker).v4.minimum_blockers_override = Some(minimum);
+                assert_session_offers_exactly_the_completable_answers(
+                    &session_from_state(state),
+                    &format!("blockers count={count} minimum={minimum}"),
+                );
+            }
+        }
+        // H2 removes blockers already assigned to an earlier attacker.
+        for minimum in 1..=3u8 {
+            let mut state = blocker_state(3);
+            let first_attacker = state.engine.combat.attackers[0];
+            let mut second = state.objects.get(first_attacker).clone();
+            second.v4 = ObjectStateV4::from_card_def(second.card_def);
+            second.v4.minimum_blockers_override = Some(minimum);
+            let second_attacker = state.objects.push(second);
+            state.players[0].battlefield.push(second_attacker);
+            state.engine.combat.attackers.push(second_attacker);
+            assert_session_offers_exactly_the_completable_answers(
+                &session_from_state(state),
+                &format!("two attackers, second minimum={minimum}"),
+            );
+        }
+    }
+
+    /// Python's V5 encoder (`features.py`) requires both answers at every
+    /// combat scan step, so sessions reset through the JSONL wire keep the
+    /// original pair even where one answer would strand the scan. The surface
+    /// still refuses that answer, with the engine's text, if it is picked.
+    #[test]
+    fn jsonl_sessions_keep_the_original_scan_pair_for_the_python_v5_encoder() {
+        for reset in [v5_reset_line("r5", 91, 8), v6_reset_line("r6", 91, 8)] {
+            let mut server = KernelRlJsonlServerV1::new();
+            server.handle_line(&reset);
+            let session = &mut server.active.as_mut().expect("active session").session;
+            let mut state = attacker_state(2);
+            let goaded = state.players[0].battlefield[0];
+            goad(&mut state, goaded);
+            session.state = state;
+            session.surface = PolicySurfaceV5::new_for_session();
+            session.environment_revision = 0;
+            session.policy_step_count = 0;
+            session.physical_decision_count = 0;
+            session.current = None;
+            session.terminal = None;
+            session.advance_to_decision_or_terminal();
+
+            let response = session.current_response();
+            assert_eq!(offered_includes(&response), vec![false, true]);
+            let (step, index, id) = action_at(&response, 0);
+            let error = session.step(1, step, index, &id).unwrap_err();
+            assert_eq!(
+                error.message,
+                "selected action no longer matches the active policy environment: \
+                 one or more goaded creatures able to attack was omitted"
+            );
+            let (step, index, id) = action_at(&response, 1);
+            session.step(1, step, index, &id).unwrap();
+        }
+    }
+
+    /// The fast actor still offers the original pair. Declining a goaded
+    /// attacker is rejected before mutation by the same rule the policy
+    /// session filters with, and stays retryable instead of halting the
+    /// episode as an internal apply failure.
+    #[test]
+    fn fast_actor_rejects_declining_a_goaded_attacker_before_mutation() {
+        let mut state = attacker_state(2);
+        let goaded = state.players[0].battlefield[0];
+        goad(&mut state, goaded);
+        let mut session = FastActorSessionV1::reset_with_limits(23, 91, 8, 8);
+        session.state = state;
+        session.surface = PolicySurfaceV5::new();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.terminal = None;
+        session.advance_to_decision_or_terminal();
+        assert_eq!(session.current.as_ref().unwrap().candidates.len(), 2);
+
+        assert_fast_actor_rejection_is_byte_atomic(
+            &mut session,
+            RlSessionErrorCode::StaleEnvironmentBinding,
+            |session| session.step(23, 0, 0),
+        );
+        assert!(session.terminal.is_none());
+        session.step(23, 0, 1).unwrap();
+        session.step(23, 1, 0).unwrap();
+        // Combat has ended (511.3 cleared its record): only the goaded
+        // creature attacked.
+        assert_eq!(
+            combat_damage_to_player_sources(&session.state),
+            vec![goaded]
+        );
     }
 
     #[test]
@@ -9131,8 +9529,7 @@ mod tests {
         state.step = Step::Main1;
         state.active_player = PlayerId::P0;
         state.priority_player = PlayerId::P0;
-        let barrels =
-            add_battlefield_object(&mut state, PlayerId::P0, "Barrels of Blasting Jelly");
+        let barrels = add_battlefield_object(&mut state, PlayerId::P0, "Barrels of Blasting Jelly");
         state.players[0].mana_pool[ManaColor::C.pool_index()] = 1;
 
         let mut session = FastActorSessionV1::reset_with_limits(24, 94, 8, 8);
@@ -9253,6 +9650,10 @@ mod tests {
         assert_eq!(test_policy_v5_materialization_calls(), (0, 1));
     }
 
+    /// Full and fast sessions offer equal candidates only where no combat scan
+    /// answer is filtered: the in-process full session drops answers without a
+    /// legal completion (goad, blocker minimums), the fast actor keeps the
+    /// original pair. Burn and Rally have neither.
     fn prove_fast_actor_parity(deck_id: &str, seed: u64) {
         let episode_id = seed ^ 0xFA57_AC70_0000_0001;
         let deck_ids = [deck_id.to_string(), deck_id.to_string()];
@@ -9474,6 +9875,7 @@ mod tests {
             [deck_id.to_string(), deck_id.to_string()],
             None,
             mode,
+            ScanMenuV1::LegalAnswersOnly,
         )
         .unwrap()
     }
@@ -11393,10 +11795,7 @@ mod tests {
         // ([higher, lower] here), while canonical order (by card_db_id) is
         // [lower, higher] -- the exact mismatch the crashing matches hit.
         let opponent_hand = session.state.players[opponent.index()].hand.clone();
-        assert!(
-            opponent_hand.len() >= 2,
-            "fixture hand must hold two cards"
-        );
+        assert!(opponent_hand.len() >= 2, "fixture hand must hold two cards");
         let higher = opponent_hand[0];
         let lower = opponent_hand[1];
         session.state.objects.get_mut(higher).card_def = 100;
@@ -11420,8 +11819,8 @@ mod tests {
         );
 
         let own_source = session.state.players[actor_id.index()].hand[0];
-        let origin_decision = PolicyDecisionV5::Surface(SurfaceDecision::Decision(
-            Decision::ChooseEffectTargets {
+        let origin_decision =
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::ChooseEffectTargets {
                 player: actor_id,
                 source: own_source,
                 selected_count: 0,
@@ -11429,8 +11828,7 @@ mod tests {
                 max_targets: 1,
                 legal_targets: vec![Target::Object(lower)],
                 can_finish: false,
-            },
-        ));
+            }));
         let (substep_index, substep_count) = origin_decision.substep();
         let candidates =
             core_policy_action_candidates_v5(&origin_decision, &session.state).unwrap();
@@ -11598,19 +11996,16 @@ mod tests {
             zone: second_object.zone,
             zone_change_count: second_object.zone_change_count,
         };
-        let components = flat_visible_action_object_components_v1(
-            &session.state,
-            actor_id,
-            &second_reference,
-        )
-        .expect("second is a known, live opponent hand card");
+        let components =
+            flat_visible_action_object_components_v1(&session.state, actor_id, &second_reference)
+                .expect("second is a known, live opponent hand card");
         assert_eq!(components.group, FlatActionObjectGroupV1::KnownOpponentHand);
         assert_eq!(components.actor_visible_ordinal, 2);
 
         // Drive the real production path against the tied card.
         let own_source = session.state.players[actor_id.index()].hand[0];
-        let origin_decision = PolicyDecisionV5::Surface(SurfaceDecision::Decision(
-            Decision::ChooseEffectTargets {
+        let origin_decision =
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::ChooseEffectTargets {
                 player: actor_id,
                 source: own_source,
                 selected_count: 0,
@@ -11618,8 +12013,7 @@ mod tests {
                 max_targets: 1,
                 legal_targets: vec![Target::Object(second)],
                 can_finish: false,
-            },
-        ));
+            }));
         let (substep_index, substep_count) = origin_decision.substep();
         let candidates =
             core_policy_action_candidates_v5(&origin_decision, &session.state).unwrap();
@@ -11771,8 +12165,8 @@ mod tests {
         // Drive the real production path against one of the surviving
         // cards.
         let own_source = session.state.players[actor_id.index()].hand[0];
-        let origin_decision = PolicyDecisionV5::Surface(SurfaceDecision::Decision(
-            Decision::ChooseEffectTargets {
+        let origin_decision =
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::ChooseEffectTargets {
                 player: actor_id,
                 source: own_source,
                 selected_count: 0,
@@ -11780,8 +12174,7 @@ mod tests {
                 max_targets: 1,
                 legal_targets: vec![Target::Object(remaining_high)],
                 can_finish: false,
-            },
-        ));
+            }));
         let (substep_index, substep_count) = origin_decision.substep();
         let candidates =
             core_policy_action_candidates_v5(&origin_decision, &session.state).unwrap();
@@ -11878,10 +12271,7 @@ mod tests {
         let opponent = PlayerId::P0;
 
         let opponent_hand = session.state.players[opponent.index()].hand.clone();
-        assert!(
-            opponent_hand.len() >= 2,
-            "fixture hand must hold two cards"
-        );
+        assert!(opponent_hand.len() >= 2, "fixture hand must hold two cards");
         let higher = opponent_hand[0];
         let lower = opponent_hand[1];
         session.state.objects.get_mut(higher).card_def = 100;
@@ -11930,8 +12320,8 @@ mod tests {
         }
 
         let own_source = session.state.players[actor_id.index()].hand[0];
-        let origin_decision = PolicyDecisionV5::Surface(SurfaceDecision::Decision(
-            Decision::ChooseEffectTargets {
+        let origin_decision =
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::ChooseEffectTargets {
                 player: actor_id,
                 source: own_source,
                 selected_count: 0,
@@ -11939,8 +12329,7 @@ mod tests {
                 max_targets: 1,
                 legal_targets: vec![Target::Object(lower)],
                 can_finish: false,
-            },
-        ));
+            }));
         let (substep_index, substep_count) = origin_decision.substep();
         let candidates =
             core_policy_action_candidates_v5(&origin_decision, &session.state).unwrap();
@@ -13705,12 +14094,16 @@ mod tests {
             "captured legacy fast-session core golden equals the full one"
         );
 
+        // Re-baselined for the end-of-combat clear (CR 511.3 rules fix):
+        // at this first decision (P1's turn 1 main phase) P0's finished
+        // combat no longer leaves attackers_declared set (the only state
+        // difference), which both the policy and the core hash cover.
         assert_eq!(
-            v2_policy, 0x3901_7f97_042a_d80a,
+            v2_policy, 0x39df_062b_9cf3_71ef,
             "final-pool-v9 environment-v2 policy environment golden"
         );
         assert_eq!(
-            v2_full_core, 0xa1c5_ca41_1ee8_1a2d,
+            v2_full_core, 0x5719_0d4d_4093_f99f,
             "final-pool-v9 environment-v2 core environment golden"
         );
         assert_eq!(
@@ -14317,23 +14710,21 @@ mod tests {
         use crate::environment_randomization_v2::PhysicalOwnerV2;
         let full = canonical_v2_full_reset(99);
         let fast = canonical_v2_fast_reset(99);
-        // Re-pinned again for the Phase 1 card lane merge (2026-09), same
-        // root cause and same shared values as
-        // `environment_hashes_are_diagnostic_dispatched_with_exact_goldens`'s
-        // own re-pin comment ("final-pool-v9 environment-v2 policy"/"core").
+        // Re-baselined with `environment_hashes_are_diagnostic_dispatched_with_exact_goldens`
+        // for the end-of-combat clear (CR 511.3 rules fix).
         assert_eq!(
             full.privileged_environment_hash(),
-            0x3901_7f97_042a_d80a,
+            0x39df_062b_9cf3_71ef,
             "pre-constructor policy pin is reused, not minted"
         );
         assert_eq!(
             full.privileged_core_environment_hash(),
-            0xa1c5_ca41_1ee8_1a2d,
+            0x5719_0d4d_4093_f99f,
             "pre-constructor core pin is reused, not minted"
         );
         assert_eq!(
             fast.privileged_core_environment_hash(),
-            0xa1c5_ca41_1ee8_1a2d,
+            0x5719_0d4d_4093_f99f,
             "full and fast v2 core hashes are equal and equal the pin"
         );
 
@@ -14371,11 +14762,11 @@ mod tests {
         );
         assert_ne!(
             full_100.privileged_environment_hash(),
-            0x3901_7f97_042a_d80a
+            0x39df_062b_9cf3_71ef
         );
         assert_ne!(
             full_100.privileged_core_environment_hash(),
-            0xa1c5_ca41_1ee8_1a2d
+            0x5719_0d4d_4093_f99f
         );
 
         // Root u64::MAX succeeds and stays exact full-width in both.

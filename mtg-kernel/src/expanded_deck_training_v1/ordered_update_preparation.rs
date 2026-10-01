@@ -451,16 +451,16 @@ where
         for row in &trajectory.decisions[job.start..job.end] {
             let common = row.tensor.tensor();
             let output = match generation {
-                FreshLineageGenerationV1::V3 => acting.score_training_tensor_v3(
-                    &NativeFlatDecisionTensorV3 {
+                FreshLineageGenerationV1::V3 => {
+                    acting.score_training_tensor_v3(&NativeFlatDecisionTensorV3 {
                         common: common.clone(),
-                    },
-                )?,
-                FreshLineageGenerationV1::V4 => acting.score_training_tensor_v4(
-                    &NativeFlatDecisionTensorV4 {
+                    })?
+                }
+                FreshLineageGenerationV1::V4 => {
+                    acting.score_training_tensor_v4(&NativeFlatDecisionTensorV4 {
                         common: common.clone(),
-                    },
-                )?,
+                    })?
+                }
             };
             ensure(
                 bits(&output.logits) == row.logits && output.value.to_bits() == row.value,

@@ -1748,9 +1748,12 @@ fn fixed_rally_corpus_is_repeatable_without_external_artifacts_v1() {
     // identity pinned in scripts/action_ingress_admission_v1/v2's sealed,
     // dated diagnostics (CORPUS_SHA256), which stay frozen forever on their
     // own terms and are untouched by this update; the two are independent.
+    // Re-baselined again for the end-of-combat clear (CR 511.3/506.4): the
+    // corpus's post-combat decisions no longer carry the previous combat's
+    // stale combat record (episode, decision and action counts unchanged).
     assert_eq!(
         first.sha256,
-        "6685d907752db0e82b62b123ffb88142d2fb59adf40f6a354c8a61ab3bd81c41"
+        "0e447c972624ed151b87fc8578200a9633a1942363141950cb44229901f2b20d"
     );
     assert_eq!(first.episode_count, 4);
     assert_eq!(first.multi_action_decision_count, 256);

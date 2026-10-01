@@ -305,52 +305,131 @@ fn package_roundtrip_has_exact_identity() {
 fn v4_search_old_disabled_package_keeps_its_archived_hash() {
     // Captured from the completed pre-descriptor 3da0d046 replay. Its trajectory
     // records this exact package digest independently of the current decoder.
-    let p=CompleteAgentPackageV1::from_json_v1(include_str!("fixtures/disabled_search_pre_v4.json")).unwrap();
-    assert!(matches!(p.search,AgentSearchPolicyV1::Disabled));
-    assert_eq!(p.package_sha256_v1().unwrap(),"aacccb855aea8bcd784dc601fb3b4c9c3a33e41c5179ea09c8ccc2b00773d429");
+    let p =
+        CompleteAgentPackageV1::from_json_v1(include_str!("fixtures/disabled_search_pre_v4.json"))
+            .unwrap();
+    assert!(matches!(p.search, AgentSearchPolicyV1::Disabled));
+    assert_eq!(
+        p.package_sha256_v1().unwrap(),
+        "aacccb855aea8bcd784dc601fb3b4c9c3a33e41c5179ea09c8ccc2b00773d429"
+    );
 }
 
 #[test]
 fn v4_search_evaluation_loader_preserves_binding_failure_and_rejects_other_modes() {
-    let p=package();
-    assert_eq!(p.load_supported_components_v1().err().unwrap(),p.load_evaluation_components_v1().err().unwrap());
-    let p=learned_opening_package();
-    assert_eq!(p.load_evaluation_components_v1().err().unwrap(),"V4 evaluation requires KeepSevenV2, fixed play/draw and Disabled or V4 search");
-    let mut p=package();p.gameplay_sampler_identity=crate::fast_sampler::FAST_CATEGORICAL_SAMPLER_VERSION.into();
-    assert_eq!(p.load_evaluation_components_v1().err().unwrap(),"evaluation behavior records require the wide categorical sampler");
+    let p = package();
+    assert_eq!(
+        p.load_supported_components_v1().err().unwrap(),
+        p.load_evaluation_components_v1().err().unwrap()
+    );
+    let p = learned_opening_package();
+    assert_eq!(
+        p.load_evaluation_components_v1().err().unwrap(),
+        "V4 evaluation requires KeepSevenV2, fixed play/draw and Disabled or V4 search"
+    );
+    let mut p = package();
+    p.gameplay_sampler_identity = crate::fast_sampler::FAST_CATEGORICAL_SAMPLER_VERSION.into();
+    assert_eq!(
+        p.load_evaluation_components_v1().err().unwrap(),
+        "evaluation behavior records require the wide categorical sampler"
+    );
 }
 
 #[test]
 fn v4_search_package_descriptor_is_strict_and_does_not_enable_execution() {
-    use crate::native_flat_tensorizer_v4::{FEATURE_CONTRACT_DIGEST_V4,FEATURE_ENCODING_DIGEST_V4};
-    let mut p=package();
-    p.runtime.feature_contract_digest=FEATURE_CONTRACT_DIGEST_V4.into();
-    p.runtime.feature_encoding_digest=FEATURE_ENCODING_DIGEST_V4.into();
-    p.gameplay.identity.model.feature_contract_digest=FEATURE_CONTRACT_DIGEST_V4.into();
-    p.gameplay.identity.model.feature_encoding_digest=FEATURE_ENCODING_DIGEST_V4.into();
-    p.gameplay.source.feature_transfer.expected_feature_contract_digest=FEATURE_CONTRACT_DIGEST_V4.into();
-    p.gameplay.source.feature_transfer.expected_feature_encoding_digest=FEATURE_ENCODING_DIGEST_V4.into();
-    let d=V4InformationSetSearchDescriptorV1{schema:V4_INFORMATION_SET_SEARCH_SCHEMA_V1.into(),algorithm:V4_INFORMATION_SET_SEARCH_ALGORITHM_V1.into(),
-        root_allocation:V4SearchRootAllocationV1::RoundRobin,interior_bonus:V4SearchInteriorBonusV1::PriorFree,
-        simulations:128,transitions:1024,depth:8,experiment_seed:20260922,
-        weights_sha256:p.gameplay.identity.model.weights_sha256.clone(),model_parameter_sha256:p.gameplay.identity.model.model_parameter_sha256.clone(),embedding_table_sha256:p.gameplay.identity.model.embedding_table_sha256.clone(),
-        feature_contract_digest:FEATURE_CONTRACT_DIGEST_V4.into(),feature_encoding_digest:FEATURE_ENCODING_DIGEST_V4.into()};
-    p.search=AgentSearchPolicyV1::V4InformationSetV1{descriptor:d.clone()};
+    use crate::native_flat_tensorizer_v4::{
+        FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4,
+    };
+    let mut p = package();
+    p.runtime.feature_contract_digest = FEATURE_CONTRACT_DIGEST_V4.into();
+    p.runtime.feature_encoding_digest = FEATURE_ENCODING_DIGEST_V4.into();
+    p.gameplay.identity.model.feature_contract_digest = FEATURE_CONTRACT_DIGEST_V4.into();
+    p.gameplay.identity.model.feature_encoding_digest = FEATURE_ENCODING_DIGEST_V4.into();
+    p.gameplay
+        .source
+        .feature_transfer
+        .expected_feature_contract_digest = FEATURE_CONTRACT_DIGEST_V4.into();
+    p.gameplay
+        .source
+        .feature_transfer
+        .expected_feature_encoding_digest = FEATURE_ENCODING_DIGEST_V4.into();
+    let d = V4InformationSetSearchDescriptorV1 {
+        schema: V4_INFORMATION_SET_SEARCH_SCHEMA_V1.into(),
+        algorithm: V4_INFORMATION_SET_SEARCH_ALGORITHM_V1.into(),
+        root_allocation: V4SearchRootAllocationV1::RoundRobin,
+        interior_bonus: V4SearchInteriorBonusV1::PriorFree,
+        simulations: 128,
+        transitions: 1024,
+        depth: 8,
+        experiment_seed: 20260922,
+        weights_sha256: p.gameplay.identity.model.weights_sha256.clone(),
+        model_parameter_sha256: p.gameplay.identity.model.model_parameter_sha256.clone(),
+        embedding_table_sha256: p.gameplay.identity.model.embedding_table_sha256.clone(),
+        feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4.into(),
+        feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4.into(),
+    };
+    p.search = AgentSearchPolicyV1::V4InformationSetV1 {
+        descriptor: d.clone(),
+    };
     p.validate_metadata_v1().unwrap();
-    let wire=serde_json::to_value(&p).unwrap();
-    assert_eq!(CompleteAgentPackageV1::from_json_v1(&wire.to_string()).unwrap(),p);
-    assert_eq!(p.load_supported_components_v1().err().unwrap(),"learned opening/play-draw or search execution is not implemented by this interface");
-    for field in ["algorithm","simulations","weights_sha256","experiment_seed"] {
-        let mut bad=wire.clone();bad["search"]["descriptor"].as_object_mut().unwrap().remove(field);
+    let wire = serde_json::to_value(&p).unwrap();
+    assert_eq!(
+        CompleteAgentPackageV1::from_json_v1(&wire.to_string()).unwrap(),
+        p
+    );
+    assert_eq!(
+        p.load_supported_components_v1().err().unwrap(),
+        "learned opening/play-draw or search execution is not implemented by this interface"
+    );
+    for field in [
+        "algorithm",
+        "simulations",
+        "weights_sha256",
+        "experiment_seed",
+    ] {
+        let mut bad = wire.clone();
+        bad["search"]["descriptor"]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
         assert!(CompleteAgentPackageV1::from_json_v1(&bad.to_string()).is_err());
     }
-    for (field,value) in [("extra",serde_json::json!(true)),("algorithm",serde_json::json!("unknown")),("root_allocation",serde_json::json!("unknown")),("interior_bonus",serde_json::json!("unknown")),("simulations",serde_json::json!(0)),("simulations",serde_json::json!(1025)),("transitions",serde_json::json!(127)),("transitions",serde_json::json!(16385)),("depth",serde_json::json!(0)),("depth",serde_json::json!(33)),("weights_sha256",serde_json::json!(digest('f'))),("model_parameter_sha256",serde_json::json!(digest('f'))),("embedding_table_sha256",serde_json::json!(digest('f'))),("feature_contract_digest",serde_json::json!(digest('5')))] {
-        let mut bad=wire.clone();bad["search"]["descriptor"][field]=value;
-        assert!(CompleteAgentPackageV1::from_json_v1(&bad.to_string()).is_err(),"{field}");
+    for (field, value) in [
+        ("extra", serde_json::json!(true)),
+        ("algorithm", serde_json::json!("unknown")),
+        ("root_allocation", serde_json::json!("unknown")),
+        ("interior_bonus", serde_json::json!("unknown")),
+        ("simulations", serde_json::json!(0)),
+        ("simulations", serde_json::json!(1025)),
+        ("transitions", serde_json::json!(127)),
+        ("transitions", serde_json::json!(16385)),
+        ("depth", serde_json::json!(0)),
+        ("depth", serde_json::json!(33)),
+        ("weights_sha256", serde_json::json!(digest('f'))),
+        ("model_parameter_sha256", serde_json::json!(digest('f'))),
+        ("embedding_table_sha256", serde_json::json!(digest('f'))),
+        ("feature_contract_digest", serde_json::json!(digest('5'))),
+    ] {
+        let mut bad = wire.clone();
+        bad["search"]["descriptor"][field] = value;
+        assert!(
+            CompleteAgentPackageV1::from_json_v1(&bad.to_string()).is_err(),
+            "{field}"
+        );
     }
-    let mut old=package();old.search=AgentSearchPolicyV1::V4InformationSetV1{descriptor:V4InformationSetSearchDescriptorV1{feature_contract_digest:digest('5'),feature_encoding_digest:digest('6'),..d}};
+    let mut old = package();
+    old.search = AgentSearchPolicyV1::V4InformationSetV1 {
+        descriptor: V4InformationSetSearchDescriptorV1 {
+            feature_contract_digest: digest('5'),
+            feature_encoding_digest: digest('6'),
+            ..d
+        },
+    };
     assert!(old.validate_metadata_v1().is_err());
-    assert_eq!(serde_json::to_string(&AgentSearchPolicyV1::Disabled).unwrap(),"{\"kind\":\"disabled\"}");
+    assert_eq!(
+        serde_json::to_string(&AgentSearchPolicyV1::Disabled).unwrap(),
+        "{\"kind\":\"disabled\"}"
+    );
 }
 
 #[test]
@@ -964,10 +1043,16 @@ fn learned_opening_fresh_package(runtime: AgentRuntimeIdentityV1) -> CompleteAge
     value.gameplay.identity.features_source_sha256 = value.runtime.features_source_sha256.clone();
     value.gameplay.identity.feature_descriptor_sha256 =
         value.runtime.feature_descriptor_sha256.clone();
-    value.gameplay.source.feature_transfer.expected_feature_contract_digest =
-        value.runtime.feature_contract_digest.clone();
-    value.gameplay.source.feature_transfer.expected_feature_encoding_digest =
-        value.runtime.feature_encoding_digest.clone();
+    value
+        .gameplay
+        .source
+        .feature_transfer
+        .expected_feature_contract_digest = value.runtime.feature_contract_digest.clone();
+    value
+        .gameplay
+        .source
+        .feature_transfer
+        .expected_feature_encoding_digest = value.runtime.feature_encoding_digest.clone();
     value.gameplay.identity.schema = "mtg-kernel-expanded-deck-inference/v2".into();
     value.gameplay.identity.source_import =
         PlayPolicyOriginV1::FreshInitialization(FreshPlayPolicyIdentityV1 {
@@ -1028,7 +1113,11 @@ fn fresh_identity_with_v4_runtime_admits_learned_opening_past_the_gate() {
     value.validate_metadata_v1().unwrap();
     assert!(value.gameplay.identity.source_import.is_fresh_v1());
     assert_eq!(
-        value.runtime.verify_current_runtime_v1().unwrap().generation_v1(),
+        value
+            .runtime
+            .verify_current_runtime_v1()
+            .unwrap()
+            .generation_v1(),
         RuntimeContractGenerationV1::V4
     );
     match value.load_supported_components_v1() {
@@ -1115,7 +1204,11 @@ fn imported_gameplay_identity_rejects_learned_opening_even_on_a_genuine_v4_runti
     // Proves the origin gate holds on its own: the runtime genuinely
     // verifies as V4, not just as some unverifiable placeholder.
     assert_eq!(
-        value.runtime.verify_current_runtime_v1().unwrap().generation_v1(),
+        value
+            .runtime
+            .verify_current_runtime_v1()
+            .unwrap()
+            .generation_v1(),
         RuntimeContractGenerationV1::V4
     );
     match value.load_supported_components_v1() {
@@ -1157,7 +1250,11 @@ fn fresh_identity_with_v4_runtime_admits_learned_play_draw_past_the_gate() {
     value.validate_metadata_v1().unwrap();
     assert!(value.gameplay.identity.source_import.is_fresh_v1());
     assert_eq!(
-        value.runtime.verify_current_runtime_v1().unwrap().generation_v1(),
+        value
+            .runtime
+            .verify_current_runtime_v1()
+            .unwrap()
+            .generation_v1(),
         RuntimeContractGenerationV1::V4
     );
     match value.load_supported_components_v1() {
@@ -1203,7 +1300,11 @@ fn imported_gameplay_identity_rejects_learned_play_draw_even_on_a_genuine_v4_run
     value.validate_metadata_v1().unwrap();
     assert!(!value.gameplay.identity.source_import.is_fresh_v1());
     assert_eq!(
-        value.runtime.verify_current_runtime_v1().unwrap().generation_v1(),
+        value
+            .runtime
+            .verify_current_runtime_v1()
+            .unwrap()
+            .generation_v1(),
         RuntimeContractGenerationV1::V4
     );
     match value.load_supported_components_v1() {
@@ -1217,56 +1318,139 @@ fn imported_gameplay_identity_rejects_learned_play_draw_even_on_a_genuine_v4_run
 
 #[test]
 fn v4_evaluation_estimate_package_preserves_archived_mean_and_disabled_contracts() {
-    let p=CompleteAgentPackageV1::from_json_v1(include_str!("fixtures/mean_search_pre_estimate.json")).unwrap();
-    assert_eq!(p.package_sha256_v1().unwrap(),"711194558896099e8f9c3cc2d0cb8d104f18ad6dbafa863491d2d66601d4e8b3");
-    assert_eq!(serde_json::to_string(&p).unwrap(),include_str!("fixtures/mean_search_pre_estimate.json"));
-    let disabled=CompleteAgentPackageV1::from_json_v1(include_str!("fixtures/disabled_search_pre_v4.json")).unwrap();
-    assert_eq!(disabled.package_sha256_v1().unwrap(),"aacccb855aea8bcd784dc601fb3b4c9c3a33e41c5179ea09c8ccc2b00773d429");
-    let AgentSearchPolicyV1::V4InformationSetV1{mut descriptor}=p.search.clone() else {panic!("archived mean route")};
-    descriptor.schema=V4_INFORMATION_SET_ESTIMATE_SCHEMA_V1.into();descriptor.algorithm=V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V1.into();
-    let mut e=p.clone();e.search=AgentSearchPolicyV1::V4InformationSetEstimateV1{descriptor:V4InformationSetEstimateDescriptorV1(descriptor)};
+    let p = CompleteAgentPackageV1::from_json_v1(include_str!(
+        "fixtures/mean_search_pre_estimate.json"
+    ))
+    .unwrap();
+    assert_eq!(
+        p.package_sha256_v1().unwrap(),
+        "711194558896099e8f9c3cc2d0cb8d104f18ad6dbafa863491d2d66601d4e8b3"
+    );
+    assert_eq!(
+        serde_json::to_string(&p).unwrap(),
+        include_str!("fixtures/mean_search_pre_estimate.json")
+    );
+    let disabled =
+        CompleteAgentPackageV1::from_json_v1(include_str!("fixtures/disabled_search_pre_v4.json"))
+            .unwrap();
+    assert_eq!(
+        disabled.package_sha256_v1().unwrap(),
+        "aacccb855aea8bcd784dc601fb3b4c9c3a33e41c5179ea09c8ccc2b00773d429"
+    );
+    let AgentSearchPolicyV1::V4InformationSetV1 { mut descriptor } = p.search.clone() else {
+        panic!("archived mean route")
+    };
+    descriptor.schema = V4_INFORMATION_SET_ESTIMATE_SCHEMA_V1.into();
+    descriptor.algorithm = V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V1.into();
+    let mut e = p.clone();
+    e.search = AgentSearchPolicyV1::V4InformationSetEstimateV1 {
+        descriptor: V4InformationSetEstimateDescriptorV1(descriptor),
+    };
     e.validate_metadata_v1().unwrap();
-    assert_ne!(e.package_sha256_v1().unwrap(),p.package_sha256_v1().unwrap());
-    let wire=serde_json::to_string(&e).unwrap();assert_eq!(CompleteAgentPackageV1::from_json_v1(&wire).unwrap(),e);
-    assert_eq!(e.load_supported_components_v1().err().unwrap(),"learned opening/play-draw or search execution is not implemented by this interface");
+    assert_ne!(
+        e.package_sha256_v1().unwrap(),
+        p.package_sha256_v1().unwrap()
+    );
+    let wire = serde_json::to_string(&e).unwrap();
+    assert_eq!(CompleteAgentPackageV1::from_json_v1(&wire).unwrap(), e);
+    assert_eq!(
+        e.load_supported_components_v1().err().unwrap(),
+        "learned opening/play-draw or search execution is not implemented by this interface"
+    );
     // Invalid runtime files must still fail in the evaluation loader before play.
-    let mut unavailable=e.clone();unavailable.runtime.executable.path="no-such-estimate-executable.exe".into();
+    let mut unavailable = e.clone();
+    unavailable.runtime.executable.path = "no-such-estimate-executable.exe".into();
     assert!(unavailable.load_evaluation_components_v1().is_err());
 }
 
 #[test]
 fn v4_evaluation_estimate_package_rejects_cross_labels_and_unsupported_settings() {
-    let p=CompleteAgentPackageV1::from_json_v1(include_str!("fixtures/mean_search_pre_estimate.json")).unwrap();
-    let mut wire=serde_json::to_value(&p).unwrap();wire["search"]["kind"]=serde_json::json!("v4_information_set_estimate_v1");
+    let p = CompleteAgentPackageV1::from_json_v1(include_str!(
+        "fixtures/mean_search_pre_estimate.json"
+    ))
+    .unwrap();
+    let mut wire = serde_json::to_value(&p).unwrap();
+    wire["search"]["kind"] = serde_json::json!("v4_information_set_estimate_v1");
     assert!(CompleteAgentPackageV1::from_json_v1(&wire.to_string()).is_err());
-    wire["search"]["descriptor"]["schema"]=serde_json::json!(V4_INFORMATION_SET_ESTIMATE_SCHEMA_V1);
-    wire["search"]["descriptor"]["algorithm"]=serde_json::json!(V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V1);
+    wire["search"]["descriptor"]["schema"] =
+        serde_json::json!(V4_INFORMATION_SET_ESTIMATE_SCHEMA_V1);
+    wire["search"]["descriptor"]["algorithm"] =
+        serde_json::json!(V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V1);
     CompleteAgentPackageV1::from_json_v1(&wire.to_string()).unwrap();
-    for (field,value) in [("schema",serde_json::json!(V4_INFORMATION_SET_SEARCH_SCHEMA_V1)),("algorithm",serde_json::json!(V4_INFORMATION_SET_SEARCH_ALGORITHM_V1)),
-        ("root_allocation",serde_json::json!("puct")),("interior_bonus",serde_json::json!("prior_weighted")),("tie_rule",serde_json::json!("mean")),
-        ("simulations",serde_json::json!(0)),("transitions",serde_json::json!(0)),("depth",serde_json::json!(33)),("weights_sha256",serde_json::json!("f".repeat(64)))] {
-        let mut bad=wire.clone();bad["search"]["descriptor"][field]=value;
-        assert!(CompleteAgentPackageV1::from_json_v1(&bad.to_string()).is_err(),"{field}");
+    for (field, value) in [
+        (
+            "schema",
+            serde_json::json!(V4_INFORMATION_SET_SEARCH_SCHEMA_V1),
+        ),
+        (
+            "algorithm",
+            serde_json::json!(V4_INFORMATION_SET_SEARCH_ALGORITHM_V1),
+        ),
+        ("root_allocation", serde_json::json!("puct")),
+        ("interior_bonus", serde_json::json!("prior_weighted")),
+        ("tie_rule", serde_json::json!("mean")),
+        ("simulations", serde_json::json!(0)),
+        ("transitions", serde_json::json!(0)),
+        ("depth", serde_json::json!(33)),
+        ("weights_sha256", serde_json::json!("f".repeat(64))),
+    ] {
+        let mut bad = wire.clone();
+        bad["search"]["descriptor"][field] = value;
+        assert!(
+            CompleteAgentPackageV1::from_json_v1(&bad.to_string()).is_err(),
+            "{field}"
+        );
     }
-    wire["search"]["kind"]=serde_json::json!("v4_information_set_v1");
+    wire["search"]["kind"] = serde_json::json!("v4_information_set_v1");
     assert!(CompleteAgentPackageV1::from_json_v1(&wire.to_string()).is_err());
 }
 
 #[test]
 fn v4_library_v2_package_is_versioned_and_collection_stays_disabled_only() {
-    let mut p=CompleteAgentPackageV1::from_json_v1(include_str!("fixtures/mean_search_pre_estimate.json")).unwrap();
-    let AgentSearchPolicyV1::V4InformationSetV1{mut descriptor}=p.search.clone() else{unreachable!()};
-    descriptor.schema=V4_INFORMATION_SET_ESTIMATE_SCHEMA_V2.into();descriptor.algorithm=V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V2.into();
-    p.search=AgentSearchPolicyV1::V4InformationSetEstimateV2{descriptor:V4InformationSetEstimateDescriptorV2(descriptor)};
+    let mut p = CompleteAgentPackageV1::from_json_v1(include_str!(
+        "fixtures/mean_search_pre_estimate.json"
+    ))
+    .unwrap();
+    let AgentSearchPolicyV1::V4InformationSetV1 { mut descriptor } = p.search.clone() else {
+        unreachable!()
+    };
+    descriptor.schema = V4_INFORMATION_SET_ESTIMATE_SCHEMA_V2.into();
+    descriptor.algorithm = V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V2.into();
+    p.search = AgentSearchPolicyV1::V4InformationSetEstimateV2 {
+        descriptor: V4InformationSetEstimateDescriptorV2(descriptor),
+    };
     p.validate_metadata_v1().unwrap();
-    let wire=serde_json::to_value(&p).unwrap();assert_eq!(wire["search"]["kind"],"v4_information_set_estimate_v2");
-    assert_eq!(CompleteAgentPackageV1::from_json_v1(&wire.to_string()).unwrap(),p);
-    assert_eq!(p.load_supported_components_v1().err().unwrap(),"learned opening/play-draw or search execution is not implemented by this interface");
-    for (field,value) in [("schema",serde_json::json!(V4_INFORMATION_SET_ESTIMATE_SCHEMA_V1)),("algorithm",serde_json::json!(V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V1)),
-        ("root_allocation",serde_json::json!("puct")),("interior_bonus",serde_json::json!("prior_weighted")),("simulations",serde_json::json!(0))] {
-        let mut bad=wire.clone();bad["search"]["descriptor"][field]=value;
-        assert!(CompleteAgentPackageV1::from_json_v1(&bad.to_string()).is_err(),"{field}");
+    let wire = serde_json::to_value(&p).unwrap();
+    assert_eq!(wire["search"]["kind"], "v4_information_set_estimate_v2");
+    assert_eq!(
+        CompleteAgentPackageV1::from_json_v1(&wire.to_string()).unwrap(),
+        p
+    );
+    assert_eq!(
+        p.load_supported_components_v1().err().unwrap(),
+        "learned opening/play-draw or search execution is not implemented by this interface"
+    );
+    for (field, value) in [
+        (
+            "schema",
+            serde_json::json!(V4_INFORMATION_SET_ESTIMATE_SCHEMA_V1),
+        ),
+        (
+            "algorithm",
+            serde_json::json!(V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V1),
+        ),
+        ("root_allocation", serde_json::json!("puct")),
+        ("interior_bonus", serde_json::json!("prior_weighted")),
+        ("simulations", serde_json::json!(0)),
+    ] {
+        let mut bad = wire.clone();
+        bad["search"]["descriptor"][field] = value;
+        assert!(
+            CompleteAgentPackageV1::from_json_v1(&bad.to_string()).is_err(),
+            "{field}"
+        );
     }
-    let mut old_label=wire;old_label["search"]["kind"]=serde_json::json!("v4_information_set_estimate_v1");
+    let mut old_label = wire;
+    old_label["search"]["kind"] = serde_json::json!("v4_information_set_estimate_v1");
     assert!(CompleteAgentPackageV1::from_json_v1(&old_label.to_string()).is_err());
 }

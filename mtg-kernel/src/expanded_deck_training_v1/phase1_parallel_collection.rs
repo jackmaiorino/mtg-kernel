@@ -508,7 +508,8 @@ mod tests {
             "got: {error}"
         );
         assert!(
-            root.join("collect-fraction-capped/non-natural.json").exists(),
+            root.join("collect-fraction-capped/non-natural.json")
+                .exists(),
             "the ledger must be preserved on disk even though the fraction cap aborted the run"
         );
     }

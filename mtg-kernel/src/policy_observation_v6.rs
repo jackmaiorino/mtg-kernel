@@ -198,14 +198,22 @@ pub(crate) mod tests {
     /// are engine-created and the payer can afford either payment.
     pub(crate) fn ward_multi_targeter_state() -> (GameState, [ObjectId; 2], ObjectId) {
         let mut state = ready_state();
-        let terror = put(&mut state, PlayerId::P1, "Tolarian Terror", Zone::Battlefield);
+        let terror = put(
+            &mut state,
+            PlayerId::P1,
+            "Tolarian Terror",
+            Zone::Battlefield,
+        );
         let spells = ["Lightning Bolt", "Lightning Bolt"]
             .map(|name| put(&mut state, PlayerId::P0, name, Zone::Hand));
         state.players[0].mana_pool[ManaColor::R.pool_index()] = 8;
         for spell in spells {
             engine::step(&mut state, Action::CastSpell(spell)).unwrap();
             engine::step(&mut state, Action::ChooseTarget(Target::Object(terror))).unwrap();
-            assert!(matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { .. }));
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
         }
         (state, spells, terror)
     }
@@ -223,20 +231,41 @@ pub(crate) mod tests {
 
     pub(crate) fn ward_same_source_abilities_state() -> (GameState, ObjectId) {
         let mut state = ready_state();
-        let terror = put(&mut state, PlayerId::P1, "Tolarian Terror", Zone::Battlefield);
-        let timberwatch = put(&mut state, PlayerId::P0, "Timberwatch Elf", Zone::Battlefield);
-        let ranger = put(&mut state, PlayerId::P0, "Quirion Ranger", Zone::Battlefield);
+        let terror = put(
+            &mut state,
+            PlayerId::P1,
+            "Tolarian Terror",
+            Zone::Battlefield,
+        );
+        let timberwatch = put(
+            &mut state,
+            PlayerId::P0,
+            "Timberwatch Elf",
+            Zone::Battlefield,
+        );
+        let ranger = put(
+            &mut state,
+            PlayerId::P0,
+            "Quirion Ranger",
+            Zone::Battlefield,
+        );
         let forest = put(&mut state, PlayerId::P0, "Forest", Zone::Battlefield);
         state.players[0].mana_pool[ManaColor::G.pool_index()] = 8;
         engine::step(&mut state, Action::ActivateAbility(timberwatch, 0)).unwrap();
         engine::step(&mut state, Action::ChooseTarget(Target::Object(terror))).unwrap();
         let _ = engine::advance_until_decision(&mut state);
         engine::step(&mut state, Action::ActivateAbility(ranger, 0)).unwrap();
-        engine::step(&mut state, Action::ChooseTarget(Target::Object(timberwatch))).unwrap();
+        engine::step(
+            &mut state,
+            Action::ChooseTarget(Target::Object(timberwatch)),
+        )
+        .unwrap();
         engine::step(&mut state, Action::ChooseCostTarget(forest)).unwrap();
         for _ in 0..8 {
             let decision = engine::advance_until_decision(&mut state);
-            if !state.objects.get(timberwatch).tapped { break; }
+            if !state.objects.get(timberwatch).tapped {
+                break;
+            }
             assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
             engine::step(&mut state, Action::Pass).unwrap();
         }
@@ -253,34 +282,80 @@ pub(crate) mod tests {
         let observation = observe(&state, PlayerId::P0);
         let queued = &observation.extensions.queued_ward_payments;
         assert_eq!(queued.len(), 2);
-        assert_ne!(queued[0].payment.targeting_stack_index, queued[1].payment.targeting_stack_index);
+        assert_ne!(
+            queued[0].payment.targeting_stack_index,
+            queued[1].payment.targeting_stack_index
+        );
         for entry in queued {
-            assert_eq!(observation.projection.surface.stack[entry.payment.targeting_stack_index as usize].source.arena_id, source.0);
+            assert_eq!(
+                observation.projection.surface.stack[entry.payment.targeting_stack_index as usize]
+                    .source
+                    .arena_id,
+                source.0
+            );
         }
         reach_ward_payment(&mut state);
         let pending = observe(&state, PlayerId::P0);
-        assert_eq!(pending.extensions.pending_ward_payment.as_ref().unwrap().targeting_stack_index,
-            queued[1].payment.targeting_stack_index);
+        assert_eq!(
+            pending
+                .extensions
+                .pending_ward_payment
+                .as_ref()
+                .unwrap()
+                .targeting_stack_index,
+            queued[1].payment.targeting_stack_index
+        );
         engine::step(&mut state, Action::ChooseEffectBoolean(false)).unwrap();
-        assert!(matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { .. }));
-        assert_eq!(state.stack.iter().filter(|item| item.source == source).count(), 1);
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(
+            state
+                .stack
+                .iter()
+                .filter(|item| item.source == source)
+                .count(),
+            1
+        );
     }
 
     #[test]
     fn v6_ward_source_zone_change_retains_the_original_trigger_incarnation() {
         let (mut state, _, terror) = ward_multi_targeter_state();
         let original_count = state.objects.get(terror).zone_change_count;
-        crate::event::propose_and_commit(&mut state, crate::event::ProposedEvent::zone_change(terror, Zone::Graveyard));
-        crate::event::propose_and_commit(&mut state, crate::event::ProposedEvent::zone_change(terror, Zone::Battlefield));
+        crate::event::propose_and_commit(
+            &mut state,
+            crate::event::ProposedEvent::zone_change(terror, Zone::Graveyard),
+        );
+        crate::event::propose_and_commit(
+            &mut state,
+            crate::event::ProposedEvent::zone_change(terror, Zone::Battlefield),
+        );
         reach_ward_payment(&mut state);
         let observation = observe(&state, PlayerId::P0);
-        let historical = observation.extensions.historical_public_sources.iter()
-            .find(|source| source.context == HistoricalSourceContextV6::PendingEffect).unwrap();
+        let historical = observation
+            .extensions
+            .historical_public_sources
+            .iter()
+            .find(|source| source.context == HistoricalSourceContextV6::PendingEffect)
+            .unwrap();
         assert_eq!(historical.source.zone_change_count, original_count);
         assert!(state.objects.get(terror).zone_change_count > original_count);
-        assert_eq!(observation.extensions.pending_ward_payment.as_ref().unwrap().generic, 2);
+        assert_eq!(
+            observation
+                .extensions
+                .pending_ward_payment
+                .as_ref()
+                .unwrap()
+                .generic,
+            2
+        );
         engine::step(&mut state, Action::ChooseEffectBoolean(false)).unwrap();
-        assert!(matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { .. }));
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
     }
 
     /// Defect-2 fixture (`InvalidDecisionRelation`, campaign-001 block-1
@@ -314,11 +389,21 @@ pub(crate) mod tests {
         state.players[1].mana_pool[ManaColor::U.pool_index()] = 2;
 
         engine::step(&mut state, Action::CastSpell(chrysalis)).unwrap();
-        assert!(matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { .. }));
-        assert_eq!(state.stack.len(), 2, "the spell and its cast trigger must both be on the stack");
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(
+            state.stack.len(),
+            2,
+            "the spell and its cast trigger must both be on the stack"
+        );
 
         engine::step(&mut state, Action::Pass).unwrap();
-        assert!(matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { .. }));
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
         engine::step(&mut state, Action::CastSpell(counterspell)).unwrap();
         match engine::advance_until_decision(&mut state) {
             Decision::ChooseTargets { legal_targets, .. } => {
@@ -327,7 +412,10 @@ pub(crate) mod tests {
             other => panic!("expected Counterspell's target decision, got {other:?}"),
         }
         engine::step(&mut state, Action::ChooseTarget(Target::Object(chrysalis))).unwrap();
-        assert!(matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { .. }));
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
         assert_eq!(state.stack.len(), 3);
 
         // Pass until exactly one stack item resolves: Counterspell itself,
@@ -346,14 +434,24 @@ pub(crate) mod tests {
                 break;
             }
         }
-        assert_eq!(state.stack.len(), 1, "only the still-pending cast trigger should remain");
-        assert_eq!(state.stack[0].kind, crate::state::StackItemKind::TriggeredAbility);
+        assert_eq!(
+            state.stack.len(),
+            1,
+            "only the still-pending cast trigger should remain"
+        );
+        assert_eq!(
+            state.stack[0].kind,
+            crate::state::StackItemKind::TriggeredAbility
+        );
         assert_eq!(state.stack[0].source, chrysalis);
         assert!(
             state.players[0].graveyard.contains(&chrysalis),
             "Counterspell must have countered the Chrysalis spell into the graveyard"
         );
-        assert!(matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { .. }));
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
         (state, chrysalis)
     }
 
@@ -368,7 +466,9 @@ pub(crate) mod tests {
         let (state, chrysalis) = spell_sourced_trigger_state_after_producer_departs_v1();
         for actor in [PlayerId::P0, PlayerId::P1] {
             policy_observation_extensions_v6(&state, actor).unwrap_or_else(|e| {
-                panic!("V6 observation extensions must not fail on a departed-producer trigger: {e}")
+                panic!(
+                    "V6 observation extensions must not fail on a departed-producer trigger: {e}"
+                )
             });
         }
         let observation = observe(&state, PlayerId::P0);
@@ -386,29 +486,60 @@ pub(crate) mod tests {
         assert!(queued.extensions.pending_ward_payment.is_none());
         assert_eq!(queued.extensions.queued_ward_payments.len(), 2);
         for (payment, spell) in queued.extensions.queued_ward_payments.iter().zip(spells) {
-            let targeter = &queued.projection.surface.stack[payment.payment.targeting_stack_index as usize];
+            let targeter =
+                &queued.projection.surface.stack[payment.payment.targeting_stack_index as usize];
             assert_eq!(targeter.source.arena_id, spell.0);
-            assert_eq!(queued.projection.surface.stack[payment.stack_index as usize].source.arena_id, terror.0);
+            assert_eq!(
+                queued.projection.surface.stack[payment.stack_index as usize]
+                    .source
+                    .arena_id,
+                terror.0
+            );
         }
-        assert!(observe_policy_v5(&state, &PolicySurfaceV5::new(), PlayerId::P0, 0, 0, 0, 1)
-            .unwrap_err().0.contains("Ward-bound"));
+        assert!(
+            observe_policy_v5(&state, &PolicySurfaceV5::new(), PlayerId::P0, 0, 0, 0, 1)
+                .unwrap_err()
+                .0
+                .contains("Ward-bound")
+        );
         reach_ward_payment(&mut state);
         let pending = observe(&state, PlayerId::P0);
         let payment = pending.extensions.pending_ward_payment.as_ref().unwrap();
         assert_eq!(payment.payer, PlayerSeatV1::P0);
         assert_eq!(payment.generic, 2);
-        assert_eq!(pending.projection.surface.stack[payment.targeting_stack_index as usize].source.arena_id, spells[1].0);
+        assert_eq!(
+            pending.projection.surface.stack[payment.targeting_stack_index as usize]
+                .source
+                .arena_id,
+            spells[1].0
+        );
         assert_eq!(pending.extensions.queued_ward_payments.len(), 1);
-        assert!(crate::rl::observe_v2(&state, &crate::surface_v2::HarnessSurfaceV2::new(), PlayerId::P0, 0)
-            .unwrap_err().0.contains("Ward-bound"));
+        assert!(crate::rl::observe_v2(
+            &state,
+            &crate::surface_v2::HarnessSurfaceV2::new(),
+            PlayerId::P0,
+            0
+        )
+        .unwrap_err()
+        .0
+        .contains("Ward-bound"));
 
         for pay in [false, true] {
             let mut answered = state.clone();
             engine::step(&mut answered, Action::ChooseEffectBoolean(pay)).unwrap();
-            assert!(matches!(engine::advance_until_decision(&mut answered), Decision::CastSpellOrPass { .. }));
-            assert_eq!(answered.objects.get(spells[1]).zone, if pay { Zone::Stack } else { Zone::Graveyard });
+            assert!(matches!(
+                engine::advance_until_decision(&mut answered),
+                Decision::CastSpellOrPass { .. }
+            ));
+            assert_eq!(
+                answered.objects.get(spells[1]).zone,
+                if pay { Zone::Stack } else { Zone::Graveyard }
+            );
             assert_eq!(answered.objects.get(spells[0]).zone, Zone::Stack);
-            assert_eq!(answered.players[0].mana_pool[ManaColor::R.pool_index()], if pay { 4 } else { 6 });
+            assert_eq!(
+                answered.players[0].mana_pool[ManaColor::R.pool_index()],
+                if pay { 4 } else { 6 }
+            );
         }
     }
 
@@ -416,41 +547,108 @@ pub(crate) mod tests {
     fn v6_ward_rejects_valid_but_foreign_targeter_and_changed_cost_or_incarnation() {
         let (mut state, spells, terror) = ward_multi_targeter_state();
         reach_ward_payment(&mut state);
-        let foreign_id = state.stack.iter().find(|item| item.source == spells[0]).unwrap().v4.stack_item_id;
+        let foreign_id = state
+            .stack
+            .iter()
+            .find(|item| item.source == spells[0])
+            .unwrap()
+            .v4
+            .stack_item_id;
         for mutation in 0..4 {
             let mut forged = state.clone();
             if mutation == 3 {
                 forged.objects.get_mut(terror).zone_change_count = u32::MAX;
-                forged.engine.pending_effect.as_mut().unwrap().resolving_item.v4.ability_source_contract.as_mut().unwrap().zone_change_count = u32::MAX;
+                forged
+                    .engine
+                    .pending_effect
+                    .as_mut()
+                    .unwrap()
+                    .resolving_item
+                    .v4
+                    .ability_source_contract
+                    .as_mut()
+                    .unwrap()
+                    .zone_change_count = u32::MAX;
             } else {
-                let crate::effect::PendingEffectChoice::ChooseBoolean { purpose, .. } = forged.engine.pending_effect.as_mut().unwrap().choice.as_mut().unwrap() else { panic!("Ward Boolean") };
-                let crate::effect::EffectBooleanChoicePurpose::CounterUnlessPaysGeneric { targeting_stack_item, generic, player, .. } = purpose else { panic!("Ward purpose") };
-                match mutation { 0 => *targeting_stack_item = foreign_id, 1 => *generic = 1, 2 => *player = PlayerId::P1, _ => unreachable!() }
+                let crate::effect::PendingEffectChoice::ChooseBoolean { purpose, .. } = forged
+                    .engine
+                    .pending_effect
+                    .as_mut()
+                    .unwrap()
+                    .choice
+                    .as_mut()
+                    .unwrap()
+                else {
+                    panic!("Ward Boolean")
+                };
+                let crate::effect::EffectBooleanChoicePurpose::CounterUnlessPaysGeneric {
+                    targeting_stack_item,
+                    generic,
+                    player,
+                    ..
+                } = purpose
+                else {
+                    panic!("Ward purpose")
+                };
+                match mutation {
+                    0 => *targeting_stack_item = foreign_id,
+                    1 => *generic = 1,
+                    2 => *player = PlayerId::P1,
+                    _ => unreachable!(),
+                }
             }
-            assert!(policy_observation_extensions_v6(&forged, PlayerId::P0).is_err(), "mutation {mutation}");
+            assert!(
+                policy_observation_extensions_v6(&forged, PlayerId::P0).is_err(),
+                "mutation {mutation}"
+            );
         }
     }
 
     #[test]
     fn v6_ward_departed_targeter_has_no_queued_payment_and_resolves_as_noop() {
         let (mut state, spells, _) = ward_multi_targeter_state();
-        let targeter_id = state.stack.iter().find(|item| item.source == spells[1]).unwrap().v4.stack_item_id;
-        crate::engine::counter_stack_item_by_id(&mut state, targeter_id).unwrap().unwrap();
+        let targeter_id = state
+            .stack
+            .iter()
+            .find(|item| item.source == spells[1])
+            .unwrap()
+            .v4
+            .stack_item_id;
+        crate::engine::counter_stack_item_by_id(&mut state, targeter_id)
+            .unwrap()
+            .unwrap();
         let observation = observe(&state, PlayerId::P0);
         assert_eq!(observation.extensions.queued_ward_payments.len(), 1);
         reach_ward_payment(&mut state);
         let observation = observe(&state, PlayerId::P0);
         let payment = observation.extensions.pending_ward_payment.unwrap();
-        assert_eq!(observation.projection.surface.stack[payment.targeting_stack_index as usize].source.arena_id, spells[0].0);
+        assert_eq!(
+            observation.projection.surface.stack[payment.targeting_stack_index as usize]
+                .source
+                .arena_id,
+            spells[0].0
+        );
     }
 
     #[test]
     fn v6_ward_departed_targeter_does_not_hide_a_malformed_trigger_cost() {
         let (mut state, spells, _) = ward_multi_targeter_state();
-        let targeter_id = state.stack.iter().find(|item| item.source == spells[1]).unwrap().v4.stack_item_id;
-        crate::engine::counter_stack_item_by_id(&mut state, targeter_id).unwrap().unwrap();
+        let targeter_id = state
+            .stack
+            .iter()
+            .find(|item| item.source == spells[1])
+            .unwrap()
+            .v4
+            .stack_item_id;
+        crate::engine::counter_stack_item_by_id(&mut state, targeter_id)
+            .unwrap()
+            .unwrap();
         let trigger = state.stack.last_mut().unwrap();
-        let Some(crate::effect::EffectOp::CounterUnlessPaysGeneric { generic, .. }) = trigger.inline_effect.as_mut() else { panic!("Ward trigger") };
+        let Some(crate::effect::EffectOp::CounterUnlessPaysGeneric { generic, .. }) =
+            trigger.inline_effect.as_mut()
+        else {
+            panic!("Ward trigger")
+        };
         *generic = 1;
         assert!(policy_observation_extensions_v6(&state, PlayerId::P0).is_err());
     }

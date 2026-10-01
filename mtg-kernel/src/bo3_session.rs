@@ -328,7 +328,10 @@ impl BestOfThreeDeckMatchV1 {
         let prepared = self.prepare_game_with_configurations_v1(
             chooser,
             choice,
-            [c0.expect("both seats assigned above"), c1.expect("both seats assigned above")],
+            [
+                c0.expect("both seats assigned above"),
+                c1.expect("both seats assigned above"),
+            ],
         )?;
         Ok(LiveGamePreparationV1 {
             prepared,
@@ -341,8 +344,12 @@ impl BestOfThreeDeckMatchV1 {
 pub enum Bo3SessionErrorV1 {
     Match(MatchStateErrorV1),
     Sideboard(SideboardErrorV1),
-    MirrorRegistrationMismatch { deck_id: String },
-    GameOneConfigurationChanged { player: PlayerId },
+    MirrorRegistrationMismatch {
+        deck_id: String,
+    },
+    GameOneConfigurationChanged {
+        player: PlayerId,
+    },
     LiveConfigurationsRequired,
     /// A `LiveSideboardSwapPolicyV1::select_live_v1` call returned an error.
     LivePolicy(String),
@@ -377,7 +384,9 @@ impl fmt::Display for Bo3SessionErrorV1 {
             Self::LiveConfigurationsRequired => formatter.write_str(
                 "this match requires live configurations; no static sideboard policy is installed",
             ),
-            Self::LivePolicy(message) => write!(formatter, "live sideboard policy error: {message}"),
+            Self::LivePolicy(message) => {
+                write!(formatter, "live sideboard policy error: {message}")
+            }
         }
     }
 }
@@ -390,12 +399,8 @@ mod tests {
     use crate::sideboard::{CardCountV1, SideboardDefaultPlanV1, SideboardPlanV1};
 
     fn alpha_deck() -> RegisteredDeckV1 {
-        RegisteredDeckV1::new_exact_v1(
-            "AlphaDeck",
-            [vec![1; 58], vec![2; 2]].concat(),
-            vec![3; 15],
-        )
-        .unwrap()
+        RegisteredDeckV1::new_exact_v1("AlphaDeck", [vec![1; 58], vec![2; 2]].concat(), vec![3; 15])
+            .unwrap()
     }
 
     fn beta_deck() -> RegisteredDeckV1 {
@@ -433,7 +438,9 @@ mod tests {
 
     fn sample_evidence() -> LearnedSideboardInputV1 {
         LearnedSideboardInputV1 {
-            registered_cards: alpha_deck().registered_configuration().combined_card_counts_v1(),
+            registered_cards: alpha_deck()
+                .registered_configuration()
+                .combined_card_counts_v1(),
             own_card_outcomes: Vec::new(),
             opponent_evidence: Vec::new(),
             resource_summaries: Vec::new(),
@@ -489,17 +496,23 @@ mod tests {
             (
                 PlayerId::P0,
                 PlayDrawChoiceV1::Play,
-                GameOutcomeV1::Win { winner: PlayerId::P0 },
+                GameOutcomeV1::Win {
+                    winner: PlayerId::P0,
+                },
             ),
             (
                 PlayerId::P1,
                 PlayDrawChoiceV1::Draw,
-                GameOutcomeV1::Win { winner: PlayerId::P1 },
+                GameOutcomeV1::Win {
+                    winner: PlayerId::P1,
+                },
             ),
             (
                 PlayerId::P0,
                 PlayDrawChoiceV1::Play,
-                GameOutcomeV1::Win { winner: PlayerId::P0 },
+                GameOutcomeV1::Win {
+                    winner: PlayerId::P0,
+                },
             ),
         ];
         for (chooser, choice, outcome) in script {
@@ -512,7 +525,10 @@ mod tests {
             baseline.record_game_result_v1(outcome).unwrap();
             candidate.record_game_result_v1(outcome).unwrap();
         }
-        assert_eq!(baseline.match_state().phase(), candidate.match_state().phase());
+        assert_eq!(
+            baseline.match_state().phase(),
+            candidate.match_state().phase()
+        );
     }
 
     /// A `new_live_v1` match (no installed static policy) has no
@@ -527,8 +543,16 @@ mod tests {
             BestOfThreeDeckMatchV1::new_live_v1([p0.clone(), p1.clone()], PlayerId::P0).unwrap();
         let mut candidate = BestOfThreeDeckMatchV1::new_live_v1([p0, p1], PlayerId::P0).unwrap();
         let registered = [
-            baseline.registered_deck(PlayerId::P0).unwrap().registered_configuration().clone(),
-            baseline.registered_deck(PlayerId::P1).unwrap().registered_configuration().clone(),
+            baseline
+                .registered_deck(PlayerId::P0)
+                .unwrap()
+                .registered_configuration()
+                .clone(),
+            baseline
+                .registered_deck(PlayerId::P1)
+                .unwrap()
+                .registered_configuration()
+                .clone(),
         ];
         let expected = baseline
             .prepare_game_with_configurations_v1(PlayerId::P0, PlayDrawChoiceV1::Play, registered)
@@ -540,7 +564,11 @@ mod tests {
         assert_eq!(actual.live_selections, [None, None]);
         // Without any live policy or installed static policy, game two would
         // have nothing to resolve a configuration from.
-        candidate.record_game_result_v1(GameOutcomeV1::Win { winner: PlayerId::P0 }).unwrap();
+        candidate
+            .record_game_result_v1(GameOutcomeV1::Win {
+                winner: PlayerId::P0,
+            })
+            .unwrap();
         let error = candidate
             .prepare_game_with_live_policies_v1(PlayerId::P1, PlayDrawChoiceV1::Play, [None, None])
             .unwrap_err();
@@ -561,7 +589,9 @@ mod tests {
             .prepare_game_v1(PlayerId::P0, PlayDrawChoiceV1::Play)
             .unwrap();
         baseline
-            .record_game_result_v1(GameOutcomeV1::Win { winner: PlayerId::P0 })
+            .record_game_result_v1(GameOutcomeV1::Win {
+                winner: PlayerId::P0,
+            })
             .unwrap();
         let expected_p1_only = baseline
             .prepare_game_v1(PlayerId::P1, PlayDrawChoiceV1::Play)
@@ -572,7 +602,9 @@ mod tests {
             .prepare_game_with_live_policies_v1(PlayerId::P0, PlayDrawChoiceV1::Play, [None, None])
             .unwrap();
         candidate
-            .record_game_result_v1(GameOutcomeV1::Win { winner: PlayerId::P0 })
+            .record_game_result_v1(GameOutcomeV1::Win {
+                winner: PlayerId::P0,
+            })
             .unwrap();
 
         // A different, still-conserving one-for-one swap than the static
@@ -620,10 +652,7 @@ mod tests {
         assert_eq!(learner.calls.len(), 1);
         assert_eq!(learner.calls[0].0, evidence);
         assert_eq!(learner.calls[0].1, current);
-        assert_eq!(
-            result.live_selections[0].as_ref().unwrap().actions.len(),
-            3
-        );
+        assert_eq!(result.live_selections[0].as_ref().unwrap().actions.len(), 3);
         assert!(result.live_selections[1].is_none());
     }
 
@@ -639,10 +668,14 @@ mod tests {
             .prepare_game_with_live_policies_v1(PlayerId::P0, PlayDrawChoiceV1::Play, [None, None])
             .unwrap();
         candidate
-            .record_game_result_v1(GameOutcomeV1::Win { winner: PlayerId::P0 })
+            .record_game_result_v1(GameOutcomeV1::Win {
+                winner: PlayerId::P0,
+            })
             .unwrap();
         let evidence = LearnedSideboardInputV1 {
-            registered_cards: alpha_deck().registered_configuration().combined_card_counts_v1(),
+            registered_cards: alpha_deck()
+                .registered_configuration()
+                .combined_card_counts_v1(),
             own_card_outcomes: Vec::new(),
             opponent_evidence: vec![crate::learned_sideboard_v1::SideboardOpponentEvidenceV1 {
                 card_id: Some(42),
@@ -691,7 +724,9 @@ mod tests {
             .unwrap();
         assert_eq!(g1.prepared.start().starting_player, PlayerId::P1);
         candidate
-            .record_game_result_v1(GameOutcomeV1::Win { winner: PlayerId::P0 })
+            .record_game_result_v1(GameOutcomeV1::Win {
+                winner: PlayerId::P0,
+            })
             .unwrap();
 
         let mut learner =
@@ -721,7 +756,9 @@ mod tests {
         p0_chooses
             .prepare_game_with_live_policies_v1(PlayerId::P0, PlayDrawChoiceV1::Play, [None, None])
             .unwrap();
-        p0_chooses.record_game_result_v1(GameOutcomeV1::Draw).unwrap();
+        p0_chooses
+            .record_game_result_v1(GameOutcomeV1::Draw)
+            .unwrap();
         let mut learner_p0_play =
             ScriptedLivePolicy::returning(current.clone(), vec![SideboardActionV1::Done]);
         let live_p0_play = [
@@ -748,7 +785,9 @@ mod tests {
         p1_chooses
             .prepare_game_with_live_policies_v1(PlayerId::P1, PlayDrawChoiceV1::Play, [None, None])
             .unwrap();
-        p1_chooses.record_game_result_v1(GameOutcomeV1::Draw).unwrap();
+        p1_chooses
+            .record_game_result_v1(GameOutcomeV1::Draw)
+            .unwrap();
         let mut learner_p1_draw =
             ScriptedLivePolicy::returning(current.clone(), vec![SideboardActionV1::Done]);
         let live_p1_draw = [
@@ -779,7 +818,9 @@ mod tests {
         candidate
             .prepare_game_with_live_policies_v1(PlayerId::P0, PlayDrawChoiceV1::Play, [None, None])
             .unwrap();
-        candidate.record_game_result_v1(GameOutcomeV1::Draw).unwrap();
+        candidate
+            .record_game_result_v1(GameOutcomeV1::Draw)
+            .unwrap();
         // Games 2..=5 all draw; the match keeps extending and the learner
         // seat is consulted every time.
         for expected_game_index in 2..=5u8 {
@@ -801,7 +842,9 @@ mod tests {
             assert_eq!(prepared.prepared.start().game_index, expected_game_index);
             assert_eq!(learner.calls.len(), 1);
             consultations += 1;
-            candidate.record_game_result_v1(GameOutcomeV1::Draw).unwrap();
+            candidate
+                .record_game_result_v1(GameOutcomeV1::Draw)
+                .unwrap();
         }
         assert_eq!(consultations, 4);
         // Every prior game drew (zero wins for either side), so the match
@@ -828,13 +871,17 @@ mod tests {
                 .prepare_game_with_live_policies_v1(chooser, PlayDrawChoiceV1::Play, live)
                 .unwrap();
             candidate
-                .record_game_result_v1(GameOutcomeV1::Win { winner: PlayerId::P0 })
+                .record_game_result_v1(GameOutcomeV1::Win {
+                    winner: PlayerId::P0,
+                })
                 .unwrap();
         }
         assert_eq!(
             candidate.match_state().phase(),
             crate::bo3_match::MatchPhaseV1::Complete {
-                outcome: crate::bo3_match::MatchOutcomeV1::Winner { winner: PlayerId::P0 }
+                outcome: crate::bo3_match::MatchOutcomeV1::Winner {
+                    winner: PlayerId::P0
+                }
             }
         );
     }
@@ -861,13 +908,17 @@ mod tests {
             .prepare_game_with_live_policies_v1(PlayerId::P0, PlayDrawChoiceV1::Play, [None, None])
             .unwrap();
         candidate
-            .record_game_result_v1(GameOutcomeV1::Win { winner: PlayerId::P0 })
+            .record_game_result_v1(GameOutcomeV1::Win {
+                winner: PlayerId::P0,
+            })
             .unwrap();
         let before_sideboard = candidate.match_state().clone();
         let error = candidate
             .prepare_game_with_live_policies_v1(PlayerId::P1, PlayDrawChoiceV1::Play, live)
             .unwrap_err();
-        assert!(matches!(error, Bo3SessionErrorV1::LivePolicy(message) if message == "no legal swap found"));
+        assert!(
+            matches!(error, Bo3SessionErrorV1::LivePolicy(message) if message == "no legal swap found")
+        );
         assert_eq!(candidate.match_state(), &before_sideboard);
         assert_ne!(&before, candidate.match_state());
     }
@@ -882,7 +933,9 @@ mod tests {
             .prepare_game_with_live_policies_v1(PlayerId::P0, PlayDrawChoiceV1::Play, [None, None])
             .unwrap();
         candidate
-            .record_game_result_v1(GameOutcomeV1::Win { winner: PlayerId::P0 })
+            .record_game_result_v1(GameOutcomeV1::Win {
+                winner: PlayerId::P0,
+            })
             .unwrap();
         let evidence = sample_evidence();
         let current = alpha_deck().registered_configuration().clone();

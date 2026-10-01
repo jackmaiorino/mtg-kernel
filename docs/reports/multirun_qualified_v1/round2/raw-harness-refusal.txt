@@ -1,0 +1,15 @@
+
+running 1 test
+test native_science_loop_v1::windows_science_loop_tests::multirun_pilot_v1 ... 
+thread 'native_science_loop_v1::windows_science_loop_tests::multirun_pilot_v1' (46384) panicked at mtg-kernel\src\native_science_loop_v1.rs:1467:13:
+multirun-launch-ticket-refused: MULTIRUN_LAUNCH_TICKET is not set; 65 planned updates exceed the 64-update small-check limit, so launch through python/tools/multirun_launcher_v1.py (COMPUTE-POLICY items 2-5)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    native_science_loop_v1::windows_science_loop_tests::multirun_pilot_v1
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1795 filtered out; finished in 0.00s
+

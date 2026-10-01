@@ -122,11 +122,11 @@ fn phase1_bo3_runner_strict_parser_and_serialized_bounds() {
             .unwrap_err()
             .contains("duplicate JSON object key")
     );
-    assert!(
-        NativeBo3TrainingRunV1::from_json_v1(&" ".repeat(MAX_NATIVE_BO3_RUN_REQUEST_BYTES_V1 + 1))
-            .unwrap_err()
-            .contains("exceeds 16 MiB")
-    );
+    assert!(NativeBo3TrainingRunV1::from_json_v1(
+        &" ".repeat(MAX_NATIVE_BO3_RUN_REQUEST_BYTES_V1 + 1)
+    )
+    .unwrap_err()
+    .contains("exceeds 16 MiB"));
     let item = vec!["exact", "bytes"];
     let expected = serde_json::to_vec(&item).unwrap();
     assert_eq!(
@@ -150,17 +150,13 @@ fn phase1_bo3_runner_intent_precedes_payload_and_corrupt_final_is_preserved() {
     verified
         .verify(&attempt.result, payload.len() as u64)
         .unwrap();
-    assert!(
-        verified
-            .verify(&attempt.result, payload.len() as u64 - 1)
-            .is_err()
-    );
+    assert!(verified
+        .verify(&attempt.result, payload.len() as u64 - 1)
+        .is_err());
     fs::write(&attempt.result.path, b"corrupt final").unwrap();
-    assert!(
-        VerifiedFiles::default()
-            .verify(&attempt.result, INPUT)
-            .is_err()
-    );
+    assert!(VerifiedFiles::default()
+        .verify(&attempt.result, INPUT)
+        .is_err());
     assert!(publish_slot_bytes(&root, &request, PlayerSeatV1::P1, payload).is_err());
     assert_eq!(fs::read(&attempt.result.path).unwrap(), b"corrupt final");
     // An orphan stage never gets removed or overwritten by a later attempt.

@@ -63,10 +63,10 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 mod origin;
-pub(crate) mod search_leaf_v4;
 pub(crate) mod public_inputs;
-pub(crate) mod stack_inputs;
 pub mod registry_evolution_v1;
+pub(crate) mod search_leaf_v4;
+pub(crate) mod stack_inputs;
 pub use origin::{
     FreshPlayPolicyIdentityV1, PlayPolicyOriginV1, TransferredFreshPlayPolicyIdentityV1,
     FRESH_PLAY_INITIALIZATION_SCHEMA_V1, TRANSFERRED_FRESH_PLAY_SCHEMA_V1,
@@ -280,8 +280,7 @@ pub(crate) fn fresh_lineage_generation_v1(
             FEATURE_DESCRIPTOR_SHA256_V4,
         ) => Ok(FreshLineageGenerationV1::V4),
         _ => Err(
-            "fresh-lineage feature identity matches neither the compiled V3 nor V4 contract"
-                .into(),
+            "fresh-lineage feature identity matches neither the compiled V3 nor V4 contract".into(),
         ),
     }
 }
@@ -372,7 +371,10 @@ fn fresh_parameter_evidence_v1(
             weights.update(value.to_bits().to_le_bytes());
         }
     }
-    require(offset == PARAMETER_BYTES, "fresh parameter payload byte count differs")?;
+    require(
+        offset == PARAMETER_BYTES,
+        "fresh parameter payload byte count differs",
+    )?;
     Ok((
         format!("{:x}", weights.finalize()),
         hash(&serde_json::to_vec(&layout).map_err(|e| e.to_string())?),
@@ -400,14 +402,12 @@ impl FrozenPlayPolicyV1 {
                 && identity.feature_contract_digest == feature_identity.feature_contract_digest
                 && identity.feature_encoding_digest == feature_identity.feature_encoding_digest
                 && identity.features_source_sha256 == feature_identity.features_source_sha256
-                && identity.feature_descriptor_sha256
-                    == feature_identity.feature_descriptor_sha256,
+                && identity.feature_descriptor_sha256 == feature_identity.feature_descriptor_sha256,
             "fresh initialization does not bind this runtime and Net8 layout",
         )?;
         model.validate_parameters_v1().map_err(|e| e.to_string())?;
         let parameters = model.parameter_snapshot_v1();
-        let (weights_sha256, parameter_layout_sha256) =
-            fresh_parameter_evidence_v1(&parameters)?;
+        let (weights_sha256, parameter_layout_sha256) = fresh_parameter_evidence_v1(&parameters)?;
         require(
             identity.initial_weights_sha256 == weights_sha256
                 && identity.initial_model_parameter_sha256 == model.parameter_manifest_sha256_v1()
@@ -972,7 +972,10 @@ impl FrozenPlayPolicyV1 {
     /// The caller must bind this fork to a confirmed engine step; this does
     /// not reconstruct an engine state or authorize a continuation workload.
     pub(crate) fn fork_for_continuation_v1(&self) -> Result<Self, String> {
-        require(self.sampling_initialized, "continuation requires initialized sampling")?;
+        require(
+            self.sampling_initialized,
+            "continuation requires initialized sampling",
+        )?;
         let mut fork = self.fork_for_collection_v3()?;
         fork.seat_rng = self.seat_rng;
         fork.sampling_initialized = true;
@@ -1816,37 +1819,59 @@ mod tests {
 
     #[test]
     fn continuation_fork_preserves_advanced_rng_without_sharing_it() {
-        for mut original in [FrozenPlayPolicyV1::training_fixture_v3(), FrozenPlayPolicyV1::training_fixture_v4()] {
-        assert!(original.fork_for_continuation_v1().is_err());
-        original.reset_sampling_v1([73, 911]);
-        for seat in [PlayerSeatV1::P0, PlayerSeatV1::P1, PlayerSeatV1::P1] {
-            original.sample_scores(&[0.0; 64], seat, 64).unwrap();
-        }
-        let original_rng = original.seat_rng;
-        let mut fork = original.fork_for_continuation_v1().unwrap();
-        assert_eq!(fork.actual_model_identity_v1(), original.actual_model_identity_v1());
-        assert_eq!(fork.identity_v1(), original.identity_v1());
-        assert_ne!(fork.embeddings.as_ptr(), original.embeddings.as_ptr());
-        for (seat, width) in [(PlayerSeatV1::P1, 257), (PlayerSeatV1::P0, 3), (PlayerSeatV1::P1, 64)] {
-            let logits = vec![0.0; width];
-            let sampled = fork.sample_scores(&logits, seat, width as u32).unwrap();
-            assert_eq!(sampled, original.sample_scores(&logits, seat, width as u32).unwrap());
-            assert_eq!(fork.seat_rng, original.seat_rng);
-        }
-        assert_ne!(original.seat_rng, original_rng);
-        let preserved = original.seat_rng;
-        let mut seeded = original.fork_for_seeded_continuation_v1([123, 456]).unwrap();
-        assert_eq!(original.seat_rng, preserved);
-        assert_eq!(seeded.seat_rng, [123, 456].map(SplitMix64::seed));
-        assert_ne!(seeded.seat_rng, preserved);
-        assert!(seeded.sampling_initialized);
-        assert_eq!(seeded.actual_model_identity_v1(), original.actual_model_identity_v1());
-        let mut repeated = original.fork_for_seeded_continuation_v1([123, 456]).unwrap();
-        for seat in [PlayerSeatV1::P0, PlayerSeatV1::P1, PlayerSeatV1::P1] {
-            assert_eq!(seeded.sample_scores(&[0.0; 64], seat, 64).unwrap(),
-                repeated.sample_scores(&[0.0; 64], seat, 64).unwrap());
-        }
-        assert_eq!(original.seat_rng, preserved);
+        for mut original in [
+            FrozenPlayPolicyV1::training_fixture_v3(),
+            FrozenPlayPolicyV1::training_fixture_v4(),
+        ] {
+            assert!(original.fork_for_continuation_v1().is_err());
+            original.reset_sampling_v1([73, 911]);
+            for seat in [PlayerSeatV1::P0, PlayerSeatV1::P1, PlayerSeatV1::P1] {
+                original.sample_scores(&[0.0; 64], seat, 64).unwrap();
+            }
+            let original_rng = original.seat_rng;
+            let mut fork = original.fork_for_continuation_v1().unwrap();
+            assert_eq!(
+                fork.actual_model_identity_v1(),
+                original.actual_model_identity_v1()
+            );
+            assert_eq!(fork.identity_v1(), original.identity_v1());
+            assert_ne!(fork.embeddings.as_ptr(), original.embeddings.as_ptr());
+            for (seat, width) in [
+                (PlayerSeatV1::P1, 257),
+                (PlayerSeatV1::P0, 3),
+                (PlayerSeatV1::P1, 64),
+            ] {
+                let logits = vec![0.0; width];
+                let sampled = fork.sample_scores(&logits, seat, width as u32).unwrap();
+                assert_eq!(
+                    sampled,
+                    original.sample_scores(&logits, seat, width as u32).unwrap()
+                );
+                assert_eq!(fork.seat_rng, original.seat_rng);
+            }
+            assert_ne!(original.seat_rng, original_rng);
+            let preserved = original.seat_rng;
+            let mut seeded = original
+                .fork_for_seeded_continuation_v1([123, 456])
+                .unwrap();
+            assert_eq!(original.seat_rng, preserved);
+            assert_eq!(seeded.seat_rng, [123, 456].map(SplitMix64::seed));
+            assert_ne!(seeded.seat_rng, preserved);
+            assert!(seeded.sampling_initialized);
+            assert_eq!(
+                seeded.actual_model_identity_v1(),
+                original.actual_model_identity_v1()
+            );
+            let mut repeated = original
+                .fork_for_seeded_continuation_v1([123, 456])
+                .unwrap();
+            for seat in [PlayerSeatV1::P0, PlayerSeatV1::P1, PlayerSeatV1::P1] {
+                assert_eq!(
+                    seeded.sample_scores(&[0.0; 64], seat, 64).unwrap(),
+                    repeated.sample_scores(&[0.0; 64], seat, 64).unwrap()
+                );
+            }
+            assert_eq!(original.seat_rng, preserved);
         }
     }
 
@@ -2043,8 +2068,8 @@ mod tests {
         };
         use crate::native_policy_train_step_v1::NativePolicyValueTrainStateV1;
         use crate::phase1_registry_transfer_v1::{
-            transfer_fresh_expanded_checkpoint_to_current_registry_v1, FreshRegistryTransferRequestV1,
-            RegistryTransferFeaturesV1,
+            transfer_fresh_expanded_checkpoint_to_current_registry_v1,
+            FreshRegistryTransferRequestV1, RegistryTransferFeaturesV1,
         };
 
         #[derive(Serialize)]
@@ -2281,7 +2306,10 @@ mod tests {
         let v3_session = FastActorSessionV1::from_v3_fixture_state(state.clone());
         let mut v3_policy = FrozenPlayPolicyV1::training_fixture_v3();
         v3_policy.reset_sampling_v1([11, 22]);
-        assert_eq!(v3_policy.feature_generation_v1(), PlayPolicyGenerationV1::V3);
+        assert_eq!(
+            v3_policy.feature_generation_v1(),
+            PlayPolicyGenerationV1::V3
+        );
         let v3_scores = v3_policy.score_fast_session_v1(&v3_session).unwrap();
         assert!(!v3_scores.logits.is_empty());
         assert!(v3_scores.logits.iter().all(|x| x.is_finite()));
@@ -2290,7 +2318,10 @@ mod tests {
         let v4_session = FastActorSessionV1::from_v3_fixture_state(state);
         let mut v4_policy = FrozenPlayPolicyV1::training_fixture_v4();
         v4_policy.reset_sampling_v1([11, 22]);
-        assert_eq!(v4_policy.feature_generation_v1(), PlayPolicyGenerationV1::V4);
+        assert_eq!(
+            v4_policy.feature_generation_v1(),
+            PlayPolicyGenerationV1::V4
+        );
         let v4_scores = v4_policy.score_fast_session_v1(&v4_session).unwrap();
         assert!(!v4_scores.logits.is_empty());
         assert!(v4_scores.logits.iter().all(|x| x.is_finite()));

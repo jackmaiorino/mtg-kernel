@@ -4,15 +4,15 @@
 //! fixed-seat views cross JSONL. This interface performs inference, never fit.
 
 mod replay;
-pub use replay::{MAX_RECORDED_REPLAY_INPUT_BYTES_V2, prepare_recorded_human_replay_v2};
+pub use replay::{prepare_recorded_human_replay_v2, MAX_RECORDED_REPLAY_INPUT_BYTES_V2};
 
 use crate::bo3_match::{GameOutcomeV1, MatchOutcomeV1, MatchPhaseV1, PlayDrawChoiceV1};
 use crate::bo3_session::BestOfThreeDeckMatchV1;
 use crate::card_def::CARD_DEFS;
 use crate::expanded_deck_training_v1::{ExpandedDeckListV1, PinnedFileV1};
 use crate::game_summary_v1::{
-    CompletedGameSummaryV2, FastGameSummaryAccumulatorV1, RemovalCounterspellTagsV1,
-    finish_opening_concession_v2,
+    finish_opening_concession_v2, CompletedGameSummaryV2, FastGameSummaryAccumulatorV1,
+    RemovalCounterspellTagsV1,
 };
 use crate::human_bo3_v1::{HumanActionRequestV1, HumanDecisionErrorV1, HumanDecisionProjectorV1};
 pub use crate::human_match_v1::HumanMatchCommandV1;
@@ -21,7 +21,7 @@ use crate::ids::PlayerId;
 use crate::learned_bo3_v1::project_sideboard_input_v1;
 use crate::learned_sideboard_v1::{FrozenSideboardEmbeddingsV1, LearnedSideboardModelV1};
 use crate::paired_bo1_harness_v1::{
-    PairedBo1PolicyInputV1, PairedBo1PolicyV1, PlayPolicyGenerationV1, paired_policy_seeds_v1,
+    paired_policy_seeds_v1, PairedBo1PolicyInputV1, PairedBo1PolicyV1, PlayPolicyGenerationV1,
 };
 use crate::phase1_agent_v1::{
     AgentPlayDrawPolicyV1, AgentSideboardPolicyV1, CompleteAgentPackageV1,
@@ -33,7 +33,7 @@ use crate::sideboard::{DeckConfigurationV1, RegisteredDeckV1};
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
 use crate::state::SplitMix64;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};

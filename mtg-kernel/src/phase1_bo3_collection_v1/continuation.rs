@@ -6,13 +6,19 @@ use serde_json::{json, Value};
 
 /// Hash the typed record with the identical serializer used at capture.
 pub fn continuation_record_sha256_v1(text: &str) -> Result<String, String> {
-    ensure(text.len() <= MAX_BO3_COLLECTION_REQUEST_BYTES_V1, "record exceeds 4 MiB")?;
+    ensure(
+        text.len() <= MAX_BO3_COLLECTION_REQUEST_BYTES_V1,
+        "record exceeds 4 MiB",
+    )?;
     crate::rl::parse_strict_json_value(text).map_err(|e| e.to_string())?;
     let record: Bo3DecisionRecordV1 = serde_json::from_str(text).map_err(|e| e.to_string())?;
     record_sha256(&record)
 }
 fn record_sha256(record: &Bo3DecisionRecordV1) -> Result<String, String> {
-    Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(record).map_err(|e| e.to_string())?)))
+    Ok(format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(record).map_err(|e| e.to_string())?)
+    ))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -38,18 +44,38 @@ impl Bo3ContinuationOptionsV1 {
         Ok(options)
     }
     fn validate(&self) -> Result<(), String> {
-        ensure((1..=3).contains(&self.game_index), "continuation game outside BO3")?;
+        ensure(
+            (1..=3).contains(&self.game_index),
+            "continuation game outside BO3",
+        )?;
         ensure(!self.match_id.is_empty(), "continuation match ID missing")?;
-        ensure(self.record_sha256.len() == 64 && self.record_sha256.bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)), "invalid root record hash")?;
-        ensure((1..=200).contains(&self.policy_seeds.len()), "continuation batch outside bounds")?;
+        ensure(
+            self.record_sha256.len() == 64
+                && self
+                    .record_sha256
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "invalid root record hash",
+        )?;
+        ensure(
+            (1..=200).contains(&self.policy_seeds.len()),
+            "continuation batch outside bounds",
+        )?;
         if self.policy_seeds.len() > 1 {
-            ensure(self.policy_seeds.iter().all(Option::is_some), "multi-row continuation requires fresh seeds")?;
+            ensure(
+                self.policy_seeds.iter().all(Option::is_some),
+                "multi-row continuation requires fresh seeds",
+            )?;
             let unique: BTreeSet<_> = self.policy_seeds.iter().copied().collect();
-            ensure(unique.len() == self.policy_seeds.len(), "duplicate continuation seed pair")?;
+            ensure(
+                unique.len() == self.policy_seeds.len(),
+                "duplicate continuation seed pair",
+            )?;
         }
-        ensure(!self.retain_records || self.policy_seeds.len() == 1,
-            "full records are restricted to single-continuation engineering checks")
+        ensure(
+            !self.retain_records || self.policy_seeds.len() == 1,
+            "full records are restricted to single-continuation engineering checks",
+        )
     }
 }
 
@@ -65,25 +91,52 @@ pub(super) struct ContinuationSink {
     committed: Option<ContinuationCapture>,
 }
 impl ContinuationSink {
-    pub(super) fn prepare(&self, input: &PairedBo1PolicyInputV1<'_>,
-        record: &Bo3DecisionRecordV1, game: u8, policies: &[FrozenPlayPolicyV1; 2],
+    pub(super) fn prepare(
+        &self,
+        input: &PairedBo1PolicyInputV1<'_>,
+        record: &Bo3DecisionRecordV1,
+        game: u8,
+        policies: &[FrozenPlayPolicyV1; 2],
     ) -> Result<Option<ContinuationCapture>, String> {
         let o = &self.options;
-        if game != o.game_index || record.decision_index != o.decision_index { return Ok(None); }
+        if game != o.game_index || record.decision_index != o.decision_index {
+            return Ok(None);
+        }
         ensure(self.committed.is_none(), "duplicate continuation root")?;
-        ensure(input.decision().acting_player == o.actor, "continuation actor differs")?;
-        ensure(record.behavior.selected_index_v1() == o.selected_index as usize, "continuation action differs")?;
-        ensure(record_sha256(record)? == o.record_sha256, "continuation archived record differs")?;
+        ensure(
+            input.decision().acting_player == o.actor,
+            "continuation actor differs",
+        )?;
+        ensure(
+            record.behavior.selected_index_v1() == o.selected_index as usize,
+            "continuation action differs",
+        )?;
+        ensure(
+            record_sha256(record)? == o.record_sha256,
+            "continuation archived record differs",
+        )?;
         // Called AFTER sampling the selected root action. Both copies retain
         // current positions; the original policies and session are untouched.
-        let forks = [policies[0].fork_for_continuation_v1()?, policies[1].fork_for_continuation_v1()?];
+        let forks = [
+            policies[0].fork_for_continuation_v1()?,
+            policies[1].fork_for_continuation_v1()?,
+        ];
         let headroom_before = input.diagnostic_continuation_headroom_v1();
         let state_hash_before = input.diagnostic_continuation_state_hash_v1();
         let session = input.diagnostic_continuation_after_action_v1(o.selected_index)?;
-        Ok(Some(ContinuationCapture { session, policies: forks, record: record.clone(), headroom_before, state_hash_before }))
+        Ok(Some(ContinuationCapture {
+            session,
+            policies: forks,
+            record: record.clone(),
+            headroom_before,
+            state_hash_before,
+        }))
     }
     pub(super) fn commit(&mut self, capture: ContinuationCapture) -> Result<(), String> {
-        ensure(self.committed.is_none(), "continuation root already committed")?;
+        ensure(
+            self.committed.is_none(),
+            "continuation root already committed",
+        )?;
         self.committed = Some(capture);
         Ok(())
     }
@@ -96,13 +149,24 @@ pub struct Bo3ContinuationResultV1 {
     pub continuation: Value,
 }
 
-pub fn collect_bo3_with_continuation_v1(config: Bo3CollectionConfigV1,
-    packages: [CompleteAgentPackageV1; 2], options: Bo3ContinuationOptionsV1,
+pub fn collect_bo3_with_continuation_v1(
+    config: Bo3CollectionConfigV1,
+    packages: [CompleteAgentPackageV1; 2],
+    options: Bo3ContinuationOptionsV1,
 ) -> Result<Bo3ContinuationResultV1, String> {
-    ensure(cfg!(feature = "experimental-burn-net8-packed-cuda-v1"), "continuation feature unavailable")?;
+    ensure(
+        cfg!(feature = "experimental-burn-net8-packed-cuda-v1"),
+        "continuation feature unavailable",
+    )?;
     options.validate()?;
-    ensure(config.match_id == options.match_id, "continuation match ID differs")?;
-    let mut sink = ContinuationSink { options: options.clone(), committed: None };
+    ensure(
+        config.match_id == options.match_id,
+        "continuation match ID differs",
+    )?;
+    let mut sink = ContinuationSink {
+        options: options.clone(),
+        committed: None,
+    };
     let collection = collect_public_observed(config, packages, None, None, Some(&mut sink))?;
     let mut rows = Vec::new();
     let mut root = Value::Null;
@@ -110,23 +174,34 @@ pub fn collect_bo3_with_continuation_v1(config: Bo3CollectionConfigV1,
         root = json!({"record":capture.record,"headroom_before":capture.headroom_before,
             "state_hash_before":capture.state_hash_before,"state_hash_after":capture.session.diagnostic_state_hash(),
             "headroom_after":capture.session.diagnostic_remaining_headroom_v1()});
-        let hashes = collection.packages.each_ref().map(|p| p.package_sha256_v1()).into_iter()
+        let hashes = collection
+            .packages
+            .each_ref()
+            .map(|p| p.package_sha256_v1())
+            .into_iter()
             .collect::<Result<Vec<_>, _>>()?;
         for seeds in &options.policy_seeds {
             rows.push(run_one(&capture, *seeds, &hashes, options.retain_records)?);
         }
     }
     let complete = !rows.is_empty() && rows.iter().all(|r| r["natural"] == true);
-    Ok(Bo3ContinuationResultV1 { schema: "mtg-kernel-bo3-continuation/v1", collection,
+    Ok(Bo3ContinuationResultV1 {
+        schema: "mtg-kernel-bo3-continuation/v1",
+        collection,
         continuation: json!({"options":options,"root":root,"rows":rows,"complete":complete,
-            "non_claim":"Conditional incumbent continuation risk at a fixed hidden state and randomness stream, not first-action causal regret, population prevalence or strength."}) })
+            "non_claim":"Conditional incumbent continuation risk at a fixed hidden state and randomness stream, not first-action causal regret, population prevalence or strength."}),
+    })
 }
 
-fn run_one(capture: &ContinuationCapture, seeds: Option<[u64; 2]>, hashes: &[String],
+fn run_one(
+    capture: &ContinuationCapture,
+    seeds: Option<[u64; 2]>,
+    hashes: &[String],
     retain_records: bool,
 ) -> Result<Value, String> {
     let fork = |p: &FrozenPlayPolicyV1| match seeds {
-        Some(s) => p.fork_for_seeded_continuation_v1(s), None => p.fork_for_continuation_v1(),
+        Some(s) => p.fork_for_seeded_continuation_v1(s),
+        None => p.fork_for_continuation_v1(),
     };
     let mut policies = [fork(&capture.policies[0])?, fork(&capture.policies[1])?];
     let mut session = capture.session.clone();
@@ -142,33 +217,54 @@ fn run_one(capture: &ContinuationCapture, seeds: Option<[u64; 2]>, hashes: &[Str
         let result = (|| -> Result<Bo3DecisionRecordV1, String> {
             let input = PairedBo1PolicyInputV1::new(&session, decision);
             let acting = seat(decision.acting_player);
-            let (selected, scores) = policies[acting].select_paired_with_scores_v1(&input)
+            let (selected, scores) = policies[acting]
+                .select_paired_with_scores_v1(&input)
                 .map_err(|e| e.to_string())?;
-            let behavior = BehaviorDistributionV1::hamilton_from_logits_v1(&scores.logits, selected)?;
-            let record = input.capture_bo3_gameplay_v4(next_index, hashes[acting].clone(), behavior)?;
-            session.step(decision.episode_id, decision.step, selected).map_err(|e| e.to_string())?;
+            let behavior =
+                BehaviorDistributionV1::hamilton_from_logits_v1(&scores.logits, selected)?;
+            let record =
+                input.capture_bo3_gameplay_v4(next_index, hashes[acting].clone(), behavior)?;
+            session
+                .step(decision.episode_id, decision.step, selected)
+                .map_err(|e| e.to_string())?;
             Ok(record)
         })();
-        let record = match result { Ok(r) => r, Err(e) => { error = Some(e); break; } };
+        let record = match result {
+            Ok(r) => r,
+            Err(e) => {
+                error = Some(e);
+                break;
+            }
+        };
         let encoded = serde_json::to_vec(&record).map_err(|e| e.to_string())?;
         bytes += encoded.len() as u64;
         digest.update((encoded.len() as u64).to_le_bytes());
         digest.update(&encoded);
         count += 1;
         next_index += 1;
-        if retain_records { records.push(record); }
+        if retain_records {
+            records.push(record);
+        }
         if retain_records && bytes > MAX_RECORD_BYTES {
-            error = Some("continuation engineering record byte limit exceeded".into()); break;
+            error = Some("continuation engineering record byte limit exceeded".into());
+            break;
         }
     }
-    let terminal = match session.current_response() { FastActorResponseV1::Terminal(t) => Some(t), _ => None };
-    let natural = error.is_none() && terminal.as_ref().is_some_and(|t|
-        t.terminal_classification == TerminalClassificationV1::Natural);
+    let terminal = match session.current_response() {
+        FastActorResponseV1::Terminal(t) => Some(t),
+        _ => None,
+    };
+    let natural = error.is_none()
+        && terminal
+            .as_ref()
+            .is_some_and(|t| t.terminal_classification == TerminalClassificationV1::Natural);
     digest.update(serde_json::to_vec(&terminal).map_err(|e| e.to_string())?);
-    Ok(json!({"policy_seeds":seeds,"natural":natural,"terminal":terminal,"error":error,
+    Ok(
+        json!({"policy_seeds":seeds,"natural":natural,"terminal":terminal,"error":error,
         "committed_steps":count,"record_bytes":bytes,"records":records,
         "trajectory_sha256":format!("{:x}",digest.finalize()),
-        "remaining_headroom":session.diagnostic_remaining_headroom_v1()}))
+        "remaining_headroom":session.diagnostic_remaining_headroom_v1()}),
+    )
 }
 
 #[cfg(all(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
@@ -180,27 +276,60 @@ mod tests {
     fn continuation_fork_confirmed_capture_reproduces_remaining_game() {
         let cfg = config("continuation-fork-replay");
         let (mut policies, packages) = fixtures_v4([PlayDrawChoiceV1::Play; 2]);
-        let original = collect_loaded_inner(&cfg, packages.each_ref(), &mut policies,
-            [None, None], None).unwrap();
+        let original =
+            collect_loaded_inner(&cfg, packages.each_ref(), &mut policies, [None, None], None)
+                .unwrap();
         let game = &original.trajectory.games[0];
-        let gameplay: Vec<_> = game.decisions.iter().filter(|r|
-            matches!(r.visible, ActorVisibleDecisionV1::Gameplay { .. })).collect();
+        let gameplay: Vec<_> = game
+            .decisions
+            .iter()
+            .filter(|r| matches!(r.visible, ActorVisibleDecisionV1::Gameplay { .. }))
+            .collect();
         let root = gameplay[gameplay.len() / 2];
-        let options = Bo3ContinuationOptionsV1 { match_id: cfg.match_id.clone(),
-            game_index: game.game_index, decision_index: root.decision_index, actor: root.actor,
+        let options = Bo3ContinuationOptionsV1 {
+            match_id: cfg.match_id.clone(),
+            game_index: game.game_index,
+            decision_index: root.decision_index,
+            actor: root.actor,
             selected_index: root.behavior.selected_index_v1() as u32,
             record_sha256: format!("{:x}", Sha256::digest(serde_json::to_vec(root).unwrap())),
-            policy_seeds: vec![None], retain_records: true };
-        let mut sink = ContinuationSink { options, committed: None };
-        let observed = collect_loaded_with_continuation(&cfg, packages.each_ref(), &mut policies,
-            [None, None], None, None, Some(&mut sink)).unwrap();
-        assert_eq!(serde_json::to_vec(&original).unwrap(), serde_json::to_vec(&observed).unwrap());
+            policy_seeds: vec![None],
+            retain_records: true,
+        };
+        let mut sink = ContinuationSink {
+            options,
+            committed: None,
+        };
+        let observed = collect_loaded_with_continuation(
+            &cfg,
+            packages.each_ref(),
+            &mut policies,
+            [None, None],
+            None,
+            None,
+            Some(&mut sink),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_vec(&original).unwrap(),
+            serde_json::to_vec(&observed).unwrap()
+        );
         let capture = sink.committed.unwrap();
-        let hashes: Vec<_> = packages.iter().map(|p| p.package_sha256_v1().unwrap()).collect();
+        let hashes: Vec<_> = packages
+            .iter()
+            .map(|p| p.package_sha256_v1().unwrap())
+            .collect();
         let replay = run_one(&capture, None, &hashes, true).unwrap();
-        let expected: Vec<_> = game.decisions.iter().filter(|r| r.decision_index > root.decision_index).collect();
+        let expected: Vec<_> = game
+            .decisions
+            .iter()
+            .filter(|r| r.decision_index > root.decision_index)
+            .collect();
         assert_eq!(replay["records"], serde_json::to_value(expected).unwrap());
-        assert_eq!(replay["terminal"], serde_json::to_value(&original.games[0].observed_terminal).unwrap());
+        assert_eq!(
+            replay["terminal"],
+            serde_json::to_value(&original.games[0].observed_terminal).unwrap()
+        );
         assert_eq!(replay["natural"], true);
         let a = run_one(&capture, Some([13, 47]), &hashes, true).unwrap();
         let b = run_one(&capture, Some([13, 47]), &hashes, true).unwrap();
@@ -211,26 +340,53 @@ mod tests {
     fn continuation_fork_rejected_root_never_admits_capture() {
         let cfg = config("continuation-fork-reject");
         let (mut policies, packages) = fixtures_v4([PlayDrawChoiceV1::Play; 2]);
-        let original = collect_loaded_inner(&cfg, packages.each_ref(), &mut policies,
-            [None, None], None).unwrap();
-        let root = original.trajectory.games[0].decisions.iter().find(|r|
-            matches!(r.visible, ActorVisibleDecisionV1::Gameplay { .. })).unwrap();
-        let options = Bo3ContinuationOptionsV1 { match_id: cfg.match_id.clone(), game_index: 1,
-            decision_index: root.decision_index, actor: root.actor,
+        let original =
+            collect_loaded_inner(&cfg, packages.each_ref(), &mut policies, [None, None], None)
+                .unwrap();
+        let root = original.trajectory.games[0]
+            .decisions
+            .iter()
+            .find(|r| matches!(r.visible, ActorVisibleDecisionV1::Gameplay { .. }))
+            .unwrap();
+        let options = Bo3ContinuationOptionsV1 {
+            match_id: cfg.match_id.clone(),
+            game_index: 1,
+            decision_index: root.decision_index,
+            actor: root.actor,
             selected_index: root.behavior.selected_index_v1() as u32,
-            record_sha256: "0".repeat(64), policy_seeds: vec![None], retain_records: true };
+            record_sha256: "0".repeat(64),
+            policy_seeds: vec![None],
+            retain_records: true,
+        };
         let text = serde_json::to_string_pretty(root).unwrap();
-        assert_eq!(continuation_record_sha256_v1(&text).unwrap(), record_sha256(root).unwrap());
+        assert_eq!(
+            continuation_record_sha256_v1(&text).unwrap(),
+            record_sha256(root).unwrap()
+        );
         for seeds in [vec![None, Some([1, 2])], vec![Some([1, 2]), Some([1, 2])]] {
             let mut invalid = options.clone();
             invalid.policy_seeds = seeds;
             invalid.retain_records = false;
             assert!(invalid.validate().is_err());
         }
-        let mut sink = ContinuationSink { options, committed: None };
-        let observed = collect_loaded_with_continuation(&cfg, packages.each_ref(), &mut policies,
-            [None, None], None, None, Some(&mut sink)).unwrap();
+        let mut sink = ContinuationSink {
+            options,
+            committed: None,
+        };
+        let observed = collect_loaded_with_continuation(
+            &cfg,
+            packages.each_ref(),
+            &mut policies,
+            [None, None],
+            None,
+            None,
+            Some(&mut sink),
+        )
+        .unwrap();
         assert!(sink.committed.is_none());
-        assert!(matches!(observed.trajectory.ending, Bo3TrajectoryEndingV1::Incomplete { .. }));
+        assert!(matches!(
+            observed.trajectory.ending,
+            Bo3TrajectoryEndingV1::Incomplete { .. }
+        ));
     }
 }

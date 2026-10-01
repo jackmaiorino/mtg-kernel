@@ -7,7 +7,7 @@ use crate::learned_sideboard_v1::{
     SideboardPlayIdentityV1, SideboardTrainingConfigV1,
 };
 use crate::phase1_agent_v1::ActorVisibleDecisionV1;
-use crate::phase1_bo3_collection_v1::{Bo3CollectionConfigV1, collect_loaded_inner};
+use crate::phase1_bo3_collection_v1::{collect_loaded_inner, Bo3CollectionConfigV1};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -36,7 +36,11 @@ fn fixture(
     fixture_generation(human, fitted, false)
 }
 
-fn fixture_generation(human: usize, fitted: bool, v4: bool) -> (
+fn fixture_generation(
+    human: usize,
+    fitted: bool,
+    v4: bool,
+) -> (
     HumanMatchServiceV2,
     Bo3CollectionConfigV1,
     [CompleteAgentPackageV1; 2],
@@ -46,12 +50,12 @@ fn fixture_generation(human: usize, fitted: bool, v4: bool) -> (
     // Two distinct basic identities allow real legal sideboard exchanges.
     cfg.registrations[0].sideboard = cfg.registrations[1].mainboard[..15].to_vec();
     cfg.registrations[1].sideboard = cfg.registrations[0].mainboard[..15].to_vec();
-    let fixtures = if v4 { crate::phase1_bo3_collection_v1::tests::fixtures_v4 }
-        else { crate::phase1_bo3_collection_v1::tests::fixtures };
-    let (policies, mut packages) = fixtures([
-        PlayDrawChoiceV1::Draw,
-        PlayDrawChoiceV1::Play,
-    ]);
+    let fixtures = if v4 {
+        crate::phase1_bo3_collection_v1::tests::fixtures_v4
+    } else {
+        crate::phase1_bo3_collection_v1::tests::fixtures
+    };
+    let (policies, mut packages) = fixtures([PlayDrawChoiceV1::Draw, PlayDrawChoiceV1::Play]);
     let [p0, p1] = policies;
     let policy = if human == 0 { p1 } else { p0 };
     let model = 1 - human;
@@ -191,16 +195,24 @@ fn human_v4_service_selects_live_binding_from_policy_and_accepts_shared_source_t
     use crate::state::Target;
     for target_label in ["Writhing Chrysalis", "Counterspell"] {
         let (mut service, _, _) = fixture_generation(0, false, true);
-        assert_eq!(service.policy.feature_generation_v1(), PlayPolicyGenerationV1::V4);
+        assert_eq!(
+            service.policy.feature_generation_v1(),
+            PlayPolicyGenerationV1::V4
+        );
         begin(&mut service);
         let (state, chrysalis, counterspell) = crate::rl_session::pyroblast_target_fixture_v1();
         service.session = Some(FastActorSessionV1::from_v3_fixture_state(state));
-        service.summary = Some(FastGameSummaryAccumulatorV1::new_v1(service.session.as_ref().unwrap()).unwrap());
+        service.summary =
+            Some(FastGameSummaryAccumulatorV1::new_v1(service.session.as_ref().unwrap()).unwrap());
         service.opening = None;
         let view = current(&mut service);
         assert_eq!(view["phase"], "decision");
-        let choice = view["decision"]["actions"].as_array().unwrap().iter()
-            .find(|a| a["label"].as_str().unwrap().contains(target_label)).unwrap();
+        let choice = view["decision"]["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["label"].as_str().unwrap().contains(target_label))
+            .unwrap();
         let command = HumanMatchCommandV1::Action {
             request_id: "v4-stack-target".into(),
             prompt_seq: view["decision"]["prompt_seq"].as_u64().unwrap(),
@@ -208,11 +220,25 @@ fn human_v4_service_selects_live_binding_from_policy_and_accepts_shared_source_t
         };
         let first = send(&mut service, command.clone());
         let session = service.session.as_ref().unwrap();
-        let target = if target_label == "Counterspell" { counterspell } else { chrysalis };
-        assert_eq!(session.game_state().stack.last().unwrap().targets, vec![Target::Object(target)]);
+        let target = if target_label == "Counterspell" {
+            counterspell
+        } else {
+            chrysalis
+        };
+        assert_eq!(
+            session.game_state().stack.last().unwrap().targets,
+            vec![Target::Object(target)]
+        );
         let after = session.privileged_core_environment_hash();
         assert_eq!(send(&mut service, command), first);
-        assert_eq!(service.session.as_ref().unwrap().privileged_core_environment_hash(), after);
+        assert_eq!(
+            service
+                .session
+                .as_ref()
+                .unwrap()
+                .privileged_core_environment_hash(),
+            after
+        );
     }
 }
 
@@ -229,12 +255,12 @@ fn human_v4_complete_bo3_both_seats_match_automated_package_gameplay_and_sideboa
 fn check_human_gameplay_parity(v4: bool) {
     for human in 0..2 {
         let (mut service, cfg, packages) = fixture_generation(human, human == 1, v4);
-        let fixtures = if v4 { crate::phase1_bo3_collection_v1::tests::fixtures_v4 }
-            else { crate::phase1_bo3_collection_v1::tests::fixtures };
-        let (mut policies, _) = fixtures([
-            PlayDrawChoiceV1::Draw,
-            PlayDrawChoiceV1::Play,
-        ]);
+        let fixtures = if v4 {
+            crate::phase1_bo3_collection_v1::tests::fixtures_v4
+        } else {
+            crate::phase1_bo3_collection_v1::tests::fixtures
+        };
+        let (mut policies, _) = fixtures([PlayDrawChoiceV1::Draw, PlayDrawChoiceV1::Play]);
         let owned_head = service.sideboard.clone();
         let mut heads = [None, None];
         heads[1 - human] = owned_head.as_ref();
@@ -663,10 +689,8 @@ fn human_v2_caps_failures_and_package_rejection_do_not_fabricate_results() {
     std::fs::write(&config.package.path, b"{}").unwrap();
     assert!(HumanMatchServiceV2::new(config.clone()).is_err());
     assert!(!config.journal_path.exists());
-    assert!(
-        strict::<HumanMatchCommandV1>(
-            br#"{"command":"current","request_id":"a","request_id":"b"}"#
-        )
-        .is_err()
-    );
+    assert!(strict::<HumanMatchCommandV1>(
+        br#"{"command":"current","request_id":"a","request_id":"b"}"#
+    )
+    .is_err());
 }

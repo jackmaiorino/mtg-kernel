@@ -2076,16 +2076,22 @@ impl GameState {
     /// Offline certificate-invariance diagnostic. Returns a private copy only.
     #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
     pub(crate) fn diagnostic_certificate_rng_clone_v1(&self) -> Self {
-        let mut copy=self.clone();
+        let mut copy = self.clone();
         match &mut copy.randomness {
-            GameRandomnessState::Legacy(rng) => {rng.next_u64();}
+            GameRandomnessState::Legacy(rng) => {
+                rng.next_u64();
+            }
             GameRandomnessState::EnvironmentV2(v2) => {
-                use crate::environment_randomization_v2::{GameEnvironmentRandomizationV2,PhysicalOwnerV2};
-                let mut changed=GameEnvironmentRandomizationV2::new(v2.pair_environment_seed() ^ 0x5a5a_a5a5_1248_8421);
-                for owner in [PhysicalOwnerV2::P0,PhysicalOwnerV2::P1] {
-                    changed.set_live_shuffle_ordinal(owner,v2.next_live_shuffle_ordinal(owner));
+                use crate::environment_randomization_v2::{
+                    GameEnvironmentRandomizationV2, PhysicalOwnerV2,
+                };
+                let mut changed = GameEnvironmentRandomizationV2::new(
+                    v2.pair_environment_seed() ^ 0x5a5a_a5a5_1248_8421,
+                );
+                for owner in [PhysicalOwnerV2::P0, PhysicalOwnerV2::P1] {
+                    changed.set_live_shuffle_ordinal(owner, v2.next_live_shuffle_ordinal(owner));
                 }
-                *v2=changed;
+                *v2 = changed;
             }
         }
         copy
@@ -2097,14 +2103,17 @@ impl GameState {
     /// Preserve mode and past physical-owner shuffle counters.
     pub(crate) fn resample_future_randomness_for_search_v3(&mut self, seed: u64) {
         match &mut self.randomness {
-            GameRandomnessState::Legacy(rng) => *rng=SplitMix64::seed(seed),
+            GameRandomnessState::Legacy(rng) => *rng = SplitMix64::seed(seed),
             GameRandomnessState::EnvironmentV2(v2) => {
-                use crate::environment_randomization_v2::{GameEnvironmentRandomizationV2,PhysicalOwnerV2};
-                let mut replacement=GameEnvironmentRandomizationV2::new(seed);
-                for owner in [PhysicalOwnerV2::P0,PhysicalOwnerV2::P1] {
-                    replacement.set_live_shuffle_ordinal(owner,v2.next_live_shuffle_ordinal(owner));
+                use crate::environment_randomization_v2::{
+                    GameEnvironmentRandomizationV2, PhysicalOwnerV2,
+                };
+                let mut replacement = GameEnvironmentRandomizationV2::new(seed);
+                for owner in [PhysicalOwnerV2::P0, PhysicalOwnerV2::P1] {
+                    replacement
+                        .set_live_shuffle_ordinal(owner, v2.next_live_shuffle_ordinal(owner));
                 }
-                *v2=replacement;
+                *v2 = replacement;
             }
         }
     }
