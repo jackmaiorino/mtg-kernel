@@ -2,23 +2,23 @@ use self::unary_basic_int::BasicIntUnaryKind;
 
 use super::{expand, numeric, permute, unfold};
 use crate::kernel::{
-    launch_binop_int, launch_scalar_binop_int, launch_unary_numeric, reduce, unary_basic_int,
-    BitwiseShlOp, BitwiseShrOp, NumericUnaryOp, NumericUnaryOpFamily,
+    BitwiseShlOp, BitwiseShrOp, NumericUnaryOp, NumericUnaryOpFamily, launch_binop_int,
+    launch_scalar_binop_int, launch_unary_numeric, reduce, unary_basic_int,
+};
+use crate::{
+    CubeBackend, CubeRuntime, FloatElement, IntElement,
+    kernel::{
+        self,
+        matmul::{MatmulStrategy, matmul},
+    },
 };
 use crate::{
     element::BoolElement,
     kernel::prng::{random_bernoulli, random_normal, random_uniform},
 };
-use crate::{
-    kernel::{
-        self,
-        matmul::{matmul, MatmulStrategy},
-    },
-    CubeBackend, CubeRuntime, FloatElement, IntElement,
-};
 use burn_backend::tensor::{BoolTensor, Device, FloatTensor, IntTensor};
-use burn_backend::{get_device_settings, Distribution, ElementConversion, Shape, TensorData};
-use burn_backend::{ops::IntTensorOps, DType, IntDType, Slice};
+use burn_backend::{DType, IntDType, Slice, ops::IntTensorOps};
+use burn_backend::{Distribution, ElementConversion, Shape, TensorData, get_device_settings};
 use burn_backend::{ExecutionError, Scalar};
 use burn_std::{BoolDType, FloatDType};
 use cubecl::frontend::Numeric;

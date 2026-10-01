@@ -2,14 +2,14 @@ use burn_backend::ops::ConvOptions;
 use burn_std::Shape;
 use cubek::{
     convolution::{
-        components::ConvSetupError, launch_ref, AcceleratedTileKind, ConvAlgorithm,
-        ConvolutionArgs, ConvolutionInputs, Strategy,
+        AcceleratedTileKind, ConvAlgorithm, ConvolutionArgs, ConvolutionInputs, Strategy,
+        components::ConvSetupError, launch_ref,
     },
     matmul::definition::{MatmulElems, MatmulGlobalElems},
     std::InputBinding,
 };
 
-use crate::{ops::numeric::empty_device_dtype, tensor::CubeTensor, CubeRuntime};
+use crate::{CubeRuntime, ops::numeric::empty_device_dtype, tensor::CubeTensor};
 
 pub fn dgrad_gemm_simple_sync<R: CubeRuntime, const N: usize>(
     out_grad: CubeTensor<R>,

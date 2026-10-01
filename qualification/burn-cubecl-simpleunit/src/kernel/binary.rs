@@ -1,10 +1,10 @@
 use crate::{
+    CubeRuntime,
     kernel::utils::{address_type, broadcast_shape},
     ops::{max_vector_size, numeric::empty_device_dtype},
     tensor::CubeTensor,
-    CubeRuntime,
 };
-use burn_backend::{bf16, f16, TensorMetadata};
+use burn_backend::{TensorMetadata, bf16, f16};
 use cubecl::{
     calculate_cube_count_elemwise, intrinsic, prelude::*, std::tensor::layout::linear::LinearView,
 };

@@ -1,11 +1,11 @@
 use crate::kernel::utils::{shape_divmod, shape_divmod_range};
 use crate::{
-    kernel::utils::address_type, ops::numeric::empty_device_dtype, tensor::CubeTensor, CubeRuntime,
+    CubeRuntime, kernel::utils::address_type, ops::numeric::empty_device_dtype, tensor::CubeTensor,
 };
 use cubecl::prelude::*;
-use cubecl::std::tensor::layout::linear::LinearView;
 use cubecl::std::FastDivmod;
-use cubecl::{calculate_cube_count_elemwise, CubeDim};
+use cubecl::std::tensor::layout::linear::LinearView;
+use cubecl::{CubeDim, calculate_cube_count_elemwise};
 
 /// gather_nd GPU kernel.
 ///

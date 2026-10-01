@@ -1,9 +1,9 @@
-use crate::{ops::numeric::empty_device_dtype, tensor::CubeTensor, CubeRuntime};
-use burn_backend::ops::{conv::calculate_conv_output_sizes, ConvOptions};
+use crate::{CubeRuntime, ops::numeric::empty_device_dtype, tensor::CubeTensor};
+use burn_backend::ops::{ConvOptions, conv::calculate_conv_output_sizes};
 use cubek::{
     convolution::{
-        components::ConvSetupError, launch_ref, AcceleratedTileKind, ConvAlgorithm,
-        ConvolutionArgs, ConvolutionInputs, Strategy,
+        AcceleratedTileKind, ConvAlgorithm, ConvolutionArgs, ConvolutionInputs, Strategy,
+        components::ConvSetupError, launch_ref,
     },
     matmul::definition::{MatmulElems, MatmulGlobalElems},
     std::InputBinding,

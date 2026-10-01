@@ -1,10 +1,11 @@
 use burn_backend::ops::ConvOptions;
 use burn_std::Shape;
-use cubek::convolution::{components::ConvSetupError, AcceleratedTileKind};
+use cubek::convolution::{AcceleratedTileKind, components::ConvSetupError};
 
 #[cfg(feature = "autotune")]
 use crate::kernel::conv::{backward_weight::wgrad_autotune, dgrad_autotune};
 use crate::{
+    CubeRuntime,
     kernel::conv::{
         backward_data::{fallback::conv_data_backward_fallback, implicit_gemm::*},
         backward_weight::{fallback::conv_weight_backward_fallback, implicit_gemm::*},
@@ -12,7 +13,6 @@ use crate::{
     },
     ops::{permute_nchw_to_nhwc, permute_nchw_to_nhwc_shape, permute_nhwc_to_nchw},
     tensor::CubeTensor,
-    CubeRuntime,
 };
 
 use super::conv_direct;

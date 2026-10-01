@@ -1,23 +1,23 @@
 use crate::BoolElement;
-use crate::{kernel, tensor::CubeTensor, CubeBackend, CubeRuntime, FloatElement, IntElement};
+use crate::{CubeBackend, CubeRuntime, FloatElement, IntElement, kernel, tensor::CubeTensor};
 use burn_backend::tensor::{BoolTensor, FloatTensor, IntTensor, QuantizedTensor};
 use burn_backend::{DType, Shape};
 use burn_cubecl_fusion::optim::reduce::ReduceSettings;
 use burn_cubecl_fusion::optim::reduce_broadcasted::ReduceBroadcastedFuser;
 use burn_cubecl_fusion::{
+    CubeFusionHandle, FallbackOperation,
     optim::{
+        CubeOptimization, CubeOptimizationState,
         elemwise::{ElementWiseFuser, ElemwiseOptimization},
         matmul::{MatmulFuser, MatmulOptimization},
         reduce::{ReduceFuser, ReduceOptimization},
         reduce_broadcasted::ReduceBroadcastedOptimization,
-        CubeOptimization, CubeOptimizationState,
     },
-    CubeFusionHandle, FallbackOperation,
 };
 use burn_fusion::UnfusedOp;
 use burn_fusion::{
-    stream::{Operation, OrderedExecution},
     FusionBackend, FusionRuntime,
+    stream::{Operation, OrderedExecution},
 };
 use burn_ir::{BackendIr, TensorHandle};
 use burn_std::Metadata;

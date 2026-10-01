@@ -1,12 +1,12 @@
 use crate::{
+    CubeBackend, CubeRuntime, FloatElement, IntElement,
     element::BoolElement,
     kernel::{self, AndOp, OrOp},
-    CubeBackend, CubeRuntime, FloatElement, IntElement,
 };
 use burn_backend::{
+    ExecutionError, Slice,
     ops::BoolTensorOps,
     tensor::{BoolTensor, Device, FloatTensor, IntTensor},
-    ExecutionError, Slice,
 };
 use burn_backend::{Scalar, Shape, TensorData};
 use burn_std::{BoolDType, BoolStore, DType, FloatDType, IntDType};

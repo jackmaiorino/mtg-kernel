@@ -1,9 +1,9 @@
 use cubecl::prelude::*;
 
 use crate::{
-    kernel::{launch_unary_numeric, NumericUnaryOp, NumericUnaryOpFamily},
-    tensor::CubeTensor,
     CubeRuntime,
+    kernel::{NumericUnaryOp, NumericUnaryOpFamily, launch_unary_numeric},
+    tensor::CubeTensor,
 };
 
 #[derive(CubeLaunch, CubeType)]

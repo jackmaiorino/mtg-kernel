@@ -1,14 +1,14 @@
 use burn_backend::ops::ConvOptions;
 use cubecl::{
     ir::StorageType,
-    tune::{anchor, local_tuner, LocalTuner, Tunable, TunableSet},
+    tune::{LocalTuner, Tunable, TunableSet, anchor, local_tuner},
 };
 use cubek::convolution::AcceleratedTileKind;
 
 use crate::{
-    kernel::conv::{conv_direct, conv_im2col_1x1, forward::implicit_gemm::*, ConvAutotuneKey},
-    tensor::CubeTensor,
     CubeAutotuneKey, CubeRuntime, CubeTuneId,
+    kernel::conv::{ConvAutotuneKey, conv_direct, conv_im2col_1x1, forward::implicit_gemm::*},
+    tensor::CubeTensor,
 };
 
 /// Executes autotune on convolution operations

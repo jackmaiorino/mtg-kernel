@@ -1,4 +1,4 @@
-use burn_backend::{quantization::QParamTensor, DType, Shape, TensorMetadata as _};
+use burn_backend::{DType, Shape, TensorMetadata as _, quantization::QParamTensor};
 use burn_std::{Metadata, Strides};
 use cubecl::quant::scheme::{QuantStore, QuantValue};
 use cubecl::{client::ComputeClient, server::Handle};

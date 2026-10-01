@@ -2,11 +2,11 @@ use cubecl::std::FastDivmod;
 use cubecl::{calculate_cube_count_elemwise, prelude::*};
 
 use crate::{
-    kernel::utils::address_type, ops::numeric::empty_device_dtype, tensor::CubeTensor, CubeRuntime,
+    CubeRuntime, kernel::utils::address_type, ops::numeric::empty_device_dtype, tensor::CubeTensor,
 };
-use burn_backend::{ops::GridSampleOptions, Shape};
+use burn_backend::{Shape, ops::GridSampleOptions};
 
-use super::base::{fetch_value, reflect_coord, PaddingMode};
+use super::base::{PaddingMode, fetch_value, reflect_coord};
 
 /// Grid sample with bilinear interpolation.
 ///

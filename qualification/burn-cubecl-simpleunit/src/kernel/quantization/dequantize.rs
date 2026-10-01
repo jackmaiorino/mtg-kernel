@@ -1,5 +1,5 @@
 use crate::tensor::CubeTensor;
-use crate::{ops::numeric::empty_device_dtype, CubeRuntime};
+use crate::{CubeRuntime, ops::numeric::empty_device_dtype};
 use burn_backend::{DType, TensorMetadata};
 
 /// Convert the tensor back to a higher precision data type.

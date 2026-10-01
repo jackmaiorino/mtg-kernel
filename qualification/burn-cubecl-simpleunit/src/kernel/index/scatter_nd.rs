@@ -1,14 +1,14 @@
 use crate::{
+    CubeRuntime,
     kernel::{
-        utils::{address_type, shape_divmod_range},
         AddOp, AssignOp, BinaryMaxOp, BinaryMinOp, BinaryOp, BinaryOpFamily, MulOp,
+        utils::{address_type, shape_divmod_range},
     },
     tensor::CubeTensor,
-    CubeRuntime,
 };
 use burn_backend::tensor::IndexingUpdateOp;
 use cubecl::std::tensor::layout::linear::LinearView;
-use cubecl::{calculate_cube_count_elemwise, CubeDim};
+use cubecl::{CubeDim, calculate_cube_count_elemwise};
 use cubecl::{prelude::*, std::FastDivmod};
 
 /// scatter_nd GPU kernel.

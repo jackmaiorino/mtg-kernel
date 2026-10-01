@@ -1,21 +1,21 @@
 use crate::{
+    CubeRuntime, CubeTuneId,
     kernel::matmul::{launch_matmul, launch_matmul_naive, utils::init_matmul_output},
     tensor::CubeTensor,
-    CubeRuntime, CubeTuneId,
 };
 use burn_backend::DType;
 use cubecl::{
     std::tensor::MatrixBatchLayout,
-    tune::{local_tuner, LocalTuner, Tunable, TunableSet, TuneGroup},
+    tune::{LocalTuner, Tunable, TunableSet, TuneGroup, local_tuner},
 };
 use cubek::matmul::{
     components::tile::TileMatmulKind,
     definition::MatmulKind,
-    launch::{should_tune_double_buffering, MatmulAutotuneKey, MatmulGlobalScale, Strategy},
+    launch::{MatmulAutotuneKey, MatmulGlobalScale, Strategy, should_tune_double_buffering},
     routines::{
-        double_buffering::DoubleBufferingArgs, double_unit::DoubleUnitSelectionArgs,
-        ordered_double_buffering::OrderedSelectionArgs, simple::SimpleArgs,
-        simple_unit::SimpleUnitSelectionArgs, BlueprintStrategy, TileSizeSelection,
+        BlueprintStrategy, TileSizeSelection, double_buffering::DoubleBufferingArgs,
+        double_unit::DoubleUnitSelectionArgs, ordered_double_buffering::OrderedSelectionArgs,
+        simple::SimpleArgs, simple_unit::SimpleUnitSelectionArgs,
     },
 };
 
