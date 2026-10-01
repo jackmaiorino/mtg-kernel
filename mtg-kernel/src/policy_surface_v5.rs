@@ -9,7 +9,9 @@ use crate::engine::{self, Action, Decision};
 use crate::ids::{ObjectId, PlayerId};
 use crate::rl_session::FastActorCurrentCandidateProofV1;
 use crate::state::GameState;
-use crate::surface_v2::{HarnessSurfaceV2, SuppressionAuditMode, SurfaceAction, SurfaceDecision};
+use crate::surface_v2::{
+    HarnessSurfaceV2, PriorityModeV1, SuppressionAuditMode, SurfaceAction, SurfaceDecision,
+};
 use serde::{Deserialize, Serialize};
 
 pub const POLICY_SURFACE_VERSION: u32 = 5;
@@ -376,6 +378,21 @@ impl PolicySurfaceV5 {
         Self::new_with_suppression_audit_mode(SuppressionAuditMode::Off)
     }
 
+    /// Expose every engine priority window, retaining the binary combat scan.
+    pub fn new_with_engine_priority_v1() -> Self {
+        Self::new_with_priority_mode_v1(PriorityModeV1::EngineWindowsV1, SuppressionAuditMode::Full)
+    }
+
+    pub(crate) fn new_with_priority_mode_v1(
+        mode: PriorityModeV1,
+        audit: SuppressionAuditMode,
+    ) -> Self {
+        Self {
+            inner: HarnessSurfaceV2::new_with_priority_mode_v1(mode, audit),
+            scan: None,
+        }
+    }
+
     /// Diagnostic constructor for proving that suppression-audit retention is
     /// observationally inert. Public standalone callers retain the historical
     /// `Full` behavior; the privately owned production session selects `Off`.
@@ -400,8 +417,10 @@ impl PolicySurfaceV5 {
 
     #[cfg(test)]
     pub(crate) fn reset_harness_context_for_test(&mut self) {
-        self.inner =
-            HarnessSurfaceV2::new_with_suppression_audit_mode(self.inner.suppression_audit_mode());
+        self.inner = HarnessSurfaceV2::new_with_priority_mode_v1(
+            self.inner.priority_mode_v1(),
+            self.inner.suppression_audit_mode(),
+        );
     }
 
     pub fn discard_unanswered_scan(&mut self) -> Result<(), String> {

@@ -32,6 +32,8 @@ An opt-in `kernel_limited_env` binary accepts custom mainboards of at least
 40 cards using the currently supported registry. The standalone Python deck
 importer and reset/step adapter are documented in
 [`limited_custom_session_v1.md`](docs/design/limited_custom_session_v1.md).
+Use `--engine-priority-v1` with Limited schema 2 to expose every engine priority
+window; see [`limited_priority_windows_v1.md`](docs/design/limited_priority_windows_v1.md).
 Full Foundations card coverage and complete Limited rules are being developed
 under [issue #110](https://github.com/jackmaiorino/mtg-kernel/issues/110).
 

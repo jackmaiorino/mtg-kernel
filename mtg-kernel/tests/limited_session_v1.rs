@@ -33,7 +33,7 @@ fn step(request_id: &str, reply: &Value) -> String {
         .iter()
         .find(|a| a["semantic"]["action_kind"] == "pass")
         .unwrap_or(&actions[0]);
-    json!({"request_type":"step", "schema_version":1, "request_id":request_id,
+    json!({"request_type":"step", "schema_version":reply["schema_version"], "request_id":request_id,
         "episode_id":decision["episode_id"], "expected_step":decision["step"],
         "selected_index":action["selected_index"], "selected_action_id":action["stable_id"]})
     .to_string()
@@ -179,8 +179,12 @@ fn custom_reset_is_not_accepted_by_the_catalog_wire_protocol() {
     assert_eq!(result["response_type"], "error");
 }
 
-fn process_smoke() -> (String, Value) {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_kernel_limited_env"))
+fn process_smoke(engine_priority: bool) -> (String, Value) {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_kernel_limited_env"));
+    if engine_priority {
+        command.arg("--engine-priority-v1");
+    }
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -190,6 +194,11 @@ fn process_smoke() -> (String, Value) {
     let mut output = BufReader::new(child.stdout.take().unwrap());
     let mut transcript = Sha256::new();
     let mut request = reset("reset");
+    if engine_priority {
+        let mut value: Value = serde_json::from_str(&request).unwrap();
+        value["schema_version"] = json!(2);
+        request = value.to_string();
+    }
     for index in 0..8192 {
         writeln!(input, "{request}").unwrap();
         input.flush().unwrap();
@@ -200,6 +209,12 @@ fn process_smoke() -> (String, Value) {
         transcript.update(line.as_bytes());
         let reply: Value = serde_json::from_str(&line).unwrap();
         assert_ne!(reply["response_type"], "error", "{reply}");
+        assert_eq!(reply["schema_version"], if engine_priority { 2 } else { 1 });
+        if engine_priority {
+            assert_eq!(reply["priority_mode"], "engine_windows_v1");
+        } else {
+            assert!(reply.get("priority_mode").is_none());
+        }
         if reply["response_type"] == "terminal" {
             drop(input);
             assert!(child.wait().unwrap().success());
@@ -214,9 +229,54 @@ fn process_smoke() -> (String, Value) {
 
 #[test]
 fn complete_40_card_game_replays_bit_identically_through_the_binary() {
-    let first = process_smoke();
-    let second = process_smoke();
+    let first = process_smoke(false);
+    let second = process_smoke(false);
     assert_eq!(first, second);
     assert_eq!(first.1["terminal"]["terminal_classification"], "natural");
     assert_eq!(first.1["terminal"]["terminal_code"], "natural_game_over");
+}
+
+#[test]
+fn opt_in_complete_game_replays_with_explicit_windows_and_mode_identity() {
+    let first = process_smoke(true);
+    let second = process_smoke(true);
+    assert_eq!(first, second);
+    assert_eq!(first.1["terminal"]["terminal_classification"], "natural");
+    assert!(first.1["terminal"]["policy_step_count"].as_u64().unwrap() > 200);
+}
+
+#[test]
+fn modes_refuse_each_others_schema_without_mutating_the_active_game() {
+    for engine_priority in [false, true] {
+        let mut server = if engine_priority {
+            LimitedJsonlServerV1::new_with_engine_priority_v1()
+        } else {
+            LimitedJsonlServerV1::new()
+        };
+        let mut request: Value = serde_json::from_str(&reset("reset")).unwrap();
+        request["schema_version"] = json!(if engine_priority { 2 } else { 1 });
+        let raw = request.to_string();
+        let active = server.handle_line(&raw);
+        assert_eq!(active, server.handle_line(&raw));
+        let reply: Value = serde_json::from_str(&active).unwrap();
+        let context = &reply["decision"]["observation"]["projection"]["surface_context"];
+        if engine_priority {
+            assert_eq!(context["engine_priority_version"], 1);
+        } else {
+            assert!(context.get("engine_priority_version").is_none());
+        }
+        let valid_step = step("step", &reply);
+        let mut invalid: Value = serde_json::from_str(&valid_step).unwrap();
+        invalid["schema_version"] = json!(if engine_priority { 1 } else { 2 });
+        assert_eq!(
+            response(&mut server, &invalid.to_string())["error"]["code"],
+            "schema_version_mismatch"
+        );
+        let next = server.handle_line(&valid_step);
+        assert_eq!(next, server.handle_line(&valid_step));
+        assert_ne!(
+            serde_json::from_str::<Value>(&next).unwrap()["response_type"],
+            "error"
+        );
+    }
 }

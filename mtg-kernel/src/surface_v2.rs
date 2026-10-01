@@ -253,6 +253,10 @@ struct BlockersReshape {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct HarnessSurfacePublicContextV2 {
+    /// Absent for historical H2 bytes and hashes. Present only in the opt-in
+    /// Limited mode so decision bindings cannot silently cross modes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine_priority_version: Option<u32>,
     pub blockers: Option<BlockersReshapePublicV2>,
     pub discard: Option<DiscardReshapePublicV2>,
     pub optional_cost: Option<OptionalCostReshapePublicV2>,
@@ -439,6 +443,7 @@ impl SuppressionCounts {
 /// separate type, per the H2 contract.
 #[derive(Clone)]
 pub struct HarnessSurfaceV2 {
+    priority_mode: PriorityModeV1,
     suppression_audit_mode: SuppressionAuditMode,
     suppression_counts: SuppressionCounts,
     suppressions: Vec<Suppression>,
@@ -698,12 +703,27 @@ fn walk_decision_tag(decision: &Decision) -> String {
     }
 }
 
+/// Priority presentation only. Neither mode claims complete Limited rules.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PriorityModeV1 {
+    #[default]
+    HarnessV2,
+    EngineWindowsV1,
+}
+
 impl HarnessSurfaceV2 {
     pub fn new() -> HarnessSurfaceV2 {
         Self::new_with_suppression_audit_mode(SuppressionAuditMode::Full)
     }
 
     pub fn new_with_suppression_audit_mode(
+        suppression_audit_mode: SuppressionAuditMode,
+    ) -> HarnessSurfaceV2 {
+        Self::new_with_priority_mode_v1(PriorityModeV1::HarnessV2, suppression_audit_mode)
+    }
+
+    pub fn new_with_priority_mode_v1(
+        priority_mode: PriorityModeV1,
         suppression_audit_mode: SuppressionAuditMode,
     ) -> HarnessSurfaceV2 {
         // The replay walk is itself a diagnostic log.  Cache the environment
@@ -714,6 +734,7 @@ impl HarnessSurfaceV2 {
         let debug_surface_walk = suppression_audit_mode == SuppressionAuditMode::Full
             && std::env::var("REPLAY_DEBUG_SURFACE_WALK").is_ok();
         HarnessSurfaceV2 {
+            priority_mode,
             suppression_audit_mode,
             suppression_counts: SuppressionCounts::default(),
             suppressions: Vec::new(),
@@ -738,6 +759,10 @@ impl HarnessSurfaceV2 {
         self.suppression_audit_mode
     }
 
+    pub const fn priority_mode_v1(&self) -> PriorityModeV1 {
+        self.priority_mode
+    }
+
     /// Returns reason counts without adding work to the `Full` or `Off` hot
     /// paths. Full derives them from its historical records on demand; Off
     /// is intentionally all zero.
@@ -757,6 +782,10 @@ impl HarnessSurfaceV2 {
 
     pub fn public_context(&self) -> HarnessSurfacePublicContextV2 {
         HarnessSurfacePublicContextV2 {
+            engine_priority_version: match self.priority_mode {
+                PriorityModeV1::HarnessV2 => None,
+                PriorityModeV1::EngineWindowsV1 => Some(1),
+            },
             blockers: self.blockers.as_ref().map(|b| BlockersReshapePublicV2 {
                 current_attacker: b.current_attacker,
                 accumulated: b.accumulated.clone(),
@@ -935,7 +964,7 @@ impl HarnessSurfaceV2 {
                     land_drops,
                     activatable_abilities,
                     ..
-                } => {
+                } if self.priority_mode == PriorityModeV1::HarnessV2 => {
                     if self.stack_len_round_seen != Some(state.engine.priority_round) {
                         self.round_opening_stack_len = state.stack.len();
                         self.stack_len_round_seen = Some(state.engine.priority_round);

@@ -24,8 +24,12 @@ The two starting fixtures contain 39 unique names, of which 36 are missing.
 The UG fixture has 17/40 supported copies; the WG fixture has 8/40. This
 36-name union is the first card batch after the custom-deck interface.
 
-Next bounded implementation: milestone 3's priority and combat foundation,
-with a mechanic inventory of the 36 missing fixture names. The Forest/Island
+Milestone 3's opt-in engine priority presentation is implemented on
+`codex/fdn-priority-windows-v1`; see `limited_priority_windows_v1.md`.
+The 36 missing fixture names now have seven mechanic batches in
+`fdn_fixture_mechanics_v1.md`. Next bounded work: current combat damage choices
+and batch A's six simple cards, followed by mulligans and the remaining batches.
+The Forest/Island
 smoke cannot establish Limited playing ability or FDN parity.
 Milestone 4's real fixtures remain visibly unsupported until their
 actual card behavior and milestone 3's dependencies land. No delivery date is

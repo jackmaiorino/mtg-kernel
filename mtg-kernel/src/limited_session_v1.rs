@@ -1,8 +1,9 @@
 //! Custom mainboards through a separate JSONL reset/step interface.
 //!
-//! Card names resolve inside the running binary. Current policy V5 semantics
-//! are reused, including its priority suppression and unconditional opening
-//! hand. This plumbing does not claim complete Limited rules or FDN support.
+//! Card names resolve inside the running binary. Schema 1 retains H2 priority
+//! suppression. Schema 2 explicitly opts into engine priority windows. Both
+//! retain the unconditional opening hand and policy V5 action representation.
+//! This plumbing does not claim complete Limited rules or FDN support.
 
 use crate::card_def::{card_id_by_name, CARD_DEFS, KERNEL_CARDDB_HASH};
 use crate::rl::parse_strict_json_value;
@@ -10,12 +11,14 @@ use crate::rl_session::{
     RlEpisodeSessionV1, RlSessionDecisionV1, RlSessionError, RlSessionResponseV1,
     RlSessionTerminalV1,
 };
+use crate::surface_v2::PriorityModeV1;
 use crate::KERNEL_VERSION;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const LIMITED_PROTOCOL_V1: &str = "kernel_limited_jsonl";
 pub const LIMITED_SCHEMA_V1: u32 = 1;
+pub const LIMITED_ENGINE_PRIORITY_SCHEMA_V1: u32 = 2;
 /// A process input bound, not a Magic format rule.
 pub const MAX_CUSTOM_DECK_CARDS_V1: usize = 10_000;
 pub const MAX_LIMITED_LINE_BYTES_V1: usize = 8 * 1024 * 1024;
@@ -140,6 +143,8 @@ pub enum LimitedReplyBodyV1 {
 pub struct LimitedReplyV1 {
     pub protocol: String,
     pub schema_version: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority_mode: Option<String>,
     pub request_id: Option<String>,
     pub kernel_version: String,
     pub card_db_hash: u64,
@@ -152,6 +157,7 @@ impl LimitedReplyV1 {
         Self {
             protocol: LIMITED_PROTOCOL_V1.to_string(),
             schema_version: LIMITED_SCHEMA_V1,
+            priority_mode: None,
             request_id,
             kernel_version: KERNEL_VERSION.to_string(),
             card_db_hash: KERNEL_CARDDB_HASH,
@@ -193,6 +199,7 @@ impl LimitedReplyV1 {
 
 #[derive(Default)]
 pub struct LimitedJsonlServerV1 {
+    priority_mode: PriorityModeV1,
     active: Option<RlEpisodeSessionV1>,
     /// The immediate exchange only, matching the existing JSONL retry model.
     last_exchange: Option<(LimitedRequestV1, String)>,
@@ -201,6 +208,29 @@ pub struct LimitedJsonlServerV1 {
 impl LimitedJsonlServerV1 {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Immutable process mode; schema-1 requests are refused in this mode.
+    pub fn new_with_engine_priority_v1() -> Self {
+        Self {
+            priority_mode: PriorityModeV1::EngineWindowsV1,
+            ..Self::default()
+        }
+    }
+
+    fn schema_version(&self) -> u32 {
+        match self.priority_mode {
+            PriorityModeV1::HarnessV2 => LIMITED_SCHEMA_V1,
+            PriorityModeV1::EngineWindowsV1 => LIMITED_ENGINE_PRIORITY_SCHEMA_V1,
+        }
+    }
+
+    fn serialize_reply(&self, mut reply: LimitedReplyV1) -> String {
+        reply.schema_version = self.schema_version();
+        if self.priority_mode == PriorityModeV1::EngineWindowsV1 {
+            reply.priority_mode = Some("engine_windows_v1".to_string());
+        }
+        serde_json::to_string(&reply).expect("reply serializes")
     }
 
     pub fn handle_line(&mut self, line: &str) -> String {
@@ -212,44 +242,44 @@ impl LimitedJsonlServerV1 {
             None
         };
         let Some(request) = request else {
-            return serde_json::to_string(&LimitedReplyV1::error(
+            return self.serialize_reply(LimitedReplyV1::error(
                 None,
                 "malformed_request",
-                "request does not match the Limited v1 schema",
-            ))
-            .expect("reply serializes");
+                if self.priority_mode == PriorityModeV1::HarnessV2 {
+                    "request does not match the Limited v1 schema"
+                } else {
+                    "request does not match the Limited schema 2 request"
+                },
+            ));
         };
         if request.request_id().is_empty() {
-            return serde_json::to_string(&LimitedReplyV1::error(
+            return self.serialize_reply(LimitedReplyV1::error(
                 None,
                 "malformed_request",
                 "request_id must be nonempty",
-            ))
-            .expect("reply serializes");
+            ));
         }
-        if request.schema_version() != LIMITED_SCHEMA_V1 {
-            return serde_json::to_string(&LimitedReplyV1::error(
+        if request.schema_version() != self.schema_version() {
+            return self.serialize_reply(LimitedReplyV1::error(
                 Some(request.request_id().to_string()),
                 "schema_version_mismatch",
                 "unsupported Limited schema_version",
-            ))
-            .expect("reply serializes");
+            ));
         }
         if let Some((previous, response)) = &self.last_exchange {
             if previous.request_id() == request.request_id() {
                 if *previous == request {
                     return response.clone();
                 }
-                return serde_json::to_string(&LimitedReplyV1::error(
+                return self.serialize_reply(LimitedReplyV1::error(
                     Some(request.request_id().to_string()),
                     "request_id_reuse_mismatch",
                     "request_id was reused for a different immediate payload",
-                ))
-                .expect("reply serializes");
+                ));
             }
         }
         let reply = self.handle_request(&request);
-        let response = serde_json::to_string(&reply).expect("reply serializes");
+        let response = self.serialize_reply(reply);
         self.last_exchange = Some((request, response.clone()));
         response
     }
@@ -286,6 +316,7 @@ impl LimitedJsonlServerV1 {
                     *max_policy_steps,
                     deck_ids,
                     [&ids[0], &ids[1]],
+                    self.priority_mode,
                 ) {
                     Ok(session) => {
                         let reply = LimitedReplyV1::state(request_id, session.current_response());
@@ -320,5 +351,68 @@ impl LimitedJsonlServerV1 {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn engine_priority_session_snapshot_restores_response_binding_and_next_transition() {
+        let forest = card_id_by_name("Forest").unwrap();
+        let island = card_id_by_name("Island").unwrap();
+        let cards = [vec![forest; 40], vec![island; 40]];
+        let identities = [&cards[0][..], &cards[1][..]].map(content_identity);
+        let mut session = RlEpisodeSessionV1::reset_with_custom_decks_v1(
+            7,
+            123,
+            4096,
+            8192,
+            identities,
+            [&cards[0], &cards[1]],
+            PriorityModeV1::EngineWindowsV1,
+        )
+        .unwrap();
+        let original = session.current_response();
+        let RlSessionResponseV1::Decision(decision) = &original else {
+            panic!("expected priority");
+        };
+        assert_eq!(
+            decision
+                .observation
+                .projection
+                .surface
+                .surface_context
+                .engine_priority_version,
+            Some(1)
+        );
+        let snapshot = session.snapshot_v5();
+        let hash = session.privileged_environment_hash();
+        let action = &decision.legal_actions[0];
+        let first = session
+            .step(
+                decision.episode_id,
+                decision.step,
+                action.selected_index,
+                &action.stable_id,
+            )
+            .unwrap();
+        let after_hash = session.privileged_environment_hash();
+        session.restore_v5(&snapshot);
+        assert_eq!(session.current_response(), original);
+        assert_eq!(session.privileged_environment_hash(), hash);
+        assert_eq!(
+            session
+                .step(
+                    decision.episode_id,
+                    decision.step,
+                    action.selected_index,
+                    &action.stable_id
+                )
+                .unwrap(),
+            first
+        );
+        assert_eq!(session.privileged_environment_hash(), after_hash);
     }
 }
