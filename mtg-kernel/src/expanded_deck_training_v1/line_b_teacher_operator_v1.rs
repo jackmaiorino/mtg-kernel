@@ -90,7 +90,13 @@ pub(super) enum LineBCensorV1 {
     /// or process ends the update without a packet; the launch path's rule
     /// for a failed update (doc section 4) records it in the run's census,
     /// not in a packet.
-    #[cfg(test)]
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "reserved for a driver; host interruption cannot publish a packet"
+        )
+    )]
     EnvironmentalInterruption,
 }
 
