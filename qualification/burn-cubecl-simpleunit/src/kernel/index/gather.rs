@@ -1,14 +1,14 @@
 use crate::{
-    CubeRuntime,
     kernel::utils::{address_type, broadcast_strides, shape_divmod},
     ops::numeric::empty_device_dtype,
     tensor::CubeTensor,
+    CubeRuntime,
 };
 use burn_backend::TensorMetadata;
-use cubecl::frontend::{ABSOLUTE_POS, Numeric, Tensor};
-use cubecl::std::{FastDivmod, tensor::index_offset_contiguous_fastdivmod};
-use cubecl::{CubeDim, std::tensor::layout::linear::LinearView};
+use cubecl::frontend::{Numeric, Tensor, ABSOLUTE_POS};
+use cubecl::std::{tensor::index_offset_contiguous_fastdivmod, FastDivmod};
 use cubecl::{calculate_cube_count_elemwise, prelude::*};
+use cubecl::{std::tensor::layout::linear::LinearView, CubeDim};
 
 #[cube(launch_unchecked, address_type = "dynamic")]
 fn gather_kernel<T: Numeric, I: Numeric>(

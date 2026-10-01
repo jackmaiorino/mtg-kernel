@@ -70,8 +70,14 @@ fn put_object(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -
 /// Mirrors `pauper_meta_w1_spells.rs`'s `ready_main1`: Main1, P0 active with
 /// priority, both libraries as given.
 fn ready_main1(p0_library: &[&str], p1_library: &[&str]) -> GameState {
-    let p0_defs = p0_library.iter().map(|name| card_id(name)).collect::<Vec<_>>();
-    let p1_defs = p1_library.iter().map(|name| card_id(name)).collect::<Vec<_>>();
+    let p0_defs = p0_library
+        .iter()
+        .map(|name| card_id(name))
+        .collect::<Vec<_>>();
+    let p1_defs = p1_library
+        .iter()
+        .map(|name| card_id(name))
+        .collect::<Vec<_>>();
     let mut state =
         GameState::new_from_libraries(&p0_defs, &p1_defs, card_name, 0x4c_41_4e_44_53_5f_52_4b);
     state.step = Step::Main1;
@@ -134,18 +140,19 @@ fn mana_colors(state: &GameState, source: ObjectId) -> Vec<ManaColor> {
     let mut decision_state = state.clone();
     let decision = engine::advance_until_decision(&mut decision_state);
     assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
-    let mut colors: Vec<ManaColor> = legal_action_candidates_v1(&SurfaceDecision::Decision(decision), state)
-        .expect("legal action projection")
-        .into_iter()
-        .filter_map(|candidate| match candidate.record.semantic {
-            ActionSemanticV1::ActivateManaAbility {
-                source: card,
-                mana_choice: Some(color),
-                ..
-            } if card.arena_id == source.0 => Some(color),
-            _ => None,
-        })
-        .collect();
+    let mut colors: Vec<ManaColor> =
+        legal_action_candidates_v1(&SurfaceDecision::Decision(decision), state)
+            .expect("legal action projection")
+            .into_iter()
+            .filter_map(|candidate| match candidate.record.semantic {
+                ActionSemanticV1::ActivateManaAbility {
+                    source: card,
+                    mana_choice: Some(color),
+                    ..
+                } if card.arena_id == source.0 => Some(color),
+                _ => None,
+            })
+            .collect();
     colors.sort_by_key(|color| *color as u8);
     colors.dedup();
     colors
@@ -207,7 +214,11 @@ fn bojuka_bog_enters_tapped_and_exiles_a_targeted_graveyard() {
     )
     .unwrap();
     pass_until_stack_empty(&mut state);
-    assert_eq!(state.players[1].graveyard.len(), 0, "P1's graveyard is exiled");
+    assert_eq!(
+        state.players[1].graveyard.len(),
+        0,
+        "P1's graveyard is exiled"
+    );
     assert_eq!(
         state.players[0].graveyard.len(),
         2,
@@ -227,7 +238,11 @@ fn bojuka_bog_enters_tapped_and_exiles_a_targeted_graveyard() {
     )
     .unwrap();
     pass_until_stack_empty(&mut other);
-    assert_eq!(other.players[0].graveyard.len(), 0, "P0's graveyard is exiled");
+    assert_eq!(
+        other.players[0].graveyard.len(),
+        0,
+        "P0's graveyard is exiled"
+    );
     assert_eq!(
         other.players[1].graveyard.len(),
         3,
@@ -312,7 +327,10 @@ fn conduit_pylons_surveils_one_on_entry() {
         vec![top_before2],
         "put into the graveyard"
     );
-    assert_ne!(milled.players[0].library.first().copied(), Some(top_before2));
+    assert_ne!(
+        milled.players[0].library.first().copied(),
+        Some(top_before2)
+    );
 }
 
 // covers: Conduit Pylons: free_ability_taps_for_colorless, paid_ability_needs_another_source_and_yields_chosen_color
@@ -338,9 +356,21 @@ fn conduit_pylons_taps_for_colorless_free_and_any_color_for_one() {
     let pylons2 = put_object(&mut paid, PlayerId::P0, "Conduit Pylons", Zone::Battlefield);
     paid.players[0].mana_pool[ManaColor::C.pool_index()] = 1;
     let choices2 = mana_colors(&paid, pylons2);
-    assert!(choices2.contains(&ManaColor::C), "the free ability stays offered");
-    for color in [ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G] {
-        assert!(choices2.contains(&color), "{color:?} is offered by the paid ability");
+    assert!(
+        choices2.contains(&ManaColor::C),
+        "the free ability stays offered"
+    );
+    for color in [
+        ManaColor::W,
+        ManaColor::U,
+        ManaColor::B,
+        ManaColor::R,
+        ManaColor::G,
+    ] {
+        assert!(
+            choices2.contains(&color),
+            "{color:?} is offered by the paid ability"
+        );
     }
     engine::step(
         &mut paid,
@@ -377,7 +407,12 @@ fn expedition_map_fetches_any_land_to_hand() {
         &["Forest"; 8],
     );
     let library_before = state.players[0].library.clone();
-    let map = put_object(&mut state, PlayerId::P0, "Expedition Map", Zone::Battlefield);
+    let map = put_object(
+        &mut state,
+        PlayerId::P0,
+        "Expedition Map",
+        Zone::Battlefield,
+    );
     state.players[0].mana_pool[ManaColor::C.pool_index()] = 2;
 
     engine::step(&mut state, Action::ActivateAbility(map, 0)).unwrap();
@@ -411,9 +446,16 @@ fn expedition_map_fetches_any_land_to_hand() {
         "a nonbasic land is an equally legal candidate"
     );
 
-    engine::step(&mut state, Action::ChooseEffectTarget(Target::Object(forest))).unwrap();
+    engine::step(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(forest)),
+    )
+    .unwrap();
     pass_until_stack_empty(&mut state);
-    assert!(state.players[0].hand.contains(&forest), "found card reaches hand");
+    assert!(
+        state.players[0].hand.contains(&forest),
+        "found card reaches hand"
+    );
     assert_eq!(
         state.objects.get(map).zone,
         Zone::Graveyard,
@@ -458,13 +500,24 @@ fn bonders_ornament_taps_for_any_color_and_draws_for_four() {
         Zone::Battlefield,
     );
     let choices = mana_colors(&mana_check, ornament);
-    for color in [ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G] {
+    for color in [
+        ManaColor::W,
+        ManaColor::U,
+        ManaColor::B,
+        ManaColor::R,
+        ManaColor::G,
+    ] {
         assert!(choices.contains(&color));
     }
 
     // Only the controller has one: only they draw.
     let mut solo = ready_main1(&["Forest"; 8], &["Forest"; 8]);
-    let solo_ornament = put_object(&mut solo, PlayerId::P0, "Bonder's Ornament", Zone::Battlefield);
+    let solo_ornament = put_object(
+        &mut solo,
+        PlayerId::P0,
+        "Bonder's Ornament",
+        Zone::Battlefield,
+    );
     solo.players[0].mana_pool[ManaColor::C.pool_index()] = 4;
     let p0_before = solo.players[0].hand.len();
     let p1_before = solo.players[1].hand.len();
@@ -475,8 +528,18 @@ fn bonders_ornament_taps_for_any_color_and_draws_for_four() {
 
     // Both players control a Bonder's Ornament: both draw.
     let mut both = ready_main1(&["Forest"; 8], &["Forest"; 8]);
-    let mine = put_object(&mut both, PlayerId::P0, "Bonder's Ornament", Zone::Battlefield);
-    put_object(&mut both, PlayerId::P1, "Bonder's Ornament", Zone::Battlefield);
+    let mine = put_object(
+        &mut both,
+        PlayerId::P0,
+        "Bonder's Ornament",
+        Zone::Battlefield,
+    );
+    put_object(
+        &mut both,
+        PlayerId::P1,
+        "Bonder's Ornament",
+        Zone::Battlefield,
+    );
     both.players[0].mana_pool[ManaColor::C.pool_index()] = 4;
     let p0_before2 = both.players[0].hand.len();
     let p1_before2 = both.players[1].hand.len();
@@ -527,7 +590,13 @@ fn barrels_of_blasting_jelly_adds_any_color_once_per_turn() {
     state.players[0].mana_pool[ManaColor::C.pool_index()] = 2;
 
     let choices = mana_colors(&state, barrels);
-    for color in [ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G] {
+    for color in [
+        ManaColor::W,
+        ManaColor::U,
+        ManaColor::B,
+        ManaColor::R,
+        ManaColor::G,
+    ] {
         assert!(choices.contains(&color), "offered before use this turn");
     }
 
@@ -566,7 +635,12 @@ fn barrels_of_blasting_jelly_adds_any_color_once_per_turn() {
     state.active_player = PlayerId::P1;
     state.priority_player = PlayerId::P1;
     let _ = engine::advance_until_decision(&mut state);
-    assert!(state.objects.get(barrels).v4.ability_uses_this_turn.is_empty());
+    assert!(state
+        .objects
+        .get(barrels)
+        .v4
+        .ability_uses_this_turn
+        .is_empty());
     state.step = Step::Main1;
     state.active_player = PlayerId::P0;
     state.priority_player = PlayerId::P0;
@@ -594,7 +668,12 @@ fn barrels_of_blasting_jelly_deals_five_to_a_creature() {
     );
     // Murmuring Mystic: 1/5, a five-toughness creature killed exactly by 5
     // damage.
-    let creature = put_object(&mut state, PlayerId::P1, "Murmuring Mystic", Zone::Battlefield);
+    let creature = put_object(
+        &mut state,
+        PlayerId::P1,
+        "Murmuring Mystic",
+        Zone::Battlefield,
+    );
     state.players[0].mana_pool[ManaColor::C.pool_index()] = 5;
 
     engine::step(&mut state, Action::ActivateAbility(barrels, 0)).unwrap();

@@ -74,9 +74,10 @@ fn run() -> Result<(), String> {
 /// Backend availability and source contents remain execution-time checks.
 fn validate_config_mode_v1() -> Result<(), String> {
     let mut args = std::env::args_os().skip(2);
-    let path = PathBuf::from(args.next().ok_or(
-        "usage: native_expanded_training_run_v1 --validate-config ABS_CONFIG.json",
-    )?);
+    let path = PathBuf::from(
+        args.next()
+            .ok_or("usage: native_expanded_training_run_v1 --validate-config ABS_CONFIG.json")?,
+    );
     if args.next().is_some() {
         return Err("unexpected validation arguments".into());
     }
@@ -98,9 +99,14 @@ fn validate_config_mode_v1() -> Result<(), String> {
     let text = std::str::from_utf8(&bytes).map_err(|error| error.to_string())?;
     let config = NativeExpandedTrainingRunV1::from_json_v1(text)?;
     config.validate_v1()?;
-    let episode_count = config.iterations.iter().try_fold(0_usize, |total, iteration| {
-        total.checked_add(iteration.episodes.len()).ok_or("episode count overflow")
-    })?;
+    let episode_count = config
+        .iterations
+        .iter()
+        .try_fold(0_usize, |total, iteration| {
+            total
+                .checked_add(iteration.episodes.len())
+                .ok_or("episode count overflow")
+        })?;
     let result = serde_json::json!({
         "schema": "phase1-native-expanded-config-validation/v1",
         "config_sha256": format!("{:x}", Sha256::digest(&bytes)),
@@ -119,6 +125,9 @@ fn validate_config_mode_v1() -> Result<(), String> {
         "native_execution": false,
         "model_loaded": false,
     });
-    println!("{}", serde_json::to_string(&result).map_err(|error| error.to_string())?);
+    println!(
+        "{}",
+        serde_json::to_string(&result).map_err(|error| error.to_string())?
+    );
     Ok(())
 }

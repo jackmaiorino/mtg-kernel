@@ -64,8 +64,14 @@ fn put_object(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -
 /// Mirrors `pauper_meta_w1_spells.rs`'s `ready_main1`: Main1, P0 active with
 /// priority, both libraries as given.
 fn ready_main1(p0_library: &[&str], p1_library: &[&str]) -> GameState {
-    let p0_defs = p0_library.iter().map(|name| card_id(name)).collect::<Vec<_>>();
-    let p1_defs = p1_library.iter().map(|name| card_id(name)).collect::<Vec<_>>();
+    let p0_defs = p0_library
+        .iter()
+        .map(|name| card_id(name))
+        .collect::<Vec<_>>();
+    let p1_defs = p1_library
+        .iter()
+        .map(|name| card_id(name))
+        .collect::<Vec<_>>();
     let mut state =
         GameState::new_from_libraries(&p0_defs, &p1_defs, card_name, 0x43_52_45_41_54_55_52_45);
     state.step = Step::Main1;
@@ -128,8 +134,7 @@ fn pass_until_etb_trigger_is_pending(state: &mut GameState, creature: ObjectId) 
     for _ in 0..16 {
         match engine::advance_until_decision(state) {
             Decision::CastSpellOrPass { .. } => {
-                if state.objects.get(creature).zone == Zone::Battlefield && state.stack.len() == 1
-                {
+                if state.objects.get(creature).zone == Zone::Battlefield && state.stack.len() == 1 {
                     return;
                 }
                 engine::step(state, Action::Pass).unwrap();
@@ -144,7 +149,12 @@ fn pass_until_etb_trigger_is_pending(state: &mut GameState, creature: ObjectId) 
 #[test]
 fn kessig_flamebreather_pings_each_opponent_on_noncreature_casts_only() {
     let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
-    put_object(&mut state, PlayerId::P0, "Kessig Flamebreather", Zone::Battlefield);
+    put_object(
+        &mut state,
+        PlayerId::P0,
+        "Kessig Flamebreather",
+        Zone::Battlefield,
+    );
     let ponder = put_object(&mut state, PlayerId::P0, "Ponder", Zone::Hand);
     let miscreant = put_object(&mut state, PlayerId::P0, "Faerie Miscreant", Zone::Hand);
     let spellbomb = put_object(&mut state, PlayerId::P0, "Nihil Spellbomb", Zone::Hand);
@@ -182,7 +192,12 @@ fn kessig_flamebreather_pings_each_opponent_on_noncreature_casts_only() {
 #[test]
 fn gixian_infiltrator_grows_when_another_permanent_is_sacrificed() {
     let mut state = ready_main1(&["Island"; 8], &["Island"; 8]);
-    let gixian = put_object(&mut state, PlayerId::P0, "Gixian Infiltrator", Zone::Battlefield);
+    let gixian = put_object(
+        &mut state,
+        PlayerId::P0,
+        "Gixian Infiltrator",
+        Zone::Battlefield,
+    );
     let blood = put_object(&mut state, PlayerId::P0, "Blood Token", Zone::Battlefield);
     // The single other card in hand makes Blood Token's mandatory discard
     // auto-resolve (a real choice would need `Decision::Discard`, out of
@@ -229,7 +244,12 @@ fn webweaver_changeling_gains_five_only_with_three_creature_cards_in_graveyard()
     for _ in 0..2 {
         put_object(&mut two_cards, PlayerId::P0, "Faerie Seer", Zone::Graveyard);
     }
-    let webweaver = put_object(&mut two_cards, PlayerId::P0, "Webweaver Changeling", Zone::Hand);
+    let webweaver = put_object(
+        &mut two_cards,
+        PlayerId::P0,
+        "Webweaver Changeling",
+        Zone::Hand,
+    );
     let starting_life = two_cards.players[0].life;
     two_cards.players[0].mana_pool[ManaColor::G.pool_index()] = 2;
     two_cards.players[0].mana_pool[ManaColor::C.pool_index()] = 3;
@@ -244,10 +264,19 @@ fn webweaver_changeling_gains_five_only_with_three_creature_cards_in_graveyard()
     // and on resolution -- 5 life gained.
     let mut three_cards = ready_main1(&["Forest"; 8], &["Forest"; 8]);
     for _ in 0..3 {
-        put_object(&mut three_cards, PlayerId::P0, "Faerie Seer", Zone::Graveyard);
+        put_object(
+            &mut three_cards,
+            PlayerId::P0,
+            "Faerie Seer",
+            Zone::Graveyard,
+        );
     }
-    let webweaver =
-        put_object(&mut three_cards, PlayerId::P0, "Webweaver Changeling", Zone::Hand);
+    let webweaver = put_object(
+        &mut three_cards,
+        PlayerId::P0,
+        "Webweaver Changeling",
+        Zone::Hand,
+    );
     let starting_life = three_cards.players[0].life;
     three_cards.players[0].mana_pool[ManaColor::G.pool_index()] = 2;
     three_cards.players[0].mana_pool[ManaColor::C.pool_index()] = 3;
@@ -267,8 +296,18 @@ fn webweaver_changeling_gains_five_only_with_three_creature_cards_in_graveyard()
     for _ in 0..3 {
         put_object(&mut rechecked, PlayerId::P0, "Faerie Seer", Zone::Graveyard);
     }
-    let relic = put_object(&mut rechecked, PlayerId::P0, "Relic of Progenitus", Zone::Battlefield);
-    let webweaver = put_object(&mut rechecked, PlayerId::P0, "Webweaver Changeling", Zone::Hand);
+    let relic = put_object(
+        &mut rechecked,
+        PlayerId::P0,
+        "Relic of Progenitus",
+        Zone::Battlefield,
+    );
+    let webweaver = put_object(
+        &mut rechecked,
+        PlayerId::P0,
+        "Webweaver Changeling",
+        Zone::Hand,
+    );
     let starting_life = rechecked.players[0].life;
     rechecked.players[0].mana_pool[ManaColor::G.pool_index()] = 2;
     rechecked.players[0].mana_pool[ManaColor::C.pool_index()] = 3;
@@ -290,7 +329,11 @@ fn webweaver_changeling_gains_five_only_with_three_creature_cards_in_graveyard()
     .unwrap();
     let chosen = match pass_until_next_decision(&mut rechecked) {
         Decision::ChooseEffectTargets { legal_targets, .. } => {
-            assert_eq!(legal_targets.len(), 3, "all three graveyard cards are candidates");
+            assert_eq!(
+                legal_targets.len(),
+                3,
+                "all three graveyard cards are candidates"
+            );
             legal_targets[0]
         }
         other => panic!("expected ChooseEffectTargets, got {other:?}"),
@@ -316,7 +359,12 @@ fn webweaver_changeling_has_every_creature_type() {
     // Elvish Mystic's own controlled-Elf count treats a changeling as
     // every creature type, same query an Elves tribal count uses.
     let mut state = ready_main1(&["Forest"; 8], &["Forest"; 8]);
-    let webweaver = put_object(&mut state, PlayerId::P0, "Webweaver Changeling", Zone::Battlefield);
+    let webweaver = put_object(
+        &mut state,
+        PlayerId::P0,
+        "Webweaver Changeling",
+        Zone::Battlefield,
+    );
     let elf_count = state.players[0]
         .battlefield
         .iter()
@@ -349,8 +397,12 @@ fn glint_hawk_is_sacrificed_unless_an_artifact_is_returned() {
     // With an artifact: accepting returns it and keeps the Hawk.
     let mut accepted = ready_main1(&["Island"; 8], &["Island"; 8]);
     let hawk = put_object(&mut accepted, PlayerId::P0, "Glint Hawk", Zone::Hand);
-    let wellspring =
-        put_object(&mut accepted, PlayerId::P0, "Ichor Wellspring", Zone::Battlefield);
+    let wellspring = put_object(
+        &mut accepted,
+        PlayerId::P0,
+        "Ichor Wellspring",
+        Zone::Battlefield,
+    );
     accepted.players[0].mana_pool[ManaColor::W.pool_index()] = 1;
     engine::step(&mut accepted, Action::CastSpell(hawk)).unwrap();
     match pass_until_next_decision(&mut accepted) {
@@ -383,8 +435,12 @@ fn glint_hawk_is_sacrificed_unless_an_artifact_is_returned() {
     // Declining still sacrifices the Hawk, even though returning was legal.
     let mut declined = ready_main1(&["Island"; 8], &["Island"; 8]);
     let hawk = put_object(&mut declined, PlayerId::P0, "Glint Hawk", Zone::Hand);
-    let wellspring =
-        put_object(&mut declined, PlayerId::P0, "Ichor Wellspring", Zone::Battlefield);
+    let wellspring = put_object(
+        &mut declined,
+        PlayerId::P0,
+        "Ichor Wellspring",
+        Zone::Battlefield,
+    );
     declined.players[0].mana_pool[ManaColor::W.pool_index()] = 1;
     engine::step(&mut declined, Action::CastSpell(hawk)).unwrap();
     pass_until_next_decision(&mut declined);

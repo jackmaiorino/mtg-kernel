@@ -1,12 +1,12 @@
 use burn_backend::{
-    DeviceId, TensorMetadata,
     distributed::{CollectiveTensor, DistributedBackend, ReduceOperation},
     tensor::{Device, FloatTensor},
+    DeviceId, TensorMetadata,
 };
 
 use crate::{
-    BoolElement, CubeBackend, CubeRuntime, FloatElement, IntElement,
     ops::numeric::{self, zeros_client},
+    BoolElement, CubeBackend, CubeRuntime, FloatElement, IntElement,
 };
 
 impl<R, F, I, BT> DistributedBackend for CubeBackend<R, F, I, BT>

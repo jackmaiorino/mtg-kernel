@@ -156,7 +156,10 @@ fn checked_in_pool_and_policy_cover_the_same_registration_set() {
     let mut policy_ids: Vec<&str> = policy.deck_ids().iter().map(String::as_str).collect();
     policy_ids.sort_unstable();
     assert_eq!(pool_ids, policy_ids);
-    assert!(pool_ids.len() >= 9, "the historical nine never leave the pool");
+    assert!(
+        pool_ids.len() >= 9,
+        "the historical nine never leave the pool"
+    );
     for historical in [
         "Wildfire", "Rally", "Affinity", "Elves", "Spy", "Burn", "Terror", "CawGates", "Faeries",
     ] {

@@ -28,7 +28,9 @@ use mtg_kernel::effect::{EffectOp, TargetRef};
 use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::{self, Cost, ManaColor, Pip};
-use mtg_kernel::state::{Counters, GameObject, GameState, ObjectLinkV4, ObjectStateV4, Step, Target, Zone};
+use mtg_kernel::state::{
+    Counters, GameObject, GameState, ObjectLinkV4, ObjectStateV4, Step, Target, Zone,
+};
 
 fn card_id(name: &str) -> u16 {
     card_id_by_name(name).unwrap_or_else(|| panic!("{name} in CARD_DEFS"))
@@ -73,8 +75,14 @@ fn put_object(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -
 /// Mirrors `pauper_meta_w1_spells.rs`'s `ready_main1`: Main1, P0 active with
 /// priority, both libraries as given.
 fn ready_main1(p0_library: &[&str], p1_library: &[&str]) -> GameState {
-    let p0_defs = p0_library.iter().map(|name| card_id(name)).collect::<Vec<_>>();
-    let p1_defs = p1_library.iter().map(|name| card_id(name)).collect::<Vec<_>>();
+    let p0_defs = p0_library
+        .iter()
+        .map(|name| card_id(name))
+        .collect::<Vec<_>>();
+    let p1_defs = p1_library
+        .iter()
+        .map(|name| card_id(name))
+        .collect::<Vec<_>>();
     let mut state =
         GameState::new_from_libraries(&p0_defs, &p1_defs, card_name, 0x44_45_4c_56_45_57_31);
     state.step = Step::Main1;
@@ -428,9 +436,24 @@ fn delve_caps_at_six_cards_even_when_mana_is_tight_enough_to_force_it() {
 #[test]
 fn viridian_longbow_equips_for_three_and_grants_a_tap_ping() {
     let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
-    let longbow = put_object(&mut state, PlayerId::P0, "Viridian Longbow", Zone::Battlefield);
-    let elf = put_object(&mut state, PlayerId::P0, "Llanowar Elves", Zone::Battlefield);
-    let other_elf = put_object(&mut state, PlayerId::P0, "Llanowar Elves", Zone::Battlefield);
+    let longbow = put_object(
+        &mut state,
+        PlayerId::P0,
+        "Viridian Longbow",
+        Zone::Battlefield,
+    );
+    let elf = put_object(
+        &mut state,
+        PlayerId::P0,
+        "Llanowar Elves",
+        Zone::Battlefield,
+    );
+    let other_elf = put_object(
+        &mut state,
+        PlayerId::P0,
+        "Llanowar Elves",
+        Zone::Battlefield,
+    );
 
     match engine::advance_until_decision(&mut state) {
         Decision::CastSpellOrPass {
@@ -457,7 +480,10 @@ fn viridian_longbow_equips_for_three_and_grants_a_tap_ping() {
     engine::step(&mut state, Action::ChooseTarget(Target::Object(elf))).unwrap();
     resolve_until_idle(&mut state);
 
-    assert_eq!(state.objects.get(longbow).v4.attached_to.unwrap().object, elf);
+    assert_eq!(
+        state.objects.get(longbow).v4.attached_to.unwrap().object,
+        elf
+    );
 
     match engine::advance_until_decision(&mut state) {
         Decision::CastSpellOrPass {
@@ -484,7 +510,11 @@ fn viridian_longbow_equips_for_three_and_grants_a_tap_ping() {
         }
         other => panic!("expected ChooseTargets, got {other:?}"),
     }
-    engine::step(&mut state, Action::ChooseTarget(Target::Player(PlayerId::P1))).unwrap();
+    engine::step(
+        &mut state,
+        Action::ChooseTarget(Target::Player(PlayerId::P1)),
+    )
+    .unwrap();
     resolve_until_idle(&mut state);
 
     assert_eq!(state.players[1].life, 19, "1 damage to P1's face");
@@ -495,8 +525,18 @@ fn viridian_longbow_equips_for_three_and_grants_a_tap_ping() {
 #[test]
 fn summoning_sick_equipped_creature_cannot_activate_the_granted_tap_ability() {
     let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
-    let longbow = put_object(&mut state, PlayerId::P0, "Viridian Longbow", Zone::Battlefield);
-    let elf = put_object(&mut state, PlayerId::P0, "Llanowar Elves", Zone::Battlefield);
+    let longbow = put_object(
+        &mut state,
+        PlayerId::P0,
+        "Viridian Longbow",
+        Zone::Battlefield,
+    );
+    let elf = put_object(
+        &mut state,
+        PlayerId::P0,
+        "Llanowar Elves",
+        Zone::Battlefield,
+    );
     state.objects.get_mut(elf).summoning_sick = true;
     attach_exact_for_test(&mut state, longbow, elf);
 
@@ -529,8 +569,18 @@ fn summoning_sick_equipped_creature_cannot_activate_the_granted_tap_ability() {
 #[test]
 fn longbow_ping_resolves_after_the_longbow_is_destroyed_in_response() {
     let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
-    let longbow = put_object(&mut state, PlayerId::P0, "Viridian Longbow", Zone::Battlefield);
-    let elf = put_object(&mut state, PlayerId::P0, "Llanowar Elves", Zone::Battlefield);
+    let longbow = put_object(
+        &mut state,
+        PlayerId::P0,
+        "Viridian Longbow",
+        Zone::Battlefield,
+    );
+    let elf = put_object(
+        &mut state,
+        PlayerId::P0,
+        "Llanowar Elves",
+        Zone::Battlefield,
+    );
     attach_exact_for_test(&mut state, longbow, elf);
     let ancient_grudge = put_object(&mut state, PlayerId::P0, "Ancient Grudge", Zone::Hand);
     state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
@@ -543,7 +593,11 @@ fn longbow_ping_resolves_after_the_longbow_is_destroyed_in_response() {
         }
         other => panic!("expected ChooseTargets, got {other:?}"),
     }
-    engine::step(&mut state, Action::ChooseTarget(Target::Player(PlayerId::P1))).unwrap();
+    engine::step(
+        &mut state,
+        Action::ChooseTarget(Target::Player(PlayerId::P1)),
+    )
+    .unwrap();
 
     // In response, destroy the Longbow while the ping still sits on the
     // stack beneath the new spell.
@@ -592,8 +646,18 @@ fn longbow_ping_resolves_after_the_longbow_is_destroyed_in_response() {
 #[test]
 fn longbow_ping_resolves_after_the_equipped_creature_is_destroyed_in_response() {
     let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
-    let longbow = put_object(&mut state, PlayerId::P0, "Viridian Longbow", Zone::Battlefield);
-    let elf = put_object(&mut state, PlayerId::P0, "Llanowar Elves", Zone::Battlefield);
+    let longbow = put_object(
+        &mut state,
+        PlayerId::P0,
+        "Viridian Longbow",
+        Zone::Battlefield,
+    );
+    let elf = put_object(
+        &mut state,
+        PlayerId::P0,
+        "Llanowar Elves",
+        Zone::Battlefield,
+    );
     attach_exact_for_test(&mut state, longbow, elf);
     let snuff_out = put_object(&mut state, PlayerId::P0, "Snuff Out", Zone::Hand);
     // Cast for the printed {3}{B} cost (floating mana, same shape as
@@ -609,7 +673,11 @@ fn longbow_ping_resolves_after_the_equipped_creature_is_destroyed_in_response() 
         }
         other => panic!("expected ChooseTargets, got {other:?}"),
     }
-    engine::step(&mut state, Action::ChooseTarget(Target::Player(PlayerId::P1))).unwrap();
+    engine::step(
+        &mut state,
+        Action::ChooseTarget(Target::Player(PlayerId::P1)),
+    )
+    .unwrap();
 
     // In response, destroy the equipped creature (the ping's own source)
     // while it still sits on the stack.

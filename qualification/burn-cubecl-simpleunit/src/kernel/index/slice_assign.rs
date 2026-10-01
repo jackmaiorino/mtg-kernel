@@ -1,12 +1,12 @@
 use crate::{
-    CubeRuntime,
     kernel::utils::{address_type, shape_divmod},
     tensor::CubeTensor,
+    CubeRuntime,
 };
 use cubecl::{
     calculate_cube_count_elemwise, intrinsic,
     prelude::*,
-    std::{FastDivmod, tensor::layout::linear::LinearView},
+    std::{tensor::layout::linear::LinearView, FastDivmod},
 };
 
 #[cube(launch_unchecked, address_type = "dynamic")]

@@ -1,24 +1,25 @@
 use burn_backend::{
+    ops::{conv::calculate_conv_output_sizes, ConvOptions},
     DType,
-    ops::{ConvOptions, conv::calculate_conv_output_sizes},
 };
 use burn_std::{Metadata, Shape};
 use core::iter;
 use cubecl::{
     prelude::*,
-    std::tensor::{TensorHandle, into_contiguous_pitched},
+    std::tensor::{into_contiguous_pitched, TensorHandle},
 };
 use cubek::convolution::components::ConvSetupError;
 
 use crate::{
-    CubeRuntime,
     kernel::{
-        AddOp, into_contiguous_aligned, launch_binop,
-        matmul::{MatmulStrategy, matmul},
+        into_contiguous_aligned, launch_binop,
+        matmul::{matmul, MatmulStrategy},
         utils::split_dim,
+        AddOp,
     },
     ops::{reshape, swap_dims},
     tensor::CubeTensor,
+    CubeRuntime,
 };
 
 #[cfg(not(test))]

@@ -72,12 +72,18 @@ fn run() -> Result<(), String> {
         && args[0] == "--prepare-source"
         && args[2] == "--toolchain"
         && args[4] == "--output";
-    let reporting = args.len() == 8 && args[0] == "--request" && args[2] == "--output"
-        && (args[4] == "--report-search" || args[4] == "--activate-search") && args[6] == "--archive";
+    let reporting = args.len() == 8
+        && args[0] == "--request"
+        && args[2] == "--output"
+        && (args[4] == "--report-search" || args[4] == "--activate-search")
+        && args[6] == "--archive";
     let auditing = args.len() == 6
         && args[0] == "--request"
         && args[2] == "--output"
-        && (args[4] == "--combat-audit" || args[4] == "--burn-audit" || args[4] == "--continuation" || args[4] == "--evaluate-search");
+        && (args[4] == "--combat-audit"
+            || args[4] == "--burn-audit"
+            || args[4] == "--continuation"
+            || args[4] == "--evaluate-search");
     if !preparing
         && !hashing
         && !auditing
@@ -116,8 +122,11 @@ fn run() -> Result<(), String> {
     let text = std::str::from_utf8(&bytes).map_err(|e| e.to_string())?;
     let (bytes, summary) = if hashing {
         let hash = mtg_kernel::phase1_bo3_collection_v1::continuation_record_sha256_v1(text)?;
-        (serde_json::to_vec(&serde_json::json!({"record_sha256":hash})).map_err(|e| e.to_string())?,
-            "typed continuation record hash; no games".into())
+        (
+            serde_json::to_vec(&serde_json::json!({"record_sha256":hash}))
+                .map_err(|e| e.to_string())?,
+            "typed continuation record hash; no games".into(),
+        )
     } else if preparing {
         if bytes.len() > MAX_BO3_COLLECTION_REQUEST_BYTES_V1 {
             return Err("package source exceeds 4 MiB".into());
@@ -131,70 +140,122 @@ fn run() -> Result<(), String> {
     } else {
         let request = Bo3CollectionRequestV1::from_json_v1(text)?;
         if reporting {
-            #[cfg(feature="experimental-burn-net8-packed-cuda-v1")]
+            #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
             {
-                use mtg_kernel::phase1_bo3_collection_v1::{report_bo3_v4,Bo3ReportOptionsV1,Bo3ReportArchiveV1,activate_bo3_v4,Bo3ActivationOptionsV1};
-                fn bounded(path:&std::ffi::OsStr,limit:u64)->Result<Vec<u8>,String> {
-                    let mut bytes=Vec::new();
-                    std::fs::File::open(path).map_err(|e|e.to_string())?.take(limit+1)
-                        .read_to_end(&mut bytes).map_err(|e|e.to_string())?;
-                    if bytes.len() as u64>limit {return Err(format!("Report input exceeds {limit} bytes"));}
+                use mtg_kernel::phase1_bo3_collection_v1::{
+                    activate_bo3_v4, report_bo3_v4, Bo3ActivationOptionsV1, Bo3ReportArchiveV1,
+                    Bo3ReportOptionsV1,
+                };
+                fn bounded(path: &std::ffi::OsStr, limit: u64) -> Result<Vec<u8>, String> {
+                    let mut bytes = Vec::new();
+                    std::fs::File::open(path)
+                        .map_err(|e| e.to_string())?
+                        .take(limit + 1)
+                        .read_to_end(&mut bytes)
+                        .map_err(|e| e.to_string())?;
+                    if bytes.len() as u64 > limit {
+                        return Err(format!("Report input exceeds {limit} bytes"));
+                    }
                     Ok(bytes)
                 }
                 // Strict parsing rejects duplicate keys even inside nested maps.
                 // Archive is data only; current packages still bind this executable.
-                let options_bytes=bounded(&args[5],32768)?;
-                let options_text=std::str::from_utf8(&options_bytes).map_err(|e|e.to_string())?;
-                let archive_bytes=bounded(&args[7],64*1024*1024)?;
-                let archive=Bo3ReportArchiveV1::from_json_v1(std::str::from_utf8(&archive_bytes).map_err(|e|e.to_string())?)?;
-                if args[4]=="--activate-search" {
-                    let options=Bo3ActivationOptionsV1::from_json_v1(options_text)?;
-                    let result=activate_bo3_v4(request.config,request.packages,options,archive)?;
+                let options_bytes = bounded(&args[5], 32768)?;
+                let options_text =
+                    std::str::from_utf8(&options_bytes).map_err(|e| e.to_string())?;
+                let archive_bytes = bounded(&args[7], 64 * 1024 * 1024)?;
+                let archive = Bo3ReportArchiveV1::from_json_v1(
+                    std::str::from_utf8(&archive_bytes).map_err(|e| e.to_string())?,
+                )?;
+                if args[4] == "--activate-search" {
+                    let options = Bo3ActivationOptionsV1::from_json_v1(options_text)?;
+                    let result =
+                        activate_bo3_v4(request.config, request.packages, options, archive)?;
                     (serde_json::to_vec(&result).map_err(|e|e.to_string())?,
                         "V4 single-game activation fixture; inspect scope_complete and abort, not a whole-match result".into())
                 } else {
-                    let options=Bo3ReportOptionsV1::from_json_v1(options_text)?;
-                    let result=report_bo3_v4(request.config,request.packages,options,archive)?;
-                    (serde_json::to_vec(&result).map_err(|e|e.to_string())?,
-                        "V4 Report observation; inspect usable_job and every assigned row".into())
+                    let options = Bo3ReportOptionsV1::from_json_v1(options_text)?;
+                    let result = report_bo3_v4(request.config, request.packages, options, archive)?;
+                    (
+                        serde_json::to_vec(&result).map_err(|e| e.to_string())?,
+                        "V4 Report observation; inspect usable_job and every assigned row".into(),
+                    )
                 }
             }
-            #[cfg(not(feature="experimental-burn-net8-packed-cuda-v1"))]
-            { return Err("Report search requires experimental-burn-net8-packed-cuda-v1".into()); }
-        } else if auditing && args[4] == "--evaluate-search" {
-            #[cfg(feature="experimental-burn-net8-packed-cuda-v1")]
+            #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
             {
-                use mtg_kernel::phase1_bo3_collection_v1::{evaluate_bo3_v4,Bo3EvaluationOptionsV1};
-                let mut options=String::new();
-                std::fs::File::open(&args[5]).map_err(|e|e.to_string())?
-                    .take(4097).read_to_string(&mut options).map_err(|e|e.to_string())?;
-                if options.len()>4096 {return Err("evaluation options exceed 4 KiB".into());}
-                // This one-field typed struct rejects unknown/duplicate fields.
-                let options:Bo3EvaluationOptionsV1=serde_json::from_str(&options).map_err(|e|e.to_string())?;
-                let result=evaluate_bo3_v4(request.config,request.packages,options)?;
-                (serde_json::to_vec(&result).map_err(|e|e.to_string())?,
-                    "V4 evaluation result; inspect ending and typed abort".into())
+                return Err("Report search requires experimental-burn-net8-packed-cuda-v1".into());
             }
-            #[cfg(not(feature="experimental-burn-net8-packed-cuda-v1"))]
-            { return Err("search evaluation requires experimental-burn-net8-packed-cuda-v1".into()); }
+        } else if auditing && args[4] == "--evaluate-search" {
+            #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+            {
+                use mtg_kernel::phase1_bo3_collection_v1::{
+                    evaluate_bo3_v4, Bo3EvaluationOptionsV1,
+                };
+                let mut options = String::new();
+                std::fs::File::open(&args[5])
+                    .map_err(|e| e.to_string())?
+                    .take(4097)
+                    .read_to_string(&mut options)
+                    .map_err(|e| e.to_string())?;
+                if options.len() > 4096 {
+                    return Err("evaluation options exceed 4 KiB".into());
+                }
+                // This one-field typed struct rejects unknown/duplicate fields.
+                let options: Bo3EvaluationOptionsV1 =
+                    serde_json::from_str(&options).map_err(|e| e.to_string())?;
+                let result = evaluate_bo3_v4(request.config, request.packages, options)?;
+                (
+                    serde_json::to_vec(&result).map_err(|e| e.to_string())?,
+                    "V4 evaluation result; inspect ending and typed abort".into(),
+                )
+            }
+            #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
+            {
+                return Err(
+                    "search evaluation requires experimental-burn-net8-packed-cuda-v1".into(),
+                );
+            }
         } else if auditing && args[4] == "--continuation" {
-            use mtg_kernel::phase1_bo3_collection_v1::{collect_bo3_with_continuation_v1, Bo3ContinuationOptionsV1};
+            use mtg_kernel::phase1_bo3_collection_v1::{
+                collect_bo3_with_continuation_v1, Bo3ContinuationOptionsV1,
+            };
             let mut options = String::new();
-            std::fs::File::open(&args[5]).map_err(|e| e.to_string())?
-                .take(32769).read_to_string(&mut options).map_err(|e| e.to_string())?;
-            let result = collect_bo3_with_continuation_v1(request.config, request.packages,
-                Bo3ContinuationOptionsV1::from_json_v1(&options)?)?;
+            std::fs::File::open(&args[5])
+                .map_err(|e| e.to_string())?
+                .take(32769)
+                .read_to_string(&mut options)
+                .map_err(|e| e.to_string())?;
+            let result = collect_bo3_with_continuation_v1(
+                request.config,
+                request.packages,
+                Bo3ContinuationOptionsV1::from_json_v1(&options)?,
+            )?;
             let summary = format!("continuation complete={}", result.continuation["complete"]);
-            (serde_json::to_vec(&result).map_err(|e| e.to_string())?, summary)
+            (
+                serde_json::to_vec(&result).map_err(|e| e.to_string())?,
+                summary,
+            )
         } else if auditing && args[4] == "--burn-audit" {
-            use mtg_kernel::phase1_bo3_collection_v1::{collect_bo3_with_burn_audit_v1, Bo3BurnAuditOptionsV1};
+            use mtg_kernel::phase1_bo3_collection_v1::{
+                collect_bo3_with_burn_audit_v1, Bo3BurnAuditOptionsV1,
+            };
             let mut options = String::new();
-            std::fs::File::open(&args[5]).map_err(|e| e.to_string())?
-                .take(4097).read_to_string(&mut options).map_err(|e| e.to_string())?;
-            let result = collect_bo3_with_burn_audit_v1(request.config, request.packages,
-                Bo3BurnAuditOptionsV1::from_json_v1(&options)?)?;
+            std::fs::File::open(&args[5])
+                .map_err(|e| e.to_string())?
+                .take(4097)
+                .read_to_string(&mut options)
+                .map_err(|e| e.to_string())?;
+            let result = collect_bo3_with_burn_audit_v1(
+                request.config,
+                request.packages,
+                Bo3BurnAuditOptionsV1::from_json_v1(&options)?,
+            )?;
             let summary = format!("burn audit complete={}", result.burn_audit["complete"]);
-            (serde_json::to_vec(&result).map_err(|e| e.to_string())?, summary)
+            (
+                serde_json::to_vec(&result).map_err(|e| e.to_string())?,
+                summary,
+            )
         } else if auditing {
             use mtg_kernel::phase1_bo3_collection_v1::{
                 collect_bo3_with_combat_audit_v1, Bo3CombatAuditOptionsV1,

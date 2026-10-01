@@ -1,12 +1,12 @@
-use burn_backend::{TensorMetadata, ops::ConvOptions};
+use burn_backend::{ops::ConvOptions, TensorMetadata};
 use burn_std::{Shape, Slice};
 use cubek::convolution::components::ConvSetupError;
 
 use crate::{
-    CubeRuntime,
     kernel::{conv::base::conv_forward_nhwc, slice, slice_assign},
     ops::{numeric::empty_device_dtype, swap_dims},
     tensor::CubeTensor,
+    CubeRuntime,
 };
 
 /// Calculate the convolution backward pass with regard to the weight gradients.

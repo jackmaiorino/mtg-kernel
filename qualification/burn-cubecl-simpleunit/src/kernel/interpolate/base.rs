@@ -1,12 +1,12 @@
 use crate::{
-    CubeRuntime,
     kernel::into_contiguous,
     ops::{numeric::empty_device_dtype, permute_nchw_to_nhwc, permute_nhwc_to_nchw},
     tensor::CubeTensor,
+    CubeRuntime,
 };
 use burn_backend::{
-    Shape, TensorMetadata,
     ops::{InterpolateMode, InterpolateOptions},
+    Shape, TensorMetadata,
 };
 
 use super::{

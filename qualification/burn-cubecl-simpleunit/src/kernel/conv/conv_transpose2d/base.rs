@@ -1,4 +1,4 @@
-use crate::{CubeRuntime, tensor::CubeTensor};
+use crate::{tensor::CubeTensor, CubeRuntime};
 use burn_backend::ops::ConvTransposeOptions;
 use cubek::convolution::components::ConvSetupError;
 

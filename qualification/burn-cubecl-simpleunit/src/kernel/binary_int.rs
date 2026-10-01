@@ -1,8 +1,8 @@
 use crate::{
-    CubeRuntime,
     kernel::utils::{address_type, broadcast_shape},
     ops::{max_vector_size, numeric::empty_device_dtype},
     tensor::CubeTensor,
+    CubeRuntime,
 };
 use burn_backend::TensorMetadata;
 use cubecl::{calculate_cube_count_elemwise, prelude::*, std::tensor::layout::linear::LinearView};

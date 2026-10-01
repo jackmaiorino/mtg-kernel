@@ -146,8 +146,7 @@ pub(super) fn run_population_command_v1(
                 "artifact":format!("match-{index:06}.json")})
             );
         }
-        let seat_generations =
-            seat_generations.expect("matches is non-empty; checked above");
+        let seat_generations = seat_generations.expect("matches is non-empty; checked above");
         Ok(
             json!({"mode":"run_population_batch", "completed_matches":matches.len(),
             "physical_games":total_games, "inputs":inputs, "play_models":identities,

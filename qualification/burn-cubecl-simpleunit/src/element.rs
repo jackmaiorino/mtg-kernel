@@ -1,7 +1,8 @@
-use burn_backend::{Element, bf16, f16};
+use burn_backend::{bf16, f16, Element};
 use cubecl::{
-    CubeElement as CubeElem, flex32,
+    flex32,
     prelude::{Float, Int, Numeric},
+    CubeElement as CubeElem,
 };
 use cubek::{
     matmul::definition::{MatmulPrecision, MatrixPrecision},

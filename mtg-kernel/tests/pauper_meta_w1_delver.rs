@@ -101,7 +101,10 @@ fn put_transformed_delver(state: &mut GameState) -> ObjectId {
 /// already holding priority as usual, with Delver of Secrets controlled by
 /// P0 already on P0's battlefield and, if given, `top_of_library` seeded as
 /// the sole card in `active_player`'s library (so it sits on top).
-fn ready_before_upkeep(active_player: PlayerId, top_of_library: Option<&str>) -> (GameState, ObjectId) {
+fn ready_before_upkeep(
+    active_player: PlayerId,
+    top_of_library: Option<&str>,
+) -> (GameState, ObjectId) {
     let library: Vec<u16> = top_of_library.into_iter().map(card_id).collect();
     let (p0_lib, p1_lib): (&[u16], &[u16]) = if active_player == PlayerId::P0 {
         (&library, &[])
@@ -111,7 +114,12 @@ fn ready_before_upkeep(active_player: PlayerId, top_of_library: Option<&str>) ->
     let mut state = GameState::new_from_libraries(p0_lib, p1_lib, card_name, 1);
     state.active_player = active_player;
     state.priority_player = active_player;
-    let delver = put_object(&mut state, PlayerId::P0, "Delver of Secrets", Zone::Battlefield);
+    let delver = put_object(
+        &mut state,
+        PlayerId::P0,
+        "Delver of Secrets",
+        Zone::Battlefield,
+    );
     (state, delver)
 }
 
@@ -167,7 +175,11 @@ fn delver_transforms_when_the_revealed_top_card_is_an_instant_or_sorcery() {
         } => {
             assert_eq!(*player, PlayerId::P0);
             assert_eq!(*source, delver);
-            assert_eq!(*default, Some(false), "declining the reveal is always legal");
+            assert_eq!(
+                *default,
+                Some(false),
+                "declining the reveal is always legal"
+            );
         }
         other => panic!("expected the reveal ChooseEffectBoolean, got {other:?}"),
     }
@@ -208,7 +220,11 @@ fn delver_transforms_when_the_revealed_top_card_is_an_instant_or_sorcery() {
     );
     assert_eq!(engine::effective_power(&accepted, delver), 3);
     assert_eq!(engine::effective_toughness(&accepted, delver), 2);
-    assert!(engine::has_effective_keyword(&accepted, delver, Keywords::FLYING));
+    assert!(engine::has_effective_keyword(
+        &accepted,
+        delver,
+        Keywords::FLYING
+    ));
 
     // Decline the reveal from the identical starting point: no transform,
     // even though Ponder was privately known (to the controller only) to be
@@ -224,7 +240,11 @@ fn delver_transforms_when_the_revealed_top_card_is_an_instant_or_sorcery() {
     assert_eq!(object.zone_change_count, original_zone_change_count);
     assert_eq!(engine::effective_power(&declined, delver), 1);
     assert_eq!(engine::effective_toughness(&declined, delver), 1);
-    assert!(!engine::has_effective_keyword(&declined, delver, Keywords::FLYING));
+    assert!(!engine::has_effective_keyword(
+        &declined,
+        delver,
+        Keywords::FLYING
+    ));
 }
 
 // covers: Delver of Secrets: non_instant_top_no_transform
@@ -265,7 +285,11 @@ fn delver_trigger_is_controllers_upkeep_only() {
     // `ChooseEffectBoolean`.
     match engine::advance_until_decision(&mut state) {
         Decision::CastSpellOrPass { player, .. } => {
-            assert_eq!(player, PlayerId::P1, "priority opens with the active player");
+            assert_eq!(
+                player,
+                PlayerId::P1,
+                "priority opens with the active player"
+            );
             assert!(
                 state.stack.is_empty(),
                 "Delver's controller-only trigger must not fire on a non-controller's upkeep"
@@ -297,7 +321,11 @@ fn delver_does_not_retrigger_once_transformed() {
 
     match engine::advance_until_decision(&mut state) {
         Decision::CastSpellOrPass { player, .. } => {
-            assert_eq!(player, PlayerId::P0, "priority opens with the active player");
+            assert_eq!(
+                player,
+                PlayerId::P0,
+                "priority opens with the active player"
+            );
             assert!(
                 state.stack.is_empty(),
                 "a transformed Delver's front-face trigger must not fire again"

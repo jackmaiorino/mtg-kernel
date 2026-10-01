@@ -1,12 +1,12 @@
-use crate::{
-    CubeRuntime,
-    kernel::utils::{address_type, shape_divmod},
-};
 use crate::{element::CubeElement, tensor::CubeTensor};
 use crate::{
+    kernel::utils::{address_type, shape_divmod},
+    CubeRuntime,
+};
+use crate::{
     kernel::{
-        AddOp, BitwiseAndOp, BitwiseOrOp, BitwiseXorOp, DivOp, MulOp, PowOp, RemainderOp, SubOp,
-        launch_binop, launch_binop_int, launch_scalar_binop, launch_scalar_binop_int,
+        launch_binop, launch_binop_int, launch_scalar_binop, launch_scalar_binop_int, AddOp,
+        BitwiseAndOp, BitwiseOrOp, BitwiseXorOp, DivOp, MulOp, PowOp, RemainderOp, SubOp,
     },
     ops::max_vector_size,
 };
@@ -16,7 +16,7 @@ use cubecl::{calculate_cube_count_elemwise, prelude::*};
 use cubecl::{client::ComputeClient, server::MemoryLayout};
 use cubecl::{
     server::MemoryLayoutDescriptor,
-    std::{FastDivmod, tensor::layout::linear::LinearView},
+    std::{tensor::layout::linear::LinearView, FastDivmod},
 };
 
 /// Creates a tensor filled with `value`

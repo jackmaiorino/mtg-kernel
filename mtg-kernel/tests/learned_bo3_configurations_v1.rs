@@ -162,27 +162,24 @@ fn explicit_brewer_registration_needs_no_catalog_or_static_policy() {
     assert_eq!(session, before);
     let original = configurations(&session);
     session
-        .prepare_game_with_configurations_v1(
-            PlayerId::P0,
-            PlayDrawChoiceV1::Play,
-            original.clone(),
-        )
+        .prepare_game_with_configurations_v1(PlayerId::P0, PlayDrawChoiceV1::Play, original.clone())
         .unwrap();
     session
-        .record_game_result_v1(GameOutcomeV1::Win { winner: PlayerId::P0 })
+        .record_game_result_v1(GameOutcomeV1::Win {
+            winner: PlayerId::P0,
+        })
         .unwrap();
     let selected = original.each_ref().map(swap_one);
     let second = session
-        .prepare_game_with_configurations_v1(
-            PlayerId::P1,
-            PlayDrawChoiceV1::Draw,
-            selected.clone(),
-        )
+        .prepare_game_with_configurations_v1(PlayerId::P1, PlayDrawChoiceV1::Draw, selected.clone())
         .unwrap();
     assert_eq!(second.start().starting_player, PlayerId::P0);
     for (seat, record) in [PlayerId::P0, PlayerId::P1].into_iter().zip(records) {
         let registration = session.registered_deck(seat).unwrap();
-        assert_eq!(record, LearnedBo3RegistrationRecordV1::from_registered_v1(registration));
+        assert_eq!(
+            record,
+            LearnedBo3RegistrationRecordV1::from_registered_v1(registration)
+        );
         assert_ne!(
             original[seat.index()].mainboard_sha256_v1(),
             second.configuration(seat).unwrap().mainboard_sha256_v1()
@@ -202,8 +199,12 @@ fn live_registration_validation_enforces_combined_copy_limit_and_basic_exception
     let mut side = vec![mountain; 15];
     side[0] = bolt;
     // Structural construction cannot bypass the live initializer's admission.
-    let unchecked = RegisteredDeckV1::new_exact_v1("TooManyBolts", main.clone(), side.clone()).unwrap();
-    let expected = SideboardErrorV1::NonbasicCopyLimitExceeded { card_id: bolt, count: 5 };
+    let unchecked =
+        RegisteredDeckV1::new_exact_v1("TooManyBolts", main.clone(), side.clone()).unwrap();
+    let expected = SideboardErrorV1::NonbasicCopyLimitExceeded {
+        card_id: bolt,
+        count: 5,
+    };
     assert_eq!(unchecked.validate_executable_v1(), Err(expected.clone()));
     assert_eq!(
         BestOfThreeDeckMatchV1::new_live_v1(
@@ -214,7 +215,8 @@ fn live_registration_validation_enforces_combined_copy_limit_and_basic_exception
     );
     main[0] = mountain;
     RegisteredDeckV1::new_executable_v1("FourAcrossZones", main, side).unwrap();
-    RegisteredDeckV1::new_executable_v1("BasicException", vec![mountain; 60], vec![mountain; 15]).unwrap();
+    RegisteredDeckV1::new_executable_v1("BasicException", vec![mountain; 60], vec![mountain; 15])
+        .unwrap();
 }
 
 #[test]

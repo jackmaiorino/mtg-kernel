@@ -2098,7 +2098,10 @@ fn apply_by_indices(
                     OptionalCostChoice::Decline
                 };
                 surface
-                    .apply(state, SurfaceAction::Action(Action::ChooseOptionalCost(choice)))
+                    .apply(
+                        state,
+                        SurfaceAction::Action(Action::ChooseOptionalCost(choice)),
+                    )
                     .map_err(|e| format!("engine-step-error:walk:ChooseOptionalCost:{e}"))
             } else {
                 surface

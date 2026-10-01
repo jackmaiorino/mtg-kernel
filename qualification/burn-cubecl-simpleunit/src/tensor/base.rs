@@ -1,8 +1,8 @@
+use crate::kernel::{launch_unary_numeric, NumericUnaryOp, NumericUnaryOpFamily};
 use crate::CubeRuntime;
-use crate::kernel::{NumericUnaryOp, NumericUnaryOpFamily, launch_unary_numeric};
 use burn_backend::quantization::QuantScheme;
 use burn_backend::{DType, QTensorPrimitive, Shape, TensorMetadata};
-use burn_std::{Metadata, strides, tensor::is_contiguous};
+use burn_std::{strides, tensor::is_contiguous, Metadata};
 use cubecl::server::Handle;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{client::ComputeClient, std::tensor::layout::linear::LinearViewLaunch};

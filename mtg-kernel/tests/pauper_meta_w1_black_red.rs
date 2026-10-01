@@ -66,8 +66,14 @@ fn put_object(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -
 /// Mirrors `pauper_meta_w1_spells.rs`'s `ready_main1`: Main1, P0 active with
 /// priority, both libraries as given.
 fn ready_main1(p0_library: &[&str], p1_library: &[&str]) -> GameState {
-    let p0_defs = p0_library.iter().map(|name| card_id(name)).collect::<Vec<_>>();
-    let p1_defs = p1_library.iter().map(|name| card_id(name)).collect::<Vec<_>>();
+    let p0_defs = p0_library
+        .iter()
+        .map(|name| card_id(name))
+        .collect::<Vec<_>>();
+    let p1_defs = p1_library
+        .iter()
+        .map(|name| card_id(name))
+        .collect::<Vec<_>>();
     let mut state =
         GameState::new_from_libraries(&p0_defs, &p1_defs, card_name, 0x424c41434b524544);
     state.step = Step::Main1;
@@ -134,8 +140,18 @@ fn suffocating_fumes_gives_opponents_creatures_minus_one_until_end_of_turn() {
     put_object(&mut state, PlayerId::P0, "Swamp", Zone::Battlefield);
     put_object(&mut state, PlayerId::P0, "Swamp", Zone::Battlefield);
     put_object(&mut state, PlayerId::P0, "Swamp", Zone::Battlefield);
-    let p0_creature = put_object(&mut state, PlayerId::P0, "Ninja of the Deep Hours", Zone::Battlefield);
-    let squirrel = put_object(&mut state, PlayerId::P1, "Squirrel Token", Zone::Battlefield);
+    let p0_creature = put_object(
+        &mut state,
+        PlayerId::P0,
+        "Ninja of the Deep Hours",
+        Zone::Battlefield,
+    );
+    let squirrel = put_object(
+        &mut state,
+        PlayerId::P1,
+        "Squirrel Token",
+        Zone::Battlefield,
+    );
     let sagu = put_object(&mut state, PlayerId::P1, "Sagu Wildling", Zone::Battlefield);
 
     let offer = engine::advance_until_decision(&mut state);
@@ -154,7 +170,11 @@ fn suffocating_fumes_gives_opponents_creatures_minus_one_until_end_of_turn() {
     );
     assert_eq!(state.objects[sagu].zone, Zone::Battlefield);
     assert_eq!(engine::effective_power(&state, sagu), 2);
-    assert_eq!(engine::effective_toughness(&state, sagu), 2, "the 3/3 is a 2/2 until end of turn");
+    assert_eq!(
+        engine::effective_toughness(&state, sagu),
+        2,
+        "the 3/3 is a 2/2 until end of turn"
+    );
     assert_eq!(state.objects[p0_creature].zone, Zone::Battlefield);
     assert_eq!(
         engine::effective_power(&state, p0_creature),
@@ -184,7 +204,10 @@ fn suffocating_fumes_cycles_for_two() {
 
     let offer = engine::advance_until_decision(&mut state);
     match offer {
-        Decision::CastSpellOrPass { ref activatable_abilities, .. } => {
+        Decision::CastSpellOrPass {
+            ref activatable_abilities,
+            ..
+        } => {
             assert!(
                 activatable_abilities.contains(&(fumes, 0)),
                 "cycling {{2}} should be offered as an activated ability from hand"
@@ -222,8 +245,18 @@ fn arms_of_hadar_shrinks_only_the_targeted_players_creatures() {
     put_object(&mut state, PlayerId::P0, "Swamp", Zone::Battlefield);
     put_object(&mut state, PlayerId::P0, "Swamp", Zone::Battlefield);
     put_object(&mut state, PlayerId::P0, "Swamp", Zone::Battlefield);
-    let p0_creature = put_object(&mut state, PlayerId::P0, "Ninja of the Deep Hours", Zone::Battlefield);
-    let p1_creature = put_object(&mut state, PlayerId::P1, "Ninja of the Deep Hours", Zone::Battlefield);
+    let p0_creature = put_object(
+        &mut state,
+        PlayerId::P0,
+        "Ninja of the Deep Hours",
+        Zone::Battlefield,
+    );
+    let p1_creature = put_object(
+        &mut state,
+        PlayerId::P1,
+        "Ninja of the Deep Hours",
+        Zone::Battlefield,
+    );
 
     let offer = engine::advance_until_decision(&mut state);
     assert!(matches!(
@@ -238,7 +271,11 @@ fn arms_of_hadar_shrinks_only_the_targeted_players_creatures() {
         }
         other => panic!("{other:?}"),
     }
-    engine::step(&mut state, Action::ChooseTarget(Target::Player(PlayerId::P1))).unwrap();
+    engine::step(
+        &mut state,
+        Action::ChooseTarget(Target::Player(PlayerId::P1)),
+    )
+    .unwrap();
     pass_until_stack_empty(&mut state);
 
     assert_eq!(
@@ -248,7 +285,11 @@ fn arms_of_hadar_shrinks_only_the_targeted_players_creatures() {
     );
     assert_eq!(state.objects[p0_creature].zone, Zone::Battlefield);
     assert_eq!(engine::effective_power(&state, p0_creature), 2);
-    assert_eq!(engine::effective_toughness(&state, p0_creature), 2, "P0's 2/2 is unchanged");
+    assert_eq!(
+        engine::effective_toughness(&state, p0_creature),
+        2,
+        "P0's 2/2 is unchanged"
+    );
 
     // Targeting P0 instead shrinks P0's creature and leaves P1's alone.
     let mut state2 = ready_main1(&["Island"; 8], &["Island"; 8]);
@@ -257,13 +298,27 @@ fn arms_of_hadar_shrinks_only_the_targeted_players_creatures() {
     put_object(&mut state2, PlayerId::P0, "Swamp", Zone::Battlefield);
     put_object(&mut state2, PlayerId::P0, "Swamp", Zone::Battlefield);
     put_object(&mut state2, PlayerId::P0, "Swamp", Zone::Battlefield);
-    let p0_creature2 = put_object(&mut state2, PlayerId::P0, "Ninja of the Deep Hours", Zone::Battlefield);
-    let p1_creature2 = put_object(&mut state2, PlayerId::P1, "Ninja of the Deep Hours", Zone::Battlefield);
+    let p0_creature2 = put_object(
+        &mut state2,
+        PlayerId::P0,
+        "Ninja of the Deep Hours",
+        Zone::Battlefield,
+    );
+    let p1_creature2 = put_object(
+        &mut state2,
+        PlayerId::P1,
+        "Ninja of the Deep Hours",
+        Zone::Battlefield,
+    );
 
     engine::advance_until_decision(&mut state2);
     engine::step(&mut state2, Action::CastSpell(hadar2)).unwrap();
     engine::advance_until_decision(&mut state2);
-    engine::step(&mut state2, Action::ChooseTarget(Target::Player(PlayerId::P0))).unwrap();
+    engine::step(
+        &mut state2,
+        Action::ChooseTarget(Target::Player(PlayerId::P0)),
+    )
+    .unwrap();
     pass_until_stack_empty(&mut state2);
 
     assert_eq!(
@@ -273,7 +328,11 @@ fn arms_of_hadar_shrinks_only_the_targeted_players_creatures() {
     );
     assert_eq!(state2.objects[p1_creature2].zone, Zone::Battlefield);
     assert_eq!(engine::effective_power(&state2, p1_creature2), 2);
-    assert_eq!(engine::effective_toughness(&state2, p1_creature2), 2, "P1's 2/2 is unchanged");
+    assert_eq!(
+        engine::effective_toughness(&state2, p1_creature2),
+        2,
+        "P1's 2/2 is unchanged"
+    );
 }
 
 // covers: Smash to Smithereens: destroys_target_artifact, deals_three_to_artifacts_controller
@@ -303,7 +362,10 @@ fn smash_to_smithereens_destroys_the_artifact_and_burns_its_controller() {
 
     assert_eq!(state.objects[enforcer].zone, Zone::Graveyard);
     assert_eq!(state.objects[smash].zone, Zone::Graveyard);
-    assert_eq!(state.players[1].life, 17, "3 damage to the destroyed artifact's controller");
+    assert_eq!(
+        state.players[1].life, 17,
+        "3 damage to the destroyed artifact's controller"
+    );
 
     // Last-known-controller case: P1 sacrifices the targeted artifact (its
     // own Nihil Spellbomb) in response, holding priority, before Smash to
@@ -317,10 +379,20 @@ fn smash_to_smithereens_destroys_the_artifact_and_burns_its_controller() {
     // damage. `stack_targets_still_legal` (engine.rs) is what enforces
     // this fizzle for the kernel, before `EffectOp::execute` ever runs.
     let mut state2 = ready_main1(&["Island"; 8], &["Island"; 8]);
-    let smash2 = put_object(&mut state2, PlayerId::P0, "Smash to Smithereens", Zone::Hand);
+    let smash2 = put_object(
+        &mut state2,
+        PlayerId::P0,
+        "Smash to Smithereens",
+        Zone::Hand,
+    );
     put_object(&mut state2, PlayerId::P0, "Mountain", Zone::Battlefield);
     put_object(&mut state2, PlayerId::P0, "Mountain", Zone::Battlefield);
-    let spellbomb = put_object(&mut state2, PlayerId::P1, "Nihil Spellbomb", Zone::Battlefield);
+    let spellbomb = put_object(
+        &mut state2,
+        PlayerId::P1,
+        "Nihil Spellbomb",
+        Zone::Battlefield,
+    );
 
     engine::advance_until_decision(&mut state2);
     engine::step(&mut state2, Action::CastSpell(smash2)).unwrap();
@@ -334,7 +406,10 @@ fn smash_to_smithereens_destroys_the_artifact_and_burns_its_controller() {
 
     // P0 (the caster) gets priority first and passes it to P1.
     match engine::advance_until_decision(&mut state2) {
-        Decision::CastSpellOrPass { player: PlayerId::P0, .. } => {
+        Decision::CastSpellOrPass {
+            player: PlayerId::P0,
+            ..
+        } => {
             engine::step(&mut state2, Action::Pass).unwrap();
         }
         other => panic!("expected P0 priority right after casting, got {other:?}"),
@@ -359,7 +434,11 @@ fn smash_to_smithereens_destroys_the_artifact_and_burns_its_controller() {
     match engine::advance_until_decision(&mut state2) {
         Decision::ChooseTargets { legal_targets, .. } => {
             assert!(legal_targets.contains(&Target::Player(PlayerId::P0)));
-            engine::step(&mut state2, Action::ChooseTarget(Target::Player(PlayerId::P0))).unwrap();
+            engine::step(
+                &mut state2,
+                Action::ChooseTarget(Target::Player(PlayerId::P0)),
+            )
+            .unwrap();
         }
         other => panic!("expected Nihil Spellbomb's own player target, got {other:?}"),
     }
@@ -376,8 +455,7 @@ fn smash_to_smithereens_destroys_the_artifact_and_burns_its_controller() {
         "a fizzled spell still resolves as an event and goes to the graveyard"
     );
     assert_eq!(
-        state2.players[1].life,
-        20,
+        state2.players[1].life, 20,
         "the spell's only target was illegal at resolution, so it fizzles entirely (CR 608.2b): \
          no destroy and no damage, unlike the same-resolution case above"
     );
@@ -398,7 +476,10 @@ fn smash_to_smithereens_has_no_legal_target_without_an_artifact() {
 
     let offer = engine::advance_until_decision(&mut state);
     match offer {
-        Decision::CastSpellOrPass { ref castable_spells, .. } => {
+        Decision::CastSpellOrPass {
+            ref castable_spells,
+            ..
+        } => {
             assert!(
                 !castable_spells.contains(&smash),
                 "Smash to Smithereens has no legal artifact target and must not be offered as castable"
@@ -421,7 +502,10 @@ fn raze_requires_sacrificing_a_land_and_destroys_the_target_land() {
     let raze = put_object(&mut state, PlayerId::P0, "Raze", Zone::Hand);
     let offer = engine::advance_until_decision(&mut state);
     match offer {
-        Decision::CastSpellOrPass { ref castable_spells, .. } => {
+        Decision::CastSpellOrPass {
+            ref castable_spells,
+            ..
+        } => {
             assert!(
                 !castable_spells.contains(&raze),
                 "no lands at all: neither {{R}} nor the sacrifice cost can be paid"
@@ -452,7 +536,11 @@ fn raze_requires_sacrificing_a_land_and_destroys_the_target_land() {
             Decision::ChooseTargets { legal_targets, .. } => {
                 assert!(legal_targets.contains(&Target::Object(mountain_a)));
                 assert!(legal_targets.contains(&Target::Object(mountain_b)));
-                engine::step(&mut state2, Action::ChooseTarget(Target::Object(mountain_a))).unwrap();
+                engine::step(
+                    &mut state2,
+                    Action::ChooseTarget(Target::Object(mountain_a)),
+                )
+                .unwrap();
                 targeted = true;
             }
             Decision::ChooseCostTargets {
@@ -471,7 +559,11 @@ fn raze_requires_sacrificing_a_land_and_destroys_the_target_land() {
         }
     }
     assert!(targeted, "Raze's own target (a land) must be chosen");
-    assert_eq!(sacrificed, Some(mountain_b), "the additional cost's land must be chosen");
+    assert_eq!(
+        sacrificed,
+        Some(mountain_b),
+        "the additional cost's land must be chosen"
+    );
     pass_until_stack_empty(&mut state2);
 
     assert_eq!(
@@ -516,8 +608,11 @@ fn raze_requires_sacrificing_a_land_and_destroys_the_target_land() {
         match engine::advance_until_decision(&mut state3) {
             Decision::ChooseTargets { legal_targets, .. } => {
                 assert!(legal_targets.contains(&Target::Object(opponent_land)));
-                engine::step(&mut state3, Action::ChooseTarget(Target::Object(opponent_land)))
-                    .unwrap();
+                engine::step(
+                    &mut state3,
+                    Action::ChooseTarget(Target::Object(opponent_land)),
+                )
+                .unwrap();
                 targeted3 = true;
             }
             Decision::ChooseCostTargets { .. } => {
@@ -531,7 +626,10 @@ fn raze_requires_sacrificing_a_land_and_destroys_the_target_land() {
             other => panic!("unexpected decision while casting Raze with one land: {other:?}"),
         }
     }
-    assert!(targeted3, "Raze's own target (the opponent's land) must be chosen");
+    assert!(
+        targeted3,
+        "Raze's own target (the opponent's land) must be chosen"
+    );
     pass_until_stack_empty(&mut state3);
 
     assert_eq!(

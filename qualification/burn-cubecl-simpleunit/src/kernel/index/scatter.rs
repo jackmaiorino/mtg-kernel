@@ -1,12 +1,12 @@
 use crate::{
-    CubeRuntime,
     kernel::{
-        AddOp, BinaryOp, BinaryOpFamily, OrOp,
         utils::{address_type, shape_divmod},
+        AddOp, BinaryOp, BinaryOpFamily, OrOp,
     },
     tensor::CubeTensor,
+    CubeRuntime,
 };
-use cubecl::{CubeDim, calculate_cube_count_elemwise};
+use cubecl::{calculate_cube_count_elemwise, CubeDim};
 use cubecl::{prelude::*, std::FastDivmod};
 
 #[cube(launch_unchecked, address_type = "dynamic")]

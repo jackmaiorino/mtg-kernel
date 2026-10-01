@@ -1,5 +1,4 @@
 use crate::{
-    CubeRuntime,
     kernel::{
         into_contiguous_aligned,
         utils::{address_type, decompose_linear, shape_divmod},
@@ -8,6 +7,7 @@ use crate::{
         max_vector_size, numeric::empty_device_dtype, permute_nchw_to_nhwc, permute_nhwc_to_nchw,
     },
     tensor::CubeTensor,
+    CubeRuntime,
 };
 use burn_backend::Shape;
 use cubecl::{calculate_cube_count_elemwise, num_traits::Zero, prelude::*, std::FastDivmod};

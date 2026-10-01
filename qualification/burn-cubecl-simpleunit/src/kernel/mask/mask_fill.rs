@@ -2,10 +2,10 @@ use burn_backend::{DType, TensorMetadata};
 use cubecl::{calculate_cube_count_elemwise, prelude::*, std::tensor::layout::linear::LinearView};
 
 use crate::{
-    CubeRuntime,
     kernel::utils::address_type,
     ops::{max_vector_size_many, numeric::empty_device_dtype},
     tensor::CubeTensor,
+    CubeRuntime,
 };
 
 #[cube(launch_unchecked, address_type = "dynamic")]

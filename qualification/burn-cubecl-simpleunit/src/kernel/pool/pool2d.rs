@@ -2,21 +2,26 @@ use core::hash::Hash;
 use cubecl::{
     prelude::*,
     std::{
-        FastDivmod,
         tensor::{
-            View,
             launch::ViewArg,
             layout::fixed_dim::{FixedDimLayout, FixedDimLayoutLaunch},
+            View,
         },
+        FastDivmod,
     },
 };
 
-use crate::{CubeRuntime, kernel::utils::decompose_linear, tensor::CubeTensor};
+use crate::{kernel::utils::decompose_linear, tensor::CubeTensor, CubeRuntime};
 
 pub trait Pool2dDirectStrategyFamily: Send + Sync + 'static {
     type Indices<N: Size>: LaunchArg;
     type Config: CubeType + Clone + Send + Sync + core::fmt::Debug + Hash + core::cmp::Eq;
-    type Pool2d<T: Numeric, N: Size>: Pool2dDirectStrategy<T, N, Config = Self::Config, Indices = Self::Indices<N>>;
+    type Pool2d<T: Numeric, N: Size>: Pool2dDirectStrategy<
+        T,
+        N,
+        Config = Self::Config,
+        Indices = Self::Indices<N>,
+    >;
 }
 
 pub(super) type Position = (usize, usize, usize, usize);

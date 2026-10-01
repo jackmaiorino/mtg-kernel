@@ -65,8 +65,14 @@ fn put_object(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -
 /// Mirrors `deep_analysis.rs`'s `ready_deep` without the Deep Analysis
 /// object: Main1, P0 active with priority, both libraries as given.
 fn ready_main1(p0_library: &[&str], p1_library: &[&str]) -> GameState {
-    let p0_defs = p0_library.iter().map(|name| card_id(name)).collect::<Vec<_>>();
-    let p1_defs = p1_library.iter().map(|name| card_id(name)).collect::<Vec<_>>();
+    let p0_defs = p0_library
+        .iter()
+        .map(|name| card_id(name))
+        .collect::<Vec<_>>();
+    let p1_defs = p1_library
+        .iter()
+        .map(|name| card_id(name))
+        .collect::<Vec<_>>();
     let mut state =
         GameState::new_from_libraries(&p0_defs, &p1_defs, card_name, 0x4445_4550_414E_414C);
     state.step = Step::Main1;
@@ -152,7 +158,10 @@ fn terminate_has_no_legal_target_without_a_creature() {
 
     let offer = engine::advance_until_decision(&mut state);
     match offer {
-        Decision::CastSpellOrPass { ref castable_spells, .. } => {
+        Decision::CastSpellOrPass {
+            ref castable_spells,
+            ..
+        } => {
             assert!(
                 !castable_spells.contains(&terminate),
                 "Terminate has no legal creature target and must not be offered as castable"
@@ -401,7 +410,10 @@ fn abandon_attachments_draws_two_only_if_a_card_is_discarded() {
                 ..
             } => {
                 assert_eq!(player, PlayerId::P0);
-                assert!(discard_payable, "the lone Island in hand is a legal discard");
+                assert!(
+                    discard_payable,
+                    "the lone Island in hand is a legal discard"
+                );
             }
             other => panic!("{other:?}"),
         }
@@ -469,10 +481,17 @@ fn acorn_harvest_creates_two_squirrels_and_flashback_costs_three_life() {
         .copied()
         .filter(|&id| state.objects[id].name == "Squirrel Token")
         .collect();
-    assert_eq!(squirrels.len(), 2, "Acorn Harvest creates two Squirrel tokens");
+    assert_eq!(
+        squirrels.len(),
+        2,
+        "Acorn Harvest creates two Squirrel tokens"
+    );
     for &squirrel in &squirrels {
         let def = &CARD_DEFS[state.objects[squirrel].card_def as usize];
-        assert!(def.is_token, "Squirrel Token must be a real token definition");
+        assert!(
+            def.is_token,
+            "Squirrel Token must be a real token definition"
+        );
         assert_eq!((def.power, def.toughness), (Some(1), Some(1)));
         assert_eq!(def.colors, &[mtg_kernel::mana::ManaColor::G]);
     }
@@ -490,7 +509,10 @@ fn acorn_harvest_creates_two_squirrels_and_flashback_costs_three_life() {
     );
     engine::step(&mut state, Action::CastSpell(harvest)).unwrap();
     pass_until_stack_empty(&mut state);
-    assert_eq!(state.players[0].life, 17, "flashback pays 3 life on top of {{1}}{{G}}");
+    assert_eq!(
+        state.players[0].life, 17,
+        "flashback pays 3 life on top of {{1}}{{G}}"
+    );
     assert_eq!(
         state.objects[harvest].zone,
         Zone::Exile,
@@ -518,7 +540,10 @@ fn acorn_harvest_creates_two_squirrels_and_flashback_costs_three_life() {
     state.players[0].life = 2;
     let offer3 = engine::advance_until_decision(&mut state);
     match offer3 {
-        Decision::CastSpellOrPass { ref castable_spells, .. } => {
+        Decision::CastSpellOrPass {
+            ref castable_spells,
+            ..
+        } => {
             assert!(
                 !castable_spells.contains(&harvest),
                 "at 2 life, the mandatory 3-life flashback cost can't be paid"

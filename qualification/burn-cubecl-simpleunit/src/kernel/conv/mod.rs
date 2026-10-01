@@ -14,12 +14,12 @@ mod tune_key;
 pub(crate) use backward_data::*;
 pub(crate) use conv_transpose2d::*;
 pub(crate) use conv_transpose3d::*;
-pub(crate) use deform_conv_transpose2d::*;
 pub(crate) use deform_conv2d::*;
+pub(crate) use deform_conv_transpose2d::*;
 pub(crate) use direct::*;
 pub(crate) use im2col::*;
 
 pub use base::*;
-pub use conv_transpose2d::{ConvTranspose2dStrategy, conv_transpose2d};
+pub use conv_transpose2d::{conv_transpose2d, ConvTranspose2dStrategy};
 
 pub(crate) use tune_key::*;

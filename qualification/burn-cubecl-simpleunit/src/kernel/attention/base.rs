@@ -1,10 +1,10 @@
 use crate::{
-    CubeBackend, CubeRuntime, kernel::attention::attention_autotune,
-    ops::numeric::empty_device_dtype, tensor::CubeTensor,
+    kernel::attention::attention_autotune, ops::numeric::empty_device_dtype, tensor::CubeTensor,
+    CubeBackend, CubeRuntime,
 };
 use burn_backend::{
+    ops::{attention::attention_fallback, AttentionModuleOptions},
     DType, Shape,
-    ops::{AttentionModuleOptions, attention::attention_fallback},
 };
 use cubek::attention::launch;
 use cubek::attention::{

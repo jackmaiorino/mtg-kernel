@@ -1,7 +1,7 @@
 use cubecl::prelude::*;
 
 use crate::{
-    CubeRuntime, kernel::into_contiguous, ops::numeric::empty_device_dtype, tensor::CubeTensor,
+    kernel::into_contiguous, ops::numeric::empty_device_dtype, tensor::CubeTensor, CubeRuntime,
 };
 use burn_backend::{Shape, TensorMetadata};
 

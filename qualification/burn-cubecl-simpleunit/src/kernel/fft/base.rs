@@ -1,6 +1,6 @@
 use crate::kernel::index::slice;
 use crate::ops::numeric::{empty_device_dtype, zeros};
-use crate::{CubeRuntime, tensor::CubeTensor};
+use crate::{tensor::CubeTensor, CubeRuntime};
 use burn_backend::{DType, TensorMetadata};
 use burn_std::Slice;
 use cubecl::prelude::*;

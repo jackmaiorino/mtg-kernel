@@ -1,8 +1,8 @@
 use burn_backend::DType;
 use cubecl::prelude::InputScalar;
 
-use super::{MaskFillStrategy, mask_where::MaskWhereStrategy};
-use crate::{CubeRuntime, tensor::CubeTensor};
+use super::{mask_where::MaskWhereStrategy, MaskFillStrategy};
+use crate::{tensor::CubeTensor, CubeRuntime};
 
 /// Execute the mask fill kernel.
 pub(crate) fn mask_fill_auto<R: CubeRuntime>(
