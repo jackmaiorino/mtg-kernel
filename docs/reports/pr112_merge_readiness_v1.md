@@ -18,6 +18,8 @@ The canonical pool and runtime catalog retain their original bytes. Eight existi
 
 Formatting applies to the Cargo workspace. Qualification dependencies and generated feature-identity authorities retain their previous bytes. CUDA-only adapters and test helpers now follow their callers' feature gates. Clippy simplifications preserve numerical operation order; explicit numerical/public input signatures retain narrowly explained argument-count allowances. No warning gate was removed.
 
+Windows hosted tests also exposed the virtual-environment Python redirector as a reservation-release deadlock: WMI returned the redirector pid while the supervisor adopted under its child pid. The supervisor now starts with the base interpreter, preserving the requested work interpreter. Mock regression tests cover default/explicit environment selection, foreign interpreter preservation, fallback and alias refusal; the existing real WMI lifecycle tests remain required.
+
 PR112 adds teacher-specific cleanup and portable scratch fixtures. Historical acceptance receipts remain unchanged and apply to their recorded commits. Exact CPU/CUDA goldens are retained pending fresh results; failures will be investigated before updating any current-build golden.
 
 Verification so far:
@@ -30,6 +32,7 @@ Verification so far:
 | HaleysPC check-only runner offline tests | 24 passed |
 | Held-spawn offline tests | 7 passed |
 | Card-tag generator tests | 3 passed |
+| Supervisor interpreter and alias regression checks | 3 passed |
 | Pinned Rust formatting | Pass |
 | Full hosted Linux/Windows Rust/Python matrix | Pending |
 | CUDA feature lint and host-safe tests | Pending |
