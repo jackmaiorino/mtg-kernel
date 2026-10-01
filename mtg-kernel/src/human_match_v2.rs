@@ -825,13 +825,10 @@ impl HumanMatchServiceV2 {
         };
         let mut error = mutation.err();
         // Invalid requests never sample, advance an engine state or observe a summary.
-        if error.is_none() && self.stopped.is_none() {
-            if self.advance_model().is_err() {
-                let reason =
-                    "The game could not continue safely. This session is stopped.".to_owned();
-                self.stopped = Some(reason.clone());
-                error = Some(reason);
-            }
+        if error.is_none() && self.stopped.is_none() && self.advance_model().is_err() {
+            let reason = "The game could not continue safely. This session is stopped.".to_owned();
+            self.stopped = Some(reason.clone());
+            error = Some(reason);
         }
         let response = self.response(&id, error);
         if !is_read {

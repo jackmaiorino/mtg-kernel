@@ -479,6 +479,7 @@ fn build_object_card_def_map_v1(
 /// control-change effect (only `controller` moves), so the terminal value is
 /// exactly the value at any earlier point in the game too. Item 2 (fix round
 /// 1) needs this to attribute `Damage`/`CombatDamageToPlayer` events to the
+///
 /// seat that owns the dealing or receiving object.
 fn build_object_owner_map_v1(
     state: &crate::state::GameState,
@@ -620,6 +621,10 @@ fn end_of_game_hand_card_ids_v1(
 /// `own_registered_card_ids_v1`, `end_of_game_hand_card_ids_v1` above), and
 /// this module's tests build them by hand from a synthetic event list, with
 /// no need to construct a full `GameState`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps the existing explicit input contract"
+)]
 fn fold_event_history_v1(
     event_history: &[CommittedEvent],
     final_turn: u32,
@@ -918,13 +923,16 @@ pub fn run_episode_with_summary_v1(
     .expect("episode summary requires a natural terminal and successful policy steps")
 }
 
+pub type EpisodePolicyV1<'a> =
+    dyn FnMut(&RlSessionDecisionV1) -> Result<(u32, String), String> + 'a;
+
 /// The production scorer variant propagates inference and selection failures.
 /// A failed scorer must never be silently converted into a played game.
 pub fn try_run_episode_with_summary_v1(
     session: &mut RlEpisodeSessionV1,
     checkpoint_weights_hash: &str,
     tags: &RemovalCounterspellTagsV1,
-    policy_fn: &mut dyn FnMut(&RlSessionDecisionV1) -> Result<(u32, String), String>,
+    policy_fn: &mut EpisodePolicyV1<'_>,
 ) -> Result<GameSummaryV1, String> {
     let mut offered_as_cast: [std::collections::BTreeSet<u16>; 2] = Default::default();
     let mut resource_curve = ResourceCurveV1::default();

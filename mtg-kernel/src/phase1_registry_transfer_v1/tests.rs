@@ -236,11 +236,11 @@ fn phase1_registry_append_preserves_all_shared_bits_and_existing_card_next_updat
         candidate.receipt_v1().initialized_embedding_scalar_count,
         32
     );
-    for id in source_count..CARD_DEFS.len() {
+    for (id, definition) in CARD_DEFS.iter().enumerate().skip(source_count) {
         let row = (id + 1) * CARD_EMBEDDING_DIM_V1..(id + 2) * CARD_EMBEDDING_DIM_V1;
         assert_eq!(
             &after.parameters[0].values[row.clone()],
-            &initial_card_row(CARD_DEFS[id].name, 123456)
+            &initial_card_row(definition.name, 123456)
         );
         assert!(after.first_moments[0].values[row.clone()]
             .iter()

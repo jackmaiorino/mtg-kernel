@@ -721,9 +721,9 @@ impl FastActorSessionV1 {
     /// it reorders decision-local-library targets, and its goaded-attacker
     /// retain-filter can shrink a forced attacker's menu from 2 candidates to
     /// 1. See [`validate_origin_decision_against_reordered_candidates_v4`],
-    /// which re-derives the raw shape, validates both functions against
-    /// that, then proves the live (possibly reordered/filtered)
-    /// `current.candidates` really is `normalize_candidates`'s output.
+    ///    which re-derives the raw shape, validates both functions against
+    ///    that, then proves the live (possibly reordered/filtered)
+    ///    `current.candidates` really is `normalize_candidates`'s output.
     pub(crate) fn encode_current_flat_action_slice_v4(
         &self,
         expected: FastActorDecisionV1,
@@ -1519,20 +1519,20 @@ mod tests {
 
     /// Burst-2 regression: two simultaneous `OrderTriggers` positions (0 and
     /// 1) whose one shared physical source is VISIBLE (still on the
-    /// battlefield, not hidden) must resolve to one shared
-    /// `SelfBattlefield` row, not two, and must never raise
-    /// `DuplicateCanonicalObject`. Before the fix, `position` was
-    /// unconditionally part of the dedup key, so position 1's
-    /// byte-identical resolution was treated as a NEW entry and rejected as
-    /// a canonical-key collision against position 0's already-recorded
-    /// entry. Reproduces the real burst-2 finding (seed
-    /// 16977991839826055713, Faeries vs Affinity, step 303, a `Surface`
-    /// decision) mechanically, without depending on that real game or its
-    /// policy weights. V3 is proven unaffected on the identical state: V3's
-    /// action-slice encoder has never had a position-sensitive path at all
-    /// (its own single, always-position-0 hidden fallback aside), so its
-    /// plain arena_id dedup already collapses this case correctly, and did
-    /// before and after this fix.
+    ///    battlefield, not hidden) must resolve to one shared
+    ///    `SelfBattlefield` row, not two, and must never raise
+    ///    `DuplicateCanonicalObject`. Before the fix, `position` was
+    ///    unconditionally part of the dedup key, so position 1's
+    ///    byte-identical resolution was treated as a NEW entry and rejected as
+    ///    a canonical-key collision against position 0's already-recorded
+    ///    entry. Reproduces the real burst-2 finding (seed
+    ///    16977991839826055713, Faeries vs Affinity, step 303, a `Surface`
+    ///    decision) mechanically, without depending on that real game or its
+    ///    policy weights. V3 is proven unaffected on the identical state: V3's
+    ///    action-slice encoder has never had a position-sensitive path at all
+    ///    (its own single, always-position-0 hidden fallback aside), so its
+    ///    plain arena_id dedup already collapses this case correctly, and did
+    ///    before and after this fix.
     #[test]
     fn v4_two_visible_order_triggers_positions_sharing_one_physical_source_share_one_row() {
         let (state, shared_object) = visible_order_triggers_shared_source_state_v1();

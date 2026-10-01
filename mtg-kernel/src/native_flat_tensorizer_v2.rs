@@ -6408,9 +6408,9 @@ fn encode_action_with_scratch_contract_v3<'a>(
         }
         FlatScorerActionKindV1::ChooseCostTarget => {
             if action.remaining == 0
-                || (!(1..=11).contains(&action.cost_kind)
-                    && !(allow_chosen_creature_cost_v3
-                        && action.cost_kind == CHOSEN_CREATURE_COST_KIND_V3))
+                || !((1..=11).contains(&action.cost_kind)
+                    || allow_chosen_creature_cost_v3
+                        && action.cost_kind == CHOSEN_CREATURE_COST_KIND_V3)
             {
                 return Err(NativeFlatTensorErrorV1::InvalidActionRange);
             }

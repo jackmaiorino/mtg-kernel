@@ -364,6 +364,7 @@ fn deterministic(
 
 /// Private loaded-components boundary. Source tests exercise real engine and
 /// actual native models here, without forging a current-runtime certificate.
+#[cfg(test)]
 fn collect_loaded(
     config: &Bo3CollectionConfigV1,
     packages: [&CompleteAgentPackageV1; 2],
@@ -373,6 +374,7 @@ fn collect_loaded(
     collect_loaded_inner(config, packages, policies, heads, None)
 }
 
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub(crate) fn collect_loaded_inner(
     config: &Bo3CollectionConfigV1,
     packages: [&CompleteAgentPackageV1; 2],
@@ -383,6 +385,7 @@ pub(crate) fn collect_loaded_inner(
     collect_loaded_observed(config, packages, policies, heads, capture, None)
 }
 
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 fn collect_loaded_observed(
     config: &Bo3CollectionConfigV1,
     packages: [&CompleteAgentPackageV1; 2],

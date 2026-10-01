@@ -518,6 +518,10 @@ fn feature_generation_label_v1(
 /// mismatched pair is still rejected exactly as before. Either way, no
 /// trajectory or training artifact is written here; this function only
 /// plays the match and returns its result.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps the existing explicit input contract"
+)]
 pub fn run_population_bo3_v1(
     config: LearnedBo3RunConfigV1,
     registered_decks: [RegisteredDeckV1; 2],
@@ -1293,9 +1297,14 @@ mod tests {
     fn opponent_private_outcomes_and_hidden_location_cannot_change_projected_input() {
         let registered = DeckConfigurationV1::new_exact_v1(vec![1; 60], vec![2; 15]).unwrap();
         let first = summary();
-        let original =
-            project_sideboard_input_v1(&registered, PlayerId::P0, &[first.clone()], 2, [1, 0])
-                .unwrap();
+        let original = project_sideboard_input_v1(
+            &registered,
+            PlayerId::P0,
+            std::slice::from_ref(&first),
+            2,
+            [1, 0],
+        )
+        .unwrap();
         let mut changed = first;
         changed.own_card_outcomes[1].insert(
             999,

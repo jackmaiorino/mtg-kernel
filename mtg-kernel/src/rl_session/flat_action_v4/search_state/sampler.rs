@@ -118,6 +118,7 @@ fn draw(rng: &mut SplitMix64, bound: u64) -> usize {
 }
 
 /// Called only on a disposable cloned state. Failure never permits retrying a seed.
+#[cfg(test)]
 pub(super) fn redeterminize(
     state: &mut GameState,
     actor: PlayerId,

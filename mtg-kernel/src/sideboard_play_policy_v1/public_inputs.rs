@@ -106,6 +106,7 @@ impl PublicInputPlayPolicyV1 {
         self
     }
 
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     pub(crate) fn install(
         &mut self,
         parameters: &[NativeNamedParameterV1],

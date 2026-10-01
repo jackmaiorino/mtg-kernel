@@ -181,6 +181,11 @@ impl NativePolicyValueTrainStateV1 {
         )
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "keeps the existing explicit input contract"
+    )]
+
     fn train_step_gae_with_input_config_v1(
         &mut self,
         groups: &[NativePolicyPhysicalDecisionV1<'_>],

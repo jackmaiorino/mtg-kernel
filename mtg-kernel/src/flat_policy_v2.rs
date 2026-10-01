@@ -1528,7 +1528,7 @@ impl FlatDecisionEncoderV2 {
                 }
             }
         }
-        found.ok_or_else(|| FlatDecisionErrorV2::InvalidReference)
+        found.ok_or(FlatDecisionErrorV2::InvalidReference)
     }
 
     fn resolve_historical_stack_target(
@@ -1569,12 +1569,12 @@ impl FlatDecisionEncoderV2 {
                 }
             }
         }
-        if !matches!(wanted.zone, FlatZoneV2::Battlefield | FlatZoneV2::Stack)
-            && !(version3 && wanted.zone == FlatZoneV2::Graveyard)
+        if !(matches!(wanted.zone, FlatZoneV2::Battlefield | FlatZoneV2::Stack)
+            || version3 && wanted.zone == FlatZoneV2::Graveyard)
         {
             return Err(FlatDecisionErrorV2::InvalidReference);
         }
-        found.ok_or_else(|| FlatDecisionErrorV2::InvalidReference)
+        found.ok_or(FlatDecisionErrorV2::InvalidReference)
     }
 
     fn resolve_paid_cost_reference(
@@ -1602,7 +1602,7 @@ impl FlatDecisionEncoderV2 {
                 }
             }
         }
-        found.ok_or_else(|| FlatDecisionErrorV2::InvalidReference)
+        found.ok_or(FlatDecisionErrorV2::InvalidReference)
     }
 
     fn add_private_card(
@@ -3832,7 +3832,7 @@ impl FlatDecisionEncoderV2 {
             output
                 .historical_public_sources
                 .push(FlatHistoricalPublicSourceV3 {
-                    context: historical.context.clone(),
+                    context: historical.context,
                     stack_item_kind: historical.stack_item_kind,
                     model_object_index: model_index,
                 });
@@ -4898,7 +4898,7 @@ impl FlatDecisionEncoderV2 {
             output
                 .historical_public_sources
                 .push(FlatHistoricalPublicSourceV4 {
-                    context: historical.context.clone(),
+                    context: historical.context,
                     stack_item_kind: historical.stack_item_kind,
                     model_object_index: model_index,
                 });

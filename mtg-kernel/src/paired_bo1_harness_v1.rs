@@ -278,6 +278,7 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
             .map_err(|error| format!("{error:?}"))
     }
 
+    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
     pub(crate) fn diagnostic_visible_spell_adapter_v1(
         &self,
     ) -> Result<
@@ -293,6 +294,7 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
             .map_err(|error| format!("{error:?}"))
     }
 
+    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
     pub(crate) fn diagnostic_visible_v4(
         &self,
     ) -> Result<
@@ -353,6 +355,7 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
             .encode_current_flat_scoring_decision_owned_v3(self.decision, encoder, buffers)
     }
 
+    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
     pub(crate) fn encode_scoring_v3_spell_target_adapter_v1(
         &self,
         encoder: &mut crate::flat_policy_v3::FlatDecisionEncoderV3,
@@ -538,6 +541,11 @@ pub(crate) mod policy_test_support {
 pub struct PairedTrialOutcomeV1 {
     pub delta: i8,
 }
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps the existing explicit input contract"
+)]
 
 pub fn run_paired_bo1_trial_v1(
     candidate_mainboard: &[u16],

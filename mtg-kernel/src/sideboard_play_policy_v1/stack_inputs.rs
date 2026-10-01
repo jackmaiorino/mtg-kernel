@@ -121,7 +121,7 @@ impl StackInputPlayPolicyV1 {
         ))
         .map_err(|e| policy_error(format!("stack-input V4 tensorization: {e:?}")))?;
         let actor = decision.acting_player as usize;
-        let mut permutation_rng = self.permutation_rng[actor].clone();
+        let mut permutation_rng = self.permutation_rng[actor];
         if self.mode == StackInputModeV1::Permuted {
             paired.stack.permutation = Some(StackColumnPermutationV1::sample(&mut permutation_rng));
         }

@@ -265,7 +265,7 @@ fn phase1_gae_invalid_inputs_reject_before_mutation() {
     ));
 
     let mut baseline = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
-    let mut with_baseline = groups.clone();
+    let mut with_baseline = groups;
     with_baseline[0].baseline_bits = 1.0f32.to_bits();
     assert!(matches!(
         baseline.train_step_gae_feature_transfer_v3(

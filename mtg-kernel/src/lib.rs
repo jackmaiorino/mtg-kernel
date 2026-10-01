@@ -110,6 +110,7 @@ pub mod model_guided_search_authority_v1;
 // out of scope here. See the module's own doc comment for the sharing
 // architecture against v1 and the quantization contract modules below.
 pub mod model_guided_search_core_v1;
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub(crate) mod model_guided_search_core_v4;
 // Model-guided searcher (CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md Section
 // 1.2, implementation item 1): pure PUCT prior-quantization contract

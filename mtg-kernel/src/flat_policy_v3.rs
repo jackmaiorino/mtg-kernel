@@ -140,7 +140,7 @@ impl FastActorSessionV1 {
         encoder
             .common
             .build_scoring_owned_v3(self, expected, buffers)
-            .map_err(|error| {
+            .inspect_err(|error| {
                 // Opt-in backend evidence only. Preserve the first failure and
                 // capture only the projection belonging to the acting player.
                 if let Some(path) = std::env::var_os("MTG_KERNEL_V3_SCORING_ERROR_CAPTURE") {
@@ -157,7 +157,6 @@ impl FastActorSessionV1 {
                         let _ = serde_json::to_writer(&mut file, &value);
                     }
                 }
-                error
             })
     }
 }
@@ -264,7 +263,7 @@ mod tests {
                     holder_turn_started: true,
                 },
             };
-            state.engine.exile_play_permissions.push(old.clone());
+            state.engine.exile_play_permissions.push(old);
             for zone in [Zone::Hand, Zone::Graveyard, Zone::Library, Zone::Exile] {
                 event::propose_and_commit(&mut state, ProposedEvent::zone_change(card, zone));
             }
@@ -295,7 +294,7 @@ mod tests {
             state.engine.exile_play_permissions.push(PlayPermission {
                 zone_change_generation: current_generation,
                 expiry: PlayPermissionExpiry::EndOfTurn,
-                ..old.clone()
+                ..old
             });
             // Two grants for the same current incarnation may coexist. Keep
             // both; removing stale grants is not deduplication or action pruning.
@@ -472,12 +471,11 @@ mod tests {
     fn escape_prefix_states() -> Vec<(String, GameState)> {
         let (mut state, _, picks) = escape_prefix_state();
         let mut states = Vec::new();
-        for prefix in 0..=3 {
+        for (prefix, pick) in picks.iter().enumerate() {
             states.push((format!("escape-prefix-{prefix}"), state.clone()));
-            if prefix < 3 {
-                engine::step(&mut state, Action::ChooseCostTarget(picks[prefix])).unwrap();
-            }
+            engine::step(&mut state, Action::ChooseCostTarget(*pick)).unwrap();
         }
+        states.push((format!("escape-prefix-{}", picks.len()), state));
         states
     }
 

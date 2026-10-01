@@ -512,7 +512,7 @@ fn validate_report(
     require(
         weights == report.weight_bits
             && report.learner_substeps >= report.learner_groups
-            && ((report.disposition == Disposition::Ready) == !eligible.is_empty())
+            && ((report.disposition == Disposition::Ready) != eligible.is_empty())
             && (!eligible.is_empty()
                 || (report.learner_groups == 0
                     && report.learner_substeps == 0
@@ -733,7 +733,7 @@ fn validate_recorded_progress(
         "recorded progress ledger differs from exact ordered schedule prefix",
     )?;
     require(
-        result(&progress, expected.progress.clone()) == *expected,
+        result(progress, expected.progress.clone()) == *expected,
         "recorded result differs from progress learner/counters/disposition",
     )
 }

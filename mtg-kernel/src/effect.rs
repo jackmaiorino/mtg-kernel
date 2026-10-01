@@ -3293,10 +3293,10 @@ fn validate_counter_unless_pays_generic(
             "the Ward-bound stack item no longer carries its triggering target".to_string(),
         );
     }
-    if require_payable {
-        if crate::mana::can_pay(&generic_mana_cost(generic), 0, player, state).is_none() {
-            return Err("the staged Ward payment is no longer payable".to_string());
-        }
+    if require_payable
+        && crate::mana::can_pay(&generic_mana_cost(generic), 0, player, state).is_none()
+    {
+        return Err("the staged Ward payment is no longer payable".to_string());
     }
     Ok(Some(item))
 }

@@ -282,6 +282,7 @@ pub enum FlatActionObjectGroupV1 {
 }
 
 mod flat_action_v3;
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 mod v3_spell_target_adapter_v1;
 #[cfg(test)]
 pub(crate) use v3_spell_target_adapter_v1::pyroblast_target_fixture_v1;
@@ -9327,7 +9328,7 @@ mod tests {
         };
         // Keep the reference itself visible and current: the activation-zone
         // relation, rather than a stale reference, must reject this action.
-        reference.zone = Zone::Battlefield.into();
+        reference.zone = Zone::Battlefield;
         assert_eq!(
             flat_validate_current_decision_relations_v1(current, &wrong_zone.state),
             Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)
