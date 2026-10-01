@@ -309,12 +309,24 @@ fn random_action_for_decision(
             // never goes through the reshape at all).
             let (discard_payable, sacrifice_payable) =
                 HarnessSurfaceV2::pending_optional_cost_payable(state).unwrap_or((false, false));
+            // `pending_optional_cost_payable` predates Glint Hawk's
+            // return-permanent cost and only reports discard/sacrifice; read
+            // the return-permanent flag straight off the same pending-cost
+            // state it reads, for the direct one-shot bypass below.
+            let return_permanent_payable = state
+                .engine
+                .pending_optional_cost
+                .as_ref()
+                .is_some_and(|pending| pending.return_permanent_payable);
             let mut options = vec![OptionalCostChoice::Decline];
             if discard_payable {
                 options.push(OptionalCostChoice::Discard);
             }
             if sacrifice_payable {
                 options.push(OptionalCostChoice::SacrificeLand);
+            }
+            if return_permanent_payable {
+                options.push(OptionalCostChoice::ReturnPermanent);
             }
             Action::ChooseOptionalCost(options[rng_below(rng, options.len())])
         }

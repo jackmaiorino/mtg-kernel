@@ -137,8 +137,8 @@ fn card_id_source(state: &GameState, name: &str) -> ObjectId {
 
 #[test]
 fn definitions_ids_hash_and_generated_programs_are_exact() {
-    assert_eq!(KERNEL_CARDDB_HASH, 0x64c8_2a26_1e07_8f1a);
-    assert_eq!(CARD_DEFS.len(), 162);
+    assert_eq!(KERNEL_CARDDB_HASH, 0x064a_7c98_9255_ab3c);
+    assert_eq!(CARD_DEFS.len(), 192); // wave 2 Task 3: 187 -> 192
     for (name, expected_id) in [
         ("Guardian of the Guildpact", 49),
         ("Journey to Nowhere", 61),
@@ -577,6 +577,21 @@ fn prismatic_strands_choice_is_rl_stable_and_prevents_all_chosen_color_damage() 
                 }
             )
     ));
+
+    // The actual resolved spell, not just a synthetic installed replacement,
+    // must expose its public shield to either player's observation.
+    for viewer in [PlayerId::P0, PlayerId::P1] {
+        let observation = observe_v2(&state, &HarnessSurfaceV2::new(), viewer, 0).unwrap();
+        let shields: Vec<_> = observation
+            .projection
+            .continuous_effects
+            .iter()
+            .filter(|effect| effect.prevent_damage_from_color_mask != 0)
+            .collect();
+        assert_eq!(shields.len(), 1);
+        assert_eq!(shields[0].prevent_damage_from_color_mask, 8);
+        assert!(shields[0].global && shields[0].source.is_none());
+    }
 
     let red = put_object(
         &mut state,

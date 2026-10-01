@@ -15,16 +15,28 @@
 //! (`event::commit`) mutates `GameState` in response to card behavior (see the
 //! crate-level invariants in `lib.rs`).
 
-use crate::card_def::{CardType, DynamicValueDef, Keywords, OptionalAdditionalCostDef, Subtype};
+use crate::card_def::{
+    CardType, DynamicValueDef, Keywords, OptionalAdditionalCostDef, PermanentFilter,
+    PermanentFilterDef, Subtype,
+};
 use crate::event;
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::{Cost, ManaColor};
 use crate::state::{
     AbilitySourceContractV4, GameState, InitiativeTriggerBindingV1, InitiativeTriggerKindV1,
-    LinkedExileRecordV4, ObjectLinkV4, PaidCostRefV4, StackItem, StackSourceContractV4,
-    StackTargetContractV4, Target, UndercityRoomV1, Zone,
+    LinkedExileRecordV4, MonarchTriggerBindingV1, ObjectLinkV4, PaidCostRefV4, StackItem,
+    StackSourceContractV4, StackTargetContractV4, Target, UndercityRoomV1, Zone,
 };
 use serde::{Deserialize, Serialize};
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+pub(crate) mod library_choice_search_v2;
+
+/// Upper bound on `EffectOp::AddManaDynamic`'s evaluated amount, matching
+/// the planner's own `yield_per_tap` ceiling so an explicitly activated
+/// source and an automatically tapped one can never disagree about how much
+/// an extreme board would produce. Well above the largest printed value in
+/// this pool (3, an assembled Urza's Tower).
+const DYNAMIC_MANA_ADD_MAXIMUM: i32 = 8;
 
 /// Immutable cast-time evidence for one Storm trigger. The printed copy
 /// count is frozen immediately after the source cast, while the historical
@@ -53,6 +65,11 @@ pub enum CreatureFilter {
     /// Any creature that does not currently have `keyword`. Operations may
     /// apply this predicate across both battlefields.
     WithoutKeyword(Keywords),
+    /// Any creature controlled by the effect's controller's one opponent
+    /// (Forktail Sweep's "each creature you don't control" -- in this
+    /// strictly two-player kernel, "not controlled by the effect's
+    /// controller" and "controlled by the opponent" are the same set).
+    OpponentControlled,
 }
 
 /// Battlefield creature restriction for a player-directed sacrifice.
@@ -90,6 +107,11 @@ pub enum LibraryCardFilter {
     /// A physical card with the Basic supertype and Land type that carries
     /// at least one of the three requested effective land subtypes.
     BasicLandWithAnySubtype([Subtype; 3]),
+    /// Any card with the Land type, basic or not. Expedition Map's "search
+    /// your library for a land card" is unrestricted by subtype (a nonbasic
+    /// land such as Bojuka Bog is an equally legal find). Appended for
+    /// pauper meta wave 2 Task 3; existing discriminants remain fixed.
+    AnyLand,
 }
 
 /// How long an impulse-drawn card (`EffectOp::ImpulseDraw`) stays playable
@@ -135,6 +157,20 @@ pub enum TargetRef {
     /// (Guttersnipe, Voldaren Epicure, Grab the Prize) never needs a
     /// chosen target -- it's always exactly `ctx.controller.opponent()`.
     Opponent,
+}
+
+/// Which player's battlefield `EffectOp::PumpAllUntilEndOfTurn` reads.
+/// Unlike `PlayerRef`, every variant here names a player whose *creatures*
+/// (matched by that op's own `filter`) are affected, never the effect
+/// controller's own board.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PumpControllerScope {
+    /// The effect controller's one opponent (Suffocating Fumes). The kernel
+    /// only ever simulates 1v1 games -- see `TargetRef::Opponent`'s doc for
+    /// the same reasoning.
+    Opponents,
+    /// The player announced at the given target index (Arms of Hadar).
+    TargetPlayer(u8),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -187,6 +223,13 @@ pub enum EffectCond {
         subtype: Subtype,
         minimum_count: u8,
     },
+    /// True iff `ctx.controller` currently has at least `n` creature cards
+    /// in their own graveyard. Webweaver Changeling's resolution-time half
+    /// of its intervening-if clause ("if there are three or more creature
+    /// cards in your graveyard, you gain 5 life"); the matching trigger-time
+    /// half is `trigger::TriggerCondition::
+    /// EtbIfGraveyardCreatureCardsAtLeast`.
+    ControllerGraveyardCreatureCardsAtLeast(u8),
     /// True iff `ctx.controller` currently controls a battlefield object
     /// with the same card definition as this effect's source, excluding the
     /// exact source object. Faerie Miscreant uses this for the resolution
@@ -286,6 +329,16 @@ pub enum EffectOp {
         object: ObjectRef,
         to_zone: Zone,
     },
+    /// Sacrifices `object` (701.20a: its controller moves it from the
+    /// battlefield to its owner's graveyard as a cost or effect, distinct
+    /// from an ordinary `MoveObject` zone change so
+    /// `TriggerCondition::SacrificeAnotherWithSubtype`/`SacrificeAnother
+    /// Permanent`-style triggers still see it). Fizzle-safe: a no-op if
+    /// `object` has already left the battlefield. Glint Hawk's ETB
+    /// `otherwise` clause ("sacrifice it") is the first consumer.
+    Sacrifice {
+        object: ObjectRef,
+    },
     TapObject {
         object: ObjectRef,
     },
@@ -318,6 +371,16 @@ pub enum EffectOp {
         player: PlayerRef,
         colors: Vec<ManaColor>,
     },
+    /// Adds a board-dependent number of mana of one color. The amount is
+    /// sampled at execution against the resolving controller, never at
+    /// announcement, so an Urza land activated after its partners left the
+    /// battlefield adds the smaller amount. Card neutral: the definition
+    /// supplies the `DynamicValueDef`, the engine supplies the evaluation.
+    AddManaDynamic {
+        player: PlayerRef,
+        color: ManaColor,
+        amount: DynamicValueDef,
+    },
     /// Creates a fresh token permanent (e.g. Blood) directly on the
     /// battlefield under `controller`'s control. `token_def` indexes
     /// `card_def::CARD_DEFS` same as any other object -- tokens are real
@@ -328,21 +391,40 @@ pub enum EffectOp {
         controller: PlayerRef,
     },
     /// The controller may pay ONE of {discard `discard` cards, sacrifice
-    /// `sacrifice_lands` lands} -- only whichever options are currently
-    /// legal are offered, and declining is always legal too (Highway
-    /// Robbery's `DoIfCostPaid(OrCost(DiscardCardCost, SacrificeTargetCost))`).
-    /// If they do, `then` runs. Like `DiscardCards`, this is deferred:
+    /// `sacrifice_lands` lands, return one controlled permanent matching
+    /// `return_permanent`} -- only whichever options are currently legal
+    /// are offered, and declining is always legal too (Highway Robbery's
+    /// `DoIfCostPaid(OrCost(DiscardCardCost, SacrificeTargetCost))`; Glint
+    /// Hawk's "sacrifice it unless you return an artifact you control" is
+    /// the first consumer of `return_permanent`/`otherwise`). If they do,
+    /// `then` runs; if every offered option is declined (or none is
+    /// payable at all), `otherwise` runs instead (`None` for every
+    /// pre-existing consumer, matching their plain "you may... if you do"
+    /// no-op-on-decline text). Like `DiscardCards`, this is deferred:
     /// `execute` stages `EngineState::pending_optional_cost` and returns
     /// without knowing the outcome yet (`engine::Decision::ChooseOptionalCost`
     /// asks), so **this must be the last leaf in any `Sequence` it appears
     /// in**, same constraint and same reason as `DiscardCards`. A future
-    /// card that needs both sub-costs simultaneously payable (not this
-    /// pool) is out of scope: `discard`/`sacrifice_lands` are mutually
-    /// exclusive choices, never both paid.
+    /// card that needs two or more of these sub-costs simultaneously
+    /// payable (not this pool) is out of scope: they are mutually
+    /// exclusive choices, never more than one paid.
     MayPayCostThen {
         discard: u8,
         sacrifice_lands: u8,
+        /// Added after `discard`/`sacrifice_lands` (Glint Hawk, the first
+        /// consumer) and defaulted on deserialize so an older serialized
+        /// snapshot without it still loads as "no return-permanent option
+        /// offered", matching every pre-existing consumer's actual shape.
+        #[serde(default)]
+        return_permanent: Option<PermanentFilterDef>,
         then: Box<EffectOp>,
+        /// Added alongside `return_permanent` and defaulted on deserialize
+        /// so an older serialized snapshot without it still loads as "no
+        /// consequence when every option is declined", matching every
+        /// pre-existing consumer's actual (hardcoded no-op-on-decline)
+        /// behavior.
+        #[serde(default)]
+        otherwise: Option<Box<EffectOp>>,
     },
     /// "Deals `amount` damage to each opponent and each creature they
     /// control" (End the Festivities). The kernel only ever simulates 1v1
@@ -569,6 +651,26 @@ pub enum EffectOp {
     ExploreTarget {
         object: ObjectRef,
     },
+    /// Looks at the top `count` cards of `player`'s library, one at a time,
+    /// and for each offers a keep-on-top-or-put-into-graveyard choice
+    /// (Conduit Pylons' "surveil 1"). A card kept on top stays there in its
+    /// original relative position; this pool's only consumer surveils
+    /// exactly one card, where the general "any order among kept cards"
+    /// ruling is unobservable. `count` decrements by one per card looked at,
+    /// re-entering this same operation until it reaches zero or the library
+    /// empties. Appended for pauper meta wave 2 Task 3.
+    Surveil {
+        player: PlayerRef,
+        count: u8,
+    },
+    /// Each player who controls a permanent with this exact generated
+    /// card-definition id draws a card (Bonder's Ornament: "each player who
+    /// controls a permanent named Bonder's Ornament draws a card"). A
+    /// deterministic leaf: no decision is offered. Appended for pauper meta
+    /// wave 2 Task 3.
+    EachPlayerControllingDefinitionDrawsCard {
+        card_def: u16,
+    },
     /// Interpreter-owned exact-incarnation move used after Explore reveals a
     /// nonland. Generated card programs never contain a pre-bound object.
     MoveBoundObject {
@@ -768,6 +870,29 @@ pub enum EffectOp {
     /// Exile this exact Saga incarnation and return the same physical card
     /// transformed under this ability's controller.
     TransformSagaSource,
+    /// Flip this exact permanent's `ObjectStateV4::face_index` to its
+    /// `CardDef::transform_face` characteristics with no zone change: the
+    /// same `ObjectId`, the same `zone_change_count`, throughout (Delver of
+    /// Secrets transforming into Insectile Aberration). Distinct from
+    /// `TransformSagaSource`, whose card exiles and returns transformed
+    /// because that Saga's own chapter text says so; Delver's rules text
+    /// never leaves the battlefield.
+    TransformSourceInPlace,
+    /// Looks privately at the top card of the controller's library
+    /// (`GameState::reveal_library_top` records this for the controller
+    /// only, so the identity never enters the opponent's observation), then
+    /// asks whether to reveal it publicly. If revealed and its printed
+    /// types match `predicate`, `then` executes; declining, or revealing a
+    /// card that does not match, ends this effect with no further
+    /// consequence (Delver of Secrets: "look at the top card of your
+    /// library. You may reveal that card. If an instant or sorcery card is
+    /// revealed this way, transform Delver of Secrets."). See
+    /// `CardTypePredicate` and
+    /// `EffectBooleanChoicePurpose::LookAtTopMayRevealThen`.
+    LookAtTopMayRevealThen {
+        predicate: CardTypePredicate,
+        then: Box<EffectOp>,
+    },
     /// The selected player sacrifices one creature matching the printed
     /// restriction. Ties for greatest power remain that player's choice.
     SacrificeCreature {
@@ -822,6 +947,50 @@ pub enum EffectOp {
     /// then shuffle.
     ResolveUndercityThrone {
         binding: InitiativeTriggerBindingV1,
+    },
+    /// Make this effect's controller the monarch (306) and freeze this
+    /// resolution's source as the provenance for their future end-step draw
+    /// triggers. Azure Fleet Admiral's ETB is the definition-owned producer.
+    BecomeMonarch,
+    /// Runtime-bound engine-owned monarch end-step draw trigger. The
+    /// event-history index and historical designation source are validated
+    /// before dispatch, the same discipline `ResolveInitiativeTrigger` uses.
+    ResolveMonarchTrigger {
+        binding: MonarchTriggerBindingV1,
+    },
+    /// A team-wide, until-end-of-turn power/toughness modifier applied to
+    /// every permanent matching `filter` on `controller`'s battlefield --
+    /// not necessarily this effect's own controller's board (Suffocating
+    /// Fumes: "creatures your opponents control get -1/-1 until end of
+    /// turn"; Arms of Hadar: "creatures target player controls get -2/-2
+    /// until end of turn"). Uses the same
+    /// `engine::UntilEndOfTurnEffect::ResolvedSetEffect` mechanism as
+    /// `PumpControlled`: the affected-objects set is locked in at
+    /// resolution (611.2c) and cleared unconditionally at the next
+    /// `Step::Cleanup`, regardless of whose turn it then is.
+    PumpAllUntilEndOfTurn {
+        filter: PermanentFilter,
+        controller: PumpControllerScope,
+        power: i16,
+        toughness: i16,
+    },
+    /// Deal `amount` damage to the controller of the announced target,
+    /// reading the historical `state::StackTargetContractV4` captured when
+    /// the target was announced (`ExecCtx::target_contracts`) rather than
+    /// the live object -- which resets its `controller` field to its owner
+    /// the instant it leaves the battlefield (`event::commit_zone_change`).
+    /// This still finds the right player if the target is destroyed earlier
+    /// in the *same* resolution (Smash to Smithereens' own preceding
+    /// `DestroyObject`, whose `Conditional` guard may have already skipped
+    /// because the object is gone). It is never reached for a target that
+    /// was already gone *before* this spell resolved at all: with a single
+    /// target referenced twice in one card's text, CR 608.2b makes the
+    /// whole spell fizzle first (`engine::stack_targets_still_legal`), the
+    /// same rules-correct behavior the real card's own Gatherer ruling
+    /// describes. Smash to Smithereens is the first consumer.
+    DealDamageToControllerOfTarget {
+        target: u8,
+        amount: i32,
     },
 }
 
@@ -1099,6 +1268,19 @@ pub enum EffectFrame {
         canonical_path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
     },
+    /// Authenticated post-answer completion for Delver of Secrets' reveal
+    /// choice. The actual public reveal and predicate check are deferred to
+    /// this frame (matching `choose_resumable_boolean`'s "the next engine
+    /// advance owns the consequence" convention) rather than executed while
+    /// answering, since `choose_resumable_boolean` only holds a mutable
+    /// borrow of the continuation, not of `state` itself.
+    LookAtTopMayReveal {
+        player: PlayerId,
+        top: EffectObjectBinding,
+        predicate: CardTypePredicate,
+        then: Box<EffectOp>,
+        path: Vec<u16>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -1329,6 +1511,26 @@ pub enum LibraryPartitionSelectionStage {
     OrderRest { selected: Vec<EffectObjectBinding> },
 }
 
+/// A predicate over a revealed card's printed types, checked against the
+/// exact top-of-library incarnation `LookAtTopMayRevealThen` bound before
+/// asking whether to reveal it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CardTypePredicate {
+    /// Delver of Secrets: "if an instant or sorcery card is revealed this
+    /// way".
+    InstantOrSorcery,
+}
+
+impl CardTypePredicate {
+    fn matches(self, types: &[CardType]) -> bool {
+        match self {
+            CardTypePredicate::InstantOrSorcery => {
+                types.contains(&CardType::Instant) || types.contains(&CardType::Sorcery)
+            }
+        }
+    }
+}
+
 /// Internal completion semantics for a generic Boolean effect choice.
 /// Public schema-v4 projects the shuffle use through its already-reserved
 /// `BooleanChoicePurposeV4::Shuffle` variant.
@@ -1370,6 +1572,17 @@ pub enum EffectBooleanChoicePurpose {
         then: Box<EffectOp>,
         canonical_path: Vec<u16>,
     },
+    /// Delver of Secrets' upkeep trigger: the controller privately looked at
+    /// the top card of their library (already recorded via
+    /// `GameState::reveal_library_top` before this choice was staged) and
+    /// may now reveal it publicly. `top` binds that exact incarnation so a
+    /// stale or restored continuation cannot substitute a different card.
+    LookAtTopMayRevealThen {
+        player: PlayerId,
+        top: EffectObjectBinding,
+        predicate: CardTypePredicate,
+        then: Box<EffectOp>,
+    },
 }
 
 /// Internal completion contract for an option choice. Public schema-v4
@@ -1388,6 +1601,17 @@ pub enum EffectOptionChoicePurpose {
     ExploreNonlandTop {
         player: PlayerId,
         top: EffectObjectBinding,
+        canonical_path: Vec<u16>,
+    },
+    /// One card of a `EffectOp::Surveil` look: keep on top (option 0) or put
+    /// into the graveyard (option 1). `remaining` is how many more cards
+    /// this surveil still owes after this one is answered; a nonzero value
+    /// re-enters `EffectOp::Surveil` for the next card. Appended for pauper
+    /// meta wave 2 Task 3.
+    SurveilTopCard {
+        player: PlayerId,
+        top: EffectObjectBinding,
+        remaining: u8,
         canonical_path: Vec<u16>,
     },
     /// A W/U/B/R/G choice whose public projection uses the already-reserved
@@ -1626,7 +1850,9 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::ReturnLinkedExiledCardToOwnersHand
         | EffectOp::PreventDamageFromChosenColorUntilEndOfTurn { .. }
         | EffectOp::ResolveInitiativeTrigger { .. }
-        | EffectOp::ResolveUndercityThrone { .. } => true,
+        | EffectOp::ResolveUndercityThrone { .. }
+        | EffectOp::LookAtTopMayRevealThen { .. }
+        | EffectOp::Surveil { .. } => true,
         _ => false,
     }
 }
@@ -1702,6 +1928,28 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
             match purpose {
                 EffectOptionChoicePurpose::Generic => {
                     path.push(option_index);
+                    continuation
+                        .frames
+                        .push(EffectFrame::Program { op: selected, path });
+                }
+                EffectOptionChoicePurpose::SurveilTopCard {
+                    remaining,
+                    canonical_path,
+                    ..
+                } => {
+                    path.push(option_index);
+                    // Continue to the next card first (pushed first, so it
+                    // pops *after* this card's keep-or-graveyard move below
+                    // -- the stack is LIFO).
+                    if remaining > 0 {
+                        continuation.frames.push(EffectFrame::Program {
+                            op: EffectOp::Surveil {
+                                player: PlayerRef::Controller,
+                                count: remaining,
+                            },
+                            path: canonical_path,
+                        });
+                    }
                     continuation
                         .frames
                         .push(EffectFrame::Program { op: selected, path });
@@ -2293,6 +2541,45 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
                                 );
                             }
                         }
+                    }
+                }
+                EffectBooleanChoicePurpose::LookAtTopMayRevealThen {
+                    player: reveal_player,
+                    top,
+                    predicate,
+                    then,
+                } => {
+                    if player != reveal_player {
+                        continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                            player,
+                            path,
+                            default,
+                            purpose: EffectBooleanChoicePurpose::LookAtTopMayRevealThen {
+                                player: reveal_player,
+                                top,
+                                predicate,
+                                then,
+                            },
+                        });
+                        return Err(
+                            "reveal choice player does not own the looked-at library".to_string()
+                        );
+                    }
+                    if value {
+                        // The public reveal and the predicate check both
+                        // touch `state`, which this function cannot borrow
+                        // while `continuation` (derived from
+                        // `state.engine.pending_effect`) is held mutably;
+                        // deferred to `EffectFrame::LookAtTopMayReveal` on
+                        // the next engine advance instead, same as every
+                        // other purpose here.
+                        continuation.frames.push(EffectFrame::LookAtTopMayReveal {
+                            player: reveal_player,
+                            top,
+                            predicate,
+                            then,
+                            path,
+                        });
                     }
                 }
             }
@@ -2950,7 +3237,7 @@ fn validate_counter_unless_pays_generic(
     player: PlayerId,
     generic: u8,
     allow_absent: bool,
-    require_public_unambiguous_and_payable: bool,
+    require_payable: bool,
 ) -> Result<Option<StackItem>, String> {
     if generic == 0 {
         return Err("zero-mana Ward is outside the certified payment shape".to_string());
@@ -3007,25 +3294,81 @@ fn validate_counter_unless_pays_generic(
             "the Ward-bound stack item no longer carries its triggering target".to_string(),
         );
     }
-    if require_public_unambiguous_and_payable {
-        let public_candidates = state
-            .stack
-            .iter()
-            .filter(|candidate| candidate.v4.target_contracts.contains(&ward_target))
-            .collect::<Vec<_>>();
-        if public_candidates.len() != 1
-            || public_candidates[0].v4.stack_item_id != targeting_stack_item
-        {
-            return Err(
-                "the current public schema cannot identify the Ward-bound stack item unambiguously"
-                    .to_string(),
-            );
-        }
-        if crate::mana::can_pay(&generic_mana_cost(generic), 0, player, state).is_none() {
-            return Err("the staged Ward payment is no longer payable".to_string());
-        }
+    if require_payable
+        && crate::mana::can_pay(&generic_mana_cost(generic), 0, player, state).is_none()
+    {
+        return Err("the staged Ward payment is no longer payable".to_string());
     }
     Ok(Some(item))
+}
+
+/// Authenticates a Ward trigger and its exact live targeter for public
+/// observation. Pending-continuation validation separately requires its
+/// resolver to remain at the live stack top in the current engine. A departed
+/// targeter is valid for a queued trigger that will do nothing.
+pub(crate) fn validated_ward_observation_targeter(
+    state: &GameState,
+    trigger: &StackItem,
+) -> Result<Option<(StackItem, u8)>, String> {
+    let Some(EffectOp::CounterUnlessPaysGeneric {
+        ward_target,
+        targeting_stack_item,
+        generic,
+    }) = trigger.inline_effect.as_ref()
+    else {
+        return Ok(None);
+    };
+    crate::engine::validated_stack_item_target_spec(trigger, state)?;
+    let payer = state
+        .stack
+        .iter()
+        .find(|item| item.v4.stack_item_id == *targeting_stack_item)
+        .map(|item| item.controller)
+        .unwrap_or(trigger.controller.opponent());
+    Ok(validate_counter_unless_pays_generic(
+        state,
+        *ward_target,
+        trigger.controller,
+        *targeting_stack_item,
+        payer,
+        *generic,
+        true,
+        false,
+    )?
+    .map(|item| (item, *generic)))
+}
+
+/// Legacy observations can infer the binding only when exactly one live item
+/// targets the Ward source. Keep this coverage restriction at their boundary,
+/// rather than halting the rules engine for successor-aware consumers.
+pub(crate) fn validate_legacy_ward_observation(state: &GameState) -> Result<(), String> {
+    let pending = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .map(|pending| &pending.resolving_item);
+    for trigger in state.stack.iter().chain(pending) {
+        let Some((bound, _)) = validated_ward_observation_targeter(state, trigger)? else {
+            continue;
+        };
+        let Some(EffectOp::CounterUnlessPaysGeneric { ward_target, .. }) =
+            trigger.inline_effect.as_ref()
+        else {
+            unreachable!()
+        };
+        let mut candidates = state
+            .stack
+            .iter()
+            .filter(|candidate| candidate.v4.target_contracts.contains(ward_target));
+        if candidates
+            .next()
+            .is_none_or(|item| item.v4.stack_item_id != bound.v4.stack_item_id)
+            || candidates.next().is_some()
+        {
+            return Err("legacy observation cannot identify the Ward-bound stack item unambiguously; the Ward observation successor is required".into());
+        }
+    }
+    Ok(())
 }
 
 fn validate_counter_unless_pays_frame(
@@ -3062,6 +3405,7 @@ fn validate_counter_unless_pays_frame(
     {
         return Err("Ward answer no longer matches its resolving trigger".to_string());
     }
+    validate_ward_resolving_binding(pending, *ward_target, *targeting_stack_item, *generic)?;
     validate_counter_unless_pays_generic(
         state,
         *ward_target,
@@ -3072,6 +3416,24 @@ fn validate_counter_unless_pays_frame(
         false,
         true,
     )?;
+    Ok(())
+}
+
+fn validate_ward_resolving_binding(
+    pending: &EffectContinuation,
+    ward_target: StackTargetContractV4,
+    targeting_stack_item: StackItemId,
+    generic: u8,
+) -> Result<(), String> {
+    if pending.resolving_item.inline_effect.as_ref()
+        != Some(&EffectOp::CounterUnlessPaysGeneric {
+            ward_target,
+            targeting_stack_item,
+            generic,
+        })
+    {
+        return Err("Ward choice binding no longer matches its resolving trigger effect".into());
+    }
     Ok(())
 }
 
@@ -3264,18 +3626,24 @@ fn validated_definition_owned_root_effect(
         let definition = crate::card_def::CARD_DEFS
             .get(source.card_def as usize)
             .ok_or("answered spell frame lost its source definition")?;
-        let effect =
-            if pending.resolving_item.v4.cast_method == Some(crate::state::CastMethodV4::Omen) {
-                definition.omen.as_ref().map(|omen| (omen.effect)())
-            } else {
-                match pending.resolving_item.mode_chosen {
-                    0 => (definition.spell_effect)(),
-                    1 => definition.mode2.as_ref().map(|mode| (mode.effect)()),
-                    2 => definition.mode3.as_ref().map(|mode| (mode.effect)()),
-                    _ => None,
-                }
+        let effect = if pending.resolving_item.v4.cast_method
+            == Some(crate::state::CastMethodV4::Omen)
+        {
+            // Shared between a real Omen card's alternative form and an
+            // Adventure card's named spell -- see
+            // `engine::supported_adventure`'s doc.
+            crate::engine::supported_adventure(definition)
+                .map(|adventure| (adventure.effect)())
+                .or_else(|| crate::engine::supported_omen(definition).map(|omen| (omen.effect)()))
+        } else {
+            match pending.resolving_item.mode_chosen {
+                0 => (definition.spell_effect)(),
+                1 => definition.mode2.as_ref().map(|mode| (mode.effect)()),
+                2 => definition.mode3.as_ref().map(|mode| (mode.effect)()),
+                _ => None,
             }
-            .ok_or("answered spell frame lost its definition-owned root program")?;
+        }
+        .ok_or("answered spell frame lost its definition-owned root program")?;
         Box::new(effect)
     } else {
         return Err("answered effect frame lost its definition-owned root program".to_string());
@@ -3703,6 +4071,53 @@ pub(crate) fn validate_initiative_trigger_binding(
     {
         return Err("Initiative trigger source provenance is malformed".to_string());
     }
+    Ok(())
+}
+
+/// Validates one engine-owned monarch end-step draw trigger's binding, the
+/// same discipline `validate_initiative_trigger_binding` applies. Deliberately
+/// looser than that sibling: the monarch trigger's source need not still be
+/// on the battlefield or carry one fixed card name (Azure Fleet Admiral's ETB
+/// grant and any later combat-damage transfer are both valid producers), only
+/// the same physical incarnation it was frozen against.
+pub(crate) fn validate_monarch_trigger_binding(
+    state: &GameState,
+    binding: MonarchTriggerBindingV1,
+) -> Result<(), String> {
+    let history_index = usize::try_from(binding.history_index)
+        .map_err(|_| "Monarch history index exceeds usize".to_string())?;
+    if state.engine.event_history.get(history_index)
+        != Some(&event::CommittedEvent::MonarchTrigger { binding })
+    {
+        return Err("Monarch trigger lost its exact committed marker".to_string());
+    }
+    let source = state
+        .objects
+        .try_get(binding.source.source)
+        .ok_or("Monarch trigger source object is missing")?;
+    if binding.source.controller != binding.player
+        || source.card_def != binding.source.card_def
+        || source.owner != binding.source.owner
+        || source.zone_change_count < binding.source.zone_change_count
+        || (source.zone_change_count == binding.source.zone_change_count
+            && (source.zone != binding.source.zone
+                || source.v4.attached_to != binding.source.attached_to))
+    {
+        return Err("Monarch trigger source provenance is malformed".to_string());
+    }
+    Ok(())
+}
+
+/// Draws one card for the monarch trigger's binding player -- 306.3's "the
+/// monarch draws a card." Synchronous: unlike the Initiative Undercity route,
+/// this trigger never needs a player choice, so it resolves through ordinary
+/// `execute` rather than the resumable interpreter.
+fn resolve_monarch_trigger(
+    state: &mut GameState,
+    binding: MonarchTriggerBindingV1,
+) -> Result<(), String> {
+    validate_monarch_trigger_binding(state, binding)?;
+    event::propose_and_commit(state, event::ProposedEvent::draw(binding.player));
     Ok(())
 }
 
@@ -5329,6 +5744,12 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 {
                     return Err("Ward Boolean choice metadata is inconsistent".to_string());
                 }
+                validate_ward_resolving_binding(
+                    pending,
+                    *ward_target,
+                    *targeting_stack_item,
+                    *generic,
+                )?;
                 validate_counter_unless_pays_generic(
                     state,
                     *ward_target,
@@ -5448,6 +5869,29 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 }
                 validate_resumable_program(then)?;
             }
+            EffectBooleanChoicePurpose::LookAtTopMayRevealThen {
+                player: reveal_player,
+                top,
+                predicate,
+                then,
+            } => {
+                if player != reveal_player || !path.is_empty() || !pending.frames.is_empty() {
+                    return Err("reveal Boolean choice metadata is inconsistent".to_string());
+                }
+                validate_effect_object_binding(state, *top)?;
+                let root = validated_definition_owned_root_effect(state, pending)?;
+                let Some(EffectOp::LookAtTopMayRevealThen {
+                    predicate: original_predicate,
+                    then: original_then,
+                }) = effect_op_at_structural_path(root.as_ref(), path)
+                else {
+                    return Err("reveal choice lost its originating operation".to_string());
+                };
+                if original_predicate != predicate || original_then != then {
+                    return Err("reveal choice payload changed".to_string());
+                }
+                validate_resumable_program(then)?;
+            }
         },
         PendingEffectChoice::ChooseOption {
             player,
@@ -5542,6 +5986,40 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     );
                 }
             }
+            EffectOptionChoicePurpose::SurveilTopCard {
+                player: surveil_player,
+                top,
+                remaining: _,
+                canonical_path,
+            } => {
+                if player != surveil_player || path != canonical_path {
+                    return Err("surveil choice player or structural path changed".to_string());
+                }
+                let [EffectOp::Sequence(keep), EffectOp::MoveBoundObject {
+                    object,
+                    to_zone: Zone::Graveyard,
+                    preserve_known_identity: true,
+                }] = options.as_slice()
+                else {
+                    return Err(
+                        "surveil choice changed its exact keep-or-graveyard options".to_string()
+                    );
+                };
+                if !keep.is_empty() || object != top {
+                    return Err("surveil choice changed its bound top card".to_string());
+                }
+                validate_effect_object_binding(state, *top)?;
+                if top.expected_zone != Zone::Library
+                    || state.players[surveil_player.index()]
+                        .library
+                        .first()
+                        .copied()
+                        != Some(top.object)
+                    || state.objects.get(top.object).owner != *surveil_player
+                {
+                    return Err("surveil choice no longer binds the looked-at top card".to_string());
+                }
+            }
             EffectOptionChoicePurpose::ChooseColor {
                 player: color_player,
                 legal_colors,
@@ -5633,9 +6111,8 @@ fn validate_resumable_program(op: &EffectOp) -> Result<(), String> {
             }
         }
         EffectOp::MayPayManaThen { then, .. }
-        | EffectOp::MayExileFromPlayersGraveyardMatchingThen { then, .. } => {
-            validate_resumable_program(then)?
-        }
+        | EffectOp::MayExileFromPlayersGraveyardMatchingThen { then, .. }
+        | EffectOp::LookAtTopMayRevealThen { then, .. } => validate_resumable_program(then)?,
         EffectOp::MayPayCostThen { .. } | EffectOp::OfferAffectedPlayerSpellCopy { .. } => {
             return Err(
                 "choice-bearing programs cannot yet mix legacy-suspending effect leaves"
@@ -6904,6 +7381,27 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     continuation.answered_choice_guard = None;
                     apply_undercity_throne_result(state, binding, Some(chosen))?;
                 }
+                EffectFrame::LookAtTopMayReveal {
+                    player,
+                    top,
+                    predicate,
+                    then,
+                    path,
+                } => {
+                    validate_effect_object_binding(state, top)?;
+                    // The reveal is public: both observers learn this exact
+                    // incarnation's identity now, not just the controller
+                    // who already knew it privately from the initial look.
+                    state.reveal_library_top(PlayerId::P0, player, 1);
+                    state.reveal_library_top(PlayerId::P1, player, 1);
+                    let revealed_def = &crate::card_def::CARD_DEFS
+                        [state.objects.get(top.object).card_def as usize];
+                    if predicate.matches(revealed_def.types) {
+                        continuation
+                            .frames
+                            .push(EffectFrame::Program { op: *then, path });
+                    }
+                }
                 EffectFrame::Program { .. } => unreachable!(),
             }
             continue;
@@ -7826,6 +8324,42 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
             }
+            EffectOp::Surveil { player, count } => {
+                let player = continuation.ctx.resolve_player(player, state);
+                if count == 0 {
+                    continue;
+                }
+                let Some(top) = bind_library_top(state, player, 1).into_iter().next() else {
+                    // Empty library ends the look silently, same shortcut
+                    // Scry and Explore use.
+                    continue;
+                };
+                // Surveil is a private look: unlike Explore, nothing here is
+                // publicly revealed unless the controller later chooses to
+                // put the card in the (public) graveyard.
+                state.reveal_library_top(player, player, 1);
+                let canonical_path = path.clone();
+                continuation.choice = Some(PendingEffectChoice::ChooseOption {
+                    player,
+                    path,
+                    options: vec![
+                        EffectOp::Sequence(vec![]),
+                        EffectOp::MoveBoundObject {
+                            object: top,
+                            to_zone: Zone::Graveyard,
+                            preserve_known_identity: true,
+                        },
+                    ],
+                    purpose: EffectOptionChoicePurpose::SurveilTopCard {
+                        player,
+                        top,
+                        remaining: count - 1,
+                        canonical_path,
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
             EffectOp::PutBoundObjectInOwnersLibrary {
                 object,
                 owner,
@@ -7865,6 +8399,34 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     event::ProposedEvent::zone_change(object.object, to_zone)
                 };
                 event::propose_and_commit(state, proposed);
+            }
+            EffectOp::LookAtTopMayRevealThen { predicate, then } => {
+                let player = continuation.ctx.controller;
+                let Some(top) = bind_library_top(state, player, 1).into_iter().next() else {
+                    // Nothing to look at: an empty library silently ends
+                    // this effect, same "no real choice" shortcut used
+                    // elsewhere in this interpreter (e.g. `ChooseKicker`
+                    // when kicking isn't affordable).
+                    continue;
+                };
+                // Private look: only the controller becomes an observer of
+                // this exact library incarnation. The identity must not
+                // enter the opponent's observation unless the controller
+                // actually reveals it below.
+                state.reveal_library_top(player, player, 1);
+                continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                    player,
+                    path,
+                    default: Some(false),
+                    purpose: EffectBooleanChoicePurpose::LookAtTopMayRevealThen {
+                        player,
+                        top,
+                        predicate,
+                        then,
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
             }
             leaf => {
                 if matches!(leaf, EffectOp::DiscardCards { .. }) && !continuation.frames.is_empty()
@@ -8684,6 +9246,7 @@ fn library_filter_matches(
                     .iter()
                     .any(|subtype| subtype_ids.binary_search(&subtype.stable_id()).is_ok())
         }
+        LibraryCardFilter::AnyLand => def.has_type(CardType::Land),
     })
 }
 
@@ -8707,6 +9270,7 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
             .fold(fnv1a_u64(0xcbf2_9ce4_8422_2325, 4), |hash, subtype| {
                 fnv1a_u64(hash, u64::from(subtype.stable_id()))
             }),
+        LibraryCardFilter::AnyLand => fnv1a_u64(0xcbf2_9ce4_8422_2325, 5),
     }
 }
 
@@ -9460,7 +10024,12 @@ fn commit_zone_change_batch(
     Ok(())
 }
 
-fn creature_matches_filter(state: &GameState, object: ObjectId, filter: &CreatureFilter) -> bool {
+fn creature_matches_filter(
+    state: &GameState,
+    object: ObjectId,
+    filter: &CreatureFilter,
+    caster: PlayerId,
+) -> bool {
     let live = state.objects.get(object);
     let def = &crate::card_def::CARD_DEFS[live.card_def as usize];
     if live.zone != Zone::Battlefield || !def.has_type(CardType::Creature) {
@@ -9474,6 +10043,7 @@ fn creature_matches_filter(state: &GameState, object: ObjectId, filter: &Creatur
         CreatureFilter::WithoutKeyword(keyword) => {
             !crate::engine::has_effective_keyword(state, object, *keyword)
         }
+        CreatureFilter::OpponentControlled => live.controller != caster,
     }
 }
 
@@ -9645,6 +10215,21 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 event::propose_and_commit(state, event::ProposedEvent::draw(player));
             }
         }
+        EffectOp::EachPlayerControllingDefinitionDrawsCard { card_def } => {
+            // APNAP-stable order: P0 then P1. Bonder's Ornament's own
+            // "getPlayersInRange" iteration order never affects the
+            // deterministic outcome here (each player's draw depends only on
+            // their own battlefield), so a fixed iteration order is safe.
+            for player in [PlayerId::P0, PlayerId::P1] {
+                let controls_named = state.players[player.index()]
+                    .battlefield
+                    .iter()
+                    .any(|&id| state.objects.get(id).card_def == *card_def);
+                if controls_named {
+                    event::propose_and_commit(state, event::ProposedEvent::draw(player));
+                }
+            }
+        }
         EffectOp::RevealTopAndPartitionByType {
             player,
             count,
@@ -9681,6 +10266,16 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 }
             }
             event::propose_and_commit(state, event::ProposedEvent::zone_change(object, *to_zone));
+        }
+        EffectOp::Sacrifice { object } => {
+            let object = ctx.resolve_object(*object);
+            if state.objects.get(object).zone == Zone::Battlefield {
+                event::log_sacrifice(state, object);
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::zone_change(object, Zone::Graveyard),
+                );
+            }
         }
         EffectOp::PutSourceOntoBattlefieldAttachedToTarget { target } => {
             let target_index = match target {
@@ -9864,6 +10459,12 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         }
         EffectOp::ExploreTarget { .. } => {
             panic!("ExploreTarget must run through the resumable interpreter")
+        }
+        EffectOp::LookAtTopMayRevealThen { .. } => {
+            panic!("LookAtTopMayRevealThen must run through the resumable interpreter")
+        }
+        EffectOp::Surveil { .. } => {
+            panic!("Surveil must run through the resumable interpreter")
         }
         EffectOp::MoveBoundObject {
             object,
@@ -10070,6 +10671,26 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 event::ProposedEvent::mana_add(player, colors.clone()),
             );
         }
+        EffectOp::AddManaDynamic {
+            player,
+            color,
+            amount,
+        } => {
+            let player = ctx.resolve_player(*player, state);
+            // The evaluator is the single source of truth shared with
+            // `mana::gather_sources`. Clamped the same way the planner
+            // clamps `yield_per_tap`, except that zero is admitted here: a
+            // future card-neutral consumer may legitimately add nothing,
+            // and no current definition can reach that value.
+            let amount = crate::engine::evaluate_dynamic_value(state, *amount, player)
+                .clamp(0, DYNAMIC_MANA_ADD_MAXIMUM);
+            if amount > 0 {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::mana_add(player, vec![*color; amount as usize]),
+                );
+            }
+        }
         EffectOp::DiscardCards { player, count } => {
             let player = ctx.resolve_player(*player, state);
             state.engine.pending_discard = Some(crate::engine::PendingDiscard {
@@ -10101,17 +10722,28 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         EffectOp::MayPayCostThen {
             discard,
             sacrifice_lands,
+            return_permanent,
             then,
+            otherwise,
         } => {
             let discard_payable = *discard > 0
                 && state.players[ctx.controller.index()].hand.len() >= *discard as usize;
             let sacrifice_payable = *sacrifice_lands > 0
                 && crate::engine::count_controlled_lands(ctx.controller, state)
                     >= *sacrifice_lands as u32;
-            if !discard_payable && !sacrifice_payable {
+            let return_permanent_payable = return_permanent.is_some_and(|filter| {
+                !crate::engine::return_permanent_cost_candidates(ctx.controller, state, filter, &[])
+                    .is_empty()
+            });
+            if !discard_payable && !sacrifice_payable && !return_permanent_payable {
                 // Nothing payable: DoIfCostPaid's own `cost.canPay(...)`
-                // gate is false too, so the reference never even offers the
-                // "may pay?" prompt here -- matches, no-op.
+                // gate is false too, so the reference never even offers
+                // the "may pay?" prompt here -- runs `otherwise`
+                // immediately (Glint Hawk with no artifact to return), or
+                // no-ops for every pre-existing consumer (`otherwise: None`).
+                if let Some(otherwise) = otherwise {
+                    execute(otherwise, ctx, state);
+                }
                 return;
             }
             state.engine.pending_optional_cost = Some(crate::engine::PendingOptionalCost {
@@ -10119,9 +10751,12 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 source: ctx.source,
                 discard: *discard,
                 sacrifice_lands: *sacrifice_lands,
+                return_permanent_filter: *return_permanent,
                 discard_payable,
                 sacrifice_payable,
+                return_permanent_payable,
                 then: (**then).clone(),
+                otherwise: otherwise.as_deref().cloned(),
                 // `resolve_top_of_stack` fills this in right after this
                 // call returns, if it's resolving this same spell -- see
                 // `PendingOptionalCost::spell_resume`'s doc.
@@ -10160,7 +10795,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             let events = [PlayerId::P0, PlayerId::P1]
                 .into_iter()
                 .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
-                .filter(|object| creature_matches_filter(state, *object, filter))
+                .filter(|object| creature_matches_filter(state, *object, filter, ctx.controller))
                 .map(|object| {
                     event::ProposedEvent::damage(ctx.source, Target::Object(object), *amount)
                 })
@@ -10280,7 +10915,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     if !def.has_type(crate::card_def::CardType::Creature) {
                         return false;
                     }
-                    creature_matches_filter(state, id, filter)
+                    creature_matches_filter(state, id, filter, ctx.controller)
                 })
                 .collect();
             if !object_ids.is_empty() {
@@ -10304,6 +10939,57 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     },
                 );
             }
+        }
+        EffectOp::PumpAllUntilEndOfTurn {
+            filter,
+            controller,
+            power,
+            toughness,
+        } => {
+            let player = match controller {
+                PumpControllerScope::Opponents => ctx.controller.opponent(),
+                PumpControllerScope::TargetPlayer(index) => match ctx.targets[*index as usize] {
+                    Target::Player(player) => player,
+                    Target::Object(_) => panic!(
+                        "PumpAllUntilEndOfTurn's TargetPlayer scope expected a player target"
+                    ),
+                },
+            };
+            let object_ids: Vec<ObjectId> = state.players[player.index()]
+                .battlefield
+                .iter()
+                .copied()
+                .filter(|&id| {
+                    let def = &crate::card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
+                    crate::engine::permanent_matches_filter(def, *filter)
+                })
+                .collect();
+            if !object_ids.is_empty() {
+                let timestamp = crate::engine::next_timestamp(state);
+                state.engine.until_end_of_turn.push(
+                    crate::engine::UntilEndOfTurnEffect::ResolvedSetEffect {
+                        object_ids,
+                        layer: crate::engine::Layers::POWER_TOUGHNESS,
+                        timestamp,
+                        duration: crate::engine::EffectDuration::EndOfTurn,
+                        power: i32::from(*power),
+                        toughness: i32::from(*toughness),
+                        grant_haste: false,
+                    },
+                );
+            }
+        }
+        EffectOp::DealDamageToControllerOfTarget { target, amount } => {
+            let controller = match ctx.target_contracts[*target as usize] {
+                StackTargetContractV4::Object { controller, .. } => controller,
+                StackTargetContractV4::Player(_) => {
+                    panic!("DealDamageToControllerOfTarget expects an object target contract")
+                }
+            };
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::damage(ctx.source, Target::Player(controller), *amount),
+            );
         }
         EffectOp::PumpTargetUntilEndOfTurnDynamic {
             target,
@@ -10704,6 +11390,37 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 event::ProposedEvent::transformed_battlefield_return(ctx.source, 1, ctx.controller),
             );
         }
+        EffectOp::TransformSourceInPlace => {
+            let Some(source_contract) = ctx.ability_source_contract else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            let Some(source) = state.objects.try_get(ctx.source) else {
+                return;
+            };
+            if source.card_def != source_contract.card_def
+                || source.owner != source_contract.owner
+                || source.zone_change_count != source_contract.zone_change_count
+                || source.zone != Zone::Battlefield
+            {
+                return;
+            }
+            let def = &crate::card_def::CARD_DEFS[source.card_def as usize];
+            if source.v4.face_index != 0 || def.transform_face.is_none() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::transform_in_place(ctx.source, 1),
+            );
+        }
         EffectOp::PutSourceOntoBattlefieldWithXPlusOneCounters => {
             if state.objects.get(ctx.source).zone != Zone::Stack {
                 state.engine.halted = Some((
@@ -10846,6 +11563,26 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             };
             if take_initiative(state, player, source).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
+        EffectOp::BecomeMonarch => {
+            let Some(mut source) = ctx.ability_source_contract else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            source.controller = ctx.controller;
+            state.monarch = Some(ctx.controller);
+            state.engine.monarch_source = Some(source);
+        }
+        EffectOp::ResolveMonarchTrigger { binding } => {
+            if resolve_monarch_trigger(state, *binding).is_err() {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -11013,6 +11750,19 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
                 })
                 .count();
             count >= usize::from(*minimum_count)
+        }
+        EffectCond::ControllerGraveyardCreatureCardsAtLeast(n) => {
+            let count = state.players[ctx.controller.index()]
+                .graveyard
+                .iter()
+                .filter(|&&id| {
+                    let object = state.objects.get(id);
+                    !object.v4.is_token
+                        && crate::card_def::CARD_DEFS[object.card_def as usize]
+                            .has_type(crate::card_def::CardType::Creature)
+                })
+                .count();
+            count >= usize::from(*n)
         }
         EffectCond::ControlsAnotherSourceCard => {
             let source_def = state.objects.get(ctx.source).card_def;
@@ -11426,5 +12176,44 @@ mod tests {
         assert_eq!(state.objects.get(card).zone, Zone::Exile);
         assert!(state.exile.contains(&card));
         assert!(state.engine.exile_play_permissions.is_empty());
+    }
+
+    // Final-review fix round item 3: `return_permanent`/`otherwise` are new
+    // fields on `MayPayCostThen` (Glint Hawk, commit bd171ce4). This is a
+    // pre-wave `MayPayCostThen` payload, hand-written exactly as Highway
+    // Robbery/Abandon Attachments would have serialized it before the wave
+    // (only `discard`/`sacrifice_lands`/`then`, no `return_permanent`/
+    // `otherwise` keys at all): it must still deserialize, with the two new
+    // fields defaulting to `None`, or a pre-wave GameState snapshot
+    // captured with either card's cost on the stack fails to load on this
+    // branch.
+    #[test]
+    fn may_pay_cost_then_deserializes_a_pre_wave_payload_missing_the_new_fields() {
+        let pre_wave_json =
+            r#"{"MayPayCostThen":{"discard":1,"sacrifice_lands":0,"then":{"Sequence":[]}}}"#;
+        let op: EffectOp =
+            serde_json::from_str(pre_wave_json).expect("pre-wave MayPayCostThen must deserialize");
+        match op {
+            EffectOp::MayPayCostThen {
+                discard,
+                sacrifice_lands,
+                return_permanent,
+                then,
+                otherwise,
+            } => {
+                assert_eq!(discard, 1);
+                assert_eq!(sacrifice_lands, 0);
+                assert_eq!(
+                    return_permanent, None,
+                    "missing field must default to no return-permanent option"
+                );
+                assert_eq!(*then, EffectOp::Sequence(Vec::new()));
+                assert_eq!(
+                    otherwise, None,
+                    "missing field must default to no decline consequence"
+                );
+            }
+            other => panic!("expected MayPayCostThen, got {other:?}"),
+        }
     }
 }
