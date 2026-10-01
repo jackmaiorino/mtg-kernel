@@ -18,6 +18,7 @@ import tempfile
 import time
 import unittest
 import uuid
+from unittest.mock import patch
 from datetime import datetime
 from pathlib import Path
 
@@ -226,6 +227,23 @@ class HostReservationTests(unittest.TestCase):
             hr.dispatch("test", "alias", "never acquired", [sys.executable, "-c", "pass"], cwd=self.root,
                         python=alias)
         self.assertEqual(hr.status()["state"], "free")
+
+    def test_supervisor_uses_base_interpreter_without_changing_work_command(self):
+        redirector = "C:/test/venv/Scripts/python.exe"
+        base = "C:/test/base/python.exe"
+        work = [redirector, "-c", "pass"]
+        with patch.object(sys, "executable", redirector), patch.object(sys, "_base_executable", base):
+            self.assertEqual(hr.supervisor_python(), os.path.abspath(base))
+            self.assertEqual(hr.supervisor_python(redirector), os.path.abspath(base))
+            line = hr.supervisor_command(uuid.uuid4().hex, work)
+            self.assertTrue(line.startswith(subprocess.list2cmdline([os.path.abspath(base)])))
+            self.assertTrue(line.endswith(subprocess.list2cmdline(work)))
+            explicit = "C:/test/other/python.exe"
+            self.assertEqual(hr.supervisor_python(explicit), os.path.abspath(explicit))
+
+    def test_supervisor_interpreter_falls_back_without_base_executable(self):
+        with patch.object(sys, "_base_executable", None):
+            self.assertEqual(hr.supervisor_python(), os.path.abspath(sys.executable))
 
     # ------------------------------------------------------------ WMI lifecycle
 

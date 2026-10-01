@@ -941,10 +941,16 @@ def dispatch(lane: str, work_id: str, release_condition: str, command: list[str]
 
 
 def supervisor_python(python: str | None = None) -> str:
-    """The interpreter WMI starts for a supervisor (default: this one). An
-    app-execution alias, such as the Microsoft Store Python under
-    WindowsApps, cannot be started by WMI, so it is refused up front."""
+    """Use the base interpreter for this environment's supervisor. Windows
+    virtual-environment python.exe is a redirector: recording its pid would
+    leave a live parent waiting on the supervisor while release waits on the
+    parent. Work commands retain the caller's requested interpreter. Explicit
+    other interpreters are preserved, and app-execution aliases are refused."""
     path = os.path.abspath(python or sys.executable)
+    if "\\windowsapps\\" in os.path.normcase(path):
+        raise ValueError(f"{path} is an app-execution alias that WMI cannot start; use a regular Python install")
+    if os.path.normcase(path) == os.path.normcase(os.path.abspath(sys.executable)):
+        path = os.path.abspath(getattr(sys, "_base_executable", None) or sys.executable)
     if "\\windowsapps\\" in os.path.normcase(path):
         raise ValueError(f"{path} is an app-execution alias that WMI cannot start; use a regular Python install")
     return path
