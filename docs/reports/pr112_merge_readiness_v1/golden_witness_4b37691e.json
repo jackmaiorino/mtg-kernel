@@ -1,0 +1,45 @@
+{
+  "schema": "pr112-current-build-golden-witness/v1",
+  "head_commit": "4b37691e1bc092539cf928a33fdbf1d87a2585fc",
+  "ci_run": 36812673206,
+  "job": 110211057207,
+  "platform": "ubuntu-24.04",
+  "normalized_log_sha256": "1a8337952584ded39f9e3a5f021ac1eb1a500d60c768f1a1c827175683f73898",
+  "scope": "Current-build engineering fixtures after main rules integration and regenerated V2 metadata; historical experiment receipts are unchanged.",
+  "library_result": {
+    "passed": 2269,
+    "failed": 4,
+    "ignored": 77
+  },
+  "other_targets": {
+    "passed": 673,
+    "failed": 0,
+    "ignored": 1
+  },
+  "joined_frame_sha256": "011d1d9bf3f7cfb49860fa74d00fafc551f6b79419c01b01c6a56ad9dd6882a4",
+  "environment_v2_policy": "0x5c21da675badfa2a",
+  "environment_v2_core_full": "0x8d0badfbfe88c092",
+  "environment_v2_core_fast": "0x8d0badfbfe88c092",
+  "checkpoint_episodes": [
+    {
+      "trajectory_sha256": "21dca504b34c30768434a74f82b618c5b5ddbc4c5760ed00edbab53a630ec455",
+      "policy_steps": 418,
+      "physical_decisions": 382,
+      "learner_policy_steps": 173,
+      "opponent_policy_steps": 245,
+      "learner_physical_decisions": 147,
+      "opponent_physical_decisions": 235
+    },
+    {
+      "trajectory_sha256": "e8f3ae4f0b90a8d3184bb0f1f916461cddc64ef04a9e76d2ee178ae68b64837e",
+      "policy_steps": 192,
+      "physical_decisions": 161,
+      "learner_policy_steps": 101,
+      "opponent_policy_steps": 91,
+      "learner_physical_decisions": 100,
+      "opponent_physical_decisions": 61
+    }
+  ],
+  "checkout_merge_commit": "4fa39dc6f57703e3c433bcebfd442b5295eb1391",
+  "base_commit": "da75fba299a8e44cb6a00ff32fd092219abc9bd8"
+}

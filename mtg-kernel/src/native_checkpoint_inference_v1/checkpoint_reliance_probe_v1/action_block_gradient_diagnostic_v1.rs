@@ -7946,9 +7946,12 @@ fn joined_frame_is_preflight_sealed_neutral_and_lineage_complete_v1() {
     // "9a19af3bb5dadbbedce5648443c7ab4a7163e389ff7cfff7559f67fdedc452c9". New
     // value is this test's own live-computed digest, read directly from a
     // failing run at the tip (never hand-typed).
+    // Current FlatActionV2 source/contract metadata was regenerated after
+    // lint cleanup (92270264). CI run 36812673206, job 110211057207,
+    // supplies the resulting joined-body digest; strict framing stays fixed.
     assert_eq!(
         frame.sha256_v1(),
-        "ba4b3568f7d93f9485b2a6cb4a00f71372f99f912ae3bb1c41aee31a65ab7c59",
+        "011d1d9bf3f7cfb49860fa74d00fafc551f6b79419c01b01c6a56ad9dd6882a4",
         "the complete compact joined-body fixture is a frozen serializer golden"
     );
     assert!(frame
