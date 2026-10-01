@@ -1742,7 +1742,7 @@ fn validate_episode_records_v1(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SeatRowDrawV1 {
     /// Chosen without the seat stream (the D3 wrapper): no draw.
-    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     None,
     /// Sampled from the stored logits: one draw, as for any ordinary row.
     Logits,
@@ -1862,7 +1862,7 @@ fn validate_episode_records_with_search_v1(
                 }
             };
             let logits = match draw {
-                #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+                #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
                 SeatRowDrawV1::None => continue,
                 SeatRowDrawV1::Logits => floats(&row.logits),
                 SeatRowDrawV1::Singleton => vec![0.0],

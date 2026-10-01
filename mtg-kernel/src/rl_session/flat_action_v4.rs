@@ -46,9 +46,11 @@
 //! raw, unconditional `card_ref` this function reads as input.
 
 use super::*;
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 mod search_state;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::Zone;
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub(crate) use search_state::{V4SearchSampleMode, V4SearchStateErrorV1};
 
 /// Local (V4-only) analog of `FlatResolvedActionObjectV2`. Two real defects
