@@ -578,6 +578,7 @@ impl CompleteAgentPackageV1 {
 
     /// Explicit evaluation-only loader. Existing native collection/learning
     /// callers retain their own Disabled-only gate and never call this method.
+    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
     pub(crate) fn load_evaluation_components_v1(
         &self,
     ) -> Result<VerifiedAgentComponentsV1, String> {

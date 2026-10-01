@@ -63,9 +63,12 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 mod origin;
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub(crate) mod public_inputs;
 pub mod registry_evolution_v1;
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub(crate) mod search_leaf_v4;
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub(crate) mod stack_inputs;
 pub use origin::{
     FreshPlayPolicyIdentityV1, PlayPolicyOriginV1, TransferredFreshPlayPolicyIdentityV1,

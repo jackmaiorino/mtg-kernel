@@ -26,10 +26,12 @@ use crate::rl_session::{
 };
 
 pub(super) const LINE_B_ROOT_RANK_DOMAIN_V1: &[u8] = b"mtg-kernel/line-b-teacher-root/v1\0";
+#[cfg(test)]
 pub(super) const LINE_B_SEED_PREFIX_V1: &str = "g115-line-b-seed-v1|";
 pub(super) const LINE_B_ROOT_MIN_ACTIONS_V1: u32 = 2;
 pub(super) const LINE_B_ROOT_MAX_ACTIONS_V1: u32 = 8;
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum LineBSeedKindV1 {
     Root,
@@ -38,6 +40,7 @@ pub(super) enum LineBSeedKindV1 {
 
 /// Codex's production seed label (11:23 dispositions, item 4): `slot` is the
 /// game's slot in its update; zero padding 2/3/2 digits.
+#[cfg(test)]
 pub(super) fn line_b_seed_label_v1(
     block: u32,
     update: u32,
@@ -53,6 +56,7 @@ pub(super) fn line_b_seed_label_v1(
 
 /// Unsigned big-endian first eight bytes of
 /// `SHA-256(ASCII("g115-line-b-seed-v1|" + label))`.
+#[cfg(test)]
 pub(super) fn line_b_seed_v1(label: &str) -> u64 {
     let digest = Sha256::digest(format!("{LINE_B_SEED_PREFIX_V1}{label}").as_bytes());
     let mut first = [0_u8; 8];

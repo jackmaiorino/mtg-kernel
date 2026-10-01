@@ -699,6 +699,7 @@ fn floats(values: &[u32]) -> Vec<f32> {
 }
 impl TensorBitsV1 {
     /// No tensor at all: an unscored V3 forced singleton records none.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     fn empty() -> Self {
         Self {
             state: Vec::new(),
@@ -717,6 +718,7 @@ impl TensorBitsV1 {
         }
     }
 
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     fn is_empty(&self) -> bool {
         self.state.is_empty()
             && self.object_features.is_empty()
@@ -1279,7 +1281,7 @@ const NON_NATURAL_ERROR_TEXT_V1: &str =
 
 #[derive(Debug)]
 enum CollectEpisodeErrorV1 {
-    NonNatural(RlSessionTerminalV1),
+    NonNatural(Box<RlSessionTerminalV1>),
     Other(String),
 }
 
@@ -1360,7 +1362,7 @@ fn collect_episode(
         match session.current_response() {
             FastActorResponseV1::Terminal(terminal) => {
                 if terminal.terminal_classification != TerminalClassificationV1::Natural {
-                    return Err(CollectEpisodeErrorV1::NonNatural(terminal));
+                    return Err(CollectEpisodeErrorV1::NonNatural(Box::new(terminal)));
                 }
                 // Read the digests actually stamped by this loaded policy's
                 // generation, never a hardcoded V3 constant: a fresh-V4
@@ -1668,11 +1670,11 @@ fn collect_episode_tolerant_v1(
     let mut ledger = Vec::new();
     let mut attempt_episode = episode.clone();
     for attempt in 1..=NON_NATURAL_RETRY_LIMIT {
-        let reborrowed_opponent = opponent.as_mut().map(|o| &mut **o);
+        let reborrowed_opponent = opponent.as_deref_mut();
         let outcome = collect_episode(policy, learner, reborrowed_opponent, &attempt_episode);
         let outcome = match outcome {
             Ok(trajectory) if seed_is_forced_non_natural_for_test_v1(attempt_episode.seed) => Err(
-                CollectEpisodeErrorV1::NonNatural(trajectory.terminal.clone()),
+                CollectEpisodeErrorV1::NonNatural(Box::new(trajectory.terminal.clone())),
             ),
             other => other,
         };
@@ -1816,6 +1818,7 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
 }
 
 /// Legacy-sampler record validation, unchanged for every existing caller.
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 fn validate_episode_records_v1(
     episode: &ExpandedEpisodeV1,
     configuration_sha256: &[String; 2],
@@ -1856,6 +1859,7 @@ fn validate_episode_records_with_learner_sampler_v1(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SeatRowDrawV1 {
     /// Chosen without the seat stream (the D3 wrapper): no draw.
+    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
     None,
     /// Sampled from the stored logits: one draw, as for any ordinary row.
     Logits,
@@ -1993,6 +1997,7 @@ fn validate_episode_records_with_search_v1(
                 }
             };
             let logits = match draw {
+                #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
                 SeatRowDrawV1::None => continue,
                 SeatRowDrawV1::Logits => floats(&row.logits),
                 SeatRowDrawV1::Singleton => vec![0.0],
@@ -2539,6 +2544,11 @@ fn compute_gae_targets_v1(
         statistics,
     })
 }
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps the existing explicit input contract"
+)]
 
 fn execute_update_v1(
     source: ExpandedModelSourceV1,
@@ -3922,7 +3932,8 @@ pub(crate) mod tests {
         let (mut policy, model, saved) = checkpoint_fixture_v1();
         let original = policy.actual_model_identity_v1();
         let ancestry = policy.identity_v1().clone();
-        let cases: [(&str, fn(&mut ExpandedCheckpointV1)); 8] = [
+        type InvalidCheckpointCase = (&'static str, fn(&mut ExpandedCheckpointV1));
+        let cases: [InvalidCheckpointCase; 8] = [
             ("revision2", |s| {
                 s.feature_contract_digest =
                     "527db1125fa760076c2e751bb70be74cab21aa4dcb7d558a0b804a597ef8adfd".into();
@@ -4019,9 +4030,8 @@ pub(crate) mod tests {
             max_policy_steps: 1000,
         };
         assert!(e.configurations().is_ok());
-        let swap = e.selected[0].sideboard[0];
-        e.selected[0].sideboard[0] = e.selected[0].mainboard[0];
-        e.selected[0].mainboard[0] = swap;
+        let selected = &mut e.selected[0];
+        std::mem::swap(&mut selected.sideboard[0], &mut selected.mainboard[0]);
         assert!(e.configurations().is_err());
         e.postboard = true;
         assert!(e.configurations().is_ok());
@@ -4042,9 +4052,11 @@ pub(crate) mod tests {
         // `TensorBitsV1` is generic over the shared inner tensor: exercise it
         // directly against `NativeFlatDecisionTensorV2`, since both the V3
         // and V4 wrappers just forward `.common` to it unchanged.
-        let mut t = NativeFlatDecisionTensorV2::default();
-        t.state = vec![0.0, -0.0, 1.2345678, f32::MIN_POSITIVE];
-        t.object_card_ids = vec![65536];
+        let t = NativeFlatDecisionTensorV2 {
+            state: vec![0.0, -0.0, 1.2345678, f32::MIN_POSITIVE],
+            object_card_ids: vec![65536],
+            ..Default::default()
+        };
         let bytes = serde_json::to_vec(&TensorBitsV1::from_tensor(&t)).unwrap();
         let saved: TensorBitsV1 = serde_json::from_slice(&bytes).unwrap();
         let restored = saved.tensor();

@@ -375,7 +375,7 @@ mod tests {
         );
         assert_eq!(
             baseline["outcome"],
-            serde_json::to_value(&played.outcome).unwrap()
+            serde_json::to_value(played.outcome).unwrap()
         );
         let report = serde_json::json!({"schema":"public-input-zero-full-match-replay/v1","architecture":ARCHITECTURE,
             "status":"ENGINEERING-PASS","projection":"both matrices all positive zero; both seats",
@@ -492,7 +492,7 @@ mod tests {
         );
         assert_eq!(
             baseline["outcome"],
-            serde_json::to_value(&played.outcome).unwrap()
+            serde_json::to_value(played.outcome).unwrap()
         );
         let report = serde_json::json!({"schema":"public-stack-zero-full-match-replay/v1","architecture":ARCHITECTURE,
             "status":"ENGINEERING-PASS","projection":"one stack message matrix all positive zero; both seats",

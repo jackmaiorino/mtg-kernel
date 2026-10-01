@@ -682,7 +682,12 @@ pub(crate) mod tests {
     fn v6_escape_exposes_every_cost_prefix_and_v5_stays_rejected() {
         let (mut state, spell, picks) = escape_prefix_state();
         let mut hashes = Vec::new();
-        for selected_count in 0..=3 {
+        for (selected_count, pick) in picks
+            .iter()
+            .map(Some)
+            .chain(std::iter::once(None))
+            .enumerate()
+        {
             let observation = observe(&state, PlayerId::P0);
             let cost = observation
                 .extensions
@@ -715,8 +720,8 @@ pub(crate) mod tests {
                     .0
                     .contains("staged Escape")
             );
-            if selected_count < 3 {
-                engine::step(&mut state, Action::ChooseCostTarget(picks[selected_count])).unwrap();
+            if let Some(pick) = pick {
+                engine::step(&mut state, Action::ChooseCostTarget(*pick)).unwrap();
             }
         }
         assert!(hashes.windows(2).all(|pair| pair[0] != pair[1]));

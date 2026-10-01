@@ -34,6 +34,7 @@ pub(crate) struct Limits {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) enum Error {
     NoDecision,
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     InvalidAdapterBinding,
     InvalidBudget,
     InsufficientHeadroom,
@@ -42,7 +43,9 @@ pub(crate) enum Error {
         source: V4SearchStateErrorV1,
     },
     Evaluator(String),
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     ObserverEnvironment(String),
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     ObserverInvariant {
         session_changed: bool,
         policy_rng_changed: bool,
@@ -350,6 +353,10 @@ pub(crate) fn search_with_backup<E: Evaluator>(
         w,
     )
 }
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps the existing explicit input contract"
+)]
 pub(crate) fn search_with_sample_mode<E: Evaluator>(
     session: &FastActorSessionV1,
     l: Limits,

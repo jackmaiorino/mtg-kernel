@@ -181,6 +181,11 @@ impl NativePolicyValueTrainStateV1 {
         )
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "keeps the existing explicit input contract"
+    )]
+
     fn train_step_gae_with_input_config_v1(
         &mut self,
         groups: &[NativePolicyPhysicalDecisionV1<'_>],
@@ -209,6 +214,10 @@ impl NativePolicyValueTrainStateV1 {
     /// Line (b) CPU update: the GAE objective plus the auxiliary term,
     /// combined before the single Adam step. `backward_worker_limit` selects
     /// the fixed-partition backward (`None`: sequential), as the V4 wrappers do.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "keeps the existing explicit input contract"
+    )]
     pub(crate) fn train_step_gae_line_b_v1(
         &mut self,
         groups: &[NativePolicyPhysicalDecisionV1<'_>],

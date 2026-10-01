@@ -352,9 +352,8 @@ pub(super) fn prepare_and_build_v3(
         session,
         &current.origin_decision,
     )
-    .map_err(|error| {
-        capture_action_error_v3(session, current, "prepare_normalization", &error, None);
-        error
+    .inspect_err(|error| {
+        capture_action_error_v3(session, current, "prepare_normalization", error, None);
     })?;
     build_with_extensions(session, current, &extension)
 }
@@ -399,25 +398,17 @@ fn build_with_extensions(
     original.flat_action_cache = None;
     original.flat_action_cache_v2 = None;
     original.candidates = raw;
-    flat_validate_current_binding_header_v1(session, &original).map_err(|error| {
+    flat_validate_current_binding_header_v1(session, &original).inspect_err(|error| {
         capture_action_error_v3(
             session,
             &original,
             "binding_header_and_relations",
-            &error,
+            error,
             None,
         );
-        error
     })?;
-    flat_validate_origin_decision_v1(&original, &session.state).map_err(|error| {
-        capture_action_error_v3(
-            session,
-            &original,
-            "origin_decision_relations",
-            &error,
-            None,
-        );
-        error
+    flat_validate_origin_decision_v1(&original, &session.state).inspect_err(|error| {
+        capture_action_error_v3(session, &original, "origin_decision_relations", error, None);
     })?;
     normalize_candidates(
         &mut original.candidates,
@@ -425,9 +416,8 @@ fn build_with_extensions(
         session,
         &original.origin_decision,
     )
-    .map_err(|error| {
-        capture_action_error_v3(session, &original, "rebuild_normalization", &error, None);
-        error
+    .inspect_err(|error| {
+        capture_action_error_v3(session, &original, "rebuild_normalization", error, None);
     })?;
     if original.candidates != current.candidates {
         capture_action_error_v3(
@@ -444,15 +434,14 @@ fn build_with_extensions(
     let mut pending_refs = Vec::<FlatUnindexedActionRefV2>::new();
     let mut resolved = Vec::<(CardStableRefV1, FlatActionObjectV2)>::new();
     for (action_index, candidate) in current.candidates.iter().enumerate() {
-        flat_validate_semantic_policy_pair_v1(candidate).map_err(|error| {
+        flat_validate_semantic_policy_pair_v1(candidate).inspect_err(|error| {
             capture_action_error_v3(
                 session,
                 current,
                 "semantic_policy_pair",
-                &error,
+                error,
                 Some(action_index),
             );
-            error
         })?;
         let action_index = u32::try_from(action_index)
             .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
@@ -536,15 +525,14 @@ fn build_with_extensions(
                 Ok(())
             },
         )
-        .map_err(|error| {
+        .inspect_err(|error| {
             capture_action_error_v3(
                 session,
                 current,
                 "action_core_and_references",
-                &error,
+                error,
                 Some(action_index as usize),
             );
-            error
         })?;
         actions.push(core);
     }
@@ -747,9 +735,8 @@ impl FastActorSessionV1 {
             .current
             .as_ref()
             .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
-        flat_validate_expected_decision_v1(self, current, expected).map_err(|error| {
-            capture_action_error_v3(self, current, "expected_decision_binding", &error, None);
-            error
+        flat_validate_expected_decision_v1(self, current, expected).inspect_err(|error| {
+            capture_action_error_v3(self, current, "expected_decision_binding", error, None);
         })?;
         if self.flat_action_contract_mode != FlatActionContractModeV1::V3 {
             return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
@@ -762,9 +749,8 @@ impl FastActorSessionV1 {
             .flat_action_cache_v2
             .as_ref()
             .ok_or(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
-        validate_cache(self, current, cache).map_err(|error| {
-            capture_action_error_v3(self, current, "cache_validation", &error, None);
-            error
+        validate_cache(self, current, cache).inspect_err(|error| {
+            capture_action_error_v3(self, current, "cache_validation", error, None);
         })?;
         Ok(cache)
     }

@@ -1,7 +1,7 @@
 {
   "schema": "kernel_removal_counterspell_tags/v1",
   "generated_from": "data/cards_v1.json",
-  "source_digest_sha256": "561aa07cbe789d53ff330ba0b53589338eaca54caba27139d2980be517d9db5a",
+  "source_digest_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
   "cards": [
     {
       "card_id": 0,

@@ -20,6 +20,7 @@ pub(crate) const PERMUTATION_CONTRACT: &[u8] =
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub enum StackInputModeV1 {
     Disabled,
     Structured,
@@ -34,6 +35,7 @@ pub(crate) struct StackColumnPermutationV1 {
     pub(crate) columns: Vec<u16>,
 }
 impl StackColumnPermutationV1 {
+    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
     pub(crate) fn sample(rng: &mut crate::state::SplitMix64) -> Self {
         let mut columns: Vec<_> = (0..FEATURE_WIDTH as u16).collect();
         for i in (1..FEATURE_WIDTH).rev() {
@@ -182,6 +184,7 @@ impl StackFeatureRowsV1 {
 }
 
 /// Both outputs are derived transactionally from the same bound actor view.
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub(crate) fn encode_stack_decision_v1(
     view: FlatScoringDecisionViewV4<'_>,
 ) -> Result<StackEncodedDecisionV1, NativeFlatTensorErrorV2> {

@@ -498,6 +498,7 @@ mod tests {
         .join()
         .unwrap();
     }
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     fn public_session(actor: crate::ids::PlayerId, life: i32) -> FastActorSessionV1 {
         use crate::policy_observation_v6::tests::{put, ready_state};
         use crate::state::Zone;

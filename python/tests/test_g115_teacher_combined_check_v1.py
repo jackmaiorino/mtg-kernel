@@ -16,9 +16,8 @@ import g115_teacher_combined_check_v1 as packet
 
 class FailurePaths(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory(prefix='g115-receipt-check-', dir='D:/e-scratch')
+        self.directory = tempfile.TemporaryDirectory(prefix='g115-receipt-check-')
         self.root = Path(self.directory.name).resolve()
-        assert self.root.parent == Path('D:/e-scratch').resolve()
         assert self.root.name.startswith('g115-receipt-check-')
         self.addCleanup(self.directory.cleanup)
         self.scratch, self.cold = self.root / 'hot', self.root / 'cold'

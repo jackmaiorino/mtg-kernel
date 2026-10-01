@@ -396,7 +396,7 @@ mod tests {
             let mut logits: Vec<f64> = (0..width)
                 .map(|_| {
                     let v = values.next_u64();
-                    if v % 13 == 0 {
+                    if v.is_multiple_of(13) {
                         -0.0
                     } else {
                         ((((v >> 11) % 4001) as i64 - 2000) as f64 / 250.0) as f32 as f64
@@ -544,7 +544,7 @@ mod tests {
             let gradient = line_b_divergence_v1(direction, &z, &goal)
                 .unwrap()
                 .logit_gradient;
-            for index in 0..3 {
+            for (index, _) in gradient.iter().enumerate() {
                 let estimate = fourth_order(direction, &z, &goal, index);
                 assert!(
                     (estimate - gradient[index]).abs() < 3e-11,
@@ -645,7 +645,7 @@ mod tests {
             let forward = line_b_divergence_v1(LineBDivergenceV1::Forward, &case.student, &goal)
                 .unwrap()
                 .logit_gradient;
-            for index in 0..forward.len() {
+            for (index, _) in forward.iter().enumerate() {
                 let difference = student.probabilities[index] - goal.probabilities[index];
                 assert_eq!(forward[index].to_bits(), difference.to_bits());
             }
@@ -653,7 +653,7 @@ mod tests {
                 let gradient = line_b_divergence_v1(direction, &case.student, &goal)
                     .unwrap()
                     .logit_gradient;
-                for index in 0..gradient.len() {
+                for (index, _) in gradient.iter().enumerate() {
                     let estimate = fourth_order(direction, &case.student, &goal, index);
                     assert!(
                         (estimate - gradient[index]).abs() < 3e-11,

@@ -639,18 +639,17 @@ fn new_attempt(
     fs::create_dir(&path).map_err(err)?;
     Ok(path)
 }
+type SlotRecoveryV1 = (
+    Option<Bo3AttemptInputV1>,
+    Option<(PathBuf, PinnedFileV1)>,
+    usize,
+);
+
 fn slot_recovery(
     directory: &Path,
     resolved: &ResolvedMatch,
     verified: &mut VerifiedFiles,
-) -> Result<
-    (
-        Option<Bo3AttemptInputV1>,
-        Option<(PathBuf, PinnedFileV1)>,
-        usize,
-    ),
-    String,
-> {
+) -> Result<SlotRecoveryV1, String> {
     fs::create_dir_all(directory).map_err(err)?;
     let existing = attempt_directories(directory, "attempt-")?;
     let expected = bounded_json(&resolved.request, 4 * 1024 * 1024)?;
