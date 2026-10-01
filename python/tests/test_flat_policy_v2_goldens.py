@@ -248,8 +248,8 @@ class FlatPolicyV2GoldenTests(unittest.TestCase):
         self.assertEqual(
             golden["card_db_hash_authority"],
             {
-                "source": "mtg-kernel/src/card_def.rs::card_db_hash_v33_is_frozen",
-                "value_hex": "ff4b98347ca4ef1d",
+                "source": "mtg-kernel/src/card_def.rs::card_db_hash_v32_is_frozen",
+                "value_hex": "64c82a261e078f1a",
             },
         )
         stress = golden["serializer_stress_v2"]

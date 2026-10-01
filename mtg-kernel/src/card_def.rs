@@ -1426,7 +1426,14 @@ mod tests {
     fn card_defs_len_matches_pool() {
         // Hero Token remains id 159 and Clue Token remains id 160. Skeleton
         // Token is appended as id 161 without renumbering earlier ids.
-        assert_eq!(CARD_DEFS.len(), 168);
+        assert_eq!(
+            CARD_DEFS.len(),
+            if cfg!(feature = "limited-fdn-fixtures") {
+                168
+            } else {
+                162
+            }
+        );
     }
 
     #[test]
@@ -1490,10 +1497,16 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "limited-fdn-fixtures"))]
+    fn card_db_hash_v32_is_frozen() {
+        assert_eq!(KERNEL_CARDDB_HASH, 0x64c8_2a26_1e07_8f1a);
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
     fn card_db_hash_v33_is_frozen() {
-        // Version 33 appends six FDN fixture definitions and binds their
-        // executable recipes without renumbering the original 162 definitions.
-        assert_eq!(KERNEL_CARDDB_HASH, 0xff4b_9834_7ca4_ef1d);
+        const EXPECTED_FDN: u64 = 0xff4b_9834_7ca4_ef1d;
+        assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
     #[test]
@@ -1694,7 +1707,8 @@ mod tests {
             .filter(|def| def.capability == CardCapability::Full)
             .count();
         assert_eq!(
-            full, 168,
+            full,
+            CARD_DEFS.len(),
             "150 Pauper cards, twelve tokens and six Limited additions"
         );
         assert_eq!(

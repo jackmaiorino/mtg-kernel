@@ -1,4 +1,5 @@
 //! Rules behavior for the first six missing names in the pinned FDN fixtures.
+#![cfg(feature = "limited-fdn-fixtures")]
 use mtg_kernel::card_def::{card_id_by_name, CardCapability, Keywords, TargetSpec, CARD_DEFS};
 use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::event::{self, ActiveReplacement, ProposedEvent, ReplacementEffectKind};

@@ -49,7 +49,7 @@ transport errors or timeouts. Engine validation errors preserve the client
 and its last successful decision. No failed request is silently retried.
 
 ```powershell
-cargo build --locked -p mtg-kernel --bin kernel_limited_env
+cargo build --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_env
 py -3.11 python/tools/limited_session_v1.py --binary target/debug/kernel_limited_env.exe --deck data/limited/smoke_v1/forest40.dck --deck data/limited/smoke_v1/island40.dck --seed 123
 ```
 

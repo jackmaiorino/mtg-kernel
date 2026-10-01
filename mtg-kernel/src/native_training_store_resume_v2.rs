@@ -1706,6 +1706,7 @@ mod windows_resume_tests {
     }
 
     #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
     fn resume_rejects_the_pre_fdn_profile_before_interacting_with_store_contents() {
         use crate::native_training_store_run_v2::test_fixture_bytes_pre_fdn_v1;
         let parent = TestParentV2::new("pre-fdn-profile");

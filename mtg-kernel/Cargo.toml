@@ -13,6 +13,9 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 sha2 = { version = "0.10", features = ["compress"] }
 
 [features]
+# Append the FDN registry to the frozen Pauper registry. Off by default so
+# existing Pauper provenance, commitments and store bytes keep their identity.
+limited-fdn-fixtures = []
 # PERFORMANCE-ONLY instrumentation for examples/bench_kernel.rs (section 5,
 # allocator profile): installs a counting global allocator wrapping the
 # system allocator. Off by default; no effect on any normal build/test.

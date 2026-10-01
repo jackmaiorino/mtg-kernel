@@ -2029,7 +2029,11 @@ mod windows_publisher_tests {
         let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
         assert_eq!(
             run.catalog_profile_v1(),
-            NativeRunCatalogProfileV1::FdnFixtureBatchA
+            if cfg!(feature = "limited-fdn-fixtures") {
+                NativeRunCatalogProfileV1::FdnFixtureBatchA
+            } else {
+                NativeRunCatalogProfileV1::Current
+            }
         );
         let executor = fresh_executor_v2(&run);
         let genesis = genesis_authorities_v2(&run, &executor);
@@ -2050,6 +2054,7 @@ mod windows_publisher_tests {
     }
 
     #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
     fn publish_rejects_the_pre_fdn_profile_before_mutating_any_store_files() {
         use crate::native_training_store_run_v2::test_fixture_bytes_pre_fdn_v1;
         let store = TestStoreV2::with_skeleton("pre-fdn-profile");
@@ -2084,7 +2089,11 @@ mod windows_publisher_tests {
         let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
         assert_eq!(
             run.catalog_profile_v1(),
-            NativeRunCatalogProfileV1::FdnFixtureBatchA
+            if cfg!(feature = "limited-fdn-fixtures") {
+                NativeRunCatalogProfileV1::FdnFixtureBatchA
+            } else {
+                NativeRunCatalogProfileV1::Current
+            }
         );
 
         let executor = fresh_executor_v2(&run);
@@ -2098,7 +2107,11 @@ mod windows_publisher_tests {
         assert_eq!(redecoded.canonical_bytes(), run.canonical_bytes());
         assert_eq!(
             redecoded.catalog_profile_v1(),
-            NativeRunCatalogProfileV1::FdnFixtureBatchA
+            if cfg!(feature = "limited-fdn-fixtures") {
+                NativeRunCatalogProfileV1::FdnFixtureBatchA
+            } else {
+                NativeRunCatalogProfileV1::Current
+            }
         );
 
         // Full read-only store validation, the same mechanism used to verify

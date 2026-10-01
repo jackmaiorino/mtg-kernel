@@ -1873,7 +1873,7 @@ fn main() {
 
     let text = fs::read_to_string(&json_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", json_path.display()));
-    let data: CardsFile = serde_json::from_str(&text)
+    let mut data: CardsFile = serde_json::from_str(&text)
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", json_path.display()));
 
     if data.version != EXPECTED_SCHEMA_VERSION {
@@ -1882,6 +1882,25 @@ fn main() {
              file has version {}. Update build.rs's CardJson/codegen for the new schema before building.",
             data.version
         );
+    }
+
+    let fdn_path = repo_root.join("data/limited/fdn_v1/cards_v1.json");
+    println!("cargo:rerun-if-changed={}", fdn_path.display());
+    if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
+        assert_eq!(
+            data.cards.len(),
+            162,
+            "FDN extension requires the frozen Pauper ID prefix"
+        );
+        let fdn_text = fs::read_to_string(&fdn_path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", fdn_path.display()));
+        let fdn: CardsFile = serde_json::from_str(&fdn_text)
+            .unwrap_or_else(|e| panic!("failed to parse {}: {e}", fdn_path.display()));
+        assert_eq!(
+            fdn.version, EXPECTED_SCHEMA_VERSION,
+            "FDN registry schema mismatch"
+        );
+        data.cards.extend(fdn.cards);
     }
 
     let mut seen_names = HashSet::new();
@@ -6622,7 +6641,13 @@ fn codegen(cards: &[CardJson]) -> String {
     // typed battlefield searches, Storm, and Clue remain bound too.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v33\n");
+    let mut canon = String::from(
+        if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
+            "kernel_carddb/v33\n"
+        } else {
+            "kernel_carddb/v32\n"
+        },
+    );
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');

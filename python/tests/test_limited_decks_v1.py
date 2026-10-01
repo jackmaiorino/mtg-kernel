@@ -20,9 +20,7 @@ FIXTURES = REPO_ROOT / "data/limited/fdn_v1"
 
 class LimitedDeckTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.registry = limited.registry_from_json(limited.load_json(
-            (REPO_ROOT / "data/cards_v1.json").read_bytes()
-        ))
+        self.registry = limited.fdn_registry()
 
     def test_registry_extension_keeps_all_original_ids_and_resolves_the_new_batch(self) -> None:
         cards = limited.load_json((REPO_ROOT / "data/cards_v1.json").read_bytes())["cards"]
@@ -35,6 +33,20 @@ class LimitedDeckTest(unittest.TestCase):
         deck = limited.parse_dck("\n".join(f"10 {name}" for name in names))
         self.assertEqual(limited.resolve_mainboard(deck, self.registry),
                          [self.registry[name].card_id for name in names for _ in range(10)])
+
+    def test_extension_rejects_duplicates_and_preserves_base_card_ids(self) -> None:
+        base = (REPO_ROOT / "data/cards_v1.json").read_bytes()
+        extension = (FIXTURES / "cards_v1.json").read_bytes()
+        base_registry = limited.registry_from_json(limited.load_json(base))
+        self.assertEqual(len(base_registry), 162)
+        self.assertNotIn("Plains", base_registry)
+        for name, card in base_registry.items():
+            self.assertEqual(self.registry[name], card)
+        self.assertEqual(self.registry["Plains"].card_id, 162)
+        with self.assertRaisesRegex(ValueError, "duplicate name"):
+            limited.combined_registry(base, [extension, extension])
+        with self.assertRaisesRegex(ValueError, "registry version 2"):
+            limited.combined_registry(base, [b'{"version":3,"cards":[]}'])
 
     def test_real_decks_are_40_cards_and_report_missing_behavior(self) -> None:
         for filename, supported_copies, source_sha256 in [
@@ -155,6 +167,8 @@ class LimitedDeckTest(unittest.TestCase):
             self.assertEqual(len(report["card_ids"]), 40)
             self.assertEqual(report["card_id_order"], "dck-row-then-copy/v1")
             self.assertEqual(report["registry_sha256"], hashlib.sha256((REPO_ROOT / "data/cards_v1.json").read_bytes()).hexdigest())
+            self.assertEqual(report["registry_extensions_sha256"],
+                             [hashlib.sha256((FIXTURES / "cards_v1.json").read_bytes()).hexdigest()])
 
 
 if __name__ == "__main__":

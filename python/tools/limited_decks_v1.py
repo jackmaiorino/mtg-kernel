@@ -122,6 +122,24 @@ def card_status(name: str, registry: dict[str, RegistryCard]) -> str:
     return "token" if card.is_token else card.capability
 
 
+def combined_registry(base: bytes, extensions: list[bytes]) -> dict[str, RegistryCard]:
+    """Append Limited definitions in the same order as the opt-in Rust build."""
+    documents = [load_json(data) for data in [base, *extensions]]
+    for document in documents:
+        registry_from_json(document)
+    return registry_from_json({
+        "version": 2,
+        "cards": [card for document in documents for card in document["cards"]],
+    })
+
+
+def fdn_registry() -> dict[str, RegistryCard]:
+    return combined_registry(
+        (REPO_ROOT / "data/cards_v1.json").read_bytes(),
+        [(REPO_ROOT / "data/limited/fdn_v1/cards_v1.json").read_bytes()],
+    )
+
+
 def zone_report(entries: tuple[DeckEntry, ...], registry: dict[str, RegistryCard]) -> dict[str, Any]:
     counts: Counter[str] = Counter()
     for entry in entries:
@@ -194,12 +212,19 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("inspect", "resolve", "inventory"))
     parser.add_argument("--registry", type=Path, default=REPO_ROOT / "data/cards_v1.json")
+    parser.add_argument("--registry-extension", type=Path, action="append", default=None,
+                        help="append definitions; the default base registry includes the FDN extension")
     parser.add_argument("--deck", type=Path, action="append", default=[])
     parser.add_argument("--card-names", type=Path, default=REPO_ROOT / "data/limited/fdn_v1/card_names.json")
     args = parser.parse_args(argv)
     try:
         raw_registry = args.registry.read_bytes()
-        registry = registry_from_json(load_json(raw_registry))
+        extension_paths = args.registry_extension
+        if extension_paths is None:
+            extension_paths = ([REPO_ROOT / "data/limited/fdn_v1/cards_v1.json"]
+                               if args.registry == REPO_ROOT / "data/cards_v1.json" else [])
+        raw_extensions = [path.read_bytes() for path in extension_paths]
+        registry = combined_registry(raw_registry, raw_extensions)
         raw_decks = [path.read_bytes() for path in args.deck]
         decks = [parse_dck(data.decode("utf-8-sig")) for data in raw_decks]
         if args.command == "inventory":
@@ -219,6 +244,8 @@ def main(argv: list[str] | None = None) -> int:
                 result["card_id_order"] = "dck-row-then-copy/v1"
                 result["card_ids"] = resolve_mainboard(decks[0], registry)
         result["registry_sha256"] = hashlib.sha256(raw_registry).hexdigest()
+        result["registry_extensions_sha256"] = [hashlib.sha256(data).hexdigest()
+                                               for data in raw_extensions]
         if args.command == "inventory":
             result["deck_sha256s"] = [hashlib.sha256(data).hexdigest() for data in raw_decks]
         print(json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2))

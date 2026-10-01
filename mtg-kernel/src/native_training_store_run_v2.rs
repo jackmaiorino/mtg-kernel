@@ -4188,7 +4188,7 @@ pub(crate) fn test_fixture_bytes_v2() -> Vec<u8> {
 
 /// The original nine-deck v32 profile remains readable, but this v33 build
 /// must reject it at mutation boundaries before touching the store.
-#[cfg(test)]
+#[cfg(all(test, feature = "limited-fdn-fixtures"))]
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn test_fixture_bytes_pre_fdn_v1() -> Vec<u8> {
     tests::fixture_bytes_pre_fdn()
@@ -6550,6 +6550,7 @@ mod tests {
     /// card database/runtime catalog changed again (needs a new profile) or
     /// the frozen literals were typed wrong when this successor landed.
     #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
     fn fdn_batch_a_frozen_literal_matches_the_live_build_constant() {
         use crate::card_def::KERNEL_CARDDB_HASH;
         use crate::runtime_decks::RUNTIME_DECK_CATALOG_FILE_SHA256;
@@ -6650,12 +6651,14 @@ mod tests {
             FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1
         );
         assert_eq!(validated.canonical_bytes(), bytes);
-        assert!(!current_profile_matches_live_build_identity_v1(
-            validated.record().environment()
-        ));
+        assert_eq!(
+            current_profile_matches_live_build_identity_v1(validated.record().environment()),
+            !cfg!(feature = "limited-fdn-fixtures")
+        );
     }
 
     #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
     fn fdn_batch_a_fixture_decodes_with_its_own_profile_and_live_identity() {
         let validated = decode_train_run_v2(&fixture_bytes()).unwrap();
         assert_eq!(

@@ -1,0 +1,190 @@
+{
+  "version": 2,
+  "cards": [
+    {
+      "name": "Plains",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [
+        "Plains"
+      ],
+      "supertypes": [
+        "Basic"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "W"
+      ],
+      "decks": [
+        "FDN_top_20626_WG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "mana_ability"
+      ],
+      "java_file": "Mage/src/main/java/mage/cards/basiclands/Plains.java"
+    },
+    {
+      "name": "Healer's Hawk",
+      "engine_capability": "full",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bird"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_top_20626_WG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying",
+        "lifelink"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HealersHawk.java"
+    },
+    {
+      "name": "Fleeting Distraction",
+      "engine_capability": "full",
+      "mana_cost": "{U}",
+      "mana_value": 1,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_top_04956_UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "temporary_power_change",
+        "draw"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FleetingDistraction.java"
+    },
+    {
+      "name": "Cathar Commando",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_top_20626_WG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "flash",
+        "sacrifice_self",
+        "artifact_enchantment_destruction"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CatharCommando.java"
+    },
+    {
+      "name": "Spectral Sailor",
+      "engine_capability": "full",
+      "mana_cost": "{U}",
+      "mana_value": 1,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Spirit",
+        "Pirate"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_top_04956_UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "flash",
+        "flying",
+        "activated_draw"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SpectralSailor.java"
+    },
+    {
+      "name": "Treetop Snarespinner",
+      "engine_capability": "full",
+      "mana_cost": "{3}{G}",
+      "mana_value": 4,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Spider"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_top_20626_WG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "reach",
+        "deathtouch",
+        "activated_counters",
+        "sorcery_speed_activation"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TreetopSnarespinner.java"
+    }
+  ]
+}
