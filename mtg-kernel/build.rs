@@ -2327,6 +2327,12 @@ enum Special {
     /// keeping the generated recipe parameterized avoids a runtime card-name
     /// special while leaving room for later draw spells to share it.
     DrawCards(u8),
+    /// A targeted creature stat change until end of turn followed by a draw.
+    PumpCreatureThenDraw {
+        power: i32,
+        toughness: i32,
+        draw: u8,
+    },
     /// Deals `amount` damage to any target (Lightning Bolt, Fiery Temper,
     /// Fireblast, Lava Dart). Fireblast's/Lava Dart's real alt cost /
     /// flashback, and Fiery Temper's Madness, are modeled via the separate
@@ -2656,6 +2662,9 @@ impl Special {
             Special::None => "none".to_string(),
             Special::GreatFurnace => "great_furnace:add_r".to_string(),
             Special::DrawCards(count) => format!("draw_cards:{count}"),
+            Special::PumpCreatureThenDraw { power, toughness, draw } => {
+                format!("pump_creature_then_draw:{power}:{toughness}:{draw}")
+            }
             Special::BurnAnyTarget(amount) => format!("burn_any_target:{amount}"),
             Special::ChainLightning => "chain_lightning".to_string(),
             Special::TargetPlayerDraw { draw } => format!("target_player_draw:{draw}"),
@@ -2827,6 +2836,7 @@ enum AbilityEffectRecipe {
     PutSourceOntoBattlefieldTappedAndAttacking,
     MoveAllTargetsToExile,
     AddMinusOneMinusOneCounter,
+    AddPlusOnePlusOneCounters(u8),
     SearchLibraryToBattlefieldTapped {
         filter: LibrarySearchFilterRecipe,
     },
@@ -2867,6 +2877,11 @@ fn special_for(name: &str) -> Special {
         // mana ability is rules text, not intrinsic to a basic land type.
         "Great Furnace" => Special::GreatFurnace,
         "Lorien Revealed" => Special::DrawCards(3),
+        "Fleeting Distraction" => Special::PumpCreatureThenDraw {
+            power: -1,
+            toughness: 0,
+            draw: 1,
+        },
         "Thoughtcast" => Special::DrawCards(2),
         "Of One Mind" => Special::DrawCards(2),
         "Eviscerator's Insight" => Special::DrawCards(2),
@@ -3001,6 +3016,9 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::BurnAnyTarget(amount) => {
             format!("target=AnyTarget;spell=DealDamage({amount});mana=None")
         }
+        Special::PumpCreatureThenDraw { power, toughness, draw } => format!(
+            "target=Creature;spell=Sequence(PumpTargetUntilEndOfTurn({power},{toughness}),DrawCards(Controller,{draw}));mana=None"
+        ),
         Special::ChainLightning => "target=AnyTarget;spell=ChainLightning;mana=None".to_string(),
         Special::TargetPlayerDraw { draw } => {
             format!("target=AnyPlayer;spell=DrawCards(Target0,{draw});mana=None")
@@ -3150,6 +3168,8 @@ fn keywords_for(card: &CardJson) -> String {
     match card.name.as_str() {
         "Masked Meower" | "Clockwork Percussionist" => keywords.push("Keywords::HASTE"),
         "Sneaky Snacker"
+        | "Healer's Hawk"
+        | "Spectral Sailor"
         | "Bird Illusion Token"
         | "Faerie Miscreant"
         | "Faerie Seer"
@@ -3186,6 +3206,16 @@ fn keywords_for(card: &CardJson) -> String {
     }
     if card.name == "Saiba Cryptomancer" {
         keywords.push("Keywords::HEXPROOF");
+    }
+    if card.name == "Healer's Hawk" {
+        keywords.push("Keywords::LIFELINK");
+    }
+    if matches!(card.name.as_str(), "Cathar Commando" | "Spectral Sailor") {
+        keywords.push("Keywords::FLASH");
+    }
+    if card.name == "Treetop Snarespinner" {
+        keywords.push("Keywords::REACH");
+        keywords.push("Keywords::DEATHTOUCH");
     }
     if keywords.is_empty() {
         "Keywords::NONE".to_string()
@@ -3426,6 +3456,45 @@ fn escape_for(name: &str) -> String {
 /// then resolve the reusable typed library search.
 fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
+        "Cathar Commando" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 1,
+                },
+                AbilityCostRecipe::SacrificeSelf,
+            ],
+            effect: AbilityEffectRecipe::DestroyTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "ArtifactOrEnchantmentPermanent",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Spectral Sailor" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: Some("U"),
+                generic: 3,
+            }],
+            effect: AbilityEffectRecipe::DrawCards(1),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Treetop Snarespinner" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: Some("G"),
+                generic: 2,
+            }],
+            effect: AbilityEffectRecipe::AddPlusOnePlusOneCounters(1),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: true,
+            target_spec: "ControlledCreature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Faerie Macabre" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::DiscardSelf],
             effect: AbilityEffectRecipe::MoveAllTargetsToExile,
@@ -4064,6 +4133,7 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::AddMinusOneMinusOneCounter => {
             "add_minus_one_minus_one_counter".to_string()
         }
+        AbilityEffectRecipe::AddPlusOnePlusOneCounters(count) => format!("add_plus_one_plus_one_counters:{count}"),
         AbilityEffectRecipe::SearchLibraryToBattlefieldTapped { filter } => format!(
             "search_library_to_battlefield_tapped:{}",
             library_search_filter_token(filter)
@@ -4199,6 +4269,9 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
         }
         AbilityEffectRecipe::AddMinusOneMinusOneCounter => {
             "ability_effect_add_minus_one_minus_one_counter".to_string()
+        }
+        AbilityEffectRecipe::AddPlusOnePlusOneCounters(count) => {
+            format!("ability_effect_add_plus_one_plus_one_counters_{count}")
         }
         AbilityEffectRecipe::SearchLibraryToBattlefieldTapped { filter } => format!(
             "ability_effect_search_{}_to_battlefield_tapped",
@@ -4601,6 +4674,31 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out).unwrap();
     }
 
+    for card in cards {
+        if let Special::PumpCreatureThenDraw {
+            power,
+            toughness,
+            draw,
+        } = special_for(&card.name)
+        {
+            let function = card
+                .name
+                .to_ascii_lowercase()
+                .replace([' ', '\'', '-'], "_");
+            writeln!(out, "fn spell_effect_{function}() -> Option<EffectOp> {{").unwrap();
+            writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+            writeln!(out, "        EffectOp::PumpTargetUntilEndOfTurnDynamic {{ target: TargetRef::Target(0), power: DynamicValueDef::Fixed({power}), toughness: DynamicValueDef::Fixed({toughness}) }},").unwrap();
+            writeln!(
+                out,
+                "        EffectOp::DrawCards {{ player: PlayerRef::Controller, count: {draw} }},"
+            )
+            .unwrap();
+            writeln!(out, "    ]))").unwrap();
+            writeln!(out, "}}").unwrap();
+            writeln!(out).unwrap();
+        }
+    }
+
     // Shared/one-off effect-program functions. Function *pointers* (not
     // owned EffectOp values) are what make a `static [CardDef; N]` array
     // possible: EffectOp contains Vec/Box and can't live in a const
@@ -4903,6 +5001,9 @@ fn codegen(cards: &[CardJson]) -> String {
                     "    EffectOp::DestroyObject {{ object: ObjectRef::Target(0) }}"
                 )
                 .unwrap();
+            }
+            AbilityEffectRecipe::AddPlusOnePlusOneCounters(count) => {
+                writeln!(out, "    EffectOp::AddCountersToTarget {{ target_index: 0, optional: false, plus1_plus1: {count}, lifelink: 0, stun: 0 }}").unwrap();
             }
             AbilityEffectRecipe::DrawThenDiscard { draw, discard } => {
                 writeln!(out, "    EffectOp::Sequence(vec![").unwrap();
@@ -6010,6 +6111,14 @@ fn codegen(cards: &[CardJson]) -> String {
                 format!("spell_effect_draw_{count}"),
                 "no_effect".to_string(),
             ),
+            Special::PumpCreatureThenDraw { .. } => (
+                "TargetSpec::Creature",
+                format!(
+                    "spell_effect_{}",
+                    c.name.to_ascii_lowercase().replace([' ', '\'', '-'], "_")
+                ),
+                "no_effect".to_string(),
+            ),
             Special::BurnAnyTarget(amount) => (
                 "TargetSpec::AnyTarget",
                 format!("spell_effect_burn_any_target_{amount}"),
@@ -6503,7 +6612,8 @@ fn codegen(cards: &[CardJson]) -> String {
     writeln!(out).unwrap();
 
     // ---- content + executable-recipe hash ------------------------------
-    // v30 hashes every generated CardDef selector plus semantic tokens from
+    // v33 appends the first six FDN fixture definitions. The contract hashes
+    // every generated CardDef selector plus semantic tokens from
     // the same `Special` and structured activated-ability recipes that emit
     // executable definitions. Lorien's Draw3/search and Deep Analysis's
     // target-player draw/ordered flashback and Sleep's ordered Escape cost
@@ -6512,7 +6622,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // typed battlefield searches, Storm, and Clue remain bound too.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v32\n");
+    let mut canon = String::from("kernel_carddb/v33\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');

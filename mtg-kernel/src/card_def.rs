@@ -518,6 +518,9 @@ pub enum TargetSpec {
     /// announcing player. Appended for Masked Vandal and Troublemaker Ouphe
     /// without changing any existing target identity.
     OpponentArtifactOrEnchantmentPermanent,
+    /// Either player's artifact or enchantment. Cathar Commando may target
+    /// its controller's own permanent. Existing target identities stay fixed.
+    ArtifactOrEnchantmentPermanent,
 }
 
 impl TargetSpec {
@@ -562,6 +565,7 @@ impl TargetSpec {
             TargetSpec::NoncreatureArtifactPermanent => 33,
             TargetSpec::Land => 34,
             TargetSpec::OpponentArtifactOrEnchantmentPermanent => 35,
+            TargetSpec::ArtifactOrEnchantmentPermanent => 36,
         }
     }
 }
@@ -1422,7 +1426,7 @@ mod tests {
     fn card_defs_len_matches_pool() {
         // Hero Token remains id 159 and Clue Token remains id 160. Skeleton
         // Token is appended as id 161 without renumbering earlier ids.
-        assert_eq!(CARD_DEFS.len(), 162);
+        assert_eq!(CARD_DEFS.len(), 168);
     }
 
     #[test]
@@ -1470,6 +1474,7 @@ mod tests {
             (TargetSpec::NoncreatureArtifactPermanent, 33),
             (TargetSpec::Land, 34),
             (TargetSpec::OpponentArtifactOrEnchantmentPermanent, 35),
+            (TargetSpec::ArtifactOrEnchantmentPermanent, 36),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);
@@ -1485,10 +1490,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v32_is_frozen() {
-        // Version 32 appends the final pool trio and Skeleton token after the
-        // combined optional-cost root without renumbering prior definitions.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x64c8_2a26_1e07_8f1a);
+    fn card_db_hash_v33_is_frozen() {
+        // Version 33 appends six FDN fixture definitions and binds their
+        // executable recipes without renumbering the original 162 definitions.
+        assert_eq!(KERNEL_CARDDB_HASH, 0xff4b_9834_7ca4_ef1d);
     }
 
     #[test]
@@ -1688,7 +1693,10 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 162, "150 pool cards plus twelve required tokens");
+        assert_eq!(
+            full, 168,
+            "150 Pauper cards, twelve tokens and six Limited additions"
+        );
         assert_eq!(
             CARD_DEFS
                 .iter()

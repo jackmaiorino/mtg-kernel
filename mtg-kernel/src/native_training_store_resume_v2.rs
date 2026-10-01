@@ -661,7 +661,7 @@ fn resume_native_training_store_impl_v1(
     // mutation. `validate_native_training_store_v2` (the read-only walk used
     // to verify sealed evidence stores) deliberately performs no such
     // rejection; only this mutator path does. Exhaustive match (fix round,
-    // panel finding 3): a future third profile variant fails this match at
+    // panel finding 3): a future profile variant fails this match at
     // compile time rather than silently resuming under it. The CURRENT arm
     // (fix round, panel finding 1, blocker: bypass) additionally requires the
     // record's own catalog fields to equal the crate's live build constants
@@ -677,7 +677,7 @@ fn resume_native_training_store_impl_v1(
                 NativeTrainingStoreResumeV2ErrorKind::HistoricalCatalogProfile,
             ));
         }
-        NativeRunCatalogProfileV1::Current => {
+        NativeRunCatalogProfileV1::Current | NativeRunCatalogProfileV1::FdnFixtureBatchA => {
             if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
                 return Err(resume_error_v2(
                     NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch,
@@ -1670,17 +1670,17 @@ mod windows_resume_tests {
     }
 
     /// Dual-Profile Catalog Successor fix round (panel finding 1, blocker:
-    /// bypass), resume boundary: a CURRENT-profile run whose embedded
+    /// bypass), resume boundary: an FDN-profile run whose embedded
     /// catalog fields do not equal the crate's live build constants at this
     /// moment is rejected with the specific `CurrentCatalogProfileLiveMismatch`
     /// kind before the root is even recaptured. The crate's real live
     /// constants cannot be changed from a test, so this simulates a future
     /// catalog move via the module's own per-thread test shim
     /// (`LiveCatalogBuildIdentityOverrideGuardV1`): the record still claims
-    /// the pinned CURRENT literal (and so still classifies `Current`), but
+    /// the pinned FDN literal (and so still classifies `FdnFixtureBatchA`), but
     /// the shimmed "live" identity has moved past it.
     #[test]
-    fn resume_rejects_a_current_catalog_profile_run_whose_live_identity_has_moved() {
+    fn resume_rejects_an_fdn_catalog_profile_run_whose_live_identity_has_moved() {
         use crate::native_training_store_run_v2::LiveCatalogBuildIdentityOverrideGuardV1;
 
         let parent = TestParentV2::new("current-catalog-profile-live-mismatch");
@@ -1699,6 +1699,21 @@ mod windows_resume_tests {
 
         let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
 
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+    }
+
+    #[test]
+    fn resume_rejects_the_pre_fdn_profile_before_interacting_with_store_contents() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_pre_fdn_v1;
+        let parent = TestParentV2::new("pre-fdn-profile");
+        let root = bootstrap_native_training_store_v2(parent.path(), "store")
+            .unwrap()
+            .into_root();
+        let run = decode_train_run_v2(&test_fixture_bytes_pre_fdn_v1()).unwrap();
+        let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
         assert_eq!(
             result.unwrap_err().kind(),
             NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch

@@ -1337,6 +1337,7 @@ fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::NoncreatureArtifactPermanent
         | TargetSpec::Land
         | TargetSpec::OpponentArtifactOrEnchantmentPermanent
+        | TargetSpec::ArtifactOrEnchantmentPermanent
         | TargetSpec::CreatureOtherThanSource => 1,
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
@@ -2511,6 +2512,17 @@ fn legal_targets_for_controller_from_source(
                 object.controller == controller.opponent()
                     && object.zone == Zone::Battlefield
                     && object_has_type(state, id, CardType::Creature)
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::ArtifactOrEnchantmentPermanent => state
+            .players
+            .iter()
+            .flat_map(|player| player.battlefield.iter().copied())
+            .filter(|&id| {
+                state.objects.get(id).zone == Zone::Battlefield
+                    && (object_has_type(state, id, CardType::Artifact)
+                        || object_has_type(state, id, CardType::Enchantment))
             })
             .map(Target::Object)
             .collect(),

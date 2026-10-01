@@ -16,8 +16,10 @@ statistics omitted. The two deck files are unchanged copies.
 
 The 286 reference names are an observed gameplay dataset, not a complete
 booster manifest. The inventory tool adds all five basic lands and any
-additional fixture cards. Plains is present in the reference but absent from
-the current kernel registry. Printed collector numbers are not a safe
+additional fixture cards. After fixture batch A, 13 reference names are
+supported and 273 remain missing. Both fixtures resolve 19 of their 40
+mainboard copies; 30 distinct fixture names still need implementation.
+Printed collector numbers are not a safe
 filter for draft availability: these real decks also use alternate printings.
 The full target pool, including any Special Guests, needs a separate manifest.
 

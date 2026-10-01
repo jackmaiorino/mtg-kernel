@@ -12070,8 +12070,8 @@ mod tests {
 
     #[test]
     fn environment_hashes_are_diagnostic_dispatched_with_exact_goldens() {
-        // Pre-edit captured legacy goldens (episode 1, env seed 99, max 8),
-        // recorded from the untouched parent before any production edit.
+        // Episode 1, env seed 99, max 8. The v33 registry changes the
+        // policy envelope database binding; both core-state goldens stay fixed.
         let legacy_full = RlEpisodeSessionV1::reset(1, 99, 8);
         let legacy_fast = FastActorSessionV1::reset(1, 99, 8);
         let v2_full = full_session_on_environment_v2(99);
@@ -12081,8 +12081,8 @@ mod tests {
         let v2_fast_core = v2_fast.privileged_core_environment_hash();
         assert_eq!(
             legacy_full.privileged_environment_hash(),
-            0xfca3_b546_61ec_28c6,
-            "final-pool-v8 legacy policy environment golden"
+            0xafb1_a909_df71_5656,
+            "fdn-batch-a-v33 legacy policy environment golden"
         );
         assert_eq!(
             legacy_full.privileged_core_environment_hash(),
@@ -12100,8 +12100,8 @@ mod tests {
         // combat no longer leaves attackers_declared set (the only state
         // difference), which both the policy and the core hash cover.
         assert_eq!(
-            v2_policy, 0x39df_062b_9cf3_71ef,
-            "final-pool-v9 environment-v2 policy environment golden"
+            v2_policy, 0x849e_d59f_ee6f_8a32,
+            "fdn-batch-a-v33 environment-v2 policy environment golden"
         );
         assert_eq!(
             v2_full_core, 0x5719_0d4d_4093_f99f,
@@ -12111,7 +12111,7 @@ mod tests {
             v2_fast_core, v2_full_core,
             "full and fast environment-v2 core hashes are equal"
         );
-        assert_ne!(v2_policy, 0xfca3_b546_61ec_28c6);
+        assert_ne!(v2_policy, 0xafb1_a909_df71_5656);
         assert_ne!(v2_full_core, 0x9a93_e402_6f8e_ad86);
     }
 

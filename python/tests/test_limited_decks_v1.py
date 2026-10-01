@@ -24,10 +24,22 @@ class LimitedDeckTest(unittest.TestCase):
             (REPO_ROOT / "data/cards_v1.json").read_bytes()
         ))
 
+    def test_registry_extension_keeps_all_original_ids_and_resolves_the_new_batch(self) -> None:
+        cards = limited.load_json((REPO_ROOT / "data/cards_v1.json").read_bytes())["cards"]
+        original_names = json.dumps([card["name"] for card in cards[:162]],
+                                    ensure_ascii=False, separators=(",", ":")).encode()
+        self.assertEqual(hashlib.sha256(original_names).hexdigest(),
+                         "396e3458a989e9b40ca59dabb389bda9dd14b9fa367a871ee84129f292e0c156")
+        names = ["Plains", "Healer's Hawk", "Fleeting Distraction", "Cathar Commando",
+                 "Spectral Sailor", "Treetop Snarespinner"]
+        deck = limited.parse_dck("\n".join(f"10 {name}" for name in names))
+        self.assertEqual(limited.resolve_mainboard(deck, self.registry),
+                         [self.registry[name].card_id for name in names for _ in range(10)])
+
     def test_real_decks_are_40_cards_and_report_missing_behavior(self) -> None:
         for filename, supported_copies, source_sha256 in [
-            ("FDN_top_04956_UG.dck", 17, "bb618d6eaddf04b0a9e51e9a88cd512a04635e99ebca91b11ace4c305d634c86"),
-            ("FDN_top_20626_WG.dck", 8, "be026f1c86e3aabcb294517188d0c5f4f0cdfa3c5e95ee9dedfc51d3cdf814f7"),
+            ("FDN_top_04956_UG.dck", 19, "bb618d6eaddf04b0a9e51e9a88cd512a04635e99ebca91b11ace4c305d634c86"),
+            ("FDN_top_20626_WG.dck", 19, "be026f1c86e3aabcb294517188d0c5f4f0cdfa3c5e95ee9dedfc51d3cdf814f7"),
         ]:
             with self.subTest(filename=filename):
                 self.assertEqual(hashlib.sha256((FIXTURES / filename).read_bytes()).hexdigest(), source_sha256)
@@ -96,7 +108,7 @@ class LimitedDeckTest(unittest.TestCase):
         by_name = {card["name"]: card for card in report["cards"]}
         self.assertEqual(report["reference_card_count"], 1)
         self.assertEqual(report["required_card_count"], 6)
-        self.assertEqual(by_name["Plains"]["status"], "missing")
+        self.assertEqual(by_name["Plains"]["status"], "full")
         self.assertFalse(by_name["Unknown"]["in_reference"])
         self.assertEqual(by_name["Unknown"]["fixture_copies"], 40)
         for names in ([], ["A", "A"], [42]):
@@ -111,6 +123,9 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 13)
+        self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
+                             for card in report["cards"]), 30)
 
     def test_cli_refusal_has_no_materialized_ids_and_inspection_is_deterministic(self) -> None:
         args = ["--deck", str(FIXTURES / "FDN_top_04956_UG.dck")]

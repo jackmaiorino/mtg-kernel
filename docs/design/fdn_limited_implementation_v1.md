@@ -18,17 +18,22 @@ claim is authorized by the work plan. Preserve the lead's current PC reservation
 Start with gameplay from already-built decks. Draft picks, sealed-pool deck
 construction and BO3 Limited sideboarding are separate extensions. Define the
 target card pool by names, not collector-number cutoffs or every FDN product.
-The source reference has 286 names, including all five basics, with seven
-current registry matches and 279 missing names before further pool auditing.
-The two starting fixtures contain 39 unique names, of which 36 are missing.
-The UG fixture has 17/40 supported copies; the WG fixture has 8/40. This
-36-name union is the first card batch after the custom-deck interface.
+The source reference has 286 names, including all five basics. Before card
+implementation it had seven registry matches and 279 missing names. The two
+starting fixtures contain 39 unique names, originally with 36 missing. Their
+baseline support was UG 17/40 copies and WG 8/40. Batch A adds six names:
+Plains, Healer's Hawk, Fleeting Distraction, Cathar Commando, Spectral Sailor
+and Treetop Snarespinner. Current support is **13/286 reference names** and
+**19/40 copies in each fixture**, with **30 fixture names still missing**.
 
 Milestone 3's opt-in engine priority presentation is implemented on
 `codex/fdn-priority-windows-v1`; see `limited_priority_windows_v1.md`.
-The 36 missing fixture names now have seven mechanic batches in
-`fdn_fixture_mechanics_v1.md`. Next bounded work: current combat damage choices
-and batch A's six simple cards, followed by mulligans and the remaining batches.
+The originally missing fixture names have seven mechanic batches in
+`fdn_fixture_mechanics_v1.md`. Batch A implements complete card behaviors
+through generic engine operations, with casting, target loss, payment,
+restoration and combat tests. Next bounded work: batch B's eight cards and
+their triggers/tokens, plus current combat damage choices before batch C.
+Mulligans and the remaining batches are still outstanding.
 The Forest/Island
 smoke cannot establish Limited playing ability or FDN parity.
 Milestone 4's real fixtures remain visibly unsupported until their

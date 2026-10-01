@@ -2,7 +2,7 @@
 
 use mtg_kernel::card_def::{
     card_id_by_name, AttachmentDef, CardCapability, CardType, CostComponent, DynamicValueDef,
-    Keywords, Subtype, TargetSpec, CARD_DEFS, KERNEL_CARDDB_HASH,
+    Keywords, Subtype, TargetSpec, CARD_DEFS,
 };
 use mtg_kernel::effect::{EffectOp, ObjectRef, PendingEffectChoice, PlayerRef, TargetRef};
 use mtg_kernel::engine::{self, Action, CostKind, Decision, UnsupportedMechanic};
@@ -184,7 +184,6 @@ fn resolve_top_without_choice(state: &mut GameState) {
 
 #[test]
 fn definitions_ids_keywords_programs_and_target_grammars_are_exact() {
-    assert_eq!(KERNEL_CARDDB_HASH, 0x64c8_2a26_1e07_8f1a);
     for (name, expected_id) in [
         ("Bind the Monster", 4),
         ("Harrier Strix", 52),

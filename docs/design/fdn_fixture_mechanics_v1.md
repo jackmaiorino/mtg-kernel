@@ -1,8 +1,8 @@
 # FDN fixture implementation batches
 
-This inventories the **36 missing names** in the two pinned 40-card fixtures.
-It is an implementation dependency list, not a support declaration. None of
-these names is added to the registry by the priority-window PR.
+This inventories the **36 originally missing names** in the two pinned
+40-card fixtures. Batch A registers six of them with rules tests. B through G
+contain the **30 still missing names**. The priority-window PR added no cards.
 
 Sources: the pinned `.dck` files under `data/limited/fdn_v1/`, the corresponding
 XMage card implementations at `a5c90fe180021e70e2a644ade00eeab07f857a40`, and
@@ -11,7 +11,7 @@ XMage paths below are relative to `Mage.Sets/src/mage/cards/`. Review the actual
 implementation and current Oracle text again when registering each card.
 
 UG and WG denote fixture membership. Forest, Island and Llanowar Elves already
-resolve; Plains does not. Kiora, the Rising Tide is a creature, so planeswalker
+resolved; Plains resolves after batch A. Kiora, the Rising Tide is a creature, so planeswalker
 support is a dependency of the wider pool rather than these two fixtures.
 
 | Batch | Card | Deck | Required behavior | XMage source |
@@ -63,11 +63,13 @@ starting points; they do not prove these new cards' entire behavior works.
 Before marking a card fully supported, test every reachable branch, including
 target loss, costs, repeat activations and relevant event ordering.
 
-The next card slice is A. Its acceptance is six resolving names with targeted
-rules tests, including flash in the new windows, lifelink during combat,
+Batch A's acceptance is six resolving names with targeted rules tests,
+including flash in the new windows, lifelink during combat,
 sacrifice paid even when the ability's target later becomes illegal, and the
 sorcery timing restriction. It does not depend on copying, layered Aura
-transformation or the unusual cards in G.
+transformation or the unusual cards in G. The next card slice is B. Its
+acceptance requires ETB and draw-event ordering, intervening conditions at
+both announcement and resolution, incarnation-safe counters and exact tokens.
 
 Batch C requires explicit current damage allocation and trample tests.
 Wizards removed damage assignment order for FDN; arbitrary multi-blocker

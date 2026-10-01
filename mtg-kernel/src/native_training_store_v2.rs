@@ -659,7 +659,7 @@ fn publish_generation_v2(
     // lock, or filesystem mutation. Both `publish_genesis_generation_v2` and
     // `publish_prepared_segment_v2` funnel through this shared function, so
     // this one check covers both. Exhaustive match (fix round, panel finding
-    // 3): a future third profile variant fails this match at compile time
+    // 3): a future profile variant fails this match at compile time
     // rather than silently publishing under it. The CURRENT arm (fix round,
     // panel finding 1, blocker: bypass) additionally requires the record's
     // own catalog fields to equal the crate's live build constants at this
@@ -675,7 +675,7 @@ fn publish_generation_v2(
                 NativeTrainingStorePublisherV2ErrorKind::HistoricalCatalogProfile,
             ));
         }
-        NativeRunCatalogProfileV1::Current => {
+        NativeRunCatalogProfileV1::Current | NativeRunCatalogProfileV1::FdnFixtureBatchA => {
             if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
                 return Err(publisher_error_v2(
                     NativeTrainingStorePublisherV2ErrorKind::CurrentCatalogProfileLiveMismatch,
@@ -2011,23 +2011,26 @@ mod windows_publisher_tests {
     }
 
     /// Dual-Profile Catalog Successor fix round (panel finding 1, blocker:
-    /// bypass), publisher boundary: a CURRENT-profile run whose embedded
+    /// bypass), publisher boundary: an FDN-profile run whose embedded
     /// catalog fields do not equal the crate's live build constants at this
     /// moment is rejected with the specific `CurrentCatalogProfileLiveMismatch`
     /// kind before any lock or filesystem mutation. Simulates a future
     /// catalog move via the run_v2 module's own per-thread test shim (the
     /// crate's real live constants cannot be changed from a test): the
-    /// record still claims the pinned CURRENT literal (and so still
-    /// classifies `Current`), but the shimmed "live" identity has moved
+    /// record still claims the pinned FDN literal (and so still
+    /// classifies `FdnFixtureBatchA`), but the shimmed "live" identity has moved
     /// past it.
     #[test]
-    fn publish_genesis_rejects_a_current_catalog_profile_run_whose_live_identity_has_moved() {
+    fn publish_genesis_rejects_an_fdn_catalog_profile_run_whose_live_identity_has_moved() {
         use crate::native_training_store_run_v2::LiveCatalogBuildIdentityOverrideGuardV1;
 
         let store = TestStoreV2::with_skeleton("current-catalog-profile-live-mismatch");
         let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
         let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
-        assert_eq!(run.catalog_profile_v1(), NativeRunCatalogProfileV1::Current);
+        assert_eq!(
+            run.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnFixtureBatchA
+        );
         let executor = fresh_executor_v2(&run);
         let genesis = genesis_authorities_v2(&run, &executor);
 
@@ -2046,21 +2049,43 @@ mod windows_publisher_tests {
         assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Latest).exists());
     }
 
+    #[test]
+    fn publish_rejects_the_pre_fdn_profile_before_mutating_any_store_files() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_pre_fdn_v1;
+        let store = TestStoreV2::with_skeleton("pre-fdn-profile");
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
+        let run = decode_train_run_v2(&test_fixture_bytes_pre_fdn_v1()).unwrap();
+        assert_eq!(run.catalog_profile_v1(), NativeRunCatalogProfileV1::Current);
+        let live = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        let executor = fresh_executor_v2(&live);
+        let genesis = genesis_authorities_v2(&live, &executor);
+        let result = publish_genesis_v2(&root, &run, &genesis);
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStorePublisherV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+        assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Run).exists());
+        assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Latest).exists());
+    }
+
     /// Dual-Profile Catalog Successor (collab CLAUDE #220) acceptance
-    /// evidence: construct a NEW-catalog CURRENT-profile record (the default
+    /// evidence: construct an FDN-profile record (the default
     /// `test_fixture_bytes_v2()` fixture, which embeds the live nine-deck
     /// catalog identity), seal it to a temp store through the real genesis
     /// publisher, decode `run.json` back off disk independent of the
     /// in-memory record, and fully validate the resulting store -- the whole
     /// construct/seal/decode/validate cycle, not just a bare decode.
     #[test]
-    fn current_profile_record_round_trips_through_construct_seal_decode_validate() {
+    fn fdn_profile_record_round_trips_through_construct_seal_decode_validate() {
         use crate::native_training_store_resume_v2::validate_native_training_store_v2;
 
         let store = TestStoreV2::with_skeleton("current-catalog-profile-round-trip");
         let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
         let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
-        assert_eq!(run.catalog_profile_v1(), NativeRunCatalogProfileV1::Current);
+        assert_eq!(
+            run.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnFixtureBatchA
+        );
 
         let executor = fresh_executor_v2(&run);
         let genesis = genesis_authorities_v2(&run, &executor);
@@ -2073,7 +2098,7 @@ mod windows_publisher_tests {
         assert_eq!(redecoded.canonical_bytes(), run.canonical_bytes());
         assert_eq!(
             redecoded.catalog_profile_v1(),
-            NativeRunCatalogProfileV1::Current
+            NativeRunCatalogProfileV1::FdnFixtureBatchA
         );
 
         // Full read-only store validation, the same mechanism used to verify

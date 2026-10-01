@@ -5923,9 +5923,11 @@ mod tests {
         // clear (CR 511.3): all five packets drop the stale
         // attackers_declared/blockers_declared flags, and the fifth its
         // stale combat attacker (see the counts above).
+        // The v33 registry adds six FDN cards. Observation/action provenance
+        // binds that new database hash; the five structural counts stay fixed.
         assert_eq!(
             digest,
-            "570bae728d89dea4b92d714ec5f410d8841e70ef60d37b3f5b02e066ef80d2cc"
+            "9704599fb011f656e19272f4084a1ddc9d960db62c60feaeda98cb31ce4b163f"
         );
     }
 
