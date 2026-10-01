@@ -11,6 +11,12 @@
 use super::*;
 use crate::line_b_teacher_target_v1::LineBDivergenceV1;
 
+type HeadGradientTensorsV1 = (
+    [Option<Tensor<CudaBackendV1, 2>>; 4],
+    [Option<Tensor<CudaBackendV1, 1>>; 3],
+);
+type ChunkHeadReadbackV1 = (ChunkBackwardOutputsV1, Vec<Vec<f32>>);
+
 /// The root rows padded to the widest menu, with the frozen targets as
 /// constants (reverse: `log q`; forward: `q`; zero at pads).
 pub(crate) struct LineBRootLossPlanV1 {
@@ -118,10 +124,7 @@ pub(crate) struct LineBRootBackwardOutputsV1 {
 fn head_gradient_tensors_v1(
     model: &ProductionNet8<CudaAutodiffBackendV1>,
     gradients: &GradientsParams,
-) -> (
-    [Option<Tensor<CudaBackendV1, 2>>; 4],
-    [Option<Tensor<CudaBackendV1, 1>>; 3],
-) {
+) -> HeadGradientTensorsV1 {
     let bias = |linear: &Linear<CudaAutodiffBackendV1>| {
         linear
             .bias
@@ -148,10 +151,7 @@ fn head_gradient_tensors_v1(
 /// to `HEAD_ONLY_TRAINABLE_TENSORS_V1` order.
 fn read_head_gradients_v1(
     transaction: Transaction<CudaBackendV1>,
-    heads: (
-        [Option<Tensor<CudaBackendV1, 2>>; 4],
-        [Option<Tensor<CudaBackendV1, 1>>; 3],
-    ),
+    heads: HeadGradientTensorsV1,
 ) -> (Transaction<CudaBackendV1>, [bool; 7]) {
     // Head order: scorer.0.weight, scorer.0.bias, scorer.2.weight,
     // value_head.0.weight, value_head.0.bias, value_head.2.weight,
@@ -270,7 +270,7 @@ impl ExperimentalDeviceTrainStateV1 {
         plan: &DenseGroupLossPlanGaeV1,
         value_coefficient: f32,
         normalization_group_count: f32,
-    ) -> Result<(ChunkBackwardOutputsV1, Vec<Vec<f32>>), Box<dyn Error>> {
+    ) -> Result<ChunkHeadReadbackV1, Box<dyn Error>> {
         let (logits, values) = if self.wide {
             self.model.forward_wide_v1(batch)
         } else {
