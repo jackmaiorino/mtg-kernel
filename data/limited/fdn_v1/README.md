@@ -16,9 +16,9 @@ statistics omitted. The two deck files are unchanged copies.
 
 The 286 reference names are an observed gameplay dataset, not a complete
 booster manifest. The inventory tool adds all five basic lands and any
-additional fixture cards. After fixture batch A, 13 reference names are
-supported and 273 remain missing. Both fixtures resolve 19 of their 40
-mainboard copies; 30 distinct fixture names still need implementation.
+additional fixture cards. After fixture batches A and B, 21 reference names
+are registered and 265 remain missing. UG resolves 23/40 mainboard copies;
+WG resolves 25/40. The fixtures still need 22 distinct card names.
 Printed collector numbers are not a safe
 filter for draft availability: these real decks also use alternate printings.
 The full target pool, including any Special Guests, needs a separate manifest.
@@ -28,7 +28,9 @@ unchanged 162-definition Pauper registry. The importer combines both files in
 that order and reports their separate SHA-256s. Build the gameplay binary with
 `cargo build --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_env`.
 Default builds retain the original Pauper catalog and its v32 identity; the
-Limited feature selects the appended definitions and their v33 identity.
+Limited feature selects the appended definitions and their v34 identity.
+The older v33 batch A profile remains readable and is rejected for mutation
+when it does not match the actual build.
 
 From the repository root, no dependencies or engine build are needed for inspection:
 

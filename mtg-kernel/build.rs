@@ -3189,6 +3189,9 @@ fn keywords_for(card: &CardJson) -> String {
         "Sneaky Snacker"
         | "Healer's Hawk"
         | "Spectral Sailor"
+        | "Dazzling Angel"
+        | "Clinquant Skymage"
+        | "Youthful Valkyrie"
         | "Bird Illusion Token"
         | "Faerie Miscreant"
         | "Faerie Seer"
@@ -3203,7 +3206,7 @@ fn keywords_for(card: &CardJson) -> String {
             keywords.push("Keywords::REACH")
         }
         "Spinewoods Paladin" | "Avenging Hunter" => keywords.push("Keywords::TRAMPLE"),
-        "Outlaw Medic" | "Sacred Cat" | "Sacred Cat Embalmed Token" => {
+        "Outlaw Medic" | "Sacred Cat" | "Sacred Cat Embalmed Token" | "Guarded Heir" => {
             keywords.push("Keywords::LIFELINK")
         }
         "Guardian of the Guildpact" => keywords.push("Keywords::PROTECTION_FROM_MONOCOLORED"),
@@ -4524,6 +4527,13 @@ fn changeling_for(name: &str) -> bool {
 /// event, target, and effect part of the generated card database identity.
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Blossoming Sands" | "Thornwood Falls" => "etb:gain_life:1",
+        "Dazzling Angel" => "other_controlled_creature_enters:gain_life:1",
+        "Clinquant Skymage" => "each_controller_draw:counter_on_bound_source:1",
+        "Dwynen's Elite" => "etb_if_another_elf:recheck_other_source_incarnation:create_elf_warrior",
+        "Good-Fortune Unicorn" => "other_controlled_creature_enters:counter_on_bound_event_object:1",
+        "Guarded Heir" => "etb:create_two_3_3_white_knights",
+        "Youthful Valkyrie" => "other_controlled_angel_enters:counter_on_bound_source:1",
         "Guttersnipe" => "cast_instant_or_sorcery:damage_opponent:2",
         "Murmuring Mystic" => "cast_instant_or_sorcery:create_bird_illusion",
         "Voldaren Epicure" => "etb:damage_opponent:1:create_blood",
@@ -6643,7 +6653,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v33\n"
+            "kernel_carddb/v34\n"
         } else {
             "kernel_carddb/v32\n"
         },
@@ -6901,6 +6911,9 @@ fn supertype_variant(t: &str) -> &'static str {
 /// which needs to).
 fn subtype_variant(t: &str) -> &'static str {
     match t {
+        "Angel" => "Subtype::Angel",
+        "Noble" => "Subtype::Noble",
+        "Unicorn" => "Subtype::Unicorn",
         "Ape" => "Subtype::Ape",
         "Aura" => "Subtype::Aura",
         "BIRD" => "Subtype::BirdAllCaps",

@@ -219,6 +219,12 @@ pub enum EffectCond {
     /// Refurbished Familiar's 1v1 form: its opponent can discard exactly
     /// one card iff that opponent's hand is nonempty at resolution.
     OpponentHasCardsInHand,
+    /// The FDN intervening condition excludes the historical source
+    /// incarnation, so a returned physical card is another object.
+    ControlsOtherIncarnationSubtypeCount {
+        subtype: Subtype,
+        minimum_count: u8,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -822,6 +828,15 @@ pub enum EffectOp {
     /// then shuffle.
     ResolveUndercityThrone {
         binding: InitiativeTriggerBindingV1,
+    },
+    /// Event-bound counter template. Trigger collection replaces this with
+    /// the exact entering incarnation; it creates no Magic target.
+    BindPlusOnePlusOneCounterToTriggerEventObject,
+    /// An entering creature bound when a nontargeted trigger was collected.
+    /// Distinct from source-bound counters, whose source contract is checked
+    /// separately when their stack item is restored or resolved.
+    PutPlusOnePlusOneCounterOnTriggerEventObject {
+        object: EffectObjectBinding,
     },
 }
 
@@ -9573,7 +9588,8 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             };
             state.objects.get_mut(object_id).counters.plus1_plus1 = next;
         }
-        EffectOp::BindPlusOnePlusOneCounterToTriggerSource => {
+        EffectOp::BindPlusOnePlusOneCounterToTriggerSource
+        | EffectOp::BindPlusOnePlusOneCounterToTriggerEventObject => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -9593,7 +9609,8 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ));
             }
         }
-        EffectOp::PutPlusOnePlusOneCounterOnBoundObject { object } => {
+        EffectOp::PutPlusOnePlusOneCounterOnBoundObject { object }
+        | EffectOp::PutPlusOnePlusOneCounterOnTriggerEventObject { object } => {
             if validate_effect_object_binding(state, *object).is_err()
                 || object.expected_zone != Zone::Battlefield
             {
@@ -11008,6 +11025,26 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
                 .iter()
                 .copied()
                 .filter(|id| *id != ctx.source)
+                .filter(|id| {
+                    subtype.is_in_subtype_ids(&crate::engine::effective_subtype_ids(state, *id))
+                })
+                .count();
+            count >= usize::from(*minimum_count)
+        }
+        EffectCond::ControlsOtherIncarnationSubtypeCount {
+            subtype,
+            minimum_count,
+        } => {
+            let count = state.players[ctx.controller.index()]
+                .battlefield
+                .iter()
+                .copied()
+                .filter(|id| {
+                    *id != ctx.source
+                        || ctx.ability_source_contract.is_some_and(|source| {
+                            state.objects.get(*id).zone_change_count != source.zone_change_count
+                        })
+                })
                 .filter(|id| {
                     subtype.is_in_subtype_ids(&crate::engine::effective_subtype_ids(state, *id))
                 })

@@ -1,8 +1,9 @@
 # FDN fixture implementation batches
 
 This inventories the **36 originally missing names** in the two pinned
-40-card fixtures. Batch A registers six of them with rules tests. B through G
-contain the **30 still missing names**. The priority-window PR added no cards.
+40-card fixtures. Batch A registers six and batch B registers eight, with
+their exact tokens. C through G contain the **22 still missing names**.
+The priority-window PR added no cards.
 
 Sources: the pinned `.dck` files under `data/limited/fdn_v1/`, the corresponding
 XMage card implementations at `a5c90fe180021e70e2a644ade00eeab07f857a40`, and
@@ -67,7 +68,7 @@ Batch A's acceptance is six resolving names with targeted rules tests,
 including flash in the new windows, lifelink during combat,
 sacrifice paid even when the ability's target later becomes illegal, and the
 sorcery timing restriction. It does not depend on copying, layered Aura
-transformation or the unusual cards in G. The next card slice is B. Its
+transformation or the unusual cards in G. Batch B's
 acceptance requires ETB and draw-event ordering, intervening conditions at
 both announcement and resolution, incarnation-safe counters and exact tokens.
 

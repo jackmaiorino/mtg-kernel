@@ -208,6 +208,10 @@ pub enum Subtype {
     /// Appended for the 4/1 black Skeleton token created by Undercity's
     /// Catacombs room. Existing stable ids remain fixed.
     Skeleton,
+    /// FDN types append without changing any existing observation id.
+    Angel,
+    Noble,
+    Unicorn,
 }
 
 impl Subtype {
@@ -270,6 +274,12 @@ impl Subtype {
         Subtype::Phyrexian,
         Subtype::Horror,
         Subtype::Nightmare,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Angel,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Noble,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Unicorn,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -1429,7 +1439,7 @@ mod tests {
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                168
+                178
             } else {
                 162
             }
@@ -1504,8 +1514,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v33_is_frozen() {
-        const EXPECTED_FDN: u64 = 0xff4b_9834_7ca4_ef1d;
+    fn card_db_hash_v34_is_frozen() {
+        const EXPECTED_FDN: u64 = 0xd2b4_79e9_d599_0f07;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
@@ -1709,7 +1719,7 @@ mod tests {
         assert_eq!(
             full,
             CARD_DEFS.len(),
-            "150 Pauper cards, twelve tokens and six Limited additions"
+            "150 Pauper cards, twelve original tokens and sixteen Limited additions"
         );
         assert_eq!(
             CARD_DEFS

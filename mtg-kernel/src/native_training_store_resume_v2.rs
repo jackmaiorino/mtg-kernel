@@ -677,7 +677,9 @@ fn resume_native_training_store_impl_v1(
                 NativeTrainingStoreResumeV2ErrorKind::HistoricalCatalogProfile,
             ));
         }
-        NativeRunCatalogProfileV1::Current | NativeRunCatalogProfileV1::FdnFixtureBatchA => {
+        NativeRunCatalogProfileV1::Current
+        | NativeRunCatalogProfileV1::FdnFixtureBatchA
+        | NativeRunCatalogProfileV1::FdnFixtureBatchB => {
             if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
                 return Err(resume_error_v2(
                     NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch,
@@ -1677,7 +1679,7 @@ mod windows_resume_tests {
     /// constants cannot be changed from a test, so this simulates a future
     /// catalog move via the module's own per-thread test shim
     /// (`LiveCatalogBuildIdentityOverrideGuardV1`): the record still claims
-    /// the pinned FDN literal (and so still classifies `FdnFixtureBatchA`), but
+    /// the pinned FDN literal (and so still classifies the selected live profile), but
     /// the shimmed "live" identity has moved past it.
     #[test]
     fn resume_rejects_an_fdn_catalog_profile_run_whose_live_identity_has_moved() {
@@ -1714,6 +1716,22 @@ mod windows_resume_tests {
             .unwrap()
             .into_root();
         let run = decode_train_run_v2(&test_fixture_bytes_pre_fdn_v1()).unwrap();
+        let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn resume_rejects_prior_fdn_batch_before_interacting_with_store_contents() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_batch_a_v1;
+        let parent = TestParentV2::new("prior-fdn-batch");
+        let root = bootstrap_native_training_store_v2(parent.path(), "store")
+            .unwrap()
+            .into_root();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_batch_a_v1()).unwrap();
         let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
         assert_eq!(
             result.unwrap_err().kind(),
