@@ -4971,14 +4971,18 @@ mod tests {
             },
             "environment": {
                 // Dual-Profile Catalog Successor (collab CLAUDE #220): the
-                // Default fixture builds the FDN batch A profile (v33 registry,
-                // unchanged nine-deck catalog), matching what production
+                // Default fixture follows the selected build's registry,
+                // matching what production
                 // capture actually mints today, so every test built on top
                 // of `fixture_record()` exercises the live science-loop/
                 // publish/resume paths unrejected. `fixture_record_historical()`
                 // below overrides these two fields back to the HISTORICAL
                 // (rev3) literals for the dedicated dual-profile tests.
-                "card_db_hash_u64_hex": FROZEN_CARD_DB_HASH_U64_HEX_FDN_BATCH_A_V1,
+                "card_db_hash_u64_hex": if cfg!(feature = "limited-fdn-fixtures") {
+                    FROZEN_CARD_DB_HASH_U64_HEX_FDN_BATCH_A_V1
+                } else {
+                    FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
+                },
                 "runtime_catalog_schema": FROZEN_RUNTIME_CATALOG_SCHEMA_V2,
                 "runtime_catalog_protocol": FROZEN_RUNTIME_CATALOG_PROTOCOL_V2,
                 "runtime_catalog_sha256": FROZEN_RUNTIME_CATALOG_SHA256_FDN_BATCH_A_V1,
