@@ -72,7 +72,9 @@ transformation or the unusual cards in G. Batch B's
 acceptance requires ETB and draw-event ordering, intervening conditions at
 both announcement and resolution, incarnation-safe counters and exact tokens.
 
-Batch C requires explicit current damage allocation and trample tests.
+The [combat foundation](fdn_combat_damage_v1.md) exposes current damage
+allocation and trample in custom-game schema 3, with focused tests and
+deterministic binary replay. Batch C still needs its card interaction tests.
 Wizards removed damage assignment order for FDN; arbitrary multi-blocker
 allocation must be a real choice. Bite Down also needs planeswalker targeting
 before its complete rules behavior can be declared supported. D and E build
