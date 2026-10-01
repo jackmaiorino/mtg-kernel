@@ -61,6 +61,29 @@ class PauperPoolManifestTest(unittest.TestCase):
         cls.registry = load(cls.registry_path)
         cls.runtime_decks = load(cls.runtime_decks_path)
 
+    def test_registry_extension_refuses_content_drift(self) -> None:
+        registry = json.loads(json.dumps(self.registry))
+        card_id, _digest = manifests.PINNED_REGISTRY_EXTENSION_CARDS_V1["Urza's Tower"]
+        registry["cards"][card_id]["produces_mana"] = ["G"]
+        _pool, rosters = manifests.build_pool_manifest(REPO_ROOT)
+        with self.assertRaisesRegex(manifests.ManifestError, "changed its id or content"):
+            manifests.normalize_registry(registry, rosters)
+
+    def test_registry_extension_refuses_reordering(self) -> None:
+        registry = json.loads(json.dumps(self.registry))
+        first = min(index for index, _digest in manifests.PINNED_REGISTRY_EXTENSION_CARDS_V1.values())
+        registry["cards"][first], registry["cards"][first + 1] = registry["cards"][first + 1], registry["cards"][first]
+        _pool, rosters = manifests.build_pool_manifest(REPO_ROOT)
+        with self.assertRaisesRegex(manifests.ManifestError, "changed its id or content"):
+            manifests.normalize_registry(registry, rosters)
+
+    def test_registry_extension_refuses_missing_cards(self) -> None:
+        registry = json.loads(json.dumps(self.registry))
+        registry["cards"].pop()
+        _pool, rosters = manifests.build_pool_manifest(REPO_ROOT)
+        with self.assertRaisesRegex(manifests.ManifestError, "extension cards are missing"):
+            manifests.normalize_registry(registry, rosters)
+
     def test_exact_java_order_keys_paths_hashes_and_protocol(self) -> None:
         self.assertEqual(manifests.repo_root_from_script(), REPO_ROOT)
         self.assertEqual(
@@ -472,9 +495,9 @@ class PauperPoolManifestTest(unittest.TestCase):
                 expected_membership.setdefault(name, []).append(Path(deck["source_path"]).name)
         registry_cards = {row["name"]: row for row in self.registry["cards"]}
         non_tokens = {name for name, row in registry_cards.items() if not row.get("is_token", False)}
-        self.assertEqual(non_tokens, pool_names)
+        self.assertEqual(non_tokens, pool_names | manifests.PINNED_REGISTRY_EXTENSION_CARDS_V1.keys())
         self.assertEqual(self.registry["unresolved"], [])
-        for name in non_tokens:
+        for name in non_tokens - manifests.PINNED_REGISTRY_EXTENSION_CARDS_V1.keys():
             self.assertEqual(registry_cards[name]["decks"], expected_membership[name], name)
         for token_name in (
             "Blood Token",

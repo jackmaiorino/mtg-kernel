@@ -91,16 +91,16 @@ pub(crate) fn project_recorded_decision_v1(
     if selected_engine_index >= actions.len() {
         return Err(HumanDecisionErrorV1::InvalidAction);
     }
-    let selected_engine_index = u32::try_from(selected_engine_index)
-        .map_err(|_| HumanDecisionErrorV1::InvalidAction)?;
+    let selected_engine_index =
+        u32::try_from(selected_engine_index).map_err(|_| HumanDecisionErrorV1::InvalidAction)?;
     let (visible, engine_indexes) =
         visible::project_decision(observation, actions, human, prompt_seq)?;
     let public_index = engine_indexes
         .iter()
         .position(|index| *index == selected_engine_index)
         .ok_or(HumanDecisionErrorV1::InvalidAction)?;
-    let public_index = u32::try_from(public_index)
-        .map_err(|_| HumanDecisionErrorV1::InvalidAction)?;
+    let public_index =
+        u32::try_from(public_index).map_err(|_| HumanDecisionErrorV1::InvalidAction)?;
     Ok((visible, public_index))
 }
 
@@ -118,7 +118,10 @@ impl HumanDecisionProjectorV1 {
     /// Explicit opt-in for runtimes whose playing policy uses V4 references.
     /// Legacy constructors continue validating the original V3 cache.
     pub(crate) fn new_v4(human_seat: PlayerSeatV1) -> Self {
-        Self { use_v4_binding: true, ..Self::new(human_seat) }
+        Self {
+            use_v4_binding: true,
+            ..Self::new(human_seat)
+        }
     }
 
     /// Read-only with respect to game state and RNG. Reprinting the same
@@ -135,7 +138,8 @@ impl HumanDecisionProjectorV1 {
             session.human_current_decision_input_v4(expected, self.human_seat)
         } else {
             session.human_current_decision_input_v1(expected, self.human_seat)
-        }.map_err(|_| HumanDecisionErrorV1::StaleDecision)?;
+        }
+        .map_err(|_| HumanDecisionErrorV1::StaleDecision)?;
         if let Some(pending) = &self.pending {
             if pending.expected == expected && pending.binding == binding {
                 return Ok(pending.visible.clone());
@@ -200,9 +204,14 @@ impl HumanDecisionProjectorV1 {
             if current_binding != pending.binding {
                 return Err(HumanDecisionErrorV1::StaleDecision);
             }
-            session.step(pending.expected.episode_id, pending.expected.step, engine_index)
+            session.step(
+                pending.expected.episode_id,
+                pending.expected.step,
+                engine_index,
+            )
         } else {
-            session.flat_policy_validate_cached_binding_v3(pending.expected, pending.binding)
+            session
+                .flat_policy_validate_cached_binding_v3(pending.expected, pending.binding)
                 .map_err(|_| HumanDecisionErrorV1::StaleDecision)?;
             session.consume_current_flat_action_slice_v3(pending.binding, engine_index)
         };

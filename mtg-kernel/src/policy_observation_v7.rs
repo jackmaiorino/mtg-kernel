@@ -29,11 +29,15 @@ type Result<T> = std::result::Result<T, RlContractError>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum HistoricalSourceContextV7 {
-    Stack { stack_index: u32 },
+    Stack {
+        stack_index: u32,
+    },
     PendingEffect,
     /// `position` indexes `state.engine.pending_triggers` directly (the
     /// live, full vector -- never a decision-scoped sub-slice).
-    PendingTrigger { position: u32 },
+    PendingTrigger {
+        position: u32,
+    },
 }
 
 impl From<HistoricalSourceContextV6> for HistoricalSourceContextV7 {

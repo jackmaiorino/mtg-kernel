@@ -1,0 +1,541 @@
+{
+  "adapter": "native-science-loop-pilot-v1",
+  "candidates": [
+    {
+      "allocation": "1@jack:0",
+      "completed_updates": 16,
+      "concurrency": 1,
+      "episodes": 1024,
+      "episodes_per_second": 11.829197058065379,
+      "host_statistics": {
+        "jack": {
+          "startup_seconds": 14.560156226158142,
+          "steady_update_seconds": 2.2664446234703064,
+          "tail_seconds": 10.40149176120758,
+          "wall_seconds": 86.56546974182129
+        }
+      },
+      "hosts": [
+        "jack"
+      ],
+      "id": "alloc-1atjackd0",
+      "overhead_seconds": 0.0,
+      "per_run": {
+        "base-s0": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "75f874240dfb3765524b02cb8cc68bc284a0b9c07055c9b0524d248ad6e1322a",
+          "exit_code": 0,
+          "generations": [
+            16,
+            20
+          ],
+          "host": "jack",
+          "output_count": 44
+        },
+        "envrand-s0": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "26461b315a7b1a21a212c684a5587c01d8e209261a7a91128a012b1df4fcbd34",
+          "exit_code": 0,
+          "generations": [
+            16,
+            20
+          ],
+          "host": "jack",
+          "output_count": 44
+        }
+      },
+      "projected_seconds": 122.44952392578125,
+      "reasons": [],
+      "startup_seconds": 14.560156226158142,
+      "status": "qualified",
+      "steady_update_seconds": 2.2664446234703064,
+      "tail_seconds": 10.40149176120758,
+      "usage": {
+        "baseline_memory_mib": {
+          "jack:0": 2876,
+          "jack:1": 9
+        },
+        "cpu_mean_percent": 10.779824451366498,
+        "gpu_peak_memory_mib": {
+          "jack:0": 5469,
+          "jack:1": 9
+        },
+        "idle_capacity_events": [],
+        "samples": 17
+      },
+      "wall_seconds": 86.56546974182129
+    },
+    {
+      "allocation": "1@jack:0+1@jack:1",
+      "completed_updates": 16,
+      "concurrency": 2,
+      "episodes": 1024,
+      "episodes_per_second": 22.089288815093703,
+      "host_statistics": {
+        "jack": {
+          "startup_seconds": 14.609937191009521,
+          "steady_update_seconds": 2.662265658378601,
+          "tail_seconds": 9.720008969306946,
+          "wall_seconds": 46.35730957984924
+        }
+      },
+      "hosts": [
+        "jack"
+      ],
+      "id": "alloc-1atjackd0_1atjackd1",
+      "overhead_seconds": 0.0,
+      "per_run": {
+        "base-s0": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "75f874240dfb3765524b02cb8cc68bc284a0b9c07055c9b0524d248ad6e1322a",
+          "exit_code": 0,
+          "generations": [
+            16,
+            20
+          ],
+          "host": "jack",
+          "output_count": 44
+        },
+        "envrand-s0": {
+          "byte_identical": true,
+          "device": 1,
+          "differing_outputs": [],
+          "digest_set_sha256": "26461b315a7b1a21a212c684a5587c01d8e209261a7a91128a012b1df4fcbd34",
+          "exit_code": 0,
+          "generations": [
+            16,
+            20
+          ],
+          "host": "jack",
+          "output_count": 44
+        }
+      },
+      "projected_seconds": 66.92619669437408,
+      "reasons": [],
+      "startup_seconds": 14.609937191009521,
+      "status": "qualified",
+      "steady_update_seconds": 2.662265658378601,
+      "tail_seconds": 9.720008969306946,
+      "usage": {
+        "baseline_memory_mib": {
+          "jack:0": 2876,
+          "jack:1": 9
+        },
+        "cpu_mean_percent": 19.380960384018767,
+        "gpu_peak_memory_mib": {
+          "jack:0": 5469,
+          "jack:1": 1806
+        },
+        "idle_capacity_events": [],
+        "samples": 9
+      },
+      "wall_seconds": 46.35730957984924
+    },
+    {
+      "allocation": "1@jack:0+1@haleyspc:0",
+      "completed_updates": 16,
+      "concurrency": 2,
+      "episodes": 1024,
+      "episodes_per_second": 10.590254684175587,
+      "host_statistics": {
+        "haleyspc": {
+          "startup_seconds": 27.08400011062622,
+          "steady_update_seconds": 3.5,
+          "tail_seconds": 22.450973749160767,
+          "wall_seconds": 96.69266986846924
+        },
+        "jack": {
+          "startup_seconds": 13.868305683135986,
+          "steady_update_seconds": 2.3909732699394226,
+          "tail_seconds": 10.09470009803772,
+          "wall_seconds": 96.69266986846924
+        }
+      },
+      "hosts": [
+        "haleyspc",
+        "jack"
+      ],
+      "id": "alloc-1atjackd0_1athaleyspcd0",
+      "overhead_seconds": 14.471439199987799,
+      "per_run": {
+        "base-s0": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "75f874240dfb3765524b02cb8cc68bc284a0b9c07055c9b0524d248ad6e1322a",
+          "exit_code": 0,
+          "generations": [
+            16,
+            20
+          ],
+          "host": "jack",
+          "output_count": 44
+        },
+        "envrand-s0": {
+          "byte_identical": true,
+          "device": 0,
+          "differing_outputs": [],
+          "digest_set_sha256": "26461b315a7b1a21a212c684a5587c01d8e209261a7a91128a012b1df4fcbd34",
+          "exit_code": 0,
+          "generations": [
+            16,
+            20
+          ],
+          "host": "haleyspc",
+          "output_count": 44
+        }
+      },
+      "projected_seconds": 120.00641305977479,
+      "reasons": [],
+      "startup_seconds": 20.476152896881104,
+      "status": "qualified",
+      "steady_update_seconds": 2.9454866349697113,
+      "tail_seconds": 16.272836923599243,
+      "usage": {
+        "baseline_memory_mib": {
+          "haleyspc:0": 476,
+          "jack:0": 2876,
+          "jack:1": 9
+        },
+        "cpu_mean_percent": 8.511327494761469,
+        "gpu_peak_memory_mib": {
+          "haleyspc:0": 2393,
+          "jack:0": 5469,
+          "jack:1": 9
+        },
+        "idle_capacity_events": [],
+        "samples": 18
+      },
+      "wall_seconds": 96.69266986846924
+    }
+  ],
+  "created_at": "2026-09-23T19:34:01.656873+00:00",
+  "data_tree_sha256": "bf51eeb0332891a4544467aaa059d3126d7731b60a92942f7059f1e8132b246b",
+  "executable_sha256": "62bf66b1a917b643fdd9f4ba8b1da08955b205c7c61f46b6669e1825b2975504",
+  "golden": {
+    "allocation": "1@jack:0",
+    "root": "D:\\multirun-qualified-v1-work\\q6-segment\\qualification\\serial-golden",
+    "runs": {
+      "base-s0": {
+        "digest_set_sha256": "75f874240dfb3765524b02cb8cc68bc284a0b9c07055c9b0524d248ad6e1322a",
+        "digests": {
+          "store/.mtg-kernel-native-train.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "store/checkpoints/update-00000000.checkpoint.json": "89cbfdfaedf42a37df5d7a7442094ca4dea8ce33064055e656b7da747854ac14",
+          "store/checkpoints/update-00000000.sidecar.json": "f04b8b64c73b2c82cbee711da2c69901b5ceac4376a9072090ce44882e161bf3",
+          "store/checkpoints/update-00000000.state.f32le": "3c83802885e13c118ebcf870de2d3c9f2209e9e9c47b66a8dac5e5232d1c9c43",
+          "store/checkpoints/update-00000004.checkpoint.json": "58df76fda712c8ae6f2b8af11bd2c8449f2cf74c9dcd15b9ec2bf1ddda6be964",
+          "store/checkpoints/update-00000004.sidecar.json": "67c2226185b0f36702138e41b371b3063beebc216d1ca237134b0b9beb713ef9",
+          "store/checkpoints/update-00000004.state.f32le": "2ea2d0f4f233d851de5ff5605306ed37e4203822794596eb9cf63b05632a3301",
+          "store/checkpoints/update-00000008.checkpoint.json": "bdfd0669fae15a04885af0cf655358ba4261fe1637cd03ba466b9556861a2084",
+          "store/checkpoints/update-00000008.sidecar.json": "2155898a1b74a6b32ef75dca064dc3dfc3a481075a9d9f2487c7d6171caa4934",
+          "store/checkpoints/update-00000008.state.f32le": "f402640ee225bfcab6c0bc0034443a35a2906d3fc25e7335f439cdf49509af04",
+          "store/checkpoints/update-00000012.checkpoint.json": "f86cb665c3cb85a90025e56ec4b1f10ff57e7af575133bdeb60cddd6f1870453",
+          "store/checkpoints/update-00000012.sidecar.json": "063c65583fdd5f1588bb160626dbc923b71fa09141a4bd8f0779a9bc630551ee",
+          "store/checkpoints/update-00000012.state.f32le": "fe13a48de53e66d512c04f251ab8f8684f1983c5bac3a368aedd4302be831c12",
+          "store/checkpoints/update-00000016.checkpoint.json": "cf41002630e951c07b46c49dfacc1e826c85edf2b1943d67f9b61dae8e411c40",
+          "store/checkpoints/update-00000016.sidecar.json": "46cae5e3f36aec30b4b4a17a1d6e628727e81d64b51c873a606f07274297ba33",
+          "store/checkpoints/update-00000016.state.f32le": "65fb6dddf39cd2f151c657c64bcf92ea4142aacd47abeceba94928a5a1ac2200",
+          "store/checkpoints/update-00000020.checkpoint.json": "7ae5bd0ba5ec56fcd6d5ba8bfc02c4c3c2c13d4f08474183f65de5e64a2fa42d",
+          "store/checkpoints/update-00000020.sidecar.json": "fa9752723e2d5dcddfd852aa3f9f4b40192a63fba33f52d0e1b608a650092e37",
+          "store/checkpoints/update-00000020.state.f32le": "7be8c6d530c45b5c898acd690292267ec7e19e7c58936cd00655547873e024db",
+          "store/heads/update-00000000.head.json": "0be67d12bd38d79d738612eceb2969ddc4c94ff00db7a1c3312ab93ff07d2668",
+          "store/heads/update-00000004.head.json": "aae40d6759bdd5b80115a8bc9bd362451aa7f0ac03ae23797d6a09b2a8ab5e88",
+          "store/heads/update-00000008.head.json": "862b389ed28e6d94d8f69be62b39d5d7ce510ba9a24bf35dea8a5ffd77028b4a",
+          "store/heads/update-00000012.head.json": "58095dba2bbf74b0c26d06c6b142800feeb75a5e49d2bf8a12383159b5687f71",
+          "store/heads/update-00000016.head.json": "826fcfb1c365084f323b7168a28bdff8d9e27932d11136c199f1ff8221f53190",
+          "store/heads/update-00000020.head.json": "7bc90b8f43ef457d66ff7a062cc5f31b328820ff365d39f17f4c7a7f585f5f7c",
+          "store/latest.json": "ffc92c087fa1c0f1d6f0435378467c5b4848562e1c688ed4c33334ec57eb4c03",
+          "store/refs/update-00000000.ref.json": "54e750714ab0d83af133fa899f22a745931a13ff5003b7a125850b08188ffd6d",
+          "store/refs/update-00000004.ref.json": "96079b4464ec35f4396c67cef0e3b15556f21be02cf8395fa2deba4061b36167",
+          "store/refs/update-00000008.ref.json": "6a0394527ddb3fcab43a47b8898b033527a2e061e9c55f222939eb662724c09f",
+          "store/refs/update-00000012.ref.json": "0ab6d8e6c29769b322d51e4fdde51e697c5d94fb70713030a58fa1de4ea5696b",
+          "store/refs/update-00000016.ref.json": "043479c09a38a06d1c172444dc92b25ceba09dc8031083c59d24ec7a7bc3df65",
+          "store/refs/update-00000020.ref.json": "9ec749377f0044d1175fb40f4fbb3228c3eea45df6eb589d2cac65c6bb95bbc5",
+          "store/run.json": "4dc7225db3cf61d2ea41cb7a5ff1fb306095a6e3f9f05d0092552e523e45ef43",
+          "store/segments/segment-00000000.json": "70771aa6633a000757b1ccd7375fb47a260cfd20159823f8bc321d2d6182948c",
+          "store/segments/segment-00000004.continuation-00000000.json": "05735bbcf593c8f14eb98f86bfa08ad1c96cda460abd0220de07030e008061dd",
+          "store/segments/segment-00000004.json": "2f24895db33475ee646cba4d352f8496fe1880ddf8351a5f021743c6fbb7a5d1",
+          "store/segments/segment-00000008.continuation-00000000.json": "d58423d5a9b0ca3efa606592621b65e1c0a529380de03d0ea4faf3c02c038b4e",
+          "store/segments/segment-00000008.json": "0410049851cbe05d46d9556251485f7ad175d07538e4a36e565c0e3747d8e638",
+          "store/segments/segment-00000012.continuation-00000000.json": "82b01cf4f5a032144e2ff0d4a4fe48aa57e6740decc3d74ddb8dfbf89057e1c3",
+          "store/segments/segment-00000012.json": "18477e1011ed5a2be626ba3f9e171afee2d8b01326d4de37c47a93475cf65aa4",
+          "store/segments/segment-00000016.continuation-00000000.json": "eaf3d954efd2f3dda2de44be873f0f7bb2ab08c79017c92c4195a408b09936d4",
+          "store/segments/segment-00000016.json": "500acecf42d7a69f10394292c561f734f2fc7cc6d33f6cc13658991f90b80ac0",
+          "store/segments/segment-00000020.continuation-00000000.json": "105305fd46f84c56e62f2d9077f0ffe39009de5dfa5e6daaa26b21a94e34d7d1",
+          "store/segments/segment-00000020.json": "a6971472a3f4167954f67eeb6dbd595d3fb5d7c859863f12937f23d1a805e5b6"
+        }
+      },
+      "envrand-s0": {
+        "digest_set_sha256": "26461b315a7b1a21a212c684a5587c01d8e209261a7a91128a012b1df4fcbd34",
+        "digests": {
+          "store/.mtg-kernel-native-train.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "store/checkpoints/update-00000000.checkpoint.json": "30e4bdacc8355cd2f762df343095d2b3ed3e12e67d90e3de9320f8cc8e358376",
+          "store/checkpoints/update-00000000.sidecar.json": "34aef531565546571fc8dd64755ee5454950c336c1ed4a7c5252439dff2525ba",
+          "store/checkpoints/update-00000000.state.f32le": "3c83802885e13c118ebcf870de2d3c9f2209e9e9c47b66a8dac5e5232d1c9c43",
+          "store/checkpoints/update-00000004.checkpoint.json": "514d7b07af19d3af40bc44d3038bf83f53c541f55db74261915e7572fe6beea5",
+          "store/checkpoints/update-00000004.sidecar.json": "b09215637f492ae68936573a19fd7641d0172d8c34d28342ad331c591eb4942e",
+          "store/checkpoints/update-00000004.state.f32le": "2aef223fe7adfa4f73c095300132bbd166f2f35a46be11230ad92236f1e76f28",
+          "store/checkpoints/update-00000008.checkpoint.json": "c74a564f0efe16fe65dde9b08f26b0a8265510b2a46a5710cfa17de3af357506",
+          "store/checkpoints/update-00000008.sidecar.json": "36a7cf8da03c4c808744bf98d451d2eb0584255c69323c28413440b1a9181922",
+          "store/checkpoints/update-00000008.state.f32le": "903870b08cca6cc7cb41ec7733a16c372d2ddf71ba62870112d75b635d4bc1ce",
+          "store/checkpoints/update-00000012.checkpoint.json": "633c85cd5836eed530463b5ba00c55d876b5a7ed2c63e44c24992ba7baf13a8b",
+          "store/checkpoints/update-00000012.sidecar.json": "1ccffc37de49070646903e66875af69e886bbc8a668f9fa1f484c2290c18017f",
+          "store/checkpoints/update-00000012.state.f32le": "f58d130d21952fb374bfbfd52ba1bf8fd5d92f0d35a2cbc39951149c918ab2c9",
+          "store/checkpoints/update-00000016.checkpoint.json": "fff471b1707ca48202addad41e83a7d14ed96e13946ebf209dd2d27bc7c97a9b",
+          "store/checkpoints/update-00000016.sidecar.json": "8fc969a3bb8ea0782100eeae330aa85ff2067ca16f5cb8a65361bbbb30d89719",
+          "store/checkpoints/update-00000016.state.f32le": "708046e37571b01c9480d7cad0202a801f2bc24ae028ef4a7c72507f90588b93",
+          "store/checkpoints/update-00000020.checkpoint.json": "8705df9677dce4ad7b1c891c35feba52f2fe713476eeea03120356c5e6ee4aa4",
+          "store/checkpoints/update-00000020.sidecar.json": "880929cee7d1405aef29c9b388c5d32240e3fe2d25fb9e7f27dee34ffc7b527e",
+          "store/checkpoints/update-00000020.state.f32le": "6e259af68bf58c68b706eb50f4a3b604b5ccce952fb029ad05eaee707acfe612",
+          "store/heads/update-00000000.head.json": "dc30962e8500795926a64b671f251d876f352b8c17bdcc2103f60e3382bbfe6e",
+          "store/heads/update-00000004.head.json": "56c89a5365a69e8305aca172cc86bd4b5aaf72104062afab27c483043bca2aed",
+          "store/heads/update-00000008.head.json": "fa7bee6b6db3cf4d1e971c685d85081bdbac159f268757df47514ca5c2613a8a",
+          "store/heads/update-00000012.head.json": "38751baa1554b70407c69db2f5220be603390df79d77473447a527ccabe614b6",
+          "store/heads/update-00000016.head.json": "78c424a1667b12db658a34d3437006b9edf3d88611c7d90a1119f4f7e5515a24",
+          "store/heads/update-00000020.head.json": "1891de7486c41b50347b79f06b99f018653f8b1aedaf81e2a9083b1de22fd63f",
+          "store/latest.json": "19dc306b0cec886e16e542bdda1ee2293731be8402e062d206a6580fb1a79bbf",
+          "store/refs/update-00000000.ref.json": "3c956cb7e0013ea92f3e04a1e0a6a1b48ccc68c93608a7f4899b9aab04753138",
+          "store/refs/update-00000004.ref.json": "eea3b4599f3522e91e3e4a21bb381ce5dfb2b9d1052f935cbf856bbeed8e6d5b",
+          "store/refs/update-00000008.ref.json": "00915c3cb0421485627dd0bdb1a68e3b0ac3f7902ff869c4542490168c384285",
+          "store/refs/update-00000012.ref.json": "9ee00ac287bb946424ff52ec10853ade903454e61d54e05353a16337fda85b8a",
+          "store/refs/update-00000016.ref.json": "f09487003524de16acffa928eeda60da801267700ed26e386b3f43a482428796",
+          "store/refs/update-00000020.ref.json": "d547a07fe01e3d4a20979701a327f28b8cefa1742d9944a47548314762ba5026",
+          "store/run.json": "0ab7c645913f94e087c15baab0d5a7f9de7a7e195a37f6852848269ef6e2d68e",
+          "store/segments/segment-00000000.json": "0d41ee3831fac5ad1dee5f911c0886086232e52c7571715e6dd26f4cb7cfcbe4",
+          "store/segments/segment-00000004.continuation-00000000.json": "8ce1a633180b6c24d29d4279aa71051392e69f83e0a5db7b7d7002c3591d05c0",
+          "store/segments/segment-00000004.json": "e98bd0daf36c1a4cdd36d7be999215e6e5223f0f55c2bf1cf130f5c9f2d5d73b",
+          "store/segments/segment-00000008.continuation-00000000.json": "7892fc1d38eec6e183a409474f9018b01d46e8b8d440949d7d4dc8fbc49f36d1",
+          "store/segments/segment-00000008.json": "068d2473fc683c547894abe00a77fd367bc3ecc7ddd36455887f88935ff29a97",
+          "store/segments/segment-00000012.continuation-00000000.json": "3ed34e1007f1344b99b70251483c5ce9358bb368bbdd1d9966a29be2f027b947",
+          "store/segments/segment-00000012.json": "8316d94d02ccdf13261ba89fca195a9673e5f7d6c1deb936fb073bebe953939e",
+          "store/segments/segment-00000016.continuation-00000000.json": "faab113e13bd7cc75941cf56963b46ae4145314baa5c3270d596a3950c618ff9",
+          "store/segments/segment-00000016.json": "ed17e3e1c875408e707aee515c6f3e8c4a23819b906c31c1523421f795670ca8",
+          "store/segments/segment-00000020.continuation-00000000.json": "97742b9f8dada49fbf856ecb8c199441fe790a4a13a6fe4bac8ed96094192683",
+          "store/segments/segment-00000020.json": "24ae1c173ffc27ca85c38278617d40ef7e3a5672b04294c5e40a4b30178c7cef"
+        }
+      }
+    },
+    "serial_repeat": {
+      "digest_set_sha256": "75f874240dfb3765524b02cb8cc68bc284a0b9c07055c9b0524d248ad6e1322a",
+      "root": "D:\\multirun-qualified-v1-work\\q6-segment\\qualification\\serial-repeat",
+      "run_id": "base-s0"
+    }
+  },
+  "gpu_footprint_mib": {
+    "haleyspc:0": 1917.0,
+    "jack:0": 2593.0,
+    "jack:1": 1797.0
+  },
+  "inventory": {
+    "hosts": {
+      "haleyspc": {
+        "checked_at": "2026-09-23T19:24:21.320583+00:00",
+        "detail": {
+          "competing": 0,
+          "cpus": 16,
+          "free_memory_gib": 19.6,
+          "gpus": [
+            "0, NVIDIA GeForce RTX 4060, GPU-17eeab7a-ad2e-5a59-4c42-8cd26a0d7223, 8188, 476"
+          ]
+        },
+        "eligible": true,
+        "reason": "reachable; idle; GPUs present"
+      },
+      "jack": {
+        "checked_at": "2026-09-23T19:24:21.320583+00:00",
+        "detail": {
+          "competing_processes": [],
+          "cpu_logical": 24,
+          "free_disk_gib_cwd_drive": 234.4,
+          "gpus": [
+            {
+              "index": 0,
+              "memory_total_mib": 12282,
+              "memory_used_mib": 2876,
+              "name": "NVIDIA GeForce RTX 4070 SUPER",
+              "utilization_percent": 0,
+              "uuid": "GPU-3502709e-6aef-8ed7-4abe-562838793e3d"
+            },
+            {
+              "index": 1,
+              "memory_total_mib": 6144,
+              "memory_used_mib": 9,
+              "name": "NVIDIA GeForce RTX 3050",
+              "utilization_percent": 0,
+              "uuid": "GPU-0642d3ca-e3d4-ba16-96ab-c561c6da90e3"
+            }
+          ],
+          "memory": {
+            "available_gib": 85.2,
+            "total_gib": 127.8
+          }
+        },
+        "eligible": true,
+        "reason": "24 logical CPUs, 2 GPUs, 0 competing training processes"
+      },
+      "runpod": {
+        "checked_at": "2026-09-23T19:24:21.320583+00:00",
+        "detail": {
+          "client_balance_usd": 211.4677920708,
+          "running_pods": 0,
+          "spend_limit_usd": 80
+        },
+        "eligible": false,
+        "reason": "account reachable, but RunPod pods are Linux and this Windows-built workload's training bytes differ across targets (per-target train_state_sha256 witnesses in mtg-kernel/src/native_trainer_v1.rs); qualifying it needs a Linux build with Linux goldens and a lease guard, which this launcher does not implement"
+      }
+    },
+    "schema": "mtg-kernel-multirun-inventory/v1"
+  },
+  "launcher_sha256": "9b565efccac2dd9d22896d08a9ccf9afe3acf9ecda34ed8c0556bf69e492b682",
+  "planned_updates": 128,
+  "qualification_updates": 8,
+  "remote_staging": {
+    "haleyspc": {
+      "executable_sha256": "62bf66b1a917b643fdd9f4ba8b1da08955b205c7c61f46b6669e1825b2975504",
+      "host": "haleyspc",
+      "mirror_root": "C:/mtg-node/multirun-mirror",
+      "runtime_libraries_sha256": {
+        "cudart64_12.dll": "9d9b868955149875ac4ef43442aaaa8913d4a7b3e4d6dd60ee871626aa045768",
+        "nvrtc-builtins64_128.dll": "96a28201dbffd4eff6dc93f310417b981bf7a141d46f2839036f5dbfd83b33ae",
+        "nvrtc64_120_0.dll": "ec2a860422b7d0396b45c29a1848faecc3788041ba52f166f0fc52c1b47e8245"
+      },
+      "stage_seconds": 14.471439199987799
+    }
+  },
+  "run_ids": [
+    "base-s0",
+    "envrand-s0"
+  ],
+  "schema": "mtg-kernel-multirun-compute-choice/v1",
+  "selected": "alloc-1atjackd0_1atjackd1",
+  "selection_rule": "minimum projected completion seconds among byte-identical, fully completed allocations; projection simulates the scheduler with each host's measured startup + planned_updates * steady_update + tail per run, plus staging overhead",
+  "sentinel": {
+    "allocation": "1@jack:0+1@jack:1",
+    "candidate": "alloc-1atjackd0_1atjackd1",
+    "entries": [
+      {
+        "arm": "base",
+        "byte_identical": true,
+        "completed_generation": 28,
+        "device": 0,
+        "differing_outputs": [],
+        "digest_set_sha256": "cf55e57a2fdbcd90d5fd9e34a574c86a1da4caafec56751eaa1033295349b4bd",
+        "exit_code": 0,
+        "host": "jack",
+        "label": "base-s0--jack-0-0",
+        "output_count": 58,
+        "run_id": "base-s0"
+      },
+      {
+        "arm": "envrand",
+        "byte_identical": true,
+        "completed_generation": 28,
+        "device": 0,
+        "differing_outputs": [],
+        "digest_set_sha256": "fb83e962dcb9bae924888a57fbf18dd31777babdd4c492c21bf5bc78ca6e7f1d",
+        "exit_code": 0,
+        "host": "jack",
+        "label": "envrand-s0--jack-0-1",
+        "output_count": 58,
+        "run_id": "envrand-s0"
+      },
+      {
+        "arm": "base",
+        "byte_identical": true,
+        "completed_generation": 28,
+        "device": 1,
+        "differing_outputs": [],
+        "digest_set_sha256": "cf55e57a2fdbcd90d5fd9e34a574c86a1da4caafec56751eaa1033295349b4bd",
+        "exit_code": 0,
+        "host": "jack",
+        "label": "base-s0--jack-1-0",
+        "output_count": 58,
+        "run_id": "base-s0"
+      },
+      {
+        "arm": "envrand",
+        "byte_identical": true,
+        "completed_generation": 28,
+        "device": 1,
+        "differing_outputs": [],
+        "digest_set_sha256": "fb83e962dcb9bae924888a57fbf18dd31777babdd4c492c21bf5bc78ca6e7f1d",
+        "exit_code": 0,
+        "host": "jack",
+        "label": "envrand-s0--jack-1-1",
+        "output_count": 58,
+        "run_id": "envrand-s0"
+      }
+    ],
+    "gpu_peak_memory_mib": {
+      "jack:0": 5661,
+      "jack:1": 1808
+    },
+    "gpu_total_memory_mib": {
+      "jack:0": 12282,
+      "jack:1": 6144
+    },
+    "memory_crowded": [],
+    "passed": true,
+    "root": "D:\\multirun-qualified-v1-work\\q6-segment\\qualification\\sentinel-alloc-1atjackd0_1atjackd1",
+    "serial": {
+      "base-s0": {
+        "digest_set_sha256": "cf55e57a2fdbcd90d5fd9e34a574c86a1da4caafec56751eaa1033295349b4bd",
+        "output_count": 58,
+        "root": "D:\\multirun-qualified-v1-work\\q6-segment\\qualification\\sentinel-serial\\base-s0"
+      },
+      "envrand-s0": {
+        "digest_set_sha256": "fb83e962dcb9bae924888a57fbf18dd31777babdd4c492c21bf5bc78ca6e7f1d",
+        "output_count": 58,
+        "root": "D:\\multirun-qualified-v1-work\\q6-segment\\qualification\\sentinel-serial\\envrand-s0"
+      }
+    },
+    "wall_seconds": 136.90036058425903
+  },
+  "sentinel_failures": [],
+  "start_generation": 12,
+  "target_generation": 28,
+  "workload": {
+    "adapter": "native-science-loop-pilot-v1",
+    "arms": {
+      "base": {
+        "knobs": {}
+      },
+      "envrand": {
+        "knobs": {
+          "MULTIRUN_ENVIRONMENT_RANDOMIZATION_V2": "1"
+        }
+      }
+    },
+    "executable_sha256": "62bf66b1a917b643fdd9f4ba8b1da08955b205c7c61f46b6669e1825b2975504",
+    "knobs": {
+      "MULTIRUN_BROKER_TARGET": "16",
+      "MULTIRUN_SESSIONS": "32",
+      "MULTIRUN_WORKERS": "2"
+    },
+    "planned_updates": 128,
+    "runs": [
+      {
+        "arm": "base",
+        "id": "base-s0",
+        "seed": 5500001
+      },
+      {
+        "arm": "envrand",
+        "id": "envrand-s0",
+        "seed": 5600001
+      }
+    ],
+    "schema": "mtg-kernel-multirun-workload/v1",
+    "segment": {
+      "resume_generation": 12,
+      "stop_generation": 28
+    }
+  },
+  "workload_sha256": "0d7f5ef7545490b631684e972987e2c9d70f1a36b74204f39cb8838879182435"
+}

@@ -284,41 +284,99 @@ mod tests {
     #[test]
     #[ignore = "explicit archived full-match request and output paths required"]
     fn public_input_zero_projection_full_match_replay() {
-        use crate::native_policy_value_net_v1::public_inputs_v1::{PublicInputWeightsV1, ARCHITECTURE};
+        use crate::native_policy_value_net_v1::public_inputs_v1::{
+            PublicInputWeightsV1, ARCHITECTURE,
+        };
         use crate::sideboard_play_policy_v1::public_inputs::PublicInputPlayPolicyV1;
-        let request_bytes = std::fs::read(std::env::var("MTG_PUBLIC_MATCH_REQUEST").unwrap()).unwrap();
+        let request_bytes =
+            std::fs::read(std::env::var("MTG_PUBLIC_MATCH_REQUEST").unwrap()).unwrap();
         let request: Request = serde_json::from_slice(&request_bytes).unwrap();
-        assert_eq!(request.mode,Mode::Baseline);
-        assert_eq!(request.config.opening_protocol,Bo3OpeningProtocolV1::KeepSevenV2);
+        assert_eq!(request.mode, Mode::Baseline);
+        assert_eq!(
+            request.config.opening_protocol,
+            Bo3OpeningProtocolV1::KeepSevenV2
+        );
         validate_run_limits_v1(&request.config).unwrap();
-        let [(p0,m0),(p1,m1)] = [load_expanded_inference_v1(&request.sources[0]).unwrap(),load_expanded_inference_v1(&request.sources[1]).unwrap()];
-        let actual = [m0,m1];
-        assert_eq!(actual,request.expected_models);
-        let mut p0 = PublicInputPlayPolicyV1::new(p0,PublicInputWeightsV1::zero()).unwrap();
-        let mut p1 = PublicInputPlayPolicyV1::new(p1,PublicInputWeightsV1::zero()).unwrap();
-        let decks: Vec<_> = request.registrations.iter().enumerate().map(|(seat,r)| {
-            assert_eq!(r.label,request.config.deck_ids[seat]);
-            RegisteredDeckV1::new_executable_v1(&r.label,r.mainboard.clone(),r.sideboard.clone()).unwrap()
-        }).collect();
-        let session = BestOfThreeDeckMatchV1::new_live_v1(decks.try_into().unwrap(),request.config.game_one_chooser).unwrap();
-        let mut router = SeatRoutedBo3PlayPolicyV1::new_v1([&mut p0,&mut p1]).unwrap();
-        let mut policy = DiagnosticPolicy { base:&mut router,seat:request.diagnostic_seat,mode:Mode::Baseline,
-            colors:vec![],resets:vec![],decisions:vec![],game_decisions:0 };
-        let keep = |_: &LearnedSideboardInputV1,current: &DeckConfigurationV1| Ok((current.clone(),vec![SideboardActionV1::Done]));
+        let [(p0, m0), (p1, m1)] = [
+            load_expanded_inference_v1(&request.sources[0]).unwrap(),
+            load_expanded_inference_v1(&request.sources[1]).unwrap(),
+        ];
+        let actual = [m0, m1];
+        assert_eq!(actual, request.expected_models);
+        let mut p0 = PublicInputPlayPolicyV1::new(p0, PublicInputWeightsV1::zero()).unwrap();
+        let mut p1 = PublicInputPlayPolicyV1::new(p1, PublicInputWeightsV1::zero()).unwrap();
+        let decks: Vec<_> = request
+            .registrations
+            .iter()
+            .enumerate()
+            .map(|(seat, r)| {
+                assert_eq!(r.label, request.config.deck_ids[seat]);
+                RegisteredDeckV1::new_executable_v1(
+                    &r.label,
+                    r.mainboard.clone(),
+                    r.sideboard.clone(),
+                )
+                .unwrap()
+            })
+            .collect();
+        let session = BestOfThreeDeckMatchV1::new_live_v1(
+            decks.try_into().unwrap(),
+            request.config.game_one_chooser,
+        )
+        .unwrap();
+        let mut router = SeatRoutedBo3PlayPolicyV1::new_v1([&mut p0, &mut p1]).unwrap();
+        let mut policy = DiagnosticPolicy {
+            base: &mut router,
+            seat: request.diagnostic_seat,
+            mode: Mode::Baseline,
+            colors: vec![],
+            resets: vec![],
+            decisions: vec![],
+            game_decisions: 0,
+        };
+        let keep = |_: &LearnedSideboardInputV1, current: &DeckConfigurationV1| {
+            Ok((current.clone(), vec![SideboardActionV1::Done]))
+        };
         let mut keep0 = keep;
         let mut keep1 = keep;
-        let played = run_learned_bo3_session_v1(request.config.clone(),session,
-            Bo3ModelProvenanceV1::PerSeat(actual.each_ref().map(|m|m.model.weights_sha256.as_str())),
-            &RemovalCounterspellTagsV1 { requires_target:request.tags.requires_target.clone(),is_counterspell:request.tags.is_counterspell.clone() },
-            &mut policy,[&mut keep0,&mut keep1]).unwrap();
-        let baseline_bytes = std::fs::read(std::env::var("MTG_PUBLIC_MATCH_BASELINE").unwrap()).unwrap();
+        let played = run_learned_bo3_session_v1(
+            request.config.clone(),
+            session,
+            Bo3ModelProvenanceV1::PerSeat(
+                actual.each_ref().map(|m| m.model.weights_sha256.as_str()),
+            ),
+            &RemovalCounterspellTagsV1 {
+                requires_target: request.tags.requires_target.clone(),
+                is_counterspell: request.tags.is_counterspell.clone(),
+            },
+            &mut policy,
+            [&mut keep0, &mut keep1],
+        )
+        .unwrap();
+        let baseline_bytes =
+            std::fs::read(std::env::var("MTG_PUBLIC_MATCH_BASELINE").unwrap()).unwrap();
         let baseline: serde_json::Value = serde_json::from_slice(&baseline_bytes).unwrap();
-        assert_eq!(baseline["request"],serde_json::to_value(&request).unwrap());
-        assert_eq!(baseline["actual_base_models"],serde_json::to_value(&actual).unwrap());
-        assert_eq!(baseline["decisions"],serde_json::to_value(&policy.decisions).unwrap());
-        assert_eq!(baseline["seed_resets"],serde_json::to_value(&policy.resets).unwrap());
-        assert_eq!(baseline["games"],serde_json::to_value(&played.games).unwrap());
-        assert_eq!(baseline["outcome"],serde_json::to_value(&played.outcome).unwrap());
+        assert_eq!(baseline["request"], serde_json::to_value(&request).unwrap());
+        assert_eq!(
+            baseline["actual_base_models"],
+            serde_json::to_value(&actual).unwrap()
+        );
+        assert_eq!(
+            baseline["decisions"],
+            serde_json::to_value(&policy.decisions).unwrap()
+        );
+        assert_eq!(
+            baseline["seed_resets"],
+            serde_json::to_value(&policy.resets).unwrap()
+        );
+        assert_eq!(
+            baseline["games"],
+            serde_json::to_value(&played.games).unwrap()
+        );
+        assert_eq!(
+            baseline["outcome"],
+            serde_json::to_value(&played.outcome).unwrap()
+        );
         let report = serde_json::json!({"schema":"public-input-zero-full-match-replay/v1","architecture":ARCHITECTURE,
             "status":"ENGINEERING-PASS","projection":"both matrices all positive zero; both seats",
             "request_sha256":format!("{:x}",Sha256::digest(&request_bytes)),
@@ -327,49 +385,115 @@ mod tests {
             "seed_resets":policy.resets,"decisions":policy.decisions,
             "all_baseline_gameplay_fields_exact":true,
             "non_claim":"No training or playing-strength evidence; original model provenance plus explicit zero-projection architecture."});
-        let output = std::fs::OpenOptions::new().create_new(true).write(true).open(std::env::var("MTG_PUBLIC_MATCH_REPORT").unwrap()).unwrap();
-        serde_json::to_writer(output,&report).unwrap();
-        println!("public-input full-match pass: {} games, {} decisions",report["games"].as_array().unwrap().len(),report["decisions"].as_array().unwrap().len());
+        let output = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(std::env::var("MTG_PUBLIC_MATCH_REPORT").unwrap())
+            .unwrap();
+        serde_json::to_writer(output, &report).unwrap();
+        println!(
+            "public-input full-match pass: {} games, {} decisions",
+            report["games"].as_array().unwrap().len(),
+            report["decisions"].as_array().unwrap().len()
+        );
     }
 
     #[test]
     #[ignore = "explicit archived full-match request and output paths required"]
     fn stack_input_zero_projection_full_match_replay() {
-        use crate::native_policy_value_net_v1::stack_inputs_v1::{StackInputWeightsV1, ARCHITECTURE};
+        use crate::native_policy_value_net_v1::stack_inputs_v1::{
+            StackInputWeightsV1, ARCHITECTURE,
+        };
         use crate::sideboard_play_policy_v1::stack_inputs::StackInputPlayPolicyV1;
-        let request_bytes = std::fs::read(std::env::var("MTG_STACK_MATCH_REQUEST").unwrap()).unwrap();
+        let request_bytes =
+            std::fs::read(std::env::var("MTG_STACK_MATCH_REQUEST").unwrap()).unwrap();
         let request: Request = serde_json::from_slice(&request_bytes).unwrap();
-        assert_eq!(request.mode,Mode::Baseline);
-        assert_eq!(request.config.opening_protocol,Bo3OpeningProtocolV1::KeepSevenV2);
+        assert_eq!(request.mode, Mode::Baseline);
+        assert_eq!(
+            request.config.opening_protocol,
+            Bo3OpeningProtocolV1::KeepSevenV2
+        );
         validate_run_limits_v1(&request.config).unwrap();
-        let [(p0,m0),(p1,m1)] = [load_expanded_inference_v1(&request.sources[0]).unwrap(),load_expanded_inference_v1(&request.sources[1]).unwrap()];
-        let actual = [m0,m1];
-        assert_eq!(actual,request.expected_models);
-        let mut p0 = StackInputPlayPolicyV1::new(p0,StackInputWeightsV1::zero()).unwrap();
-        let mut p1 = StackInputPlayPolicyV1::new(p1,StackInputWeightsV1::zero()).unwrap();
-        let decks: Vec<_> = request.registrations.iter().enumerate().map(|(seat,r)| {
-            assert_eq!(r.label,request.config.deck_ids[seat]);
-            RegisteredDeckV1::new_executable_v1(&r.label,r.mainboard.clone(),r.sideboard.clone()).unwrap()
-        }).collect();
-        let session = BestOfThreeDeckMatchV1::new_live_v1(decks.try_into().unwrap(),request.config.game_one_chooser).unwrap();
-        let mut router = SeatRoutedBo3PlayPolicyV1::new_v1([&mut p0,&mut p1]).unwrap();
-        let mut policy = DiagnosticPolicy { base:&mut router,seat:request.diagnostic_seat,mode:Mode::Baseline,
-            colors:vec![],resets:vec![],decisions:vec![],game_decisions:0 };
-        let keep = |_: &LearnedSideboardInputV1,current: &DeckConfigurationV1| Ok((current.clone(),vec![SideboardActionV1::Done]));
+        let [(p0, m0), (p1, m1)] = [
+            load_expanded_inference_v1(&request.sources[0]).unwrap(),
+            load_expanded_inference_v1(&request.sources[1]).unwrap(),
+        ];
+        let actual = [m0, m1];
+        assert_eq!(actual, request.expected_models);
+        let mut p0 = StackInputPlayPolicyV1::new(p0, StackInputWeightsV1::zero()).unwrap();
+        let mut p1 = StackInputPlayPolicyV1::new(p1, StackInputWeightsV1::zero()).unwrap();
+        let decks: Vec<_> = request
+            .registrations
+            .iter()
+            .enumerate()
+            .map(|(seat, r)| {
+                assert_eq!(r.label, request.config.deck_ids[seat]);
+                RegisteredDeckV1::new_executable_v1(
+                    &r.label,
+                    r.mainboard.clone(),
+                    r.sideboard.clone(),
+                )
+                .unwrap()
+            })
+            .collect();
+        let session = BestOfThreeDeckMatchV1::new_live_v1(
+            decks.try_into().unwrap(),
+            request.config.game_one_chooser,
+        )
+        .unwrap();
+        let mut router = SeatRoutedBo3PlayPolicyV1::new_v1([&mut p0, &mut p1]).unwrap();
+        let mut policy = DiagnosticPolicy {
+            base: &mut router,
+            seat: request.diagnostic_seat,
+            mode: Mode::Baseline,
+            colors: vec![],
+            resets: vec![],
+            decisions: vec![],
+            game_decisions: 0,
+        };
+        let keep = |_: &LearnedSideboardInputV1, current: &DeckConfigurationV1| {
+            Ok((current.clone(), vec![SideboardActionV1::Done]))
+        };
         let mut keep0 = keep;
         let mut keep1 = keep;
-        let played = run_learned_bo3_session_v1(request.config.clone(),session,
-            Bo3ModelProvenanceV1::PerSeat(actual.each_ref().map(|m|m.model.weights_sha256.as_str())),
-            &RemovalCounterspellTagsV1 { requires_target:request.tags.requires_target.clone(),is_counterspell:request.tags.is_counterspell.clone() },
-            &mut policy,[&mut keep0,&mut keep1]).unwrap();
-        let baseline_bytes = std::fs::read(std::env::var("MTG_STACK_MATCH_BASELINE").unwrap()).unwrap();
+        let played = run_learned_bo3_session_v1(
+            request.config.clone(),
+            session,
+            Bo3ModelProvenanceV1::PerSeat(
+                actual.each_ref().map(|m| m.model.weights_sha256.as_str()),
+            ),
+            &RemovalCounterspellTagsV1 {
+                requires_target: request.tags.requires_target.clone(),
+                is_counterspell: request.tags.is_counterspell.clone(),
+            },
+            &mut policy,
+            [&mut keep0, &mut keep1],
+        )
+        .unwrap();
+        let baseline_bytes =
+            std::fs::read(std::env::var("MTG_STACK_MATCH_BASELINE").unwrap()).unwrap();
         let baseline: serde_json::Value = serde_json::from_slice(&baseline_bytes).unwrap();
-        assert_eq!(baseline["request"],serde_json::to_value(&request).unwrap());
-        assert_eq!(baseline["actual_base_models"],serde_json::to_value(&actual).unwrap());
-        assert_eq!(baseline["decisions"],serde_json::to_value(&policy.decisions).unwrap());
-        assert_eq!(baseline["seed_resets"],serde_json::to_value(&policy.resets).unwrap());
-        assert_eq!(baseline["games"],serde_json::to_value(&played.games).unwrap());
-        assert_eq!(baseline["outcome"],serde_json::to_value(&played.outcome).unwrap());
+        assert_eq!(baseline["request"], serde_json::to_value(&request).unwrap());
+        assert_eq!(
+            baseline["actual_base_models"],
+            serde_json::to_value(&actual).unwrap()
+        );
+        assert_eq!(
+            baseline["decisions"],
+            serde_json::to_value(&policy.decisions).unwrap()
+        );
+        assert_eq!(
+            baseline["seed_resets"],
+            serde_json::to_value(&policy.resets).unwrap()
+        );
+        assert_eq!(
+            baseline["games"],
+            serde_json::to_value(&played.games).unwrap()
+        );
+        assert_eq!(
+            baseline["outcome"],
+            serde_json::to_value(&played.outcome).unwrap()
+        );
         let report = serde_json::json!({"schema":"public-stack-zero-full-match-replay/v1","architecture":ARCHITECTURE,
             "status":"ENGINEERING-PASS","projection":"one stack message matrix all positive zero; both seats",
             "request_sha256":format!("{:x}",Sha256::digest(&request_bytes)),
@@ -378,9 +502,17 @@ mod tests {
             "seed_resets":policy.resets,"decisions":policy.decisions,
             "all_baseline_gameplay_fields_exact":true,
             "non_claim":"No training or playing-strength evidence; original model provenance plus explicit zero-projection architecture."});
-        let output = std::fs::OpenOptions::new().create_new(true).write(true).open(std::env::var("MTG_STACK_MATCH_REPORT").unwrap()).unwrap();
-        serde_json::to_writer(output,&report).unwrap();
-        println!("public-stack full-match pass: {} games, {} decisions",report["games"].as_array().unwrap().len(),report["decisions"].as_array().unwrap().len());
+        let output = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(std::env::var("MTG_STACK_MATCH_REPORT").unwrap())
+            .unwrap();
+        serde_json::to_writer(output, &report).unwrap();
+        println!(
+            "public-stack full-match pass: {} games, {} decisions",
+            report["games"].as_array().unwrap().len(),
+            report["decisions"].as_array().unwrap().len()
+        );
     }
 
     fn menu(name: &str, actor: PlayerSeatV1, colors: &[ManaColor]) -> Vec<ActionSemanticV1> {

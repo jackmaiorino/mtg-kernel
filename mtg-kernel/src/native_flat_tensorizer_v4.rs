@@ -166,9 +166,9 @@ mod tests {
             common: tensor.common.clone(),
         };
         let v3_output = model
-            .forward_feature_transfer_v3(crate::native_flat_tensorizer_v3::encoded_decision_view_v3(
-                &v3_tensor,
-            ))
+            .forward_feature_transfer_v3(
+                crate::native_flat_tensorizer_v3::encoded_decision_view_v3(&v3_tensor),
+            )
             .unwrap();
         assert_eq!(output.logits, v3_output.logits);
         assert_eq!(output.value, v3_output.value);

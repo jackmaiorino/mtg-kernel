@@ -2101,11 +2101,10 @@ fn policy_observation_extensions_with_text_v6(
                 ..
             })
         ) {
-            pending_ward_payment = Some(
-                ward_payment(&pending.resolving_item)?.ok_or_else(|| {
+            pending_ward_payment =
+                Some(ward_payment(&pending.resolving_item)?.ok_or_else(|| {
                     RlContractError("pending Ward payment has no live bound targeter".into())
-                })?,
-            );
+                })?);
         }
         historical_public_sources.push(HistoricalPublicSourceV6 {
             context: HistoricalSourceContextV6::PendingEffect,
@@ -2278,11 +2277,46 @@ pub fn make_legal_action_v5(
     })
 }
 
+/// The policy surface's original candidates for `decision`: for a combat scan
+/// step, always the `[include: false, include: true]` pair, which remains the
+/// private origin contract. A policy is offered
+/// [`policy_legal_action_candidates_v5`].
 pub fn legal_action_candidates_v5(
     decision: &PolicyDecisionV5,
     state: &GameState,
 ) -> Result<Vec<PolicyLegalActionCandidateV5>> {
-    let core = core_policy_action_candidates_v5(decision, state)?;
+    legal_action_records_v5(core_policy_action_candidates_v5(decision, state)?)
+}
+
+/// The legal actions a policy is offered at `decision`: the original
+/// candidates without any combat scan answer that leaves no legal completion
+/// of the aggregate declaration (declining a goaded attacker, or a block that
+/// can no longer end empty or reach the attacker's minimum). A step whose
+/// other answer is infeasible offers its single legal answer at index 0.
+pub fn policy_legal_action_candidates_v5(
+    decision: &PolicyDecisionV5,
+    surface: &PolicySurfaceV5,
+    state: &GameState,
+) -> Result<Vec<PolicyLegalActionCandidateV5>> {
+    let mut core = core_policy_action_candidates_v5(decision, state)?;
+    if !matches!(decision, PolicyDecisionV5::Surface(_)) {
+        let feasible = surface
+            .feasible_scan_answers(state, decision)
+            .map_err(RlContractError)?;
+        core.retain(|candidate| match candidate.policy_action {
+            PolicyActionV5::ChooseAttackerInclusion { include, .. }
+            | PolicyActionV5::ChooseBlockerInclusion { include, .. } => {
+                feasible[usize::from(include)]
+            }
+            PolicyActionV5::Surface(_) => true,
+        });
+    }
+    legal_action_records_v5(core)
+}
+
+fn legal_action_records_v5(
+    core: Vec<CorePolicyActionCandidateV1>,
+) -> Result<Vec<PolicyLegalActionCandidateV5>> {
     let out = core
         .into_iter()
         .enumerate()
@@ -3082,6 +3116,11 @@ pub fn record_burn_mirror_episode(
     )
 }
 
+/// Records through an in-process session, which drops combat scan answers
+/// without a legal completion. Python's V5 encoder (`features.py`) reads these
+/// records and requires both answers at every scan step; the Burn mirror never
+/// has a filtered step. A recorder for other decks must offer the JSONL
+/// server's original pair.
 pub fn record_burn_mirror_episode_with_limits(
     episode_id: u64,
     env_seed: u64,
@@ -4101,68 +4140,73 @@ fn validate_episode_decision_payload(
                     )));
                 }
             }
-            if legal_actions.len() != 2 {
-                return Err(RlContractError(format!(
-                    "{context} combat scan must expose exactly two Boolean actions"
-                )));
-            }
             let expected_actor = acting_player;
-            let valid_pair = match policy_context.current_stage {
-                PolicySurfaceStageV5::AttackerInclusion => {
-                    private.attacker.is_none()
-                        && matches!(
-                            &legal_actions[0].semantic,
-                            ActionSemanticV1::ChooseAttackerInclusion {
-                                actor,
-                                attacker,
-                                include: false,
-                            } if *actor == expected_actor
-                                && attacker == &private.current_candidate
-                        )
-                        && matches!(
-                            &legal_actions[1].semantic,
-                            ActionSemanticV1::ChooseAttackerInclusion {
-                                actor,
-                                attacker,
-                                include: true,
-                            } if *actor == expected_actor
-                                && attacker == &private.current_candidate
-                        )
-                }
+            let (context_matches_stage, fixed_attacker) = match policy_context.current_stage {
+                PolicySurfaceStageV5::AttackerInclusion => (private.attacker.is_none(), None),
                 PolicySurfaceStageV5::BlockerInclusion => {
                     let Some(fixed_attacker) = private.attacker.as_ref() else {
                         return Err(RlContractError(format!(
                             "{context} blocker scan is missing its fixed attacker"
                         )));
                     };
-                    matches!(
-                        &legal_actions[0].semantic,
-                        ActionSemanticV1::ChooseBlockerInclusion {
-                            actor,
-                            attacker,
-                            blocker,
-                            include: false,
-                        } if *actor == expected_actor
-                            && attacker == fixed_attacker
-                            && blocker == &private.current_candidate
-                    ) && matches!(
-                        &legal_actions[1].semantic,
-                        ActionSemanticV1::ChooseBlockerInclusion {
-                            actor,
-                            attacker,
-                            blocker,
-                            include: true,
-                        } if *actor == expected_actor
-                            && attacker == fixed_attacker
-                            && blocker == &private.current_candidate
-                    )
+                    (true, Some(fixed_attacker))
                 }
                 PolicySurfaceStageV5::Surface => unreachable!(),
             };
-            if !valid_pair {
-                return Err(RlContractError(format!(
-                    "{context} combat scan actions must be the exact [include:false, include:true] pair bound to the current candidate"
-                )));
+            // Whether `action` answers the current candidate with `include`.
+            let answers = |action: &LegalActionV5, include: bool| {
+                context_matches_stage
+                    && match (&action.semantic, fixed_attacker) {
+                        (
+                            ActionSemanticV1::ChooseAttackerInclusion {
+                                actor,
+                                attacker,
+                                include: answer,
+                            },
+                            None,
+                        ) => {
+                            *actor == expected_actor
+                                && attacker == &private.current_candidate
+                                && *answer == include
+                        }
+                        (
+                            ActionSemanticV1::ChooseBlockerInclusion {
+                                actor,
+                                attacker,
+                                blocker,
+                                include: answer,
+                            },
+                            Some(fixed_attacker),
+                        ) => {
+                            *actor == expected_actor
+                                && attacker == fixed_attacker
+                                && blocker == &private.current_candidate
+                                && *answer == include
+                        }
+                        _ => false,
+                    }
+            };
+            match legal_actions {
+                [exclude, include] => {
+                    if !(answers(exclude, false) && answers(include, true)) {
+                        return Err(RlContractError(format!(
+                            "{context} combat scan actions must be the exact [include:false, include:true] pair bound to the current candidate"
+                        )));
+                    }
+                }
+                // The other answer leaves no legal completion of the declaration.
+                [single] => {
+                    if !(answers(single, false) || answers(single, true)) {
+                        return Err(RlContractError(format!(
+                            "{context} single combat scan action must answer the current candidate"
+                        )));
+                    }
+                }
+                _ => {
+                    return Err(RlContractError(format!(
+                        "{context} combat scan must expose one or two Boolean actions"
+                    )));
+                }
             }
         }
     }
@@ -5328,13 +5372,13 @@ fn combat_public_v2(state: &GameState, acting_player: PlayerId) -> Result<Combat
                     blockers
                         .iter()
                         .copied()
-                        .filter_map(
-                            |id| match combat_participant_visible_v2(state, id, acting_player) {
+                        .filter_map(|id| {
+                            match combat_participant_visible_v2(state, id, acting_player) {
                                 Ok(true) => Some(card_ref(state, id)),
                                 Ok(false) => None,
                                 Err(err) => Some(Err(err)),
-                            },
-                        )
+                            }
+                        })
                         .collect::<Result<Vec<_>>>()?,
                 ))
             })
@@ -5766,20 +5810,74 @@ fn continuous_effects_public_v2(
             }
         }
     }
+    // Keyword grants lasting until their holder's next turn (Undercity's
+    // Throne of the Dead Three: "It gains hexproof until your next turn").
+    // They change the affected object's projected keywords, so an observer
+    // must be able to see which effect grants them and for how long.
+    for effect in &state.engine.until_next_turn_keywords {
+        let Some(object) = state.objects.try_get(effect.object_id) else {
+            continue;
+        };
+        if object.zone != Zone::Battlefield
+            || object.zone_change_count != effect.object_zone_change_count
+        {
+            continue;
+        }
+        let affected_objects = visible_card_refs(state, &[effect.object_id], acting_player)?;
+        if affected_objects.is_empty() {
+            continue;
+        }
+        out.push(ContinuousEffectPublicV2 {
+            source: None,
+            controller: Some(effect.holder.into()),
+            affected_objects,
+            affected_players: Vec::new(),
+            global: false,
+            layers: engine::Layers::ABILITY_ADDING.0,
+            // The stored grant has no engine timestamp; like an attached
+            // equipment profile, key it by the exact affected incarnation.
+            timestamp: (u64::from(effect.object_id.0) << 32)
+                | u64::from(effect.object_zone_change_count),
+            duration: EffectDurationV2::UntilControllersNextTurn,
+            power_delta: 0,
+            toughness_delta: 0,
+            grants_haste: effect.keywords.has(Keywords::HASTE),
+            set_power: None,
+            set_toughness: None,
+            add_color_mask: 0,
+            remove_color_mask: 0,
+            add_subtype_ids: Vec::new(),
+            remove_subtype_ids: Vec::new(),
+            add_keyword_mask: effect.keywords.0,
+            remove_keyword_mask: 0,
+            ward_generic_delta: 0,
+            minimum_blockers: None,
+            add_landwalk_mask: 0,
+            remove_landwalk_mask: 0,
+            prevent_damage_from_color_mask: 0,
+            damage_cannot_be_prevented: false,
+        });
+    }
     // Strands prevention lives in active_replacements, not until_end_of_turn.
     // Its chosen colors are public and affect every matching damage source.
     // Aggregate equal-duration shields: duplicate installations have no extra
     // effect, and neither source allocation nor replacement IDs belong in the
     // actor's observation. In particular the originating card can have moved
     // to a hidden zone without making its already-resolved effect secret.
-    let prevention_mask = state.engine.active_replacements.iter().fold(0, |mask, replacement| {
-        match replacement.kind {
-            crate::event::ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { color, turn, active_player }
-                if turn == state.turn && active_player == state.active_player =>
-                mask | crate::card_def::mana_color_mask(color),
+    let prevention_mask = state
+        .engine
+        .active_replacements
+        .iter()
+        .fold(0, |mask, replacement| match replacement.kind {
+            crate::event::ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn {
+                color,
+                turn,
+                active_player,
+            } if turn == state.turn && active_player == state.active_player => {
+                mask | crate::card_def::mana_color_mask(color)
+            }
             _ => mask,
-        }
-    });
+        });
     if prevention_mask != 0 {
         out.push(ContinuousEffectPublicV2 {
             source: None,
@@ -6274,14 +6372,17 @@ fn pending_discard_semantic_v2(
     engine::validate_pending_discard_binding(state, p)
         .map_err(|(_, error)| RlContractError(format!("invalid pending discard: {error}")))?;
     let (resume_stage, resume_source) = match &p.resume {
-        engine::DiscardResume::None => (DiscardResumeSemanticV2::None, None),
+        // The resolving ability itself stays on the public stack.
+        engine::DiscardResume::None | engine::DiscardResume::FinishAbilityResolution { .. } => {
+            (DiscardResumeSemanticV2::None, None)
+        }
         engine::DiscardResume::FinishCast { .. } => (DiscardResumeSemanticV2::FinishCast, None),
         engine::DiscardResume::FinishActivation { .. } => {
             (DiscardResumeSemanticV2::FinishActivation, None)
         }
-        // These sources were public stack objects before resolution popped
-        // them. The choice remains inside that uninterrupted resolution, so
-        // preserve the historical public incarnation while it is detached.
+        // These sources are the spell still resolving on the stack (608.2);
+        // the choice remains inside that uninterrupted resolution, so they
+        // keep the spell's public stack incarnation.
         engine::DiscardResume::FinishSpellResolution { source, .. } => (
             DiscardResumeSemanticV2::FinishSpellResolution,
             Some(detached_resolving_source_ref(
@@ -7154,6 +7255,12 @@ mod policy_v5_artifact_tests {
     }
 
     fn scan_records() -> Vec<PolicyEpisodeRecordV2> {
+        scan_records_with_goaded_first_attacker(false)
+    }
+
+    /// With `goaded_first`, the first scanned attacker is goaded, so its step
+    /// records the single legal answer (include) at index 0.
+    fn scan_records_with_goaded_first_attacker(goaded_first: bool) -> Vec<PolicyEpisodeRecordV2> {
         let mut state = GameState::new_from_libraries(&[], &[], card_name, 77);
         state.step = Step::DeclareAttackers;
         state.active_player = PlayerId::P0;
@@ -7178,6 +7285,15 @@ mod policy_v5_artifact_tests {
             });
             state.players[0].battlefield.push(id);
         }
+        if goaded_first {
+            let goaded = state.players[0].battlefield[0];
+            let expires_at_turn = state.turn + 1;
+            state.objects.get_mut(goaded).v4.goaded_by = vec![crate::state::GoadStateV4 {
+                player: PlayerId::P1,
+                expires_at_turn,
+            }];
+        }
+        let selections: [usize; 3] = if goaded_first { [0, 0, 1] } else { [1, 0, 1] };
         let mut surface = PolicySurfaceV5::new();
         let mut records = vec![PolicyEpisodeRecordV2::Header {
             schema_version: POLICY_EPISODE_SCHEMA_VERSION,
@@ -7191,7 +7307,7 @@ mod policy_v5_artifact_tests {
             episode_key: "test-0".to_string(),
             deck_identifiers: ["Burn".to_string(), "Burn".to_string()],
         }];
-        for (step, selected_index) in [1usize, 0, 1].into_iter().enumerate() {
+        for (step, selected_index) in selections.into_iter().enumerate() {
             let decision = surface.next_decision(&mut state).unwrap();
             let (substep_index, substep_count) = decision.substep();
             let observation = observe_policy_v5(
@@ -7204,7 +7320,20 @@ mod policy_v5_artifact_tests {
                 substep_count,
             )
             .unwrap();
-            let actions = legal_action_candidates_v5(&decision, &state).unwrap();
+            let mut actions = legal_action_candidates_v5(&decision, &state).unwrap();
+            if goaded_first && step == 0 {
+                actions.retain(|action| {
+                    matches!(
+                        action.record.semantic,
+                        ActionSemanticV1::ChooseAttackerInclusion { include: true, .. }
+                    )
+                });
+                for (index, action) in actions.iter_mut().enumerate() {
+                    action.record =
+                        make_legal_action_v5(index as u32, action.record.semantic.clone(), None)
+                            .unwrap();
+                }
+            }
             let selected_action_id = actions[selected_index].record.stable_id.clone();
             records.push(PolicyEpisodeRecordV2::Decision {
                 schema_version: POLICY_EPISODE_SCHEMA_VERSION,
@@ -7361,6 +7490,53 @@ mod policy_v5_artifact_tests {
             .unwrap_err()
             .to_string()
             .contains("exact [include:false, include:true] pair"));
+    }
+
+    /// A scan step whose other answer has no legal completion (here a goaded
+    /// attacker) records a single answer; it must still name the current
+    /// candidate.
+    #[test]
+    fn a_single_forced_scan_answer_validates_only_when_bound_to_the_current_candidate() {
+        let valid = scan_records_with_goaded_first_attacker(true);
+        let PolicyEpisodeRecordV2::Decision { legal_actions, .. } = &valid[1] else {
+            unreachable!()
+        };
+        assert_eq!(legal_actions.len(), 1);
+        validate_policy_episode_records(&valid).unwrap();
+
+        let mut wrong_candidate = valid.clone();
+        let PolicyEpisodeRecordV2::Decision {
+            observation,
+            legal_actions,
+            selected_action_id,
+            ..
+        } = &mut wrong_candidate[1]
+        else {
+            unreachable!()
+        };
+        let other = observation
+            .projection
+            .policy_surface_context
+            .private_combat_selection
+            .as_ref()
+            .unwrap()
+            .remaining_after_current[0]
+            .clone();
+        legal_actions[0] = make_legal_action_v5(
+            0,
+            ActionSemanticV1::ChooseAttackerInclusion {
+                actor: PlayerSeatV1::P0,
+                attacker: other,
+                include: true,
+            },
+            None,
+        )
+        .unwrap();
+        *selected_action_id = legal_actions[0].stable_id.clone();
+        assert!(validate_policy_episode_records(&wrong_candidate)
+            .unwrap_err()
+            .to_string()
+            .contains("single combat scan action must answer the current candidate"));
     }
 
     #[test]

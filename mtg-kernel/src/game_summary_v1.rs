@@ -5,8 +5,8 @@
 
 use crate::event::CommittedEvent;
 use crate::ids::PlayerId;
-use crate::rl_session::{RlEpisodeSessionV1, RlSessionDecisionV1, RlSessionResponseV1};
 use crate::rl::ActionSemanticV1;
+use crate::rl_session::{RlEpisodeSessionV1, RlSessionDecisionV1, RlSessionResponseV1};
 use crate::state::{Target, Zone};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -140,7 +140,9 @@ impl SummaryHistoryV1 {
         if self.last_turn != Some(state.turn) {
             self.turn_watermarks
                 .push((state.engine.event_history.len(), state.turn));
-            self.resource_curve.lands_by_turn.push(count_lands_v1(state));
+            self.resource_curve
+                .lands_by_turn
+                .push(count_lands_v1(state));
             for seat in 0..2 {
                 self.resource_curve.hand_size_by_turn[seat]
                     .push(state.players[seat].hand.len() as u32);
@@ -256,10 +258,17 @@ impl FastGameSummaryAccumulatorV1 {
             }
             return Ok(false);
         }
-        if Some(decision.step) != self.initial_policy_steps.checked_add(self.observed_decisions) {
+        if Some(decision.step)
+            != self
+                .initial_policy_steps
+                .checked_add(self.observed_decisions)
+        {
             return Err("summary requires every gameplay decision in order".into());
         }
-        let next = self.observed_decisions.checked_add(1).ok_or("summary decision count overflow")?;
+        let next = self
+            .observed_decisions
+            .checked_add(1)
+            .ok_or("summary decision count overflow")?;
         self.history.observe_turn(state);
         self.history.offered_as_cast[seat_index_v1(decision.acting_player)]
             .extend(session.current_offered_hand_cast_ids_v1());
@@ -313,7 +322,9 @@ impl FastGameSummaryAccumulatorV1 {
         }
         if terminal.episode_id != self.episode_id
             || Some(terminal.policy_step_count)
-                != self.initial_policy_steps.checked_add(self.observed_decisions)
+                != self
+                    .initial_policy_steps
+                    .checked_add(self.observed_decisions)
             || session.game_state().engine.event_history.len() < self.last_event_count
             || session.game_state().turn < self.last_observed_turn
         {
@@ -321,7 +332,9 @@ impl FastGameSummaryAccumulatorV1 {
         }
         Ok(self.finish(
             session,
-            terminal.winner.map(|seat| PlayerId(seat_index_v1(seat) as u8)),
+            terminal
+                .winner
+                .map(|seat| PlayerId(seat_index_v1(seat) as u8)),
             GameSummaryCompletionV2::Natural,
             weights,
             tags,
@@ -372,7 +385,10 @@ pub fn finish_opening_concession_v2(
     Ok(CompletedGameSummaryV2 {
         schema: "mtg-kernel-completed-game-summary/v2",
         summary: SummaryHistoryV1::default().finish(
-            state, Some(conceding_player.opponent()), weights, tags,
+            state,
+            Some(conceding_player.opponent()),
+            weights,
+            tags,
         ),
         completion: GameSummaryCompletionV2::Concession {
             conceding_player,
@@ -382,7 +398,9 @@ pub fn finish_opening_concession_v2(
                 starting_player: view.starting_player,
                 mulligans_taken: view.mulligans_taken,
                 hand_counts: std::array::from_fn(|seat| state.players[seat].hand.len() as u32),
-                library_counts: std::array::from_fn(|seat| state.players[seat].library.len() as u32),
+                library_counts: std::array::from_fn(|seat| {
+                    state.players[seat].library.len() as u32
+                }),
             },
         },
         history: GameSummaryHistoryV2 {
@@ -447,7 +465,11 @@ fn count_lands_v1(state: &crate::state::GameState) -> u32 {
 fn build_object_card_def_map_v1(
     state: &crate::state::GameState,
 ) -> BTreeMap<crate::ids::ObjectId, u16> {
-    state.objects.iter().map(|(id, object)| (id, object.card_def)).collect()
+    state
+        .objects
+        .iter()
+        .map(|(id, object)| (id, object.card_def))
+        .collect()
 }
 
 /// Same one-pass-over-the-terminal-arena rationale as
@@ -461,7 +483,11 @@ fn build_object_card_def_map_v1(
 fn build_object_owner_map_v1(
     state: &crate::state::GameState,
 ) -> BTreeMap<crate::ids::ObjectId, PlayerId> {
-    state.objects.iter().map(|(id, object)| (id, object.owner)).collect()
+    state
+        .objects
+        .iter()
+        .map(|(id, object)| (id, object.owner))
+        .collect()
 }
 
 /// Every non-token object this game whose `owner` is `seat`: exactly the
@@ -478,7 +504,8 @@ fn own_registered_card_ids_v1(
         .objects
         .iter()
         .filter(|(_, object)| {
-            object.owner == seat_player && !crate::card_def::CARD_DEFS[object.card_def as usize].is_token
+            object.owner == seat_player
+                && !crate::card_def::CARD_DEFS[object.card_def as usize].is_token
         })
         .map(|(_, object)| object.card_def)
         .collect()
@@ -491,7 +518,11 @@ fn own_registered_card_ids_v1(
 /// turn whose watermark index exceeds it (the earliest turn boundary
 /// reached after the event committed); an event at or after the last
 /// watermark is attributed to `final_turn`, the turn the game ended on.
-fn turn_for_event_index_v1(turn_watermarks: &[(usize, u32)], final_turn: u32, event_index: usize) -> u32 {
+fn turn_for_event_index_v1(
+    turn_watermarks: &[(usize, u32)],
+    final_turn: u32,
+    event_index: usize,
+) -> u32 {
     turn_watermarks
         .iter()
         .find(|&&(watermark_index, _)| watermark_index > event_index)
@@ -600,7 +631,10 @@ fn fold_event_history_v1(
     offered_as_cast: &[std::collections::BTreeSet<u16>; 2],
     tags: &RemovalCounterspellTagsV1,
     resource_curve: &mut ResourceCurveV1,
-) -> ([Vec<OpponentEvidenceRowV1>; 2], [BTreeMap<u16, OwnCardOutcomeV1>; 2]) {
+) -> (
+    [Vec<OpponentEvidenceRowV1>; 2],
+    [BTreeMap<u16, OwnCardOutcomeV1>; 2],
+) {
     let mut opponent_first_seen: [BTreeMap<u16, u32>; 2] = Default::default();
     let mut opponent_end_of_game_zone: [BTreeMap<u16, Zone>; 2] = Default::default();
     let mut times_drawn: [BTreeMap<u16, u8>; 2] = Default::default();
@@ -612,7 +646,8 @@ fn fold_event_history_v1(
     // carry a `zone_change_count` for exactly this reason). `object_incarnation`
     // below is this fold's own running per-object incarnation counter, since
     // `Damage` and `ZoneChange` carry no such count directly.
-    let mut ever_dealt_damage: std::collections::BTreeSet<(crate::ids::ObjectId, u32)> = Default::default();
+    let mut ever_dealt_damage: std::collections::BTreeSet<(crate::ids::ObjectId, u32)> =
+        Default::default();
     let mut died_without_damage: [std::collections::BTreeSet<u16>; 2] = Default::default();
     // Tracks each object's incarnation number as this fold walks
     // `event_history` forward, incremented once per `ZoneChange` event that
@@ -636,7 +671,10 @@ fn fold_event_history_v1(
 
     for (index, event) in event_history.iter().enumerate() {
         match event {
-            CommittedEvent::Draw { player, object: Some(object_id) } => {
+            CommittedEvent::Draw {
+                player,
+                object: Some(object_id),
+            } => {
                 let seat = seat_index_from_player_id_v1(*player);
                 if let Some(&card_id) = object_card_def.get(object_id) {
                     if own_registered_ids[seat].contains(&card_id) {
@@ -655,7 +693,11 @@ fn fold_event_history_v1(
                     }
                 }
             }
-            CommittedEvent::Damage { source, target, amount } => {
+            CommittedEvent::Damage {
+                source,
+                target,
+                amount,
+            } => {
                 // Item 4 (Important): only a positive amount counts as
                 // "dealt damage" toward `ever_dealt_damage` / the
                 // `died_without_dealing_damage` signal it feeds.
@@ -693,13 +735,18 @@ fn fold_event_history_v1(
                     }
                     Target::Object(target_object) => {
                         if let Some(&owner) = object_owner.get(target_object) {
-                            resource_curve.damage_taken_total[seat_index_from_player_id_v1(owner)] +=
-                                i64::from(*amount);
+                            resource_curve.damage_taken_total
+                                [seat_index_from_player_id_v1(owner)] += i64::from(*amount);
                         }
                     }
                 }
             }
-            CommittedEvent::CombatDamageToPlayer { source, source_zone_change_count, player: _, amount } => {
+            CommittedEvent::CombatDamageToPlayer {
+                source,
+                source_zone_change_count,
+                player: _,
+                amount,
+            } => {
                 if *amount > 0 {
                     ever_dealt_damage.insert((*source, *source_zone_change_count));
                 }
@@ -725,9 +772,19 @@ fn fold_event_history_v1(
                     }
                 }
             }
-            CommittedEvent::ZoneChange { object, from, to, controller_before } => {
-                let Some(&card_id) = object_card_def.get(object) else { continue };
-                let is_public = matches!(to, Zone::Battlefield | Zone::Graveyard | Zone::Stack | Zone::Exile);
+            CommittedEvent::ZoneChange {
+                object,
+                from,
+                to,
+                controller_before,
+            } => {
+                let Some(&card_id) = object_card_def.get(object) else {
+                    continue;
+                };
+                let is_public = matches!(
+                    to,
+                    Zone::Battlefield | Zone::Graveyard | Zone::Stack | Zone::Exile
+                );
                 let is_died = matches!(to, Zone::Graveyard | Zone::Exile)
                     && !matches!(from, Zone::Graveyard | Zone::Exile);
 
@@ -752,9 +809,9 @@ fn fold_event_history_v1(
                         && own_registered_ids[opponent_seat].contains(&card_id)
                         && is_public
                     {
-                        opponent_first_seen[seat]
-                            .entry(card_id)
-                            .or_insert_with(|| turn_for_event_index_v1(turn_watermarks, final_turn, index));
+                        opponent_first_seen[seat].entry(card_id).or_insert_with(|| {
+                            turn_for_event_index_v1(turn_watermarks, final_turn, index)
+                        });
                         opponent_end_of_game_zone[seat].insert(card_id, *to);
                     }
                 }
@@ -839,8 +896,7 @@ fn record_turn_watermark_if_new_v1(
         turn_watermarks.push((state.engine.event_history.len(), turn));
         resource_curve.lands_by_turn.push(count_lands_v1(state));
         for seat in 0..2 {
-            resource_curve.hand_size_by_turn[seat]
-                .push(state.players[seat].hand.len() as u32);
+            resource_curve.hand_size_by_turn[seat].push(state.players[seat].hand.len() as u32);
             // `PlayerState.life: i32` (`state.rs:353`) matches
             // `ResourceCurveV1.life_by_turn: [Vec<i32>; 2]`
             // exactly; no cast, no truncation.
@@ -962,7 +1018,10 @@ pub fn append_game_summary_jsonl_v1(
     summary: &GameSummaryV1,
 ) -> std::io::Result<()> {
     use std::io::Write;
-    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
     let line = serde_json::to_string(summary).expect("GameSummaryV1 always serializes");
     writeln!(file, "{line}")
 }
@@ -1029,7 +1088,12 @@ mod tests {
         let mainboards = burn_and_rally();
         let deck_ids = ["Burn".to_owned(), "Rally".to_owned()];
         let mut session = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits(
-            1, 0x7777_7777_7777_7777, 2000, 200_000, deck_ids, mainboards,
+            1,
+            0x7777_7777_7777_7777,
+            2000,
+            200_000,
+            deck_ids,
+            mainboards,
         )
         .unwrap();
         let tags = RemovalCounterspellTagsV1 {
@@ -1039,18 +1103,33 @@ mod tests {
         let mut rng = SplitMix64::seed(0x8888_8888_8888_8888);
         let mut policy = |decision: &RlSessionDecisionV1| {
             let index = (rng.next_u64() as usize) % decision.legal_actions.len();
-            (index as u32, decision.legal_actions[index].stable_id.clone())
+            (
+                index as u32,
+                decision.legal_actions[index].stable_id.clone(),
+            )
         };
-        let summary = run_episode_with_summary_v1(&mut session, "deadbeefdeadbeef", &tags, &mut policy);
+        let summary =
+            run_episode_with_summary_v1(&mut session, "deadbeefdeadbeef", &tags, &mut policy);
         assert_eq!(summary.schema_version, GAME_SUMMARY_SCHEMA_V1);
         assert_eq!(summary.checkpoint_weights_hash, "deadbeefdeadbeef");
         assert!(!summary.checkpoint_git_head.is_empty());
-        assert!(summary.resource_curve.lands_by_turn.iter().sum::<u32>() > 0, "some land entered play over a full game");
+        assert!(
+            summary.resource_curve.lands_by_turn.iter().sum::<u32>() > 0,
+            "some land entered play over a full game"
+        );
         // own_card_outcomes must only ever key cards from that seat's own
         // registered mainboard, never the opponent's.
-        let burn_ids: std::collections::BTreeSet<u16> = runtime_deck_by_id("Burn").unwrap().card_ids.iter().copied().collect();
+        let burn_ids: std::collections::BTreeSet<u16> = runtime_deck_by_id("Burn")
+            .unwrap()
+            .card_ids
+            .iter()
+            .copied()
+            .collect();
         for &card_id in summary.own_card_outcomes[0].keys() {
-            assert!(burn_ids.contains(&card_id), "P0 own_card_outcomes leaked a non-Burn card_id {card_id}");
+            assert!(
+                burn_ids.contains(&card_id),
+                "P0 own_card_outcomes leaked a non-Burn card_id {card_id}"
+            );
         }
     }
 
@@ -1088,14 +1167,20 @@ mod tests {
         // `Targeted` event ever logged in its casting window (no legal
         // target was ever chosen).
         let event_history = vec![
-            CommittedEvent::Draw { player: PlayerId::P0, object: Some(ObjectId(20)) }, // index 0
+            CommittedEvent::Draw {
+                player: PlayerId::P0,
+                object: Some(ObjectId(20)),
+            }, // index 0
             CommittedEvent::ZoneChange {
                 object: ObjectId(10),
                 from: Zone::Library,
                 to: Zone::Battlefield,
                 controller_before: PlayerId::P1,
             }, // index 1: P1's card_id 100 becomes public
-            CommittedEvent::SpellCast { spell: ObjectId(20), controller: PlayerId::P0 }, // index 2
+            CommittedEvent::SpellCast {
+                spell: ObjectId(20),
+                controller: PlayerId::P0,
+            }, // index 2
             CommittedEvent::ZoneChange {
                 object: ObjectId(20),
                 from: Zone::Stack,
@@ -1109,7 +1194,9 @@ mod tests {
         let turn_watermarks = vec![(0usize, 1u32), (2usize, 2u32)];
         let final_turn = 3u32;
         let object_card_def: BTreeMap<ObjectId, u16> =
-            [(ObjectId(10), 100u16), (ObjectId(20), 200u16)].into_iter().collect();
+            [(ObjectId(10), 100u16), (ObjectId(20), 200u16)]
+                .into_iter()
+                .collect();
         let own_registered_ids: [std::collections::BTreeSet<u16>; 2] = [
             [200u16].into_iter().collect(),
             [100u16].into_iter().collect(),
@@ -1122,7 +1209,9 @@ mod tests {
             is_counterspell: Default::default(),
         };
         let object_owner: BTreeMap<ObjectId, PlayerId> =
-            [(ObjectId(10), PlayerId::P1), (ObjectId(20), PlayerId::P0)].into_iter().collect();
+            [(ObjectId(10), PlayerId::P1), (ObjectId(20), PlayerId::P0)]
+                .into_iter()
+                .collect();
         let mut resource_curve = ResourceCurveV1::default();
 
         let (opponent_evidence, own_card_outcomes) = fold_event_history_v1(
@@ -1161,12 +1250,19 @@ mod tests {
         assert_eq!(outcome.times_drawn, 1);
         assert!(outcome.cast);
         assert!(!outcome.stuck_in_hand);
-        assert!(outcome.removal_no_target, "cast with no traced target must be recorded");
-        assert!(!outcome.counterspell_held, "not tagged is_counterspell, so this field is always false here");
+        assert!(
+            outcome.removal_no_target,
+            "cast with no traced target must be recorded"
+        );
+        assert!(
+            !outcome.counterspell_held,
+            "not tagged is_counterspell, so this field is always false here"
+        );
     }
 
     #[test]
-    fn fold_event_history_records_removal_no_target_false_when_targeted_precedes_spell_cast_in_real_engine_order() {
+    fn fold_event_history_records_removal_no_target_false_when_targeted_precedes_spell_cast_in_real_engine_order(
+    ) {
         use crate::ids::{ObjectId, StackItemId};
 
         // Item 1 (Critical): the real engine order. `finalize_owned_cast`
@@ -1189,7 +1285,10 @@ mod tests {
                 targeting_stack_item: StackItemId(1),
                 targeting_controller: PlayerId::P0,
             }, // index 1: declared before this cast's own SpellCast
-            CommittedEvent::SpellCast { spell: ObjectId(20), controller: PlayerId::P0 }, // index 2
+            CommittedEvent::SpellCast {
+                spell: ObjectId(20),
+                controller: PlayerId::P0,
+            }, // index 2
             CommittedEvent::ZoneChange {
                 object: ObjectId(20),
                 from: Zone::Stack,
@@ -1200,9 +1299,13 @@ mod tests {
         let turn_watermarks = vec![(0usize, 1u32)];
         let final_turn = 1u32;
         let object_card_def: BTreeMap<ObjectId, u16> =
-            [(ObjectId(10), 100u16), (ObjectId(20), 200u16)].into_iter().collect();
+            [(ObjectId(10), 100u16), (ObjectId(20), 200u16)]
+                .into_iter()
+                .collect();
         let object_owner: BTreeMap<ObjectId, PlayerId> =
-            [(ObjectId(10), PlayerId::P1), (ObjectId(20), PlayerId::P0)].into_iter().collect();
+            [(ObjectId(10), PlayerId::P1), (ObjectId(20), PlayerId::P0)]
+                .into_iter()
+                .collect();
         let own_registered_ids: [std::collections::BTreeSet<u16>; 2] = [
             [200u16].into_iter().collect(),
             [100u16].into_iter().collect(),
@@ -1249,22 +1352,38 @@ mod tests {
         // branch, exercising that the second attack does not overwrite
         // `first_attack_turn`); P1's creature retaliates for 5 (turn 3).
         let event_history = vec![
-            CommittedEvent::Damage { source: ObjectId(40), target: Target::Object(ObjectId(41)), amount: 2 }, // index 0
-            CommittedEvent::Damage { source: ObjectId(40), target: Target::Player(PlayerId::P1), amount: 3 }, // index 1
+            CommittedEvent::Damage {
+                source: ObjectId(40),
+                target: Target::Object(ObjectId(41)),
+                amount: 2,
+            }, // index 0
+            CommittedEvent::Damage {
+                source: ObjectId(40),
+                target: Target::Player(PlayerId::P1),
+                amount: 3,
+            }, // index 1
             CommittedEvent::CombatDamageToPlayer {
                 source: ObjectId(40),
                 source_zone_change_count: 0,
                 player: PlayerId::P1,
                 amount: 3,
             }, // index 2
-            CommittedEvent::Damage { source: ObjectId(41), target: Target::Player(PlayerId::P0), amount: 5 }, // index 3
+            CommittedEvent::Damage {
+                source: ObjectId(41),
+                target: Target::Player(PlayerId::P0),
+                amount: 5,
+            }, // index 3
             CommittedEvent::CombatDamageToPlayer {
                 source: ObjectId(41),
                 source_zone_change_count: 0,
                 player: PlayerId::P0,
                 amount: 5,
             }, // index 4
-            CommittedEvent::Damage { source: ObjectId(40), target: Target::Player(PlayerId::P1), amount: 1 }, // index 5
+            CommittedEvent::Damage {
+                source: ObjectId(40),
+                target: Target::Player(PlayerId::P1),
+                amount: 1,
+            }, // index 5
             CommittedEvent::CombatDamageToPlayer {
                 source: ObjectId(40),
                 source_zone_change_count: 1,
@@ -1281,11 +1400,16 @@ mod tests {
         let final_turn = 3u32;
         let object_card_def: BTreeMap<ObjectId, u16> = Default::default();
         let object_owner: BTreeMap<ObjectId, PlayerId> =
-            [(ObjectId(40), PlayerId::P0), (ObjectId(41), PlayerId::P1)].into_iter().collect();
+            [(ObjectId(40), PlayerId::P0), (ObjectId(41), PlayerId::P1)]
+                .into_iter()
+                .collect();
         let own_registered_ids: [std::collections::BTreeSet<u16>; 2] = Default::default();
         let end_of_game_hand_card_ids: [std::collections::BTreeSet<u16>; 2] = Default::default();
         let offered_as_cast: [std::collections::BTreeSet<u16>; 2] = Default::default();
-        let tags = RemovalCounterspellTagsV1 { requires_target: Default::default(), is_counterspell: Default::default() };
+        let tags = RemovalCounterspellTagsV1 {
+            requires_target: Default::default(),
+            is_counterspell: Default::default(),
+        };
         let mut resource_curve = ResourceCurveV1::default();
 
         fold_event_history_v1(
@@ -1302,15 +1426,33 @@ mod tests {
         );
 
         assert_eq!(resource_curve.damage_dealt_total[0], 6, "P0's creature dealt 2 + 3 + 1 across three Damage events, CombatDamageToPlayer not double-counted");
-        assert_eq!(resource_curve.damage_dealt_total[1], 5, "P1's creature dealt 5");
-        assert_eq!(resource_curve.damage_taken_total[0], 5, "P0 took 5 combat damage to the player");
-        assert_eq!(resource_curve.damage_taken_total[1], 6, "P1 took 3 + 1 to the player and 2 to its own permanent");
-        assert_eq!(resource_curve.first_attack_turn[0], Some(2), "P0's first CombatDamageToPlayer landed turn 2");
-        assert_eq!(resource_curve.first_attack_turn[1], Some(3), "P1's first (and only) CombatDamageToPlayer landed turn 3");
+        assert_eq!(
+            resource_curve.damage_dealt_total[1], 5,
+            "P1's creature dealt 5"
+        );
+        assert_eq!(
+            resource_curve.damage_taken_total[0], 5,
+            "P0 took 5 combat damage to the player"
+        );
+        assert_eq!(
+            resource_curve.damage_taken_total[1], 6,
+            "P1 took 3 + 1 to the player and 2 to its own permanent"
+        );
+        assert_eq!(
+            resource_curve.first_attack_turn[0],
+            Some(2),
+            "P0's first CombatDamageToPlayer landed turn 2"
+        );
+        assert_eq!(
+            resource_curve.first_attack_turn[1],
+            Some(3),
+            "P1's first (and only) CombatDamageToPlayer landed turn 3"
+        );
     }
 
     #[test]
-    fn fold_event_history_scopes_died_without_dealing_damage_by_incarnation_and_ignores_zero_amount_damage() {
+    fn fold_event_history_scopes_died_without_dealing_damage_by_incarnation_and_ignores_zero_amount_damage(
+    ) {
         use crate::ids::ObjectId;
 
         // Items 3, 4, 5 (Important): card_id 501 (ObjectId 50) lives once,
@@ -1330,7 +1472,11 @@ mod tests {
                 to: Zone::Battlefield,
                 controller_before: PlayerId::P0,
             },
-            CommittedEvent::Damage { source: ObjectId(50), target: Target::Player(PlayerId::P1), amount: 4 },
+            CommittedEvent::Damage {
+                source: ObjectId(50),
+                target: Target::Player(PlayerId::P1),
+                amount: 4,
+            },
             CommittedEvent::ZoneChange {
                 object: ObjectId(50),
                 from: Zone::Battlefield,
@@ -1344,7 +1490,11 @@ mod tests {
                 to: Zone::Battlefield,
                 controller_before: PlayerId::P0,
             },
-            CommittedEvent::Damage { source: ObjectId(51), target: Target::Player(PlayerId::P1), amount: 2 },
+            CommittedEvent::Damage {
+                source: ObjectId(51),
+                target: Target::Player(PlayerId::P1),
+                amount: 2,
+            },
             CommittedEvent::ZoneChange {
                 object: ObjectId(51),
                 from: Zone::Battlefield,
@@ -1359,7 +1509,11 @@ mod tests {
                 to: Zone::Battlefield,
                 controller_before: PlayerId::P0,
             },
-            CommittedEvent::Damage { source: ObjectId(51), target: Target::Player(PlayerId::P1), amount: 0 },
+            CommittedEvent::Damage {
+                source: ObjectId(51),
+                target: Target::Player(PlayerId::P1),
+                amount: 0,
+            },
             CommittedEvent::ZoneChange {
                 object: ObjectId(51),
                 from: Zone::Battlefield,
@@ -1370,14 +1524,21 @@ mod tests {
         let turn_watermarks = vec![(0usize, 1u32)];
         let final_turn = 1u32;
         let object_card_def: BTreeMap<ObjectId, u16> =
-            [(ObjectId(50), 501u16), (ObjectId(51), 502u16)].into_iter().collect();
+            [(ObjectId(50), 501u16), (ObjectId(51), 502u16)]
+                .into_iter()
+                .collect();
         let object_owner: BTreeMap<ObjectId, PlayerId> =
-            [(ObjectId(50), PlayerId::P0), (ObjectId(51), PlayerId::P0)].into_iter().collect();
+            [(ObjectId(50), PlayerId::P0), (ObjectId(51), PlayerId::P0)]
+                .into_iter()
+                .collect();
         let own_registered_ids: [std::collections::BTreeSet<u16>; 2] =
             [[501u16, 502u16].into_iter().collect(), Default::default()];
         let end_of_game_hand_card_ids: [std::collections::BTreeSet<u16>; 2] = Default::default();
         let offered_as_cast: [std::collections::BTreeSet<u16>; 2] = Default::default();
-        let tags = RemovalCounterspellTagsV1 { requires_target: Default::default(), is_counterspell: Default::default() };
+        let tags = RemovalCounterspellTagsV1 {
+            requires_target: Default::default(),
+            is_counterspell: Default::default(),
+        };
         let mut resource_curve = ResourceCurveV1::default();
 
         let (_opponent_evidence, own_card_outcomes) = fold_event_history_v1(
@@ -1413,7 +1574,12 @@ mod tests {
         let mainboards = burn_and_rally();
         let deck_ids = ["Burn".to_owned(), "Rally".to_owned()];
         let mut session = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits(
-            4, 0x9999_9999_9999_9999, 2000, 200_000, deck_ids, mainboards,
+            4,
+            0x9999_9999_9999_9999,
+            2000,
+            200_000,
+            deck_ids,
+            mainboards,
         )
         .unwrap();
         let mut rng = SplitMix64::seed(0xaaaa_aaaa_aaaa_aaaa);
@@ -1425,22 +1591,41 @@ mod tests {
             match session.current_response() {
                 RlSessionResponseV1::Terminal(_) => break session.game_state().turn,
                 RlSessionResponseV1::Decision(decision) => {
-                    record_turn_watermark_if_new_v1(&session, &mut turn_watermarks, &mut last_turn, &mut resource_curve);
+                    record_turn_watermark_if_new_v1(
+                        &session,
+                        &mut turn_watermarks,
+                        &mut last_turn,
+                        &mut resource_curve,
+                    );
                     let index = (rng.next_u64() as usize) % decision.legal_actions.len();
                     let selected_action_id = decision.legal_actions[index].stable_id.clone();
                     session
-                        .step(decision.episode_id, decision.step, index as u32, &selected_action_id)
+                        .step(
+                            decision.episode_id,
+                            decision.step,
+                            index as u32,
+                            &selected_action_id,
+                        )
                         .expect("policy-selected action is legal by construction");
                 }
             }
         };
 
-        assert!(!turn_watermarks.is_empty(), "a real episode reaches at least one decision");
+        assert!(
+            !turn_watermarks.is_empty(),
+            "a real episode reaches at least one decision"
+        );
         for pair in turn_watermarks.windows(2) {
             let (prev_index, prev_turn) = pair[0];
             let (next_index, next_turn) = pair[1];
-            assert!(next_index >= prev_index, "event_history length must be monotone non-decreasing between watermarks");
-            assert!(next_turn >= prev_turn, "turn must be monotone non-decreasing between watermarks");
+            assert!(
+                next_index >= prev_index,
+                "event_history length must be monotone non-decreasing between watermarks"
+            );
+            assert!(
+                next_turn >= prev_turn,
+                "turn must be monotone non-decreasing between watermarks"
+            );
         }
         assert_eq!(
             turn_watermarks.last().unwrap().1,
@@ -1459,16 +1644,28 @@ mod tests {
         let mainboards = burn_and_rally();
         let deck_ids = ["Burn".to_owned(), "Rally".to_owned()];
         let mut session = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits(
-            2, 0x2222_2222_2222_2222, 2000, 200_000, deck_ids, mainboards,
+            2,
+            0x2222_2222_2222_2222,
+            2000,
+            200_000,
+            deck_ids,
+            mainboards,
         )
         .unwrap();
-        let tags = RemovalCounterspellTagsV1 { requires_target: Default::default(), is_counterspell: Default::default() };
+        let tags = RemovalCounterspellTagsV1 {
+            requires_target: Default::default(),
+            is_counterspell: Default::default(),
+        };
         let mut rng = SplitMix64::seed(0x3333_3333_3333_3333);
         let mut policy = |decision: &RlSessionDecisionV1| {
             let index = (rng.next_u64() as usize) % decision.legal_actions.len();
-            (index as u32, decision.legal_actions[index].stable_id.clone())
+            (
+                index as u32,
+                decision.legal_actions[index].stable_id.clone(),
+            )
         };
-        let summary = run_episode_with_summary_v1(&mut session, "cafef00dcafef00d", &tags, &mut policy);
+        let summary =
+            run_episode_with_summary_v1(&mut session, "cafef00dcafef00d", &tags, &mut policy);
         append_game_summary_jsonl_v1(&path, &summary).unwrap();
         append_game_summary_jsonl_v1(&path, &summary).unwrap();
 
@@ -1502,8 +1699,14 @@ mod tests {
         use crate::ids::ObjectId;
 
         let event_history = vec![
-            CommittedEvent::Draw { player: PlayerId::P1, object: Some(ObjectId(30)) }, // index 0: private, card_id 300, stays in hand
-            CommittedEvent::Draw { player: PlayerId::P1, object: Some(ObjectId(31)) }, // index 1: private, card_id 301
+            CommittedEvent::Draw {
+                player: PlayerId::P1,
+                object: Some(ObjectId(30)),
+            }, // index 0: private, card_id 300, stays in hand
+            CommittedEvent::Draw {
+                player: PlayerId::P1,
+                object: Some(ObjectId(31)),
+            }, // index 1: private, card_id 301
             CommittedEvent::ZoneChange {
                 object: ObjectId(31),
                 from: Zone::Hand,
@@ -1517,15 +1720,22 @@ mod tests {
         let turn_watermarks = vec![(0usize, 1u32)];
         let final_turn = 5u32;
         let object_card_def: BTreeMap<ObjectId, u16> =
-            [(ObjectId(30), 300u16), (ObjectId(31), 301u16)].into_iter().collect();
+            [(ObjectId(30), 300u16), (ObjectId(31), 301u16)]
+                .into_iter()
+                .collect();
         let own_registered_ids: [std::collections::BTreeSet<u16>; 2] =
             [Default::default(), [300u16, 301u16].into_iter().collect()];
         let end_of_game_hand_card_ids: [std::collections::BTreeSet<u16>; 2] =
             [Default::default(), [300u16].into_iter().collect()];
         let offered_as_cast: [std::collections::BTreeSet<u16>; 2] = Default::default();
-        let tags = RemovalCounterspellTagsV1 { requires_target: Default::default(), is_counterspell: Default::default() };
+        let tags = RemovalCounterspellTagsV1 {
+            requires_target: Default::default(),
+            is_counterspell: Default::default(),
+        };
         let object_owner: BTreeMap<ObjectId, PlayerId> =
-            [(ObjectId(30), PlayerId::P1), (ObjectId(31), PlayerId::P1)].into_iter().collect();
+            [(ObjectId(30), PlayerId::P1), (ObjectId(31), PlayerId::P1)]
+                .into_iter()
+                .collect();
         let mut resource_curve = ResourceCurveV1::default();
 
         let (opponent_evidence, own_card_outcomes) = fold_event_history_v1(
@@ -1543,9 +1753,16 @@ mod tests {
 
         // P0's evidence about P1: exactly the discarded card, never the
         // one that stayed private in hand.
-        assert_eq!(opponent_evidence[0].len(), 1, "only the publicly-discarded card may appear");
+        assert_eq!(
+            opponent_evidence[0].len(),
+            1,
+            "only the publicly-discarded card may appear"
+        );
         assert_eq!(opponent_evidence[0][0].card_id, 301);
-        assert_eq!(opponent_evidence[0][0].first_seen_turn, 5, "first_seen_turn must be the public event's turn, not the private draw's");
+        assert_eq!(
+            opponent_evidence[0][0].first_seen_turn, 5,
+            "first_seen_turn must be the public event's turn, not the private draw's"
+        );
         assert_eq!(opponent_evidence[0][0].end_of_game_zone, Zone::Graveyard);
         assert!(
             !opponent_evidence[0].iter().any(|row| row.card_id == 300),
@@ -1581,8 +1798,10 @@ mod tests {
     /// a separate `tests/` binary, not linked into the lib), so this mirrors
     /// its `TagFileV1`/`TagRowV1` shape locally instead.
     fn load_real_removal_counterspell_tags_v1() -> RemovalCounterspellTagsV1 {
-        const TAG_FILE_JSON: &str = include_str!("../../data/pauper_removal_counterspell_tags_v1.json");
-        let document: RealTagFileV1 = serde_json::from_str(TAG_FILE_JSON).expect("tag file parses as RealTagFileV1");
+        const TAG_FILE_JSON: &str =
+            include_str!("../../data/pauper_removal_counterspell_tags_v1.json");
+        let document: RealTagFileV1 =
+            serde_json::from_str(TAG_FILE_JSON).expect("tag file parses as RealTagFileV1");
         let mut requires_target = std::collections::BTreeSet::new();
         let mut is_counterspell = std::collections::BTreeSet::new();
         for row in document.cards {
@@ -1593,11 +1812,15 @@ mod tests {
                 is_counterspell.insert(row.card_id);
             }
         }
-        RemovalCounterspellTagsV1 { requires_target, is_counterspell }
+        RemovalCounterspellTagsV1 {
+            requires_target,
+            is_counterspell,
+        }
     }
 
     #[test]
-    fn run_episode_with_real_tags_records_removal_no_target_false_for_a_legally_targeted_cast_down() {
+    fn run_episode_with_real_tags_records_removal_no_target_false_for_a_legally_targeted_cast_down()
+    {
         // Item 6 (Important): `removal_no_target` and `counterspell_held`
         // were never exercised against the real, committed tag file with
         // real engine-emitted events -- the Critical bug (item 1) shipped
@@ -1632,9 +1855,13 @@ mod tests {
             let mut rng = SplitMix64::seed(seed ^ 0xABCD_EF01_2345_6789);
             let mut policy = |decision: &RlSessionDecisionV1| {
                 let index = (rng.next_u64() as usize) % decision.legal_actions.len();
-                (index as u32, decision.legal_actions[index].stable_id.clone())
+                (
+                    index as u32,
+                    decision.legal_actions[index].stable_id.clone(),
+                )
             };
-            let summary = run_episode_with_summary_v1(&mut session, "fixround1castdown", &tags, &mut policy);
+            let summary =
+                run_episode_with_summary_v1(&mut session, "fixround1castdown", &tags, &mut policy);
             for seat in 0..2 {
                 if let Some(outcome) = summary.own_card_outcomes[seat].get(&CAST_DOWN_CARD_ID) {
                     if outcome.cast {
@@ -1708,12 +1935,16 @@ mod tests {
         // own copy of card_id 66 going public must not appear in P0's own
         // evidence (opponent_evidence[0]) at all, only in P1's (the true
         // opponent); symmetrically for P1's own copy.
-        let object_card_def: BTreeMap<ObjectId, u16> = [(ObjectId(80), 66u16)].into_iter().collect();
+        let object_card_def: BTreeMap<ObjectId, u16> =
+            [(ObjectId(80), 66u16)].into_iter().collect();
         let own_registered_ids: [std::collections::BTreeSet<u16>; 2] =
             [[66u16].into_iter().collect(), [66u16].into_iter().collect()];
         let end_of_game_hand_card_ids: [std::collections::BTreeSet<u16>; 2] = Default::default();
         let offered_as_cast: [std::collections::BTreeSet<u16>; 2] = Default::default();
-        let tags = RemovalCounterspellTagsV1 { requires_target: Default::default(), is_counterspell: Default::default() };
+        let tags = RemovalCounterspellTagsV1 {
+            requires_target: Default::default(),
+            is_counterspell: Default::default(),
+        };
         let turn_watermarks = vec![(0usize, 1u32)];
         let final_turn = 1u32;
 
@@ -1724,7 +1955,8 @@ mod tests {
             to: Zone::Battlefield,
             controller_before: PlayerId::P0,
         }];
-        let object_owner_p0: BTreeMap<ObjectId, PlayerId> = [(ObjectId(80), PlayerId::P0)].into_iter().collect();
+        let object_owner_p0: BTreeMap<ObjectId, PlayerId> =
+            [(ObjectId(80), PlayerId::P0)].into_iter().collect();
         let mut resource_curve = ResourceCurveV1::default();
         let (opponent_evidence, _) = fold_event_history_v1(
             &p0_owns_it,
@@ -1742,7 +1974,11 @@ mod tests {
             opponent_evidence[0].is_empty(),
             "P0's own copy of a shared card_id must never appear in P0's own opponent_evidence"
         );
-        assert_eq!(opponent_evidence[1].len(), 1, "P1 (the true opponent) must learn about P0's public card");
+        assert_eq!(
+            opponent_evidence[1].len(),
+            1,
+            "P1 (the true opponent) must learn about P0's public card"
+        );
         assert_eq!(opponent_evidence[1][0].card_id, 66);
 
         // Symmetric case: P1's own copy of the same shared card_id goes
@@ -1753,7 +1989,8 @@ mod tests {
             to: Zone::Battlefield,
             controller_before: PlayerId::P1,
         }];
-        let object_owner_p1: BTreeMap<ObjectId, PlayerId> = [(ObjectId(80), PlayerId::P1)].into_iter().collect();
+        let object_owner_p1: BTreeMap<ObjectId, PlayerId> =
+            [(ObjectId(80), PlayerId::P1)].into_iter().collect();
         let mut resource_curve = ResourceCurveV1::default();
         let (opponent_evidence, _) = fold_event_history_v1(
             &p1_owns_it,
@@ -1771,12 +2008,17 @@ mod tests {
             opponent_evidence[1].is_empty(),
             "P1's own copy of a shared card_id must never appear in P1's own opponent_evidence"
         );
-        assert_eq!(opponent_evidence[0].len(), 1, "P0 (the true opponent) must learn about P1's public card");
+        assert_eq!(
+            opponent_evidence[0].len(),
+            1,
+            "P0 (the true opponent) must learn about P1's public card"
+        );
         assert_eq!(opponent_evidence[0][0].card_id, 66);
     }
 
     #[test]
-    fn run_episode_with_real_engine_opponent_evidence_rows_are_always_backed_by_an_opponent_owned_public_reveal() {
+    fn run_episode_with_real_engine_opponent_evidence_rows_are_always_backed_by_an_opponent_owned_public_reveal(
+    ) {
         // Final review item 1 (Important), real-episode half: for every
         // opponent_evidence row a seat recorded, walk the real trace
         // (`event_history`, not the summary alone) and confirm at least one
@@ -1788,29 +2030,47 @@ mod tests {
         let mainboards = burn_and_rally();
         let deck_ids = ["Burn".to_owned(), "Rally".to_owned()];
         let mut session = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits(
-            5, 0xBBBB_BBBB_BBBB_BBBB, 2000, 200_000, deck_ids, mainboards,
+            5,
+            0xBBBB_BBBB_BBBB_BBBB,
+            2000,
+            200_000,
+            deck_ids,
+            mainboards,
         )
         .unwrap();
-        let tags = RemovalCounterspellTagsV1 { requires_target: Default::default(), is_counterspell: Default::default() };
+        let tags = RemovalCounterspellTagsV1 {
+            requires_target: Default::default(),
+            is_counterspell: Default::default(),
+        };
         let mut rng = SplitMix64::seed(0xCCCC_CCCC_CCCC_CCCC);
         let mut policy = |decision: &RlSessionDecisionV1| {
             let index = (rng.next_u64() as usize) % decision.legal_actions.len();
-            (index as u32, decision.legal_actions[index].stable_id.clone())
+            (
+                index as u32,
+                decision.legal_actions[index].stable_id.clone(),
+            )
         };
-        let summary = run_episode_with_summary_v1(&mut session, "finalreviewitem1", &tags, &mut policy);
+        let summary =
+            run_episode_with_summary_v1(&mut session, "finalreviewitem1", &tags, &mut policy);
 
         let final_state = session.game_state();
         let object_card_def = build_object_card_def_map_v1(final_state);
         let object_owner = build_object_owner_map_v1(final_state);
 
-        let mut public_reveals_by_owner_seat: [std::collections::BTreeSet<u16>; 2] = Default::default();
+        let mut public_reveals_by_owner_seat: [std::collections::BTreeSet<u16>; 2] =
+            Default::default();
         for event in &final_state.engine.event_history {
             if let CommittedEvent::ZoneChange { object, to, .. } = event {
-                let is_public = matches!(to, Zone::Battlefield | Zone::Graveyard | Zone::Stack | Zone::Exile);
+                let is_public = matches!(
+                    to,
+                    Zone::Battlefield | Zone::Graveyard | Zone::Stack | Zone::Exile
+                );
                 if !is_public {
                     continue;
                 }
-                let (Some(&card_id), Some(&owner)) = (object_card_def.get(object), object_owner.get(object)) else {
+                let (Some(&card_id), Some(&owner)) =
+                    (object_card_def.get(object), object_owner.get(object))
+                else {
                     continue;
                 };
                 public_reveals_by_owner_seat[seat_index_from_player_id_v1(owner)].insert(card_id);
@@ -1829,6 +2089,9 @@ mod tests {
                 checked += 1;
             }
         }
-        assert!(checked > 0, "a full Burn vs Rally game must reveal at least one opponent card publicly");
+        assert!(
+            checked > 0,
+            "a full Burn vs Rally game must reveal at least one opponent card publicly"
+        );
     }
 }

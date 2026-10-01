@@ -8697,7 +8697,7 @@
         },
         {
           "atom_id": "observation.projection.stack.[].cast_method",
-          "case_count": 3,
+          "case_count": 4,
           "classification": "model_input",
           "distinct_value_count": 3,
           "kind": "enum",
@@ -8706,24 +8706,24 @@
             "flashback",
             "normal"
           ],
-          "occurrence_count": 3,
+          "occurrence_count": 4,
           "status": "WITNESSED"
         },
         {
           "atom_id": "observation.projection.stack.[].cast_method.<present>",
-          "case_count": 3,
+          "case_count": 4,
           "classification": "model_input",
           "distinct_value_count": 1,
           "kind": "presence",
           "observed_values": [
             true
           ],
-          "occurrence_count": 3,
+          "occurrence_count": 4,
           "status": "WITNESSED"
         },
         {
           "atom_id": "observation.projection.stack.[].controller",
-          "case_count": 3,
+          "case_count": 4,
           "classification": "model_input",
           "distinct_value_count": 2,
           "kind": "seat",
@@ -8731,33 +8731,33 @@
             "opponent",
             "self"
           ],
-          "occurrence_count": 3,
+          "occurrence_count": 4,
           "status": "WITNESSED"
         },
         {
           "atom_id": "observation.projection.stack.[].face_index",
-          "case_count": 3,
+          "case_count": 4,
           "classification": "model_input",
           "distinct_value_count": 1,
           "kind": "int",
-          "occurrence_count": 3,
+          "occurrence_count": 4,
           "status": "WITNESSED"
         },
         {
           "atom_id": "observation.projection.stack.[].is_copy",
-          "case_count": 3,
+          "case_count": 4,
           "classification": "model_input",
           "distinct_value_count": 1,
           "kind": "bool",
           "observed_values": [
             false
           ],
-          "occurrence_count": 3,
+          "occurrence_count": 4,
           "status": "WITNESSED"
         },
         {
           "atom_id": "observation.projection.stack.[].is_flashback",
-          "case_count": 3,
+          "case_count": 4,
           "classification": "model_input",
           "distinct_value_count": 2,
           "kind": "bool",
@@ -8765,40 +8765,40 @@
             false,
             true
           ],
-          "occurrence_count": 3,
+          "occurrence_count": 4,
           "status": "WITNESSED"
         },
         {
           "atom_id": "observation.projection.stack.[].kicked",
-          "case_count": 3,
+          "case_count": 4,
           "classification": "model_input",
           "distinct_value_count": 1,
           "kind": "bool",
           "observed_values": [
             false
           ],
-          "occurrence_count": 3,
+          "occurrence_count": 4,
           "status": "WITNESSED"
         },
         {
           "atom_id": "observation.projection.stack.[].madness_offer",
-          "case_count": 3,
+          "case_count": 4,
           "classification": "model_input",
           "distinct_value_count": 1,
           "kind": "bool",
           "observed_values": [
             false
           ],
-          "occurrence_count": 3,
+          "occurrence_count": 4,
           "status": "WITNESSED"
         },
         {
           "atom_id": "observation.projection.stack.[].mode_chosen",
-          "case_count": 3,
+          "case_count": 4,
           "classification": "model_input",
           "distinct_value_count": 1,
           "kind": "int",
-          "occurrence_count": 3,
+          "occurrence_count": 4,
           "status": "WITNESSED"
         },
         {
@@ -8848,16 +8848,16 @@
         },
         {
           "atom_id": "observation.projection.stack.[].source.card_db_id",
-          "case_count": 3,
+          "case_count": 4,
           "classification": "model_input",
-          "distinct_value_count": 2,
+          "distinct_value_count": 3,
           "kind": "int",
-          "occurrence_count": 3,
+          "occurrence_count": 4,
           "status": "WITNESSED"
         },
         {
           "atom_id": "observation.projection.stack.[].source.controller",
-          "case_count": 3,
+          "case_count": 4,
           "classification": "model_input",
           "distinct_value_count": 2,
           "kind": "seat",
@@ -8865,12 +8865,12 @@
             "opponent",
             "self"
           ],
-          "occurrence_count": 3,
+          "occurrence_count": 4,
           "status": "WITNESSED"
         },
         {
           "atom_id": "observation.projection.stack.[].source.owner",
-          "case_count": 3,
+          "case_count": 4,
           "classification": "model_input",
           "distinct_value_count": 2,
           "kind": "seat",
@@ -8878,31 +8878,31 @@
             "opponent",
             "self"
           ],
-          "occurrence_count": 3,
+          "occurrence_count": 4,
           "status": "WITNESSED"
         },
         {
           "atom_id": "observation.projection.stack.[].source.zone",
-          "case_count": 3,
+          "case_count": 4,
           "classification": "model_input",
           "distinct_value_count": 1,
           "kind": "enum",
           "observed_values": [
             "Stack"
           ],
-          "occurrence_count": 3,
+          "occurrence_count": 4,
           "status": "WITNESSED"
         },
         {
           "atom_id": "observation.projection.stack.[].stack_item_kind",
-          "case_count": 3,
+          "case_count": 4,
           "classification": "model_input",
           "distinct_value_count": 1,
           "kind": "enum",
           "observed_values": [
             "spell"
           ],
-          "occurrence_count": 3,
+          "occurrence_count": 4,
           "status": "WITNESSED"
         },
         {
@@ -8980,11 +8980,11 @@
         },
         {
           "atom_id": "observation.projection.stack.[].x_value",
-          "case_count": 3,
+          "case_count": 4,
           "classification": "model_input",
           "distinct_value_count": 1,
           "kind": "int",
-          "occurrence_count": 3,
+          "occurrence_count": 4,
           "status": "WITNESSED"
         },
         {
@@ -13066,7 +13066,7 @@
       "case_count": 18,
       "path": "data/flat_policy_v2/python_full_features_v2.json",
       "schema": "mtg-kernel-python-full-features-golden/v2",
-      "sha256": "edd8c255d65b0f1eba17b029da2d0e4aa5f9600243e9e390cd105c0b32b92812"
+      "sha256": "508490d5c2954e08abdc2fbaa1376cdf5bac38a1df7c52dde6b730108d8a122f"
     },
     {
       "case_count": 115,
@@ -13082,7 +13082,7 @@
     "no observation-leakage, model-capacity, equilibrium, BO3, sideboarding, human, or pro-level-play verdict",
     "enum-domain and seat-category gaps are diagnostic because schema domains can contain contextually inadmissible combinations"
   ],
-  "payload_sha256": "8838fd47e0dc4af46f0058999c9bff1b67c9f0d9db239f692f1b71015bb507e9",
+  "payload_sha256": "48b2e4a8119e6f054caf6d280cdb23e68de3c97b4b7049196f5b20dbcd204433",
   "representation_identities": {
     "action": [
       {
@@ -14064,20 +14064,20 @@
         "structured_signature_sha256": "14c69ac61354580836c52555f4c8becd8ffc9e092c9bd40f5ac75ea0370140c5"
       },
       {
-        "canonical_sha256": "84d2fe95b8d0e2e469613404bcaca5293d73d8ffbcb3ab3e14fa8bca3f627048",
-        "complete_representation_sha256": "fa24350879b6fb64b005e270aa0f9de5528273b9d9bfa6ef51b3ec6cc5440811",
+        "canonical_sha256": "676508cbcf9bb20e72d6fb63b83680ee4171a156738ce67594c66638a2b141a5",
+        "complete_representation_sha256": "9182f6f81477d9bf9e95a9d0683abcdee52c1923851a0dfe35f49cc3654cc6b5",
         "name": "burn-mirror-replay-32",
-        "quantized_tail_sha256": "8e1f97dcac67c59127bf772617d2a6e879403947dadd4b0a295a3ac891087d66",
-        "raw_digest_sha256": "cfc45403be0696028a0d67286dfc52fc4bed5c8b459880363afb548fe74bb944",
-        "structured_signature_sha256": "d11aab95e20af81c49ed4e0d9ecb190a5806aeda4af86f9ddc7e22829d1e7f71"
+        "quantized_tail_sha256": "2ede0e5b7e73b46c438ee4b31b1d88f0736c51374a7a4a43a806e7fcabe2c627",
+        "raw_digest_sha256": "a07826c635fec06243679bd909029e6c20031c7fc3fd3f1c33ab934a957a9e10",
+        "structured_signature_sha256": "175e8eb67a7044e6daf08f402f3f7b1b1fbda4af7177ff6e3704e66953f0cb8c"
       },
       {
-        "canonical_sha256": "8057a80f97fe18e433cc8934615969519db060b2c9656c2a91a707fb12023651",
-        "complete_representation_sha256": "a65e8d91648e0295206324d08e822b2324cc1a086d57ae942732d35b86954181",
+        "canonical_sha256": "3a0db90d2718c0781c4658a306c4616821fceaaffccc538588cd488798f5554d",
+        "complete_representation_sha256": "622a8a8c0e46b7a2e6899dced85bc41b0aa2e51db684304e23e71d15ec1c0916",
         "name": "burn-mirror-replay-48",
-        "quantized_tail_sha256": "b344bac5a24f396d61a821dc2fd39d64440ba2cc71c0b8eead9c55e8a2257c3c",
-        "raw_digest_sha256": "6d8a09fbd61e29da5d61c475ec3dc6bb692f7a8e0cbca78e055c17133a9c7f1b",
-        "structured_signature_sha256": "56272ca787892128f911395cb6f1af860a2a0484da9a87da31b5b3c6a7e7dcfe"
+        "quantized_tail_sha256": "b561382b3946b01ea109c96826420a42fd60e85110a5ce9d88d301a907b1d551",
+        "raw_digest_sha256": "944d42cc81cdf0c8d90574f1acf47badfd4f3d93057e317ac7af91911421f870",
+        "structured_signature_sha256": "0297b67ad9adbfa971b012e6de978b024396cc5a3cc8409c13a883ab35966f3c"
       },
       {
         "canonical_sha256": "48276c1d6fd1e714a50302dd58b9880bab29d69b6e7eb7da3cb2ed72f5ca3fae",
@@ -14088,12 +14088,12 @@
         "structured_signature_sha256": "9018e36e796ed911aa7b23e474300475a9bb5e2171c88a9e97367524c7ee9c56"
       },
       {
-        "canonical_sha256": "2d56ab6439454092562d61ba8a16a33b5a90f14ba2832d8a3711e31980bb7e14",
-        "complete_representation_sha256": "f34bb84c6cf4c37c04ef0ef898b8b9d3cea64b58faba3af008fc926cd2ecbffe",
+        "canonical_sha256": "23c03b21db62620df6c6ea8b9f1a15f2750a85a9e4187b594414a4dafc18a0ef",
+        "complete_representation_sha256": "cbf8ae34257cd4f5ba782c92c96e71ba9ed6489d2b5b011c40113446a011054d",
         "name": "burn-rally-paid-cost",
-        "quantized_tail_sha256": "c108993c645d14cf1920de41a47e980711ee1e4df2fe0d486faafa355db6a7ad",
-        "raw_digest_sha256": "47e584fd44f43eb687e59b68c2211423b9a7ef6373a6b968ef608cd7753fa90d",
-        "structured_signature_sha256": "fc0b6d4b6419615e3991ff2697f3b61c484ba494221f992e83fc3302107998c0"
+        "quantized_tail_sha256": "fbc5c50422d69b00727496b071bdeae06ad1d3baefbf9feb9696cf0443ea9807",
+        "raw_digest_sha256": "7a73765875db5487054627d695d1754e528611e5746cd2ff7eb848916e331eb0",
+        "structured_signature_sha256": "fa326bdcc0319a4e6e71ff988e6b9fb568044035fc7e284c4a6e5b28c14847f2"
       },
       {
         "canonical_sha256": "675f05eb16191846f02d40ada878bfdf4992cee8ee0526f20378b2cd5b951437",
@@ -14104,12 +14104,12 @@
         "structured_signature_sha256": "4c767d362ccae7e4f7ae4b5e5e65cb91af6b532910ccae8e6331e8de8cd0bf3e"
       },
       {
-        "canonical_sha256": "dfb3e05b882dea03453481145d379762efbe8d33bd8c1be9675019111b94bad9",
-        "complete_representation_sha256": "1e8a5c9fcc2e4e5c18cb03d34a64dec003d4c3f44bda9feee946d232205e87ac",
+        "canonical_sha256": "6f033b53b9d885751453e90cc71ac3767b85fb003096c683bde52d2230a0314c",
+        "complete_representation_sha256": "28982bbd51324de6246427768fffe2f7e03878d774a6cda1e2cfeff002d63206",
         "name": "rally-mirror-effect",
-        "quantized_tail_sha256": "5376d109a5b8784a0fbccbee32a7daf4e7f72e8142d619a21aec6b52592d9e28",
-        "raw_digest_sha256": "fbb4f4d805a8bd2de3bf0e625fd620f38418c96865c061dfd0fc7c1889b5c1eb",
-        "structured_signature_sha256": "ca640508754511832ffc79dfb770bba4b1ea3cb9a392af29d7ebbea5ac4368ff"
+        "quantized_tail_sha256": "59eebbc2eddb86dc51ba390aae4ed739196623101d713a0c93afd4cd84f0b23e",
+        "raw_digest_sha256": "c9953d704205efb67b2e5ca92b209c9ec67bf82ffc6fa49c551ccbe8748541b3",
+        "structured_signature_sha256": "496d03170ea1ad41075ee331e970e0dcd0c1f718a3f9c3ff7e633f4532aeb955"
       },
       {
         "canonical_sha256": "8054321507b6ef6181e85653cc9abd6ec41ed33707ea8528c09bd5feb486447f",

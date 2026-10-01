@@ -1756,14 +1756,16 @@ pub(crate) fn train_step_cuda_burn_dense_gae_feature_transfer_v3(
         learning_rate,
         false,
     )?;
-    let candidate =
-        NativePolicyValueTrainStateV1::from_snapshot_v1(state.model_v1().clone(), &updated_snapshot)
-            .map_err(|_| {
-                *resident_device_state_slot_v1() = None;
-                NativePolicyTrainErrorV1::CudaBackend {
-                    code: "cuda-gae-v3-state-reimport-failure",
-                }
-            })?;
+    let candidate = NativePolicyValueTrainStateV1::from_snapshot_v1(
+        state.model_v1().clone(),
+        &updated_snapshot,
+    )
+    .map_err(|_| {
+        *resident_device_state_slot_v1() = None;
+        NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-gae-v3-state-reimport-failure",
+        }
+    })?;
     *state = candidate;
     Ok(result)
 }
@@ -1798,14 +1800,16 @@ pub(crate) fn train_step_cuda_burn_dense_gae_feature_transfer_v4(
         learning_rate,
         false,
     )?;
-    let candidate =
-        NativePolicyValueTrainStateV1::from_snapshot_v1(state.model_v1().clone(), &updated_snapshot)
-            .map_err(|_| {
-                *resident_device_state_slot_v1() = None;
-                NativePolicyTrainErrorV1::CudaBackend {
-                    code: "cuda-gae-v4-state-reimport-failure",
-                }
-            })?;
+    let candidate = NativePolicyValueTrainStateV1::from_snapshot_v1(
+        state.model_v1().clone(),
+        &updated_snapshot,
+    )
+    .map_err(|_| {
+        *resident_device_state_slot_v1() = None;
+        NativePolicyTrainErrorV1::CudaBackend {
+            code: "cuda-gae-v4-state-reimport-failure",
+        }
+    })?;
     *state = candidate;
     Ok(result)
 }
@@ -1817,11 +1821,27 @@ pub(crate) fn train_step_cuda_terminal_imitation_v4(
     learning_rate: f32,
     device_ordinal: usize,
 ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
-    state.validate_cuda_feature_transfer_coefficients_v4(groups,0.0,learning_rate,device_ordinal,true)?;
-    let (result,snapshot)=train_step_cuda_burn_dense_gae_inner_v1(state.snapshot_v1()?,device_ordinal,groups,
-        &vec![0.0;groups.len()],&vec![1.0;groups.len()],0.0,learning_rate,true)?;
-    let candidate=NativePolicyValueTrainStateV1::from_snapshot_v1(state.model_v1().clone(),&snapshot)?;
-    *state=candidate;Ok(result)
+    state.validate_cuda_feature_transfer_coefficients_v4(
+        groups,
+        0.0,
+        learning_rate,
+        device_ordinal,
+        true,
+    )?;
+    let (result, snapshot) = train_step_cuda_burn_dense_gae_inner_v1(
+        state.snapshot_v1()?,
+        device_ordinal,
+        groups,
+        &vec![0.0; groups.len()],
+        &vec![1.0; groups.len()],
+        0.0,
+        learning_rate,
+        true,
+    )?;
+    let candidate =
+        NativePolicyValueTrainStateV1::from_snapshot_v1(state.model_v1().clone(), &snapshot)?;
+    *state = candidate;
+    Ok(result)
 }
 
 /// Run one production training update on the CudaBurnDense backend.

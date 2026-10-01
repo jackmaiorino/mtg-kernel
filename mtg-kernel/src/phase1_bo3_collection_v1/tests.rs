@@ -1,5 +1,4 @@
 use super::*;
-use crate::rl_session::FastActorSessionV1;
 use crate::bo3_match::MatchOutcomeV1;
 use crate::expanded_deck_training_v1::{
     ExpandedInferenceIdentityV1, ExpandedModelSourceV1, ExpandedSeatBehaviorV1, PinnedFileV1,
@@ -9,6 +8,7 @@ use crate::learned_bo3_v1::{
 };
 use crate::learned_sideboard_v1::{LearnedSideboardInputV1, SideboardPlayIdentityV1};
 use crate::native_flat_tensorizer_v3::*;
+use crate::rl_session::FastActorSessionV1;
 use crate::sideboard_play_policy_v1::FrozenPlayObservationTransferV3;
 
 fn pin(label: &str) -> PinnedFileV1 {
@@ -271,7 +271,10 @@ pub(crate) fn compact_board_policy_v4() -> FrozenPlayPolicyV1 {
 
 /// V4 sibling of `package`: same test-only ancestry shape, but every
 /// feature-identity field is the compiled V4 fresh-lineage tuple, never V3's.
-pub(crate) fn package_v4(policy: &FrozenPlayPolicyV1, choice: PlayDrawChoiceV1) -> CompleteAgentPackageV1 {
+pub(crate) fn package_v4(
+    policy: &FrozenPlayPolicyV1,
+    choice: PlayDrawChoiceV1,
+) -> CompleteAgentPackageV1 {
     use crate::native_flat_tensorizer_v4::{
         FEATURES_SOURCE_SHA256_V4, FEATURE_CONTRACT_DIGEST_V4, FEATURE_DESCRIPTOR_SHA256_V4,
         FEATURE_ENCODING_DIGEST_V4, FEATURE_REGISTRY_VERSION_V4, FEATURE_SCHEMA_VERSION_V4,
@@ -608,7 +611,8 @@ fn actual_engine_error_does_not_commit_pending_selection_or_infer_commit_from_co
         };
         let mut recorder = RecordingPolicy {
             capture: None,
-            combat: None, continuation: None,
+            combat: None,
+            continuation: None,
             policies: &mut policies,
             hashes: &hashes,
             game: &mut game,
@@ -652,39 +656,85 @@ fn bo3_v4_recorder_preserves_real_stack_target_scoring_and_replay() {
     // while the playing V4 policy resolves the spell target unambiguously.
     let (state, _, _) = crate::rl_session::pyroblast_target_fixture_v1();
     let mut session = FastActorSessionV1::from_v3_fixture_state(state);
-    let FastActorResponseV1::Decision(decision) = session.current_response() else { panic!() };
+    let FastActorResponseV1::Decision(decision) = session.current_response() else {
+        panic!()
+    };
     let input = PairedBo1PolicyInputV1::new(&session, decision);
     assert!(input.diagnostic_visible_v1().is_err());
     let expected_visible = input.diagnostic_visible_v4().unwrap();
     let seeds = paired_policy_seeds_v1(908);
     let (mut direct, _) = fixtures_v4([PlayDrawChoiceV1::Play; 2]);
-    for policy in &mut direct { policy.reset_for_game_v1(seeds).unwrap(); }
+    for policy in &mut direct {
+        policy.reset_for_game_v1(seeds).unwrap();
+    }
     let (selected, scores) = direct[seat(decision.acting_player)]
-        .select_paired_with_scores_v1(&input).unwrap();
-    let expected_behavior = BehaviorDistributionV1::hamilton_from_logits_v1(&scores.logits, selected).unwrap();
+        .select_paired_with_scores_v1(&input)
+        .unwrap();
+    let expected_behavior =
+        BehaviorDistributionV1::hamilton_from_logits_v1(&scores.logits, selected).unwrap();
     let mut serialized = Vec::new();
     for _ in 0..2 {
         let (mut policies, packages) = fixtures_v4([PlayDrawChoiceV1::Play; 2]);
         let hashes = packages.each_ref().map(|p| p.package_sha256_v1().unwrap());
-        let mut game = Bo3TrainingGameV1 { game_index: 1, start: None, decisions: Vec::new(), terminal: None };
-        let mut budget = RecordBudget { count: 0, bytes: 0, max_count: 1000, max_bytes: MAX_RECORD_BYTES };
-        let mut recorder = RecordingPolicy { capture: None, combat: None, continuation: None, policies: &mut policies, hashes: &hashes,
-            game: &mut game, budget: &mut budget, pending: None, recording_cap: false, rejected_selections: 0 };
+        let mut game = Bo3TrainingGameV1 {
+            game_index: 1,
+            start: None,
+            decisions: Vec::new(),
+            terminal: None,
+        };
+        let mut budget = RecordBudget {
+            count: 0,
+            bytes: 0,
+            max_count: 1000,
+            max_bytes: MAX_RECORD_BYTES,
+        };
+        let mut recorder = RecordingPolicy {
+            capture: None,
+            combat: None,
+            continuation: None,
+            policies: &mut policies,
+            hashes: &hashes,
+            game: &mut game,
+            budget: &mut budget,
+            pending: None,
+            recording_cap: false,
+            rejected_selections: 0,
+        };
         recorder.reset_for_game_v1(seeds).unwrap();
-        assert_eq!(recorder.select_action_v1(PairedBo1PolicyInputV1::new(&session, decision)).unwrap(), selected);
+        assert_eq!(
+            recorder
+                .select_action_v1(PairedBo1PolicyInputV1::new(&session, decision))
+                .unwrap(),
+            selected
+        );
         let record = &recorder.pending.as_ref().unwrap().record;
         assert_eq!(record.behavior, expected_behavior);
-        let ActorVisibleDecisionV1::Gameplay { observation, ordered_actions } = &record.visible else { panic!() };
+        let ActorVisibleDecisionV1::Gameplay {
+            observation,
+            ordered_actions,
+        } = &record.visible
+        else {
+            panic!()
+        };
         assert_eq!(**observation, expected_visible.0);
         assert_eq!(*ordered_actions, expected_visible.1);
         serialized.push(serde_json::to_vec(record).unwrap());
         // Recording must not mutate the actual decision or consume engine RNG.
-        assert_eq!(session.current_response(), FastActorResponseV1::Decision(decision));
+        assert_eq!(
+            session.current_response(),
+            FastActorResponseV1::Decision(decision)
+        );
     }
     assert_eq!(serialized[0], serialized[1]);
     let mut direct_session = session.clone();
-    assert_eq!(session.step(decision.episode_id, decision.step, selected).unwrap(),
-        direct_session.step(decision.episode_id, decision.step, selected).unwrap());
+    assert_eq!(
+        session
+            .step(decision.episode_id, decision.step, selected)
+            .unwrap(),
+        direct_session
+            .step(decision.episode_id, decision.step, selected)
+            .unwrap()
+    );
 }
 
 #[test]
@@ -692,15 +742,25 @@ fn bo3_v4_capture_preserves_previous_valid_records_and_rejects_stale_binding() {
     let (mut state, _, _) = crate::rl_session::pyroblast_target_fixture_v1();
     state.stack.remove(1); // No shared-source cast trigger: valid in both generations.
     let mut session = FastActorSessionV1::from_v3_fixture_state(state);
-    let FastActorResponseV1::Decision(decision) = session.current_response() else { panic!() };
+    let FastActorResponseV1::Decision(decision) = session.current_response() else {
+        panic!()
+    };
     let behavior = BehaviorDistributionV1::Deterministic { selected_index: 0 };
     let input = PairedBo1PolicyInputV1::new(&session, decision);
-    let original = input.capture_bo3_gameplay_v1(7, "a".repeat(64), behavior.clone()).unwrap();
-    let current = input.capture_bo3_gameplay_v4(7, "a".repeat(64), behavior.clone()).unwrap();
-    assert_eq!(serde_json::to_vec(&original).unwrap(), serde_json::to_vec(&current).unwrap());
+    let original = input
+        .capture_bo3_gameplay_v1(7, "a".repeat(64), behavior.clone())
+        .unwrap();
+    let current = input
+        .capture_bo3_gameplay_v4(7, "a".repeat(64), behavior.clone())
+        .unwrap();
+    assert_eq!(
+        serde_json::to_vec(&original).unwrap(),
+        serde_json::to_vec(&current).unwrap()
+    );
     session.step(decision.episode_id, decision.step, 0).unwrap();
     assert!(PairedBo1PolicyInputV1::new(&session, decision)
-        .capture_bo3_gameplay_v4(8, "a".repeat(64), behavior).is_err());
+        .capture_bo3_gameplay_v4(8, "a".repeat(64), behavior)
+        .is_err());
 }
 
 #[test]
@@ -973,8 +1033,7 @@ fn v4_bo3_collect_gate_accepts_a_v4_pairing_and_rejects_a_mixed_v3_v4_pairing() 
 #[test]
 fn policy_level_generation_equality_rejects_a_mixed_pairing_directly() {
     let cfg = config("policy-level-generation-gate");
-    let (_agreeing_policies, packages) =
-        fixtures([PlayDrawChoiceV1::Play, PlayDrawChoiceV1::Draw]);
+    let (_agreeing_policies, packages) = fixtures([PlayDrawChoiceV1::Play, PlayDrawChoiceV1::Draw]);
     let mut mismatched = [
         FrozenPlayPolicyV1::training_fixture_v3(),
         FrozenPlayPolicyV1::training_fixture_v4(),
@@ -983,8 +1042,8 @@ fn policy_level_generation_equality_rejects_a_mixed_pairing_directly() {
         mismatched[0].feature_generation_v1(),
         mismatched[1].feature_generation_v1()
     );
-    let error = collect_loaded(&cfg, packages.each_ref(), &mut mismatched, [None, None])
-        .unwrap_err();
+    let error =
+        collect_loaded(&cfg, packages.each_ref(), &mut mismatched, [None, None]).unwrap_err();
     assert_eq!(
         error, "installed BO3 gameplay seats use different fresh-lineage feature generations",
         "the policy-level generation gate specifically (not the earlier \
@@ -1012,14 +1071,13 @@ fn collection_path_has_no_cross_generation_evaluation_opt_in() {
     assert!(error.contains("unknown field"), "unexpected error: {error}");
 
     let cfg = config("no-cross-gen-opt-in-mixed");
-    let (_agreeing_policies, packages) =
-        fixtures([PlayDrawChoiceV1::Play, PlayDrawChoiceV1::Draw]);
+    let (_agreeing_policies, packages) = fixtures([PlayDrawChoiceV1::Play, PlayDrawChoiceV1::Draw]);
     let mut mismatched = [
         FrozenPlayPolicyV1::training_fixture_v3(),
         FrozenPlayPolicyV1::training_fixture_v4(),
     ];
-    let error = collect_loaded(&cfg, packages.each_ref(), &mut mismatched, [None, None])
-        .unwrap_err();
+    let error =
+        collect_loaded(&cfg, packages.each_ref(), &mut mismatched, [None, None]).unwrap_err();
     assert_eq!(
         error, "installed BO3 gameplay seats use different fresh-lineage feature generations",
         "the collection path's own gate has no opt-in and must still reject this"

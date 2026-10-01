@@ -348,7 +348,11 @@ impl NativePolicyValueTrainStateV1 {
                 for (index, group) in unweighted_groups.iter().enumerate() {
                     let d_joint_log_probability = -group.advantage * weights[index];
                     let d_value = (value_coefficient * weights[index]) * (2.0 * group.value_error);
-                    finite_scalar("weighted_policy_coefficient", index, d_joint_log_probability)?;
+                    finite_scalar(
+                        "weighted_policy_coefficient",
+                        index,
+                        d_joint_log_probability,
+                    )?;
                     finite_scalar("weighted_value_coefficient", index, d_value)?;
                     coefficients.push((d_joint_log_probability, d_value));
                 }

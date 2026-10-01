@@ -69,10 +69,10 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 
-mod weighted_v3;
+mod carryover_probe_v1;
 mod gae_v1;
 pub(crate) mod retention_v1;
-mod carryover_probe_v1;
+mod weighted_v3;
 
 #[cfg(test)]
 thread_local! {
@@ -1405,7 +1405,13 @@ impl NativePolicyValueTrainStateV1 {
         learning_rate: f32,
         device_ordinal: usize,
     ) -> Result<(), NativePolicyTrainErrorV1> {
-        self.validate_cuda_feature_transfer_coefficients_v4(groups,value_coefficient,learning_rate,device_ordinal,false)
+        self.validate_cuda_feature_transfer_coefficients_v4(
+            groups,
+            value_coefficient,
+            learning_rate,
+            device_ordinal,
+            false,
+        )
     }
 
     #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
@@ -1427,7 +1433,9 @@ impl NativePolicyValueTrainStateV1 {
         if groups.is_empty() {
             return Err(NativePolicyTrainErrorV1::EmptyBatch);
         }
-        if !value_coefficient.is_finite() || (value_coefficient <= 0.0 && !(imitation && value_coefficient==0.0)) {
+        if !value_coefficient.is_finite()
+            || (value_coefficient <= 0.0 && !(imitation && value_coefficient == 0.0))
+        {
             return Err(NativePolicyTrainErrorV1::InvalidValueCoefficient);
         }
         if !learning_rate.is_finite() || learning_rate <= 0.0 {
@@ -8248,8 +8256,8 @@ mod tests {
         );
     }
 
-    pub(super) fn real_map_training_tensor_v3() -> crate::native_flat_tensorizer_v3::NativeFlatDecisionTensorV3
-    {
+    pub(super) fn real_map_training_tensor_v3(
+    ) -> crate::native_flat_tensorizer_v3::NativeFlatDecisionTensorV3 {
         use crate::flat_policy_v2::{FlatScoringDecisionViewV2, FlatScoringOwnedBuffersV2};
         use crate::flat_policy_v3::{FlatDecisionEncoderV3, FlatScoringDecisionViewV3};
         use crate::native_flat_tensorizer_v3::{

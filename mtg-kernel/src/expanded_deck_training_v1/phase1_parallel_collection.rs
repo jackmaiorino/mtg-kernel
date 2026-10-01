@@ -256,7 +256,11 @@ pub(super) fn collect_parallel_v1(
             schema: NON_NATURAL_LEDGER_SCHEMA_V1.into(),
             entries: ledger_entries,
         };
-        Some(publish_json(&output_directory, "non-natural.json", &document)?)
+        Some(publish_json(
+            &output_directory,
+            "non-natural.json",
+            &document,
+        )?)
     } else {
         None
     };
@@ -493,7 +497,8 @@ mod tests {
             "got: {error}"
         );
         assert!(
-            root.join("collect-fraction-capped/non-natural.json").exists(),
+            root.join("collect-fraction-capped/non-natural.json")
+                .exists(),
             "the ledger must be preserved on disk even though the fraction cap aborted the run"
         );
     }

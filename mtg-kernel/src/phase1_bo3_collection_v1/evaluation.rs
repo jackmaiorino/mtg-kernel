@@ -1,10 +1,12 @@
 //! Evaluation-only V4 search route. These results are never training trajectories.
 use super::*;
 use crate::model_guided_search_core_v4 as search;
-mod report;
 mod activation;
-pub use activation::{activate_bo3_v4,Bo3ActivationOptionsV1,Bo3ActivationResultV1};
-pub use report::{report_bo3_v4,Bo3ReportOptionsV1,Bo3ReportArchiveV1,Bo3ReportRootV1,Bo3ReportResultV1};
+mod report;
+pub use activation::{activate_bo3_v4, Bo3ActivationOptionsV1, Bo3ActivationResultV1};
+pub use report::{
+    report_bo3_v4, Bo3ReportArchiveV1, Bo3ReportOptionsV1, Bo3ReportResultV1, Bo3ReportRootV1,
+};
 
 pub const BO3_EVALUATION_RESULT_SCHEMA_V1: &str = "mtg-kernel-bo3-search-evaluation/v1";
 
@@ -56,14 +58,30 @@ struct EvaluationGame {
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum EvaluationDecision {
-    Ordinary { record: Bo3DecisionRecordV1 },
-    Search { record: Bo3DecisionRecordV1, search: SearchDiagnostics },
-    EstimateSearch { record: Bo3DecisionRecordV1, search: EstimateSearchDiagnostics },
-    EstimateSearchLibraryV2 { record: Bo3DecisionRecordV1, search: EstimateSearchDiagnostics<V4InformationSetEstimateDescriptorV2> },
+    Ordinary {
+        record: Bo3DecisionRecordV1,
+    },
+    Search {
+        record: Bo3DecisionRecordV1,
+        search: SearchDiagnostics,
+    },
+    EstimateSearch {
+        record: Bo3DecisionRecordV1,
+        search: EstimateSearchDiagnostics,
+    },
+    EstimateSearchLibraryV2 {
+        record: Bo3DecisionRecordV1,
+        search: EstimateSearchDiagnostics<V4InformationSetEstimateDescriptorV2>,
+    },
 }
 impl EvaluationDecision {
     fn record(&self) -> &Bo3DecisionRecordV1 {
-        match self { Self::Ordinary{record} | Self::Search{record,..} | Self::EstimateSearch{record,..} | Self::EstimateSearchLibraryV2{record,..} => record }
+        match self {
+            Self::Ordinary { record }
+            | Self::Search { record, .. }
+            | Self::EstimateSearch { record, .. }
+            | Self::EstimateSearchLibraryV2 { record, .. } => record,
+        }
     }
 }
 
@@ -85,7 +103,7 @@ struct SearchDiagnostics {
 }
 
 #[derive(Debug, Serialize)]
-struct EstimateSearchDiagnostics<D=V4InformationSetEstimateDescriptorV1> {
+struct EstimateSearchDiagnostics<D = V4InformationSetEstimateDescriptorV1> {
     descriptor: D,
     selected_by_core: u32,
     selected_by_estimate: u32,
@@ -138,13 +156,19 @@ struct EvaluationStop {
 }
 impl From<String> for EvaluationStop {
     fn from(message: String) -> Self {
-        Self { reason: IncompleteMatchReasonV1::EngineError, actor: None, step: None,
-            cause: AbortCause::Engine { message } }
+        Self {
+            reason: IncompleteMatchReasonV1::EngineError,
+            actor: None,
+            step: None,
+            cause: AbortCause::Engine { message },
+        }
     }
 }
 impl EvaluationStop {
     fn at(mut self, actor: PlayerSeatV1, step: u64) -> Self {
-        self.actor = Some(actor); self.step = Some(step); self
+        self.actor = Some(actor);
+        self.step = Some(step);
+        self
     }
 }
 
@@ -161,21 +185,50 @@ impl EvaluationBudget {
     fn check(&self, record: &EvaluationDecision) -> Result<u64, EvaluationStop> {
         let size = if self.native_record_bytes {
             serde_json::to_vec(record.record())
-        } else { serde_json::to_vec(record) }.map_err(|e| e.to_string())?.len() as u64;
+        } else {
+            serde_json::to_vec(record)
+        }
+        .map_err(|e| e.to_string())?
+        .len() as u64;
         if self.count >= self.max_count || self.bytes.saturating_add(size) > self.max_bytes {
-            return Err(EvaluationStop { reason: IncompleteMatchReasonV1::DecisionCap,
-                actor: Some(record.record().actor), step: None, cause: AbortCause::RecordCap });
+            return Err(EvaluationStop {
+                reason: IncompleteMatchReasonV1::DecisionCap,
+                actor: Some(record.record().actor),
+                step: None,
+                cause: AbortCause::RecordCap,
+            });
         }
         Ok(size)
     }
     fn append_checked(&mut self, game: &mut EvaluationGame, record: EvaluationDecision, size: u64) {
         debug_assert_eq!(record.record().decision_index, self.count);
-        if matches!(&record, EvaluationDecision::Search { search: SearchDiagnostics { full_outcome: Some(_), .. }, .. }
-            | EvaluationDecision::EstimateSearch { search: EstimateSearchDiagnostics { full_outcome: Some(_), .. }, .. }
-            | EvaluationDecision::EstimateSearchLibraryV2 { search: EstimateSearchDiagnostics { full_outcome: Some(_), .. }, .. }) {
+        if matches!(
+            &record,
+            EvaluationDecision::Search {
+                search: SearchDiagnostics {
+                    full_outcome: Some(_),
+                    ..
+                },
+                ..
+            } | EvaluationDecision::EstimateSearch {
+                search: EstimateSearchDiagnostics {
+                    full_outcome: Some(_),
+                    ..
+                },
+                ..
+            } | EvaluationDecision::EstimateSearchLibraryV2 {
+                search: EstimateSearchDiagnostics {
+                    full_outcome: Some(_),
+                    ..
+                },
+                ..
+            }
+        ) {
             self.retained += 1;
         }
-        self.count += 1; self.bytes += size; game.decisions.push(record);
+        self.count += 1;
+        self.bytes += size;
+        game.decisions.push(record);
     }
 }
 
@@ -186,68 +239,155 @@ pub fn evaluate_bo3_v4(
     options: Bo3EvaluationOptionsV1,
 ) -> Result<Bo3EvaluationResultV1, String> {
     validate_evaluation(&config, packages.each_ref(), &options)?;
-    let [p0,p1] = packages.each_ref().map(CompleteAgentPackageV1::load_evaluation_components_v1);
-    let p0=p0?; let p1=p1?;
-    let mut policies=[p0.gameplay,p1.gameplay];
-    let heads=[p0.sideboard,p1.sideboard];
-    let (evaluated,timings)=evaluate_loaded(&config, packages.each_ref(), &mut policies,
-        heads.each_ref().map(Option::as_ref), &options)?;
-    let semantic_sha256=semantic_hash(&(&config,&options,&evaluated))?;
-    Ok(Bo3EvaluationResultV1 { schema: BO3_EVALUATION_RESULT_SCHEMA_V1.into(), config,options,packages,
-        current_runtimes:[p0.current_runtime,p1.current_runtime],evaluated,semantic_sha256,timings })
+    let [p0, p1] = packages
+        .each_ref()
+        .map(CompleteAgentPackageV1::load_evaluation_components_v1);
+    let p0 = p0?;
+    let p1 = p1?;
+    let mut policies = [p0.gameplay, p1.gameplay];
+    let heads = [p0.sideboard, p1.sideboard];
+    let (evaluated, timings) = evaluate_loaded(
+        &config,
+        packages.each_ref(),
+        &mut policies,
+        heads.each_ref().map(Option::as_ref),
+        &options,
+    )?;
+    let semantic_sha256 = semantic_hash(&(&config, &options, &evaluated))?;
+    Ok(Bo3EvaluationResultV1 {
+        schema: BO3_EVALUATION_RESULT_SCHEMA_V1.into(),
+        config,
+        options,
+        packages,
+        current_runtimes: [p0.current_runtime, p1.current_runtime],
+        evaluated,
+        semantic_sha256,
+        timings,
+    })
 }
 
-fn semantic_hash(value: &impl Serialize) -> Result<String,String> {
-    Ok(format!("{:x}",Sha256::digest(serde_json::to_vec(value).map_err(|e|e.to_string())?)))
+fn semantic_hash(value: &impl Serialize) -> Result<String, String> {
+    Ok(format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(value).map_err(|e| e.to_string())?)
+    ))
 }
 
-fn validate_evaluation(config:&Bo3CollectionConfigV1, packages:[&CompleteAgentPackageV1;2], options:&Bo3EvaluationOptionsV1)->Result<(),String> {
-    ensure(options.max_retained_search_outcomes<=16,"evaluation retains at most 16 full search outcomes")?;
-    ensure(config.schema==BO3_COLLECTION_CONFIG_SCHEMA_V1,"BO3 evaluation config schema differs")?;
-    ensure(!config.match_id.is_empty() && config.match_id.len()<=128 && config.match_id.is_ascii(),"invalid BO3 evaluation match identity")?;
-    ensure(packages[0].runtime==packages[1].runtime,"physical seats use different runtime/feature contracts")?;
-    ensure((3..=254).contains(&config.max_physical_games) && config.max_physical_decisions>0 && config.max_policy_steps>0,
-        "BO3 evaluation requires positive episode limits and 3..=254 physical games")?;
-    ensure((1..=MAX_RECORDS).contains(&config.max_decision_records) && (1..=MAX_RECORD_BYTES).contains(&config.max_decision_json_bytes),
-        "BO3 evaluation recording limits exceed the bounded driver")?;
+fn validate_evaluation(
+    config: &Bo3CollectionConfigV1,
+    packages: [&CompleteAgentPackageV1; 2],
+    options: &Bo3EvaluationOptionsV1,
+) -> Result<(), String> {
+    ensure(
+        options.max_retained_search_outcomes <= 16,
+        "evaluation retains at most 16 full search outcomes",
+    )?;
+    ensure(
+        config.schema == BO3_COLLECTION_CONFIG_SCHEMA_V1,
+        "BO3 evaluation config schema differs",
+    )?;
+    ensure(
+        !config.match_id.is_empty() && config.match_id.len() <= 128 && config.match_id.is_ascii(),
+        "invalid BO3 evaluation match identity",
+    )?;
+    ensure(
+        packages[0].runtime == packages[1].runtime,
+        "physical seats use different runtime/feature contracts",
+    )?;
+    ensure(
+        (3..=254).contains(&config.max_physical_games)
+            && config.max_physical_decisions > 0
+            && config.max_policy_steps > 0,
+        "BO3 evaluation requires positive episode limits and 3..=254 physical games",
+    )?;
+    ensure(
+        (1..=MAX_RECORDS).contains(&config.max_decision_records)
+            && (1..=MAX_RECORD_BYTES).contains(&config.max_decision_json_bytes),
+        "BO3 evaluation recording limits exceed the bounded driver",
+    )?;
     for id in &config.summary_tags.requires_target | &config.summary_tags.is_counterspell {
-        ensure((id as usize)<crate::card_def::CARD_DEFS.len(),"summary tag is outside the compiled card registry")?;
+        ensure(
+            (id as usize) < crate::card_def::CARD_DEFS.len(),
+            "summary tag is outside the compiled card registry",
+        )?;
     }
     registrations(config)?;
     for package in packages {
         package.validate_metadata_v1()?;
-        ensure(matches!(package.opening,AgentOpeningPolicyV1::Existing{protocol:Bo3OpeningProtocolV1::KeepSevenV2})
-            && matches!(package.play_draw,AgentPlayDrawPolicyV1::Fixed{..})
-            && matches!(package.search,AgentSearchPolicyV1::Disabled|AgentSearchPolicyV1::V4InformationSetV1{..}|AgentSearchPolicyV1::V4InformationSetEstimateV1{..}|AgentSearchPolicyV1::V4InformationSetEstimateV2{..}),
-            "evaluation supports KeepSevenV2, fixed play/draw and Disabled or V4 search")?;
-        ensure(package.gameplay_sampler_identity==crate::fast_sampler::WIDE_CATEGORICAL_SAMPLER_VERSION_V1,
-            "evaluation requires the wide categorical sampler")?;
-        ensure(package.gameplay.identity.model.feature_contract_digest==crate::native_flat_tensorizer_v4::FEATURE_CONTRACT_DIGEST_V4
-            && package.gameplay.identity.model.feature_encoding_digest==crate::native_flat_tensorizer_v4::FEATURE_ENCODING_DIGEST_V4,
-            "evaluation requires both V4 feature generations")?;
+        ensure(
+            matches!(
+                package.opening,
+                AgentOpeningPolicyV1::Existing {
+                    protocol: Bo3OpeningProtocolV1::KeepSevenV2
+                }
+            ) && matches!(package.play_draw, AgentPlayDrawPolicyV1::Fixed { .. })
+                && matches!(
+                    package.search,
+                    AgentSearchPolicyV1::Disabled
+                        | AgentSearchPolicyV1::V4InformationSetV1 { .. }
+                        | AgentSearchPolicyV1::V4InformationSetEstimateV1 { .. }
+                        | AgentSearchPolicyV1::V4InformationSetEstimateV2 { .. }
+                ),
+            "evaluation supports KeepSevenV2, fixed play/draw and Disabled or V4 search",
+        )?;
+        ensure(
+            package.gameplay_sampler_identity
+                == crate::fast_sampler::WIDE_CATEGORICAL_SAMPLER_VERSION_V1,
+            "evaluation requires the wide categorical sampler",
+        )?;
+        ensure(
+            package.gameplay.identity.model.feature_contract_digest
+                == crate::native_flat_tensorizer_v4::FEATURE_CONTRACT_DIGEST_V4
+                && package.gameplay.identity.model.feature_encoding_digest
+                    == crate::native_flat_tensorizer_v4::FEATURE_ENCODING_DIGEST_V4,
+            "evaluation requires both V4 feature generations",
+        )?;
     }
     Ok(())
 }
 
-fn evaluate_loaded(config:&Bo3CollectionConfigV1,packages:[&CompleteAgentPackageV1;2],
-    policies:&mut [FrozenPlayPolicyV1;2],heads:[Option<&LearnedSideboardModelV1>;2],options:&Bo3EvaluationOptionsV1)
-    ->Result<(EvaluatedMatch,Vec<SearchTiming>),String> {
-    evaluate_loaded_with_report(config,packages,policies,heads,options,None)
+fn evaluate_loaded(
+    config: &Bo3CollectionConfigV1,
+    packages: [&CompleteAgentPackageV1; 2],
+    policies: &mut [FrozenPlayPolicyV1; 2],
+    heads: [Option<&LearnedSideboardModelV1>; 2],
+    options: &Bo3EvaluationOptionsV1,
+) -> Result<(EvaluatedMatch, Vec<SearchTiming>), String> {
+    evaluate_loaded_with_report(config, packages, policies, heads, options, None)
 }
-fn evaluate_loaded_with_report(config:&Bo3CollectionConfigV1,packages:[&CompleteAgentPackageV1;2],
-    policies:&mut [FrozenPlayPolicyV1;2],heads:[Option<&LearnedSideboardModelV1>;2],options:&Bo3EvaluationOptionsV1,
-    report:Option<&mut report::ReportSink>) ->Result<(EvaluatedMatch,Vec<SearchTiming>),String> {
-    evaluate_loaded_scoped(config,packages,policies,heads,options,report,None)
+fn evaluate_loaded_with_report(
+    config: &Bo3CollectionConfigV1,
+    packages: [&CompleteAgentPackageV1; 2],
+    policies: &mut [FrozenPlayPolicyV1; 2],
+    heads: [Option<&LearnedSideboardModelV1>; 2],
+    options: &Bo3EvaluationOptionsV1,
+    report: Option<&mut report::ReportSink>,
+) -> Result<(EvaluatedMatch, Vec<SearchTiming>), String> {
+    evaluate_loaded_scoped(config, packages, policies, heads, options, report, None)
 }
-fn evaluate_loaded_scoped(config:&Bo3CollectionConfigV1,packages:[&CompleteAgentPackageV1;2],
-    policies:&mut [FrozenPlayPolicyV1;2],heads:[Option<&LearnedSideboardModelV1>;2],options:&Bo3EvaluationOptionsV1,
-    mut report:Option<&mut report::ReportSink>,mut activation:Option<&mut activation::ActivationSink>)
-    ->Result<(EvaluatedMatch,Vec<SearchTiming>),String> {
-    ensure(report.is_none() || activation.is_none(),"Report and activation cannot be combined")?;
-    validate_evaluation(config,packages,options)?;
-    crate::deterministic_math_v1::ensure_thread_mxcsr_normalized_v1().map_err(|e|format!("{e:?}"))?;
-    crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().map_err(|e|format!("{e:?}"))?;
-    ensure(policies.iter().all(|p|p.feature_generation_v1()==PlayPolicyGenerationV1::V4),"evaluation requires actual V4 policies")?;
+fn evaluate_loaded_scoped(
+    config: &Bo3CollectionConfigV1,
+    packages: [&CompleteAgentPackageV1; 2],
+    policies: &mut [FrozenPlayPolicyV1; 2],
+    heads: [Option<&LearnedSideboardModelV1>; 2],
+    options: &Bo3EvaluationOptionsV1,
+    mut report: Option<&mut report::ReportSink>,
+    mut activation: Option<&mut activation::ActivationSink>,
+) -> Result<(EvaluatedMatch, Vec<SearchTiming>), String> {
+    ensure(
+        report.is_none() || activation.is_none(),
+        "Report and activation cannot be combined",
+    )?;
+    validate_evaluation(config, packages, options)?;
+    crate::deterministic_math_v1::ensure_thread_mxcsr_normalized_v1()
+        .map_err(|e| format!("{e:?}"))?;
+    crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().map_err(|e| format!("{e:?}"))?;
+    ensure(
+        policies
+            .iter()
+            .all(|p| p.feature_generation_v1() == PlayPolicyGenerationV1::V4),
+        "evaluation requires actual V4 policies",
+    )?;
     for i in 0..2 {
         ensure(
             policies[i].uses_observation_successor_v3()
@@ -297,10 +437,12 @@ fn evaluate_loaded_scoped(config:&Bo3CollectionConfigV1,packages:[&CompleteAgent
     });
     let mut current = registered.clone();
     let mut summaries: [Vec<GameSummaryV1>; 2] = [Vec::new(), Vec::new()];
-    let mut timings=Vec::new();
+    let mut timings = Vec::new();
     let mut seed_stream = SplitMix64::seed(config.seed);
     let mut budget = EvaluationBudget {
-        retained:0, max_retained:options.max_retained_search_outcomes,native_record_bytes:report.is_some(),
+        retained: 0,
+        max_retained: options.max_retained_search_outcomes,
+        native_record_bytes: report.is_some(),
         count: 0,
         bytes: 0,
         max_count: config.max_decision_records,
@@ -311,47 +453,129 @@ fn evaluate_loaded_scoped(config:&Bo3CollectionConfigV1,packages:[&CompleteAgent
         is_counterspell: config.summary_tags.is_counterspell.clone(),
     };
 
-    let mut evaluated=EvaluatedMatch {schema:BO3_EVALUATION_RESULT_SCHEMA_V1.into(),match_id:config.match_id.clone(),
-        initial_chooser:config.initial_chooser,behavior_packages_by_seat:[packages[0].package_sha256_v1()?,packages[1].package_sha256_v1()?],
-        registrations_by_seat:config.registrations.clone(),games:Vec::new(),ending:Bo3TrajectoryEndingV1::Incomplete{reason:IncompleteMatchReasonV1::Interrupted},
-        abort:None,committed_decision_records:0,committed_decision_json_bytes:0};
+    let mut evaluated = EvaluatedMatch {
+        schema: BO3_EVALUATION_RESULT_SCHEMA_V1.into(),
+        match_id: config.match_id.clone(),
+        initial_chooser: config.initial_chooser,
+        behavior_packages_by_seat: [
+            packages[0].package_sha256_v1()?,
+            packages[1].package_sha256_v1()?,
+        ],
+        registrations_by_seat: config.registrations.clone(),
+        games: Vec::new(),
+        ending: Bo3TrajectoryEndingV1::Incomplete {
+            reason: IncompleteMatchReasonV1::Interrupted,
+        },
+        abort: None,
+        committed_decision_records: 0,
+        committed_decision_json_bytes: 0,
+    };
     loop {
-        let (game_index,chooser)=match match_session.match_state().phase() {
-            MatchPhaseV1::Complete{outcome}=>{evaluated.ending=Bo3TrajectoryEndingV1::Complete{outcome};break;},
-            MatchPhaseV1::AwaitingPlayDrawChoice{game_index,chooser}=>(game_index,chooser),
-            _=>return Err("evaluation coordinator unexpectedly awaits a game result".into()),
+        let (game_index, chooser) = match match_session.match_state().phase() {
+            MatchPhaseV1::Complete { outcome } => {
+                evaluated.ending = Bo3TrajectoryEndingV1::Complete { outcome };
+                break;
+            }
+            MatchPhaseV1::AwaitingPlayDrawChoice {
+                game_index,
+                chooser,
+            } => (game_index, chooser),
+            _ => return Err("evaluation coordinator unexpectedly awaits a game result".into()),
         };
-        if game_index>config.max_physical_games {
-            evaluated.ending=Bo3TrajectoryEndingV1::Incomplete{reason:IncompleteMatchReasonV1::PhysicalGameCap};
-            evaluated.abort=Some(Abort{game_index,actor:None,step:None,cause:AbortCause::PhysicalGameCap});break;
+        if game_index > config.max_physical_games {
+            evaluated.ending = Bo3TrajectoryEndingV1::Incomplete {
+                reason: IncompleteMatchReasonV1::PhysicalGameCap,
+            };
+            evaluated.abort = Some(Abort {
+                game_index,
+                actor: None,
+                step: None,
+                cause: AbortCause::PhysicalGameCap,
+            });
+            break;
         }
-        let mut game=EvaluationGame{game_index,start:None,environment_seed:None,decisions:Vec::new(),terminal:None,discarded_pending_selections:0};
-        let mut played=play_evaluation_game(config,packages,&evaluated.behavior_packages_by_seat,policies,heads,&mut match_session,
-            &registered,&mut current,&summaries,&tags,&mut seed_stream,chooser,&mut game,&mut budget,&mut timings,report.as_deref_mut(),activation.as_deref_mut());
-        if let Some(sink)=activation.as_deref_mut() {
-            if let Err(stop)=sink.after_game(&game,played.is_ok()) {played=Err(stop);}
+        let mut game = EvaluationGame {
+            game_index,
+            start: None,
+            environment_seed: None,
+            decisions: Vec::new(),
+            terminal: None,
+            discarded_pending_selections: 0,
+        };
+        let mut played = play_evaluation_game(
+            config,
+            packages,
+            &evaluated.behavior_packages_by_seat,
+            policies,
+            heads,
+            &mut match_session,
+            &registered,
+            &mut current,
+            &summaries,
+            &tags,
+            &mut seed_stream,
+            chooser,
+            &mut game,
+            &mut budget,
+            &mut timings,
+            report.as_deref_mut(),
+            activation.as_deref_mut(),
+        );
+        if let Some(sink) = activation.as_deref_mut() {
+            if let Err(stop) = sink.after_game(&game, played.is_ok()) {
+                played = Err(stop);
+            }
         }
         evaluated.games.push(game);
         match played {
-            Ok(summary)=>{
-                let outcome=summary.winner.map_or(GameOutcomeV1::Draw,|winner|GameOutcomeV1::Win{winner});
-                let mut other=summary.clone();other.checkpoint_weights_hash=packages[1].gameplay.identity.model.weights_sha256.clone();
-                summaries[0].push(summary);summaries[1].push(other);
+            Ok(summary) => {
+                let outcome = summary
+                    .winner
+                    .map_or(GameOutcomeV1::Draw, |winner| GameOutcomeV1::Win { winner });
+                let mut other = summary.clone();
+                other.checkpoint_weights_hash =
+                    packages[1].gameplay.identity.model.weights_sha256.clone();
+                summaries[0].push(summary);
+                summaries[1].push(other);
                 // Activation is a single-game fixture scope, not a completed BO3 match.
-                if activation.as_ref().is_some_and(|s|s.target_game()==game_index) {break;}
-                if let Err(error)=match_session.record_game_result_v1(outcome) {
-                    evaluated.ending=Bo3TrajectoryEndingV1::Incomplete{reason:IncompleteMatchReasonV1::EngineError};
-                    evaluated.abort=Some(Abort{game_index,actor:None,step:None,cause:AbortCause::Engine{message:error.to_string()}});break;
+                if activation
+                    .as_ref()
+                    .is_some_and(|s| s.target_game() == game_index)
+                {
+                    break;
                 }
-            },
-            Err(stop)=>{
-                evaluated.ending=Bo3TrajectoryEndingV1::Incomplete{reason:stop.reason};
-                evaluated.abort=Some(Abort{game_index,actor:stop.actor,step:stop.step,cause:stop.cause});break;
-            },
+                if let Err(error) = match_session.record_game_result_v1(outcome) {
+                    evaluated.ending = Bo3TrajectoryEndingV1::Incomplete {
+                        reason: IncompleteMatchReasonV1::EngineError,
+                    };
+                    evaluated.abort = Some(Abort {
+                        game_index,
+                        actor: None,
+                        step: None,
+                        cause: AbortCause::Engine {
+                            message: error.to_string(),
+                        },
+                    });
+                    break;
+                }
+            }
+            Err(stop) => {
+                evaluated.ending = Bo3TrajectoryEndingV1::Incomplete {
+                    reason: stop.reason,
+                };
+                evaluated.abort = Some(Abort {
+                    game_index,
+                    actor: stop.actor,
+                    step: stop.step,
+                    cause: stop.cause,
+                });
+                break;
+            }
         }
     }
-    evaluated.committed_decision_records=budget.count;evaluated.committed_decision_json_bytes=budget.bytes;
-    Ok((evaluated,timings))
+    evaluated.committed_decision_records = budget.count;
+    evaluated.committed_decision_json_bytes = budget.bytes;
+    Ok((evaluated, timings))
 }
 #[allow(clippy::too_many_arguments)]
 fn play_evaluation_game(
@@ -472,8 +696,19 @@ fn play_evaluation_game(
     opening.keep()?;
     budget.append_checked(game, record, size);
     let mut episode = opening.into_session()?;
-    let mut recorder=EvaluationPolicy {policies,packages,hashes,game,budget,timings,report,activation,pending:None,
-        failure:None,attempted:None};
+    let mut recorder = EvaluationPolicy {
+        policies,
+        packages,
+        hashes,
+        game,
+        budget,
+        timings,
+        report,
+        activation,
+        pending: None,
+        failure: None,
+        attempted: None,
+    };
     recorder
         .reset_for_game_v1(paired_policy_seeds_v1(environment_seed))
         .map_err(|e| e.to_string())?;
@@ -483,8 +718,11 @@ fn play_evaluation_game(
         tags,
         &mut recorder,
     );
-    let terminal=match episode.current_response() {FastActorResponseV1::Terminal(t)=>Some(t),_=>None};
-    recorder.finish_game(played,terminal)
+    let terminal = match episode.current_response() {
+        FastActorResponseV1::Terminal(t) => Some(t),
+        _ => None,
+    };
+    recorder.finish_game(played, terminal)
 }
 fn evaluation_opening_record(
     budget: &EvaluationBudget,
@@ -519,184 +757,402 @@ fn evaluation_deterministic(
     selected_index: u32,
     visible: ActorVisibleDecisionV1,
 ) -> EvaluationDecision {
-    EvaluationDecision::Ordinary { record: Bo3DecisionRecordV1 {
-        decision_index: budget.count,
-        actor,
-        behavior_package_sha256: packages[seat(actor)].clone(),
-        behavior: BehaviorDistributionV1::Deterministic { selected_index },
-        visible,
-    }}
+    EvaluationDecision::Ordinary {
+        record: Bo3DecisionRecordV1 {
+            decision_index: budget.count,
+            actor,
+            behavior_package_sha256: packages[seat(actor)].clone(),
+            behavior: BehaviorDistributionV1::Deterministic { selected_index },
+            visible,
+        },
+    }
 }
 
 struct EvaluationPending {
-    step:u64,
-    record:EvaluationDecision,
-    size:u64,
-    report_row:Option<usize>,
+    step: u64,
+    record: EvaluationDecision,
+    size: u64,
+    report_row: Option<usize>,
 }
 struct EvaluationPolicy<'a> {
-    policies:&'a mut [FrozenPlayPolicyV1;2],
-    packages:[&'a CompleteAgentPackageV1;2],
-    hashes:&'a [String;2],
-    game:&'a mut EvaluationGame,
-    budget:&'a mut EvaluationBudget,
-    timings:&'a mut Vec<SearchTiming>,
-    report:Option<&'a mut report::ReportSink>,
-    activation:Option<&'a mut activation::ActivationSink>,
-    pending:Option<EvaluationPending>,
-    failure:Option<EvaluationStop>,
-    attempted:Option<(PlayerSeatV1,u64)>,
+    policies: &'a mut [FrozenPlayPolicyV1; 2],
+    packages: [&'a CompleteAgentPackageV1; 2],
+    hashes: &'a [String; 2],
+    game: &'a mut EvaluationGame,
+    budget: &'a mut EvaluationBudget,
+    timings: &'a mut Vec<SearchTiming>,
+    report: Option<&'a mut report::ReportSink>,
+    activation: Option<&'a mut activation::ActivationSink>,
+    pending: Option<EvaluationPending>,
+    failure: Option<EvaluationStop>,
+    attempted: Option<(PlayerSeatV1, u64)>,
 }
 impl EvaluationPolicy<'_> {
-    fn commit_pending(&mut self,next_step:u64)->Result<(),String> {
-        if let Some(pending)=&self.pending {
-            ensure(pending.step.checked_add(1)==Some(next_step),"evaluation callback did not confirm previous gameplay step")?;
-        } else {ensure(next_step==0,"evaluation callback skipped an unrecorded gameplay step")?;}
-        if let Some(pending)=self.pending.take() {
-            if let (Some(sink),Some(row))=(self.report.as_deref_mut(),pending.report_row) {sink.commit(row);}
-            self.budget.append_checked(self.game,pending.record,pending.size);
+    fn commit_pending(&mut self, next_step: u64) -> Result<(), String> {
+        if let Some(pending) = &self.pending {
+            ensure(
+                pending.step.checked_add(1) == Some(next_step),
+                "evaluation callback did not confirm previous gameplay step",
+            )?;
+        } else {
+            ensure(
+                next_step == 0,
+                "evaluation callback skipped an unrecorded gameplay step",
+            )?;
+        }
+        if let Some(pending) = self.pending.take() {
+            if let (Some(sink), Some(row)) = (self.report.as_deref_mut(), pending.report_row) {
+                sink.commit(row);
+            }
+            self.budget
+                .append_checked(self.game, pending.record, pending.size);
         }
         Ok(())
     }
-    fn finish_game(&mut self,played:Result<GameSummaryV1,String>,terminal:Option<RlSessionTerminalV1>)->Result<GameSummaryV1,EvaluationStop> {
-        if let Some(t)=&terminal {
-            self.game.terminal=Some(Bo3GameTerminalV1{classification:t.terminal_classification,outcome:t.terminal_outcome,gameplay_decision_count:t.policy_step_count});
+    fn finish_game(
+        &mut self,
+        played: Result<GameSummaryV1, String>,
+        terminal: Option<RlSessionTerminalV1>,
+    ) -> Result<GameSummaryV1, EvaluationStop> {
+        if let Some(t) = &terminal {
+            self.game.terminal = Some(Bo3GameTerminalV1 {
+                classification: t.terminal_classification,
+                outcome: t.terminal_outcome,
+                gameplay_decision_count: t.policy_step_count,
+            });
         }
-        let result=match played {
-            Ok(summary)=>(|| {
-                let t=terminal.as_ref().ok_or_else(||"successful evaluation lacks terminal".to_owned())?;
-                if t.terminal_classification!=TerminalClassificationV1::Natural {
-                    return Err(EvaluationStop{reason:IncompleteMatchReasonV1::EngineError,actor:None,step:Some(t.policy_step_count),cause:AbortCause::NonNaturalTerminal});
+        let result = match played {
+            Ok(summary) => (|| {
+                let t = terminal
+                    .as_ref()
+                    .ok_or_else(|| "successful evaluation lacks terminal".to_owned())?;
+                if t.terminal_classification != TerminalClassificationV1::Natural {
+                    return Err(EvaluationStop {
+                        reason: IncompleteMatchReasonV1::EngineError,
+                        actor: None,
+                        step: Some(t.policy_step_count),
+                        cause: AbortCause::NonNaturalTerminal,
+                    });
                 }
-                ensure(summary.winner.map(PlayerSeatV1::from)==t.winner,"evaluation summary and terminal winner differ")?;
+                ensure(
+                    summary.winner.map(PlayerSeatV1::from) == t.winner,
+                    "evaluation summary and terminal winner differ",
+                )?;
                 self.commit_pending(t.policy_step_count)?;
                 Ok(summary)
             })(),
-            Err(message)=>{
-                Err(self.failure.take().unwrap_or_else(|| {
-                    let mut stop=EvaluationStop::from(message);
-                    if terminal.as_ref().is_some_and(|t|t.terminal_classification==TerminalClassificationV1::Truncated) {
-                        stop.reason=IncompleteMatchReasonV1::DecisionCap;
-                        stop.cause=AbortCause::Truncated;
-                    }
-                    if let Some((actor,step))=self.attempted.or_else(||self.pending.as_ref().map(|p|(p.record.record().actor,p.step))) {stop=stop.at(actor,step);}
-                    stop
-                }))
-            },
+            Err(message) => Err(self.failure.take().unwrap_or_else(|| {
+                let mut stop = EvaluationStop::from(message);
+                if terminal.as_ref().is_some_and(|t| {
+                    t.terminal_classification == TerminalClassificationV1::Truncated
+                }) {
+                    stop.reason = IncompleteMatchReasonV1::DecisionCap;
+                    stop.cause = AbortCause::Truncated;
+                }
+                if let Some((actor, step)) = self.attempted.or_else(|| {
+                    self.pending
+                        .as_ref()
+                        .map(|p| (p.record.record().actor, p.step))
+                }) {
+                    stop = stop.at(actor, step);
+                }
+                stop
+            })),
         };
         if result.is_err() {
-            let pending=self.pending.take();
-            if let (Some(sink),Some(row))=(self.report.as_deref_mut(),pending.as_ref().and_then(|p|p.report_row)) {sink.discard(row);}
-            self.game.discarded_pending_selections=u64::from(pending.is_some())+u64::from(self.attempted.take().is_some());
+            let pending = self.pending.take();
+            if let (Some(sink), Some(row)) = (
+                self.report.as_deref_mut(),
+                pending.as_ref().and_then(|p| p.report_row),
+            ) {
+                sink.discard(row);
+            }
+            self.game.discarded_pending_selections =
+                u64::from(pending.is_some()) + u64::from(self.attempted.take().is_some());
         }
         result
     }
-    fn select(&mut self,input:&PairedBo1PolicyInputV1<'_>)->Result<u32,EvaluationStop> {
-        let decision=input.decision();let i=seat(decision.acting_player);
+    fn select(&mut self, input: &PairedBo1PolicyInputV1<'_>) -> Result<u32, EvaluationStop> {
+        let decision = input.decision();
+        let i = seat(decision.acting_player);
         self.commit_pending(decision.step)?;
-        self.attempted=Some((decision.acting_player,decision.step));
-        let mut report_row=None;
-        if let Some(sink)=self.activation.as_deref_mut() {sink.before_decision(self.game,self.budget.count,input)?;}
-        let switched=self.activation.as_ref().filter(|s|s.uses_search(self.game.game_index,decision.acting_player));
-        let route=switched.map_or(&self.packages[i].search,|s|&s.search);
-        let behavior_hash=switched.map_or(&self.hashes[i],|s|&s.search_hash);
-        let (selected,record)=match route {
-            AgentSearchPolicyV1::Disabled=>{
-                let (selected,scores)=self.policies[i].select_paired_with_scores_v1(input).map_err(|e|e.to_string())?;
-                let behavior=BehaviorDistributionV1::hamilton_from_logits_v1(&scores.logits,selected)?;
-                let record=input.capture_bo3_gameplay_v4(self.budget.count,behavior_hash.clone(),behavior)?;
-                if let Some(sink)=self.report.as_deref_mut() {
-                    report_row=sink.observe(self.game.game_index,&record,input,&self.policies[i]);
+        self.attempted = Some((decision.acting_player, decision.step));
+        let mut report_row = None;
+        if let Some(sink) = self.activation.as_deref_mut() {
+            sink.before_decision(self.game, self.budget.count, input)?;
+        }
+        let switched = self
+            .activation
+            .as_ref()
+            .filter(|s| s.uses_search(self.game.game_index, decision.acting_player));
+        let route = switched.map_or(&self.packages[i].search, |s| &s.search);
+        let behavior_hash = switched.map_or(&self.hashes[i], |s| &s.search_hash);
+        let (selected, record) = match route {
+            AgentSearchPolicyV1::Disabled => {
+                let (selected, scores) = self.policies[i]
+                    .select_paired_with_scores_v1(input)
+                    .map_err(|e| e.to_string())?;
+                let behavior =
+                    BehaviorDistributionV1::hamilton_from_logits_v1(&scores.logits, selected)?;
+                let record = input.capture_bo3_gameplay_v4(
+                    self.budget.count,
+                    behavior_hash.clone(),
+                    behavior,
+                )?;
+                if let Some(sink) = self.report.as_deref_mut() {
+                    report_row =
+                        sink.observe(self.game.game_index, &record, input, &self.policies[i]);
                 }
-                (selected,EvaluationDecision::Ordinary{record})
-            },
-            AgentSearchPolicyV1::V4InformationSetV1{descriptor}=>{
-                let limits=search::Limits{simulations:descriptor.simulations,transitions:descriptor.transitions,depth:descriptor.depth,seed:descriptor.experiment_seed};
-                let allocation=match descriptor.root_allocation {V4SearchRootAllocationV1::Puct=>search::RootAllocation::Puct,V4SearchRootAllocationV1::RoundRobin=>search::RootAllocation::RoundRobin};
-                let interior=match descriptor.interior_bonus {V4SearchInteriorBonusV1::PriorWeighted=>search::InteriorBonus::PriorWeighted,V4SearchInteriorBonusV1::PriorFree=>search::InteriorBonus::PriorFree};
-                let started=std::time::Instant::now();
-                let result=input.evaluation_search_v4(&self.policies[i],limits,allocation,interior);
-                self.timings.push(SearchTiming{game_index:self.game.game_index,actor:decision.acting_player,step:decision.step,
-                    elapsed_ns:u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)});
-                let outcome=result.map_err(|error|EvaluationStop{reason:IncompleteMatchReasonV1::EngineError,
-                    actor:Some(decision.acting_player),step:Some(decision.step),cause:AbortCause::Search{error}})?;
-                let selected=outcome.selected;
-                let record=input.capture_bo3_gameplay_v4(self.budget.count,behavior_hash.clone(),BehaviorDistributionV1::Deterministic{selected_index:selected})?;
-                let diagnostics=SearchDiagnostics{descriptor:descriptor.clone(),selected_by_mean:outcome.selected_by_mean,
-                    simulations:outcome.simulations,transitions:outcome.transitions,nodes:outcome.nodes,headroom:outcome.headroom,
-                    root_visits:outcome.root_visits.clone(),root_value_sums:outcome.root_value_sums.clone(),root_priors:outcome.root_priors.clone(),
-                    root_work:outcome.root_work.clone(),census:outcome.census.clone(),outcome_sha256:semantic_hash(&outcome)?,
-                    full_outcome:if self.budget.retained<self.budget.max_retained {Some(outcome)} else {None}};
-                (selected,EvaluationDecision::Search{record,search:diagnostics})
-            },
-            AgentSearchPolicyV1::V4InformationSetEstimateV1{descriptor}=>{
-                let d=&descriptor.0;
-                let limits=search::Limits{simulations:d.simulations,transitions:d.transitions,depth:d.depth,seed:d.experiment_seed};
-                let started=std::time::Instant::now();
-                let result=input.report_search_v4(&self.policies[i],limits);
-                self.timings.push(SearchTiming{game_index:self.game.game_index,actor:decision.acting_player,step:decision.step,
-                    elapsed_ns:u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)});
-                let abort=|error|EvaluationStop{reason:IncompleteMatchReasonV1::EngineError,
-                    actor:Some(decision.acting_player),step:Some(decision.step),cause:AbortCause::Search{error}};
-                let outcome=result.map_err(abort)?;
-                let estimate=outcome.estimator.as_ref().ok_or_else(||abort(search::Error::CorruptTree))?;
-                let root=estimate.nodes.first().ok_or_else(||abort(search::Error::CorruptTree))?;
+                (selected, EvaluationDecision::Ordinary { record })
+            }
+            AgentSearchPolicyV1::V4InformationSetV1 { descriptor } => {
+                let limits = search::Limits {
+                    simulations: descriptor.simulations,
+                    transitions: descriptor.transitions,
+                    depth: descriptor.depth,
+                    seed: descriptor.experiment_seed,
+                };
+                let allocation = match descriptor.root_allocation {
+                    V4SearchRootAllocationV1::Puct => search::RootAllocation::Puct,
+                    V4SearchRootAllocationV1::RoundRobin => search::RootAllocation::RoundRobin,
+                };
+                let interior = match descriptor.interior_bonus {
+                    V4SearchInteriorBonusV1::PriorWeighted => search::InteriorBonus::PriorWeighted,
+                    V4SearchInteriorBonusV1::PriorFree => search::InteriorBonus::PriorFree,
+                };
+                let started = std::time::Instant::now();
+                let result =
+                    input.evaluation_search_v4(&self.policies[i], limits, allocation, interior);
+                self.timings.push(SearchTiming {
+                    game_index: self.game.game_index,
+                    actor: decision.acting_player,
+                    step: decision.step,
+                    elapsed_ns: u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+                });
+                let outcome = result.map_err(|error| EvaluationStop {
+                    reason: IncompleteMatchReasonV1::EngineError,
+                    actor: Some(decision.acting_player),
+                    step: Some(decision.step),
+                    cause: AbortCause::Search { error },
+                })?;
+                let selected = outcome.selected;
+                let record = input.capture_bo3_gameplay_v4(
+                    self.budget.count,
+                    behavior_hash.clone(),
+                    BehaviorDistributionV1::Deterministic {
+                        selected_index: selected,
+                    },
+                )?;
+                let diagnostics = SearchDiagnostics {
+                    descriptor: descriptor.clone(),
+                    selected_by_mean: outcome.selected_by_mean,
+                    simulations: outcome.simulations,
+                    transitions: outcome.transitions,
+                    nodes: outcome.nodes,
+                    headroom: outcome.headroom,
+                    root_visits: outcome.root_visits.clone(),
+                    root_value_sums: outcome.root_value_sums.clone(),
+                    root_priors: outcome.root_priors.clone(),
+                    root_work: outcome.root_work.clone(),
+                    census: outcome.census.clone(),
+                    outcome_sha256: semantic_hash(&outcome)?,
+                    full_outcome: if self.budget.retained < self.budget.max_retained {
+                        Some(outcome)
+                    } else {
+                        None
+                    },
+                };
+                (
+                    selected,
+                    EvaluationDecision::Search {
+                        record,
+                        search: diagnostics,
+                    },
+                )
+            }
+            AgentSearchPolicyV1::V4InformationSetEstimateV1 { descriptor } => {
+                let d = &descriptor.0;
+                let limits = search::Limits {
+                    simulations: d.simulations,
+                    transitions: d.transitions,
+                    depth: d.depth,
+                    seed: d.experiment_seed,
+                };
+                let started = std::time::Instant::now();
+                let result = input.report_search_v4(&self.policies[i], limits);
+                self.timings.push(SearchTiming {
+                    game_index: self.game.game_index,
+                    actor: decision.acting_player,
+                    step: decision.step,
+                    elapsed_ns: u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+                });
+                let abort = |error| EvaluationStop {
+                    reason: IncompleteMatchReasonV1::EngineError,
+                    actor: Some(decision.acting_player),
+                    step: Some(decision.step),
+                    cause: AbortCause::Search { error },
+                };
+                let outcome = result.map_err(abort)?;
+                let estimate = outcome
+                    .estimator
+                    .as_ref()
+                    .ok_or_else(|| abort(search::Error::CorruptTree))?;
+                let root = estimate
+                    .nodes
+                    .first()
+                    .ok_or_else(|| abort(search::Error::CorruptTree))?;
                 // The versioned E rule preserves the estimator's lowest-index tie.
-                let selected=estimate.selected_by_estimate;
-                let record=input.capture_bo3_gameplay_v4(self.budget.count,behavior_hash.clone(),BehaviorDistributionV1::Deterministic{selected_index:selected})?;
-                let diagnostics=EstimateSearchDiagnostics{descriptor:descriptor.clone(),selected_by_core:outcome.selected,
-                    selected_by_estimate:selected,root_estimates:root.edges.iter().map(|e|e.value).collect(),selected_by_mean:outcome.selected_by_mean,
-                    simulations:outcome.simulations,transitions:outcome.transitions,nodes:outcome.nodes,headroom:outcome.headroom,
-                    root_visits:outcome.root_visits.clone(),root_value_sums:outcome.root_value_sums.clone(),root_priors:outcome.root_priors.clone(),
-                    root_work:outcome.root_work.clone(),census:outcome.census.clone(),outcome_sha256:semantic_hash(&outcome)?,
-                    full_outcome:if self.budget.retained<self.budget.max_retained {Some(outcome)} else {None}};
-                (selected,EvaluationDecision::EstimateSearch{record,search:diagnostics})
-            },
-            AgentSearchPolicyV1::V4InformationSetEstimateV2{descriptor}=>{
-                let d=&descriptor.0;
-                let limits=search::Limits{simulations:d.simulations,transitions:d.transitions,depth:d.depth,seed:d.experiment_seed};
-                let started=std::time::Instant::now();
-                let result=input.report_search_library_v2(&self.policies[i],limits);
-                self.timings.push(SearchTiming{game_index:self.game.game_index,actor:decision.acting_player,step:decision.step,
-                    elapsed_ns:u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)});
-                let abort=|error|EvaluationStop{reason:IncompleteMatchReasonV1::EngineError,
-                    actor:Some(decision.acting_player),step:Some(decision.step),cause:AbortCause::Search{error}};
-                let outcome=result.map_err(abort)?;
-                let estimate=outcome.estimator.as_ref().ok_or_else(||abort(search::Error::CorruptTree))?;
-                let root=estimate.nodes.first().ok_or_else(||abort(search::Error::CorruptTree))?;
+                let selected = estimate.selected_by_estimate;
+                let record = input.capture_bo3_gameplay_v4(
+                    self.budget.count,
+                    behavior_hash.clone(),
+                    BehaviorDistributionV1::Deterministic {
+                        selected_index: selected,
+                    },
+                )?;
+                let diagnostics = EstimateSearchDiagnostics {
+                    descriptor: descriptor.clone(),
+                    selected_by_core: outcome.selected,
+                    selected_by_estimate: selected,
+                    root_estimates: root.edges.iter().map(|e| e.value).collect(),
+                    selected_by_mean: outcome.selected_by_mean,
+                    simulations: outcome.simulations,
+                    transitions: outcome.transitions,
+                    nodes: outcome.nodes,
+                    headroom: outcome.headroom,
+                    root_visits: outcome.root_visits.clone(),
+                    root_value_sums: outcome.root_value_sums.clone(),
+                    root_priors: outcome.root_priors.clone(),
+                    root_work: outcome.root_work.clone(),
+                    census: outcome.census.clone(),
+                    outcome_sha256: semantic_hash(&outcome)?,
+                    full_outcome: if self.budget.retained < self.budget.max_retained {
+                        Some(outcome)
+                    } else {
+                        None
+                    },
+                };
+                (
+                    selected,
+                    EvaluationDecision::EstimateSearch {
+                        record,
+                        search: diagnostics,
+                    },
+                )
+            }
+            AgentSearchPolicyV1::V4InformationSetEstimateV2 { descriptor } => {
+                let d = &descriptor.0;
+                let limits = search::Limits {
+                    simulations: d.simulations,
+                    transitions: d.transitions,
+                    depth: d.depth,
+                    seed: d.experiment_seed,
+                };
+                let started = std::time::Instant::now();
+                let result = input.report_search_library_v2(&self.policies[i], limits);
+                self.timings.push(SearchTiming {
+                    game_index: self.game.game_index,
+                    actor: decision.acting_player,
+                    step: decision.step,
+                    elapsed_ns: u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+                });
+                let abort = |error| EvaluationStop {
+                    reason: IncompleteMatchReasonV1::EngineError,
+                    actor: Some(decision.acting_player),
+                    step: Some(decision.step),
+                    cause: AbortCause::Search { error },
+                };
+                let outcome = result.map_err(abort)?;
+                let estimate = outcome
+                    .estimator
+                    .as_ref()
+                    .ok_or_else(|| abort(search::Error::CorruptTree))?;
+                let root = estimate
+                    .nodes
+                    .first()
+                    .ok_or_else(|| abort(search::Error::CorruptTree))?;
                 // The versioned E rule preserves the estimator's lowest-index tie.
-                let selected=estimate.selected_by_estimate;
-                let record=input.capture_bo3_gameplay_v4(self.budget.count,behavior_hash.clone(),BehaviorDistributionV1::Deterministic{selected_index:selected})?;
-                let diagnostics=EstimateSearchDiagnostics{descriptor:descriptor.clone(),selected_by_core:outcome.selected,
-                    selected_by_estimate:selected,root_estimates:root.edges.iter().map(|e|e.value).collect(),selected_by_mean:outcome.selected_by_mean,
-                    simulations:outcome.simulations,transitions:outcome.transitions,nodes:outcome.nodes,headroom:outcome.headroom,
-                    root_visits:outcome.root_visits.clone(),root_value_sums:outcome.root_value_sums.clone(),root_priors:outcome.root_priors.clone(),
-                    root_work:outcome.root_work.clone(),census:outcome.census.clone(),outcome_sha256:semantic_hash(&outcome)?,
-                    full_outcome:if self.budget.retained<self.budget.max_retained {Some(outcome)} else {None}};
-                (selected,EvaluationDecision::EstimateSearchLibraryV2{record,search:diagnostics})
-            },
-            _=>return Err("unsupported evaluation search descriptor".to_owned().into()),
+                let selected = estimate.selected_by_estimate;
+                let record = input.capture_bo3_gameplay_v4(
+                    self.budget.count,
+                    behavior_hash.clone(),
+                    BehaviorDistributionV1::Deterministic {
+                        selected_index: selected,
+                    },
+                )?;
+                let diagnostics = EstimateSearchDiagnostics {
+                    descriptor: descriptor.clone(),
+                    selected_by_core: outcome.selected,
+                    selected_by_estimate: selected,
+                    root_estimates: root.edges.iter().map(|e| e.value).collect(),
+                    selected_by_mean: outcome.selected_by_mean,
+                    simulations: outcome.simulations,
+                    transitions: outcome.transitions,
+                    nodes: outcome.nodes,
+                    headroom: outcome.headroom,
+                    root_visits: outcome.root_visits.clone(),
+                    root_value_sums: outcome.root_value_sums.clone(),
+                    root_priors: outcome.root_priors.clone(),
+                    root_work: outcome.root_work.clone(),
+                    census: outcome.census.clone(),
+                    outcome_sha256: semantic_hash(&outcome)?,
+                    full_outcome: if self.budget.retained < self.budget.max_retained {
+                        Some(outcome)
+                    } else {
+                        None
+                    },
+                };
+                (
+                    selected,
+                    EvaluationDecision::EstimateSearchLibraryV2 {
+                        record,
+                        search: diagnostics,
+                    },
+                )
+            }
+            _ => return Err("unsupported evaluation search descriptor".to_owned().into()),
         };
-        let size=match self.budget.check(&record) {
-            Ok(size)=>size,
-            Err(error)=>{if let (Some(sink),Some(row))=(self.report.as_deref_mut(),report_row) {sink.discard(row);} return Err(error);}
+        let size = match self.budget.check(&record) {
+            Ok(size) => size,
+            Err(error) => {
+                if let (Some(sink), Some(row)) = (self.report.as_deref_mut(), report_row) {
+                    sink.discard(row);
+                }
+                return Err(error);
+            }
         };
-        self.pending=Some(EvaluationPending{step:decision.step,record,size,report_row});
-        self.attempted=None;
+        self.pending = Some(EvaluationPending {
+            step: decision.step,
+            record,
+            size,
+            report_row,
+        });
+        self.attempted = None;
         Ok(selected)
     }
 }
 impl PairedBo1PolicyV1 for EvaluationPolicy<'_> {
-    fn uses_observation_successor_v3(&self)->bool {true}
-    fn reset_for_game_v1(&mut self,seeds:[u64;2])->Result<(),RlSessionError> {
-        for policy in &mut *self.policies {policy.reset_for_game_v1(seeds)?;} Ok(())
+    fn uses_observation_successor_v3(&self) -> bool {
+        true
     }
-    fn select_action_v1(&mut self,input:PairedBo1PolicyInputV1<'_>)->Result<u32,RlSessionError> {
-        let decision=input.decision();
+    fn reset_for_game_v1(&mut self, seeds: [u64; 2]) -> Result<(), RlSessionError> {
+        for policy in &mut *self.policies {
+            policy.reset_for_game_v1(seeds)?;
+        }
+        Ok(())
+    }
+    fn select_action_v1(
+        &mut self,
+        input: PairedBo1PolicyInputV1<'_>,
+    ) -> Result<u32, RlSessionError> {
+        let decision = input.decision();
         self.select(&input).map_err(|stop| {
-            let message=format!("evaluation aborted: {:?}",stop.cause);
-            self.failure=Some(stop.at(decision.acting_player,decision.step));
-            RlSessionError{code:RlSessionErrorCode::StaleEnvironmentBinding,message}
+            let message = format!("evaluation aborted: {:?}", stop.cause);
+            self.failure = Some(stop.at(decision.acting_player, decision.step));
+            RlSessionError {
+                code: RlSessionErrorCode::StaleEnvironmentBinding,
+                message,
+            }
         })
     }
 }
@@ -706,230 +1162,580 @@ mod tests {
     use super::*;
     use crate::phase1_bo3_collection_v1::tests as fixtures;
 
-    pub(super) fn search_package(p:&mut CompleteAgentPackageV1,depth:u16) {
-        let m=&p.gameplay.identity.model;
-        p.search=AgentSearchPolicyV1::V4InformationSetV1{descriptor:V4InformationSetSearchDescriptorV1{
-            schema:V4_INFORMATION_SET_SEARCH_SCHEMA_V1.into(),algorithm:V4_INFORMATION_SET_SEARCH_ALGORITHM_V1.into(),
-            root_allocation:V4SearchRootAllocationV1::RoundRobin,interior_bonus:V4SearchInteriorBonusV1::PriorFree,
-            simulations:32,transitions:128,depth,experiment_seed:29,
-            weights_sha256:m.weights_sha256.clone(),model_parameter_sha256:m.model_parameter_sha256.clone(),
-            embedding_table_sha256:m.embedding_table_sha256.clone(),feature_contract_digest:m.feature_contract_digest.clone(),
-            feature_encoding_digest:m.feature_encoding_digest.clone()}};
+    pub(super) fn search_package(p: &mut CompleteAgentPackageV1, depth: u16) {
+        let m = &p.gameplay.identity.model;
+        p.search = AgentSearchPolicyV1::V4InformationSetV1 {
+            descriptor: V4InformationSetSearchDescriptorV1 {
+                schema: V4_INFORMATION_SET_SEARCH_SCHEMA_V1.into(),
+                algorithm: V4_INFORMATION_SET_SEARCH_ALGORITHM_V1.into(),
+                root_allocation: V4SearchRootAllocationV1::RoundRobin,
+                interior_bonus: V4SearchInteriorBonusV1::PriorFree,
+                simulations: 32,
+                transitions: 128,
+                depth,
+                experiment_seed: 29,
+                weights_sha256: m.weights_sha256.clone(),
+                model_parameter_sha256: m.model_parameter_sha256.clone(),
+                embedding_table_sha256: m.embedding_table_sha256.clone(),
+                feature_contract_digest: m.feature_contract_digest.clone(),
+                feature_encoding_digest: m.feature_encoding_digest.clone(),
+            },
+        };
         p.validate_metadata_v1().unwrap();
     }
 
     #[test]
     fn v4_evaluation_disabled_matches_native_bo3_and_repeats_semantically() {
-        let config=fixtures::config("evaluation-parity");
-        let options=Bo3EvaluationOptionsV1{max_retained_search_outcomes:0};
-        let choices=[PlayDrawChoiceV1::Play,PlayDrawChoiceV1::Draw];
-        let (mut native_policies,packages)=fixtures::fixtures_v4(choices);
-        let native=collect_loaded(&config,packages.each_ref(),&mut native_policies,[None,None]).unwrap();
-        let mut policies=fixtures::fixtures_v4(choices).0;
-        let (actual,timing)=evaluate_loaded(&config,packages.each_ref(),&mut policies,[None,None],&options).unwrap();
-        assert!(matches!(actual.ending,Bo3TrajectoryEndingV1::Complete{..}));
-        assert_eq!(actual.ending,native.trajectory.ending);assert!(actual.abort.is_none());assert!(timing.is_empty());
-        assert_eq!(actual.games.len(),native.trajectory.games.len());
-        assert_eq!(actual.committed_decision_records,native.committed_decision_records);
-        for (a,b) in actual.games.iter().zip(&native.trajectory.games) {
-            assert_eq!(a.start,b.start);assert_eq!(a.terminal,b.terminal);assert_eq!(a.discarded_pending_selections,0);
-            assert_eq!(a.decisions.len(),b.decisions.len());
-            for (a,b) in a.decisions.iter().zip(&b.decisions) {assert_eq!(a.record(),b);assert!(matches!(a,EvaluationDecision::Ordinary{..}));}
+        let config = fixtures::config("evaluation-parity");
+        let options = Bo3EvaluationOptionsV1 {
+            max_retained_search_outcomes: 0,
+        };
+        let choices = [PlayDrawChoiceV1::Play, PlayDrawChoiceV1::Draw];
+        let (mut native_policies, packages) = fixtures::fixtures_v4(choices);
+        let native = collect_loaded(
+            &config,
+            packages.each_ref(),
+            &mut native_policies,
+            [None, None],
+        )
+        .unwrap();
+        let mut policies = fixtures::fixtures_v4(choices).0;
+        let (actual, timing) = evaluate_loaded(
+            &config,
+            packages.each_ref(),
+            &mut policies,
+            [None, None],
+            &options,
+        )
+        .unwrap();
+        assert!(matches!(
+            actual.ending,
+            Bo3TrajectoryEndingV1::Complete { .. }
+        ));
+        assert_eq!(actual.ending, native.trajectory.ending);
+        assert!(actual.abort.is_none());
+        assert!(timing.is_empty());
+        assert_eq!(actual.games.len(), native.trajectory.games.len());
+        assert_eq!(
+            actual.committed_decision_records,
+            native.committed_decision_records
+        );
+        for (a, b) in actual.games.iter().zip(&native.trajectory.games) {
+            assert_eq!(a.start, b.start);
+            assert_eq!(a.terminal, b.terminal);
+            assert_eq!(a.discarded_pending_selections, 0);
+            assert_eq!(a.decisions.len(), b.decisions.len());
+            for (a, b) in a.decisions.iter().zip(&b.decisions) {
+                assert_eq!(a.record(), b);
+                assert!(matches!(a, EvaluationDecision::Ordinary { .. }));
+            }
         }
-        let mut repeat_policies=fixtures::fixtures_v4(choices).0;
-        let (repeat,_)=evaluate_loaded(&config,packages.each_ref(),&mut repeat_policies,[None,None],&options).unwrap();
-        assert_eq!(semantic_hash(&(&config,&options,&actual)).unwrap(),semantic_hash(&(&config,&options,&repeat)).unwrap());
-        let encoded=serde_json::to_value(&actual).unwrap();
+        let mut repeat_policies = fixtures::fixtures_v4(choices).0;
+        let (repeat, _) = evaluate_loaded(
+            &config,
+            packages.each_ref(),
+            &mut repeat_policies,
+            [None, None],
+            &options,
+        )
+        .unwrap();
+        assert_eq!(
+            semantic_hash(&(&config, &options, &actual)).unwrap(),
+            semantic_hash(&(&config, &options, &repeat)).unwrap()
+        );
+        let encoded = serde_json::to_value(&actual).unwrap();
         assert!(serde_json::from_value::<Bo3TrainingTrajectoryV1>(encoded).is_err());
     }
 
     #[test]
     fn v4_evaluation_search_headroom_abort_is_typed_and_has_no_fallback() {
-        let mut config=fixtures::config("evaluation-headroom");config.max_policy_steps=1;
-        let options=Bo3EvaluationOptionsV1{max_retained_search_outcomes:1};
-        let (mut policies,mut packages)=fixtures::fixtures_v4([PlayDrawChoiceV1::Play;2]);
-        for p in &mut packages {search_package(p,4);}
-        assert!(validate_configuration(&config,packages.each_ref()).is_err());
+        let mut config = fixtures::config("evaluation-headroom");
+        config.max_policy_steps = 1;
+        let options = Bo3EvaluationOptionsV1 {
+            max_retained_search_outcomes: 1,
+        };
+        let (mut policies, mut packages) = fixtures::fixtures_v4([PlayDrawChoiceV1::Play; 2]);
+        for p in &mut packages {
+            search_package(p, 4);
+        }
+        assert!(validate_configuration(&config, packages.each_ref()).is_err());
         assert!(packages[0].load_supported_components_v1().is_err());
-        let (result,timing)=evaluate_loaded(&config,packages.each_ref(),&mut policies,[None,None],&options).unwrap();
-        let abort=result.abort.as_ref().unwrap();
-        assert!(matches!(abort.cause,AbortCause::Search{error:search::Error::InsufficientHeadroom}));
-        assert_eq!(abort.game_index,1);assert_eq!(abort.step,Some(0));assert!(abort.actor.is_some());
-        assert_eq!(timing.len(),1);
-        assert_eq!(result.games[0].discarded_pending_selections,1);
-        assert!(result.games[0].decisions.iter().all(|d|!matches!(d.record().visible,ActorVisibleDecisionV1::Gameplay{..})));
+        let (result, timing) = evaluate_loaded(
+            &config,
+            packages.each_ref(),
+            &mut policies,
+            [None, None],
+            &options,
+        )
+        .unwrap();
+        let abort = result.abort.as_ref().unwrap();
+        assert!(matches!(
+            abort.cause,
+            AbortCause::Search {
+                error: search::Error::InsufficientHeadroom
+            }
+        ));
+        assert_eq!(abort.game_index, 1);
+        assert_eq!(abort.step, Some(0));
+        assert!(abort.actor.is_some());
+        assert_eq!(timing.len(), 1);
+        assert_eq!(result.games[0].discarded_pending_selections, 1);
+        assert!(result.games[0]
+            .decisions
+            .iter()
+            .all(|d| !matches!(d.record().visible, ActorVisibleDecisionV1::Gameplay { .. })));
     }
 
     #[test]
     fn v4_evaluation_caps_and_runtime_identity_are_distinct_from_engine_faults() {
-        let mut config=fixtures::config("evaluation-truncation");config.max_policy_steps=1;
-        let options=Bo3EvaluationOptionsV1{max_retained_search_outcomes:0};
-        let (mut policies,mut packages)=fixtures::fixtures_v4([PlayDrawChoiceV1::Play;2]);
-        let (result,_)=evaluate_loaded(&config,packages.each_ref(),&mut policies,[None,None],&options).unwrap();
-        assert!(matches!(result.ending,Bo3TrajectoryEndingV1::Incomplete{reason:IncompleteMatchReasonV1::DecisionCap}));
-        assert!(matches!(result.abort.unwrap().cause,AbortCause::Truncated));
-        let old=packages[1].runtime.tracked_tree_sha256.clone();packages[1].runtime.tracked_tree_sha256="e".repeat(64);
-        assert_eq!(validate_evaluation(&config,packages.each_ref(),&options).unwrap_err(),"physical seats use different runtime/feature contracts");
-        packages[1].runtime.tracked_tree_sha256=old;
-        for id in ["".to_owned(),"x".repeat(129),"nonascii-\u{e9}".to_owned()] {
-            config.match_id=id;
-            assert_eq!(validate_evaluation(&config,packages.each_ref(),&options).unwrap_err(),"invalid BO3 evaluation match identity");
+        let mut config = fixtures::config("evaluation-truncation");
+        config.max_policy_steps = 1;
+        let options = Bo3EvaluationOptionsV1 {
+            max_retained_search_outcomes: 0,
+        };
+        let (mut policies, mut packages) = fixtures::fixtures_v4([PlayDrawChoiceV1::Play; 2]);
+        let (result, _) = evaluate_loaded(
+            &config,
+            packages.each_ref(),
+            &mut policies,
+            [None, None],
+            &options,
+        )
+        .unwrap();
+        assert!(matches!(
+            result.ending,
+            Bo3TrajectoryEndingV1::Incomplete {
+                reason: IncompleteMatchReasonV1::DecisionCap
+            }
+        ));
+        assert!(matches!(result.abort.unwrap().cause, AbortCause::Truncated));
+        let old = packages[1].runtime.tracked_tree_sha256.clone();
+        packages[1].runtime.tracked_tree_sha256 = "e".repeat(64);
+        assert_eq!(
+            validate_evaluation(&config, packages.each_ref(), &options).unwrap_err(),
+            "physical seats use different runtime/feature contracts"
+        );
+        packages[1].runtime.tracked_tree_sha256 = old;
+        for id in ["".to_owned(), "x".repeat(129), "nonascii-\u{e9}".to_owned()] {
+            config.match_id = id;
+            assert_eq!(
+                validate_evaluation(&config, packages.each_ref(), &options).unwrap_err(),
+                "invalid BO3 evaluation match identity"
+            );
         }
     }
 
     #[test]
     fn v4_evaluation_records_search_truthfully_and_never_commits_an_unconfirmed_step() {
-        use crate::policy_observation_v6::tests::{ready_state,put};
-        use crate::state::Zone;
+        use crate::policy_observation_v6::tests::{put, ready_state};
         use crate::rl_session::FastActorSessionV1;
-        let mut state=ready_state();
-        put(&mut state,PlayerId::P0,"Lightning Bolt",Zone::Hand);
-        state.players[0].mana_pool[crate::mana::ManaColor::R.pool_index()]=3;
-        for actor in [PlayerId::P0,PlayerId::P1] {for name in ["Forest","Mountain","Island"] {put(&mut state,actor,name,Zone::Library);}}
-        let mut session=FastActorSessionV1::from_v3_fixture_state(state);
-        let (mut policies,mut packages)=fixtures::fixtures_v4([PlayDrawChoiceV1::Play;2]);
-        for p in &mut packages {search_package(p,4);}
-        let hashes=[packages[0].package_sha256_v1().unwrap(),packages[1].package_sha256_v1().unwrap()];
-        let mut game=EvaluationGame{game_index:1,start:None,environment_seed:None,decisions:Vec::new(),terminal:None,discarded_pending_selections:0};
-        let mut budget=EvaluationBudget{count:0,bytes:0,retained:0,max_count:100,max_bytes:MAX_RECORD_BYTES,max_retained:1,native_record_bytes:false};
-        let mut timings=Vec::new();
-        let mut recorder=EvaluationPolicy{policies:&mut policies,packages:packages.each_ref(),hashes:&hashes,game:&mut game,budget:&mut budget,
-            timings:&mut timings,report:None,activation:None,pending:None,failure:None,attempted:None};
-        let FastActorResponseV1::Decision(d)=session.current_response() else {panic!("fixture")};
-        let action=recorder.select_action_v1(PairedBo1PolicyInputV1::new(&session,d)).unwrap();
+        use crate::state::Zone;
+        let mut state = ready_state();
+        put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
+        state.players[0].mana_pool[crate::mana::ManaColor::R.pool_index()] = 3;
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for name in ["Forest", "Mountain", "Island"] {
+                put(&mut state, actor, name, Zone::Library);
+            }
+        }
+        let mut session = FastActorSessionV1::from_v3_fixture_state(state);
+        let (mut policies, mut packages) = fixtures::fixtures_v4([PlayDrawChoiceV1::Play; 2]);
+        for p in &mut packages {
+            search_package(p, 4);
+        }
+        let hashes = [
+            packages[0].package_sha256_v1().unwrap(),
+            packages[1].package_sha256_v1().unwrap(),
+        ];
+        let mut game = EvaluationGame {
+            game_index: 1,
+            start: None,
+            environment_seed: None,
+            decisions: Vec::new(),
+            terminal: None,
+            discarded_pending_selections: 0,
+        };
+        let mut budget = EvaluationBudget {
+            count: 0,
+            bytes: 0,
+            retained: 0,
+            max_count: 100,
+            max_bytes: MAX_RECORD_BYTES,
+            max_retained: 1,
+            native_record_bytes: false,
+        };
+        let mut timings = Vec::new();
+        let mut recorder = EvaluationPolicy {
+            policies: &mut policies,
+            packages: packages.each_ref(),
+            hashes: &hashes,
+            game: &mut game,
+            budget: &mut budget,
+            timings: &mut timings,
+            report: None,
+            activation: None,
+            pending: None,
+            failure: None,
+            attempted: None,
+        };
+        let FastActorResponseV1::Decision(d) = session.current_response() else {
+            panic!("fixture")
+        };
+        let action = recorder
+            .select_action_v1(PairedBo1PolicyInputV1::new(&session, d))
+            .unwrap();
         assert!(recorder.game.decisions.is_empty());
-        session.step(d.episode_id,d.step,action).unwrap();
-        let FastActorResponseV1::Decision(next)=session.current_response() else {panic!("fixture needs next decision")};
-        recorder.select_action_v1(PairedBo1PolicyInputV1::new(&session,next)).unwrap();
-        let EvaluationDecision::Search{record,search}= &recorder.game.decisions[0] else {panic!("search record missing")};
-        assert_eq!(record.behavior,BehaviorDistributionV1::Deterministic{selected_index:action});
-        assert_eq!(search.outcome_sha256,semantic_hash(search.full_outcome.as_ref().unwrap()).unwrap());
-        assert_eq!(search.simulations,32);assert_eq!(recorder.budget.retained,1);
+        session.step(d.episode_id, d.step, action).unwrap();
+        let FastActorResponseV1::Decision(next) = session.current_response() else {
+            panic!("fixture needs next decision")
+        };
+        recorder
+            .select_action_v1(PairedBo1PolicyInputV1::new(&session, next))
+            .unwrap();
+        let EvaluationDecision::Search { record, search } = &recorder.game.decisions[0] else {
+            panic!("search record missing")
+        };
+        assert_eq!(
+            record.behavior,
+            BehaviorDistributionV1::Deterministic {
+                selected_index: action
+            }
+        );
+        assert_eq!(
+            search.outcome_sha256,
+            semantic_hash(search.full_outcome.as_ref().unwrap()).unwrap()
+        );
+        assert_eq!(search.simulations, 32);
+        assert_eq!(recorder.budget.retained, 1);
         // A failed engine receipt never admits the second pending selection.
-        assert!(matches!(&recorder.pending.as_ref().unwrap().record,EvaluationDecision::Search{search:SearchDiagnostics{full_outcome:None,..},..}));
-        assert!(recorder.finish_game(Err("fixed engine failure receipt".into()),None).is_err());
-        assert_eq!(recorder.game.discarded_pending_selections,1);
-        assert_eq!(recorder.game.decisions.len(),1);
+        assert!(matches!(
+            &recorder.pending.as_ref().unwrap().record,
+            EvaluationDecision::Search {
+                search: SearchDiagnostics {
+                    full_outcome: None,
+                    ..
+                },
+                ..
+            }
+        ));
+        assert!(recorder
+            .finish_game(Err("fixed engine failure receipt".into()), None)
+            .is_err());
+        assert_eq!(recorder.game.discarded_pending_selections, 1);
+        assert_eq!(recorder.game.decisions.len(), 1);
     }
-    fn estimate_package(p:&mut CompleteAgentPackageV1,depth:u16) {
-        search_package(p,depth);
-        let AgentSearchPolicyV1::V4InformationSetV1{mut descriptor}=p.search.clone() else {unreachable!()};
-        descriptor.schema=V4_INFORMATION_SET_ESTIMATE_SCHEMA_V1.into();descriptor.algorithm=V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V1.into();
-        p.search=AgentSearchPolicyV1::V4InformationSetEstimateV1{descriptor:V4InformationSetEstimateDescriptorV1(descriptor)};
+    fn estimate_package(p: &mut CompleteAgentPackageV1, depth: u16) {
+        search_package(p, depth);
+        let AgentSearchPolicyV1::V4InformationSetV1 { mut descriptor } = p.search.clone() else {
+            unreachable!()
+        };
+        descriptor.schema = V4_INFORMATION_SET_ESTIMATE_SCHEMA_V1.into();
+        descriptor.algorithm = V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V1.into();
+        p.search = AgentSearchPolicyV1::V4InformationSetEstimateV1 {
+            descriptor: V4InformationSetEstimateDescriptorV1(descriptor),
+        };
         p.validate_metadata_v1().unwrap();
     }
     #[test]
     fn v4_evaluation_estimate_headroom_abort_never_falls_back() {
-        let mut config=fixtures::config("estimate-headroom");config.max_policy_steps=1;
-        let options=Bo3EvaluationOptionsV1{max_retained_search_outcomes:0};
-        let (mut policies,mut packages)=fixtures::fixtures_v4([PlayDrawChoiceV1::Play;2]);
-        for p in &mut packages {estimate_package(p,8);}
-        assert!(validate_configuration(&config,packages.each_ref()).is_err());
-        let (result,timings)=evaluate_loaded(&config,packages.each_ref(),&mut policies,[None,None],&options).unwrap();
-        assert!(matches!(result.abort.unwrap().cause,AbortCause::Search{error:search::Error::InsufficientHeadroom}));
-        assert_eq!(timings.len(),1);assert_eq!(result.games[0].discarded_pending_selections,1);
-        assert!(result.games[0].decisions.iter().all(|d|!matches!(d.record().visible,ActorVisibleDecisionV1::Gameplay{..})));
+        let mut config = fixtures::config("estimate-headroom");
+        config.max_policy_steps = 1;
+        let options = Bo3EvaluationOptionsV1 {
+            max_retained_search_outcomes: 0,
+        };
+        let (mut policies, mut packages) = fixtures::fixtures_v4([PlayDrawChoiceV1::Play; 2]);
+        for p in &mut packages {
+            estimate_package(p, 8);
+        }
+        assert!(validate_configuration(&config, packages.each_ref()).is_err());
+        let (result, timings) = evaluate_loaded(
+            &config,
+            packages.each_ref(),
+            &mut policies,
+            [None, None],
+            &options,
+        )
+        .unwrap();
+        assert!(matches!(
+            result.abort.unwrap().cause,
+            AbortCause::Search {
+                error: search::Error::InsufficientHeadroom
+            }
+        ));
+        assert_eq!(timings.len(), 1);
+        assert_eq!(result.games[0].discarded_pending_selections, 1);
+        assert!(result.games[0]
+            .decisions
+            .iter()
+            .all(|d| !matches!(d.record().visible, ActorVisibleDecisionV1::Gameplay { .. })));
     }
     #[test]
     fn v4_evaluation_estimate_plays_direct_report_choice_both_seats_with_receipts() {
-        use crate::policy_observation_v6::tests::{ready_state,put};
-        use crate::state::Zone;
+        use crate::policy_observation_v6::tests::{put, ready_state};
         use crate::rl_session::FastActorSessionV1;
-        for actor in [PlayerId::P0,PlayerId::P1] {
-            let mut state=ready_state();state.active_player=actor;state.priority_player=actor;
-            put(&mut state,actor,"Lightning Bolt",Zone::Hand);put(&mut state,actor,"Gut Shot",Zone::Hand);
-            state.players[actor.index()].mana_pool[crate::mana::ManaColor::R.pool_index()]=3;
-            for owner in [actor,actor.opponent()] {for name in ["Forest","Mountain","Island"] {put(&mut state,owner,name,Zone::Library);}}
-            let mut session=FastActorSessionV1::from_v3_fixture_state(state);
-            let (mut policies,mut packages)=fixtures::fixtures_v4([PlayDrawChoiceV1::Play;2]);
-            for p in &mut packages {estimate_package(p,4);}
-            let FastActorResponseV1::Decision(d)=session.current_response() else {panic!("fixture")};
-            let before=session.diagnostic_state_hash();
-            let expected=PairedBo1PolicyInputV1::new(&session,d).report_search_v4(&policies[actor.index()],search::Limits{simulations:32,transitions:128,depth:4,seed:29}).unwrap();
-            assert_eq!(before,session.diagnostic_state_hash());
-            let expected_estimate=expected.estimator.as_ref().unwrap();
-            let hashes=[packages[0].package_sha256_v1().unwrap(),packages[1].package_sha256_v1().unwrap()];
-            let mut game=EvaluationGame{game_index:1,start:None,environment_seed:None,decisions:Vec::new(),terminal:None,discarded_pending_selections:0};
-            let mut budget=EvaluationBudget{count:0,bytes:0,retained:0,max_count:100,max_bytes:MAX_RECORD_BYTES,max_retained:0,native_record_bytes:false};
-            let mut timings=Vec::new();
-            let mut recorder=EvaluationPolicy{policies:&mut policies,packages:packages.each_ref(),hashes:&hashes,game:&mut game,budget:&mut budget,
-                timings:&mut timings,report:None,activation:None,pending:None,failure:None,attempted:None};
-            let action=recorder.select_action_v1(PairedBo1PolicyInputV1::new(&session,d)).unwrap();
-            assert_eq!(action,expected_estimate.selected_by_estimate);assert_eq!(before,session.diagnostic_state_hash());
+        use crate::state::Zone;
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state();
+            state.active_player = actor;
+            state.priority_player = actor;
+            put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+            put(&mut state, actor, "Gut Shot", Zone::Hand);
+            state.players[actor.index()].mana_pool[crate::mana::ManaColor::R.pool_index()] = 3;
+            for owner in [actor, actor.opponent()] {
+                for name in ["Forest", "Mountain", "Island"] {
+                    put(&mut state, owner, name, Zone::Library);
+                }
+            }
+            let mut session = FastActorSessionV1::from_v3_fixture_state(state);
+            let (mut policies, mut packages) = fixtures::fixtures_v4([PlayDrawChoiceV1::Play; 2]);
+            for p in &mut packages {
+                estimate_package(p, 4);
+            }
+            let FastActorResponseV1::Decision(d) = session.current_response() else {
+                panic!("fixture")
+            };
+            let before = session.diagnostic_state_hash();
+            let expected = PairedBo1PolicyInputV1::new(&session, d)
+                .report_search_v4(
+                    &policies[actor.index()],
+                    search::Limits {
+                        simulations: 32,
+                        transitions: 128,
+                        depth: 4,
+                        seed: 29,
+                    },
+                )
+                .unwrap();
+            assert_eq!(before, session.diagnostic_state_hash());
+            let expected_estimate = expected.estimator.as_ref().unwrap();
+            let hashes = [
+                packages[0].package_sha256_v1().unwrap(),
+                packages[1].package_sha256_v1().unwrap(),
+            ];
+            let mut game = EvaluationGame {
+                game_index: 1,
+                start: None,
+                environment_seed: None,
+                decisions: Vec::new(),
+                terminal: None,
+                discarded_pending_selections: 0,
+            };
+            let mut budget = EvaluationBudget {
+                count: 0,
+                bytes: 0,
+                retained: 0,
+                max_count: 100,
+                max_bytes: MAX_RECORD_BYTES,
+                max_retained: 0,
+                native_record_bytes: false,
+            };
+            let mut timings = Vec::new();
+            let mut recorder = EvaluationPolicy {
+                policies: &mut policies,
+                packages: packages.each_ref(),
+                hashes: &hashes,
+                game: &mut game,
+                budget: &mut budget,
+                timings: &mut timings,
+                report: None,
+                activation: None,
+                pending: None,
+                failure: None,
+                attempted: None,
+            };
+            let action = recorder
+                .select_action_v1(PairedBo1PolicyInputV1::new(&session, d))
+                .unwrap();
+            assert_eq!(action, expected_estimate.selected_by_estimate);
+            assert_eq!(before, session.diagnostic_state_hash());
             assert!(recorder.game.decisions.is_empty());
-            let EvaluationDecision::EstimateSearch{record,search}=&recorder.pending.as_ref().unwrap().record else {panic!("estimate record required")};
-            assert_eq!(record.behavior,BehaviorDistributionV1::Deterministic{selected_index:action});
-            assert_eq!(search.selected_by_estimate,action);assert_eq!(search.selected_by_core,expected.selected);
-            assert_eq!(search.selected_by_mean,expected.selected_by_mean);assert_eq!(search.outcome_sha256,semantic_hash(&expected).unwrap());
-            assert_eq!(search.root_estimates,expected_estimate.nodes[0].edges.iter().map(|e|e.value).collect::<Vec<_>>());
+            let EvaluationDecision::EstimateSearch { record, search } =
+                &recorder.pending.as_ref().unwrap().record
+            else {
+                panic!("estimate record required")
+            };
+            assert_eq!(
+                record.behavior,
+                BehaviorDistributionV1::Deterministic {
+                    selected_index: action
+                }
+            );
+            assert_eq!(search.selected_by_estimate, action);
+            assert_eq!(search.selected_by_core, expected.selected);
+            assert_eq!(search.selected_by_mean, expected.selected_by_mean);
+            assert_eq!(search.outcome_sha256, semantic_hash(&expected).unwrap());
+            assert_eq!(
+                search.root_estimates,
+                expected_estimate.nodes[0]
+                    .edges
+                    .iter()
+                    .map(|e| e.value)
+                    .collect::<Vec<_>>()
+            );
             assert!(search.full_outcome.is_none());
-            session.step(d.episode_id,d.step,action).unwrap();
-            let FastActorResponseV1::Decision(next)=session.current_response() else {panic!("fixture must continue")};
-            recorder.select_action_v1(PairedBo1PolicyInputV1::new(&session,next)).unwrap();
-            assert_eq!(recorder.game.decisions.len(),1);assert_eq!(recorder.budget.retained,0);
-            let serialized=serde_json::to_value(&recorder.game.decisions[0]).unwrap();
-            assert_eq!(serialized["kind"],"estimate_search");
-            assert!(recorder.finish_game(Err("unconfirmed engine step".into()),None).is_err());
-            assert_eq!(recorder.game.decisions.len(),1);assert_eq!(recorder.game.discarded_pending_selections,1);
+            session.step(d.episode_id, d.step, action).unwrap();
+            let FastActorResponseV1::Decision(next) = session.current_response() else {
+                panic!("fixture must continue")
+            };
+            recorder
+                .select_action_v1(PairedBo1PolicyInputV1::new(&session, next))
+                .unwrap();
+            assert_eq!(recorder.game.decisions.len(), 1);
+            assert_eq!(recorder.budget.retained, 0);
+            let serialized = serde_json::to_value(&recorder.game.decisions[0]).unwrap();
+            assert_eq!(serialized["kind"], "estimate_search");
+            assert!(recorder
+                .finish_game(Err("unconfirmed engine step".into()), None)
+                .is_err());
+            assert_eq!(recorder.game.decisions.len(), 1);
+            assert_eq!(recorder.game.discarded_pending_selections, 1);
         }
     }
     #[test]
     fn v4_library_v2_evaluation_plays_library_choice_both_seats_with_receipts() {
-        use crate::policy_observation_v6::tests::{ready_state,put};
-        use crate::state::Zone;
+        use crate::policy_observation_v6::tests::{put, ready_state};
         use crate::rl_session::FastActorSessionV1;
-        for actor in [PlayerId::P0,PlayerId::P1] {
-            let mut state=ready_state();state.active_player=actor;state.priority_player=actor;
-            let source=put(&mut state,actor,"Generous Ent",Zone::Hand);
-            state.players[actor.index()].mana_pool[crate::mana::ManaColor::G.pool_index()]=3;
-            for owner in [actor,actor.opponent()] {for name in ["Forest","Forest","Island","Mountain"] {put(&mut state,owner,name,Zone::Library);}}
-            crate::engine::step(&mut state,crate::engine::Action::ActivateAbility(source,0)).unwrap();
-            for _ in 0..16 {
-                match crate::engine::advance_until_decision(&mut state) {
-                    crate::engine::Decision::CastSpellOrPass{..}=>crate::engine::step(&mut state,crate::engine::Action::Pass).unwrap(),
-                    crate::engine::Decision::ChooseEffectTargets{..}=>break,
-                    other=>panic!("unexpected {other:?}"),
+        use crate::state::Zone;
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state();
+            state.active_player = actor;
+            state.priority_player = actor;
+            let source = put(&mut state, actor, "Generous Ent", Zone::Hand);
+            state.players[actor.index()].mana_pool[crate::mana::ManaColor::G.pool_index()] = 3;
+            for owner in [actor, actor.opponent()] {
+                for name in ["Forest", "Forest", "Island", "Mountain"] {
+                    put(&mut state, owner, name, Zone::Library);
                 }
             }
-            let mut session=FastActorSessionV1::from_v3_fixture_state(state);
-            let (mut policies,mut packages)=fixtures::fixtures_v4([PlayDrawChoiceV1::Play;2]);
+            crate::engine::step(
+                &mut state,
+                crate::engine::Action::ActivateAbility(source, 0),
+            )
+            .unwrap();
+            for _ in 0..16 {
+                match crate::engine::advance_until_decision(&mut state) {
+                    crate::engine::Decision::CastSpellOrPass { .. } => {
+                        crate::engine::step(&mut state, crate::engine::Action::Pass).unwrap()
+                    }
+                    crate::engine::Decision::ChooseEffectTargets { .. } => break,
+                    other => panic!("unexpected {other:?}"),
+                }
+            }
+            let mut session = FastActorSessionV1::from_v3_fixture_state(state);
+            let (mut policies, mut packages) = fixtures::fixtures_v4([PlayDrawChoiceV1::Play; 2]);
             for p in &mut packages {
-                estimate_package(p,4);
-                let AgentSearchPolicyV1::V4InformationSetEstimateV1{descriptor}=p.search.clone() else{unreachable!()};
-                let mut descriptor=descriptor.0;descriptor.schema=V4_INFORMATION_SET_ESTIMATE_SCHEMA_V2.into();descriptor.algorithm=V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V2.into();
-                p.search=AgentSearchPolicyV1::V4InformationSetEstimateV2{descriptor:V4InformationSetEstimateDescriptorV2(descriptor)};
+                estimate_package(p, 4);
+                let AgentSearchPolicyV1::V4InformationSetEstimateV1 { descriptor } =
+                    p.search.clone()
+                else {
+                    unreachable!()
+                };
+                let mut descriptor = descriptor.0;
+                descriptor.schema = V4_INFORMATION_SET_ESTIMATE_SCHEMA_V2.into();
+                descriptor.algorithm = V4_INFORMATION_SET_ESTIMATE_ALGORITHM_V2.into();
+                p.search = AgentSearchPolicyV1::V4InformationSetEstimateV2 {
+                    descriptor: V4InformationSetEstimateDescriptorV2(descriptor),
+                };
                 p.validate_metadata_v1().unwrap();
             }
-            let FastActorResponseV1::Decision(d)=session.current_response() else {panic!("fixture")};
-            let before=session.diagnostic_state_hash();
-            let expected=PairedBo1PolicyInputV1::new(&session,d).report_search_library_v2(&policies[actor.index()],search::Limits{simulations:32,transitions:128,depth:4,seed:29}).unwrap();
-            assert_eq!(before,session.diagnostic_state_hash());
-            let expected_estimate=expected.estimator.as_ref().unwrap();
-            let hashes=[packages[0].package_sha256_v1().unwrap(),packages[1].package_sha256_v1().unwrap()];
-            let mut game=EvaluationGame{game_index:1,start:None,environment_seed:None,decisions:Vec::new(),terminal:None,discarded_pending_selections:0};
-            let mut budget=EvaluationBudget{count:0,bytes:0,retained:0,max_count:100,max_bytes:MAX_RECORD_BYTES,max_retained:0,native_record_bytes:false};
-            let mut timings=Vec::new();
-            let mut recorder=EvaluationPolicy{policies:&mut policies,packages:packages.each_ref(),hashes:&hashes,game:&mut game,budget:&mut budget,
-                timings:&mut timings,report:None,activation:None,pending:None,failure:None,attempted:None};
-            let action=recorder.select_action_v1(PairedBo1PolicyInputV1::new(&session,d)).unwrap();
-            assert_eq!(action,expected_estimate.selected_by_estimate);assert_eq!(before,session.diagnostic_state_hash());
+            let FastActorResponseV1::Decision(d) = session.current_response() else {
+                panic!("fixture")
+            };
+            let before = session.diagnostic_state_hash();
+            let expected = PairedBo1PolicyInputV1::new(&session, d)
+                .report_search_library_v2(
+                    &policies[actor.index()],
+                    search::Limits {
+                        simulations: 32,
+                        transitions: 128,
+                        depth: 4,
+                        seed: 29,
+                    },
+                )
+                .unwrap();
+            assert_eq!(before, session.diagnostic_state_hash());
+            let expected_estimate = expected.estimator.as_ref().unwrap();
+            let hashes = [
+                packages[0].package_sha256_v1().unwrap(),
+                packages[1].package_sha256_v1().unwrap(),
+            ];
+            let mut game = EvaluationGame {
+                game_index: 1,
+                start: None,
+                environment_seed: None,
+                decisions: Vec::new(),
+                terminal: None,
+                discarded_pending_selections: 0,
+            };
+            let mut budget = EvaluationBudget {
+                count: 0,
+                bytes: 0,
+                retained: 0,
+                max_count: 100,
+                max_bytes: MAX_RECORD_BYTES,
+                max_retained: 0,
+                native_record_bytes: false,
+            };
+            let mut timings = Vec::new();
+            let mut recorder = EvaluationPolicy {
+                policies: &mut policies,
+                packages: packages.each_ref(),
+                hashes: &hashes,
+                game: &mut game,
+                budget: &mut budget,
+                timings: &mut timings,
+                report: None,
+                activation: None,
+                pending: None,
+                failure: None,
+                attempted: None,
+            };
+            let action = recorder
+                .select_action_v1(PairedBo1PolicyInputV1::new(&session, d))
+                .unwrap();
+            assert_eq!(action, expected_estimate.selected_by_estimate);
+            assert_eq!(before, session.diagnostic_state_hash());
             assert!(recorder.game.decisions.is_empty());
-            let EvaluationDecision::EstimateSearchLibraryV2{record,search}=&recorder.pending.as_ref().unwrap().record else {panic!("estimate record required")};
-            assert_eq!(record.behavior,BehaviorDistributionV1::Deterministic{selected_index:action});
-            assert_eq!(search.selected_by_estimate,action);assert_eq!(search.selected_by_core,expected.selected);
-            assert_eq!(search.selected_by_mean,expected.selected_by_mean);assert_eq!(search.outcome_sha256,semantic_hash(&expected).unwrap());
-            assert_eq!(search.root_estimates,expected_estimate.nodes[0].edges.iter().map(|e|e.value).collect::<Vec<_>>());
+            let EvaluationDecision::EstimateSearchLibraryV2 { record, search } =
+                &recorder.pending.as_ref().unwrap().record
+            else {
+                panic!("estimate record required")
+            };
+            assert_eq!(
+                record.behavior,
+                BehaviorDistributionV1::Deterministic {
+                    selected_index: action
+                }
+            );
+            assert_eq!(search.selected_by_estimate, action);
+            assert_eq!(search.selected_by_core, expected.selected);
+            assert_eq!(search.selected_by_mean, expected.selected_by_mean);
+            assert_eq!(search.outcome_sha256, semantic_hash(&expected).unwrap());
+            assert_eq!(
+                search.root_estimates,
+                expected_estimate.nodes[0]
+                    .edges
+                    .iter()
+                    .map(|e| e.value)
+                    .collect::<Vec<_>>()
+            );
             assert!(search.full_outcome.is_none());
-            session.step(d.episode_id,d.step,action).unwrap();
-            let FastActorResponseV1::Decision(next)=session.current_response() else {panic!("fixture must continue")};
-            recorder.select_action_v1(PairedBo1PolicyInputV1::new(&session,next)).unwrap();
-            assert_eq!(recorder.game.decisions.len(),1);assert_eq!(recorder.budget.retained,0);
-            let serialized=serde_json::to_value(&recorder.game.decisions[0]).unwrap();
-            assert_eq!(serialized["kind"],"estimate_search_library_v2");
-            assert!(recorder.finish_game(Err("unconfirmed engine step".into()),None).is_err());
-            assert_eq!(recorder.game.decisions.len(),1);assert_eq!(recorder.game.discarded_pending_selections,1);
+            session.step(d.episode_id, d.step, action).unwrap();
+            let FastActorResponseV1::Decision(next) = session.current_response() else {
+                panic!("fixture must continue")
+            };
+            recorder
+                .select_action_v1(PairedBo1PolicyInputV1::new(&session, next))
+                .unwrap();
+            assert_eq!(recorder.game.decisions.len(), 1);
+            assert_eq!(recorder.budget.retained, 0);
+            let serialized = serde_json::to_value(&recorder.game.decisions[0]).unwrap();
+            assert_eq!(serialized["kind"], "estimate_search_library_v2");
+            assert!(recorder
+                .finish_game(Err("unconfirmed engine step".into()), None)
+                .is_err());
+            assert_eq!(recorder.game.decisions.len(), 1);
+            assert_eq!(recorder.game.discarded_pending_selections, 1);
         }
     }
-
 }
-

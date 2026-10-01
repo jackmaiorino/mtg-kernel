@@ -1,0 +1,10 @@
+{"schema":"mtg-kernel-multirun-workload/v1","adapter":"native-science-loop-pilot-v1",
+ "executable":"D:/multirun-qualified-v1-work/exe/mtg_kernel-ffbc5f976dc668e8.exe","executable_sha256":"ffbc5f976dc668e8d82daf92eaf9bf52f2078964d03dfe7e473fade3532f6235",
+ "data_root":"D:/mtg-kernel-multirun-qualified-v1/data",
+ "planned_updates":128,
+ "knobs":{"MULTIRUN_WORKERS":"2","MULTIRUN_SESSIONS":"32","MULTIRUN_BROKER_TARGET":"16"},
+ "arms":{"base":{"knobs":{}},"envrand":{"knobs":{"MULTIRUN_ENVIRONMENT_RANDOMIZATION_V2":"1"}}},
+ "runs":[{"id":"base-s0","seed":5100001,"arm":"base"},{"id":"envrand-s0","seed":5200001,"arm":"envrand"},
+         {"id":"base-s1","seed":5100002,"arm":"base"},{"id":"envrand-s1","seed":5200002,"arm":"envrand"},
+         {"id":"base-s2","seed":5100003,"arm":"base"},{"id":"envrand-s2","seed":5200003,"arm":"envrand"},
+         {"id":"base-s3","seed":5100004,"arm":"base"},{"id":"envrand-s3","seed":5200004,"arm":"envrand"}]}

@@ -1451,31 +1451,22 @@ mod tests {
         // #236, 2026-08-14): observation-derived, see logical_state_sha256
         // above for the full rationale.
         //
-        // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
-        // 13, identity finalisation): the wave's 21 new cards moved
-        // KERNEL_CARDDB_HASH, which the observation embeds. Old value:
-        // "f6a0be9ced1bceb1628965d2597e7c3cc7adeaa5ae8de24aa017d52a481b6985".
-        //
-        // Re-pinned again for the Phase 1 card lane merge (2026-09): merging
-        // lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the
-        // Phase 1 branch moved KERNEL_CARDDB_HASH again (from
-        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause.
-        // Old (wave-1) value:
-        // "a9e2d7d620e2b921bda94ebdc77db9bd3f1a211fae4835bf650ee3aea9347bad".
-        // deck_hashes/episode_index/environment_seed/learner_seat above are
-        // confirmed unaffected. New value is this test's own live-computed
-        // digest, read directly from a failing run (never hand-typed).
+        // Re-baselined again for the end-of-combat clear (CR 511.3/506.4
+        // rules fix): the checkpoint policy acts on observations that no
+        // longer carry a stale combat record after combat, so both
+        // episodes' trajectories (and hence their lengths) move. The counts
+        // are this test's own live-computed values, read from a failing run.
         assert_eq!(
             lower_hex_raw32_v1(bindings[0].trajectory_sha256()),
-            "39640e9adf5630473c3c07fd19fd1b5b4e85ef1d790cc4a0641f24dc6f159c5a"
+            "ed146f9d608a5d9accd420bc42bc91f7e17b4419078c3788d7d670679f601809"
         );
         assert_eq!(bindings[0].outer_trajectory_sha256_v2(), None);
-        assert_eq!(bindings[0].policy_step_count(), 151);
-        assert_eq!(bindings[0].physical_decision_count(), 141);
-        assert_eq!(bindings[0].learner_policy_step_count(), 63);
-        assert_eq!(bindings[0].opponent_policy_step_count(), 88);
-        assert_eq!(bindings[0].learner_physical_decision_count(), 53);
-        assert_eq!(bindings[0].opponent_physical_decision_count(), 88);
+        assert_eq!(bindings[0].policy_step_count(), 418);
+        assert_eq!(bindings[0].physical_decision_count(), 382);
+        assert_eq!(bindings[0].learner_policy_step_count(), 173);
+        assert_eq!(bindings[0].opponent_policy_step_count(), 245);
+        assert_eq!(bindings[0].learner_physical_decision_count(), 147);
+        assert_eq!(bindings[0].opponent_physical_decision_count(), 235);
 
         assert_eq!(bindings[1].episode_index(), 3);
         assert_eq!(bindings[1].environment_seed(), 3_233_989_599_464_222_885);
@@ -1505,7 +1496,7 @@ mod tests {
         // from a failing run (never hand-typed).
         assert_eq!(
             lower_hex_raw32_v1(bindings[1].trajectory_sha256()),
-            "af2343421fc8e9af763c9333e1b3ca6a980d303c45ec54b0577baff857ff264d"
+            "abc61dcc821c145ca28feb251c481b95058fd7311a8a644069edbce38a9d1c9c"
         );
         assert_eq!(bindings[1].outer_trajectory_sha256_v2(), None);
         // Re-baselined once per the owner ruling on record (collab CLAUDE
@@ -1517,12 +1508,14 @@ mod tests {
         // invariant across the epoch even though it was deterministic
         // before and after it. Values are this test's own live-computed
         // counts, read directly from failing runs (never hand-typed).
-        assert_eq!(bindings[1].policy_step_count(), 200);
-        assert_eq!(bindings[1].physical_decision_count(), 167);
+        // Re-baselined again for the end-of-combat clear, as bindings[0]
+        // above.
+        assert_eq!(bindings[1].policy_step_count(), 192);
+        assert_eq!(bindings[1].physical_decision_count(), 161);
         assert_eq!(bindings[1].learner_policy_step_count(), 101);
-        assert_eq!(bindings[1].opponent_policy_step_count(), 99);
+        assert_eq!(bindings[1].opponent_policy_step_count(), 91);
         assert_eq!(bindings[1].learner_physical_decision_count(), 100);
-        assert_eq!(bindings[1].opponent_physical_decision_count(), 67);
+        assert_eq!(bindings[1].opponent_physical_decision_count(), 61);
     }
 
     #[test]

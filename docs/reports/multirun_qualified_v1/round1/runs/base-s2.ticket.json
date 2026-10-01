@@ -1,0 +1,13 @@
+{
+  "allocation": "2@jack:0+2@jack:1",
+  "compute_choice_sha256": "cb1475026904509ccddd89a7e4d125a21ec553b2f7618e6daee09755a4b8f1b1",
+  "executable_sha256": "ffbc5f976dc668e8d82daf92eaf9bf52f2078964d03dfe7e473fade3532f6235",
+  "issued_at": "2026-09-23T05:08:00.369537+00:00",
+  "kind": "launch",
+  "planned_updates": 128,
+  "run_id": "base-s2",
+  "schema": "mtg-kernel-multirun-launch-ticket/v1",
+  "seed": 5100003,
+  "stop_after_generation": null,
+  "workload_sha256": "0daaf3d26f90dab57f57454ed398d0155dd6453ac15e34f4d81cbdcf34f46635"
+}

@@ -28,79 +28,159 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
     }
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-    pub(crate) fn diagnostic_v4_search_leaf_v1(&self,policy:&crate::sideboard_play_policy_v1::FrozenPlayPolicyV1,
-        scores:&crate::sideboard_play_policy_v1::FrozenPlayDecisionScoresV1)->Result<serde_json::Value,String> {
-        if self.session.current_response()!=FastActorResponseV1::Decision(self.decision) {
+    pub(crate) fn diagnostic_v4_search_leaf_v1(
+        &self,
+        policy: &crate::sideboard_play_policy_v1::FrozenPlayPolicyV1,
+        scores: &crate::sideboard_play_policy_v1::FrozenPlayDecisionScoresV1,
+    ) -> Result<serde_json::Value, String> {
+        if self.session.current_response() != FastActorResponseV1::Decision(self.decision) {
             return Err("leaf diagnostic decision binding differs".into());
         }
-        crate::sideboard_play_policy_v1::search_leaf_v4::diagnostic_report(policy,self.session,scores)
+        crate::sideboard_play_policy_v1::search_leaf_v4::diagnostic_report(
+            policy,
+            self.session,
+            scores,
+        )
     }
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-    pub(crate) fn diagnostic_v4_search_core_v1(&self,policy:&crate::sideboard_play_policy_v1::FrozenPlayPolicyV1)->Result<serde_json::Value,String> {
-        if self.session.current_response()!=FastActorResponseV1::Decision(self.decision) {return Err("core diagnostic decision binding differs".into());}
-        crate::sideboard_play_policy_v1::search_leaf_v4::core_diagnostic_report(policy,self.session)
+    pub(crate) fn diagnostic_v4_search_core_v1(
+        &self,
+        policy: &crate::sideboard_play_policy_v1::FrozenPlayPolicyV1,
+    ) -> Result<serde_json::Value, String> {
+        if self.session.current_response() != FastActorResponseV1::Decision(self.decision) {
+            return Err("core diagnostic decision binding differs".into());
+        }
+        crate::sideboard_play_policy_v1::search_leaf_v4::core_diagnostic_report(
+            policy,
+            self.session,
+        )
     }
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-    pub(crate) fn diagnostic_certificate_priors_v4(&self,policy:&crate::sideboard_play_policy_v1::FrozenPlayPolicyV1,hand:bool)->Result<serde_json::Value,String> {
-        if self.session.current_response()!=FastActorResponseV1::Decision(self.decision) {return Err("certificate prior root binding differs".into());}
-        crate::sideboard_play_policy_v1::search_leaf_v4::certificate_prior_report(policy,self.session,hand)
+    pub(crate) fn diagnostic_certificate_priors_v4(
+        &self,
+        policy: &crate::sideboard_play_policy_v1::FrozenPlayPolicyV1,
+        hand: bool,
+    ) -> Result<serde_json::Value, String> {
+        if self.session.current_response() != FastActorResponseV1::Decision(self.decision) {
+            return Err("certificate prior root binding differs".into());
+        }
+        crate::sideboard_play_policy_v1::search_leaf_v4::certificate_prior_report(
+            policy,
+            self.session,
+            hand,
+        )
     }
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-    pub(crate) fn diagnostic_allocation_v4(&self,policy:&crate::sideboard_play_policy_v1::FrozenPlayPolicyV1)->Result<serde_json::Value,String> {
-        if self.session.current_response()!=FastActorResponseV1::Decision(self.decision) {return Err("allocation root binding differs".into());}
-        crate::sideboard_play_policy_v1::search_leaf_v4::allocation_diagnostic_report(policy,self.session)
+    pub(crate) fn diagnostic_allocation_v4(
+        &self,
+        policy: &crate::sideboard_play_policy_v1::FrozenPlayPolicyV1,
+    ) -> Result<serde_json::Value, String> {
+        if self.session.current_response() != FastActorResponseV1::Decision(self.decision) {
+            return Err("allocation root binding differs".into());
+        }
+        crate::sideboard_play_policy_v1::search_leaf_v4::allocation_diagnostic_report(
+            policy,
+            self.session,
+        )
     }
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-    pub(crate) fn diagnostic_backup_v4(&self,policy:&crate::sideboard_play_policy_v1::FrozenPlayPolicyV1)->Result<serde_json::Value,String> {
-        if self.session.current_response()!=FastActorResponseV1::Decision(self.decision) {return Err("backup root binding differs".into());}
-        crate::sideboard_play_policy_v1::search_leaf_v4::backup_diagnostic_report(policy,self.session)
+    pub(crate) fn diagnostic_backup_v4(
+        &self,
+        policy: &crate::sideboard_play_policy_v1::FrozenPlayPolicyV1,
+    ) -> Result<serde_json::Value, String> {
+        if self.session.current_response() != FastActorResponseV1::Decision(self.decision) {
+            return Err("backup root binding differs".into());
+        }
+        crate::sideboard_play_policy_v1::search_leaf_v4::backup_diagnostic_report(
+            policy,
+            self.session,
+        )
     }
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-    pub(crate) fn evaluation_search_v4(&self,policy:&crate::sideboard_play_policy_v1::FrozenPlayPolicyV1,
-        limits:crate::model_guided_search_core_v4::Limits,allocation:crate::model_guided_search_core_v4::RootAllocation,
-        interior:crate::model_guided_search_core_v4::InteriorBonus)->Result<crate::model_guided_search_core_v4::Outcome,crate::model_guided_search_core_v4::Error> {
-        use crate::model_guided_search_core_v4::{Error,search_with_policies};
-        if self.session.current_response()!=FastActorResponseV1::Decision(self.decision) {
+    pub(crate) fn evaluation_search_v4(
+        &self,
+        policy: &crate::sideboard_play_policy_v1::FrozenPlayPolicyV1,
+        limits: crate::model_guided_search_core_v4::Limits,
+        allocation: crate::model_guided_search_core_v4::RootAllocation,
+        interior: crate::model_guided_search_core_v4::InteriorBonus,
+    ) -> Result<
+        crate::model_guided_search_core_v4::Outcome,
+        crate::model_guided_search_core_v4::Error,
+    > {
+        use crate::model_guided_search_core_v4::{search_with_policies, Error};
+        if self.session.current_response() != FastActorResponseV1::Decision(self.decision) {
             return Err(Error::InvalidAdapterBinding);
         }
-        let evaluator=crate::sideboard_play_policy_v1::search_leaf_v4::V4SearchLeafEvaluatorV1::new(policy).map_err(Error::Evaluator)?;
-        search_with_policies(self.session,limits,&evaluator,allocation,interior,None)
+        let evaluator =
+            crate::sideboard_play_policy_v1::search_leaf_v4::V4SearchLeafEvaluatorV1::new(policy)
+                .map_err(Error::Evaluator)?;
+        search_with_policies(self.session, limits, &evaluator, allocation, interior, None)
     }
 
-    #[cfg(feature="experimental-burn-net8-packed-cuda-v1")]
-    pub(crate) fn report_search_future_v3(&self,policy:&crate::sideboard_play_policy_v1::FrozenPlayPolicyV1,
-        limits:crate::model_guided_search_core_v4::Limits)->Result<crate::model_guided_search_core_v4::Outcome,crate::model_guided_search_core_v4::Error> {
-        if self.session.current_response()!=FastActorResponseV1::Decision(self.decision) {
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    pub(crate) fn report_search_future_v3(
+        &self,
+        policy: &crate::sideboard_play_policy_v1::FrozenPlayPolicyV1,
+        limits: crate::model_guided_search_core_v4::Limits,
+    ) -> Result<
+        crate::model_guided_search_core_v4::Outcome,
+        crate::model_guided_search_core_v4::Error,
+    > {
+        if self.session.current_response() != FastActorResponseV1::Decision(self.decision) {
             return Err(crate::model_guided_search_core_v4::Error::InvalidAdapterBinding);
         }
-        crate::sideboard_play_policy_v1::search_leaf_v4::report_search_observation_future_v3(policy,self.session,limits)
+        crate::sideboard_play_policy_v1::search_leaf_v4::report_search_observation_future_v3(
+            policy,
+            self.session,
+            limits,
+        )
     }
 
     /// Report-only observation. Never consumes a live action or policy RNG.
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-    pub(crate) fn report_search_v4(&self,policy:&crate::sideboard_play_policy_v1::FrozenPlayPolicyV1,
-        limits:crate::model_guided_search_core_v4::Limits)->Result<crate::model_guided_search_core_v4::Outcome,crate::model_guided_search_core_v4::Error> {
+    pub(crate) fn report_search_v4(
+        &self,
+        policy: &crate::sideboard_play_policy_v1::FrozenPlayPolicyV1,
+        limits: crate::model_guided_search_core_v4::Limits,
+    ) -> Result<
+        crate::model_guided_search_core_v4::Outcome,
+        crate::model_guided_search_core_v4::Error,
+    > {
         use crate::model_guided_search_core_v4::Error;
-        if self.session.current_response()!=FastActorResponseV1::Decision(self.decision) {
+        if self.session.current_response() != FastActorResponseV1::Decision(self.decision) {
             return Err(Error::InvalidAdapterBinding);
         }
-        crate::sideboard_play_policy_v1::search_leaf_v4::report_search_observation(policy,self.session,limits)
+        crate::sideboard_play_policy_v1::search_leaf_v4::report_search_observation(
+            policy,
+            self.session,
+            limits,
+        )
     }
 
     /// Report-only observation. Never consumes a live action or policy RNG.
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-    pub(crate) fn report_search_library_v2(&self,policy:&crate::sideboard_play_policy_v1::FrozenPlayPolicyV1,
-        limits:crate::model_guided_search_core_v4::Limits)->Result<crate::model_guided_search_core_v4::Outcome,crate::model_guided_search_core_v4::Error> {
+    pub(crate) fn report_search_library_v2(
+        &self,
+        policy: &crate::sideboard_play_policy_v1::FrozenPlayPolicyV1,
+        limits: crate::model_guided_search_core_v4::Limits,
+    ) -> Result<
+        crate::model_guided_search_core_v4::Outcome,
+        crate::model_guided_search_core_v4::Error,
+    > {
         use crate::model_guided_search_core_v4::Error;
-        if self.session.current_response()!=FastActorResponseV1::Decision(self.decision) {
+        if self.session.current_response() != FastActorResponseV1::Decision(self.decision) {
             return Err(Error::InvalidAdapterBinding);
         }
-        crate::sideboard_play_policy_v1::search_leaf_v4::report_search_observation_library_v2(policy,self.session,limits)
+        crate::sideboard_play_policy_v1::search_leaf_v4::report_search_observation_library_v2(
+            policy,
+            self.session,
+            limits,
+        )
     }
 
     /// Coordinator-only continuation capture. Clone the full engine session
@@ -108,13 +188,15 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
     /// The returned copy has consumed exactly the selected root action. It
     /// must not be admitted until the original recorder confirms that step.
     pub(crate) fn diagnostic_continuation_after_action_v1(
-        &self, selected: u32,
+        &self,
+        selected: u32,
     ) -> Result<FastActorSessionV1, String> {
         if self.session.current_response() != FastActorResponseV1::Decision(self.decision) {
             return Err("continuation capture differs from the scoring decision binding".into());
         }
         let mut continuation = self.session.clone();
-        continuation.step(self.decision.episode_id, self.decision.step, selected)
+        continuation
+            .step(self.decision.episode_id, self.decision.step, selected)
             .map_err(|error| format!("continuation root action: {error}"))?;
         Ok(continuation)
     }
@@ -130,34 +212,51 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
     /// Report-only certificate check, called by the recorder after sampling.
     /// Neither actions, extracted strategies nor session clones escape here.
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-    pub(crate) fn diagnostic_public_certificate_execution_v1(&self,hand:bool)->Result<serde_json::Value,String> {
-        use crate::expanded_deck_training_v1::stack_features::terminal_tactics::{certificate_execution,public_burn_tree,public_hand_burn_tree};
-        let audit=if hand {public_hand_burn_tree::audit_execution} else {public_burn_tree::audit_execution};
-        let mut report=certificate_execution::invariance_report(self.session,self.decision,audit)?;
-        let mut value=report["audit"].take();
-        value["execution_invariance"]=report["byte_identical_variants"].take();
+    pub(crate) fn diagnostic_public_certificate_execution_v1(
+        &self,
+        hand: bool,
+    ) -> Result<serde_json::Value, String> {
+        use crate::expanded_deck_training_v1::stack_features::terminal_tactics::{
+            certificate_execution, public_burn_tree, public_hand_burn_tree,
+        };
+        let audit = if hand {
+            public_hand_burn_tree::audit_execution
+        } else {
+            public_burn_tree::audit_execution
+        };
+        let mut report =
+            certificate_execution::invariance_report(self.session, self.decision, audit)?;
+        let mut value = report["audit"].take();
+        value["execution_invariance"] = report["byte_identical_variants"].take();
         Ok(value)
     }
 
     /// Opt-in evaluation recorder only. The playing policy is not changed by
     /// these bounded counterfactuals and receives no cloned hidden game state.
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-    pub(crate) fn diagnostic_terminal_targets_v1(&self)->Result<serde_json::Value,String> {
+    pub(crate) fn diagnostic_terminal_targets_v1(&self) -> Result<serde_json::Value, String> {
         crate::expanded_deck_training_v1::stack_features::terminal_tactics::audit_live_burn_targets_v1(self.session,self.decision)
     }
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-    pub(crate) fn diagnostic_public_burn_tree_v1(&self)->Result<serde_json::Value,String> {
-        crate::expanded_deck_training_v1::stack_features::terminal_tactics::public_burn_tree::audit(self.session,self.decision)
+    pub(crate) fn diagnostic_public_burn_tree_v1(&self) -> Result<serde_json::Value, String> {
+        crate::expanded_deck_training_v1::stack_features::terminal_tactics::public_burn_tree::audit(
+            self.session,
+            self.decision,
+        )
     }
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-    pub(crate) fn diagnostic_public_hand_burn_tree_v1(&self)->Result<serde_json::Value,String> {
+    pub(crate) fn diagnostic_public_hand_burn_tree_v1(&self) -> Result<serde_json::Value, String> {
         crate::expanded_deck_training_v1::stack_features::terminal_tactics::public_hand_burn_tree::audit(self.session,self.decision)
     }
 
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-    pub(crate) fn diagnostic_public_combat_v1(&self, depth: u32, nodes_per_action: u32) -> Result<serde_json::Value, String> {
+    pub(crate) fn diagnostic_public_combat_v1(
+        &self,
+        depth: u32,
+        nodes_per_action: u32,
+    ) -> Result<serde_json::Value, String> {
         crate::expanded_deck_training_v1::stack_features::terminal_tactics::public_combat::audit_public_combat_v1(
             self.session, self.decision, depth, nodes_per_action)
     }
@@ -166,7 +265,13 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
     /// or the consumable action binding. Stable references are transport only.
     pub(crate) fn diagnostic_visible_v1(
         &self,
-    ) -> Result<(crate::policy_observation_v6::ObservationV6, Vec<crate::rl::ActionSemanticV1>), String> {
+    ) -> Result<
+        (
+            crate::policy_observation_v6::ObservationV6,
+            Vec<crate::rl::ActionSemanticV1>,
+        ),
+        String,
+    > {
         self.session
             .human_current_decision_input_v1(self.decision, self.decision.acting_player)
             .map(|(observation, actions, _)| (observation, actions))
@@ -175,15 +280,30 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
 
     pub(crate) fn diagnostic_visible_spell_adapter_v1(
         &self,
-    ) -> Result<(crate::policy_observation_v6::ObservationV6, Vec<crate::rl::ActionSemanticV1>, bool), String> {
-        self.session.diagnostic_visible_spell_adapter_v1(self.decision)
+    ) -> Result<
+        (
+            crate::policy_observation_v6::ObservationV6,
+            Vec<crate::rl::ActionSemanticV1>,
+            bool,
+        ),
+        String,
+    > {
+        self.session
+            .diagnostic_visible_spell_adapter_v1(self.decision)
             .map_err(|error| format!("{error:?}"))
     }
 
     pub(crate) fn diagnostic_visible_v4(
         &self,
-    ) -> Result<(crate::policy_observation_v6::ObservationV6, Vec<crate::rl::ActionSemanticV1>), String> {
-        self.session.diagnostic_current_decision_input_v4(self.decision)
+    ) -> Result<
+        (
+            crate::policy_observation_v6::ObservationV6,
+            Vec<crate::rl::ActionSemanticV1>,
+        ),
+        String,
+    > {
+        self.session
+            .diagnostic_current_decision_input_v4(self.decision)
             .map_err(|error| format!("{error:?}"))
     }
 
@@ -216,7 +336,10 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
             return Err("BO3 capture differs from the scoring decision binding".into());
         }
         crate::phase1_agent_v1::Bo3DecisionRecordV1::gameplay_from_session_v4(
-            decision_index, package_sha256, behavior, self.session,
+            decision_index,
+            package_sha256,
+            behavior,
+            self.session,
         )
     }
 
@@ -234,8 +357,12 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
         &self,
         encoder: &mut crate::flat_policy_v3::FlatDecisionEncoderV3,
         buffers: &mut crate::flat_policy_v2::FlatScoringOwnedBuffersV2<'_>,
-    ) -> Result<(crate::flat_policy_v3::FlatDecisionV3, bool), crate::flat_policy_v2::FlatDecisionErrorV2> {
-        self.session.encode_v3_spell_target_adapter_v1(self.decision, encoder, buffers)
+    ) -> Result<
+        (crate::flat_policy_v3::FlatDecisionV3, bool),
+        crate::flat_policy_v2::FlatDecisionErrorV2,
+    > {
+        self.session
+            .encode_v3_spell_target_adapter_v1(self.decision, encoder, buffers)
     }
 
     /// V4 sibling of `encode_scoring_owned_v3`, for a policy whose
@@ -289,20 +416,31 @@ mod continuation_capture_tests {
             let headroom = session.diagnostic_remaining_headroom_v1();
             let input = PairedBo1PolicyInputV1::new(&session, decision);
             let fork = input.diagnostic_continuation_after_action_v1(0).unwrap();
-            assert_eq!(session.current_response(), FastActorResponseV1::Decision(decision));
+            assert_eq!(
+                session.current_response(),
+                FastActorResponseV1::Decision(decision)
+            );
             assert_eq!(session.diagnostic_state_hash(), hash);
             assert_eq!(session.diagnostic_remaining_headroom_v1(), headroom);
             assert_eq!(fork.policy_step_count(), session.policy_step_count() + 1);
             assert_eq!(fork.diagnostic_remaining_headroom_v1()[1], headroom[1] - 1);
             let mut expected = session.clone();
-            expected.step(decision.episode_id, decision.step, 0).unwrap();
+            expected
+                .step(decision.episode_id, decision.step, 0)
+                .unwrap();
             assert_eq!(fork.current_response(), expected.current_response());
-            assert_eq!(fork.diagnostic_state_hash(), expected.diagnostic_state_hash());
-            assert!(input.diagnostic_continuation_after_action_v1(decision.legal_action_count).is_err());
+            assert_eq!(
+                fork.diagnostic_state_hash(),
+                expected.diagnostic_state_hash()
+            );
+            assert!(input
+                .diagnostic_continuation_after_action_v1(decision.legal_action_count)
+                .is_err());
             let mut stale = decision;
             stale.step += 1;
             assert!(PairedBo1PolicyInputV1::new(&session, stale)
-                .diagnostic_continuation_after_action_v1(0).is_err());
+                .diagnostic_continuation_after_action_v1(0)
+                .is_err());
         }
     }
 }

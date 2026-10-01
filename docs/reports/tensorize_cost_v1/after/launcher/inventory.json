@@ -1,0 +1,60 @@
+{
+  "hosts": {
+    "haleyspc": {
+      "checked_at": "2026-09-24T05:06:49.146890+00:00",
+      "detail": {
+        "competing": 0,
+        "cpus": 16,
+        "free_memory_gib": 18.9,
+        "gpus": [
+          "0, NVIDIA GeForce RTX 4060, GPU-17eeab7a-ad2e-5a59-4c42-8cd26a0d7223, 8188, 515"
+        ]
+      },
+      "eligible": true,
+      "reason": "reachable; idle; GPUs present"
+    },
+    "jack": {
+      "checked_at": "2026-09-24T05:06:49.146890+00:00",
+      "detail": {
+        "competing_processes": [],
+        "cpu_logical": 24,
+        "free_disk_gib_cwd_drive": 227.4,
+        "gpus": [
+          {
+            "index": 0,
+            "memory_total_mib": 12282,
+            "memory_used_mib": 2682,
+            "name": "NVIDIA GeForce RTX 4070 SUPER",
+            "utilization_percent": 0,
+            "uuid": "GPU-3502709e-6aef-8ed7-4abe-562838793e3d"
+          },
+          {
+            "index": 1,
+            "memory_total_mib": 6144,
+            "memory_used_mib": 0,
+            "name": "NVIDIA GeForce RTX 3050",
+            "utilization_percent": 0,
+            "uuid": "GPU-0642d3ca-e3d4-ba16-96ab-c561c6da90e3"
+          }
+        ],
+        "memory": {
+          "available_gib": 81.2,
+          "total_gib": 127.8
+        }
+      },
+      "eligible": true,
+      "reason": "24 logical CPUs, 2 GPUs, 0 competing training processes"
+    },
+    "runpod": {
+      "checked_at": "2026-09-24T05:06:49.146890+00:00",
+      "detail": {
+        "client_balance_usd": 211.1080698488,
+        "running_pods": 0,
+        "spend_limit_usd": 80
+      },
+      "eligible": false,
+      "reason": "account reachable, but RunPod pods are Linux and this Windows-built workload's training bytes differ across targets (per-target train_state_sha256 witnesses in mtg-kernel/src/native_trainer_v1.rs); qualifying it needs a Linux build with Linux goldens and a lease guard, which this launcher does not implement"
+    }
+  },
+  "schema": "mtg-kernel-multirun-inventory/v1"
+}

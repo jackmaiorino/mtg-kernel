@@ -250,18 +250,33 @@ mod evaluation_tests {
         let mut outputs = Vec::new();
         for variant in 0..2 {
             let mut state = state.clone();
-            put(&mut state, PlayerId::P1, if variant == 0 { "Island" } else { "Mountain" }, Zone::Hand);
+            put(
+                &mut state,
+                PlayerId::P1,
+                if variant == 0 { "Island" } else { "Mountain" },
+                Zone::Hand,
+            );
             for actor in [PlayerId::P0, PlayerId::P1] {
-                for name in ["Island", "Mountain"] { put(&mut state, actor, name, Zone::Library); }
-                if variant == 1 { state.players[actor.index()].library.reverse(); }
+                for name in ["Island", "Mountain"] {
+                    put(&mut state, actor, name, Zone::Library);
+                }
+                if variant == 1 {
+                    state.players[actor.index()].library.reverse();
+                }
             }
             let session = FastActorSessionV1::from_v3_fixture_state(state);
             let response = session.current_response();
-            let FastActorResponseV1::Decision(decision) = response else { panic!() };
+            let FastActorResponseV1::Decision(decision) = response else {
+                panic!()
+            };
             let input = PairedBo1PolicyInputV1::new(&session, decision);
             assert!(input.diagnostic_visible_v1().is_err());
             let mut reference = FrozenPlayPolicyV1::training_fixture_v4();
-            let mut zero = PublicInputPlayPolicyV1::new(FrozenPlayPolicyV1::training_fixture_v4(), PublicInputWeightsV1::zero()).unwrap();
+            let mut zero = PublicInputPlayPolicyV1::new(
+                FrozenPlayPolicyV1::training_fixture_v4(),
+                PublicInputWeightsV1::zero(),
+            )
+            .unwrap();
             reference.reset_sampling_v1([321, 654]);
             zero.reset_for_game_v1([321, 654]).unwrap();
             for _ in 0..8 {
@@ -271,13 +286,24 @@ mod evaluation_tests {
                 assert_eq!(actual.1.logits, expected.1.logits);
                 assert_eq!(actual.1.value.to_bits(), expected.1.value.to_bits());
             }
-            let mut nonzero = PublicInputPlayPolicyV1::new(FrozenPlayPolicyV1::training_fixture_v4(),
-                PublicInputWeightsV1::new(vec![0.01; 2048], vec![0.02; 384]).unwrap()).unwrap();
+            let mut nonzero = PublicInputPlayPolicyV1::new(
+                FrozenPlayPolicyV1::training_fixture_v4(),
+                PublicInputWeightsV1::new(vec![0.01; 2048], vec![0.02; 384]).unwrap(),
+            )
+            .unwrap();
             nonzero.reset_for_game_v1([321, 654]).unwrap();
             let (action, scores) = nonzero.select_with_scores(&input).unwrap();
-            assert!(action < 2 && scores.logits.len() == 2 && scores.logits.iter().all(|x| x.is_finite()));
-            outputs.push((action, scores.logits, scores.value.to_bits(),
-                serde_json::to_vec(nonzero.auxiliary.as_ref().unwrap()).unwrap()));
+            assert!(
+                action < 2
+                    && scores.logits.len() == 2
+                    && scores.logits.iter().all(|x| x.is_finite())
+            );
+            outputs.push((
+                action,
+                scores.logits,
+                scores.value.to_bits(),
+                serde_json::to_vec(nonzero.auxiliary.as_ref().unwrap()).unwrap(),
+            ));
             assert_eq!(session.current_response(), response);
         }
         assert_eq!(outputs[0], outputs[1]);
@@ -322,14 +348,18 @@ mod evaluation_tests {
             assert!(diagnostic_repaired);
             assert_eq!(actions.len(), 2);
             diagnostics.push(serde_json::to_vec(&(observation, actions)).unwrap());
-            assert_eq!(*diagnostics.last().unwrap(),
-                serde_json::to_vec(&input.diagnostic_visible_v4().unwrap()).unwrap());
+            assert_eq!(
+                *diagnostics.last().unwrap(),
+                serde_json::to_vec(&input.diagnostic_visible_v4().unwrap()).unwrap()
+            );
             let mut stale = decision;
             stale.step += 1;
             assert!(PairedBo1PolicyInputV1::new(&session, stale)
-                .diagnostic_visible_spell_adapter_v1().is_err());
+                .diagnostic_visible_spell_adapter_v1()
+                .is_err());
             assert!(PairedBo1PolicyInputV1::new(&session, stale)
-                .diagnostic_visible_v4().is_err());
+                .diagnostic_visible_v4()
+                .is_err());
             assert!(policy.select_paired_with_scores_v1(&input).is_err());
             let (action, scores, repaired) =
                 select_spell_adapter_v3_for_evaluation(&mut policy, &input).unwrap();
@@ -367,12 +397,16 @@ mod evaluation_tests {
         };
         let input = PairedBo1PolicyInputV1::new(&session, decision);
         let original_visible = input.diagnostic_visible_v1().unwrap();
-        assert_eq!(serde_json::to_vec(&original_visible).unwrap(),
-            serde_json::to_vec(&input.diagnostic_visible_v4().unwrap()).unwrap());
+        assert_eq!(
+            serde_json::to_vec(&original_visible).unwrap(),
+            serde_json::to_vec(&input.diagnostic_visible_v4().unwrap()).unwrap()
+        );
         let (observation, actions, repaired) = input.diagnostic_visible_spell_adapter_v1().unwrap();
         assert!(!repaired);
-        assert_eq!(serde_json::to_vec(&original_visible).unwrap(),
-            serde_json::to_vec(&(observation, actions)).unwrap());
+        assert_eq!(
+            serde_json::to_vec(&original_visible).unwrap(),
+            serde_json::to_vec(&(observation, actions)).unwrap()
+        );
         let mut original = FrozenPlayPolicyV1::training_fixture_v3();
         let mut adapted = FrozenPlayPolicyV1::training_fixture_v3();
         original.reset_sampling_v1([222, 444]);

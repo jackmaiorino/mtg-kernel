@@ -84,7 +84,8 @@ mod tests {
             let FastActorResponseV1::Decision(decision) = fresh.current_response() else {
                 panic!("opening must reach a playable decision");
             };
-            let mut projector = crate::human_bo3_v1::HumanDecisionProjectorV1::new(decision.acting_player);
+            let mut projector =
+                crate::human_bo3_v1::HumanDecisionProjectorV1::new(decision.acting_player);
             let visible = projector.project_current(&fresh, decision).unwrap();
             assert!(!visible.actions.is_empty());
             assert_eq!(fresh.state.starting_player, starting);

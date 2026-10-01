@@ -1,12 +1,12 @@
 //! Finite synchronous BO3 match-return batches. No BO1 dispatch is changed.
 use super::continuation::{
-    ValidatedBo3TipV1, recorded_bo3_tip_v1, validate_bo3_tip_v1, validate_recorded_bo3_result_v1,
+    recorded_bo3_tip_v1, validate_bo3_tip_v1, validate_recorded_bo3_result_v1, ValidatedBo3TipV1,
 };
 use super::preparation::{physical_match_identity, strict_json};
 use super::*;
 use crate::durable_publication_v1::{
-    DurableFileExpectationV1, capture_existing_publication_parent_v1, publish_new_file_v1,
-    verify_existing_publication_v1,
+    capture_existing_publication_parent_v1, publish_new_file_v1, verify_existing_publication_v1,
+    DurableFileExpectationV1,
 };
 use crate::expanded_deck_training_v1::{
     ExpandedSeatBehaviorV1, PinnedFileV1, UpdateBackwardExecutionV1,
@@ -14,12 +14,12 @@ use crate::expanded_deck_training_v1::{
 use crate::phase1_agent_v1::CompleteAgentPackageV1;
 use crate::phase1_bo3_collection_v1::Bo3CollectionConfigV1;
 use crate::rl::PlayerSeatV1;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
-use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::thread;

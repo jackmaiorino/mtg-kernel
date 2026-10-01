@@ -48,7 +48,10 @@ pub struct RegistryTransferCliRequestV1 {
 }
 
 fn read_bounded(path: &std::path::Path) -> Result<Vec<u8>, String> {
-    require(path.is_absolute(), "registry transfer CLI requires absolute paths")?;
+    require(
+        path.is_absolute(),
+        "registry transfer CLI requires absolute paths",
+    )?;
     let metadata = std::fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
     require(
         metadata.len() <= MAX_CLI_INPUT_BYTES,
@@ -128,7 +131,9 @@ fn inference_only_episode() -> Result<ExpandedEpisodeV1, String> {
 /// artifact through `verify_registry_transfer_artifact_v1`. No training,
 /// collection, or registry/model mutation occurs; every write below is this
 /// CLI's own, never the pure transfer/verify functions'.
-pub fn run_registry_transfer_cli_v1(request: &RegistryTransferCliRequestV1) -> Result<Value, String> {
+pub fn run_registry_transfer_cli_v1(
+    request: &RegistryTransferCliRequestV1,
+) -> Result<Value, String> {
     require(
         request.schema == REQUEST_SCHEMA,
         "unknown registry transfer CLI request schema",
@@ -236,7 +241,9 @@ mod tests {
     use super::*;
     use crate::expanded_deck_training_v1::tests::checkpoint_fixture_v1;
     use crate::expanded_deck_training_v1::{load_expanded_inference_v1, ExpandedModelSourceV1};
-    use crate::native_flat_tensorizer_v3::{FEATURE_DESCRIPTOR_SHA256_V3, FEATURES_SOURCE_SHA256_V3};
+    use crate::native_flat_tensorizer_v3::{
+        FEATURES_SOURCE_SHA256_V3, FEATURE_DESCRIPTOR_SHA256_V3,
+    };
     use crate::sideboard_play_policy_v1::FrozenPlayObservationTransferV3;
 
     fn temp_dir(label: &str) -> PathBuf {

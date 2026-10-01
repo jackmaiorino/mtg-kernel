@@ -5903,7 +5903,11 @@ mod tests {
                 [10, 0, 3, 0, 0, 0, 0, 0, 2, 1, 2],
                 [12, 8, 3, 0, 0, 0, 0, 0, 8, 8, 8],
                 [14, 4, 5, 1, 0, 0, 0, 0, 2, 2, 2],
-                [15, 1, 5, 0, 0, 0, 0, 0, 2, 1, 2],
+                // Re-baselined for the end-of-combat clear (CR 511.3): the
+                // fifth decision (the next turn's first main phase) no
+                // longer carries the previous combat's stale attacker
+                // object and its CombatAttacker relation.
+                [14, 0, 5, 0, 0, 0, 0, 0, 2, 1, 2],
             ]
         );
         // Re-baselined once per the owner ruling on record (collab CLAUDE
@@ -5915,26 +5919,13 @@ mod tests {
         // structural shape), confirming this is a byte-content shift, not a
         // behavioral regression. Value is this test's own live-computed
         // digest, read directly from a failing run before this update
-        // (never hand-typed).
-        //
-        // Re-baselined again for the pauper-meta-cards-v1 card lane's wave 1
-        // (Task 13, identity finalisation): the wave's 21 new cards moved
-        // KERNEL_CARDDB_HASH, which the observation bytes embed. Old value:
-        // "2683fe1dc81fba1d9b755a8482303394ee9ffc52678908524a540fbf43ebd043".
-        // scorer.counts above is again unaffected.
-        //
-        // Re-baselined again for the Phase 1 card lane merge (2026-09):
-        // merging lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into
-        // the Phase 1 branch moved KERNEL_CARDDB_HASH again (from
-        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause.
-        // Old (wave-1) value:
-        // "78289df65db7f4464e1107fdcbb7703c9ad2512aa3246fc9b5bb82475d103c81".
-        // scorer.counts above is again confirmed unaffected. New value is
-        // this test's own live-computed digest, read directly from a
-        // failing run (never hand-typed).
+        // (never hand-typed). Re-baselined again for the end-of-combat
+        // clear (CR 511.3): all five packets drop the stale
+        // attackers_declared/blockers_declared flags, and the fifth its
+        // stale combat attacker (see the counts above).
         assert_eq!(
             digest,
-            "f4468293c68ef2b62557aabf03afdd8056a9fae1a9d4258ec4cc708c7f6b84a4"
+            "570bae728d89dea4b92d714ec5f410d8841e70ef60d37b3f5b02e066ef80d2cc"
         );
     }
 

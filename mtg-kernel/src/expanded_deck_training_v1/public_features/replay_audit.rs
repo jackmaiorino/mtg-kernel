@@ -129,7 +129,10 @@ fn read_trajectory(
                 "public trajectories require public models",
             )?;
             let t: Trajectory = serde_json::from_slice(bytes).map_err(err)?;
-            ensure(admits_public_trajectory(&t), "trajectory schema/rows differ")?;
+            ensure(
+                admits_public_trajectory(&t),
+                "trajectory schema/rows differ",
+            )?;
             Ok(SavedTrajectory {
                 state_hash: t.optimizer_state_sha256,
                 episode: t.episode,

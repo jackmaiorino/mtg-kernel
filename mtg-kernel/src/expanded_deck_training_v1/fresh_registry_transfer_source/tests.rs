@@ -5,7 +5,9 @@ use crate::phase1_registry_transfer_v1::{
     transfer_fresh_expanded_checkpoint_to_current_registry_v1, FreshRegistryTransferRequestV1,
     RegistryTransferFeaturesV1,
 };
-use crate::sideboard_play_policy_v1::{FreshPlayPolicyIdentityV1, FRESH_PLAY_INITIALIZATION_SCHEMA_V1};
+use crate::sideboard_play_policy_v1::{
+    FreshPlayPolicyIdentityV1, FRESH_PLAY_INITIALIZATION_SCHEMA_V1,
+};
 
 const LR: f32 = 0.00003;
 const VC: f32 = 0.75;
@@ -345,7 +347,11 @@ fn phase1_fresh_registry_trainer_real_update_reloads_exact_adam_and_transfer_pro
     let last_saved: ExpandedCheckpointV1 = read_pinned(&last_pin).unwrap();
     assert_eq!(last_saved.schema, CHECKPOINT_SCHEMA_TRANSFER);
     assert_eq!(
-        last_saved.registry_transfer.as_ref().unwrap().completed_updates,
+        last_saved
+            .registry_transfer
+            .as_ref()
+            .unwrap()
+            .completed_updates,
         2
     );
     assert_eq!(last_saved.adam_step, resumed_state.adam_step_v1());
@@ -376,11 +382,13 @@ fn phase1_fresh_registry_trainer_rejects_wrong_scalars_before_publication() {
 #[test]
 fn phase1_fresh_registry_source_schema_document_is_rejected_by_the_ordinary_reader() {
     let f = fixture();
-    assert!(validate_ordinary_source_descriptor_v1(&ExpandedModelSourceV1 {
-        checkpoint: Some(f.source.play_import.clone()),
-        ..f.source.clone()
-    })
-    .is_err());
+    assert!(
+        validate_ordinary_source_descriptor_v1(&ExpandedModelSourceV1 {
+            checkpoint: Some(f.source.play_import.clone()),
+            ..f.source.clone()
+        })
+        .is_err()
+    );
     assert!(load_ordinary_bo3_parent_v1(&ExpandedModelSourceV1 {
         checkpoint: Some(f.source.play_import.clone()),
         ..f.source.clone()

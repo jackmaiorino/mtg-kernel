@@ -173,7 +173,9 @@ impl NativePolicyValueTrainStateV1 {
             &vec![1.0; groups.len()],
             0.0,
             learning_rate,
-            BackwardExecutionV1::FixedPartitions { worker_limit: backward_worker_limit },
+            BackwardExecutionV1::FixedPartitions {
+                worker_limit: backward_worker_limit,
+            },
             input_config,
             true,
         )
@@ -191,7 +193,9 @@ impl NativePolicyValueTrainStateV1 {
         imitation: bool,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         validate_gae_inputs_v1(groups, value_targets, advantages)?;
-        if !value_coefficient.is_finite() || (value_coefficient <= 0.0 && !(imitation && value_coefficient == 0.0)) {
+        if !value_coefficient.is_finite()
+            || (value_coefficient <= 0.0 && !(imitation && value_coefficient == 0.0))
+        {
             return Err(NativePolicyTrainErrorV1::InvalidValueCoefficient);
         }
         if !learning_rate.is_finite() || learning_rate <= 0.0 {

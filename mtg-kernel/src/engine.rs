@@ -822,6 +822,13 @@ pub enum DiscardResume {
         then: Box<EffectOp>,
         spell_resume: Option<(ObjectId, Zone)>,
     },
+    /// A resolving triggered or activated ability whose last instruction
+    /// is a discard (Harrier Strix's loot, Moon-Circuit Hacker's and
+    /// Refurbished Familiar's triggers, The Modern Age's chapter). 608.2:
+    /// the ability is still resolving, and stays on the stack, until the
+    /// discard is chosen; `apply_discard` then removes this exact stack
+    /// item. Appended after every earlier variant.
+    FinishAbilityResolution { stack_item_id: StackItemId },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -957,8 +964,11 @@ pub enum OptionalCostChoice {
     ReturnPermanent,
 }
 
-/// This turn's combat. Reset at every `Step::BeginCombat`. An attacker
-/// with no entry in `blocked_by` is unblocked.
+/// This turn's combat. Reset at every `Step::BeginCombat` and again as the
+/// end of combat step ends (511.3: every creature is removed from combat
+/// then). An attacker with no entry in `blocked_by` is unblocked; one whose
+/// entry lists no blockers stays blocked (509.1h). A permanent leaves these
+/// lists the moment it leaves the battlefield (`remove_from_combat`, 506.4).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CombatState {
     pub attackers_declared: bool,
@@ -974,6 +984,22 @@ pub struct CombatState {
     /// This is reference-AI behavior, not a rules-level ordering guarantee;
     /// a future surface can carry an explicit damage allocation instead.
     pub blocked_by: Vec<(ObjectId, Vec<ObjectId>)>,
+}
+
+impl CombatState {
+    /// 506.4: a permanent that leaves the battlefield is removed from
+    /// combat. It stops being an attacking or blocking creature, so its id
+    /// (which the object arena reuses for the card's later incarnations,
+    /// 400.7) must not keep it in combat if the card returns. A blocked
+    /// attacker keeps its (possibly now empty) blocker list: it remains
+    /// blocked even if every creature blocking it is removed (509.1h).
+    pub(crate) fn remove_from_combat(&mut self, id: ObjectId) {
+        self.attackers.retain(|&attacker| attacker != id);
+        self.blocked_by.retain(|(attacker, _)| *attacker != id);
+        for (_, blockers) in &mut self.blocked_by {
+            blockers.retain(|&blocker| blocker != id);
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2584,26 +2610,15 @@ fn legal_targets_for_controller_from_source(
         .map(Target::Object)
         .collect(),
         TargetSpec::SpellManaValueAtMostControlledSubtypes { first, second } => {
-            let first = first.stable_id();
-            let second = second.map(card_def::Subtype::stable_id);
             let controlled_count = state
                 .objects
                 .iter()
                 .filter(|(_, object)| {
+                    let ids = &object.v4.effective_subtype_ids;
                     object.zone == Zone::Battlefield
                         && object.controller == controller
-                        && (object
-                            .v4
-                            .effective_subtype_ids
-                            .binary_search(&first)
-                            .is_ok()
-                            || second.is_some_and(|second| {
-                                object
-                                    .v4
-                                    .effective_subtype_ids
-                                    .binary_search(&second)
-                                    .is_ok()
-                            }))
+                        && (first.is_in_subtype_ids(ids)
+                            || second.is_some_and(|second| second.is_in_subtype_ids(ids)))
                 })
                 .count() as u16;
             let announcing = state
@@ -2702,7 +2717,8 @@ fn target_prefix_can_complete(
     target_prefix_can_complete_for_controller(spec, targets_chosen, state.priority_player, state)
 }
 
-pub(crate) fn target_prefix_can_complete_for_controller(
+#[cfg(test)]
+fn target_prefix_can_complete_for_controller(
     spec: TargetSpec,
     targets_chosen: &[Target],
     controller: PlayerId,
@@ -2715,6 +2731,36 @@ pub(crate) fn target_prefix_can_complete_for_controller(
         None,
         state,
     )
+}
+
+/// The source a pending triggered ability targets from: its frozen source
+/// incarnation's definition, exactly as `Decision::ChooseTargets` and
+/// `Action::ChooseTarget` see it.
+fn pending_trigger_targeting_source(pending: &PendingTrigger) -> Option<TargetingSource> {
+    pending.source_contract.map(|contract| TargetingSource {
+        object: pending.source,
+        card_def: contract.card_def,
+    })
+}
+
+/// 603.3d: whether a pending triggered ability's chosen target prefix can
+/// still be completed with targets legal *for its source* (protection from
+/// the source's colour, "other than this", ...). This must be the same
+/// source-aware legality its `Decision::ChooseTargets` offers: a source-less
+/// check kept Journey to Nowhere's trigger when the only creature had
+/// protection from monocolored, and then offered zero legal targets.
+pub(crate) fn pending_trigger_targets_can_complete(
+    pending: &PendingTrigger,
+    state: &GameState,
+) -> bool {
+    pending.target_spec == TargetSpec::None
+        || target_prefix_can_complete_for_controller_and_source(
+            pending.target_spec,
+            &pending.targets,
+            pending.controller,
+            pending_trigger_targeting_source(pending),
+            state,
+        )
 }
 
 fn target_prefix_can_complete_for_controller_and_source(
@@ -2760,6 +2806,7 @@ fn target_prefix_can_complete_for_controller_and_source(
 /// The next legal target choices that still admit a complete mandatory
 /// assignment. Filtering at every prefix prevents a legal first pick from
 /// leading to an empty dependent second-pick decision.
+#[cfg(test)]
 fn completable_next_targets_for(
     spec: TargetSpec,
     targets_chosen: &[Target],
@@ -2808,6 +2855,22 @@ fn activation_legal_targets_for(
     targets_chosen: &[Target],
     state: &GameState,
 ) -> Vec<Target> {
+    activation_legal_targets_with_source_lki(source, ability, targets_chosen, false, state)
+}
+
+/// `source_departed`: the ability's source has left the battlefield since
+/// activation (Tinder Wall sacrifices itself as a cost). Its combat relation
+/// is then read from last known information (608.2b, 113.7a): the target was
+/// checked to be a creature it blocked at activation, and a blocker stops
+/// blocking only by being removed from combat, which here happened when it
+/// left (506.4), so the relation as it last existed still holds.
+fn activation_legal_targets_with_source_lki(
+    source: ObjectId,
+    ability: &ActivatedAbilityDef,
+    targets_chosen: &[Target],
+    source_departed: bool,
+    state: &GameState,
+) -> Vec<Target> {
     let controller = state.objects.get(source).controller;
     legal_targets_for_controller_from_source(
         ability.target_spec,
@@ -2826,14 +2889,15 @@ fn activation_legal_targets_for(
             let Target::Object(attacker) = target else {
                 return false;
             };
-            state
-                .engine
-                .combat
-                .blocked_by
-                .iter()
-                .any(|(candidate_attacker, blockers)| {
-                    candidate_attacker == attacker && blockers.contains(&source)
-                })
+            source_departed
+                || state
+                    .engine
+                    .combat
+                    .blocked_by
+                    .iter()
+                    .any(|(candidate_attacker, blockers)| {
+                        candidate_attacker == attacker && blockers.contains(&source)
+                    })
         }
     })
     .collect()
@@ -3063,7 +3127,11 @@ pub(crate) fn evaluate_dynamic_value(
                             && has_effective_subtype(state, candidate, pair.second)
                     })
             });
-            return i32::from(if met { amount_when_met } else { amount_otherwise });
+            return i32::from(if met {
+                amount_when_met
+            } else {
+                amount_otherwise
+            });
         }
     };
     i32::try_from(count).expect("the object arena count fits the engine's signed value range")
@@ -6290,6 +6358,20 @@ pub(crate) fn validate_pending_discard_binding(
             }
             Ok(())
         }
+        DiscardResume::FinishAbilityResolution { stack_item_id } => {
+            let resolving = state
+                .stack
+                .iter()
+                .filter(|item| item.v4.stack_item_id == *stack_item_id)
+                .collect::<Vec<_>>();
+            match resolving.as_slice() {
+                [item] if item.kind != StackItemKind::Spell => Ok(()),
+                _ => Err((
+                    state.stack.last().map_or(ObjectId(0), |item| item.source),
+                    "ability discard lost its resolving stack item".to_string(),
+                )),
+            }
+        }
         DiscardResume::None
         | DiscardResume::FinishSpellResolution { .. }
         | DiscardResume::FinishOptionalCost { .. } => Ok(()),
@@ -6423,6 +6505,13 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
     }
     match pending_discard.resume {
         DiscardResume::None => collect_and_queue_triggers(state),
+        DiscardResume::FinishAbilityResolution { stack_item_id } => {
+            // The ability's resolution is over only now (608.2).
+            state
+                .stack
+                .retain(|item| item.v4.stack_item_id != stack_item_id);
+            collect_and_queue_triggers(state);
+        }
         DiscardResume::FinishCast { .. } => {
             let (pending, cast_method) =
                 owned_cast.expect("validated FinishCast owns its removed pending cast");
@@ -6594,13 +6683,30 @@ fn drain_pending_spell_copy_or_decide(state: &mut GameState) -> Option<Decision>
 }
 
 /// Pure live-choice projection shared by the engine and disposable search clones.
-pub(crate) fn pending_effect_targets_decision_v2(pending: &effect::EffectContinuation) -> Option<Decision> {
-    let effect::PendingEffectChoice::SelectTargets { player, selected, legal, min_targets, max_targets, .. } = pending.choice.as_ref()? else { return None; };
+pub(crate) fn pending_effect_targets_decision_v2(
+    pending: &effect::EffectContinuation,
+) -> Option<Decision> {
+    let effect::PendingEffectChoice::SelectTargets {
+        player,
+        selected,
+        legal,
+        min_targets,
+        max_targets,
+        ..
+    } = pending.choice.as_ref()?
+    else {
+        return None;
+    };
     Some(Decision::ChooseEffectTargets {
-        player: *player, source: pending.resolving_item.source,
-        selected_count: selected.len().try_into().expect("effect selected-target count fits the u16 public contract"),
-        min_targets: *min_targets, max_targets: *max_targets,
-        legal_targets: legal.iter().map(|candidate|candidate.target).collect(),
+        player: *player,
+        source: pending.resolving_item.source,
+        selected_count: selected
+            .len()
+            .try_into()
+            .expect("effect selected-target count fits the u16 public contract"),
+        min_targets: *min_targets,
+        max_targets: *max_targets,
+        legal_targets: legal.iter().map(|candidate| candidate.target).collect(),
         can_finish: selected.len() >= usize::from(*min_targets),
     })
 }
@@ -6641,8 +6747,9 @@ fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
                     .try_into()
                     .expect("effect option count fits the u16 public contract"),
             },
-            effect::PendingEffectChoice::SelectTargets { .. } =>
-                pending_effect_targets_decision_v2(pending).expect("matched SelectTargets"),
+            effect::PendingEffectChoice::SelectTargets { .. } => {
+                pending_effect_targets_decision_v2(pending).expect("matched SelectTargets")
+            }
             effect::PendingEffectChoice::ChooseBoolean {
                 player,
                 default,
@@ -6686,6 +6793,7 @@ fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
                     Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
                 return None;
             }
+            keep_ability_on_stack_until_discarded(state, &item);
             collect_and_queue_triggers(state);
             reset_priority(state);
         }
@@ -8355,11 +8463,7 @@ pub(crate) fn validate_pending_activation(
                 || tap_cost_subtype.is_some_and(|subtype| {
                     binding.object != pending.source
                         && !live.tapped
-                        && live
-                            .v4
-                            .effective_subtype_ids
-                            .binary_search(&subtype.stable_id())
-                            .is_ok()
+                        && subtype.is_in_subtype_ids(&live.v4.effective_subtype_ids)
                         && payable_activation_cost_object_candidates(
                             pending.controller,
                             pending.source,
@@ -8579,6 +8683,15 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                 source: pending.source,
             });
         }
+        if !pending_trigger_targets_can_complete(&pending, state) {
+            // 603.3d at the actual placement checkpoint: legality can change
+            // between collection and placement (an earlier trigger in this
+            // batch was just put on the stack), and a trigger whose targets
+            // cannot be completed is removed rather than posing a
+            // `ChooseTargets` with no legal choice.
+            state.engine.pending_triggers.remove(0);
+            continue;
+        }
         let need = target_count(pending.target_spec);
         if pending.targets.len() < usize::from(need) {
             let trigger_source = pending.source_contract.map(|contract| TargetingSource {
@@ -8613,7 +8726,7 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                     pending.target_spec,
                     &pending.targets,
                     pending.controller,
-                    trigger_source,
+                    pending_trigger_targeting_source(&pending),
                     state,
                 ),
                 can_finish: pending.targets.len()
@@ -9465,8 +9578,18 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
                     ability_index,
                     item.v4.granted_by,
                 )?;
-                activation_legal_targets_for(item.source, &ability, &chosen, state)
-                    .contains(&target)
+                let source_departed = state.objects.try_get(item.source).is_none_or(|live| {
+                    live.zone_change_count != source_contract.zone_change_count
+                        || live.zone != source_contract.zone
+                });
+                activation_legal_targets_with_source_lki(
+                    item.source,
+                    &ability,
+                    &chosen,
+                    source_departed,
+                    state,
+                )
+                .contains(&target)
             }
             _ => legal_targets_for_controller_from_source(
                 spec,
@@ -9740,6 +9863,42 @@ fn execute_resolving_program(
     }
 }
 
+/// 608.2: a triggered or activated ability whose program ended by staging
+/// a discard (`EffectOp::DiscardCards` returns before the discard is
+/// chosen) is still resolving. Keep it on the stack, bound to the pending
+/// discard, until `apply_discard` removes it. Returns whether it was kept.
+fn keep_ability_on_stack_until_discarded(state: &mut GameState, item: &StackItem) -> bool {
+    if item.kind == StackItemKind::Spell {
+        return false;
+    }
+    let Some(pending) = state.engine.pending_discard.as_mut() else {
+        return false;
+    };
+    if pending.resume != DiscardResume::None {
+        return false;
+    }
+    pending.resume = DiscardResume::FinishAbilityResolution {
+        stack_item_id: item.v4.stack_item_id,
+    };
+    state.stack.push(item.clone());
+    true
+}
+
+/// 608.2 / 608.2n: a spell whose resolution waits on a player's choice (its
+/// own discard, or a "you may pay" cost) is still resolving and stays on
+/// the stack until the deferred move to its post-resolution zone, which
+/// removes it from `state.stack` with the rest of the zone change
+/// (`event::remove_from_zone`). Putting the popped item back keeps the card
+/// in exactly one public zone throughout the choice, as the resumable
+/// `pending_effect` and `pending_spell_copy` paths already do.
+fn keep_spell_on_stack_until_resolved(state: &mut GameState, item: StackItem) {
+    // The zone change matches the stack entry through its source contract;
+    // without one it could never be removed, so leave such an item off.
+    if item.v4.source_contract.is_some() {
+        state.stack.push(item);
+    }
+}
+
 fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     let item = state
         .stack
@@ -9815,7 +9974,11 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     }
 
     if let Some(effect) = item.inline_effect.clone() {
-        return execute_resolving_program(state, &item, &ctx, &effect);
+        let progress = execute_resolving_program(state, &item, &ctx, &effect);
+        if progress == ResolutionProgress::Complete {
+            keep_ability_on_stack_until_discarded(state, &item);
+        }
+        return progress;
     }
 
     let card_def_idx = state.objects.get(item.source).card_def;
@@ -9907,6 +10070,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 source: item.source,
                 to_zone,
             };
+            keep_spell_on_stack_until_resolved(state, item);
         } else if let Some(poc) = state.engine.pending_optional_cost.as_mut() {
             // Same 608.2m deferral, one layer further out: the effect
             // resolved into `EffectOp::MayPayCostThen` (Highway Robbery:
@@ -9923,6 +10087,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             // `PendingOptionalCost::spell_resume`'s doc for where the
             // deferred move actually happens once that's all done.
             poc.spell_resume = Some((item.source, to_zone));
+            keep_spell_on_stack_until_resolved(state, item);
         } else {
             if finish_resolved_stack_item(state, &item).is_err() {
                 state.engine.halted =
@@ -10014,6 +10179,12 @@ fn advance_step(state: &mut GameState) {
             .all(|&id| !is_still_in_combat(state, id))
     {
         next = Step::EndCombat;
+    }
+    // 511.3: as the end of combat step ends, every creature is removed from
+    // combat. Without this the record of this combat's attackers and
+    // blockers survived into the second main phase and the next turn.
+    if state.step == Step::EndCombat {
+        state.engine.combat = CombatState::default();
     }
 
     state.step = next;
@@ -10782,16 +10953,14 @@ pub fn has_effective_subtype(state: &GameState, id: ObjectId, subtype: card_def:
     let Some(object) = state.objects.try_get(id) else {
         return false;
     };
-    if object
-        .v4
-        .effective_subtype_ids
-        .binary_search(&subtype.stable_id())
-        .is_ok()
-    {
+    if subtype.is_in_subtype_ids(&object.v4.effective_subtype_ids) {
         return true;
     }
-    attached_equipment_profiles(state, id)
-        .any(|(_, equipment)| equipment.add_subtype == Some(subtype))
+    attached_equipment_profiles(state, id).any(|(_, equipment)| {
+        equipment
+            .add_subtype
+            .is_some_and(|added| added.same_subtype_as(subtype))
+    })
 }
 
 fn participates_in_wave(state: &GameState, id: ObjectId, first_strike_wave: bool) -> bool {
@@ -11040,11 +11209,25 @@ pub(crate) fn put_ninjutsu_source_onto_battlefield_attacking(
     {
         return Ok(());
     }
+    // The source is in hand, so any combat entry naming its id belongs to an
+    // earlier battlefield incarnation that was removed from combat when it
+    // left (506.4) -- e.g. the attacker an earlier ninjutsu returned this
+    // same combat, whose own ninjutsu is resolving now. That stale id is not
+    // this object: the permanent entering here is a new object (400.7) that
+    // is attacking and unblocked (702.49c). Drop the stale entries instead
+    // of treating them as "already attacking", which halted the game.
+    state
+        .engine
+        .combat
+        .attackers
+        .retain(|&attacker| attacker != source);
+    state
+        .engine
+        .combat
+        .blocked_by
+        .retain(|(attacker, _)| *attacker != source);
     event::propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Battlefield));
     state.objects.get_mut(source).tapped = true;
-    if state.engine.combat.attackers.contains(&source) {
-        return Err("ninjutsu source already appears in combat".to_string());
-    }
     state.engine.combat.attackers.push(source);
     Ok(())
 }
@@ -11065,17 +11248,27 @@ fn assign_attacker_damage_to_blockers(
         let deathtouch = has_effective_keyword(state, attacker, Keywords::DEATHTOUCH);
         for &blocker in blockers.iter().filter(|&&id| is_still_in_combat(state, id)) {
             let lethal = (effective_toughness(state, blocker)
-                - state.objects.get(blocker).damage as i32).max(0);
+                - state.objects.get(blocker).damage as i32)
+                .max(0);
             let assign = remaining.min(if deathtouch { lethal.min(1) } else { lethal });
             if assign > 0 {
-                events.push(ProposedEvent::damage(attacker, Target::Object(blocker), assign));
+                events.push(ProposedEvent::damage(
+                    attacker,
+                    Target::Object(blocker),
+                    assign,
+                ));
                 remaining -= assign;
             }
-            if remaining == 0 { break; }
+            if remaining == 0 {
+                break;
+            }
         }
         if remaining > 0 {
-            events.push(ProposedEvent::damage(attacker,
-                Target::Player(state.objects.get(attacker).controller.opponent()), remaining));
+            events.push(ProposedEvent::damage(
+                attacker,
+                Target::Player(state.objects.get(attacker).controller.opponent()),
+                remaining,
+            ));
         }
         return;
     }
@@ -11719,10 +11912,7 @@ fn apply_choose_target(state: &mut GameState, target: Target) -> Result<(), Stri
                 pending.target_spec,
                 &pending.targets,
                 pending.controller,
-                pending.source_contract.map(|contract| TargetingSource {
-                    object: pending.source,
-                    card_def: contract.card_def,
-                }),
+                pending_trigger_targeting_source(&pending),
                 state,
             )
             .contains(&target)
@@ -11902,7 +12092,19 @@ fn apply_choose_optional_activation_target(
             "optional activation targets cannot precede an interactive discard".to_string(),
         );
     }
-    let legal = completable_next_targets_for(pending.target_spec, &pending.targets_chosen, state);
+    // Validate against the same source-aware set the optional-target
+    // decision offered (`drain_pending_activation_or_decide`), not a
+    // source-less one that ignores protection from the source.
+    let ability = card_def::CARD_DEFS
+        .get(state.objects.get(pending.source).card_def as usize)
+        .and_then(|def| def.activated_abilities.get(pending.ability_index as usize))
+        .ok_or("pending activation lost its ability definition")?;
+    let legal = completable_next_activation_targets_for(
+        pending.source,
+        ability,
+        &pending.targets_chosen,
+        state,
+    );
     if !legal.contains(&target) {
         return Err(format!(
             "{target:?} is not a legal optional activation target"
@@ -14914,13 +15116,18 @@ mod tests {
             object: ninja,
             zone_change_count: state.objects.get(ninja).zone_change_count,
         });
-        put_ninjutsu_source_onto_battlefield_attacking(&mut state, ninja, PlayerId::P0, expected_source)
-            .unwrap_or_else(|error| {
-                panic!(
-                    "a legal ninjutsu re-entry must not be rejected by a stale \
+        put_ninjutsu_source_onto_battlefield_attacking(
+            &mut state,
+            ninja,
+            PlayerId::P0,
+            expected_source,
+        )
+        .unwrap_or_else(|error| {
+            panic!(
+                "a legal ninjutsu re-entry must not be rejected by a stale \
                      pre-bounce combat.attackers entry: {error}"
-                )
-            });
+            )
+        });
         assert_eq!(state.objects.get(ninja).zone, Zone::Battlefield);
         assert!(state.engine.combat.attackers.contains(&ninja));
     }
@@ -15329,7 +15536,10 @@ mod tests {
             state.engine.pending_triggers.is_empty(),
             "the trigger with no legal target must be dropped, not left pending"
         );
-        assert!(state.exile.is_empty(), "nothing was exiled: there was no legal target");
+        assert!(
+            state.exile.is_empty(),
+            "nothing was exiled: there was no legal target"
+        );
         assert_eq!(state.objects.get(journey).zone, Zone::Battlefield);
         assert_eq!(state.objects.get(guardian).zone, Zone::Battlefield);
     }

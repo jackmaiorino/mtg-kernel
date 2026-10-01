@@ -24,11 +24,13 @@ fn train_groups(state: &mut NativePolicyValueTrainStateV1, groups: &[LearnerTens
     let native: Vec<_> = substeps
         .iter()
         .zip(groups)
-        .map(|(substeps, (reward, _, _))| NativePolicyPhysicalDecisionV1 {
-            substeps,
-            terminal_return: *reward,
-            baseline_bits: 0,
-        })
+        .map(
+            |(substeps, (reward, _, _))| NativePolicyPhysicalDecisionV1 {
+                substeps,
+                terminal_return: *reward,
+                baseline_bits: 0,
+            },
+        )
         .collect();
     state
         .train_step_feature_transfer_v3(&native, VC, LR)
@@ -159,16 +161,22 @@ fn phase1_preparation_real_updates_preserve_all_state_bits_and_group_order() {
                 );
             }
             let mut loads = 0;
-            let prepared =
-                prepare_with_loader_v1(&episodes, &parallel_policy, &learner, workers, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, |source| {
+            let prepared = prepare_with_loader_v1(
+                &episodes,
+                &parallel_policy,
+                &learner,
+                workers,
+                DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+                |source| {
                     loads += 1;
                     assert_eq!(source, &other.as_ref().unwrap().source);
                     Ok(LoadedOpponentV1 {
                         policy: opponent.fork_for_collection_v3().unwrap(),
                         behavior: other.clone().unwrap(),
                     })
-                })
-                .unwrap();
+                },
+            )
+            .unwrap();
             assert_eq!(loads, 1, "repeated opponent must load only once");
             assert_eq!(prepared.telemetry.opponent_load_calls, 1);
             assert_eq!(prepared.telemetry.physical_group_jobs, 64);
@@ -253,7 +261,10 @@ fn phase1_preparation_recovers_episode_boundaries_matching_input_for_both_paths(
         .collect();
     for (label, groups) in [("sequential", &sequential), ("parallel", &prepared.groups)] {
         let actual_ordinals: Vec<usize> = groups.iter().map(|(_, ordinal, _)| *ordinal).collect();
-        assert_eq!(actual_ordinals, expected_ordinals, "{label} episode boundaries");
+        assert_eq!(
+            actual_ordinals, expected_ordinals,
+            "{label} episode boundaries"
+        );
     }
     assert_eq!(group_bytes(&sequential), group_bytes(&prepared.groups));
 }
@@ -267,9 +278,14 @@ fn phase1_preparation_current_model_reuse_avoids_disk_load_and_keeps_rng_outputs
     t.seat_behaviors = Some([learner.clone(), learner.clone()]);
     validate_trajectory(&t).unwrap();
     let expected = replay_learner_groups_v1(0, &t, &policy, Some(&policy)).unwrap();
-    let prepared = prepare_with_loader_v1(std::slice::from_ref(&t), &policy, &learner, 4, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, |_| {
-        panic!("current source should reuse the already validated learner")
-    })
+    let prepared = prepare_with_loader_v1(
+        std::slice::from_ref(&t),
+        &policy,
+        &learner,
+        4,
+        DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+        |_| panic!("current source should reuse the already validated learner"),
+    )
     .unwrap();
     assert_eq!(prepared.telemetry.opponent_load_calls, 0);
     assert_eq!(prepared.telemetry.current_model_reuses, 1);
@@ -400,14 +416,20 @@ fn phase1_preparation_limits_reject_before_dispatch_or_opponent_load() {
             t
         })
         .collect();
-    let result = prepare_with_loader_v1(&episodes, &policy, &learner, 4, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, |_| {
-        panic!("opponent bound must be checked before loading")
-    });
+    let result = prepare_with_loader_v1(
+        &episodes,
+        &policy,
+        &learner,
+        4,
+        DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+        |_| panic!("opponent bound must be checked before loading"),
+    );
     assert!(result.err().unwrap().contains("32 distinct opponents"));
     let mut oversized = template;
     // Actual vector payload, not a mocked limit: no forward or source load may
     // begin when one decoded tensor already exceeds the preparation budget.
-    oversized.decisions[0].tensor.state = vec![0; DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES * MEBIBYTE / 4 + 1];
+    oversized.decisions[0].tensor.state =
+        vec![0; DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES * MEBIBYTE / 4 + 1];
     let result = prepare_with_loader_v1(
         std::slice::from_ref(&oversized),
         &policy,

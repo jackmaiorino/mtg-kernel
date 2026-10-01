@@ -504,6 +504,27 @@ def _expected_memberships(
     return result
 
 
+# Eight implemented wave-2 research cards precede Urzatron's canonical deck
+# registration. They are a closed registry extension, not pool admissions.
+# Pin their complete rows and existing ids so validation cannot admit a new
+# name, change a card, or renumber it through this exception. The 18-deck pool
+# and nine active runtime decks keep their existing manifests and identities.
+PINNED_REGISTRY_EXTENSION_CARDS_V1 = {
+    "Urza's Tower": (184, '7a7900557ecb652d466c64325a0d6337fd629528acfa998b88dc1b4f194123eb'),
+    "Urza's Power Plant": (185, '32a16d7e8492634e656988a1d6c1cbdcc616f786d04d0cd6e90bb01e239cb128'),
+    "Urza's Mine": (186, 'c162a630cc6e6f5e260a6b96c123546a841fbeb28604fde40122b94e6ece4bee'),
+    'Bojuka Bog': (187, '64bdff72470abfe9eca8a6cc6e153ae6581a95272dea8ab0f4f6204eda8e6eb0'),
+    'Conduit Pylons': (188, '26818c94bee49341d7fa10e88982c049cbe77e2cb47d351802c8e7b3be72c98a'),
+    'Expedition Map': (189, '3bd312e9cdeda857a931b729864156d7b8bdf9e3907967c06a48683e9fb67149'),
+    "Bonder's Ornament": (190, 'aa5ac4fe137d9700ce3cddfbcd005a84670d798cb21dc7b604c85df439cdf124'),
+    'Barrels of Blasting Jelly': (191, 'b62a08b965ccf8886b8263b61c81b004a6664d473fe0a9abbae1c5ce2ce420cd'),
+}
+
+
+def registry_extension_row_sha256_v1(card: dict[str, Any]) -> str:
+    return sha256_hex(json.dumps(card, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+
+
 def normalize_registry(
     registry: dict[str, Any], rosters: dict[str, tuple[Counter[str], Counter[str]]]
 ) -> dict[str, Any]:
@@ -517,6 +538,7 @@ def normalize_registry(
     expected_memberships = _expected_memberships(rosters)
     seen: set[str] = set()
     registered_non_tokens: set[str] = set()
+    extension_names: set[str] = set()
     non_token_count = 0
     token_names: set[str] = set()
     for index, card in enumerate(cards):
@@ -540,11 +562,21 @@ def normalize_registry(
                     f"token {name!r} must have full engine_capability"
                 )
             continue
+        if name in PINNED_REGISTRY_EXTENSION_CARDS_V1:
+            expected_id, expected_sha256 = PINNED_REGISTRY_EXTENSION_CARDS_V1[name]
+            if index != expected_id or registry_extension_row_sha256_v1(card) != expected_sha256:
+                raise ManifestError(f"pinned registry extension card {name!r} changed its id or content")
+            if name in expected_memberships:
+                raise ManifestError(f"registry extension card {name!r} requires explicit pool admission")
+            extension_names.add(name)
+            continue
         non_token_count += 1
         registered_non_tokens.add(name)
         if name not in expected_memberships:
             raise ManifestError(f"registry-only non-token card {name!r} is outside the pinned pool")
         card["decks"] = list(expected_memberships[name])
+    if extension_names != PINNED_REGISTRY_EXTENSION_CARDS_V1.keys():
+        raise ManifestError("pinned registry extension cards are missing")
     expected_token_names = {name for name, _producers in TOKEN_DEPENDENCIES}
     if non_token_count != 171 or token_names != expected_token_names:
         raise ManifestError(

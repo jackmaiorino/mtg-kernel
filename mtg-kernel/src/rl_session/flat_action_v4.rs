@@ -47,9 +47,9 @@
 
 use super::*;
 mod search_state;
-pub(crate) use search_state::{V4SearchStateErrorV1,V4SearchSampleMode};
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::Zone;
+pub(crate) use search_state::{V4SearchSampleMode, V4SearchStateErrorV1};
 
 /// Local (V4-only) analog of `FlatResolvedActionObjectV2`. Two real defects
 /// were found in real gameplay by conflating `arena_id` and `position` in
@@ -127,28 +127,30 @@ fn frozen_pending_trigger_semantic_v4(
     state: &crate::state::GameState,
     semantic: ActionSemanticV1,
 ) -> ActionSemanticV1 {
-    let frozen_at = |position: usize, live: &CardStableRefV1, actor: PlayerSeatV1| -> CardStableRefV1 {
-        let Some(pending) = state.engine.pending_triggers.get(position) else {
-            return live.clone();
+    let frozen_at =
+        |position: usize, live: &CardStableRefV1, actor: PlayerSeatV1| -> CardStableRefV1 {
+            let Some(pending) = state.engine.pending_triggers.get(position) else {
+                return live.clone();
+            };
+            if PlayerSeatV1::from(pending.controller) != actor || pending.source.0 != live.arena_id
+            {
+                return live.clone();
+            }
+            let Some(contract) = pending.source_contract else {
+                return live.clone();
+            };
+            if !crate::trigger::pending_trigger_hidden_source_v1(state, pending) {
+                return live.clone();
+            }
+            CardStableRefV1 {
+                arena_id: pending.source.0,
+                card_db_id: contract.card_def,
+                owner: contract.owner.into(),
+                controller: contract.controller.into(),
+                zone: contract.zone,
+                zone_change_count: contract.zone_change_count,
+            }
         };
-        if PlayerSeatV1::from(pending.controller) != actor || pending.source.0 != live.arena_id {
-            return live.clone();
-        }
-        let Some(contract) = pending.source_contract else {
-            return live.clone();
-        };
-        if !crate::trigger::pending_trigger_hidden_source_v1(state, pending) {
-            return live.clone();
-        }
-        CardStableRefV1 {
-            arena_id: pending.source.0,
-            card_db_id: contract.card_def,
-            owner: contract.owner.into(),
-            controller: contract.controller.into(),
-            zone: contract.zone,
-            zone_change_count: contract.zone_change_count,
-        }
-    };
     match semantic {
         ActionSemanticV1::OrderTriggers {
             actor,
@@ -592,14 +594,16 @@ fn flat_visible_action_object_extension_aware_v4(
     extension: &crate::policy_observation_v6::PolicyObservationExtensionsV6,
 ) -> Result<(FlatActionObjectV2, bool), FlatActionDecisionSliceErrorV1> {
     if role == FlatActionRefRoleV1::Source {
-        if let Some((ordinal, _)) = extension
-            .historical_public_sources
-            .iter()
-            .enumerate()
-            .find(|(_, row)| {
-                row.context == crate::policy_observation_v6::HistoricalSourceContextV6::PendingEffect
-                    && row.source == *reference
-            })
+        if let Some((ordinal, _)) =
+            extension
+                .historical_public_sources
+                .iter()
+                .enumerate()
+                .find(|(_, row)| {
+                    row.context
+                        == crate::policy_observation_v6::HistoricalSourceContextV6::PendingEffect
+                        && row.source == *reference
+                })
         {
             return extension_object_v4(
                 reference,
@@ -613,10 +617,20 @@ fn flat_visible_action_object_extension_aware_v4(
     if let Some(ordinal) = extension
         .decision_local_library
         .as_ref()
-        .and_then(|search| search.cards.iter().position(|card| card.stable == *reference))
+        .and_then(|search| {
+            search
+                .cards
+                .iter()
+                .position(|card| card.stable == *reference)
+        })
     {
-        return extension_object_v4(reference, actor, FlatActionObjectGroupV1::DecisionLocalLibrary, ordinal)
-            .map(|object| (object, false));
+        return extension_object_v4(
+            reference,
+            actor,
+            FlatActionObjectGroupV1::DecisionLocalLibrary,
+            ordinal,
+        )
+        .map(|object| (object, false));
     }
     flat_visible_action_object_v4(state, actor, position, reference)
 }
@@ -627,7 +641,13 @@ impl FastActorSessionV1 {
     pub(crate) fn diagnostic_current_decision_input_v4(
         &self,
         expected: FastActorDecisionV1,
-    ) -> Result<(crate::policy_observation_v6::ObservationV6, Vec<ActionSemanticV1>), FlatActionDecisionSliceErrorV1> {
+    ) -> Result<
+        (
+            crate::policy_observation_v6::ObservationV6,
+            Vec<ActionSemanticV1>,
+        ),
+        FlatActionDecisionSliceErrorV1,
+    > {
         let (observation, actions, _) =
             self.human_current_decision_input_v4(expected, expected.acting_player)?;
         Ok((observation, actions))
@@ -639,25 +659,47 @@ impl FastActorSessionV1 {
         &self,
         expected: FastActorDecisionV1,
         human_seat: PlayerSeatV1,
-    ) -> Result<(crate::policy_observation_v6::ObservationV6, Vec<ActionSemanticV1>, FlatActionDecisionBindingV3), FlatActionDecisionSliceErrorV1> {
-        let current = self.current.as_ref()
+    ) -> Result<
+        (
+            crate::policy_observation_v6::ObservationV6,
+            Vec<ActionSemanticV1>,
+            FlatActionDecisionBindingV3,
+        ),
+        FlatActionDecisionSliceErrorV1,
+    > {
+        let current = self
+            .current
+            .as_ref()
             .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
         flat_validate_expected_decision_v1(self, current, expected)?;
         if PlayerSeatV1::from(current.actor) != human_seat {
             return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
         }
         let count = current.candidates.len();
-        let max_refs = count.checked_mul(FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1)
-            .ok_or(FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?.max(256);
+        let max_refs = count
+            .checked_mul(FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1)
+            .ok_or(FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?
+            .max(256);
         let mut actions = vec![FlatActionCoreV1::default(); count];
         let mut refs = vec![FlatActionRefV2::default(); max_refs];
         let mut objects = vec![FlatActionObjectV2::default(); max_refs];
-        let slice = self.encode_current_flat_action_slice_v4(expected, &mut FlatActionDecisionSliceBuffersV2 {
-            actions: &mut actions, refs: &mut refs, objects: &mut objects,
-        })?;
-        Ok((self.flat_policy_observation_v4(expected)?,
-            current.candidates.iter().map(|candidate| candidate.semantic.clone()).collect(),
-            slice.binding))
+        let slice = self.encode_current_flat_action_slice_v4(
+            expected,
+            &mut FlatActionDecisionSliceBuffersV2 {
+                actions: &mut actions,
+                refs: &mut refs,
+                objects: &mut objects,
+            },
+        )?;
+        Ok((
+            self.flat_policy_observation_v4(expected)?,
+            current
+                .candidates
+                .iter()
+                .map(|candidate| candidate.semantic.clone())
+                .collect(),
+            slice.binding,
+        ))
     }
 
     /// V4 sibling of `encode_current_flat_action_slice_v3`. Cache-free: it
@@ -709,21 +751,23 @@ impl FastActorSessionV1 {
                 .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
             let ref_start = u32::try_from(unindexed_refs.len())
                 .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
-            let semantic = frozen_pending_trigger_semantic_v4(&self.state, candidate.semantic.clone());
+            let semantic =
+                frozen_pending_trigger_semantic_v4(&self.state, candidate.semantic.clone());
             let core = flat_action_core_and_refs_v1(
                 &semantic,
                 actor,
                 ref_start,
                 |role, order_index, associated_order, reference| {
                     let position = u32::from(order_index);
-                    let (object, position_sensitive) = flat_visible_action_object_extension_aware_v4(
-                        &self.state,
-                        current.actor,
-                        position,
-                        role,
-                        reference,
-                        &extension,
-                    )?;
+                    let (object, position_sensitive) =
+                        flat_visible_action_object_extension_aware_v4(
+                            &self.state,
+                            current.actor,
+                            position,
+                            role,
+                            reference,
+                            &extension,
+                        )?;
                     if let Some(previous) = resolved_objects.iter().find(|candidate| {
                         candidate.arena_id == reference.arena_id
                             && candidate.reference == *reference
@@ -915,14 +959,19 @@ fn flat_validate_current_binding_staleness_v4(
 ///
 /// Test-only. Re-exported as `crate::rl_session::hidden_order_triggers_state_v1`.
 #[cfg(test)]
-pub(crate) fn hidden_order_triggers_state_v1(count: usize) -> (crate::state::GameState, Vec<ObjectId>) {
+pub(crate) fn hidden_order_triggers_state_v1(
+    count: usize,
+) -> (crate::state::GameState, Vec<ObjectId>) {
     use crate::card_def::TargetSpec;
     use crate::effect::EffectOp;
     use crate::policy_observation_v6::tests::{put, ready_state};
     use crate::state::AbilitySourceContractV4;
     use crate::trigger::PendingTrigger;
 
-    assert!(count >= 2, "Decision::OrderTriggers needs a group of 2 or more");
+    assert!(
+        count >= 2,
+        "Decision::OrderTriggers needs a group of 2 or more"
+    );
     let mut state = ready_state();
     let mut sources = Vec::with_capacity(count);
     for _ in 0..count {
@@ -954,7 +1003,8 @@ pub(crate) fn hidden_order_triggers_state_v1(count: usize) -> (crate::state::Gam
             assert_eq!(live.zone, Zone::Battlefield);
             live.zone = Zone::Library;
             live.zone_change_count += 1;
-            live.v4.reset_for_zone_change(live.card_def, Zone::Library, state.turn);
+            live.v4
+                .reset_for_zone_change(live.card_def, Zone::Library, state.turn);
             live.controller = live.owner;
             live.tapped = false;
             live.summoning_sick = false;
@@ -963,9 +1013,11 @@ pub(crate) fn hidden_order_triggers_state_v1(count: usize) -> (crate::state::Gam
             live.plotted_turn = None;
         }
         state.players[PlayerId::P0.index()].library.push(object);
-        assert!(state.library_knowledge[PlayerId::P0.index()][PlayerId::P0.index()]
-            .iter()
-            .all(|entry| entry.object != object));
+        assert!(
+            state.library_knowledge[PlayerId::P0.index()][PlayerId::P0.index()]
+                .iter()
+                .all(|entry| entry.object != object)
+        );
     }
     (state, sources)
 }
@@ -980,7 +1032,8 @@ pub(crate) fn hidden_order_triggers_state_v1(count: usize) -> (crate::state::Gam
 ///
 /// Test-only. Re-exported as `crate::rl_session::hidden_order_triggers_shared_source_state_v1`.
 #[cfg(test)]
-pub(crate) fn hidden_order_triggers_shared_source_state_v1() -> (crate::state::GameState, ObjectId) {
+pub(crate) fn hidden_order_triggers_shared_source_state_v1() -> (crate::state::GameState, ObjectId)
+{
     use crate::card_def::TargetSpec;
     use crate::effect::EffectOp;
     use crate::policy_observation_v6::tests::{put, ready_state};
@@ -1017,9 +1070,11 @@ pub(crate) fn hidden_order_triggers_shared_source_state_v1() -> (crate::state::G
         live.zone_change_count += 1;
     }
     state.players[PlayerId::P0.index()].library.push(object);
-    assert!(state.library_knowledge[PlayerId::P0.index()][PlayerId::P0.index()]
-        .iter()
-        .all(|entry| entry.object != object));
+    assert!(
+        state.library_knowledge[PlayerId::P0.index()][PlayerId::P0.index()]
+            .iter()
+            .all(|entry| entry.object != object)
+    );
     (state, object)
 }
 
@@ -1047,7 +1102,12 @@ pub(crate) fn spell_and_own_cast_trigger_shared_source_state_v1(
     use crate::state::{StackItem, StackItemKind, StackStateV4};
 
     let mut state = ready_state();
-    let object = put(&mut state, PlayerId::P0, "Writhing Chrysalis", Zone::Battlefield);
+    let object = put(
+        &mut state,
+        PlayerId::P0,
+        "Writhing Chrysalis",
+        Zone::Battlefield,
+    );
     state.players[PlayerId::P0.index()]
         .battlefield
         .retain(|&id| id != object);
@@ -1270,8 +1330,14 @@ mod tests {
 
         let (_v4_result, v4_objects) = encoded_v4(&session);
 
-        assert_eq!(pending_source_ordinals(&v3_objects), pending_source_ordinals(&v4_objects));
-        assert_eq!(v3_objects, v4_objects, "V4 must reproduce the exact V3 row set for this decision");
+        assert_eq!(
+            pending_source_ordinals(&v3_objects),
+            pending_source_ordinals(&v4_objects)
+        );
+        assert_eq!(
+            v3_objects, v4_objects,
+            "V4 must reproduce the exact V3 row set for this decision"
+        );
     }
 
     #[test]
@@ -1290,7 +1356,9 @@ mod tests {
             live.zone = Zone::Battlefield;
             live.zone_change_count += 1;
         }
-        state.players[PlayerId::P0.index()].battlefield.push(visible);
+        state.players[PlayerId::P0.index()]
+            .battlefield
+            .push(visible);
 
         let session = FastActorSessionV1::from_v3_fixture_state(state);
         assert!(matches!(
@@ -1316,7 +1384,10 @@ mod tests {
                 },
             )
             .unwrap_err();
-        assert_eq!(v3_error, FlatActionDecisionSliceErrorV1::HiddenActionReference);
+        assert_eq!(
+            v3_error,
+            FlatActionDecisionSliceErrorV1::HiddenActionReference
+        );
 
         let (result, objects) = encoded_v4(&session);
         assert!(result.active_action_count > 0);
@@ -1354,12 +1425,19 @@ mod tests {
                 },
             )
             .unwrap_err();
-        assert_eq!(v3_error, FlatActionDecisionSliceErrorV1::HiddenActionReference);
+        assert_eq!(
+            v3_error,
+            FlatActionDecisionSliceErrorV1::HiddenActionReference
+        );
 
         let (result, objects) = encoded_v4(&session);
         assert!(result.active_action_count > 0);
         let ordinals = pending_source_ordinals(&objects);
-        assert_eq!(ordinals.len(), count, "every hidden position must gain exactly one row");
+        assert_eq!(
+            ordinals.len(),
+            count,
+            "every hidden position must gain exactly one row"
+        );
         let mut expected_ordinals: Vec<u16> = (1..=count as u16).collect();
         expected_ordinals.sort_unstable();
         assert_eq!(
@@ -1367,7 +1445,11 @@ mod tests {
             "ordinals must be collision-free and match the ceiling(=1, empty stack)+position formula"
         );
         let unique: std::collections::BTreeSet<_> = ordinals.iter().copied().collect();
-        assert_eq!(unique.len(), count, "no two hidden positions may share an ordinal");
+        assert_eq!(
+            unique.len(),
+            count,
+            "no two hidden positions may share an ordinal"
+        );
     }
 
     #[test]
@@ -1409,9 +1491,16 @@ mod tests {
             2,
             "both positions must gain their own row despite sharing one physical source"
         );
-        let mut ordinals: Vec<u16> = pending_rows.iter().map(|row| row.actor_visible_ordinal).collect();
+        let mut ordinals: Vec<u16> = pending_rows
+            .iter()
+            .map(|row| row.actor_visible_ordinal)
+            .collect();
         ordinals.sort_unstable();
-        assert_eq!(ordinals, vec![1, 2], "ceiling(=1, empty stack) + position 0 and + position 1");
+        assert_eq!(
+            ordinals,
+            vec![1, 2],
+            "ceiling(=1, empty stack) + position 0 and + position 1"
+        );
         assert_ne!(
             pending_rows[0].canonical_key(),
             pending_rows[1].canonical_key(),
@@ -1421,7 +1510,10 @@ mod tests {
         // (same card_token/zone/zone_change_count -- only the ordinal
         // differs, which is exactly what disambiguates the two positions).
         assert_eq!(pending_rows[0].card_token, pending_rows[1].card_token);
-        assert_eq!(pending_rows[0].zone_change_count, pending_rows[1].zone_change_count);
+        assert_eq!(
+            pending_rows[0].zone_change_count,
+            pending_rows[1].zone_change_count
+        );
         let _ = shared_object;
     }
 
@@ -1524,7 +1616,10 @@ mod tests {
             flat_visible_action_object_v4(&state, PlayerId::P0, 0, &reference)
                 .expect("V4 must resolve the spell's own stack position unambiguously");
         assert_eq!(object_row.group, FlatActionObjectGroupV1::Stack);
-        assert_eq!(object_row.actor_visible_ordinal, 0, "the spell was pushed at stack position 0");
+        assert_eq!(
+            object_row.actor_visible_ordinal, 0,
+            "the spell was pushed at stack position 0"
+        );
         assert!(!position_sensitive);
 
         assert_eq!(
@@ -1591,17 +1686,23 @@ mod tests {
                 },
             )
             .unwrap_or_else(|e| {
-                panic!("V3 action-slice encoding must not fail on a departed-producer trigger: {e:?}")
+                panic!(
+                    "V3 action-slice encoding must not fail on a departed-producer trigger: {e:?}"
+                )
             });
-        session.flat_policy_observation_v3(expected(&session)).unwrap_or_else(|e| {
-            panic!("V3 policy observation must not fail on a departed-producer trigger: {e:?}")
-        });
+        session
+            .flat_policy_observation_v3(expected(&session))
+            .unwrap_or_else(|e| {
+                panic!("V3 policy observation must not fail on a departed-producer trigger: {e:?}")
+            });
 
         let (v4_result, _objects) = encoded_v4(&session);
         assert!(v4_result.active_action_count > 0);
-        session.flat_policy_observation_v4(expected(&session)).unwrap_or_else(|e| {
-            panic!("V4 policy observation must not fail on a departed-producer trigger: {e:?}")
-        });
+        session
+            .flat_policy_observation_v4(expected(&session))
+            .unwrap_or_else(|e| {
+                panic!("V4 policy observation must not fail on a departed-producer trigger: {e:?}")
+            });
 
         let _ = chrysalis;
     }

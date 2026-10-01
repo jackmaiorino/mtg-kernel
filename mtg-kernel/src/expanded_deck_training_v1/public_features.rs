@@ -56,8 +56,7 @@ fn entropy_is_zero(value: &f32) -> bool {
 
 fn validate_entropy(config: &Config) -> Result<(), String> {
     ensure(
-        config.entropy_coefficient.is_finite()
-            && (0.0..=1.0).contains(&config.entropy_coefficient),
+        config.entropy_coefficient.is_finite() && (0.0..=1.0).contains(&config.entropy_coefficient),
         "public entropy coefficient must be finite in [0,1]",
     )
 }
@@ -131,14 +130,22 @@ fn weights(public: &ProjectionSnapshot) -> Result<PublicInputWeightsV1, String> 
 fn validate_projection_mode(config: &Config, public: &ProjectionSnapshot) -> Result<(), String> {
     if !config.inputs_enabled || config.projection_mode == ProjectionMode::StateOnly {
         ensure(
-            public.object.iter().chain(&public.object_first).chain(&public.object_second)
+            public
+                .object
+                .iter()
+                .chain(&public.object_first)
+                .chain(&public.object_second)
                 .all(|v| f32::from_bits(*v) == 0.0),
             "disabled public cost projection acquired weights or moments",
         )?;
     }
     if !config.inputs_enabled {
         ensure(
-            public.state.iter().chain(&public.state_first).chain(&public.state_second)
+            public
+                .state
+                .iter()
+                .chain(&public.state_first)
+                .chain(&public.state_second)
                 .all(|v| f32::from_bits(*v) == 0.0),
             "disabled public state projection acquired weights or moments",
         )?;
@@ -384,7 +391,9 @@ fn collect_with_opponent(
                             if audit_every
                                 .is_some_and(|n| search.decisions() % u64::from(n.max(1)) == 0)
                             {
-                                search_opponent::audit_live_root(search, net, &session, d, selected)?;
+                                search_opponent::audit_live_root(
+                                    search, net, &session, d, selected,
+                                )?;
                             }
                             auxiliary.push(None);
                             sampler_identity =
@@ -405,7 +414,13 @@ fn collect_with_opponent(
                                 policy.select_with_scores(&input).map_err(err)?;
                             let (tensor, public_rows) = policy.captured()?;
                             auxiliary.push(Some(public_rows.clone()));
-                            Seat::push_public_row(rows, &session, d, selected, scores.logits.len())?;
+                            Seat::push_public_row(
+                                rows,
+                                &session,
+                                d,
+                                selected,
+                                scores.logits.len(),
+                            )?;
                             (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
                         }
                         Seat::Legacy {
@@ -602,7 +617,10 @@ pub fn run(command: Command) -> Result<Value, String> {
     let config = &command.config;
     validate_entropy(config)?;
     let execution_gpu_ordinal = command.execution_gpu_ordinal.unwrap_or(config.gpu_ordinal);
-    ensure(execution_gpu_ordinal < 16, "execution GPU ordinal outside bounds")?;
+    ensure(
+        execution_gpu_ordinal < 16,
+        "execution GPU ordinal outside bounds",
+    )?;
     ensure(
         (1..=64).contains(&command.collector_workers),
         "public collector count outside bounds",
@@ -795,8 +813,7 @@ pub fn run(command: Command) -> Result<Value, String> {
                 for (row, tensor, auxiliary) in &group {
                     let output = policy.replay(tensor, auxiliary)?;
                     ensure(
-                        bits(&output.logits) == row.logits
-                            && output.value.to_bits() == row.value,
+                        bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
                         "public rollout replay differs from current learner",
                     )?;
                 }
@@ -848,7 +865,10 @@ pub fn run(command: Command) -> Result<Value, String> {
             .iter()
             .map(|substeps| PublicTrainingGroup { substeps })
             .collect();
-        stage_seconds.insert("replay_targets_and_grouping", replay_started.elapsed().as_secs_f64());
+        stage_seconds.insert(
+            "replay_targets_and_grouping",
+            replay_started.elapsed().as_secs_f64(),
+        );
         let update_started = std::time::Instant::now();
         device
             .update_groups(
@@ -866,7 +886,10 @@ pub fn run(command: Command) -> Result<Value, String> {
         stage_seconds.insert("device_update_call", update_started.elapsed().as_secs_f64());
         let snapshot_started = std::time::Instant::now();
         (legacy, public) = device.snapshot().map_err(err)?;
-        stage_seconds.insert("device_snapshot_call", snapshot_started.elapsed().as_secs_f64());
+        stage_seconds.insert(
+            "device_snapshot_call",
+            snapshot_started.elapsed().as_secs_f64(),
+        );
         let install_started = std::time::Instant::now();
         validate_projection_mode(config, &public)?;
         ensure(
@@ -889,13 +912,19 @@ pub fn run(command: Command) -> Result<Value, String> {
             )?;
         }
         policy.install(&legacy.parameters, weights(&public)?)?;
-        stage_seconds.insert("validate_and_install", install_started.elapsed().as_secs_f64());
+        stage_seconds.insert(
+            "validate_and_install",
+            install_started.elapsed().as_secs_f64(),
+        );
         let encode_started = std::time::Instant::now();
         let optimizer = public_training::snapshot::encode(&legacy, &public).map_err(err)?;
         stage_seconds.insert("optimizer_encoding", encode_started.elapsed().as_secs_f64());
         let publish_started = std::time::Instant::now();
         let optimizer_hash = publish_bytes(&directory, "optimizer.json", &optimizer)?;
-        stage_seconds.insert("optimizer_publication", publish_started.elapsed().as_secs_f64());
+        stage_seconds.insert(
+            "optimizer_publication",
+            publish_started.elapsed().as_secs_f64(),
+        );
         let checkpoint_started = std::time::Instant::now();
         let checkpoint = Checkpoint {
             schema: "mtg-kernel-public-input-checkpoint/v1".into(),
@@ -906,7 +935,10 @@ pub fn run(command: Command) -> Result<Value, String> {
             trajectory_sha256: trajectory_hashes,
         };
         publish_json(&directory, "checkpoint.json", &checkpoint)?;
-        stage_seconds.insert("checkpoint_publication", checkpoint_started.elapsed().as_secs_f64());
+        stage_seconds.insert(
+            "checkpoint_publication",
+            checkpoint_started.elapsed().as_secs_f64(),
+        );
         let receipt = json!({"update":update,"execution_gpu_ordinal":execution_gpu_ordinal,"collector_workers":command.collector_workers,"episodes":trajectories.len(),"natural_games":trajectories.len(),"learner_groups":groups.len(),"learner_substeps":steps.iter().map(Vec::len).sum::<usize>(),
             "physical_decisions":trajectories.iter().map(|t|t.terminal.physical_decision_count).sum::<u64>(),"before_state_sha256":before,"after_state_sha256":optimizer_hash,
             "legacy_adam_step":legacy.adam_step,"public_adam_step":public.adam_step,"advantage_statistics":statistics,"collection_seconds":collection_seconds,"seconds":started.elapsed().as_secs_f64(),

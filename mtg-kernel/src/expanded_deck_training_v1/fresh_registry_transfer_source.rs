@@ -11,7 +11,8 @@ use crate::phase1_registry_transfer_v1::{
 };
 use registry_transfer_source::{
     batch_sha, check_pin, read_schedule, ExpandedRegistryContinuationV1,
-    ExpandedRegistryTransferScheduleV1, ExpandedRegistryTransferSourceV1, TransferTrainingContextV1,
+    ExpandedRegistryTransferScheduleV1, ExpandedRegistryTransferSourceV1,
+    TransferTrainingContextV1,
 };
 
 pub(super) const SOURCE_SCHEMA: &str = "mtg-kernel-expanded-fresh-registry-transfer-source/v1";

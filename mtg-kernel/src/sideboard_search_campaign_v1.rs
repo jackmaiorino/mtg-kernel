@@ -59,13 +59,19 @@ pub struct SearchCampaignManifestV1 {
 pub enum SearchCampaignErrorV1 {
     Io(String),
     Json(String),
-    HashMismatch { expected: String, actual: String },
+    HashMismatch {
+        expected: String,
+        actual: String,
+    },
     MissingHashFile(String),
     /// A manifest field or driver parameter failed a pre-registered
     /// validity check (fix round 1, item 3: `bo1_one_sided_alpha` and
     /// `bo3_confidence_level` must lie strictly inside (0, 1); also used by
     /// `run_bo3_ratification_v1`'s `game_index` parameter check).
-    InvalidParameter { name: String, reason: String },
+    InvalidParameter {
+        name: String,
+        reason: String,
+    },
 }
 
 /// The legacy BO3 driver uses projected RL decisions. Sampling and recurrent
@@ -94,7 +100,8 @@ impl std::fmt::Display for SearchCampaignErrorV1 {
             Self::Io(message) => write!(f, "io error: {message}"),
             Self::Json(message) => write!(f, "json error: {message}"),
             Self::HashMismatch { expected, actual } => write!(
-                f, "manifest sha256 mismatch: recorded {expected}, recomputed {actual}"
+                f,
+                "manifest sha256 mismatch: recorded {expected}, recomputed {actual}"
             ),
             Self::MissingHashFile(path) => write!(f, "missing sidecar hash file: {path}"),
             Self::InvalidParameter { name, reason } => {
@@ -120,7 +127,8 @@ pub fn manifest_sha256_v1(manifest: &SearchCampaignManifestV1) -> String {
 pub fn load_and_verify_manifest_v1(
     path: &std::path::Path,
 ) -> Result<SearchCampaignManifestV1, SearchCampaignErrorV1> {
-    let raw = std::fs::read_to_string(path).map_err(|error| SearchCampaignErrorV1::Io(error.to_string()))?;
+    let raw = std::fs::read_to_string(path)
+        .map_err(|error| SearchCampaignErrorV1::Io(error.to_string()))?;
     let hash_path = path.with_extension("json.sha256");
     let recorded = std::fs::read_to_string(&hash_path)
         .map_err(|_| SearchCampaignErrorV1::MissingHashFile(hash_path.display().to_string()))?;
@@ -136,13 +144,19 @@ pub fn load_and_verify_manifest_v1(
     // when they parse to the same struct.
     let actual = {
         let digest = Sha256::digest(raw.as_bytes());
-        digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>()
+        digest
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
     };
     if recorded != actual {
-        return Err(SearchCampaignErrorV1::HashMismatch { expected: recorded, actual });
+        return Err(SearchCampaignErrorV1::HashMismatch {
+            expected: recorded,
+            actual,
+        });
     }
-    let manifest: SearchCampaignManifestV1 =
-        serde_json::from_str(&raw).map_err(|error| SearchCampaignErrorV1::Json(error.to_string()))?;
+    let manifest: SearchCampaignManifestV1 = serde_json::from_str(&raw)
+        .map_err(|error| SearchCampaignErrorV1::Json(error.to_string()))?;
     validate_manifest_alpha_and_confidence_v1(&manifest)?;
     Ok(manifest)
 }
@@ -160,13 +174,19 @@ fn validate_manifest_alpha_and_confidence_v1(
     if !(manifest.bo1_one_sided_alpha > 0.0 && manifest.bo1_one_sided_alpha < 1.0) {
         return Err(SearchCampaignErrorV1::InvalidParameter {
             name: "bo1_one_sided_alpha".to_owned(),
-            reason: format!("must lie strictly inside (0, 1), got {}", manifest.bo1_one_sided_alpha),
+            reason: format!(
+                "must lie strictly inside (0, 1), got {}",
+                manifest.bo1_one_sided_alpha
+            ),
         });
     }
     if !(manifest.bo3_confidence_level > 0.0 && manifest.bo3_confidence_level < 1.0) {
         return Err(SearchCampaignErrorV1::InvalidParameter {
             name: "bo3_confidence_level".to_owned(),
-            reason: format!("must lie strictly inside (0, 1), got {}", manifest.bo3_confidence_level),
+            reason: format!(
+                "must lie strictly inside (0, 1), got {}",
+                manifest.bo3_confidence_level
+            ),
         });
     }
     Ok(())
@@ -189,7 +209,11 @@ pub fn candidate_seed_v1(
     hasher.update([game_index]);
     hasher.update(candidate_index.to_be_bytes());
     let digest = hasher.finalize();
-    u64::from_be_bytes(digest[0..8].try_into().expect("sha256 digest is at least 8 bytes"))
+    u64::from_be_bytes(
+        digest[0..8]
+            .try_into()
+            .expect("sha256 digest is at least 8 bytes"),
+    )
 }
 
 /// Supplied evidence of card exposure for an exact checkpoint. An inventory
@@ -221,7 +245,10 @@ pub enum EmbeddingExposureStatusV1 {
 /// Catalog membership establishes no training exposure. In the absence of
 /// checkpoint-bound evidence every row remains unknown.
 pub fn embedding_status_v1(card_ids: &[u16]) -> Vec<(u16, EmbeddingExposureStatusV1)> {
-    card_ids.iter().map(|&card_id| (card_id, EmbeddingExposureStatusV1::Unknown)).collect()
+    card_ids
+        .iter()
+        .map(|&card_id| (card_id, EmbeddingExposureStatusV1::Unknown))
+        .collect()
 }
 
 pub fn embedding_status_with_provenance_v1(
@@ -232,31 +259,33 @@ pub fn embedding_status_with_provenance_v1(
     let Some(provenance) = provenance else {
         return embedding_status_v1(card_ids);
     };
-    let valid_hash = |value: &str| {
-        value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-    };
+    let valid_hash =
+        |value: &str| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit());
     if provenance.checkpoint_weights_sha256 != checkpoint_weights_sha256
         || !valid_hash(&provenance.checkpoint_weights_sha256)
         || !valid_hash(&provenance.exposure_artifact_sha256)
     {
         return embedding_status_v1(card_ids);
     }
-    card_ids.iter().map(|&card_id| {
-        let status = if provenance.observed_card_ids.contains(&card_id) {
-            EmbeddingExposureStatusV1::ObservedInTraining {
-                checkpoint_weights_sha256: provenance.checkpoint_weights_sha256.clone(),
-                exposure_artifact_sha256: provenance.exposure_artifact_sha256.clone(),
-            }
-        } else if provenance.complete_history {
-            EmbeddingExposureStatusV1::NotObservedInCompleteHistory {
-                checkpoint_weights_sha256: provenance.checkpoint_weights_sha256.clone(),
-                exposure_artifact_sha256: provenance.exposure_artifact_sha256.clone(),
-            }
-        } else {
-            EmbeddingExposureStatusV1::Unknown
-        };
-        (card_id, status)
-    }).collect()
+    card_ids
+        .iter()
+        .map(|&card_id| {
+            let status = if provenance.observed_card_ids.contains(&card_id) {
+                EmbeddingExposureStatusV1::ObservedInTraining {
+                    checkpoint_weights_sha256: provenance.checkpoint_weights_sha256.clone(),
+                    exposure_artifact_sha256: provenance.exposure_artifact_sha256.clone(),
+                }
+            } else if provenance.complete_history {
+                EmbeddingExposureStatusV1::NotObservedInCompleteHistory {
+                    checkpoint_weights_sha256: provenance.checkpoint_weights_sha256.clone(),
+                    exposure_artifact_sha256: provenance.exposure_artifact_sha256.clone(),
+                }
+            } else {
+                EmbeddingExposureStatusV1::Unknown
+            };
+            (card_id, status)
+        })
+        .collect()
 }
 
 /// Bounded 1-card swaps: for every mainboard card_id (ascending) and every
@@ -290,8 +319,14 @@ pub fn generate_one_swap_candidates_v1(
                 registered.deck_id().to_owned(),
                 opponent_deck_id.to_owned(),
                 game_index,
-                vec![CardCountV1 { card_id: in_id, count: 1 }],
-                vec![CardCountV1 { card_id: out_id, count: 1 }],
+                vec![CardCountV1 {
+                    card_id: in_id,
+                    count: 1,
+                }],
+                vec![CardCountV1 {
+                    card_id: out_id,
+                    count: 1,
+                }],
             );
             if let Ok(plan) = plan {
                 candidates.push(plan);
@@ -335,8 +370,14 @@ pub fn generate_multi_swap_candidates_v1(
                 registered.deck_id().to_owned(),
                 opponent_deck_id.to_owned(),
                 game_index,
-                in_combo.iter().map(|&card_id| CardCountV1 { card_id, count: 1 }).collect(),
-                out_combo.iter().map(|&card_id| CardCountV1 { card_id, count: 1 }).collect(),
+                in_combo
+                    .iter()
+                    .map(|&card_id| CardCountV1 { card_id, count: 1 })
+                    .collect(),
+                out_combo
+                    .iter()
+                    .map(|&card_id| CardCountV1 { card_id, count: 1 })
+                    .collect(),
             );
             if let Ok(plan) = plan {
                 candidates.push(plan);
@@ -434,21 +475,32 @@ pub fn load_warm_start_plan_inputs_v1(
     path: &std::path::Path,
     expected_sha256: &str,
 ) -> Result<Vec<SideboardPlanV1>, SearchCampaignErrorV1> {
-    let raw = std::fs::read_to_string(path).map_err(|error| SearchCampaignErrorV1::Io(error.to_string()))?;
+    let raw = std::fs::read_to_string(path)
+        .map_err(|error| SearchCampaignErrorV1::Io(error.to_string()))?;
     let actual = {
         let digest = Sha256::digest(raw.as_bytes());
-        digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>()
+        digest
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
     };
     if actual != expected_sha256 {
-        return Err(SearchCampaignErrorV1::HashMismatch { expected: expected_sha256.to_owned(), actual });
+        return Err(SearchCampaignErrorV1::HashMismatch {
+            expected: expected_sha256.to_owned(),
+            actual,
+        });
     }
-    let parsed: WarmStartPlanInputsV1 =
-        serde_json::from_str(&raw).map_err(|error| SearchCampaignErrorV1::Json(error.to_string()))?;
+    let parsed: WarmStartPlanInputsV1 = serde_json::from_str(&raw)
+        .map_err(|error| SearchCampaignErrorV1::Json(error.to_string()))?;
     let mut plans = Vec::new();
     for row in parsed.rows {
-        if let Ok(plan) =
-            SideboardPlanV1::new_v1(row.self_deck_id, row.opponent_deck_id, row.game_index, row.cards_in, row.cards_out)
-        {
+        if let Ok(plan) = SideboardPlanV1::new_v1(
+            row.self_deck_id,
+            row.opponent_deck_id,
+            row.game_index,
+            row.cards_in,
+            row.cards_out,
+        ) {
             plans.push(plan);
         }
     }
@@ -478,23 +530,36 @@ pub fn resolve_opponent_mainboard_for_cell_v1(
     game_index: u8,
     sideboard_policy: &crate::sideboard::DeterministicSideboardPolicyV1,
 ) -> Result<(Vec<u16>, OpponentResolutionVariantV1), SideboardErrorV1> {
-    let opponent_registered = crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(opponent_deck_id)?;
+    let opponent_registered =
+        crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(opponent_deck_id)?;
     if game_index == 1 {
         return Ok((
-            opponent_registered.registered_configuration().mainboard().to_vec(),
+            opponent_registered
+                .registered_configuration()
+                .mainboard()
+                .to_vec(),
             OpponentResolutionVariantV1::RegisteredMainboard,
         ));
     }
     let plan = sideboard_policy.plan_for_v1(opponent_deck_id, self_deck_id, game_index)?;
     if plan.cards_in().is_empty() && plan.cards_out().is_empty() {
         return Ok((
-            opponent_registered.registered_configuration().mainboard().to_vec(),
+            opponent_registered
+                .registered_configuration()
+                .mainboard()
+                .to_vec(),
             OpponentResolutionVariantV1::RegisteredMainboard,
         ));
     }
-    let (configuration, _receipt) =
-        opponent_registered.apply_plan_v1(&plan, "search-driver-opponent-resolution/v1", [0u8; 32])?;
-    Ok((configuration.mainboard().to_vec(), OpponentResolutionVariantV1::Bo3RatifiedPlan))
+    let (configuration, _receipt) = opponent_registered.apply_plan_v1(
+        &plan,
+        "search-driver-opponent-resolution/v1",
+        [0u8; 32],
+    )?;
+    Ok((
+        configuration.mainboard().to_vec(),
+        OpponentResolutionVariantV1::Bo3RatifiedPlan,
+    ))
 }
 
 /// Design section 4's disclosure requirement: "an `opponent_embedding_status`
@@ -502,7 +567,9 @@ pub fn resolve_opponent_mainboard_for_cell_v1(
 /// accepted-opponent-plan variant was used." Identical trained-check logic
 /// to `embedding_status_v1`, kept as a separately named function so a
 /// receipt row's two lists are never confused with each other by call site.
-pub fn opponent_embedding_status_v1(opponent_plan_cards_in: &[u16]) -> Vec<(u16, EmbeddingExposureStatusV1)> {
+pub fn opponent_embedding_status_v1(
+    opponent_plan_cards_in: &[u16],
+) -> Vec<(u16, EmbeddingExposureStatusV1)> {
     embedding_status_v1(opponent_plan_cards_in)
 }
 
@@ -531,11 +598,39 @@ pub struct CandidateReceiptFieldsV1 {
 /// `derive_n_per_cell_v1`. Self-contained: no new external dependency
 /// (Global Constraints).
 fn inverse_normal_cdf_v1(p: f64) -> f64 {
-    assert!(p > 0.0 && p < 1.0, "inverse_normal_cdf_v1 is defined on (0, 1)");
-    const A: [f64; 6] = [-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02, 1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00];
-    const B: [f64; 5] = [-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02, 6.680131188771972e+01, -1.328068155288572e+01];
-    const C: [f64; 6] = [-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00, -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00];
-    const D: [f64; 4] = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00, 3.754408661907416e+00];
+    assert!(
+        p > 0.0 && p < 1.0,
+        "inverse_normal_cdf_v1 is defined on (0, 1)"
+    );
+    const A: [f64; 6] = [
+        -3.969683028665376e+01,
+        2.209460984245205e+02,
+        -2.759285104469687e+02,
+        1.383577518672690e+02,
+        -3.066479806614716e+01,
+        2.506628277459239e+00,
+    ];
+    const B: [f64; 5] = [
+        -5.447609879822406e+01,
+        1.615858368580409e+02,
+        -1.556989798598866e+02,
+        6.680131188771972e+01,
+        -1.328068155288572e+01,
+    ];
+    const C: [f64; 6] = [
+        -7.784894002430293e-03,
+        -3.223964580411365e-01,
+        -2.400758277161838e+00,
+        -2.549732539343734e+00,
+        4.374664141464968e+00,
+        2.938163982698783e+00,
+    ];
+    const D: [f64; 4] = [
+        7.784695709041462e-03,
+        3.224671290700398e-01,
+        2.445134137142996e+00,
+        3.754408661907416e+00,
+    ];
     let p_low = 0.02425;
     let p_high = 1.0 - p_low;
     if p < p_low {
@@ -558,7 +653,11 @@ fn inverse_normal_cdf_v1(p: f64) -> f64 {
 /// ("n = ceil((z_alpha + z_power)^2 * variance / minimum_win_rate_delta^2),
 /// variance = p(1-p) at p = 0.5"): design section 4, "N is a power
 /// calculation, not a budget-driven guess."
-pub fn derive_n_per_cell_v1(minimum_win_rate_delta: f64, target_power: f64, one_sided_alpha: f64) -> u32 {
+pub fn derive_n_per_cell_v1(
+    minimum_win_rate_delta: f64,
+    target_power: f64,
+    one_sided_alpha: f64,
+) -> u32 {
     assert!(minimum_win_rate_delta > 0.0);
     assert!(target_power > 0.0 && target_power < 1.0);
     assert!(one_sided_alpha > 0.0 && one_sided_alpha < 1.0);
@@ -582,7 +681,10 @@ pub fn bo1_provisional_accept_v1(
     seed: u64,
 ) -> (bool, crate::paired_bo1_harness_v1::PairedBootstrapResultV1) {
     let result = crate::paired_bo1_harness_v1::paired_bootstrap_ci_with_alpha_v1(
-        deltas, manifest.bootstrap_resample_count, seed, manifest.bo1_bootstrap_sidedness,
+        deltas,
+        manifest.bootstrap_resample_count,
+        seed,
+        manifest.bo1_bootstrap_sidedness,
         manifest.bo1_one_sided_alpha,
     );
     (result.lower > 0.0, result)
@@ -600,7 +702,10 @@ pub fn bo3_ratify_v1(
     seed: u64,
 ) -> (bool, crate::paired_bo1_harness_v1::PairedBootstrapResultV1) {
     let result = crate::paired_bo1_harness_v1::paired_bootstrap_ci_with_alpha_v1(
-        deltas, manifest.bootstrap_resample_count, seed, manifest.bo3_bootstrap_sidedness,
+        deltas,
+        manifest.bootstrap_resample_count,
+        seed,
+        manifest.bo3_bootstrap_sidedness,
         1.0 - manifest.bo3_confidence_level,
     );
     // Deltas are candidate wins minus incumbent wins. An interval entirely
@@ -647,13 +752,20 @@ pub fn run_bo1_provisional_search_for_cell_v1(
                 candidate_index as u32 * manifest.n_per_cell + trial,
             );
             let outcome = crate::paired_bo1_harness_v1::run_paired_bo1_trial_v1(
-                &candidate_mainboard, &working_best_mainboard, opponent_mainboard,
-                PlayerId::P0, seed, PlayerId::P0, 2000, policy,
+                &candidate_mainboard,
+                &working_best_mainboard,
+                opponent_mainboard,
+                PlayerId::P0,
+                seed,
+                PlayerId::P0,
+                2000,
+                policy,
             )
             .map_err(|error| SearchCampaignErrorV1::Io(error.to_string()))?;
             deltas.push(outcome.delta);
         }
-        let (accepted, _result) = bo1_provisional_accept_v1(&deltas, manifest, manifest.bootstrap_seed);
+        let (accepted, _result) =
+            bo1_provisional_accept_v1(&deltas, manifest, manifest.bootstrap_seed);
         if accepted {
             working_best_mainboard = candidate_mainboard;
             working_best = Some(candidate.clone());
@@ -759,11 +871,17 @@ fn resolve_bo3_game_mainboards_v1(
     sideboard_policy: &crate::sideboard::DeterministicSideboardPolicyV1,
 ) -> Result<(Vec<u16>, Vec<u16>), SearchCampaignErrorV1> {
     let (opponent_mainboard, _variant) = resolve_opponent_mainboard_for_cell_v1(
-        opponent_deck_id, self_deck_id, physical_game_index, sideboard_policy,
+        opponent_deck_id,
+        self_deck_id,
+        physical_game_index,
+        sideboard_policy,
     )
     .map_err(|error| SearchCampaignErrorV1::Io(error.to_string()))?;
     let self_mainboard = if physical_game_index == 1 {
-        self_registered.registered_configuration().mainboard().to_vec()
+        self_registered
+            .registered_configuration()
+            .mainboard()
+            .to_vec()
     } else if physical_game_index >= cell_game_index {
         let (configuration, _receipt) = self_registered
             .apply_plan_v1(plan_under_test, "search-driver-bo3-self/v1", [0u8; 32])
@@ -771,7 +889,10 @@ fn resolve_bo3_game_mainboards_v1(
         configuration.mainboard().to_vec()
     } else {
         let (mainboard, _variant) = resolve_opponent_mainboard_for_cell_v1(
-            self_deck_id, opponent_deck_id, physical_game_index, sideboard_policy,
+            self_deck_id,
+            opponent_deck_id,
+            physical_game_index,
+            sideboard_policy,
         )
         .map_err(|error| SearchCampaignErrorV1::Io(error.to_string()))?;
         mainboard
@@ -814,16 +935,23 @@ fn play_bo3_match_for_seat_v1(
     arm: Bo3RatificationArmV1,
     play_policy: &mut dyn PairedBo3PolicyV1,
 ) -> Result<(bool, Vec<Bo3GameTraceV1>), SearchCampaignErrorV1> {
-    let self_registered = crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(self_deck_id)
-        .map_err(|error| SearchCampaignErrorV1::Io(error.to_string()))?;
-    let opponent_registered = crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(opponent_deck_id)
-        .map_err(|error| SearchCampaignErrorV1::Io(error.to_string()))?;
+    let self_registered =
+        crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(self_deck_id)
+            .map_err(|error| SearchCampaignErrorV1::Io(error.to_string()))?;
+    let opponent_registered =
+        crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(opponent_deck_id)
+            .map_err(|error| SearchCampaignErrorV1::Io(error.to_string()))?;
     let mut match_session = crate::bo3_session::BestOfThreeDeckMatchV1::new_v1(
-        self_registered.clone(), opponent_registered, sideboard_policy.clone(), PlayerId::P0,
+        self_registered.clone(),
+        opponent_registered,
+        sideboard_policy.clone(),
+        PlayerId::P0,
     )
     .map_err(|error| SearchCampaignErrorV1::Io(format!("{error:?}")))?;
 
-    play_policy.reset_for_match_v1(crate::paired_bo1_harness_v1::paired_policy_seeds_v1(pair_environment_seed))?;
+    play_policy.reset_for_match_v1(crate::paired_bo1_harness_v1::paired_policy_seeds_v1(
+        pair_environment_seed,
+    ))?;
     let mut trace = Vec::new();
     loop {
         let chooser = match match_session.match_state().phase() {
@@ -840,17 +968,29 @@ fn play_bo3_match_for_seat_v1(
         let start = game.start();
 
         let (self_mainboard, opponent_mainboard) = resolve_bo3_game_mainboards_v1(
-            &self_registered, self_deck_id, opponent_deck_id, start.game_index, cell_game_index,
-            plan_under_test, sideboard_policy,
+            &self_registered,
+            self_deck_id,
+            opponent_deck_id,
+            start.game_index,
+            cell_game_index,
+            plan_under_test,
+            sideboard_policy,
         )?;
         if start.game_index == 1 {
             // Cross-check against bo3_session's own independently computed
             // game-1 configuration; both must be the registered mainboard.
-            let bo3_self = game.configuration(PlayerId::P0).map(|configuration| configuration.mainboard());
-            let bo3_opponent = game.configuration(PlayerId::P1).map(|configuration| configuration.mainboard());
-            if bo3_self != Some(self_mainboard.as_slice()) || bo3_opponent != Some(opponent_mainboard.as_slice()) {
+            let bo3_self = game
+                .configuration(PlayerId::P0)
+                .map(|configuration| configuration.mainboard());
+            let bo3_opponent = game
+                .configuration(PlayerId::P1)
+                .map(|configuration| configuration.mainboard());
+            if bo3_self != Some(self_mainboard.as_slice())
+                || bo3_opponent != Some(opponent_mainboard.as_slice())
+            {
                 return Err(SearchCampaignErrorV1::Io(
-                    "game 1 mainboard cross-check against bo3_session's own configuration failed".to_owned(),
+                    "game 1 mainboard cross-check against bo3_session's own configuration failed"
+                        .to_owned(),
                 ));
             }
         }
@@ -870,23 +1010,33 @@ fn play_bo3_match_for_seat_v1(
         let winner = loop {
             match session.current_response() {
                 crate::rl_session::RlSessionResponseV1::Terminal(terminal) => {
-                    if terminal.terminal_classification != crate::rl::TerminalClassificationV1::Natural {
+                    if terminal.terminal_classification
+                        != crate::rl::TerminalClassificationV1::Natural
+                    {
                         return Err(SearchCampaignErrorV1::InvalidParameter {
                             name: "terminal_classification".to_owned(),
-                            reason: format!("BO3 game ended as {:?}/{:?}; no match result is recorded",
-                                terminal.terminal_classification, terminal.terminal_outcome),
+                            reason: format!(
+                                "BO3 game ended as {:?}/{:?}; no match result is recorded",
+                                terminal.terminal_classification, terminal.terminal_outcome
+                            ),
                         });
                     }
                     break terminal.winner;
                 }
                 crate::rl_session::RlSessionResponseV1::Decision(decision) => {
-                    let (selected_index, selected_action_id) = play_policy.select_action_v1(PairedBo3PolicyInputV1 {
-                        acting_player: decision.acting_player,
-                        observation: &decision.observation,
-                        legal_actions: &decision.legal_actions,
-                    })?;
+                    let (selected_index, selected_action_id) =
+                        play_policy.select_action_v1(PairedBo3PolicyInputV1 {
+                            acting_player: decision.acting_player,
+                            observation: &decision.observation,
+                            legal_actions: &decision.legal_actions,
+                        })?;
                     session
-                        .step(decision.episode_id, decision.step, selected_index, &selected_action_id)
+                        .step(
+                            decision.episode_id,
+                            decision.step,
+                            selected_index,
+                            &selected_action_id,
+                        )
                         .map_err(|error| SearchCampaignErrorV1::Io(error.to_string()))?;
                 }
             }
@@ -903,8 +1053,12 @@ fn play_bo3_match_for_seat_v1(
             starting_player: start.starting_player,
             chooser: start.chooser,
             hash_convention: TRACE_MAINBOARD_HASH_CONVENTION_V1.to_owned(),
-            self_mainboard_sha256: hex_encode_v1(crate::sideboard::mainboard_slice_sha256_v1(&self_mainboard)),
-            opponent_mainboard_sha256: hex_encode_v1(crate::sideboard::mainboard_slice_sha256_v1(&opponent_mainboard)),
+            self_mainboard_sha256: hex_encode_v1(crate::sideboard::mainboard_slice_sha256_v1(
+                &self_mainboard,
+            )),
+            opponent_mainboard_sha256: hex_encode_v1(crate::sideboard::mainboard_slice_sha256_v1(
+                &opponent_mainboard,
+            )),
             winner: winner_player_id,
         });
         let outcome = match winner_player_id {
@@ -918,7 +1072,12 @@ fn play_bo3_match_for_seat_v1(
             crate::bo3_match::MatchTransitionV1::NextGameChoice { .. } => continue,
             crate::bo3_match::MatchTransitionV1::Complete { outcome } => {
                 return Ok((
-                    matches!(outcome, crate::bo3_match::MatchOutcomeV1::Winner { winner: PlayerId::P0 }),
+                    matches!(
+                        outcome,
+                        crate::bo3_match::MatchOutcomeV1::Winner {
+                            winner: PlayerId::P0
+                        }
+                    ),
                     trace,
                 ));
             }
@@ -962,14 +1121,34 @@ pub fn run_bo3_ratification_v1(
     let mut deltas: Vec<i8> = Vec::with_capacity(manifest.m_bo3_matches_per_ratification as usize);
     let mut trace = Vec::new();
     for match_index in 0..manifest.m_bo3_matches_per_ratification {
-        let seed = candidate_seed_v1(manifest.master_seed, self_deck_id, opponent_deck_id, game_index, match_index);
+        let seed = candidate_seed_v1(
+            manifest.master_seed,
+            self_deck_id,
+            opponent_deck_id,
+            game_index,
+            match_index,
+        );
         let (candidate_won, candidate_trace) = play_bo3_match_for_seat_v1(
-            self_deck_id, opponent_deck_id, game_index, candidate_plan, sideboard_policy, seed,
-            match_index, Bo3RatificationArmV1::Candidate, play_policy,
+            self_deck_id,
+            opponent_deck_id,
+            game_index,
+            candidate_plan,
+            sideboard_policy,
+            seed,
+            match_index,
+            Bo3RatificationArmV1::Candidate,
+            play_policy,
         )?;
         let (incumbent_won, incumbent_trace) = play_bo3_match_for_seat_v1(
-            self_deck_id, opponent_deck_id, game_index, incumbent_plan, sideboard_policy, seed,
-            match_index, Bo3RatificationArmV1::Incumbent, play_policy,
+            self_deck_id,
+            opponent_deck_id,
+            game_index,
+            incumbent_plan,
+            sideboard_policy,
+            seed,
+            match_index,
+            Bo3RatificationArmV1::Incumbent,
+            play_policy,
         )?;
         trace.extend(candidate_trace);
         trace.extend(incumbent_trace);
@@ -997,7 +1176,8 @@ mod tests {
                 minimum_win_rate_delta: 0.05,
                 target_power: 0.8,
                 calibration_mean_seconds_per_game: 0.42,
-                formula: "n = ceil((z_alpha + z_power)^2 * variance / minimum_win_rate_delta^2)".to_owned(),
+                formula: "n = ceil((z_alpha + z_power)^2 * variance / minimum_win_rate_delta^2)"
+                    .to_owned(),
             },
             m_bo3_matches_per_ratification: 60,
             warm_start_plan_inputs_sha256: "0".repeat(64),
@@ -1014,7 +1194,10 @@ mod tests {
     /// `sample_manifest()` with `n_per_cell` overridden, for the driver
     /// tests (Step 13) that need a small, fast trial count.
     fn sample_manifest_with_n_per_cell_v1(n_per_cell: u32) -> SearchCampaignManifestV1 {
-        SearchCampaignManifestV1 { n_per_cell, ..sample_manifest() }
+        SearchCampaignManifestV1 {
+            n_per_cell,
+            ..sample_manifest()
+        }
     }
 
     #[test]
@@ -1033,17 +1216,23 @@ mod tests {
         let manifest = sample_manifest();
         let path = dir.join("manifest.json");
         std::fs::write(&path, manifest_canonical_bytes_v1(&manifest)).unwrap();
-        std::fs::write(path.with_extension("json.sha256"), manifest_sha256_v1(&manifest)).unwrap();
+        std::fs::write(
+            path.with_extension("json.sha256"),
+            manifest_sha256_v1(&manifest),
+        )
+        .unwrap();
         let loaded = load_and_verify_manifest_v1(&path).expect("untampered manifest loads");
         assert_eq!(loaded, manifest);
 
         // Tamper with the file on disk without updating the sidecar hash.
         let mut tampered_bytes = manifest_canonical_bytes_v1(&manifest);
-        let mut tampered: SearchCampaignManifestV1 = serde_json::from_slice(&tampered_bytes).unwrap();
+        let mut tampered: SearchCampaignManifestV1 =
+            serde_json::from_slice(&tampered_bytes).unwrap();
         tampered.k_max_candidates_per_cell += 1;
         tampered_bytes = manifest_canonical_bytes_v1(&tampered);
         std::fs::write(&path, tampered_bytes).unwrap();
-        let error = load_and_verify_manifest_v1(&path).expect_err("tampered manifest must be refused");
+        let error =
+            load_and_verify_manifest_v1(&path).expect_err("tampered manifest must be refused");
         assert!(matches!(error, SearchCampaignErrorV1::HashMismatch { .. }));
     }
 
@@ -1063,7 +1252,10 @@ mod tests {
         let pulse_of_murasa_id = crate::card_def::card_id_by_name("Pulse of Murasa")
             .expect("Pulse of Murasa is registered");
         let status = embedding_status_v1(&[pulse_of_murasa_id]);
-        assert_eq!(status, vec![(pulse_of_murasa_id, EmbeddingExposureStatusV1::Unknown)]);
+        assert_eq!(
+            status,
+            vec![(pulse_of_murasa_id, EmbeddingExposureStatusV1::Unknown)]
+        );
     }
 
     #[test]
@@ -1076,11 +1268,17 @@ mod tests {
             complete_history: false,
         };
         let partial = embedding_status_with_provenance_v1(&[1, 2], &checkpoint, Some(&provenance));
-        assert!(matches!(partial[0].1, EmbeddingExposureStatusV1::ObservedInTraining { .. }));
+        assert!(matches!(
+            partial[0].1,
+            EmbeddingExposureStatusV1::ObservedInTraining { .. }
+        ));
         assert_eq!(partial[1].1, EmbeddingExposureStatusV1::Unknown);
         provenance.complete_history = true;
         let complete = embedding_status_with_provenance_v1(&[1, 2], &checkpoint, Some(&provenance));
-        assert!(matches!(complete[1].1, EmbeddingExposureStatusV1::NotObservedInCompleteHistory { .. }));
+        assert!(matches!(
+            complete[1].1,
+            EmbeddingExposureStatusV1::NotObservedInCompleteHistory { .. }
+        ));
         assert_eq!(
             embedding_status_with_provenance_v1(&[1, 2], &"c".repeat(64), Some(&provenance)),
             embedding_status_v1(&[1, 2]),
@@ -1099,7 +1297,8 @@ mod tests {
 
     #[test]
     fn one_swap_candidates_are_legal_plans_restricted_to_the_registered_75_and_deterministic() {
-        let registered = checked_in_pauper_registered_deck_by_id_v1("Burn").expect("Burn is checked in");
+        let registered =
+            checked_in_pauper_registered_deck_by_id_v1("Burn").expect("Burn is checked in");
         // k = 2 is provably smaller than Burn's total legal one-swap count:
         // Burn's registered 75 has 60 mainboard and 15 sideboard cards, so
         // mainboard_ids.len() * sideboard_ids.len() (an upper bound on
@@ -1110,17 +1309,30 @@ mod tests {
         let k = 2;
         let a = generate_one_swap_candidates_v1(&registered, "Rally", 2, k);
         let b = generate_one_swap_candidates_v1(&registered, "Rally", 2, k);
-        assert_eq!(a.len(), k as usize, "the cap must actually fire at exactly k candidates");
+        assert_eq!(
+            a.len(),
+            k as usize,
+            "the cap must actually fire at exactly k candidates"
+        );
         for (candidate_a, candidate_b) in a.iter().zip(b.iter()) {
             assert_eq!(
-                candidate_a.cards_in(), candidate_b.cards_in(),
+                candidate_a.cards_in(),
+                candidate_b.cards_in(),
                 "same traversal order and k must reproduce the identical candidate list"
             );
         }
-        let sideboard_ids: std::collections::BTreeSet<u16> =
-            registered.registered_configuration().sideboard().iter().copied().collect();
-        let mainboard_ids: std::collections::BTreeSet<u16> =
-            registered.registered_configuration().mainboard().iter().copied().collect();
+        let sideboard_ids: std::collections::BTreeSet<u16> = registered
+            .registered_configuration()
+            .sideboard()
+            .iter()
+            .copied()
+            .collect();
+        let mainboard_ids: std::collections::BTreeSet<u16> = registered
+            .registered_configuration()
+            .mainboard()
+            .iter()
+            .copied()
+            .collect();
         for plan in &a {
             for row in plan.cards_in() {
                 assert!(
@@ -1144,54 +1356,78 @@ mod tests {
 
     #[test]
     fn multi_swap_candidates_swap_exactly_degree_cards_and_stay_within_the_registered_75() {
-        let registered = checked_in_pauper_registered_deck_by_id_v1("Burn").expect("Burn is checked in");
+        let registered =
+            checked_in_pauper_registered_deck_by_id_v1("Burn").expect("Burn is checked in");
         for degree in [2usize, 3, 4] {
             let candidates = generate_multi_swap_candidates_v1(&registered, "Rally", 2, degree, 3);
-            assert!(!candidates.is_empty(), "degree {degree} must produce at least one candidate");
+            assert!(
+                !candidates.is_empty(),
+                "degree {degree} must produce at least one candidate"
+            );
             for plan in &candidates {
                 assert_eq!(plan.cards_in().len(), degree);
                 assert_eq!(plan.cards_out().len(), degree);
                 registered
                     .apply_plan_v1(plan, "multi-swap-check/v1", [0u8; 32])
-                    .unwrap_or_else(|error| panic!("degree-{degree} candidate must apply cleanly: {error}"));
+                    .unwrap_or_else(|error| {
+                        panic!("degree-{degree} candidate must apply cleanly: {error}")
+                    });
             }
         }
     }
 
     #[test]
-    fn hill_climb_search_terminates_within_the_iteration_bound_and_converges_on_a_monotonic_score() {
+    fn hill_climb_search_terminates_within_the_iteration_bound_and_converges_on_a_monotonic_score()
+    {
         // Generic over a plain `i32` "score" rather than `SideboardPlanV1`:
         // this exercises the search loop's own termination and acceptance
         // logic in isolation, independent of any deck-specific scoring.
-        let always_climb_to_ten = |current: &i32, candidate: &i32| *candidate <= 10 && *candidate > *current;
+        let always_climb_to_ten =
+            |current: &i32, candidate: &i32| *candidate <= 10 && *candidate > *current;
         let neighborhood = |current: &i32| vec![current + 1];
         let converged = hill_climb_search_v1(0i32, neighborhood, 100, always_climb_to_ten);
-        assert_eq!(converged, 10, "hill-climb converges to the ceiling the acceptance function allows");
+        assert_eq!(
+            converged, 10,
+            "hill-climb converges to the ceiling the acceptance function allows"
+        );
 
         let always_accept = |_current: &i32, _candidate: &i32| true;
-        let bounded = hill_climb_search_v1(0i32, |current: &i32| vec![current + 1], 3, always_accept);
-        assert_eq!(bounded, 3, "with max_iterations = 3 and an always-accept function, exactly 3 steps run");
+        let bounded =
+            hill_climb_search_v1(0i32, |current: &i32| vec![current + 1], 3, always_accept);
+        assert_eq!(
+            bounded, 3,
+            "with max_iterations = 3 and an always-accept function, exactly 3 steps run"
+        );
     }
 
     #[test]
     fn warm_start_plan_inputs_load_and_verify_against_their_own_sha256() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../docs/research/sideboard_plan_inputs_2026-09/plan_inputs_warm_start_v1.json");
-        let raw = std::fs::read_to_string(&path).expect("warm-start plan-inputs file exists (Step 9 creates it)");
+        let raw = std::fs::read_to_string(&path)
+            .expect("warm-start plan-inputs file exists (Step 9 creates it)");
         let expected = {
             let digest = Sha256::digest(raw.as_bytes());
-            digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>()
+            digest
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
         };
         let plans = load_warm_start_plan_inputs_v1(&path, &expected)
             .expect("the real file must load against its own freshly computed hash");
-        assert!(!plans.is_empty(), "the warm-start file must seed at least one cell");
+        assert!(
+            !plans.is_empty(),
+            "the warm-start file must seed at least one cell"
+        );
         let wrong_hash = "0".repeat(64);
-        let error = load_warm_start_plan_inputs_v1(&path, &wrong_hash).expect_err("a wrong hash must be refused");
+        let error = load_warm_start_plan_inputs_v1(&path, &wrong_hash)
+            .expect_err("a wrong hash must be refused");
         assert!(matches!(error, SearchCampaignErrorV1::HashMismatch { .. }));
     }
 
     #[test]
-    fn resolve_opponent_mainboard_uses_the_registered_mainboard_unconditionally_at_game_index_one() {
+    fn resolve_opponent_mainboard_uses_the_registered_mainboard_unconditionally_at_game_index_one()
+    {
         let policy = DeterministicSideboardPolicyV1::checked_in_pauper_v1().unwrap();
         let (mainboard, variant) =
             resolve_opponent_mainboard_for_cell_v1("Rally", "Burn", 1, &policy).unwrap();
@@ -1224,7 +1460,10 @@ mod tests {
                 assert_eq!(mainboard, expected);
             }
             OpponentResolutionVariantV1::Bo3RatifiedPlan => {
-                assert_eq!(mainboard.len(), crate::sideboard::REGISTERED_MAINBOARD_SIZE_V1);
+                assert_eq!(
+                    mainboard.len(),
+                    crate::sideboard::REGISTERED_MAINBOARD_SIZE_V1
+                );
             }
         }
     }
@@ -1234,7 +1473,10 @@ mod tests {
         let pulse_of_murasa_id = crate::card_def::card_id_by_name("Pulse of Murasa")
             .expect("Pulse of Murasa is registered");
         let status = opponent_embedding_status_v1(&[pulse_of_murasa_id]);
-        assert_eq!(status, vec![(pulse_of_murasa_id, EmbeddingExposureStatusV1::Unknown)]);
+        assert_eq!(
+            status,
+            vec![(pulse_of_murasa_id, EmbeddingExposureStatusV1::Unknown)]
+        );
     }
 
     #[test]
@@ -1246,12 +1488,13 @@ mod tests {
         assert_eq!(n, 619);
     }
 
-    use crate::bo3_session::BestOfThreeDeckMatchV1;
     use crate::bo3_match::{GameOutcomeV1, PlayDrawChoiceV1};
+    use crate::bo3_session::BestOfThreeDeckMatchV1;
     use crate::paired_bo1_harness_v1::{run_paired_bo1_trial_v1, PairedTrialOutcomeV1};
     use crate::state::SplitMix64;
 
-    fn random_policy_v1() -> crate::paired_bo1_harness_v1::policy_test_support::SeededRandomBo1PolicyV1 {
+    fn random_policy_v1(
+    ) -> crate::paired_bo1_harness_v1::policy_test_support::SeededRandomBo1PolicyV1 {
         // The paired driver supplies and resets both seat streams for every arm.
         crate::paired_bo1_harness_v1::policy_test_support::SeededRandomBo1PolicyV1::default()
     }
@@ -1263,7 +1506,10 @@ mod tests {
 
     impl Default for SeededRandomBo3PolicyV1 {
         fn default() -> Self {
-            Self { rng: [SplitMix64::seed(0), SplitMix64::seed(0)], resets: Vec::new() }
+            Self {
+                rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
+                resets: Vec::new(),
+            }
         }
     }
 
@@ -1274,7 +1520,10 @@ mod tests {
             Ok(())
         }
 
-        fn select_action_v1(&mut self, input: PairedBo3PolicyInputV1<'_>) -> Result<(u32, String), SearchCampaignErrorV1> {
+        fn select_action_v1(
+            &mut self,
+            input: PairedBo3PolicyInputV1<'_>,
+        ) -> Result<(u32, String), SearchCampaignErrorV1> {
             let seat = match input.acting_player {
                 crate::rl::PlayerSeatV1::P0 => 0,
                 crate::rl::PlayerSeatV1::P1 => 1,
@@ -1316,7 +1565,8 @@ mod tests {
 
     #[test]
     fn bo3_ratification_uses_the_bo3_assigned_starting_player_for_every_game() {
-        let match_session_result = BestOfThreeDeckMatchV1::checked_in_pauper_v1("Burn", "Rally", PlayerId::P0);
+        let match_session_result =
+            BestOfThreeDeckMatchV1::checked_in_pauper_v1("Burn", "Rally", PlayerId::P0);
         let mut match_session = match match_session_result {
             Ok(session) => session,
             Err(error) => panic!(
@@ -1328,13 +1578,25 @@ mod tests {
             .expect("game 1 prepares");
         let start = game.start();
         assert_eq!(start.game_index, 1);
-        assert_eq!(start.starting_player, PlayerId::P0, "PlayDrawChoiceV1::Play by the chooser starts that player");
+        assert_eq!(
+            start.starting_player,
+            PlayerId::P0,
+            "PlayDrawChoiceV1::Play by the chooser starts that player"
+        );
         // The binding this task's driver must honor: every BO3-ratification
         // game is constructed from exactly this starting_player value via
         // Task A's starting-player-aware explicit-deck constructor, never
         // the plain P0-only one.
-        let p0_mainboard = game.configuration(PlayerId::P0).unwrap().mainboard().to_vec();
-        let p1_mainboard = game.configuration(PlayerId::P1).unwrap().mainboard().to_vec();
+        let p0_mainboard = game
+            .configuration(PlayerId::P0)
+            .unwrap()
+            .mainboard()
+            .to_vec();
+        let p1_mainboard = game
+            .configuration(PlayerId::P1)
+            .unwrap()
+            .mainboard()
+            .to_vec();
         let deck_ids = ["Burn".to_owned(), "Rally".to_owned()];
         let session = crate::rl_session::RlEpisodeSessionV1::reset_with_explicit_decks_and_limits_with_starting_player_v1(
             1, 0x9999, 2000, 200_000, deck_ids, [p0_mainboard, p1_mainboard], start.starting_player,
@@ -1342,7 +1604,9 @@ mod tests {
         .expect("bo3-bound explicit-deck reset succeeds");
         assert_eq!(session.game_state().active_player, start.starting_player);
         match_session
-            .record_game_result_v1(GameOutcomeV1::Win { winner: PlayerId::P0 })
+            .record_game_result_v1(GameOutcomeV1::Win {
+                winner: PlayerId::P0,
+            })
             .expect("recording game 1's result advances the match");
     }
 
@@ -1350,15 +1614,27 @@ mod tests {
     fn bo1_accept_boundary_on_synthetic_deltas() {
         let clearly_positive = [1i8; 20];
         let accept = crate::paired_bo1_harness_v1::paired_bootstrap_ci_v1(
-            &clearly_positive, 2000, 1, BootstrapSidednessV1::OneSidedLower,
+            &clearly_positive,
+            2000,
+            1,
+            BootstrapSidednessV1::OneSidedLower,
         );
-        assert!(accept.lower > 0.0, "a uniformly positive delta series must clear the BO1 accept boundary");
+        assert!(
+            accept.lower > 0.0,
+            "a uniformly positive delta series must clear the BO1 accept boundary"
+        );
 
         let clearly_mixed = [1i8, -1, 1, -1, 1, -1, 1, -1, 1, -1];
         let reject = crate::paired_bo1_harness_v1::paired_bootstrap_ci_v1(
-            &clearly_mixed, 2000, 1, BootstrapSidednessV1::OneSidedLower,
+            &clearly_mixed,
+            2000,
+            1,
+            BootstrapSidednessV1::OneSidedLower,
         );
-        assert!(reject.lower <= 0.0, "a zero-mean delta series must not clear the BO1 accept boundary");
+        assert!(
+            reject.lower <= 0.0,
+            "a zero-mean delta series must not clear the BO1 accept boundary"
+        );
     }
 
     #[test]
@@ -1366,7 +1642,10 @@ mod tests {
         let manifest = sample_manifest();
         let clearly_positive = [1i8; 20];
         let (accepted, _) = bo3_ratify_v1(&clearly_positive, &manifest, 1);
-        assert!(accepted, "a consistently better candidate is eligible for ratification");
+        assert!(
+            accepted,
+            "a consistently better candidate is eligible for ratification"
+        );
 
         let clearly_mixed = [1i8, -1, 1, -1, 1, -1, 1, -1, 1, -1];
         let (accepted, _) = bo3_ratify_v1(&clearly_mixed, &manifest, 1);
@@ -1378,12 +1657,18 @@ mod tests {
         // These are actual paired match outcomes in the driver's sign
         // convention: the candidate loses and the incumbent wins each pair.
         let paired_winners = [(false, true); 20];
-        let deltas: Vec<i8> = paired_winners.iter()
-            .map(|&(candidate_won, incumbent_won)| i8::from(candidate_won) - i8::from(incumbent_won))
+        let deltas: Vec<i8> = paired_winners
+            .iter()
+            .map(|&(candidate_won, incumbent_won)| {
+                i8::from(candidate_won) - i8::from(incumbent_won)
+            })
             .collect();
         let (accepted, interval) = bo3_ratify_v1(&deltas, &sample_manifest(), 1);
         assert_eq!((interval.lower, interval.upper), (-1.0, -1.0));
-        assert!(!accepted, "statistically clear harm must reject the candidate");
+        assert!(
+            !accepted,
+            "statistically clear harm must reject the candidate"
+        );
     }
 
     #[test]
@@ -1393,7 +1678,11 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let manifest_path = dir.join("manifest.json");
         std::fs::write(&manifest_path, manifest_canonical_bytes_v1(&manifest)).unwrap();
-        std::fs::write(manifest_path.with_extension("json.sha256"), manifest_sha256_v1(&manifest)).unwrap();
+        std::fs::write(
+            manifest_path.with_extension("json.sha256"),
+            manifest_sha256_v1(&manifest),
+        )
+        .unwrap();
 
         let registered = checked_in_pauper_registered_deck_by_id_v1("Burn").unwrap();
         let incumbent = SideboardPlanV1::keep_registered_v1("Burn", "Rally", 2).unwrap();
@@ -1405,7 +1694,13 @@ mod tests {
             .to_vec();
         let mut policy = random_policy_v1();
         let result = run_bo1_provisional_search_for_cell_v1(
-            &manifest, &manifest_path, &registered, &incumbent, &candidates, &opponent_mainboard, &mut policy,
+            &manifest,
+            &manifest_path,
+            &registered,
+            &incumbent,
+            &candidates,
+            &opponent_mainboard,
+            &mut policy,
         )
         .expect("the driver runs end to end against a real, small candidate set");
         if let Some(accepted) = result {
@@ -1424,15 +1719,21 @@ mod tests {
 
     #[test]
     fn load_and_verify_manifest_refuses_bo1_alpha_or_bo3_confidence_outside_zero_one() {
-        let dir = std::env::temp_dir().join(format!("search_manifest_alpha_test_{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("search_manifest_alpha_test_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
 
         let mut bad_alpha = sample_manifest();
         bad_alpha.bo1_one_sided_alpha = 0.0;
         let path = dir.join("bad_alpha.json");
         std::fs::write(&path, manifest_canonical_bytes_v1(&bad_alpha)).unwrap();
-        std::fs::write(path.with_extension("json.sha256"), manifest_sha256_v1(&bad_alpha)).unwrap();
-        let error = load_and_verify_manifest_v1(&path).expect_err("bo1_one_sided_alpha = 0.0 must be refused");
+        std::fs::write(
+            path.with_extension("json.sha256"),
+            manifest_sha256_v1(&bad_alpha),
+        )
+        .unwrap();
+        let error = load_and_verify_manifest_v1(&path)
+            .expect_err("bo1_one_sided_alpha = 0.0 must be refused");
         assert!(matches!(
             error,
             SearchCampaignErrorV1::InvalidParameter { ref name, .. } if name == "bo1_one_sided_alpha"
@@ -1442,8 +1743,13 @@ mod tests {
         bad_confidence.bo3_confidence_level = 1.0;
         let path = dir.join("bad_confidence.json");
         std::fs::write(&path, manifest_canonical_bytes_v1(&bad_confidence)).unwrap();
-        std::fs::write(path.with_extension("json.sha256"), manifest_sha256_v1(&bad_confidence)).unwrap();
-        let error = load_and_verify_manifest_v1(&path).expect_err("bo3_confidence_level = 1.0 must be refused");
+        std::fs::write(
+            path.with_extension("json.sha256"),
+            manifest_sha256_v1(&bad_confidence),
+        )
+        .unwrap();
+        let error = load_and_verify_manifest_v1(&path)
+            .expect_err("bo3_confidence_level = 1.0 must be refused");
         assert!(matches!(
             error,
             SearchCampaignErrorV1::InvalidParameter { ref name, .. } if name == "bo3_confidence_level"
@@ -1451,9 +1757,12 @@ mod tests {
     }
 
     #[test]
-    fn resolve_bo3_game_mainboards_selects_registered_for_game_one_and_the_plan_under_test_with_carry_forward() {
-        let registered = checked_in_pauper_registered_deck_by_id_v1("Burn").expect("Burn is checked in");
-        let opponent_registered = checked_in_pauper_registered_deck_by_id_v1("Rally").expect("Rally is checked in");
+    fn resolve_bo3_game_mainboards_selects_registered_for_game_one_and_the_plan_under_test_with_carry_forward(
+    ) {
+        let registered =
+            checked_in_pauper_registered_deck_by_id_v1("Burn").expect("Burn is checked in");
+        let opponent_registered =
+            checked_in_pauper_registered_deck_by_id_v1("Rally").expect("Rally is checked in");
         let policy = DeterministicSideboardPolicyV1::checked_in_pauper_v1().unwrap();
         let candidates = generate_one_swap_candidates_v1(&registered, "Rally", 2, 1);
         let plan_under_test = candidates.first().expect("at least one candidate exists");
@@ -1461,11 +1770,23 @@ mod tests {
         // Game 1: both seats play their registered mainboards, exactly,
         // regardless of cell_game_index or plan_under_test.
         let (self_game1, opponent_game1) = resolve_bo3_game_mainboards_v1(
-            &registered, "Burn", "Rally", 1, 2, plan_under_test, &policy,
+            &registered,
+            "Burn",
+            "Rally",
+            1,
+            2,
+            plan_under_test,
+            &policy,
         )
         .expect("game 1 resolves");
-        assert_eq!(self_game1, registered.registered_configuration().mainboard());
-        assert_eq!(opponent_game1, opponent_registered.registered_configuration().mainboard());
+        assert_eq!(
+            self_game1,
+            registered.registered_configuration().mainboard()
+        );
+        assert_eq!(
+            opponent_game1,
+            opponent_registered.registered_configuration().mainboard()
+        );
 
         // Game 2, cell_game_index 2: the self seat plays exactly
         // apply_plan_v1(plan_under_test)'s mainboard, not the registered one.
@@ -1473,7 +1794,13 @@ mod tests {
             .apply_plan_v1(plan_under_test, "test-expected/v1", [0u8; 32])
             .unwrap();
         let (self_game2_cell2, _opponent_game2) = resolve_bo3_game_mainboards_v1(
-            &registered, "Burn", "Rally", 2, 2, plan_under_test, &policy,
+            &registered,
+            "Burn",
+            "Rally",
+            2,
+            2,
+            plan_under_test,
+            &policy,
         )
         .expect("game 2 resolves");
         assert_eq!(self_game2_cell2, expected_configuration.mainboard());
@@ -1485,11 +1812,18 @@ mod tests {
         // Game 3, cell_game_index 2 (carry-forward): physical game 3 still
         // plays the SAME plan under test, since 3 >= cell_game_index (2).
         let (self_game3_cell2, _) = resolve_bo3_game_mainboards_v1(
-            &registered, "Burn", "Rally", 3, 2, plan_under_test, &policy,
+            &registered,
+            "Burn",
+            "Rally",
+            3,
+            2,
+            plan_under_test,
+            &policy,
         )
         .expect("game 3 resolves");
         assert_eq!(
-            self_game3_cell2, expected_configuration.mainboard(),
+            self_game3_cell2,
+            expected_configuration.mainboard(),
             "carry-forward: game 3 reuses the game-2 plan when the cell under test is game_index 2"
         );
 
@@ -1499,7 +1833,13 @@ mod tests {
         // resolution (registered mainboard here, since the checked-in
         // policy has zero plans).
         let (self_game2_cell3, _) = resolve_bo3_game_mainboards_v1(
-            &registered, "Burn", "Rally", 2, 3, plan_under_test, &policy,
+            &registered,
+            "Burn",
+            "Rally",
+            2,
+            3,
+            plan_under_test,
+            &policy,
         )
         .expect("game 2 resolves under cell_game_index 3");
         assert_eq!(
@@ -1523,9 +1863,13 @@ mod tests {
         // game-1 outcome is driven only by the seed and policy; searches a
         // fixed, ordered seed range for the first one where P0 wins,
         // rather than a hand-picked magic seed (the Task D pattern).
-        let registered = checked_in_pauper_registered_deck_by_id_v1("Burn").expect("Burn is checked in");
+        let registered =
+            checked_in_pauper_registered_deck_by_id_v1("Burn").expect("Burn is checked in");
         let candidates = generate_one_swap_candidates_v1(&registered, "Rally", 2, 1);
-        let plan_under_test = candidates.first().expect("at least one candidate exists").clone();
+        let plan_under_test = candidates
+            .first()
+            .expect("at least one candidate exists")
+            .clone();
         let policy = DeterministicSideboardPolicyV1::checked_in_pauper_v1().unwrap();
 
         for seed in 1u64..=150 {
@@ -1534,7 +1878,10 @@ mod tests {
                 "Burn", "Rally", 2, &plan_under_test, &policy, seed, 0, Bo3RatificationArmV1::Candidate, &mut policy_fn,
             )
             .expect("play_bo3_match_for_seat_v1 must never abort with WrongChooser once the chooser is read from the live phase");
-            let game_one = trace.iter().find(|row| row.game_index == 1).expect("every match plays game 1");
+            let game_one = trace
+                .iter()
+                .find(|row| row.game_index == 1)
+                .expect("every match plays game 1");
             if game_one.winner == Some(PlayerId::P0) {
                 let game_two = trace
                     .iter()
@@ -1568,17 +1915,23 @@ mod tests {
         manifest_narrow.bo1_one_sided_alpha = 0.05;
         let mut manifest_wide = sample_manifest();
         manifest_wide.bo1_one_sided_alpha = 0.40;
-        let (accept_narrow, result_narrow) = bo1_provisional_accept_v1(&deltas, &manifest_narrow, 42);
+        let (accept_narrow, result_narrow) =
+            bo1_provisional_accept_v1(&deltas, &manifest_narrow, 42);
         let (accept_wide, result_wide) = bo1_provisional_accept_v1(&deltas, &manifest_wide, 42);
         assert!(
             !accept_narrow,
-            "bo1_one_sided_alpha = 0.05 must reject this vector (lower = {})", result_narrow.lower
+            "bo1_one_sided_alpha = 0.05 must reject this vector (lower = {})",
+            result_narrow.lower
         );
         assert!(
             accept_wide,
-            "bo1_one_sided_alpha = 0.40 must accept this vector (lower = {})", result_wide.lower
+            "bo1_one_sided_alpha = 0.40 must accept this vector (lower = {})",
+            result_wide.lower
         );
-        assert_ne!(accept_narrow, accept_wide, "the manifest's bo1_one_sided_alpha must actually govern the accept decision");
+        assert_ne!(
+            accept_narrow, accept_wide,
+            "the manifest's bo1_one_sided_alpha must actually govern the accept decision"
+        );
     }
 
     #[test]
@@ -1604,7 +1957,10 @@ mod tests {
             "bo3_confidence_level = 0.2 must ratify this vector (lower = {}, upper = {})",
             result_low.lower, result_low.upper
         );
-        assert_ne!(ratify_high, ratify_low, "the manifest's bo3_confidence_level must actually govern the ratify decision");
+        assert_ne!(
+            ratify_high, ratify_low,
+            "the manifest's bo3_confidence_level must actually govern the ratify decision"
+        );
     }
 
     #[test]
@@ -1614,7 +1970,11 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let manifest_path = dir.join("manifest.json");
         std::fs::write(&manifest_path, manifest_canonical_bytes_v1(&manifest)).unwrap();
-        std::fs::write(manifest_path.with_extension("json.sha256"), manifest_sha256_v1(&manifest)).unwrap();
+        std::fs::write(
+            manifest_path.with_extension("json.sha256"),
+            manifest_sha256_v1(&manifest),
+        )
+        .unwrap();
 
         // The plan itself must be a valid postboard (>= 2) plan (SideboardPlanV1's
         // own constructor refuses game_index 1); this test's target is the
@@ -1643,11 +2003,18 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let manifest_path = dir.join("manifest.json");
         std::fs::write(&manifest_path, manifest_canonical_bytes_v1(&manifest)).unwrap();
-        std::fs::write(manifest_path.with_extension("json.sha256"), manifest_sha256_v1(&manifest)).unwrap();
+        std::fs::write(
+            manifest_path.with_extension("json.sha256"),
+            manifest_sha256_v1(&manifest),
+        )
+        .unwrap();
 
         let registered = checked_in_pauper_registered_deck_by_id_v1("Burn").unwrap();
         let candidates = generate_one_swap_candidates_v1(&registered, "Rally", 2, 1);
-        let candidate_plan = candidates.first().expect("at least one candidate exists").clone();
+        let candidate_plan = candidates
+            .first()
+            .expect("at least one candidate exists")
+            .clone();
         let incumbent_plan = SideboardPlanV1::keep_registered_v1("Burn", "Rally", 2).unwrap();
         let policy = DeterministicSideboardPolicyV1::checked_in_pauper_v1().unwrap();
         let mut policy_fn = SeededRandomBo3PolicyV1::default();
@@ -1660,7 +2027,11 @@ mod tests {
         let expected_matches = manifest.m_bo3_matches_per_ratification;
         // Every match plays at least 2 physical games per arm (BO3 never
         // completes in fewer than 2), across 2 arms (candidate, incumbent).
-        assert!(trace.len() as u32 >= 2 * 2 * expected_matches, "trace is missing games: {} rows", trace.len());
+        assert!(
+            trace.len() as u32 >= 2 * 2 * expected_matches,
+            "trace is missing games: {} rows",
+            trace.len()
+        );
         for row in &trace {
             assert!(row.match_index < expected_matches);
             assert!((1..=3).contains(&row.game_index));
@@ -1679,11 +2050,19 @@ mod tests {
         // returned Err on the first match where the self seat won a
         // non-final game, and this call would not have reached here.
         use std::collections::BTreeMap;
-        let mut by_match_arm: BTreeMap<(u32, Bo3RatificationArmV1), Vec<&Bo3GameTraceV1>> = BTreeMap::new();
+        let mut by_match_arm: BTreeMap<(u32, Bo3RatificationArmV1), Vec<&Bo3GameTraceV1>> =
+            BTreeMap::new();
         for row in &trace {
-            by_match_arm.entry((row.match_index, row.arm)).or_default().push(row);
+            by_match_arm
+                .entry((row.match_index, row.arm))
+                .or_default()
+                .push(row);
         }
-        assert_eq!(by_match_arm.len() as u32, 2 * expected_matches, "every match must have both a candidate and an incumbent arm");
+        assert_eq!(
+            by_match_arm.len() as u32,
+            2 * expected_matches,
+            "every match must have both a candidate and an incumbent arm"
+        );
         for rows in by_match_arm.values() {
             assert_eq!(rows[0].game_index, 1);
             assert_eq!(rows[0].chooser, PlayerId::P0);
@@ -1709,13 +2088,29 @@ mod tests {
         let sideboard_policy = DeterministicSideboardPolicyV1::checked_in_pauper_v1().unwrap();
         let mut play_policy = SeededRandomBo3PolicyV1::default();
         let (candidate_win, candidate_trace) = play_bo3_match_for_seat_v1(
-            "Burn", "Rally", 2, &plan, &sideboard_policy, 5151, 0,
-            Bo3RatificationArmV1::Candidate, &mut play_policy,
-        ).expect("candidate match completes naturally");
+            "Burn",
+            "Rally",
+            2,
+            &plan,
+            &sideboard_policy,
+            5151,
+            0,
+            Bo3RatificationArmV1::Candidate,
+            &mut play_policy,
+        )
+        .expect("candidate match completes naturally");
         let (incumbent_win, mut incumbent_trace) = play_bo3_match_for_seat_v1(
-            "Burn", "Rally", 2, &plan, &sideboard_policy, 5151, 0,
-            Bo3RatificationArmV1::Incumbent, &mut play_policy,
-        ).expect("incumbent match completes naturally");
+            "Burn",
+            "Rally",
+            2,
+            &plan,
+            &sideboard_policy,
+            5151,
+            0,
+            Bo3RatificationArmV1::Incumbent,
+            &mut play_policy,
+        )
+        .expect("incumbent match completes naturally");
         assert_eq!(play_policy.resets.len(), 2);
         assert_eq!(play_policy.resets[0], play_policy.resets[1]);
         assert_ne!(play_policy.resets[0][0], play_policy.resets[0][1]);
@@ -1723,8 +2118,10 @@ mod tests {
         for row in &mut incumbent_trace {
             row.arm = Bo3RatificationArmV1::Candidate;
         }
-        assert_eq!(candidate_trace, incumbent_trace,
-            "identical plans share every game result and starting-player transition");
+        assert_eq!(
+            candidate_trace, incumbent_trace,
+            "identical plans share every game result and starting-player transition"
+        );
     }
 
     #[test]
@@ -1742,16 +2139,31 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let manifest_path = dir.join("manifest.json");
         std::fs::write(&manifest_path, manifest_canonical_bytes_v1(&manifest)).unwrap();
-        std::fs::write(manifest_path.with_extension("json.sha256"), manifest_sha256_v1(&manifest)).unwrap();
+        std::fs::write(
+            manifest_path.with_extension("json.sha256"),
+            manifest_sha256_v1(&manifest),
+        )
+        .unwrap();
 
         let registered = checked_in_pauper_registered_deck_by_id_v1("Burn").unwrap();
         let candidates = generate_one_swap_candidates_v1(&registered, "Rally", 2, 1);
-        let candidate_plan = candidates.first().expect("at least one candidate exists").clone();
+        let candidate_plan = candidates
+            .first()
+            .expect("at least one candidate exists")
+            .clone();
         let incumbent_plan = SideboardPlanV1::keep_registered_v1("Burn", "Rally", 2).unwrap();
         let policy = DeterministicSideboardPolicyV1::checked_in_pauper_v1().unwrap();
         let mut policy_fn = SeededRandomBo3PolicyV1::default();
         let (_ratified, trace) = run_bo3_ratification_v1(
-            &manifest, &manifest_path, "Burn", "Rally", 2, &candidate_plan, &incumbent_plan, &policy, &mut policy_fn,
+            &manifest,
+            &manifest_path,
+            "Burn",
+            "Rally",
+            2,
+            &candidate_plan,
+            &incumbent_plan,
+            &policy,
+            &mut policy_fn,
         )
         .expect("a real Burn-vs-Rally BO3 ratification run must complete");
 
@@ -1759,7 +2171,10 @@ mod tests {
             .iter()
             .find(|row| row.arm == Bo3RatificationArmV1::Candidate && row.game_index == 2)
             .expect("the candidate arm always plays at least a game 2");
-        assert_eq!(candidate_game_two_row.hash_convention, TRACE_MAINBOARD_HASH_CONVENTION_V1);
+        assert_eq!(
+            candidate_game_two_row.hash_convention,
+            TRACE_MAINBOARD_HASH_CONVENTION_V1
+        );
 
         let (_configuration, receipt) = registered
             .apply_plan_v1(&candidate_plan, "trace-hash-expected/v1", [0u8; 32])

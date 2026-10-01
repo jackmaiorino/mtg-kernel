@@ -5,11 +5,16 @@
 use super::visible::Handles;
 use super::HumanDecisionErrorV1 as Error;
 use crate::card_def::{self, CostComponent, ManaAbilityAmountDef, ManaAbilityCostDef};
+use crate::effect::{
+    CreatureFilter, EffectCond, EffectOp, ImpulseDuration, ObjectRef, PlayerRef, TargetRef,
+};
 use crate::engine::{CastMode, ChosenCreatureCostZoneV1, CostKind, OptionalCostChoice};
-use crate::effect::{CreatureFilter, EffectCond, EffectOp, ImpulseDuration, ObjectRef, PlayerRef, TargetRef};
 use crate::mana::{Cost, ManaColor, Pip};
 use crate::policy_observation_v6::{HistoricalSourceContextV6, ObservationV6};
-use crate::rl::{ActionSemanticV1 as A, BooleanChoicePurposeV4, CardStableRefV1, PendingEffectChoiceSemanticV4, PendingTriggerKindV2, PlayerSeatV1, SpellCopyStageV2, StackItemKindV2, TargetRefV1};
+use crate::rl::{
+    ActionSemanticV1 as A, BooleanChoicePurposeV4, CardStableRefV1, PendingEffectChoiceSemanticV4,
+    PendingTriggerKindV2, PlayerSeatV1, SpellCopyStageV2, StackItemKindV2, TargetRefV1,
+};
 use crate::state::Zone;
 
 fn color(color: ManaColor) -> &'static str {
@@ -74,14 +79,20 @@ fn cost_components(components: &[CostComponent]) -> Result<String, Error> {
 }
 
 fn activation_cost(components: &[CostComponent], source: &str) -> Result<String, Error> {
-    if components.is_empty() { return Ok("pay {0}".into()); }
-    components.iter().map(|component| match component {
-        CostComponent::Tap => Ok(format!("tap {source}")),
-        CostComponent::SacrificeSelf => Ok(format!("sacrifice {source}")),
-        CostComponent::ExileSelf => Ok(format!("exile {source}")),
-        CostComponent::DiscardSelf => Ok(format!("discard {source}")),
-        other => cost_components(std::slice::from_ref(other)),
-    }).collect::<Result<Vec<_>, _>>().map(|parts| parts.join("; "))
+    if components.is_empty() {
+        return Ok("pay {0}".into());
+    }
+    components
+        .iter()
+        .map(|component| match component {
+            CostComponent::Tap => Ok(format!("tap {source}")),
+            CostComponent::SacrificeSelf => Ok(format!("sacrifice {source}")),
+            CostComponent::ExileSelf => Ok(format!("exile {source}")),
+            CostComponent::DiscardSelf => Ok(format!("discard {source}")),
+            other => cost_components(std::slice::from_ref(other)),
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(|parts| parts.join("; "))
 }
 
 // Definition programs contain no runtime objects or hidden card identities.
@@ -115,9 +126,13 @@ fn effect_object(object: ObjectRef) -> Result<&'static str, Error> {
 fn effect_condition(condition: &EffectCond) -> Result<String, Error> {
     Ok(match condition {
         EffectCond::WasKicked => "this spell was kicked".into(),
-        EffectCond::ControlsArtifactCount(n) => format!("its controller controls at least {n} artifacts"),
+        EffectCond::ControlsArtifactCount(n) => {
+            format!("its controller controls at least {n} artifacts")
+        }
         EffectCond::TargetIsColor(0, c) => format!("the chosen target is {}", color(*c)),
-        EffectCond::TargetInZone(0, Zone::Battlefield) => "the chosen target is on the battlefield".into(),
+        EffectCond::TargetInZone(0, Zone::Battlefield) => {
+            "the chosen target is on the battlefield".into()
+        }
         EffectCond::TargetInZone(0, Zone::Stack) => "the chosen target is on the stack".into(),
         EffectCond::And(a, b) => format!("{} and {}", effect_condition(a)?, effect_condition(b)?),
         _ => return Err(Error::UnsupportedPrompt),
@@ -189,10 +204,13 @@ fn program_at_path<'a>(mut program: &'a EffectOp, path: &[u16]) -> Result<&'a Ef
             EffectOp::Sequence(ops) => ops.get(*component as usize),
             EffectOp::Choice { options, .. } => options.get(*component as usize),
             EffectOp::Conditional { then, else_, .. } => match component {
-                0 => Some(then.as_ref()), 1 => Some(else_.as_ref()), _ => None,
+                0 => Some(then.as_ref()),
+                1 => Some(else_.as_ref()),
+                _ => None,
             },
             _ => None,
-        }.ok_or(Error::UnsupportedPrompt)?;
+        }
+        .ok_or(Error::UnsupportedPrompt)?;
     }
     Ok(program)
 }
@@ -200,22 +218,45 @@ fn program_at_path<'a>(mut program: &'a EffectOp, path: &[u16]) -> Result<&'a Ef
 // The public DTO does not carry a runtime effect program or an ability
 // selector for a resolving effect. Accept definition reconstruction only
 // when every possible printed program agrees at this structural path.
-fn pending_program(source: &CardStableRefV1, path: &[u16], observation: &ObservationV6) -> Result<EffectOp, Error> {
-    if !observation.extensions.historical_public_sources.iter().any(|record|
-        record.context == HistoricalSourceContextV6::PendingEffect && record.source == *source && record.stack_item_kind == StackItemKindV2::Spell) {
+fn pending_program(
+    source: &CardStableRefV1,
+    path: &[u16],
+    observation: &ObservationV6,
+) -> Result<EffectOp, Error> {
+    if !observation
+        .extensions
+        .historical_public_sources
+        .iter()
+        .any(|record| {
+            record.context == HistoricalSourceContextV6::PendingEffect
+                && record.source == *source
+                && record.stack_item_kind == StackItemKindV2::Spell
+        })
+    {
         return Err(Error::UnsupportedPrompt);
     }
     let def = definition(source)?;
     // Alternate spell forms have distinct programs without a public form
     // selector on the resolving-effect DTO. Do not assume the front face.
-    if def.omen.is_some() || def.adventure.is_some() || def.bestow.is_some() { return Err(Error::UnsupportedPrompt); }
+    if def.omen.is_some() || def.adventure.is_some() || def.bestow.is_some() {
+        return Err(Error::UnsupportedPrompt);
+    }
     let mut roots = Vec::new();
-    if let Some(root) = (def.spell_effect)() { roots.push(root); }
-    for mode in [&def.mode2, &def.mode3].into_iter().flatten() { roots.push((mode.effect)()); }
+    if let Some(root) = (def.spell_effect)() {
+        roots.push(root);
+    }
+    for mode in [&def.mode2, &def.mode3].into_iter().flatten() {
+        roots.push((mode.effect)());
+    }
     let mut selected = None;
     for root in roots {
         let candidate = program_at_path(&root, path)?.clone();
-        if selected.as_ref().is_some_and(|previous| previous != &candidate) { return Err(Error::UnsupportedPrompt); }
+        if selected
+            .as_ref()
+            .is_some_and(|previous| previous != &candidate)
+        {
+            return Err(Error::UnsupportedPrompt);
+        }
         selected = Some(candidate);
     }
     selected.ok_or(Error::UnsupportedPrompt)
@@ -305,14 +346,30 @@ pub(super) fn label(
             format!("Play {} as your land for the turn", handles.name(source)?)
         }
         A::CastSpell { source, .. } => format!("Begin casting {}", handles.name(source)?),
-        A::ActivateAbility { source, ability_index, .. } => {
+        A::ActivateAbility {
+            source,
+            ability_index,
+            ..
+        } => {
             let def = definition(source)?;
-            let ability = def.activated_abilities.get(*ability_index as usize)
+            let ability = def
+                .activated_abilities
+                .get(*ability_index as usize)
                 .ok_or(Error::UnsupportedPrompt)?;
-            if ability.activation_zone != source.zone { return Err(Error::UnsupportedPrompt); }
+            if ability.activation_zone != source.zone {
+                return Err(Error::UnsupportedPrompt);
+            }
             let name = handles.name(source)?;
-            format!("Activate {name}: {}: {}{}", activation_cost(ability.cost, &name)?, describe_effect(&(ability.effect)())?,
-                if ability.sorcery_speed_only { "; activate only as a sorcery" } else { "" })
+            format!(
+                "Activate {name}: {}: {}{}",
+                activation_cost(ability.cost, &name)?,
+                describe_effect(&(ability.effect)())?,
+                if ability.sorcery_speed_only {
+                    "; activate only as a sorcery"
+                } else {
+                    ""
+                }
+            )
         }
         A::PlotSpell { source, .. } => {
             let cost = definition(source)?
@@ -493,33 +550,70 @@ pub(super) fn label(
                 handles.name(source)?
             )
         }
-        A::ChooseSpellMode { source, mode_index, mode_count, .. } => {
+        A::ChooseSpellMode {
+            source,
+            mode_index,
+            mode_count,
+            ..
+        } => {
             let def = definition(source)?;
             let count = 1 + u8::from(def.mode2.is_some()) + u8::from(def.mode3.is_some());
-            if count != *mode_count || *mode_index >= count { return Err(Error::UnsupportedPrompt); }
+            if count != *mode_count || *mode_index >= count {
+                return Err(Error::UnsupportedPrompt);
+            }
             let effect = match mode_index {
                 0 => (def.spell_effect)().ok_or(Error::UnsupportedPrompt)?,
                 1 => (def.mode2.as_ref().ok_or(Error::UnsupportedPrompt)?.effect)(),
                 2 => (def.mode3.as_ref().ok_or(Error::UnsupportedPrompt)?.effect)(),
                 _ => return Err(Error::UnsupportedPrompt),
             };
-            format!("For {}, {}", handles.name(source)?, describe_effect(&effect)?)
+            format!(
+                "For {}, {}",
+                handles.name(source)?,
+                describe_effect(&effect)?
+            )
         }
-        A::ChooseEffectOption { source, option_index, option_count, .. } => {
-            let pending = observation.projection.surface.engine_context.pending_effect.as_ref()
+        A::ChooseEffectOption {
+            source,
+            option_index,
+            option_count,
+            ..
+        } => {
+            let pending = observation
+                .projection
+                .surface
+                .engine_context
+                .pending_effect
+                .as_ref()
                 .ok_or(Error::UnsupportedPrompt)?;
-            let Some(PendingEffectChoiceSemanticV4::Options { player, structural_path, option_count: count }) = &pending.choice else {
+            let Some(PendingEffectChoiceSemanticV4::Options {
+                player,
+                structural_path,
+                option_count: count,
+            }) = &pending.choice
+            else {
                 return Err(Error::UnsupportedPrompt);
             };
-            if pending.source.as_ref() != Some(source) || *player != human || count != option_count {
+            if pending.source.as_ref() != Some(source) || *player != human || count != option_count
+            {
                 return Err(Error::UnsupportedPrompt);
             }
-            let EffectOp::Choice { options, .. } = pending_program(source, structural_path, observation)? else {
+            let EffectOp::Choice { options, .. } =
+                pending_program(source, structural_path, observation)?
+            else {
                 return Err(Error::UnsupportedPrompt);
             };
-            if options.len() != *option_count as usize { return Err(Error::UnsupportedPrompt); }
-            let selected = options.get(*option_index as usize).ok_or(Error::UnsupportedPrompt)?;
-            format!("For {}, {}", handles.name(source)?, describe_effect(selected)?)
+            if options.len() != *option_count as usize {
+                return Err(Error::UnsupportedPrompt);
+            }
+            let selected = options
+                .get(*option_index as usize)
+                .ok_or(Error::UnsupportedPrompt)?;
+            format!(
+                "For {}, {}",
+                handles.name(source)?,
+                describe_effect(selected)?
+            )
         }
         A::ChooseEffectTarget {
             source,
@@ -556,26 +650,66 @@ pub(super) fn label(
             handles.name(source)?
         ),
         A::ChooseEffectBoolean { source, value, .. } => {
-            let pending = observation.projection.surface.engine_context.pending_effect.as_ref()
+            let pending = observation
+                .projection
+                .surface
+                .engine_context
+                .pending_effect
+                .as_ref()
                 .ok_or(Error::UnsupportedPrompt)?;
-            let Some(PendingEffectChoiceSemanticV4::Boolean { player, structural_path, purpose, .. }) = &pending.choice else {
+            let Some(PendingEffectChoiceSemanticV4::Boolean {
+                player,
+                structural_path,
+                purpose,
+                ..
+            }) = &pending.choice
+            else {
                 return Err(Error::UnsupportedPrompt);
             };
-            if pending.source.as_ref() != Some(source) || *player != human { return Err(Error::UnsupportedPrompt); }
+            if pending.source.as_ref() != Some(source) || *player != human {
+                return Err(Error::UnsupportedPrompt);
+            }
             if *purpose == BooleanChoicePurposeV4::Shuffle {
-                return Ok(format!("{} your library for {}", if *value { "Shuffle" } else { "Do not shuffle" }, handles.name(source)?));
+                return Ok(format!(
+                    "{} your library for {}",
+                    if *value { "Shuffle" } else { "Do not shuffle" },
+                    handles.name(source)?
+                ));
             }
             let Some(ward) = observation.extensions.pending_ward_payment.as_ref() else {
-                if *purpose != BooleanChoicePurposeV4::PayCost { return Err(Error::UnsupportedPrompt); }
-                let EffectOp::MayPayManaThen { player: PlayerRef::Controller, colored, generic, then } = pending_program(source, structural_path, observation)? else {
+                if *purpose != BooleanChoicePurposeV4::PayCost {
+                    return Err(Error::UnsupportedPrompt);
+                }
+                let EffectOp::MayPayManaThen {
+                    player: PlayerRef::Controller,
+                    colored,
+                    generic,
+                    then,
+                } = pending_program(source, structural_path, observation)?
+                else {
                     return Err(Error::UnsupportedPrompt);
                 };
-                if pending.controller != human { return Err(Error::UnsupportedPrompt); }
-                let mut cost = if generic == 0 { String::new() } else { format!("{{{generic}}}") };
-                for c in colored { cost.push_str(&format!("{{{}}}", color(c))); }
-                if cost.is_empty() { cost.push_str("{0}"); }
-                return Ok(format!("{} {cost} for {}{}{}", if *value { "Pay" } else { "Decline to pay" }, handles.name(source)?,
-                    if *value { ": " } else { "; do not " }, describe_effect(&then)?));
+                if pending.controller != human {
+                    return Err(Error::UnsupportedPrompt);
+                }
+                let mut cost = if generic == 0 {
+                    String::new()
+                } else {
+                    format!("{{{generic}}}")
+                };
+                for c in colored {
+                    cost.push_str(&format!("{{{}}}", color(c)));
+                }
+                if cost.is_empty() {
+                    cost.push_str("{0}");
+                }
+                return Ok(format!(
+                    "{} {cost} for {}{}{}",
+                    if *value { "Pay" } else { "Decline to pay" },
+                    handles.name(source)?,
+                    if *value { ": " } else { "; do not " },
+                    describe_effect(&then)?
+                ));
             };
             if ward.payer != human {
                 return Err(Error::UnsupportedPrompt);
@@ -649,14 +783,29 @@ pub(super) fn label(
             handles.name(source)?
         ),
         A::ChooseSpellCopyPayment { source, pay, .. } => {
-            let pending = observation.projection.surface.engine_context.pending_spell_copy.as_ref()
+            let pending = observation
+                .projection
+                .surface
+                .engine_context
+                .pending_spell_copy
+                .as_ref()
                 .ok_or(Error::UnsupportedPrompt)?;
-            if pending.player != human || pending.parent.as_ref() != Some(source) || pending.stage != SpellCopyStageV2::Payment {
+            if pending.player != human
+                || pending.parent.as_ref() != Some(source)
+                || pending.stage != SpellCopyStageV2::Payment
+            {
                 return Err(Error::UnsupportedPrompt);
             }
             let root = (definition(source)?.spell_effect)().ok_or(Error::UnsupportedPrompt)?;
-            let EffectOp::Sequence(ops) = root else { return Err(Error::UnsupportedPrompt); };
-            if !matches!(ops.last(), Some(EffectOp::OfferAffectedPlayerSpellCopy { affected: TargetRef::Target(0) })) {
+            let EffectOp::Sequence(ops) = root else {
+                return Err(Error::UnsupportedPrompt);
+            };
+            if !matches!(
+                ops.last(),
+                Some(EffectOp::OfferAffectedPlayerSpellCopy {
+                    affected: TargetRef::Target(0)
+                })
+            ) {
                 return Err(Error::UnsupportedPrompt);
             }
             format!("{} {{R}}{{R}} to copy {} (inherited target: {}; a new target may be chosen after payment)",
@@ -712,32 +861,52 @@ pub(super) fn label(
             handles.name(blocker)?,
             handles.name(attacker)?
         ),
-        A::OrderTriggers { pending_sources, order, .. } => {
-            let pending = &observation.projection.surface.engine_context.pending_triggers;
-            if pending_sources.len() != order.len() || pending_sources.len() < 2 || pending.len() < order.len() {
+        A::OrderTriggers {
+            pending_sources,
+            order,
+            ..
+        } => {
+            let pending = &observation
+                .projection
+                .surface
+                .engine_context
+                .pending_triggers;
+            if pending_sources.len() != order.len()
+                || pending_sources.len() < 2
+                || pending.len() < order.len()
+            {
                 return Err(Error::UnsupportedPrompt);
             }
             let mut sorted = order.clone();
             sorted.sort_unstable();
-            if sorted != (0..order.len()).collect::<Vec<_>>() { return Err(Error::UnsupportedPrompt); }
+            if sorted != (0..order.len()).collect::<Vec<_>>() {
+                return Err(Error::UnsupportedPrompt);
+            }
             let mut descriptions = Vec::new();
             let mut seen = Vec::new();
             for &index in order {
                 let source = &pending_sources[index];
                 let trigger = &pending[index];
-                if trigger.source.as_ref() != Some(source) || trigger.controller != human || trigger.trigger_kind != PendingTriggerKindV2::TriggeredAbility {
+                if trigger.source.as_ref() != Some(source)
+                    || trigger.controller != human
+                    || trigger.trigger_kind != PendingTriggerKindV2::TriggeredAbility
+                {
                     return Err(Error::UnsupportedPrompt);
                 }
-                if seen.contains(source) { return Err(Error::UnsupportedPrompt); }
+                if seen.contains(source) {
+                    return Err(Error::UnsupportedPrompt);
+                }
                 seen.push(source.clone());
                 descriptions.push(format!("Trigger from {}", handles.name(source)?));
             }
-            format!("Put triggers on the stack from bottom to top (last resolves first): {}", descriptions.join("; then "))
+            format!(
+                "Put triggers on the stack from bottom to top (last resolves first): {}",
+                descriptions.join("; then ")
+            )
         }
         // These visible records do not contain enough human meaning. In
         // particular effect option paths do not describe their outcomes, and
         // same-source triggers require frozen ability provenance, not an index.
-        A::ChooseEffectNumber { .. }
-        | A::Ambiguous { .. } => return Err(Error::UnsupportedPrompt),
+        A::ChooseEffectNumber { .. } | A::Ambiguous { .. } => return Err(Error::UnsupportedPrompt),
     })
 }

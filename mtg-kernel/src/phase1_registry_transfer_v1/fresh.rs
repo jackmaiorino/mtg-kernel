@@ -20,7 +20,7 @@ use crate::native_policy_train_step_v1::{
     ADAM_EPSILON_V1, ADAM_WEIGHT_DECAY_V1, NATIVE_OPTIMIZER_IDENTITY_V1,
 };
 use crate::native_policy_value_net_v1::{
-    CARD_EMBEDDING_DIM_V1, MODEL_ARCHITECTURE_VERSION_V1, NativePolicyValueNetV1,
+    NativePolicyValueNetV1, CARD_EMBEDDING_DIM_V1, MODEL_ARCHITECTURE_VERSION_V1,
 };
 use crate::sideboard_play_policy_v1::FreshPlayPolicyIdentityV1;
 use serde::{Deserialize, Serialize};
@@ -342,7 +342,9 @@ mod tests {
     use crate::native_policy_train_step_v1::{
         NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
     };
-    use crate::native_policy_value_net_v1::{NativePolicyValueModelConfigV1, NativePolicyValueNetV1};
+    use crate::native_policy_value_net_v1::{
+        NativePolicyValueModelConfigV1, NativePolicyValueNetV1,
+    };
     use crate::sideboard_play_policy_v1::FRESH_PLAY_INITIALIZATION_SCHEMA_V1;
     use serde_json::Value;
 
@@ -372,7 +374,9 @@ mod tests {
             .unwrap();
         let logits: Vec<u32> = output.logits.iter().map(|x| x.to_bits()).collect();
         let steps = [NativePolicySubstepV1 {
-            forward: NativePolicyForwardInputV1::Encoded(Box::new(encoded_decision_view_v3(&tensor))),
+            forward: NativePolicyForwardInputV1::Encoded(Box::new(encoded_decision_view_v3(
+                &tensor,
+            ))),
             selected_action_index: 1,
             expected_raw_action_logit_bits: &logits,
             expected_value_bits: output.value.to_bits(),
@@ -749,7 +753,9 @@ mod tests {
         let saved = fresh_checkpoint(&snapshot, &registry);
 
         let mut wrong_registry_binding = saved.clone();
-        wrong_registry_binding.source_import.destination_registry_sha256 = "0".repeat(64);
+        wrong_registry_binding
+            .source_import
+            .destination_registry_sha256 = "0".repeat(64);
         let bytes = serde_json::to_vec(&wrong_registry_binding).unwrap();
         let error = transfer_fresh_expanded_checkpoint_to_current_registry_v1(
             &bytes,
@@ -779,7 +785,9 @@ mod tests {
         );
 
         let mut wrong_card_count_binding = saved;
-        wrong_card_count_binding.source_import.destination_card_count += 1;
+        wrong_card_count_binding
+            .source_import
+            .destination_card_count += 1;
         let bytes = serde_json::to_vec(&wrong_card_count_binding).unwrap();
         let error = transfer_fresh_expanded_checkpoint_to_current_registry_v1(
             &bytes,
@@ -836,7 +844,9 @@ mod tests {
         .unwrap();
         assert!(error.contains("learned optimizer state"), "{error}");
         assert!(
-            error.contains("declared source registry does not match this checkpoint's training history"),
+            error.contains(
+                "declared source registry does not match this checkpoint's training history"
+            ),
             "{error}"
         );
     }
@@ -852,7 +862,8 @@ mod tests {
     }
 
     #[test]
-    fn phase1_fresh_registry_artifact_replay_rejects_tampered_state_even_with_new_artifact_digest() {
+    fn phase1_fresh_registry_artifact_replay_rejects_tampered_state_even_with_new_artifact_digest()
+    {
         let snapshot = learned_state().snapshot_v1().unwrap();
         let registry = source_registry(CARD_DEFS.len() - 1);
         let saved = fresh_checkpoint(&snapshot, &registry);
@@ -864,9 +875,13 @@ mod tests {
         )
         .unwrap();
         let artifact = candidate.artifact_bytes_v1().unwrap();
-        let reloaded =
-            verify_fresh_registry_transfer_artifact_v1(&artifact, &sha(&artifact), &bytes, &registry)
-                .unwrap();
+        let reloaded = verify_fresh_registry_transfer_artifact_v1(
+            &artifact,
+            &sha(&artifact),
+            &bytes,
+            &registry,
+        )
+        .unwrap();
         assert_eq!(
             candidate.state.snapshot_v1().unwrap(),
             reloaded.state.snapshot_v1().unwrap()

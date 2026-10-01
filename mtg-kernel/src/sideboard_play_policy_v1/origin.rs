@@ -159,7 +159,9 @@ impl PlayPolicyOriginV1 {
         value.validate_v1()?;
         Ok(Self::FreshInitialization(value))
     }
-    pub fn transferred_fresh_v1(value: TransferredFreshPlayPolicyIdentityV1) -> Result<Self, String> {
+    pub fn transferred_fresh_v1(
+        value: TransferredFreshPlayPolicyIdentityV1,
+    ) -> Result<Self, String> {
         value.validate_v1()?;
         Ok(Self::TransferredFreshInitialization(value))
     }
@@ -410,9 +412,8 @@ impl<'de> Deserialize<'de> for PlayPolicyOriginV1 {
                     }
                     let wrapper = TransferredFreshPlayPolicyIdentityV1 {
                         schema,
-                        original: original.ok_or_else(|| {
-                            <M::Error as de::Error>::missing_field("original")
-                        })?,
+                        original: original
+                            .ok_or_else(|| <M::Error as de::Error>::missing_field("original"))?,
                         destination_registry_sha256: take!(strings, "destination_registry_sha256"),
                         destination_card_db_hash: take!(strings, "destination_card_db_hash"),
                         destination_card_count: take!(counts, "destination_card_count"),
@@ -620,9 +621,18 @@ mod tests {
         assert_eq!(origin.destination_card_db_hash_v1(), "5".repeat(16));
         assert_eq!(origin.destination_card_count_v1(), 190);
         // Initial weight/seed/producer accessors read the nested ancestry.
-        assert_eq!(origin.feature_contract_digest_v1(), original.feature_contract_digest);
-        assert_eq!(origin.feature_encoding_digest_v1(), original.feature_encoding_digest);
-        assert_eq!(origin.initial_weights_sha256_v1(), original.initial_weights_sha256);
+        assert_eq!(
+            origin.feature_contract_digest_v1(),
+            original.feature_contract_digest
+        );
+        assert_eq!(
+            origin.feature_encoding_digest_v1(),
+            original.feature_encoding_digest
+        );
+        assert_eq!(
+            origin.initial_weights_sha256_v1(),
+            original.initial_weights_sha256
+        );
         assert_eq!(
             origin.initial_model_parameter_sha256_v1(),
             original.initial_model_parameter_sha256
@@ -640,7 +650,10 @@ mod tests {
         assert!(serde_json::from_str::<PlayPolicyOriginV1>(&nested_duplicate).is_err());
 
         let missing_original = raw.replacen(
-            &format!(",\"original\":{}", serde_json::to_string(&original).unwrap()),
+            &format!(
+                ",\"original\":{}",
+                serde_json::to_string(&original).unwrap()
+            ),
             "",
             1,
         );

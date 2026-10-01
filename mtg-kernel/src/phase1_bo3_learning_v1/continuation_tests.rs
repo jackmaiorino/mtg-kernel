@@ -1,7 +1,7 @@
 use super::*;
 use crate::bo3_match::PlayDrawChoiceV1;
-use crate::native_flat_tensorizer_v3::{NativeFlatDecisionTensorV3, encoded_decision_view_v3};
-use crate::native_flat_tensorizer_v4::{NativeFlatDecisionTensorV4, encoded_decision_view_v4};
+use crate::native_flat_tensorizer_v3::{encoded_decision_view_v3, NativeFlatDecisionTensorV3};
+use crate::native_flat_tensorizer_v4::{encoded_decision_view_v4, NativeFlatDecisionTensorV4};
 use crate::native_policy_train_step_v1::{
     NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
 };
@@ -13,13 +13,13 @@ use crate::phase1_bo3_learning_v1::preparation::{
     finish_prepared, replay_attempt, TrainableResultDto, MAX_PREPARED_BYTES,
 };
 use crate::phase1_bo3_learning_v1::{
-    BO3_PREPARATION_REQUEST_SCHEMA_V1, Bo3AttemptInputV1, Bo3PreparationLimitsV1,
+    Bo3AttemptInputV1, Bo3PreparationLimitsV1, BO3_PREPARATION_REQUEST_SCHEMA_V1,
 };
 
 fn native_state_and_tensor() -> (NativePolicyValueTrainStateV1, NativeFlatDecisionTensorV3) {
     use crate::human_opening_v1::HumanOpeningV1;
     use crate::ids::PlayerId;
-    use crate::paired_bo1_harness_v1::{PairedBo1PolicyInputV1, paired_policy_seeds_v1};
+    use crate::paired_bo1_harness_v1::{paired_policy_seeds_v1, PairedBo1PolicyInputV1};
     use crate::rl_session::FastActorResponseV1;
     let (mut policies, _) = fixtures([PlayDrawChoiceV1::Play; 2]);
     let cfg = config("continuation-native-tensor");
@@ -115,7 +115,7 @@ fn numerical_update(
 fn native_state_and_tensor_v4() -> (NativePolicyValueTrainStateV1, NativeFlatDecisionTensorV4) {
     use crate::human_opening_v1::HumanOpeningV1;
     use crate::ids::PlayerId;
-    use crate::paired_bo1_harness_v1::{PairedBo1PolicyInputV1, paired_policy_seeds_v1};
+    use crate::paired_bo1_harness_v1::{paired_policy_seeds_v1, PairedBo1PolicyInputV1};
     use crate::rl_session::FastActorResponseV1;
     let (mut policies, _) = fixtures_v4([PlayDrawChoiceV1::Play; 2]);
     let cfg = config("continuation-native-tensor-v4");
@@ -618,12 +618,10 @@ fn bo3_continuation_public_parser_is_bounded_and_preserves_explicit_transition_t
         Bo3GameplayUpdateRequestV1::from_json_v1(std::str::from_utf8(&bytes).unwrap()).unwrap(),
         request
     );
-    assert!(
-        Bo3GameplayUpdateRequestV1::from_json_v1(
-            r#"{"input":{"kind":"bo3_checkpoint","kind":"ordinary_checkpoint_transition"}}"#
-        )
-        .is_err()
-    );
+    assert!(Bo3GameplayUpdateRequestV1::from_json_v1(
+        r#"{"input":{"kind":"bo3_checkpoint","kind":"ordinary_checkpoint_transition"}}"#
+    )
+    .is_err());
     assert!(
         Bo3GameplayUpdateRequestV1::from_json_v1(&" ".repeat(MAX_REQUEST_BYTES as usize + 1))
             .is_err()
@@ -763,11 +761,9 @@ fn bo3_continuation_real_pinned_update_matches_oracle_and_checkpoint_only_recove
     UPDATE_CALLS.with(|n| n.set(0));
     PREPARATION_CALLS.with(|n| n.set(0));
     STOP_BEFORE_PROGRESS.with(|flag| flag.set(true));
-    assert!(
-        update_bo3_gameplay_v1(request.clone())
-            .unwrap_err()
-            .contains("injected stop")
-    );
+    assert!(update_bo3_gameplay_v1(request.clone())
+        .unwrap_err()
+        .contains("injected stop"));
     assert!(request.output_directory.join("checkpoint.json").is_file());
     assert!(!request.output_directory.join("progress.json").exists());
     assert_eq!(UPDATE_CALLS.with(|n| n.get()), 1);

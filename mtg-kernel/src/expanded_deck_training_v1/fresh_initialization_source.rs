@@ -8,6 +8,8 @@
 use super::{FrozenPlayObservationTransferV3, FrozenPlayPolicyV1, PinnedFileV1};
 use crate::card_def::{CARD_DEFS, KERNEL_CARDDB_HASH};
 use crate::fast_sampler::WIDE_CATEGORICAL_SAMPLER_VERSION_V1;
+#[cfg(test)]
+use crate::native_policy_train_step_v1::native_train_state_parameter_layout_v1;
 use crate::native_policy_value_net_v1::{
     NativePolicyValueModelConfigV1, NativePolicyValueNetV1, CARD_EMBEDDING_DIM_V1,
     MODEL_ARCHITECTURE_VERSION_V1, MODEL_CONFIG_FINGERPRINT_V1, PARAMETER_COUNT_V1,
@@ -15,8 +17,6 @@ use crate::native_policy_value_net_v1::{
 use crate::sideboard_play_policy_v1::{
     fresh_lineage_generation_v1, FreshLineageGenerationV1, FreshPlayPolicyIdentityV1,
 };
-#[cfg(test)]
-use crate::native_policy_train_step_v1::native_train_state_parameter_layout_v1;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -723,9 +723,8 @@ pub(crate) fn write_synthetic_fresh_source_with_parameters_v1(
         object_group_count: config.object_group_count as u64,
         action_ref_feature_dim: config.action_ref_feature_dim as u64,
     };
-    let generator_model_config_sha256 = hash(
-        &canonical(&serde_json::to_value(&generator_model_config).unwrap()).unwrap(),
-    );
+    let generator_model_config_sha256 =
+        hash(&canonical(&serde_json::to_value(&generator_model_config).unwrap()).unwrap());
     assert_eq!(generator_model_config_sha256, MODEL_CONFIG_FINGERPRINT_V1);
 
     let paths = source_paths_v1(feature_identity.generation);
@@ -803,7 +802,9 @@ pub(crate) fn write_synthetic_fresh_source_with_parameters_v1(
         payload: Payload {
             file: "parameters.f32le".into(),
             encoding: "ieee-754-binary32-little-endian".into(),
-            layout: "torch-named-parameters-c-contiguous-row-major-linear-output-input-no-padding-v1".into(),
+            layout:
+                "torch-named-parameters-c-contiguous-row-major-linear-output-input-no-padding-v1"
+                    .into(),
             bytes: PAYLOAD_BYTES,
             sha256: hash(&payload),
             model_parameter_sha256: model.parameter_manifest_sha256_v1(),

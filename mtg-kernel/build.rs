@@ -5456,7 +5456,11 @@ fn codegen(cards: &[CardJson]) -> String {
             }
             AbilityEffectRecipe::EachPlayerControllingNamedPermanentDrawsCard(name) => {
                 writeln!(out, "    let named = crate::card_def::card_id_by_name({name:?}).expect(\"{name} in CARD_DEFS\");").unwrap();
-                writeln!(out, "    EffectOp::EachPlayerControllingDefinitionDrawsCard {{ card_def: named }}").unwrap();
+                writeln!(
+                    out,
+                    "    EffectOp::EachPlayerControllingDefinitionDrawsCard {{ card_def: named }}"
+                )
+                .unwrap();
             }
         }
         writeln!(out, "}}").unwrap();
@@ -5820,7 +5824,11 @@ fn codegen(cards: &[CardJson]) -> String {
         .iter()
         .any(|card| matches!(special_for(&card.name), Special::DestroyCreature))
     {
-        writeln!(out, "fn spell_effect_destroy_creature() -> Option<EffectOp> {{").unwrap();
+        writeln!(
+            out,
+            "fn spell_effect_destroy_creature() -> Option<EffectOp> {{"
+        )
+        .unwrap();
         writeln!(out, "    Some(EffectOp::Conditional {{").unwrap();
         writeln!(
             out,
@@ -5868,7 +5876,11 @@ fn codegen(cards: &[CardJson]) -> String {
         .iter()
         .any(|card| matches!(special_for(&card.name), Special::DestroyArtifact))
     {
-        writeln!(out, "fn spell_effect_destroy_artifact() -> Option<EffectOp> {{").unwrap();
+        writeln!(
+            out,
+            "fn spell_effect_destroy_artifact() -> Option<EffectOp> {{"
+        )
+        .unwrap();
         writeln!(out, "    Some(EffectOp::Conditional {{").unwrap();
         writeln!(
             out,
@@ -7217,12 +7229,7 @@ fn codegen(cards: &[CardJson]) -> String {
             }
         )
         .unwrap();
-        writeln!(
-            out,
-            "        delve: {},",
-            executable && delve_for(&c.name)
-        )
-        .unwrap();
+        writeln!(out, "        delve: {},", executable && delve_for(&c.name)).unwrap();
         writeln!(
             out,
             "        adventure: {},",

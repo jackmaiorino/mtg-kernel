@@ -268,9 +268,18 @@ fn phase1_gae_invalid_inputs_reject_before_mutation() {
     let mut with_baseline = groups.clone();
     with_baseline[0].baseline_bits = 1.0f32.to_bits();
     assert!(matches!(
-        baseline.train_step_gae_feature_transfer_v3(&with_baseline, &[0.0, 0.0], &[0.0, 0.0], VC, LR),
+        baseline.train_step_gae_feature_transfer_v3(
+            &with_baseline,
+            &[0.0, 0.0],
+            &[0.0, 0.0],
+            VC,
+            LR
+        ),
         Err(NativePolicyTrainErrorV1::BaselineUnsupportedBackend { group_index: 0 })
     ));
 
-    assert_eq!(model.parameter_snapshot_v1(), before.parameter_snapshot_v1());
+    assert_eq!(
+        model.parameter_snapshot_v1(),
+        before.parameter_snapshot_v1()
+    );
 }

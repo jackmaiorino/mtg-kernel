@@ -8,9 +8,9 @@
 pub(crate) mod bridge;
 pub(crate) mod cell_zero_arm_v1;
 mod training;
+pub use training::entropy::run_gradient_probe as run_public_entropy_gradient_probe_v1;
 pub(crate) use training::public_inputs as public_training;
 pub(crate) use training::stack_inputs as stack_training;
-pub use training::entropy::run_gradient_probe as run_public_entropy_gradient_probe_v1;
 #[cfg(test)]
 mod v3_adapter_tests;
 
@@ -239,13 +239,15 @@ impl<B: Backend> ProductionNet8<B> {
             .card_embedding
             .forward(batch.object_card_ids.clone().unsqueeze_dim::<2>(1))
             .squeeze_dim::<2>(1);
-        let object_input = Tensor::cat(
-            vec![batch.object_features.clone(), object_card],
-            1,
-        );
+        let object_input = Tensor::cat(vec![batch.object_features.clone(), object_card], 1);
         let object_base = match &public {
-            Some((addition, _)) => self.object_encoder.second.forward(
-                (self.object_encoder.first.forward(object_input) + addition.clone()).tanh()).tanh(),
+            Some((addition, _)) => self
+                .object_encoder
+                .second
+                .forward(
+                    (self.object_encoder.first.forward(object_input) + addition.clone()).tanh(),
+                )
+                .tanh(),
             None => self.object_encoder.forward(object_input),
         };
 
@@ -316,8 +318,11 @@ impl<B: Backend> ProductionNet8<B> {
         .reshape([batch.decision_count, OBJECT_GROUP_COUNT_V1 * D::HIDDEN_DIM]);
         let state_input = Tensor::cat(vec![batch.state.clone(), pooled_objects], 1);
         let state_hidden = match public {
-            Some((_, addition)) => self.state_encoder.second.forward(
-                (self.state_encoder.first.forward(state_input) + addition).tanh()).tanh(),
+            Some((_, addition)) => self
+                .state_encoder
+                .second
+                .forward((self.state_encoder.first.forward(state_input) + addition).tanh())
+                .tanh(),
             None => self.state_encoder.forward(state_input),
         };
 

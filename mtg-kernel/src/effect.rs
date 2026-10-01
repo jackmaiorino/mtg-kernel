@@ -3625,25 +3625,24 @@ fn validated_definition_owned_root_effect(
         let definition = crate::card_def::CARD_DEFS
             .get(source.card_def as usize)
             .ok_or("answered spell frame lost its source definition")?;
-        let effect =
-            if pending.resolving_item.v4.cast_method == Some(crate::state::CastMethodV4::Omen) {
-                // Shared between a real Omen card's alternative form and an
-                // Adventure card's named spell -- see
-                // `engine::supported_adventure`'s doc.
-                crate::engine::supported_adventure(definition)
-                    .map(|adventure| (adventure.effect)())
-                    .or_else(|| {
-                        crate::engine::supported_omen(definition).map(|omen| (omen.effect)())
-                    })
-            } else {
-                match pending.resolving_item.mode_chosen {
-                    0 => (definition.spell_effect)(),
-                    1 => definition.mode2.as_ref().map(|mode| (mode.effect)()),
-                    2 => definition.mode3.as_ref().map(|mode| (mode.effect)()),
-                    _ => None,
-                }
+        let effect = if pending.resolving_item.v4.cast_method
+            == Some(crate::state::CastMethodV4::Omen)
+        {
+            // Shared between a real Omen card's alternative form and an
+            // Adventure card's named spell -- see
+            // `engine::supported_adventure`'s doc.
+            crate::engine::supported_adventure(definition)
+                .map(|adventure| (adventure.effect)())
+                .or_else(|| crate::engine::supported_omen(definition).map(|omen| (omen.effect)()))
+        } else {
+            match pending.resolving_item.mode_chosen {
+                0 => (definition.spell_effect)(),
+                1 => definition.mode2.as_ref().map(|mode| (mode.effect)()),
+                2 => definition.mode3.as_ref().map(|mode| (mode.effect)()),
+                _ => None,
             }
-            .ok_or("answered spell frame lost its definition-owned root program")?;
+        }
+        .ok_or("answered spell frame lost its definition-owned root program")?;
         Box::new(effect)
     } else {
         return Err("answered effect frame lost its definition-owned root program".to_string());
@@ -4112,7 +4111,10 @@ pub(crate) fn validate_monarch_trigger_binding(
 /// monarch draws a card." Synchronous: unlike the Initiative Undercity route,
 /// this trigger never needs a player choice, so it resolves through ordinary
 /// `execute` rather than the resumable interpreter.
-fn resolve_monarch_trigger(state: &mut GameState, binding: MonarchTriggerBindingV1) -> Result<(), String> {
+fn resolve_monarch_trigger(
+    state: &mut GameState,
+    binding: MonarchTriggerBindingV1,
+) -> Result<(), String> {
     validate_monarch_trigger_binding(state, binding)?;
     event::propose_and_commit(state, event::ProposedEvent::draw(binding.player));
     Ok(())
@@ -6014,9 +6016,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         != Some(top.object)
                     || state.objects.get(top.object).owner != *surveil_player
                 {
-                    return Err(
-                        "surveil choice no longer binds the looked-at top card".to_string()
-                    );
+                    return Err("surveil choice no longer binds the looked-at top card".to_string());
                 }
             }
             EffectOptionChoicePurpose::ChooseColor {
@@ -7393,8 +7393,8 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     // who already knew it privately from the initial look.
                     state.reveal_library_top(PlayerId::P0, player, 1);
                     state.reveal_library_top(PlayerId::P1, player, 1);
-                    let revealed_def =
-                        &crate::card_def::CARD_DEFS[state.objects.get(top.object).card_def as usize];
+                    let revealed_def = &crate::card_def::CARD_DEFS
+                        [state.objects.get(top.object).card_def as usize];
                     if predicate.matches(revealed_def.types) {
                         continuation
                             .frames
@@ -9224,7 +9224,7 @@ fn library_filter_matches(
     }
     Ok(match filter {
         LibraryCardFilter::LandWithSubtype(subtype) => {
-            def.has_type(CardType::Land) && subtype_ids.binary_search(&subtype.stable_id()).is_ok()
+            def.has_type(CardType::Land) && subtype.is_in_subtype_ids(subtype_ids)
         }
         LibraryCardFilter::BasicLand => {
             def.has_type(CardType::Land)
@@ -10036,7 +10036,9 @@ fn creature_matches_filter(
     }
     match filter {
         CreatureFilter::AnyControlled => true,
-        CreatureFilter::ControlledWithSubtype(subtype) => def.subtypes.contains(subtype),
+        CreatureFilter::ControlledWithSubtype(subtype) => {
+            crate::engine::has_effective_subtype(state, object, *subtype)
+        }
         CreatureFilter::WithoutKeyword(keyword) => {
             !crate::engine::has_effective_keyword(state, object, *keyword)
         }
@@ -10447,9 +10449,8 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     let object = state.objects.get(id);
                     let def = &crate::card_def::CARD_DEFS[object.card_def as usize];
                     (def.has_type(crate::card_def::CardType::Creature)
-                        && crate::engine::effective_subtype_ids(state, id)
-                            .binary_search(&excluded_subtype.stable_id())
-                            .is_err())
+                        && !excluded_subtype
+                            .is_in_subtype_ids(&crate::engine::effective_subtype_ids(state, id)))
                     .then(|| event::ProposedEvent::damage(ctx.source, Target::Object(id), *amount))
                 })
                 .collect();
@@ -10946,14 +10947,12 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         } => {
             let player = match controller {
                 PumpControllerScope::Opponents => ctx.controller.opponent(),
-                PumpControllerScope::TargetPlayer(index) => {
-                    match ctx.targets[*index as usize] {
-                        Target::Player(player) => player,
-                        Target::Object(_) => panic!(
-                            "PumpAllUntilEndOfTurn's TargetPlayer scope expected a player target"
-                        ),
-                    }
-                }
+                PumpControllerScope::TargetPlayer(index) => match ctx.targets[*index as usize] {
+                    Target::Player(player) => player,
+                    Target::Object(_) => panic!(
+                        "PumpAllUntilEndOfTurn's TargetPlayer scope expected a player target"
+                    ),
+                },
             };
             let object_ids: Vec<ObjectId> = state.players[player.index()]
                 .battlefield
@@ -10982,9 +10981,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         EffectOp::DealDamageToControllerOfTarget { target, amount } => {
             let controller = match ctx.target_contracts[*target as usize] {
                 StackTargetContractV4::Object { controller, .. } => controller,
-                StackTargetContractV4::Player(_) => panic!(
-                    "DealDamageToControllerOfTarget expects an object target contract"
-                ),
+                StackTargetContractV4::Player(_) => {
+                    panic!("DealDamageToControllerOfTarget expects an object target contract")
+                }
             };
             event::propose_and_commit(
                 state,
@@ -11046,9 +11045,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     .battlefield
                     .iter()
                     .filter(|&&id| {
-                        crate::engine::effective_subtype_ids(state, id)
-                            .binary_search(&subtype.stable_id())
-                            .is_ok()
+                        subtype.is_in_subtype_ids(&crate::engine::effective_subtype_ids(state, id))
                     })
                     .count()
                     .try_into()
@@ -11418,7 +11415,10 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ));
                 return;
             }
-            event::propose_and_commit(state, event::ProposedEvent::transform_in_place(ctx.source, 1));
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::transform_in_place(ctx.source, 1),
+            );
         }
         EffectOp::PutSourceOntoBattlefieldWithXPlusOneCounters => {
             if state.objects.get(ctx.source).zone != Zone::Stack {
@@ -11739,16 +11739,13 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
             subtype,
             minimum_count,
         } => {
-            let subtype_id = subtype.stable_id();
             let count = state.players[ctx.controller.index()]
                 .battlefield
                 .iter()
                 .copied()
                 .filter(|id| *id != ctx.source)
                 .filter(|id| {
-                    crate::engine::effective_subtype_ids(state, *id)
-                        .binary_search(&subtype_id)
-                        .is_ok()
+                    subtype.is_in_subtype_ids(&crate::engine::effective_subtype_ids(state, *id))
                 })
                 .count();
             count >= usize::from(*minimum_count)
@@ -12191,7 +12188,8 @@ mod tests {
     // branch.
     #[test]
     fn may_pay_cost_then_deserializes_a_pre_wave_payload_missing_the_new_fields() {
-        let pre_wave_json = r#"{"MayPayCostThen":{"discard":1,"sacrifice_lands":0,"then":{"Sequence":[]}}}"#;
+        let pre_wave_json =
+            r#"{"MayPayCostThen":{"discard":1,"sacrifice_lands":0,"then":{"Sequence":[]}}}"#;
         let op: EffectOp =
             serde_json::from_str(pre_wave_json).expect("pre-wave MayPayCostThen must deserialize");
         match op {

@@ -687,12 +687,18 @@ impl NativePolicyValueNetV1 {
 
     /// Explicit V4 search-only forward; existing V4 inference remains LibmTanh.
     pub(crate) fn forward_search_feature_transfer_v4(
-        &self, encoded: NativeEncodedDecisionViewV1<'_>,
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
     ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
         #[cfg(target_arch = "x86_64")]
         deterministic_math_v1::assert_pinned_mxcsr_state_v1();
-        let counts=encoded.validate(self.feature_transfer_config_v4())?;
-        self.forward_validated_rows_v1(encoded,counts,None,ForwardActivationModeV1::KernelDeterministicTanh)
+        let counts = encoded.validate(self.feature_transfer_config_v4())?;
+        self.forward_validated_rows_v1(
+            encoded,
+            counts,
+            None,
+            ForwardActivationModeV1::KernelDeterministicTanh,
+        )
     }
 
     fn forward_validated_rows_v1(
@@ -702,7 +708,13 @@ impl NativePolicyValueNetV1 {
         action_ref_pooled_capture: Option<&mut Vec<f32>>,
         activation_mode: ForwardActivationModeV1,
     ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
-        self.forward_public_validated_rows_v1(encoded, counts, action_ref_pooled_capture, activation_mode, None)
+        self.forward_public_validated_rows_v1(
+            encoded,
+            counts,
+            action_ref_pooled_capture,
+            activation_mode,
+            None,
+        )
     }
 
     fn forward_public_validated_rows_v1(
@@ -711,9 +723,19 @@ impl NativePolicyValueNetV1 {
         counts: ValidatedCountsV1,
         action_ref_pooled_capture: Option<&mut Vec<f32>>,
         activation_mode: ForwardActivationModeV1,
-        public: Option<(&public_inputs_v1::PublicInputWeightsV1, &crate::public_cost_features_v1::PublicFeatureRowsV1)>,
+        public: Option<(
+            &public_inputs_v1::PublicInputWeightsV1,
+            &crate::public_cost_features_v1::PublicFeatureRowsV1,
+        )>,
     ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
-        self.forward_stack_and_public_validated_rows_v1(encoded, counts, action_ref_pooled_capture, activation_mode, public, None)
+        self.forward_stack_and_public_validated_rows_v1(
+            encoded,
+            counts,
+            action_ref_pooled_capture,
+            activation_mode,
+            public,
+            None,
+        )
     }
 
     fn forward_stack_and_public_validated_rows_v1(
@@ -722,8 +744,14 @@ impl NativePolicyValueNetV1 {
         counts: ValidatedCountsV1,
         mut action_ref_pooled_capture: Option<&mut Vec<f32>>,
         activation_mode: ForwardActivationModeV1,
-        public: Option<(&public_inputs_v1::PublicInputWeightsV1, &crate::public_cost_features_v1::PublicFeatureRowsV1)>,
-        stack: Option<(&stack_inputs_v1::StackInputWeightsV1, &crate::public_stack_features_v1::StackFeatureRowsV1)>,
+        public: Option<(
+            &public_inputs_v1::PublicInputWeightsV1,
+            &crate::public_cost_features_v1::PublicFeatureRowsV1,
+        )>,
+        stack: Option<(
+            &stack_inputs_v1::StackInputWeightsV1,
+            &crate::public_stack_features_v1::StackFeatureRowsV1,
+        )>,
     ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
         let mut object_input = Vec::with_capacity(counts.object_count * OBJECT_ENCODER_INPUT_V1);
         for object in 0..counts.object_count {
@@ -742,7 +770,13 @@ impl NativePolicyValueNetV1 {
             &object_input,
             counts.object_count,
             activation_mode,
-            public.map(|(weights, rows)| (weights.object.as_slice(), rows.objects.iter().flatten().copied().collect::<Vec<_>>(), crate::public_cost_features_v1::OBJECT_WIDTH)),
+            public.map(|(weights, rows)| {
+                (
+                    weights.object.as_slice(),
+                    rows.objects.iter().flatten().copied().collect::<Vec<_>>(),
+                    crate::public_cost_features_v1::OBJECT_WIDTH,
+                )
+            }),
         );
 
         let mut edge_pooled = vec![0.0; counts.object_count * HIDDEN_DIM_V1];
@@ -799,8 +833,17 @@ impl NativePolicyValueNetV1 {
         state_input.extend_from_slice(encoded.state);
         state_input.extend_from_slice(&pooled_objects);
         let state_hidden = public_inputs_v1::apply_optional_public_projection_v1(
-            &self.state_encoder, &state_input, 1, activation_mode,
-            public.map(|(weights, rows)| (weights.state.as_slice(), rows.state.clone(), crate::public_cost_features_v1::STATE_WIDTH)),
+            &self.state_encoder,
+            &state_input,
+            1,
+            activation_mode,
+            public.map(|(weights, rows)| {
+                (
+                    weights.state.as_slice(),
+                    rows.state.clone(),
+                    crate::public_cost_features_v1::STATE_WIDTH,
+                )
+            }),
         );
 
         let mut action_ref_pooled = vec![0.0; counts.action_count * HIDDEN_DIM_V1];

@@ -5,7 +5,7 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "f7d6e129a83ee32874a567b47346a66af52c7a7d98fa41cc7ce284ddff8d91c9",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "561aa07cbe789d53ff330ba0b53589338eaca54caba27139d2980be517d9db5a"
+    "registry_raw_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14"
   },
   "totals": {
     "pool_cards": 171,

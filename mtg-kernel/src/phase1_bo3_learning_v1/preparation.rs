@@ -12,7 +12,9 @@ use crate::native_flat_tensorizer_v4::NativeFlatDecisionTensorV4;
 use crate::native_policy_train_step_v1::{
     NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
 };
-use crate::paired_bo1_harness_v1::{paired_policy_seeds_v1, PairedBo1PolicyV1, PlayPolicyGenerationV1};
+use crate::paired_bo1_harness_v1::{
+    paired_policy_seeds_v1, PairedBo1PolicyV1, PlayPolicyGenerationV1,
+};
 use crate::phase1_agent_v1::*;
 use crate::phase1_bo3_collection_v1::{Bo3CollectionConfigV1, BO3_COLLECTION_RESULT_SCHEMA_V1};
 use crate::rl::{PlayerSeatV1, TerminalClassificationV1};
@@ -849,13 +851,17 @@ pub(crate) fn replay_attempt(
             let scores = if policies[seat(decision.actor)].feature_generation_v1()
                 == PlayPolicyGenerationV1::V4
             {
-                policies[seat(decision.actor)].score_training_tensor_v4(&NativeFlatDecisionTensorV4 {
-                    common: tensor.clone(),
-                })?
+                policies[seat(decision.actor)].score_training_tensor_v4(
+                    &NativeFlatDecisionTensorV4 {
+                        common: tensor.clone(),
+                    },
+                )?
             } else {
-                policies[seat(decision.actor)].score_training_tensor_v3(&NativeFlatDecisionTensorV3 {
-                    common: tensor.clone(),
-                })?
+                policies[seat(decision.actor)].score_training_tensor_v3(
+                    &NativeFlatDecisionTensorV3 {
+                        common: tensor.clone(),
+                    },
+                )?
             };
             require(
                 scores.value.to_bits() == captured.raw_value_bits

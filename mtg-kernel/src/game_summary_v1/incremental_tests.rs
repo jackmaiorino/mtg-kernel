@@ -7,7 +7,10 @@ use crate::paired_bo1_harness_v1::{
 use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
 
 fn tags() -> RemovalCounterspellTagsV1 {
-    RemovalCounterspellTagsV1 { requires_target: Default::default(), is_counterspell: Default::default() }
+    RemovalCounterspellTagsV1 {
+        requires_target: Default::default(),
+        is_counterspell: Default::default(),
+    }
 }
 
 fn actual_opening(human: PlayerId, starting: PlayerId, opponent_land: &str) -> HumanOpeningV1 {
@@ -15,7 +18,17 @@ fn actual_opening(human: PlayerId, starting: PlayerId, opponent_land: &str) -> H
     let other = crate::card_def::card_id_by_name(opponent_land).unwrap();
     let mut decks = [vec![mountain; 60], vec![mountain; 60]];
     decks[human.opponent().index()] = vec![other; 60];
-    HumanOpeningV1::new(11, 99, 10_000, 100_000, ["First".into(), "Second".into()], decks, starting, human).unwrap()
+    HumanOpeningV1::new(
+        11,
+        99,
+        10_000,
+        100_000,
+        ["First".into(), "Second".into()],
+        decks,
+        starting,
+        human,
+    )
+    .unwrap()
 }
 
 fn actual_session(starting: PlayerId) -> FastActorSessionV1 {
@@ -31,16 +44,27 @@ fn policy() -> SeededRandomBo1PolicyV1 {
 }
 
 fn one_step(session: &mut FastActorSessionV1, policy: &mut SeededRandomBo1PolicyV1) {
-    let FastActorResponseV1::Decision(d) = session.current_response() else { panic!("expected decision") };
-    let selected = policy.select_action_v1(PairedBo1PolicyInputV1::new(session, d)).unwrap();
+    let FastActorResponseV1::Decision(d) = session.current_response() else {
+        panic!("expected decision")
+    };
+    let selected = policy
+        .select_action_v1(PairedBo1PolicyInputV1::new(session, d))
+        .unwrap();
     session.step(d.episode_id, d.step, selected).unwrap();
 }
 
-fn incremental_to_natural(session: &mut FastActorSessionV1, p: &mut SeededRandomBo1PolicyV1) -> CompletedGameSummaryV2 {
+fn incremental_to_natural(
+    session: &mut FastActorSessionV1,
+    p: &mut SeededRandomBo1PolicyV1,
+) -> CompletedGameSummaryV2 {
     let mut accumulated = FastGameSummaryAccumulatorV1::new_v1(session).unwrap();
     loop {
         match session.current_response() {
-            FastActorResponseV1::Terminal(_) => return accumulated.finish_natural_v1(session, "weights", &tags()).unwrap(),
+            FastActorResponseV1::Terminal(_) => {
+                return accumulated
+                    .finish_natural_v1(session, "weights", &tags())
+                    .unwrap()
+            }
             FastActorResponseV1::Decision(_) => {
                 assert!(accumulated.observe_current_v1(session).unwrap());
                 assert!(!accumulated.observe_current_v1(session).unwrap());
@@ -61,19 +85,33 @@ fn natural_incremental_and_automatic_match_frozen_driver_bytes_rng_and_actions()
         let mut interactive = actual_session(starting);
         let (mut p0, mut p1, mut p2) = (policy(), policy(), policy());
         let expected = frozen_fast_driver_oracle_v1(&mut old, "weights", &tags(), &mut p0).unwrap();
-        let actual = try_run_fast_episode_with_summary_v1(&mut automatic, "weights", &tags(), &mut p1).unwrap();
+        let actual =
+            try_run_fast_episode_with_summary_v1(&mut automatic, "weights", &tags(), &mut p1)
+                .unwrap();
         let completed = incremental_to_natural(&mut interactive, &mut p2);
         assert_eq!(completed.completion, GameSummaryCompletionV2::Natural);
         assert_eq!(completed.history.initial_policy_steps, 0);
-        assert_eq!(completed.history.observed_gameplay_decisions, completed.history.committed_policy_steps);
+        assert_eq!(
+            completed.history.observed_gameplay_decisions,
+            completed.history.committed_policy_steps
+        );
         assert!(completed.history.committed_policy_steps > 0);
-        assert_eq!(serde_json::to_vec(&expected).unwrap(), serde_json::to_vec(&actual).unwrap());
-        assert_eq!(serde_json::to_vec(&expected).unwrap(), serde_json::to_vec(&completed.summary).unwrap());
+        assert_eq!(
+            serde_json::to_vec(&expected).unwrap(),
+            serde_json::to_vec(&actual).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_vec(&expected).unwrap(),
+            serde_json::to_vec(&completed.summary).unwrap()
+        );
         assert_eq!(p0.traces, p1.traces);
         assert_eq!(p0.traces, p2.traces);
         assert_eq!(old.current_response(), automatic.current_response());
         assert_eq!(old.current_response(), interactive.current_response());
-        assert_eq!(serde_json::to_vec(old.game_state()).unwrap(), serde_json::to_vec(interactive.game_state()).unwrap());
+        assert_eq!(
+            serde_json::to_vec(old.game_state()).unwrap(),
+            serde_json::to_vec(interactive.game_state()).unwrap()
+        );
     }
 }
 
@@ -82,11 +120,18 @@ fn legacy_partial_start_keeps_its_old_summary_but_full_history_constructor_rejec
     let mut old = actual_session(PlayerId::P0);
     let mut fresh = actual_session(PlayerId::P0);
     let (mut p0, mut p1) = (policy(), policy());
-    for _ in 0..5 { one_step(&mut old, &mut p0); one_step(&mut fresh, &mut p1); }
+    for _ in 0..5 {
+        one_step(&mut old, &mut p0);
+        one_step(&mut fresh, &mut p1);
+    }
     assert!(FastGameSummaryAccumulatorV1::new_v1(&fresh).is_err());
     let expected = frozen_fast_driver_oracle_v1(&mut old, "weights", &tags(), &mut p0).unwrap();
-    let actual = try_run_fast_episode_with_summary_v1(&mut fresh, "weights", &tags(), &mut p1).unwrap();
-    assert_eq!(serde_json::to_vec(&expected).unwrap(), serde_json::to_vec(&actual).unwrap());
+    let actual =
+        try_run_fast_episode_with_summary_v1(&mut fresh, "weights", &tags(), &mut p1).unwrap();
+    assert_eq!(
+        serde_json::to_vec(&expected).unwrap(),
+        serde_json::to_vec(&actual).unwrap()
+    );
     assert_eq!(p0.traces, p1.traces);
 }
 
@@ -104,31 +149,71 @@ fn opening_concessions_bind_actual_mulligan_bottom_ready_history_without_gamepla
                     _ => {}
                 }
                 let before = serde_json::to_vec(opening.summary_state_v2().unwrap().0).unwrap();
-                let completed = finish_opening_concession_v2(&opening, human, "weights", &tags()).unwrap();
-                let again = finish_opening_concession_v2(&opening, human, "weights", &tags()).unwrap();
-                assert_eq!(serde_json::to_vec(&completed).unwrap(), serde_json::to_vec(&again).unwrap());
-                assert_eq!(before, serde_json::to_vec(opening.summary_state_v2().unwrap().0).unwrap());
+                let completed =
+                    finish_opening_concession_v2(&opening, human, "weights", &tags()).unwrap();
+                let again =
+                    finish_opening_concession_v2(&opening, human, "weights", &tags()).unwrap();
+                assert_eq!(
+                    serde_json::to_vec(&completed).unwrap(),
+                    serde_json::to_vec(&again).unwrap()
+                );
+                assert_eq!(
+                    before,
+                    serde_json::to_vec(opening.summary_state_v2().unwrap().0).unwrap()
+                );
                 assert_eq!(completed.summary.winner, Some(human.opponent()));
                 assert_eq!(completed.history.observed_gameplay_decisions, 0);
                 assert_eq!(completed.history.committed_policy_steps, 0);
                 assert_eq!(completed.history.committed_physical_decisions, 0);
                 assert!(completed.history.retained_event_count >= 14);
-                let expected_phase = [HumanOpeningPhaseV1::Mulligan, HumanOpeningPhaseV1::Mulligan, HumanOpeningPhaseV1::Bottom, HumanOpeningPhaseV1::Ready][phase_index];
-                let GameSummaryCompletionV2::Concession { conceding_player, stage: GameConcessionStageV2::Opening { phase, human_seat, starting_player, mulligans_taken, hand_counts, library_counts } } = completed.completion else { panic!("explicit opening concession required") };
+                let expected_phase = [
+                    HumanOpeningPhaseV1::Mulligan,
+                    HumanOpeningPhaseV1::Mulligan,
+                    HumanOpeningPhaseV1::Bottom,
+                    HumanOpeningPhaseV1::Ready,
+                ][phase_index];
+                let GameSummaryCompletionV2::Concession {
+                    conceding_player,
+                    stage:
+                        GameConcessionStageV2::Opening {
+                            phase,
+                            human_seat,
+                            starting_player,
+                            mulligans_taken,
+                            hand_counts,
+                            library_counts,
+                        },
+                } = completed.completion
+                else {
+                    panic!("explicit opening concession required")
+                };
                 assert_eq!(conceding_player, human);
                 assert_eq!(human_seat, human.into());
                 assert_eq!(starting_player, starting.into());
                 assert_eq!(phase, expected_phase);
                 assert_eq!(mulligans_taken, u8::from(phase_index > 0));
-                assert_eq!(hand_counts[human.index()], if phase_index == 3 { 6 } else { 7 });
+                assert_eq!(
+                    hand_counts[human.index()],
+                    if phase_index == 3 { 6 } else { 7 }
+                );
                 assert_eq!(hand_counts[human.opponent().index()], 7);
-                assert_eq!(library_counts[human.index()] + hand_counts[human.index()], 60);
+                assert_eq!(
+                    library_counts[human.index()] + hand_counts[human.index()],
+                    60
+                );
                 let own = &completed.summary.own_card_outcomes[human.index()][&mountain];
                 assert_eq!(own.times_drawn, if phase_index == 0 { 7 } else { 14 });
                 assert!(own.stuck_in_hand);
                 assert!(!own.cast && !own.died_without_dealing_damage && !own.removal_no_target);
-                assert!(completed.summary.opponent_evidence.iter().all(Vec::is_empty));
-                assert_eq!(serde_json::to_vec(&completed.summary.resource_curve).unwrap(), serde_json::to_vec(&ResourceCurveV1::default()).unwrap());
+                assert!(completed
+                    .summary
+                    .opponent_evidence
+                    .iter()
+                    .all(Vec::is_empty));
+                assert_eq!(
+                    serde_json::to_vec(&completed.summary.resource_curve).unwrap(),
+                    serde_json::to_vec(&ResourceCurveV1::default()).unwrap()
+                );
             }
         }
     }
@@ -137,15 +222,27 @@ fn opening_concessions_bind_actual_mulligan_bottom_ready_history_without_gamepla
 #[test]
 fn opening_concession_projection_hides_other_seat_hand_and_library_identities() {
     let mountain = crate::card_def::card_id_by_name("Mountain").unwrap();
-    let registered = crate::sideboard::DeckConfigurationV1::new_exact_v1(vec![mountain;60],vec![mountain;15]).unwrap();
+    let registered =
+        crate::sideboard::DeckConfigurationV1::new_exact_v1(vec![mountain; 60], vec![mountain; 15])
+            .unwrap();
     for human in [PlayerId::P0, PlayerId::P1] {
         let mut projected = Vec::new();
         for opponent_land in ["Island", "Swamp"] {
             let opening = actual_opening(human, PlayerId::P0, opponent_land);
-            let completed = finish_opening_concession_v2(&opening, human, "weights", &tags()).unwrap();
+            let completed =
+                finish_opening_concession_v2(&opening, human, "weights", &tags()).unwrap();
             let mut wins = [0, 0];
             wins[human.opponent().index()] = 1;
-            projected.push(crate::learned_bo3_v1::project_sideboard_input_v1(&registered, human, &[completed.summary], 2, wins).unwrap());
+            projected.push(
+                crate::learned_bo3_v1::project_sideboard_input_v1(
+                    &registered,
+                    human,
+                    &[completed.summary],
+                    2,
+                    wins,
+                )
+                .unwrap(),
+            );
         }
         assert_eq!(projected[0], projected[1]);
         assert!(projected[0].opponent_evidence.is_empty());
@@ -156,15 +253,30 @@ fn opening_concession_projection_hides_other_seat_hand_and_library_identities() 
 #[test]
 fn actual_offered_hand_cast_is_retained_once_before_a_gameplay_concession() {
     let mainboards = ["Burn", "Rally"].map(|name| {
-        crate::runtime_decks::runtime_deck_by_id(name).unwrap().card_ids.to_vec()
+        crate::runtime_decks::runtime_deck_by_id(name)
+            .unwrap()
+            .card_ids
+            .to_vec()
     });
-    let mut opening = HumanOpeningV1::new(21, 99, 5_000, 50_000, ["Burn".into(), "Rally".into()], mainboards, PlayerId::P0, PlayerId::P0).unwrap();
+    let mut opening = HumanOpeningV1::new(
+        21,
+        99,
+        5_000,
+        50_000,
+        ["Burn".into(), "Rally".into()],
+        mainboards,
+        PlayerId::P0,
+        PlayerId::P0,
+    )
+    .unwrap();
     opening.keep().unwrap();
     let mut session = opening.into_session().unwrap();
     let mut accumulator = FastGameSummaryAccumulatorV1::new_v1(&session).unwrap();
     let mut p = policy();
     for _ in 0..1_000 {
-        let FastActorResponseV1::Decision(decision) = session.current_response() else { panic!("expected a real offered cast before terminal") };
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            panic!("expected a real offered cast before terminal")
+        };
         let offered = session.current_offered_hand_cast_ids_v1();
         accumulator.observe_current_v1(&session).unwrap();
         assert!(!accumulator.observe_current_v1(&session).unwrap());
@@ -175,11 +287,16 @@ fn actual_offered_hand_cast_is_retained_once_before_a_gameplay_concession() {
             // The offered hand card and its legal action come from the engine.
             let mut tagged = tags();
             tagged.is_counterspell.insert(card_id);
-            let completed = accumulator.finish_concession_v1(&session, actor, "weights", &tagged).unwrap();
+            let completed = accumulator
+                .finish_concession_v1(&session, actor, "weights", &tagged)
+                .unwrap();
             let own = &completed.summary.own_card_outcomes[actor.index()][&card_id];
             assert!(own.stuck_in_hand);
             assert!(!own.counterspell_held);
-            assert_eq!(completed.history.observed_gameplay_decisions, session.policy_step_count() + 1);
+            assert_eq!(
+                completed.history.observed_gameplay_decisions,
+                session.policy_step_count() + 1
+            );
             return;
         }
         one_step(&mut session, &mut p);
@@ -192,20 +309,33 @@ fn gameplay_concession_keeps_actual_prefix_and_rejects_unobserved_or_terminal_hi
     let mut session = actual_session(PlayerId::P0);
     let mut accumulator = FastGameSummaryAccumulatorV1::new_v1(&session).unwrap();
     let mut p = policy();
-    for _ in 0..4 { accumulator.observe_current_v1(&session).unwrap(); one_step(&mut session, &mut p); }
+    for _ in 0..4 {
+        accumulator.observe_current_v1(&session).unwrap();
+        one_step(&mut session, &mut p);
+    }
     let before = serde_json::to_vec(session.game_state()).unwrap();
-    let completed = accumulator.finish_concession_v1(&session, PlayerId::P1, "weights", &tags()).unwrap();
+    let completed = accumulator
+        .finish_concession_v1(&session, PlayerId::P1, "weights", &tags())
+        .unwrap();
     assert_eq!(before, serde_json::to_vec(session.game_state()).unwrap());
     assert_eq!(completed.summary.winner, Some(PlayerId::P0));
     assert_eq!(completed.history.committed_policy_steps, 4);
     assert_eq!(completed.history.observed_gameplay_decisions, 5);
-    assert_eq!(completed.completion, GameSummaryCompletionV2::Concession { conceding_player: PlayerId::P1, stage: GameConcessionStageV2::Gameplay });
+    assert_eq!(
+        completed.completion,
+        GameSummaryCompletionV2::Concession {
+            conceding_player: PlayerId::P1,
+            stage: GameConcessionStageV2::Gameplay
+        }
+    );
     assert!(!completed.summary.resource_curve.lands_by_turn.is_empty());
 
     let mut missed = actual_session(PlayerId::P0);
     let accumulator = FastGameSummaryAccumulatorV1::new_v1(&missed).unwrap();
     one_step(&mut missed, &mut policy());
-    assert!(accumulator.finish_concession_v1(&missed, PlayerId::P0, "weights", &tags()).is_err());
+    assert!(accumulator
+        .finish_concession_v1(&missed, PlayerId::P0, "weights", &tags())
+        .is_err());
 
     let mut capped = FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
         3, 99, 1, 1, ["A".into(),"B".into()], [vec![crate::card_def::card_id_by_name("Mountain").unwrap();60],vec![crate::card_def::card_id_by_name("Island").unwrap();60]], PlayerId::P0,
@@ -213,10 +343,19 @@ fn gameplay_concession_keeps_actual_prefix_and_rejects_unobserved_or_terminal_hi
     let mut accumulated = FastGameSummaryAccumulatorV1::new_v1(&capped).unwrap();
     accumulated.observe_current_v1(&capped).unwrap();
     one_step(&mut capped, &mut policy());
-    let FastActorResponseV1::Terminal(terminal) = capped.current_response() else { panic!("one-step cap must halt") };
-    assert_ne!(terminal.terminal_classification, crate::rl::TerminalClassificationV1::Natural);
-    assert!(accumulated.finish_concession_v1(&capped, PlayerId::P0, "weights", &tags()).is_err());
-    assert!(FastGameSummaryAccumulatorV1::for_legacy_driver_v1(&capped).finish_natural_v1(&capped, "weights", &tags()).is_err());
+    let FastActorResponseV1::Terminal(terminal) = capped.current_response() else {
+        panic!("one-step cap must halt")
+    };
+    assert_ne!(
+        terminal.terminal_classification,
+        crate::rl::TerminalClassificationV1::Natural
+    );
+    assert!(accumulated
+        .finish_concession_v1(&capped, PlayerId::P0, "weights", &tags())
+        .is_err());
+    assert!(FastGameSummaryAccumulatorV1::for_legacy_driver_v1(&capped)
+        .finish_natural_v1(&capped, "weights", &tags())
+        .is_err());
 }
 
 fn frozen_fast_driver_oracle_v1(
@@ -304,4 +443,3 @@ fn frozen_fast_driver_oracle_v1(
         }
     }
 }
-

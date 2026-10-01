@@ -503,7 +503,9 @@ fn build_with_extensions(
                         && role == FlatActionRefRoleV1::TargetObject
                     {
                         super::v3_spell_target_adapter_v1::visible_spell_target(
-                            &session.state, current.actor, reference,
+                            &session.state,
+                            current.actor,
+                            reference,
                         )?
                     } else {
                         flat_visible_action_object_v2(&session.state, current.actor, reference)?
@@ -652,8 +654,8 @@ impl FastActorSessionV1 {
     }
 
     #[cfg(test)]
-    pub(crate) fn fixture_policy_headroom_v4(&mut self, remaining:u64) {
-        self.max_policy_steps=self.policy_step_count.checked_add(remaining).unwrap();
+    pub(crate) fn fixture_policy_headroom_v4(&mut self, remaining: u64) {
+        self.max_policy_steps = self.policy_step_count.checked_add(remaining).unwrap();
     }
 
     #[cfg(test)]
@@ -994,7 +996,9 @@ pub(crate) fn shuffle_trigger_source_into_library_v1(
         assert_eq!(object.zone, Zone::Battlefield);
         object.zone = Zone::Library;
         object.zone_change_count += 1;
-        object.v4.reset_for_zone_change(object.card_def, Zone::Library, state.turn);
+        object
+            .v4
+            .reset_for_zone_change(object.card_def, Zone::Library, state.turn);
         object.controller = object.owner;
         object.tapped = false;
         object.summoning_sick = false;
@@ -1095,7 +1099,9 @@ pub(crate) fn avenging_hunter_hidden_source_with_stack_historical_rows_state_v1(
 ) -> (GameState, ObjectId) {
     use crate::engine::{self, Action, Decision};
     use crate::policy_observation_v6::tests::{put, ready_state};
-    use crate::state::{AbilitySourceContractV4, InitiativeTriggerKindV1, StackItemKind, Target, UndercityRoomV1};
+    use crate::state::{
+        AbilitySourceContractV4, InitiativeTriggerKindV1, StackItemKind, Target, UndercityRoomV1,
+    };
     use crate::trigger::PendingTrigger;
 
     let mut state = ready_state();
@@ -1117,7 +1123,11 @@ pub(crate) fn avenging_hunter_hidden_source_with_stack_historical_rows_state_v1(
     let bolt = put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
     state.players[PlayerId::P0.index()].mana_pool[ManaColor::R.pool_index()] = 1;
     engine::step(&mut state, Action::CastSpell(bolt)).unwrap();
-    engine::step(&mut state, Action::ChooseTarget(Target::Object(bolt_target))).unwrap();
+    engine::step(
+        &mut state,
+        Action::ChooseTarget(Target::Object(bolt_target)),
+    )
+    .unwrap();
     assert!(matches!(
         engine::advance_until_decision(&mut state),
         Decision::CastSpellOrPass { .. }
@@ -1564,7 +1574,8 @@ mod tests {
         let saw_choose_target_or_finish = current.candidates.iter().any(|candidate| {
             matches!(
                 candidate.semantic,
-                ActionSemanticV1::ChooseTarget { .. } | ActionSemanticV1::FinishTargetSelection { .. }
+                ActionSemanticV1::ChooseTarget { .. }
+                    | ActionSemanticV1::FinishTargetSelection { .. }
             )
         });
         assert!(saw_choose_target_or_finish);
@@ -1608,10 +1619,7 @@ mod tests {
         let observation = session
             .flat_policy_observation_v3(expected(&session))
             .unwrap();
-        assert!(observation
-            .extensions
-            .historical_public_sources
-            .is_empty());
+        assert!(observation.extensions.historical_public_sources.is_empty());
     }
 
     #[test]
@@ -1665,12 +1673,19 @@ mod tests {
         );
         assert_eq!(state.stack.len(), 1);
         assert_eq!(state.stack[0].source, filler);
-        assert_eq!(state.stack[0].kind, crate::state::StackItemKind::TriggeredAbility);
+        assert_eq!(
+            state.stack[0].kind,
+            crate::state::StackItemKind::TriggeredAbility
+        );
 
         let contract = state.engine.pending_triggers[0].source_contract.unwrap();
         assert_eq!(contract.source, hunter);
         shuffle_trigger_source_into_library_v1(&mut state, hunter, PlayerId::P0);
-        assert_eq!(state.stack.len(), 1, "the filler stack item is untouched by the shuffle");
+        assert_eq!(
+            state.stack.len(),
+            1,
+            "the filler stack item is untouched by the shuffle"
+        );
 
         let session = FastActorSessionV1::from_v3_fixture_state(state);
         let (_, objects) = encoded(&session);
@@ -1707,7 +1722,8 @@ mod tests {
     fn v3_pending_trigger_known_library_source_takes_the_ordinary_path() {
         let (mut state, hunter, goaded, _ordinary) =
             avenging_hunter_undercity_arena_choose_targets_state_v1(false);
-        let new_generation = move_trigger_source_to_known_library_v1(&mut state, hunter, PlayerId::P0);
+        let new_generation =
+            move_trigger_source_to_known_library_v1(&mut state, hunter, PlayerId::P0);
 
         let session = FastActorSessionV1::from_v3_fixture_state(state);
         let (_, objects) = encoded(&session);
@@ -1800,7 +1816,12 @@ mod tests {
             .all(|row| row.group != FlatActionObjectGroupV1::HistoricalPublicSource));
         let hunter_rows: Vec<_> = objects
             .iter()
-            .filter(|row| row.card_token == flat_card_token_v2(crate::card_def::card_id_by_name("Avenging Hunter").unwrap()))
+            .filter(|row| {
+                row.card_token
+                    == flat_card_token_v2(
+                        crate::card_def::card_id_by_name("Avenging Hunter").unwrap(),
+                    )
+            })
             .collect();
         assert!(!hunter_rows.is_empty());
         for row in &hunter_rows {

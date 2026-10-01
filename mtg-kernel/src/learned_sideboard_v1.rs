@@ -6,7 +6,9 @@
 //! are borrowed, frozen inputs. This is an imitation implementation, not an RL
 //! trainer or a claim that a particular checkpoint improves match win rate.
 
-use crate::fast_sampler::{FastCategoricalError, WideCategoricalScratchV1, FAST_CATEGORICAL_MASS_TOTAL};
+use crate::fast_sampler::{
+    FastCategoricalError, WideCategoricalScratchV1, FAST_CATEGORICAL_MASS_TOTAL,
+};
 use crate::sideboard::{CardCountV1, DeckConfigurationV1, SideboardPlanV1};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -577,9 +579,7 @@ impl LearnedSideboardModelV1 {
     ) -> ResultV1<SampledSideboardDecisionV1> {
         let scored = self.score_v1(input, state, embeddings)?;
         let logits_f32: Vec<f32> = scored.logits.iter().map(|&value| value as f32).collect();
-        let sampled_index = scratch
-            .sample(&logits_f32, seed)
-            .map_err(sampler_error)? as u32;
+        let sampled_index = scratch.sample(&logits_f32, seed).map_err(sampler_error)? as u32;
         let masses = scratch.last_masses_v1(logits_f32.len());
         let sampled_probability =
             masses[sampled_index as usize] as f64 / FAST_CATEGORICAL_MASS_TOTAL as f64;
@@ -1951,8 +1951,7 @@ mod tests {
             (0, SideboardActionV1::Done, 0x3ff0_0000_0000_0000),
         ];
         assert_eq!(result.decisions.len(), expected.len());
-        for (decision, (index, action, probability_bits)) in result.decisions.iter().zip(expected)
-        {
+        for (decision, (index, action, probability_bits)) in result.decisions.iter().zip(expected) {
             assert_eq!(decision.sampled_index, index);
             assert_eq!(decision.sampled_action, action);
             assert_eq!(decision.sampled_probability.to_bits(), probability_bits);

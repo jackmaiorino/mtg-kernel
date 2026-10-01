@@ -798,7 +798,9 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
         ProposedEvent::Transform(t) => {
             let obj = state.objects.get_mut(t.object);
             let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
-            let Some(face) = (t.face_index == 1).then_some(def.transform_face.as_ref()).flatten()
+            let Some(face) = (t.face_index == 1)
+                .then_some(def.transform_face.as_ref())
+                .flatten()
             else {
                 panic!("transform_in_place requested an undefined face");
             };
@@ -1117,33 +1119,8 @@ fn commit_zone_change(
     state.forget_hand_object(id);
     state.clear_object_relations(id);
     if from_zone == Zone::Battlefield {
-        // 506.4: a permanent that leaves the battlefield leaves combat.
-        // `state.engine.combat.attackers` is a bare `Vec<ObjectId>` with no
-        // accompanying zone-change generation, so a stale entry left behind
-        // by a departure is indistinguishable, by id alone, from a live one
-        // if this same id later returns to combat later the same turn.
-        // `engine::put_ninjutsu_source_onto_battlefield_attacking`'s
-        // own-duplicate guard trusts a bare `combat.attackers.contains(&
-        // source)`, so it fails closed on that entirely legal re-entry
-        // (`engine_halted:InvalidEffectContinuation`) unless every
-        // departure keeps the list clean. Two `pay_cost_components_with_x`
-        // cost components (`ReturnControlledUnblockedAttackerToOwnersHand`,
-        // `ReturnControlledPermanentToOwnersHand`) already pruned this by
-        // hand for their own departures; centralizing it here, on every
-        // zone change away from the battlefield, covers every other
-        // departure path too -- Snap's own "return target creature to its
-        // owner's hand" resolution effect (`effect::EffectOp::MoveObject`)
-        // among them -- instead of requiring each one to remember it
-        // individually. Root cause for the Faeries-deck halt family
-        // reported after both ninjutsu fixes: a ninjutsu creature (Ninja of
-        // the Deep Hours or Moon-Circuit Hacker) attacked, was bounced by
-        // Snap without leaving `combat.attackers`, and then legally
-        // ninjutsu'd back into the same combat.
-        state
-            .engine
-            .combat
-            .attackers
-            .retain(|&attacker| attacker != id);
+        // 506.4: leaving the battlefield removes it from combat.
+        state.engine.combat.remove_from_combat(id);
     }
 
     match to_zone {
@@ -1350,25 +1327,15 @@ fn refresh_paid_creature_power_lki(state: &mut GameState, id: ObjectId, from_zon
 /// are never freed, so snapshots and provenance may still refer to the inert
 /// historical identity without making it a live target.
 ///
-/// Also drops every `state.engine.linked_exile_records` row naming `id` on
-/// either side. `clear_object_relations` already clears the per-object
-/// `v4.exiled_by`/`attached_to` markers, but `linked_exile_records` is
-/// separate engine bookkeeping (Journey to Nowhere/Mesmeric Fiend's "return
-/// when the source leaves" contract) that only ever grows or shrinks through
-/// its own dedicated call sites (`effect::EffectOp::ExileTargetLinkedToSource`
-/// and its `LinkedExileChosenHandCard` sibling push a row; `EffectOp::
-/// ReturnObjectsExiledBySource` is the only thing that removes one) -- none of
-/// which this token-cleanup sweep goes through. A linked-exile token that
-/// ceases here keeps its `zone` (`Exile`) and `zone_change_count` exactly as
-/// recorded (this function's whole contract, above), so without this the row
-/// looks byte-identical to a live, still-exiled incarnation to every later
-/// reader: `object_relations_public_v4`'s uniqueness proof
-/// (`validate_linked_exile_records_public_v4`) finds the exact incarnation it
-/// expects but the object is no longer in `state.exile`'s list, which reads
-/// as "not uniquely in exile" (CR 111.8/704.5d: a token in a
-/// non-battlefield zone ceases to exist immediately, so a linked-exile
-/// record can never legitimately outlive its own exiled token, and there is
-/// nothing left to return).
+/// Also drops every `state.engine.linked_exile_records` row whose exiled
+/// object is `id`. Because the zone marker and zone-change count stay as
+/// recorded, such a row would otherwise still look like a live, uniquely
+/// exiled incarnation: observation fails its uniqueness proof and
+/// `ReturnObjectsExiledBySource` would put the ceased token back onto the
+/// battlefield, which 111.8 forbids. Rows naming `id` only as their source
+/// are kept: a token source ceases only after leaving the battlefield, and
+/// its leaves-the-battlefield return still resolves from the row by source
+/// contract.
 pub fn cease_to_exist(state: &mut GameState, id: ObjectId) -> bool {
     let owner = state.objects.get(id).owner;
     let zone = state.objects.get(id).zone;
@@ -1379,7 +1346,7 @@ pub fn cease_to_exist(state: &mut GameState, id: ObjectId) -> bool {
         state
             .engine
             .linked_exile_records
-            .retain(|record| record.exiled != id && record.source.source != id);
+            .retain(|record| record.exiled != id);
     }
     removed
 }
@@ -1620,55 +1587,18 @@ mod tests {
         );
     }
 
-    /// Root-cause regression for the CawGates-vs-Rally V4 encoding halt
-    /// (campaign-002 block2 iteration 2, slots 7 and 0): Journey to Nowhere
-    /// exiles a Rally token (e.g. a Rally at the Hornburg Human), and
-    /// `trigger::sba_fixed_point`'s 111.8/704.5d sweep immediately ceases it
-    /// (a token is never on the battlefield once exiled). Before this fix,
-    /// `cease_to_exist` removed the token from `state.exile` without
-    /// touching `state.engine.linked_exile_records`, leaving a record whose
-    /// `exiled_zone_change_count` still matched the ceased object's
-    /// unchanged `zone_change_count` -- `rl::validate_linked_exile_records_
-    /// public_v4` then expected that exact incarnation to be uniquely in
-    /// `state.exile`, found it gone, and failed with "linked-exile exact
-    /// card incarnation is not uniquely in exile", surfaced to the actor as
-    /// `V4 actor-visible encoding: Action(CorruptCurrentBinding)` (the
-    /// blanket `map_err` in `rl_session::flat_action_v4::
-    /// flat_policy_observation_v4` discards the real error). Proven directly
-    /// against `cease_to_exist`, isolated from the rest of the SBA sweep;
-    /// the real-game proof is `expanded_deck_training_v1::tests::
-    /// campaign_002_a_block2_iteration_2_slot_7_*` and its `_b_..._slot_0_*`
-    /// sibling.
+    /// Spellbench launch-benchmark reproduction (CawGates): Journey to Nowhere
+    /// exiled a token, the 111.8/704.5d sweep ceased it, and the linked-exile
+    /// record outlived it, so every later observation failed and Journey
+    /// leaving would have returned the ceased token.
     #[test]
-    fn cease_to_exist_drops_stale_linked_exile_records_on_either_side() {
-        use crate::state::{AbilitySourceContractV4, GameObject, LinkedExileRecordV4, ObjectLinkV4, ObjectStateV4};
+    fn cease_to_exist_drops_the_linked_exile_record_of_the_ceased_exiled_object() {
+        use crate::state::{AbilitySourceContractV4, LinkedExileRecordV4, ObjectLinkV4};
 
-        fn push_object(state: &mut GameState, owner: PlayerId, zone: Zone) -> ObjectId {
-            state.objects.push(GameObject {
-                card_def: 0,
-                name: "fixture".to_string(),
-                owner,
-                controller: owner,
-                zone,
-                tapped: false,
-                summoning_sick: false,
-                damage: 0,
-                counters: Default::default(),
-                attachments: Vec::new(),
-                v4: ObjectStateV4::from_card_def(0),
-                spell_copy_origin: None,
-                plotted_turn: None,
-                zone_change_count: 0,
-            })
-        }
-
-        // Exiled-side cleanup: the linked-exile *target* (the Rally token)
-        // ceases while its source (Journey to Nowhere) is still live on the
-        // battlefield.
         let mut state = fresh_state();
-        let source = push_object(&mut state, PlayerId::P0, Zone::Battlefield);
+        let source = push_object_into(&mut state, PlayerId::P0, Zone::Battlefield);
+        let exiled = push_object_into(&mut state, PlayerId::P1, Zone::Exile);
         state.players[0].battlefield.push(source);
-        let exiled = push_object(&mut state, PlayerId::P1, Zone::Exile);
         state.exile.push(exiled);
         state.objects.get_mut(exiled).v4.exiled_by = Some(ObjectLinkV4 {
             object: source,
@@ -1691,43 +1621,64 @@ mod tests {
         });
 
         assert!(cease_to_exist(&mut state, exiled));
-        assert!(
-            !state.exile.contains(&exiled),
-            "cease_to_exist must still drop the ceased object from state.exile"
-        );
+        assert!(!state.exile.contains(&exiled));
+        assert_eq!(state.objects.get(exiled).v4.exiled_by, None);
         assert!(
             state.engine.linked_exile_records.is_empty(),
-            "a ceased exiled token must not leave a dangling linked-exile record: {:?}",
+            "a ceased exiled object must not leave a linked-exile record: {:?}",
             state.engine.linked_exile_records
         );
+    }
 
-        // Source-side cleanup: symmetric sweep when the identity that ceases
-        // is the recorded *source* rather than the exiled object.
-        let other_source = push_object(&mut state, PlayerId::P0, Zone::Graveyard);
-        state.players[0].graveyard.push(other_source);
-        let other_exiled = push_object(&mut state, PlayerId::P1, Zone::Exile);
-        state.exile.push(other_exiled);
-        state.engine.linked_exile_records.push(LinkedExileRecordV4 {
+    /// A token source that left the battlefield has already triggered its
+    /// return, which resolves from the row by source contract, so the row
+    /// must survive the source ceasing to exist.
+    #[test]
+    fn cease_to_exist_keeps_the_linked_exile_record_of_a_ceased_token_source() {
+        use crate::state::{AbilitySourceContractV4, LinkedExileRecordV4};
+
+        let mut state = fresh_state();
+        let token_source = push_object_into(&mut state, PlayerId::P0, Zone::Graveyard);
+        state.players[0].graveyard.push(token_source);
+        let still_exiled = push_object_into(&mut state, PlayerId::P1, Zone::Exile);
+        state.exile.push(still_exiled);
+        let record = LinkedExileRecordV4 {
             source: AbilitySourceContractV4 {
-                source: other_source,
+                source: token_source,
                 card_def: 0,
                 owner: PlayerId::P0,
                 controller: PlayerId::P0,
-                zone: Zone::Graveyard,
+                zone: Zone::Battlefield,
                 zone_change_count: 0,
                 attached_to: None,
             },
-            exiled: other_exiled,
+            exiled: still_exiled,
             exiled_card_def: 0,
             exiled_owner: PlayerId::P1,
             exiled_zone_change_count: 0,
-        });
+        };
+        state.objects.get_mut(token_source).zone_change_count = 1;
+        state.engine.linked_exile_records.push(record);
+        assert!(cease_to_exist(&mut state, token_source));
+        assert_eq!(state.engine.linked_exile_records, vec![record]);
+    }
 
-        assert!(cease_to_exist(&mut state, other_source));
-        assert!(
-            state.engine.linked_exile_records.is_empty(),
-            "a ceased source identity must also drop its linked-exile record: {:?}",
-            state.engine.linked_exile_records
-        );
+    fn push_object_into(state: &mut GameState, owner: PlayerId, zone: Zone) -> ObjectId {
+        state.objects.push(crate::state::GameObject {
+            card_def: 0,
+            name: "fixture".to_string(),
+            owner,
+            controller: owner,
+            zone,
+            tapped: false,
+            summoning_sick: false,
+            damage: 0,
+            counters: Default::default(),
+            attachments: Vec::new(),
+            v4: crate::state::ObjectStateV4::from_card_def(0),
+            spell_copy_origin: None,
+            plotted_turn: None,
+            zone_change_count: 0,
+        })
     }
 }

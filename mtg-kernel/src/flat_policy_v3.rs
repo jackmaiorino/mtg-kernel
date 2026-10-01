@@ -366,10 +366,28 @@ mod tests {
         // combat: the code under test only looks at `state.engine.combat`
         // and each named object's current zone, so this reproduces exactly
         // what a real post-combat, hidden-zone-bound decision presents.
-        let attacker = put(&mut state, PlayerId::P1, "Tolarian Terror", Zone::Battlefield);
-        event::propose_and_commit(&mut state, ProposedEvent::zone_change(attacker, Zone::Graveyard));
-        let blocker_visible = put(&mut state, PlayerId::P0, "Tolarian Terror", Zone::Battlefield);
-        let blocker_hidden = put(&mut state, PlayerId::P0, "Tolarian Terror", Zone::Battlefield);
+        let attacker = put(
+            &mut state,
+            PlayerId::P1,
+            "Tolarian Terror",
+            Zone::Battlefield,
+        );
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(attacker, Zone::Graveyard),
+        );
+        let blocker_visible = put(
+            &mut state,
+            PlayerId::P0,
+            "Tolarian Terror",
+            Zone::Battlefield,
+        );
+        let blocker_hidden = put(
+            &mut state,
+            PlayerId::P0,
+            "Tolarian Terror",
+            Zone::Battlefield,
+        );
         event::propose_and_commit(
             &mut state,
             ProposedEvent::zone_change(blocker_hidden, Zone::Library),
@@ -384,7 +402,8 @@ mod tests {
         let blocker_own_hand = put(&mut state, PlayerId::P0, "Tolarian Terror", Zone::Hand);
         let blocker_opp_hand_unrevealed =
             put(&mut state, PlayerId::P1, "Tolarian Terror", Zone::Hand);
-        let blocker_opp_hand_revealed = put(&mut state, PlayerId::P1, "Tolarian Terror", Zone::Hand);
+        let blocker_opp_hand_revealed =
+            put(&mut state, PlayerId::P1, "Tolarian Terror", Zone::Hand);
         state
             .reveal_hand_card(PlayerId::P0, PlayerId::P1, blocker_opp_hand_revealed)
             .unwrap();
@@ -419,7 +438,11 @@ mod tests {
         )
         .unwrap();
         let combat = &observation.projection.surface.combat;
-        assert_eq!(combat.ordered_attackers.len(), 1, "dead attacker stays visible in its graveyard");
+        assert_eq!(
+            combat.ordered_attackers.len(),
+            1,
+            "dead attacker stays visible in its graveyard"
+        );
         assert_eq!(combat.attacker_to_ordered_blockers.len(), 1);
         let (_, blockers) = &combat.attacker_to_ordered_blockers[0];
         assert_eq!(

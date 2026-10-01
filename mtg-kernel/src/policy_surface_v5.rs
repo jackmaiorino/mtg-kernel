@@ -307,6 +307,58 @@ impl CombatScanV5 {
         }
         Ok(())
     }
+
+    /// The one scan-answer legality rule: `Ok` iff answering `include` for
+    /// the current candidate keeps at least one completion that the engine's
+    /// own aggregate validator accepts. Otherwise the engine's refusal of the
+    /// largest completion, which names the requirement that can no longer be
+    /// met.
+    ///
+    /// Probing the smallest and the largest completion is exact for the
+    /// current requirements. Attacker legality is monotone in the declared
+    /// set (only omitting a goaded attacker is refused), so the largest
+    /// completion is legal whenever any is. A blocker declaration is legal
+    /// when an attacker's count is zero or reaches its minimum, and every
+    /// count between the two probes is reachable. A future requirement of
+    /// another shape needs `scan_accepts_exactly_the_answers_that_keep_a_
+    /// legal_completion` extended with it.
+    fn answer_keeps_a_legal_completion(
+        &self,
+        state: &GameState,
+        surface: &HarnessSurfaceV2,
+        include: bool,
+    ) -> Result<(), String> {
+        let (candidates, cursor, selected) = match self {
+            CombatScanV5::Attackers {
+                ordered_candidates,
+                cursor,
+                selected,
+                ..
+            }
+            | CombatScanV5::Blockers {
+                ordered_candidates,
+                cursor,
+                selected,
+                ..
+            } => (ordered_candidates, *cursor, selected),
+        };
+        let validate = |declared: &[ObjectId]| match self {
+            CombatScanV5::Attackers { .. } => engine::validate_declare_attackers(state, declared),
+            CombatScanV5::Blockers { attacker, .. } => {
+                surface.validate_declare_blockers_for_attacker(state, *attacker, declared)
+            }
+        };
+        let mut smallest = selected.clone();
+        if include {
+            smallest.push(candidates[cursor]);
+        }
+        if validate(&smallest).is_ok() {
+            return Ok(());
+        }
+        let mut largest = smallest;
+        largest.extend_from_slice(&candidates[(cursor + 1)..]);
+        validate(&largest)
+    }
 }
 
 #[derive(Clone)]
@@ -375,6 +427,24 @@ impl PolicySurfaceV5 {
                 private_combat_selection: None,
             }),
         }
+    }
+
+    /// For the active scan step `decision`, whether `[include: false,
+    /// include: true]` each keep a legal completion of the aggregate
+    /// declaration. These are the answers `apply` accepts.
+    pub fn feasible_scan_answers(
+        &self,
+        state: &GameState,
+        decision: &PolicyDecisionV5,
+    ) -> Result<[bool; 2], String> {
+        let scan = self.scan.as_ref().ok_or("no active policy combat scan")?;
+        if policy_decision_for_scan(scan)? != *decision {
+            return Err("decision is not the active policy combat scan step".to_string());
+        }
+        Ok([false, true].map(|include| {
+            scan.answer_keeps_a_legal_completion(state, &self.inner, include)
+                .is_ok()
+        }))
     }
 
     pub fn privileged_scan_context(&self) -> Result<PolicySurfaceContextIdsV5, String> {
@@ -524,7 +594,7 @@ impl PolicySurfaceV5 {
         )?;
         scan.validate_shape()?;
 
-        let (candidate, include, blocker_attacker) = match (scan, action) {
+        let include = match (scan, action) {
             (
                 CombatScanV5::Attackers {
                     player,
@@ -544,7 +614,7 @@ impl PolicySurfaceV5 {
                 if *attacker != ordered_candidates[*cursor] {
                     return Err("stale policy combat scan candidate binding".to_string());
                 }
-                (*attacker, *include, None)
+                *include
             }
             (
                 CombatScanV5::Blockers {
@@ -570,45 +640,19 @@ impl PolicySurfaceV5 {
                 if *blocker != ordered_candidates[*cursor] {
                     return Err("stale policy combat scan candidate binding".to_string());
                 }
-                (*blocker, *include, Some(*attacker))
+                *include
             }
             _ => return Err("policy action kind does not match active combat scan".to_string()),
         };
 
-        let (ordered_candidates, cursor, selected) = match scan {
-            CombatScanV5::Attackers {
-                ordered_candidates,
-                cursor,
-                selected,
-                ..
-            }
-            | CombatScanV5::Blockers {
-                ordered_candidates,
-                cursor,
-                selected,
-                ..
-            } => (ordered_candidates, *cursor, selected),
-        };
-        let completes_scan = cursor.checked_add(1) == Some(ordered_candidates.len());
-
         // Aggregate combat commit is the only scan path that reaches H2/the
-        // engine after advancing the scan. Preflight the exact aggregate while
-        // everything is still read-only so stale state cannot partially
-        // mutate or reach H2's blocker `expect` boundary.
-        if completes_scan {
-            let mut included = selected.clone();
-            if include {
-                included.push(candidate);
-            }
-            if let Some(attacker) = blocker_attacker {
-                self.inner
-                    .validate_declare_blockers_for_attacker(state, attacker, &included)?;
-            } else {
-                engine::validate_declare_attackers(state, &included)?;
-            }
-        }
-
-        Ok(())
+        // engine after advancing the scan. Preflight while everything is
+        // still read-only: an answer must keep a legal completion (for the
+        // final answer, the exact aggregate itself), so stale state cannot
+        // partially mutate or reach H2's blocker `expect` boundary and no
+        // accepted answer can strand the scan. `apply_in_place` applies the
+        // same rule.
+        scan.answer_keeps_a_legal_completion(state, &self.inner, include)
     }
 
     // Backend-only diagnostic. Do not attach this private scan to human views
@@ -790,6 +834,29 @@ impl PolicySurfaceV5 {
         if actor != expected_actor {
             return Err("stale policy combat scan actor binding".to_string());
         }
+        let (current, completes_scan) = match &*scan {
+            CombatScanV5::Attackers {
+                ordered_candidates,
+                cursor,
+                ..
+            }
+            | CombatScanV5::Blockers {
+                ordered_candidates,
+                cursor,
+                ..
+            } => (
+                ordered_candidates[*cursor],
+                *cursor + 1 == ordered_candidates.len(),
+            ),
+        };
+        if candidate != current {
+            return Err("stale policy combat scan candidate binding".to_string());
+        }
+        // The rule `validate_fast_actor_current_action` preflights; the final
+        // answer is validated by the aggregate commit below.
+        if !completes_scan {
+            scan.answer_keeps_a_legal_completion(state, &self.inner, include)?;
+        }
         let (ordered_candidates, cursor, selected) = match scan {
             CombatScanV5::Attackers {
                 ordered_candidates,
@@ -804,9 +871,6 @@ impl PolicySurfaceV5 {
                 ..
             } => (ordered_candidates, cursor, selected),
         };
-        if candidate != ordered_candidates[*cursor] {
-            return Err("stale policy combat scan candidate binding".to_string());
-        }
         if include {
             selected.push(candidate);
         }
@@ -914,6 +978,56 @@ fn surface_binding_envelope_bytes(
     }
 }
 
+/// Test oracle judged only by the engine's aggregate validators, by brute
+/// force: does some completion of the active scan, after answering `include`
+/// for the current candidate, declare legally?
+#[cfg(test)]
+pub(crate) fn scan_answer_has_legal_completion_for_test(
+    surface: &PolicySurfaceV5,
+    state: &GameState,
+    include: bool,
+) -> bool {
+    let scan = surface.scan.as_ref().expect("active scan");
+    let (candidates, cursor, selected) = match scan {
+        CombatScanV5::Attackers {
+            ordered_candidates,
+            cursor,
+            selected,
+            ..
+        }
+        | CombatScanV5::Blockers {
+            ordered_candidates,
+            cursor,
+            selected,
+            ..
+        } => (ordered_candidates, *cursor, selected),
+    };
+    let mut prefix = selected.clone();
+    if include {
+        prefix.push(candidates[cursor]);
+    }
+    let remaining = &candidates[(cursor + 1)..];
+    (0..(1usize << remaining.len())).any(|mask| {
+        let mut aggregate = prefix.clone();
+        aggregate.extend(
+            remaining
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| mask & (1 << index) != 0)
+                .map(|(_, id)| *id),
+        );
+        match scan {
+            CombatScanV5::Attackers { .. } => {
+                engine::validate_declare_attackers(state, &aggregate).is_ok()
+            }
+            CombatScanV5::Blockers { attacker, .. } => surface
+                .inner
+                .validate_declare_blockers_for_attacker(state, *attacker, &aggregate)
+                .is_ok(),
+        }
+    })
+}
+
 #[cfg(test)]
 thread_local! {
     static TEST_EXACT_SURFACE_HASH_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
@@ -1010,6 +1124,40 @@ mod tests {
             ids.push(id);
         }
         (state, ids)
+    }
+
+    /// Sources of this game's committed combat damage to a player, in
+    /// commit order. The combat record is cleared as the end of combat step
+    /// ends (511.3), so a test whose commit auto-advanced past combat reads
+    /// what its declarations did from the permanent event history instead.
+    fn combat_damage_to_player_sources(state: &GameState) -> Vec<ObjectId> {
+        state
+            .engine
+            .event_history
+            .iter()
+            .filter_map(|event| match event {
+                crate::event::CommittedEvent::CombatDamageToPlayer { source, .. } => Some(*source),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Sources of the committed damage dealt to one creature, in commit
+    /// order (in these combat-only fixtures, exactly its combat opponents).
+    fn damage_sources_to(state: &GameState, target: ObjectId) -> Vec<ObjectId> {
+        state
+            .engine
+            .event_history
+            .iter()
+            .filter_map(|event| match event {
+                crate::event::CommittedEvent::Damage {
+                    source,
+                    target: crate::state::Target::Object(id),
+                    amount,
+                } if *id == target && *amount > 0 => Some(*source),
+                _ => None,
+            })
+            .collect()
     }
 
     fn blocker_state(count: usize) -> (GameState, ObjectId, Vec<ObjectId>) {
@@ -1179,24 +1327,33 @@ mod tests {
     #[test]
     fn zero_candidate_combat_inherits_h2_silent_commit_without_policy_microstep() {
         let (mut attack_state, _) = attacker_state(0);
+        let attack_turn = attack_state.turn;
         let mut attack_surface = PolicySurfaceV5::new();
         let attack_next = attack_surface.next_decision(&mut attack_state).unwrap();
         assert!(!matches!(
             attack_next,
             PolicyDecisionV5::AttackerInclusion { .. }
         ));
-        assert!(attack_state.engine.combat.attackers_declared);
-        assert!(attack_state.engine.combat.attackers.is_empty());
+        // The silent commit auto-advances past combat, whose record is
+        // cleared as the end of combat step ends (511.3): the empty
+        // declaration shows as having left the declare attackers step with
+        // no combat damage dealt.
+        assert!(attack_state.turn != attack_turn || attack_state.step != Step::DeclareAttackers);
+        assert!(combat_damage_to_player_sources(&attack_state).is_empty());
 
-        let (mut block_state, _, _) = blocker_state(0);
+        let (mut block_state, attacker, _) = blocker_state(0);
         let mut block_surface = PolicySurfaceV5::new();
         let block_next = block_surface.next_decision(&mut block_state).unwrap();
         assert!(!matches!(
             block_next,
             PolicyDecisionV5::BlockerInclusion { .. }
         ));
-        assert!(block_state.engine.combat.blockers_declared);
-        assert!(block_state.engine.combat.blocked_by.is_empty());
+        // The empty block declaration left the attacker unblocked.
+        assert_eq!(
+            combat_damage_to_player_sources(&block_state),
+            vec![attacker]
+        );
+        assert!(damage_sources_to(&block_state, attacker).is_empty());
     }
 
     #[test]
@@ -1260,7 +1417,7 @@ mod tests {
         state.step = Step::DeclareBlockers;
         state.priority_player = PlayerId::P1;
         state.engine.combat.attackers_declared = true;
-        state.engine.combat.attackers = attackers;
+        state.engine.combat.attackers = attackers.clone();
         let card_def = card_id_by_name("Voldaren Epicure").unwrap();
         let blocker = state.objects.push(GameObject {
             card_def,
@@ -1291,8 +1448,11 @@ mod tests {
             PolicyDecisionV5::BlockerInclusion { blocker: candidate, .. }
                 if candidate == blocker
         ));
-        assert!(state.engine.combat.blockers_declared);
-        assert_eq!(state.engine.combat.blocked_by[0].1, vec![blocker]);
+        // Combat has ended (511.3 cleared its record): the blocker blocked
+        // only the first attacker, and the second went unblocked.
+        assert_eq!(damage_sources_to(&state, blocker), vec![attackers[0]]);
+        assert_eq!(damage_sources_to(&state, attackers[0]), vec![blocker]);
+        assert_eq!(combat_damage_to_player_sources(&state), vec![attackers[1]]);
     }
 
     #[test]
@@ -1419,6 +1579,196 @@ mod tests {
                 .map(|action| action.record.stable_id.clone())
                 .collect::<Vec<_>>()
         );
+    }
+
+    fn goad(state: &mut GameState, attacker: ObjectId) {
+        let expires_at_turn = state.turn + 1;
+        state.objects.get_mut(attacker).v4.goaded_by = vec![crate::state::GoadStateV4 {
+            player: PlayerId::P1,
+            expires_at_turn,
+        }];
+    }
+
+    fn inclusion_action(decision: &PolicyDecisionV5, include: bool) -> PolicyActionV5 {
+        match *decision {
+            PolicyDecisionV5::AttackerInclusion {
+                player, attacker, ..
+            } => PolicyActionV5::ChooseAttackerInclusion {
+                actor: player,
+                attacker,
+                include,
+            },
+            PolicyDecisionV5::BlockerInclusion {
+                player,
+                attacker,
+                blocker,
+                ..
+            } => PolicyActionV5::ChooseBlockerInclusion {
+                actor: player,
+                attacker,
+                blocker,
+                include,
+            },
+            PolicyDecisionV5::Surface(ref other) => {
+                panic!("expected a combat scan step, got {other:?}")
+            }
+        }
+    }
+
+    /// Walks every reachable answer sequence of every scan in this combat
+    /// step (including later per-attacker blocker scans) and requires the
+    /// surface to accept exactly the answers that keep a legal completion.
+    fn assert_scan_accepts_exactly_the_completable_answers(
+        surface: &PolicySurfaceV5,
+        state: &GameState,
+        label: &str,
+    ) {
+        let mut probe_state = state.clone();
+        let mut probe_surface = surface.clone();
+        let decision = probe_surface.next_decision(&mut probe_state).unwrap();
+        if matches!(decision, PolicyDecisionV5::Surface(_)) {
+            return;
+        }
+        for include in [false, true] {
+            let completable =
+                scan_answer_has_legal_completion_for_test(&probe_surface, &probe_state, include);
+            let mut next_state = probe_state.clone();
+            let mut next_surface = probe_surface.clone();
+            let accepted = next_surface
+                .apply(&mut next_state, inclusion_action(&decision, include))
+                .is_ok();
+            assert_eq!(
+                accepted, completable,
+                "{label}: scan {:?}, answer include={include}",
+                probe_surface.scan
+            );
+            if accepted {
+                assert_scan_accepts_exactly_the_completable_answers(
+                    &next_surface,
+                    &next_state,
+                    label,
+                );
+            }
+        }
+    }
+
+    /// Spellbench launch-benchmark reproduction (Elves, Undercity Arena
+    /// goad): declining a goaded attacker at a non-final scan step used to be
+    /// accepted, after which both final answers were refused, so no legal
+    /// declaration remained.
+    #[test]
+    fn declining_a_goaded_attacker_is_refused_before_the_scan_is_stranded() {
+        let (mut state, candidates) = attacker_state(2);
+        goad(&mut state, candidates[0]);
+        let mut surface = PolicySurfaceV5::new();
+        let first = surface.next_decision(&mut state).unwrap();
+        assert!(matches!(
+            first,
+            PolicyDecisionV5::AttackerInclusion { attacker, .. } if attacker == candidates[0]
+        ));
+        let state_before = state.clone();
+        let surface_before = surface.clone();
+        let error = surface
+            .apply(&mut state, inclusion_action(&first, false))
+            .unwrap_err();
+        assert_eq!(
+            error,
+            "one or more goaded creatures able to attack was omitted"
+        );
+        assert_eq!(state, state_before);
+        assert_eq!(surface.scan, surface_before.scan);
+
+        surface
+            .apply(&mut state, inclusion_action(&first, true))
+            .unwrap();
+        let second = surface.next_decision(&mut state).unwrap();
+        surface
+            .apply(&mut state, inclusion_action(&second, false))
+            .unwrap();
+        assert!(state.engine.combat.attackers_declared);
+        assert_eq!(state.engine.combat.attackers, vec![candidates[0]]);
+    }
+
+    /// A partial block that can no longer reach the attacker's minimum is
+    /// refused when it is answered, not only at the final commit.
+    #[test]
+    fn a_partial_block_that_cannot_reach_the_minimum_is_refused_when_answered() {
+        let (mut state, attacker, blockers) = blocker_state(3);
+        state.objects.get_mut(attacker).v4.minimum_blockers_override = Some(3);
+        let mut surface = PolicySurfaceV5::new();
+        let first = surface.next_decision(&mut state).unwrap();
+        surface
+            .apply(&mut state, inclusion_action(&first, true))
+            .unwrap();
+        let second = surface.next_decision(&mut state).unwrap();
+        let state_before = state.clone();
+        let surface_before = surface.clone();
+        let error = surface
+            .apply(&mut state, inclusion_action(&second, false))
+            .unwrap_err();
+        assert_eq!(
+            error,
+            format!("{attacker} requires at least 3 creatures to block it")
+        );
+        assert_eq!(state, state_before);
+        assert_eq!(surface.scan, surface_before.scan);
+
+        surface
+            .apply(&mut state, inclusion_action(&second, true))
+            .unwrap();
+        let third = surface.next_decision(&mut state).unwrap();
+        surface
+            .apply(&mut state, inclusion_action(&third, true))
+            .unwrap();
+        assert!(state.engine.combat.blockers_declared);
+        assert_eq!(state.engine.combat.blocked_by, vec![(attacker, blockers)]);
+    }
+
+    #[test]
+    fn scan_accepts_exactly_the_answers_that_keep_a_legal_completion() {
+        for count in 1..=4 {
+            for goad_mask in 0..(1usize << count) {
+                let (mut state, candidates) = attacker_state(count);
+                for (index, id) in candidates.iter().copied().enumerate() {
+                    if goad_mask & (1 << index) != 0 {
+                        goad(&mut state, id);
+                    }
+                }
+                assert_scan_accepts_exactly_the_completable_answers(
+                    &PolicySurfaceV5::new(),
+                    &state,
+                    &format!("attackers count={count} goad_mask={goad_mask:#06b}"),
+                );
+            }
+        }
+        for count in 1..=4 {
+            for minimum in 1..=3u8 {
+                let (mut state, attacker, _) = blocker_state(count);
+                state.objects.get_mut(attacker).v4.minimum_blockers_override = Some(minimum);
+                assert_scan_accepts_exactly_the_completable_answers(
+                    &PolicySurfaceV5::new(),
+                    &state,
+                    &format!("blockers count={count} minimum={minimum}"),
+                );
+            }
+        }
+        // H2 removes blockers already assigned to an earlier attacker, so a
+        // later minimum-two attacker can be scanned with a single candidate.
+        for minimum in 1..=3u8 {
+            let (mut state, first_attacker, _) = blocker_state(3);
+            let card_def = state.objects.get(first_attacker).card_def;
+            let mut second = state.objects.get(first_attacker).clone();
+            second.v4 = ObjectStateV4::from_card_def(card_def);
+            second.v4.minimum_blockers_override = Some(minimum);
+            let second_attacker = state.objects.push(second);
+            state.players[0].battlefield.push(second_attacker);
+            state.engine.combat.attackers.push(second_attacker);
+            assert_scan_accepts_exactly_the_completable_answers(
+                &PolicySurfaceV5::new(),
+                &state,
+                &format!("two attackers, second minimum={minimum}"),
+            );
+        }
     }
 
     #[test]

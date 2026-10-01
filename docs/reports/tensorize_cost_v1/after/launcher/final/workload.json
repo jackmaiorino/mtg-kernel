@@ -1,0 +1,82 @@
+{
+ "schema": "mtg-kernel-multirun-workload/v1",
+ "adapter": "native-science-loop-pilot-v1",
+ "executable": "D:/tensorize-cost-v1-work/exe/final-cuda.exe",
+ "executable_sha256": "6b79322fa75af8f3a69ca7be4306d68b03c389e36627f8b6e1549dea167b0011",
+ "data_root": "D:/mtg-kernel-tensorize-cost-v1/data",
+ "remote_mirror_root": "C:/mtg-node/multirun-mirror",
+ "remote_runtime_libraries": [
+  "D:/multirun-qualified-v1-work/cuda-runtime/nvrtc64_120_0.dll",
+  "D:/multirun-qualified-v1-work/cuda-runtime/nvrtc-builtins64_128.dll",
+  "D:/multirun-qualified-v1-work/cuda-runtime/cudart64_12.dll"
+ ],
+ "planned_updates": 128,
+ "knobs": {
+  "MULTIRUN_WORKERS": "2",
+  "MULTIRUN_SESSIONS": "32",
+  "MULTIRUN_BROKER_TARGET": "16"
+ },
+ "runs": [
+  {
+   "id": "base-s0",
+   "seed": 5500001,
+   "arm": "base"
+  },
+  {
+   "id": "envrand-s0",
+   "seed": 5600001,
+   "arm": "envrand"
+  },
+  {
+   "id": "base-s1",
+   "seed": 5500002,
+   "arm": "base"
+  },
+  {
+   "id": "envrand-s1",
+   "seed": 5600002,
+   "arm": "envrand"
+  },
+  {
+   "id": "base-s2",
+   "seed": 5500003,
+   "arm": "base"
+  },
+  {
+   "id": "envrand-s2",
+   "seed": 5600003,
+   "arm": "envrand"
+  },
+  {
+   "id": "base-s3",
+   "seed": 5500004,
+   "arm": "base"
+  },
+  {
+   "id": "envrand-s3",
+   "seed": 5600004,
+   "arm": "envrand"
+  },
+  {
+   "id": "base-s4",
+   "seed": 5500005,
+   "arm": "base"
+  },
+  {
+   "id": "envrand-s4",
+   "seed": 5600005,
+   "arm": "envrand"
+  }
+ ],
+ "remote_cuda_root": "D:/multirun-qualified-v1-work/cuda-runtime",
+ "arms": {
+  "base": {
+   "knobs": {}
+  },
+  "envrand": {
+   "knobs": {
+    "MULTIRUN_ENVIRONMENT_RANDOMIZATION_V2": "1"
+   }
+  }
+ }
+}
