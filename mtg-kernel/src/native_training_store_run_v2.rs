@@ -5223,6 +5223,7 @@ mod tests {
             .unwrap()
     }
 
+    #[cfg(feature = "limited-fdn-fixtures")]
     pub(super) fn fixture_bytes_fdn_batch_a() -> Vec<u8> {
         let mut record = fixture_record();
         record.environment.card_db_hash_u64_hex =
