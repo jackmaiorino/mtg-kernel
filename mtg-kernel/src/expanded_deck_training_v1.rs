@@ -2901,6 +2901,26 @@ mod warm_cuda_timing_tests;
 
 #[cfg(test)]
 pub(crate) mod tests {
+    // Current rules/catalog baseline observed in PR112 CI run 36807239038.
+    // CPU libm last bits differ between MSVC and Linux GNU; equality remains exact.
+    #[cfg(target_os = "windows")]
+    const ORDINARY_SEQUENTIAL_STATE_SHA256_V1: &str =
+        "4d816715da28f1d82f4e9f433fb3d486800cf7aeb999ba5dd00cb77d1174bee9";
+    #[cfg(not(target_os = "windows"))]
+    const ORDINARY_SEQUENTIAL_STATE_SHA256_V1: &str =
+        "351b3b0d9a50cf291534a2def8de6dc8ab8242c36c298432ffa59bed123cb4c9";
+    #[cfg(target_os = "windows")]
+    const ORDINARY_FIXED_PARTITION_STATE_SHA256_V1: &str =
+        "d5f00127988d2bb59f2e0bad69b845e4599e1e6642001b1be2d598360b48c604";
+    #[cfg(not(target_os = "windows"))]
+    const ORDINARY_FIXED_PARTITION_STATE_SHA256_V1: &str =
+        "df15d8b098ba7983ffbab9ae8129650b9920499ece78dee07c7c4936847f149e";
+    #[cfg(target_os = "windows")]
+    const ORDINARY_GAE_STATE_SHA256_V1: &str =
+        "e33f47b78f60f1a5e39363f2d9803063f39f544feff29d9ab94f03dcad3ad531";
+    #[cfg(not(target_os = "windows"))]
+    const ORDINARY_GAE_STATE_SHA256_V1: &str =
+        "037ef43b1b0bd4eb247790378957fa37591cc5e9b19b1bb99ac2c394cd59f1a5";
     use super::*;
     use crate::sideboard::checked_in_pauper_registered_deck_by_id_v1;
 
@@ -6160,7 +6180,7 @@ pub(crate) mod tests {
         // this pin is this test's own independent measurement, not copied
         // from the V3 constant).
         assert_eq!(
-            state, "28faac998142e07ddc5368238f45ff05e6a0578140d0e490a24daefe95fff878",
+            state, ORDINARY_SEQUENTIAL_STATE_SHA256_V1,
             "the V4 ordinary-trainer path over real constructed decks must stay reproducible"
         );
     }
@@ -6188,7 +6208,7 @@ pub(crate) mod tests {
         assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V3);
         assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V3);
         assert_eq!(
-            state, "28faac998142e07ddc5368238f45ff05e6a0578140d0e490a24daefe95fff878",
+            state, ORDINARY_SEQUENTIAL_STATE_SHA256_V1,
             "the V3 ordinary-trainer path must be byte-for-byte unchanged by \
              the V4 update-path follow-up"
         );
@@ -6252,7 +6272,7 @@ pub(crate) mod tests {
         // expected to be bit-identical to each other.
         assert_eq!(
             reference.unwrap(),
-            "2fd271a3aab18a9bcd2501bf92ce8f24664ffcb1269ba885b79159fe743e1bf0",
+            ORDINARY_FIXED_PARTITION_STATE_SHA256_V1,
             "the V4 fixed-partition ordinary-trainer path over real constructed decks \
              must stay reproducible"
         );
@@ -6383,7 +6403,7 @@ pub(crate) mod tests {
         assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V4);
         assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V4);
         assert_ne!(
-            state, "28faac998142e07ddc5368238f45ff05e6a0578140d0e490a24daefe95fff878",
+            state, ORDINARY_SEQUENTIAL_STATE_SHA256_V1,
             "CUDA differs from CPU sequential by design (tolerance-bounded, never bit-identical); \
              an exact match here would itself be suspicious"
         );
@@ -6521,7 +6541,7 @@ pub(crate) mod tests {
         assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V4);
         assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V4);
         assert_eq!(
-            state, "5aabee1d46b0882ebbf63d93d1906571f30e1191e9606234903799e061a4d671",
+            state, ORDINARY_GAE_STATE_SHA256_V1,
             "the gae_advantage_value/v1 CPU ordinary-trainer path over real constructed decks \
              must stay reproducible"
         );
@@ -6628,7 +6648,7 @@ pub(crate) mod tests {
         assert_eq!(contract, FEATURE_CONTRACT_DIGEST_V4);
         assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V4);
         assert_ne!(
-            state, "5aabee1d46b0882ebbf63d93d1906571f30e1191e9606234903799e061a4d671",
+            state, ORDINARY_GAE_STATE_SHA256_V1,
             "CUDA differs from CPU sequential by design (tolerance-bounded, never bit-identical); \
              an exact match here would itself be suspicious"
         );

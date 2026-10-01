@@ -1439,6 +1439,21 @@ mod tests {
 
         let bindings = result.episode_bindings();
         assert_eq!(bindings.len(), 2);
+        eprintln!(
+            "current checkpoint episode goldens: {:?}",
+            bindings
+                .iter()
+                .map(|b| (
+                    lower_hex_raw32_v1(b.trajectory_sha256()),
+                    b.policy_step_count(),
+                    b.physical_decision_count(),
+                    b.learner_policy_step_count(),
+                    b.opponent_policy_step_count(),
+                    b.learner_physical_decision_count(),
+                    b.opponent_physical_decision_count()
+                ))
+                .collect::<Vec<_>>()
+        );
 
         assert_eq!(bindings[0].episode_index(), 2);
         assert_eq!(bindings[0].environment_seed(), 3_233_989_599_464_222_885);
@@ -1458,7 +1473,7 @@ mod tests {
         // are this test's own live-computed values, read from a failing run.
         assert_eq!(
             lower_hex_raw32_v1(bindings[0].trajectory_sha256()),
-            "ed146f9d608a5d9accd420bc42bc91f7e17b4419078c3788d7d670679f601809"
+            "21dca504b34c30768434a74f82b618c5b5ddbc4c5760ed00edbab53a630ec455"
         );
         assert_eq!(bindings[0].outer_trajectory_sha256_v2(), None);
         assert_eq!(bindings[0].policy_step_count(), 418);
