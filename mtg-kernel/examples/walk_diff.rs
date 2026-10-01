@@ -1894,9 +1894,7 @@ fn decision_texts(
                 .pending_optional_cost
                 .as_ref()
                 .is_some_and(|pending| pending.return_permanent_payable);
-            if return_permanent_payable {
-                Some(("CHOOSE_USE", vec!["Yes".to_string(), "No".to_string()]))
-            } else if !*discard_payable && !*sacrifice_payable {
+            if return_permanent_payable || (!*discard_payable && !*sacrifice_payable) {
                 Some(("CHOOSE_USE", vec!["Yes".to_string(), "No".to_string()]))
             } else {
                 Some((
