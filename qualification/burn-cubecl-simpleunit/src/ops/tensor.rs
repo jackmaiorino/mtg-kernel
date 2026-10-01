@@ -1,20 +1,20 @@
 use super::{expand, numeric, permute, unfold};
-use crate::CubeBackend;
 use crate::kernel::prng::{random_bernoulli, random_normal, random_uniform};
 use crate::kernel::unary_basic::BasicFloatUnaryKind;
 use crate::kernel::{
-    self, FloatUnaryOp, FloatUnaryOpFamily, launch_unary_float, reduce, unary_basic,
+    self, launch_unary_float, reduce, unary_basic, FloatUnaryOp, FloatUnaryOpFamily,
 };
-use crate::{CubeRuntime, FloatElement, IntElement};
+use crate::CubeBackend;
 use crate::{
     element::BoolElement,
-    kernel::matmul::{MatmulStrategy, matmul},
+    kernel::matmul::{matmul, MatmulStrategy},
 };
+use crate::{CubeRuntime, FloatElement, IntElement};
 use burn_backend::ops::GridSampleOptions;
 use burn_backend::tensor::{BoolTensor, Device, FloatTensor, IntTensor};
+use burn_backend::{get_device_settings, ExecutionError, Scalar};
+use burn_backend::{ops::FloatTensorOps, Distribution, Shape, TensorData};
 use burn_backend::{DType, ElementConversion, FloatDType, Slice};
-use burn_backend::{Distribution, Shape, TensorData, ops::FloatTensorOps};
-use burn_backend::{ExecutionError, Scalar, get_device_settings};
 use burn_std::{BoolDType, IntDType};
 use cubecl::prelude::*;
 use cubek::reduce::components::instructions::ReduceOperationConfig;

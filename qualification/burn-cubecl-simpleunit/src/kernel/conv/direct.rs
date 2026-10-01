@@ -1,13 +1,13 @@
+use crate::{kernel::utils::decompose_linear, ops::numeric::empty_device_dtype};
 use crate::{
-    CubeRuntime,
     kernel::{into_contiguous_aligned, utils::address_type},
     ops::max_vector_size,
     tensor::CubeTensor,
+    CubeRuntime,
 };
-use crate::{kernel::utils::decompose_linear, ops::numeric::empty_device_dtype};
 use burn_backend::{
+    ops::{conv::calculate_conv_output_sizes, ConvOptions},
     TensorMetadata,
-    ops::{ConvOptions, conv::calculate_conv_output_sizes},
 };
 use cubecl::{
     calculate_cube_count_elemwise, prelude::*, std::tensor::layout::linear::LinearView,

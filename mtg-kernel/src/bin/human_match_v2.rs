@@ -1,6 +1,6 @@
 //! Explicit complete-agent human interface; V1 remains a separate entry point.
 use mtg_kernel::human_match_v2::{
-    MAX_RECORDED_REPLAY_INPUT_BYTES_V2, prepare_recorded_human_replay_v2, serve_human_match_v2,
+    prepare_recorded_human_replay_v2, serve_human_match_v2, MAX_RECORDED_REPLAY_INPUT_BYTES_V2,
 };
 use std::io::Read;
 
@@ -48,7 +48,7 @@ fn run() -> Result<(), String> {
 
 fn prepare_replay(input: &std::path::Path, output: &std::path::Path) -> Result<(), String> {
     use mtg_kernel::durable_publication_v1::{
-        DurableFileExpectationV1, capture_existing_publication_parent_v1, publish_new_file_v1,
+        capture_existing_publication_parent_v1, publish_new_file_v1, DurableFileExpectationV1,
     };
     let parent_path = output
         .parent()

@@ -1,10 +1,10 @@
 use crate::{
-    CubeRuntime, CubeTuneId,
-    kernel::attention::{AttentionStrategy, attention},
+    kernel::attention::{attention, AttentionStrategy},
     tensor::CubeTensor,
+    CubeRuntime, CubeTuneId,
 };
 use burn_backend::ops::AttentionModuleOptions;
-use cubecl::tune::{LocalTuner, Tunable, TunableSet, TuneGroup, local_tuner};
+use cubecl::tune::{local_tuner, LocalTuner, Tunable, TunableSet, TuneGroup};
 use cubek::attention::{
     launch::AttentionAutotuneKey, routines::blackbox_accelerated::BlackboxAcceleratedStrategy,
 };

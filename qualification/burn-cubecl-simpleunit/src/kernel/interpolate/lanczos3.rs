@@ -2,16 +2,16 @@ use cubecl::{calculate_cube_count_elemwise, prelude::*};
 use cubecl::{
     num_traits::Zero,
     std::{
-        FastDivmod,
         tensor::layout::{linear::LinearLayout, *},
+        FastDivmod,
     },
 };
 
 use crate::{
-    CubeRuntime,
     kernel::utils::{address_type, linear_layout, shape_divmod},
     ops::max_vector_size,
     tensor::CubeTensor,
+    CubeRuntime,
 };
 
 #[cube(launch, address_type = "dynamic")]

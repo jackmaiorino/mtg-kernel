@@ -70,8 +70,14 @@ fn put_object(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -
 /// Mirrors `pauper_meta_w1_delve_and_longbow.rs`'s `ready_main1`: Main1, P0
 /// active with priority, both libraries as given.
 fn ready_main1(p0_library: &[&str], p1_library: &[&str]) -> GameState {
-    let p0_defs = p0_library.iter().map(|name| card_id(name)).collect::<Vec<_>>();
-    let p1_defs = p1_library.iter().map(|name| card_id(name)).collect::<Vec<_>>();
+    let p0_defs = p0_library
+        .iter()
+        .map(|name| card_id(name))
+        .collect::<Vec<_>>();
+    let p1_defs = p1_library
+        .iter()
+        .map(|name| card_id(name))
+        .collect::<Vec<_>>();
     let mut state =
         GameState::new_from_libraries(&p0_defs, &p1_defs, card_name, 0x4144_5645_4e54_5552);
     state.step = Step::Main1;
@@ -110,7 +116,11 @@ fn resolve_until_idle(state: &mut GameState) {
 /// that decision *unapplied*, so the caller can inspect `state.stack`
 /// (e.g. a step-entry trigger sitting on the stack, not yet resolved)
 /// before deciding how to proceed.
-fn advance_to_step_decision(state: &mut GameState, step: Step, active_player: PlayerId) -> Decision {
+fn advance_to_step_decision(
+    state: &mut GameState,
+    step: Step,
+    active_player: PlayerId,
+) -> Decision {
     for _ in 0..2000 {
         let decision = engine::advance_until_decision(state);
         if state.step == step && state.active_player == active_player {
@@ -139,8 +149,18 @@ fn advance_to_step_decision(state: &mut GameState, step: Step, active_player: Pl
 fn forktail_sweep_is_cast_from_hand_then_the_dragon_is_cast_from_exile() {
     let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
     let fang_dragon = put_object(&mut state, PlayerId::P0, "Fang Dragon", Zone::Hand);
-    let p0_elf = put_object(&mut state, PlayerId::P0, "Llanowar Elves", Zone::Battlefield);
-    let p1_elf = put_object(&mut state, PlayerId::P1, "Llanowar Elves", Zone::Battlefield);
+    let p0_elf = put_object(
+        &mut state,
+        PlayerId::P0,
+        "Llanowar Elves",
+        Zone::Battlefield,
+    );
+    let p1_elf = put_object(
+        &mut state,
+        PlayerId::P1,
+        "Llanowar Elves",
+        Zone::Battlefield,
+    );
 
     // Exactly {1}{R}: enough for Forktail Sweep, nowhere near Fang Dragon's
     // own {5}{R}{R}, so the Adventure form is the only viable one and gets
@@ -295,7 +315,10 @@ fn visible_name_resolves_adventure_face() {
         Some((fang_dragon_id, 0))
     );
     let def = &CARD_DEFS[fang_dragon_id as usize];
-    let adventure = def.adventure.as_ref().expect("Fang Dragon has an Adventure");
+    let adventure = def
+        .adventure
+        .as_ref()
+        .expect("Fang Dragon has an Adventure");
     assert_eq!(adventure.name, "Forktail Sweep");
     assert_eq!(adventure.types, &[CardType::Sorcery]);
 }
@@ -480,9 +503,7 @@ fn admiral_cannot_be_blocked_by_the_monarchs_creatures() {
     engine::step(&mut blockable, Action::DeclareAttackers(vec![admiral])).unwrap();
     loop {
         match engine::advance_until_decision(&mut blockable) {
-            Decision::CastSpellOrPass { .. } => {
-                engine::step(&mut blockable, Action::Pass).unwrap()
-            }
+            Decision::CastSpellOrPass { .. } => engine::step(&mut blockable, Action::Pass).unwrap(),
             Decision::DeclareBlockers { legal_blockers, .. } => {
                 let (_, blockers) = legal_blockers
                     .iter()
@@ -513,8 +534,18 @@ fn forktail_sweep_still_triggers_cast_instant_or_sorcery_abilities() {
     let mut state = ready_main1(&["Mountain"; 8], &["Mountain"; 8]);
     let fang_dragon = put_object(&mut state, PlayerId::P0, "Fang Dragon", Zone::Hand);
     let guttersnipe = put_object(&mut state, PlayerId::P0, "Guttersnipe", Zone::Battlefield);
-    let p0_elf = put_object(&mut state, PlayerId::P0, "Llanowar Elves", Zone::Battlefield);
-    let p1_elf = put_object(&mut state, PlayerId::P1, "Llanowar Elves", Zone::Battlefield);
+    let p0_elf = put_object(
+        &mut state,
+        PlayerId::P0,
+        "Llanowar Elves",
+        Zone::Battlefield,
+    );
+    let p1_elf = put_object(
+        &mut state,
+        PlayerId::P1,
+        "Llanowar Elves",
+        Zone::Battlefield,
+    );
     // Exactly {1}{R}: only Forktail Sweep is payable, so it auto-selects.
     state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
     state.players[0].mana_pool[ManaColor::C.pool_index()] = 1;

@@ -59,8 +59,14 @@ fn put_object(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -
 /// Mirrors `pauper_meta_w1_spells.rs`'s `ready_main1`: Main1, P0 active with
 /// priority, both libraries as given.
 fn ready_main1(p0_library: &[&str], p1_library: &[&str]) -> GameState {
-    let p0_defs = p0_library.iter().map(|name| card_id(name)).collect::<Vec<_>>();
-    let p1_defs = p1_library.iter().map(|name| card_id(name)).collect::<Vec<_>>();
+    let p0_defs = p0_library
+        .iter()
+        .map(|name| card_id(name))
+        .collect::<Vec<_>>();
+    let p1_defs = p1_library
+        .iter()
+        .map(|name| card_id(name))
+        .collect::<Vec<_>>();
     let mut state =
         GameState::new_from_libraries(&p0_defs, &p1_defs, card_name, 0x53_4e_55_46_46_4f_55_54);
     state.step = Step::Main1;
@@ -123,7 +129,12 @@ fn snuff_out_offers_the_life_payment_only_with_a_swamp() {
     let snuff_out = put_object(&mut state, PlayerId::P0, "Snuff Out", Zone::Hand);
     put_object(&mut state, PlayerId::P0, "Island", Zone::Battlefield);
     let victim = put_object(&mut state, PlayerId::P1, "Faerie Seer", Zone::Battlefield);
-    let black_creature = put_object(&mut state, PlayerId::P1, "Gixian Infiltrator", Zone::Battlefield);
+    let black_creature = put_object(
+        &mut state,
+        PlayerId::P1,
+        "Gixian Infiltrator",
+        Zone::Battlefield,
+    );
     state.players[0].life = 20;
 
     // Only a single Island: the printed {3}{B} cost is unpayable (not even
@@ -181,8 +192,7 @@ fn snuff_out_offers_the_life_payment_only_with_a_swamp() {
     );
     assert_eq!(state.objects.get(victim).zone, Zone::Graveyard);
     assert_eq!(
-        state.players[0].mana_pool,
-        [0; 6],
+        state.players[0].mana_pool, [0; 6],
         "no mana spent through the alternative cost"
     );
     assert!(
@@ -228,7 +238,10 @@ fn snuff_out_still_casts_for_mana_without_a_swamp() {
         state.players[0].life, starting_life,
         "no life paid: cast for its printed mana cost"
     );
-    assert_eq!(state.players[0].mana_pool, [0; 6], "all floating mana spent");
+    assert_eq!(
+        state.players[0].mana_pool, [0; 6],
+        "all floating mana spent"
+    );
     let _ = CastMode::Normal; // documents which mode this test exercises
 }
 
@@ -239,7 +252,10 @@ fn contaminated_aquifer_enters_tapped_and_taps_for_u_or_b() {
     let land = put_object(&mut state, PlayerId::P0, "Contaminated Aquifer", Zone::Hand);
     engine::step(&mut state, Action::PlayLand(land)).unwrap();
     assert_eq!(state.objects.get(land).zone, Zone::Battlefield);
-    assert!(state.objects.get(land).tapped, "enters the battlefield tapped");
+    assert!(
+        state.objects.get(land).tapped,
+        "enters the battlefield tapped"
+    );
 
     advance_to_players_next_main1(&mut state, PlayerId::P0);
     assert!(
@@ -247,12 +263,20 @@ fn contaminated_aquifer_enters_tapped_and_taps_for_u_or_b() {
         "untapped by P0's own next untap step"
     );
 
-    engine::step(&mut state, Action::ActivateManaAbilityChoice(land, ManaColor::U)).unwrap();
+    engine::step(
+        &mut state,
+        Action::ActivateManaAbilityChoice(land, ManaColor::U),
+    )
+    .unwrap();
     assert!(state.objects.get(land).tapped);
     assert_eq!(state.players[0].mana_pool[ManaColor::U.pool_index()], 1);
 
     state.objects.get_mut(land).tapped = false;
-    engine::step(&mut state, Action::ActivateManaAbilityChoice(land, ManaColor::B)).unwrap();
+    engine::step(
+        &mut state,
+        Action::ActivateManaAbilityChoice(land, ManaColor::B),
+    )
+    .unwrap();
     assert!(state.objects.get(land).tapped);
     assert_eq!(state.players[0].mana_pool[ManaColor::B.pool_index()], 1);
 }

@@ -1,14 +1,14 @@
 //! Explicit BO3 capture, read-only preparation, one CPU update, or finite run.
 //! Update and finite-run durability/recovery belong to their library APIs.
 use mtg_kernel::durable_publication_v1::{
-    DurableFileExpectationV1, capture_existing_publication_parent_v1, publish_new_file_v1,
+    capture_existing_publication_parent_v1, publish_new_file_v1, DurableFileExpectationV1,
 };
 use mtg_kernel::expanded_deck_training_v1::PinnedFileV1;
 use mtg_kernel::phase1_bo3_learning_v1::{
-    Bo3GameplayPreparationReportV1, Bo3GameplayPreparationRequestV1, Bo3GameplayUpdateRequestV1,
+    collect_trainable_bo3_v1, prepare_bo3_gameplay_batch_v1, run_native_bo3_training_v1,
+    update_bo3_gameplay_v1, Bo3GameplayPreparationReportV1, Bo3GameplayPreparationRequestV1,
+    Bo3GameplayUpdateRequestV1, NativeBo3TrainingRunV1, TrainableBo3RequestV1,
     MAX_BO3_PREPARATION_REQUEST_BYTES_V1, MAX_NATIVE_BO3_RUN_REQUEST_BYTES_V1,
-    NativeBo3TrainingRunV1, TrainableBo3RequestV1, collect_trainable_bo3_v1,
-    prepare_bo3_gameplay_batch_v1, run_native_bo3_training_v1, update_bo3_gameplay_v1,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -384,31 +384,25 @@ mod tests {
 
     #[test]
     fn trainable_cli_public_preparation_parser_rejects_duplicate_and_oversize_json() {
-        assert!(
-            Bo3GameplayPreparationRequestV1::from_json_v1(
-                r#"{"learner":{"source":{"x":1,"x":2}}}"#
-            )
-            .unwrap_err()
-            .contains("duplicate JSON object key")
-        );
-        assert!(
-            Bo3GameplayPreparationRequestV1::from_json_v1(
-                &" ".repeat(MAX_BO3_PREPARATION_REQUEST_BYTES_V1 + 1)
-            )
-            .unwrap_err()
-            .contains("exceeds 1 MiB")
-        );
+        assert!(Bo3GameplayPreparationRequestV1::from_json_v1(
+            r#"{"learner":{"source":{"x":1,"x":2}}}"#
+        )
+        .unwrap_err()
+        .contains("duplicate JSON object key"));
+        assert!(Bo3GameplayPreparationRequestV1::from_json_v1(
+            &" ".repeat(MAX_BO3_PREPARATION_REQUEST_BYTES_V1 + 1)
+        )
+        .unwrap_err()
+        .contains("exceeds 1 MiB"));
     }
 
     #[test]
     fn trainable_cli_update_uses_strict_bounded_request_parser() {
-        assert!(
-            Bo3GameplayUpdateRequestV1::from_json_v1(
-                r#"{"input":{"kind":"bo3_checkpoint","kind":"ordinary_checkpoint_transition"}}"#
-            )
-            .unwrap_err()
-            .contains("duplicate JSON object key")
-        );
+        assert!(Bo3GameplayUpdateRequestV1::from_json_v1(
+            r#"{"input":{"kind":"bo3_checkpoint","kind":"ordinary_checkpoint_transition"}}"#
+        )
+        .unwrap_err()
+        .contains("duplicate JSON object key"));
         assert!(
             Bo3GameplayUpdateRequestV1::from_json_v1(&" ".repeat(UPDATE_REQUEST_BYTES + 1))
                 .unwrap_err()

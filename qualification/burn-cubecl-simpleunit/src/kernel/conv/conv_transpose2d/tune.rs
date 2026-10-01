@@ -1,10 +1,10 @@
 use burn_backend::ops::ConvTransposeOptions;
-use cubecl::tune::{LocalTuner, Tunable, TunableSet, local_tuner};
+use cubecl::tune::{local_tuner, LocalTuner, Tunable, TunableSet};
 
 use crate::{
-    CubeAutotuneKey, CubeRuntime, CubeTuneId,
-    kernel::conv::{ConvTranspose2dAutotuneKey, conv_transpose2d_col2im, conv_transpose2d_direct},
+    kernel::conv::{conv_transpose2d_col2im, conv_transpose2d_direct, ConvTranspose2dAutotuneKey},
     tensor::CubeTensor,
+    CubeAutotuneKey, CubeRuntime, CubeTuneId,
 };
 
 /// Executes autotune on conv2d operations

@@ -1,20 +1,20 @@
 use crate::{
-    CubeRuntime,
     kernel::{
-        pool::pool2d::{Position, view4d},
+        pool::pool2d::{view4d, Position},
         utils::{address_type, decompose_linear, shape_divmod},
     },
     ops::{
         max_vector_size, numeric::empty_device_dtype, permute_nchw_to_nhwc, permute_nhwc_to_nchw,
     },
     tensor::CubeTensor,
+    CubeRuntime,
 };
 use burn_backend::Shape;
 use cubecl::{
     calculate_cube_count_elemwise,
     num_traits::Zero,
     prelude::*,
-    std::{FastDivmod, tensor::View},
+    std::{tensor::View, FastDivmod},
 };
 
 #[derive(CubeLaunch, CubeType)]

@@ -1,12 +1,12 @@
 use burn_backend::{
-    DType, TensorData,
     backend::ExecutionError,
     ops::{TransactionOps, TransactionPrimitive, TransactionPrimitiveData},
+    DType, TensorData,
 };
 use burn_std::{Shape, Strides};
 use cubecl::server::{CopyDescriptor, Handle};
 
-use crate::{CubeBackend, CubeRuntime, FloatElement, IntElement, element::BoolElement};
+use crate::{element::BoolElement, CubeBackend, CubeRuntime, FloatElement, IntElement};
 
 impl<R, F, I, BT> TransactionOps<Self> for CubeBackend<R, F, I, BT>
 where

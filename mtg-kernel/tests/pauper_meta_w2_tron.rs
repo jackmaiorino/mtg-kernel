@@ -185,7 +185,8 @@ fn fixture_state(deck_card_ids: &[u16], seed: u64, pool: [u8; 6]) -> GameState {
             .library
             .iter()
             .position(|&id| {
-                CARD_DEFS[state.objects.get(id).card_def as usize].is_automatic_payment_mana_source()
+                CARD_DEFS[state.objects.get(id).card_def as usize]
+                    .is_automatic_payment_mana_source()
             });
         let Some(position) = position else {
             break;
@@ -476,7 +477,10 @@ fn losing_a_piece_drops_the_yield_back_to_one() {
     // The amount is sampled at activation, never stamped onto the land, so
     // moving the Mine off the battlefield through the ordinary commit
     // pipeline is enough to unassemble Tron.
-    event::propose_and_commit(&mut state, ProposedEvent::zone_change(mine, Zone::Graveyard));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(mine, Zone::Graveyard),
+    );
     assert_eq!(state.objects.get(mine).zone, Zone::Graveyard);
 
     engine::step(&mut state, Action::ActivateManaAbility(tower)).unwrap();

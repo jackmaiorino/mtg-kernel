@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
 
-use crate::{CubeRuntime, tensor::CubeTensor};
+use crate::{tensor::CubeTensor, CubeRuntime};
 use burn_backend::ops::{GridSampleOptions, GridSamplePaddingMode, InterpolateMode};
 
 use super::bilinear::grid_sample_bilinear_launch;

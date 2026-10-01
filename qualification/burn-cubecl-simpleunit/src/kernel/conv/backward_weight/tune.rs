@@ -2,17 +2,17 @@ use burn_backend::ops::ConvOptions;
 use burn_std::Shape;
 use cubecl::{
     ir::StorageType,
-    tune::{LocalTuner, Tunable, TunableSet, anchor, local_tuner},
+    tune::{anchor, local_tuner, LocalTuner, Tunable, TunableSet},
 };
 use cubek::convolution::AcceleratedTileKind;
 
 use crate::{
-    CubeAutotuneKey, CubeRuntime, CubeTuneId,
     kernel::conv::{
-        ConvAutotuneKey,
         backward_weight::{fallback::conv_weight_backward_fallback, implicit_gemm::*},
+        ConvAutotuneKey,
     },
     tensor::CubeTensor,
+    CubeAutotuneKey, CubeRuntime, CubeTuneId,
 };
 
 /// Executes autotune on the weight gradients pass for convolution

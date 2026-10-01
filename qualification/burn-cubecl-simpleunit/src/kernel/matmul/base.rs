@@ -1,5 +1,5 @@
 use super::init_matmul_output;
-use crate::{CubeRuntime, kernel::quantization::dequantize, tensor::CubeTensor};
+use crate::{kernel::quantization::dequantize, tensor::CubeTensor, CubeRuntime};
 use burn_backend::{DType, QTensorPrimitive};
 use burn_std::QuantLevel;
 use cubek::{

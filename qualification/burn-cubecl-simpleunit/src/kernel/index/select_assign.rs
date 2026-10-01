@@ -1,9 +1,9 @@
 use crate::kernel::{
-    AddOp, BinaryOp, BinaryOpFamily, OrOp,
     utils::{address_type, shape_divmod},
+    AddOp, BinaryOp, BinaryOpFamily, OrOp,
 };
-use crate::{CubeRuntime, tensor::CubeTensor};
-use cubecl::{CubeDim, calculate_cube_count_elemwise, std::tensor::layout::linear::LinearView};
+use crate::{tensor::CubeTensor, CubeRuntime};
+use cubecl::{calculate_cube_count_elemwise, std::tensor::layout::linear::LinearView, CubeDim};
 use cubecl::{prelude::*, std::FastDivmod};
 
 /// Uses checked launch mode because user-provided `indices` may contain out-of-bounds values

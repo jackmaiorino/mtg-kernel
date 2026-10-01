@@ -1,14 +1,14 @@
 use cubecl::std::{
-    FastDivmod,
     tensor::layout::{linear::LinearLayout, *},
+    FastDivmod,
 };
 use cubecl::{calculate_cube_count_elemwise, prelude::*};
 
 use crate::{
-    CubeRuntime,
     kernel::utils::{address_type, linear_layout, shape_divmod},
     ops::max_vector_size,
     tensor::CubeTensor,
+    CubeRuntime,
 };
 
 #[cube(launch_unchecked, address_type = "dynamic")]

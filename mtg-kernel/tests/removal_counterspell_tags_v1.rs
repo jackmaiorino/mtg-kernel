@@ -58,9 +58,16 @@ fn every_requires_target_row_matches_a_nontrivial_live_target_spec() {
     let mut checked = 0usize;
     for row in &document.cards {
         let Some(def) = CARD_DEFS.get(row.card_id) else {
-            panic!("tag file row {:?} (card_id {}) has no CARD_DEFS entry", row.name, row.card_id);
+            panic!(
+                "tag file row {:?} (card_id {}) has no CARD_DEFS entry",
+                row.name, row.card_id
+            );
         };
-        assert_eq!(def.name, row.name, "card_id {} name drifted between the registry and the tag file", row.card_id);
+        assert_eq!(
+            def.name, row.name,
+            "card_id {} name drifted between the registry and the tag file",
+            row.card_id
+        );
         if def.capability != CardCapability::Full {
             // A not-yet-implemented card's target_spec is not yet meaningful
             // ground truth; the mechanics-tag claim is unverifiable until
@@ -69,14 +76,18 @@ fn every_requires_target_row_matches_a_nontrivial_live_target_spec() {
         }
         if row.requires_target {
             assert_ne!(
-                def.target_spec, TargetSpec::None,
+                def.target_spec,
+                TargetSpec::None,
                 "{} is tagged requires_target but CARD_DEFS reports TargetSpec::None",
                 row.name
             );
             checked += 1;
         }
     }
-    assert!(checked > 0, "at least one fully-implemented requires_target row must exist to exercise this check");
+    assert!(
+        checked > 0,
+        "at least one fully-implemented requires_target row must exist to exercise this check"
+    );
 }
 
 #[test]
@@ -89,7 +100,10 @@ fn every_is_counterspell_row_has_a_spell_on_stack_target_spec() {
         // above, rather than the unchecked `CARD_DEFS[row.card_id]` index
         // this line used to take.
         let Some(def) = CARD_DEFS.get(row.card_id) else {
-            panic!("tag file row {:?} (card_id {}) has no CARD_DEFS entry", row.name, row.card_id);
+            panic!(
+                "tag file row {:?} (card_id {}) has no CARD_DEFS entry",
+                row.name, row.card_id
+            );
         };
         if def.capability != CardCapability::Full {
             continue;
@@ -103,7 +117,10 @@ fn every_is_counterspell_row_has_a_spell_on_stack_target_spec() {
             checked += 1;
         }
     }
-    assert!(checked > 0, "at least one fully-implemented is_counterspell row must exist to exercise this check");
+    assert!(
+        checked > 0,
+        "at least one fully-implemented is_counterspell row must exist to exercise this check"
+    );
 }
 
 #[test]

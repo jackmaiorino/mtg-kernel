@@ -1,24 +1,23 @@
 #[cfg(feature = "autotune")]
 use super::{autotune_reduce, autotune_sum};
 use crate::{
-    CubeRuntime,
     ops::numeric::{empty_device_contiguous_dtype, zeros_client},
     tensor::CubeTensor,
+    CubeRuntime,
 };
 use burn_backend::{DType, TensorMetadata};
 use burn_std::Metadata;
 use cubecl::{
-    AutotuneKey,
     client::ComputeClient,
     features::AtomicUsage,
     ir::{StorageType, Type},
+    AutotuneKey,
 };
 use cubek::reduce::{
-    ReduceDtypes, ReduceError, ReduceStrategy,
     components::instructions::ReduceOperationConfig,
     launch::{RoutineStrategy, VectorizationStrategy},
-    routines::{BlueprintStrategy, unit::UnitStrategy},
-    shared_sum,
+    routines::{unit::UnitStrategy, BlueprintStrategy},
+    shared_sum, ReduceDtypes, ReduceError, ReduceStrategy,
 };
 use serde::{Deserialize, Serialize};
 

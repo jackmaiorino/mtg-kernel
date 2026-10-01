@@ -1,9 +1,8 @@
 use super::{bilinear_interpolate, deform_im2col, index};
 use crate::{
-    CubeRuntime,
     kernel::{
         cast, into_contiguous_aligned,
-        matmul::{MatmulStrategy, matmul},
+        matmul::{matmul, MatmulStrategy},
         reduce::reduce_dim,
         slice_assign,
         utils::{address_type, decompose_linear},
@@ -13,14 +12,16 @@ use crate::{
         reshape, swap_dims,
     },
     tensor::CubeTensor,
+    CubeRuntime,
 };
-use burn_backend::{DType, Shape, TensorMetadata, ops::DeformConvOptions};
+use burn_backend::{ops::DeformConvOptions, DType, Shape, TensorMetadata};
 use cubecl::{
-    CubeDim, CubeLaunch, calculate_cube_count_elemwise, cube,
+    calculate_cube_count_elemwise, cube,
     features::AtomicUsage,
     ir::FloatKind,
     prelude::*,
-    std::{FastDivmod, tensor::layout::linear::LinearView},
+    std::{tensor::layout::linear::LinearView, FastDivmod},
+    CubeDim, CubeLaunch,
 };
 use cubek::{
     convolution::components::ConvSetupError,

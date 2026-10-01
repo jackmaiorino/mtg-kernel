@@ -1,4 +1,4 @@
-use crate::{CubeRuntime, FloatElement, IntElement, element::BoolElement, tensor::CubeTensor};
+use crate::{element::BoolElement, tensor::CubeTensor, CubeRuntime, FloatElement, IntElement};
 use burn_backend::{
     Backend, BackendTypes, DTypeUsage, DTypeUsageSet, DeviceOps, ExecutionError, TensorData,
 };

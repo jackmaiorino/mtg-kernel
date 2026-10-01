@@ -1,14 +1,14 @@
 use crate::{
-    CubeRuntime,
     kernel::utils::{address_type, decompose_linear, shape_divmod},
     ops::numeric::empty_device_dtype,
     tensor::CubeTensor,
+    CubeRuntime,
 };
-use burn_backend::{Shape, ops::ConvTransposeOptions};
+use burn_backend::{ops::ConvTransposeOptions, Shape};
 use cubecl::{
     calculate_cube_count_elemwise,
     prelude::*,
-    std::{FastDivmod, tensor::layout::linear::LinearView},
+    std::{tensor::layout::linear::LinearView, FastDivmod},
 };
 use cubek::convolution::components::ConvSetupError;
 

@@ -1,6 +1,6 @@
 use super::SourceTemplate;
-use crate::{CubeRuntime, element::CubeElement, tensor::CubeTensor};
-use cubecl::{CompilationError, Compiler, CubeTask, prelude::*};
+use crate::{element::CubeElement, tensor::CubeTensor, CubeRuntime};
+use cubecl::{prelude::*, CompilationError, Compiler, CubeTask};
 
 /// Kernel source to create a [source](SourceTemplate)
 pub trait KernelSource: Send + 'static + Sync {

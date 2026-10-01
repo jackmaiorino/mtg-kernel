@@ -1,15 +1,15 @@
 use crate::{
-    CubeRuntime,
     kernel::utils::{address_type, shape_divmod},
     ops::numeric::empty_device_dtype,
     tensor::CubeTensor,
+    CubeRuntime,
 };
 use burn_backend::{Slice, TensorMetadata};
 use burn_std::{Metadata, SliceOps};
 use cubecl::{
     calculate_cube_count_elemwise, intrinsic,
     prelude::*,
-    std::{FastDivmod, tensor::layout::linear::LinearView},
+    std::{tensor::layout::linear::LinearView, FastDivmod},
 };
 use std::ops::Range;
 
