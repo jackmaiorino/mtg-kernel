@@ -4596,6 +4596,7 @@ impl RlEpisodeSessionV1 {
             max_policy_steps,
             state,
             surface: PolicySurfaceV5::new_for_session(),
+            scan_menu: ScanMenuV1::LegalAnswersOnly,
             environment_revision: 0,
             policy_step_count: 0,
             physical_decision_count: 0,
