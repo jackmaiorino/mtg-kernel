@@ -4375,9 +4375,6 @@ pub(crate) mod tests {
             sideboard: vec![
                 43, 74, 74, 74, 74, 89, 89, 89, 111, 111, 111, 126, 126, 126, 126,
             ],
-            sideboard: vec![
-                43, 74, 74, 74, 74, 89, 89, 89, 111, 111, 111, 126, 126, 126, 126,
-            ],
         };
         let episode = ExpandedEpisodeV1 {
             id: "breadth-3da0216e51fb249275cc26ab-b0-i95-s2".into(),

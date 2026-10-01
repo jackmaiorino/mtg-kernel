@@ -76,9 +76,10 @@ mod line_b_auxiliary_v1;
 pub(crate) use head_only_mask_v1::{
     HeadOnlyMaskV1, HEAD_ONLY_MASK_VERSION_V1, HEAD_ONLY_TRAINABLE_TENSORS_V1,
 };
+#[cfg(test)]
+use line_b_auxiliary_v1::LineBPermutationKindV1;
 pub(crate) use line_b_auxiliary_v1::{
     line_b_permuted_input_v1, LineBAuxiliaryInputV1, LineBAuxiliaryResultV1, LineBAuxiliaryRootV1,
-    LineBPermutationKindV1,
 };
 pub(crate) mod retention_v1;
 mod weighted_v3;
