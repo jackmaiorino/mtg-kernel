@@ -7685,9 +7685,16 @@ pub(crate) mod tests {
     /// update of this fixture (FABLE-REVIEW-20260927 change 4), pinned from
     /// the runs of 2026-09-27 at dbab4cd0; the CUDA values are GPU 1's (RTX
     /// 3050). Each backend is deterministic run to run (acceptance-001).
+    // Current rules/catalog baseline: exact outputs from CI run 36807239038.
+    #[cfg(target_os = "windows")]
     const LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1: [&str; 2] = [
-        "e60b46a397f917cfadfbb87cd36fdac9d0a11187cc81fe04edbabf50db8d9926",
-        "73e13d2db04664ce76d984966763f27318c6bd3dd17ffe2b5e0981b833b4fe64",
+        "210f9027d1423e2c84615be12fc66a2623a750ebff681553089e326fd96bdb0b",
+        "cf5b62f634e083c8f81d2ea3f9409481eef95d626147fddd8be0b9bdc4408317",
+    ];
+    #[cfg(not(target_os = "windows"))]
+    const LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1: [&str; 2] = [
+        "4fe193c8baaabf0fe5b4db8e09c14f165d02df67d665a336fa826b5feaf3afe3",
+        "579e90b83826148aefa7c17cfae19471b6c92e151962c410792c141a8a80873e",
     ];
     const LINE_B_TEACHER_UPDATE_GOLDEN_CUDA_V1: [&str; 2] = [
         "4ec11a5c9df8bf98cecd3f72a72fa39906377489945aa6d8be77822624f4cd92",
