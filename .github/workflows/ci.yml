@@ -139,6 +139,10 @@ jobs:
       - name: Run Rust release tests
         run: cargo test --release --locked --workspace --all-targets --no-fail-fast
 
+      # Preserve the design's 40us budget without concurrent neural tests.
+      - name: Check snapshot clone budget on an idle test process
+        run: cargo test --release --locked -p mtg-kernel --lib snapshot::tests::snapshot_clone_cost_is_bounded -- --exact --ignored --test-threads=1
+
       - name: Validate native Store production feature boundary
         run: |
           cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --lib native_store_production_capture_v2::

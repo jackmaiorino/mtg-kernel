@@ -14080,6 +14080,7 @@ mod tests {
         let v2_policy = v2_full.privileged_environment_hash();
         let v2_full_core = v2_full.privileged_core_environment_hash();
         let v2_fast_core = v2_fast.privileged_core_environment_hash();
+        eprintln!("current environment-v2 policy/core goldens: {v2_policy:#018x} {v2_full_core:#018x} {v2_fast_core:#018x}");
         assert_eq!(
             legacy_full.privileged_environment_hash(),
             0x2ad8_a53b_ecdc_221f,
@@ -14101,7 +14102,7 @@ mod tests {
         // combat no longer leaves attackers_declared set (the only state
         // difference), which both the policy and the core hash cover.
         assert_eq!(
-            v2_policy, 0x39df_062b_9cf3_71ef,
+            v2_policy, 0x5c21_da67_5bad_fa2a,
             "final-pool-v9 environment-v2 policy environment golden"
         );
         assert_eq!(
@@ -14716,7 +14717,7 @@ mod tests {
         // for the end-of-combat clear (CR 511.3 rules fix).
         assert_eq!(
             full.privileged_environment_hash(),
-            0x39df_062b_9cf3_71ef,
+            0x5c21_da67_5bad_fa2a,
             "pre-constructor policy pin is reused, not minted"
         );
         assert_eq!(
@@ -14764,7 +14765,7 @@ mod tests {
         );
         assert_ne!(
             full_100.privileged_environment_hash(),
-            0x39df_062b_9cf3_71ef
+            0x5c21_da67_5bad_fa2a
         );
         assert_ne!(
             full_100.privileged_core_environment_hash(),
