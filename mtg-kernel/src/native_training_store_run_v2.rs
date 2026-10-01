@@ -2443,11 +2443,7 @@ fn classify_catalog_profile_from_identity_v1(
 /// ever needs the live classification as a value rather than as a boundary
 /// check (`current_profile_matches_live_build_identity_v1` already covers
 /// the boundary-check shape production code actually needs).
-#[cfg(all(
-    test,
-    target_os = "windows",
-    feature = "native-training-store-v2-production"
-))]
+#[cfg(all(test, target_os = "windows"))]
 pub(crate) fn live_catalog_profile_v1() -> NativeRunCatalogProfileV1 {
     let (card_db_hash_u64_hex, runtime_catalog_sha256) = live_catalog_build_identity_v1();
     classify_catalog_profile_from_identity_v1(&card_db_hash_u64_hex, &runtime_catalog_sha256)
