@@ -28,7 +28,6 @@ use std::fmt::{Display, Formatter};
 use std::process::Command;
 
 pub(crate) mod entropy;
-pub(crate) mod entropy;
 pub(crate) mod line_b_root;
 pub(crate) mod public_inputs;
 pub(crate) mod stack_inputs;
