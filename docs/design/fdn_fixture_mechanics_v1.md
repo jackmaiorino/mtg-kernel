@@ -1,11 +1,12 @@
 # FDN fixture implementation batches
 
 This inventories the **36 originally missing names** in the two pinned
-40-card fixtures. Through the Voyage slice, the registry covers 33 of those
-names. **Three remain:** Celestial Armor,
-Sylvan Scavenging and Witness Protection. Source coverage
-is UG 38/40 and WG 38/40 copies; both original deck files retain their pinned
-hashes. The batch table below preserves the original decomposition.
+40-card fixtures. Through the Witness slice, the registry covers all 36 of
+those names and all seven required token definitions. Both original decks
+resolve 40/40 copies and retain their pinned hashes. London mulligans are
+implemented in custom-game schema 4. The batch table below preserves the
+original decomposition. Complete milestone verification remains pending;
+see the [gameplay validation matrix](../reports/fdn_fixture_gameplay_v1_validation.md).
 
 The [Prowler slice](fdn_prowler_creature_v1.md) implements turn-scoped
 creature death history, its morbid end-step trigger and ward two. Fourteen
@@ -23,7 +24,7 @@ placement followed by private surveil. Nineteen focused rules checks,
 eleven XMage comparisons, regressions and external replay pass. Release
 mutation boundaries and CI remain pending.
 
-The remaining implementation slices are concrete:
+The final card slices are implemented with focused interaction tests:
 
 | Slice | Work | Required checks |
 | --- | --- | --- |
@@ -31,9 +32,9 @@ The remaining implementation slices are concrete:
 | Celestial Armor | Add flash Equipment, entry attachment and temporary target hexproof/indestructible, continuous equipped bonuses and equip. | Target loss, legal attachment and movement; target keeps its temporary abilities after Equipment moves; equip timing/payment; destruction and damage protection; restore. |
 | Witness Protection | Apply its Aura's name, type, color, ability-removal and base-stat layers. | Suppress triggers, ward and activations; keep counters and later modifiers; use effective names for legend checks; restore original characteristics when the Aura leaves; attachment and pending-decision restore. |
 
-After those slices, add London mulligan and bottoming choices to the custom
-game interface with replay and pending-choice restore. The fixture milestone
-then requires both unchanged decks to load, fixed-seed external games to
+The [London slice](fdn_london_mulligans_v1.md) adds mulligan and bottoming
+choices to the custom-game interface with replay and pending-choice restore.
+The fixture milestone requires both unchanged decks to load, fixed-seed external games to
 finish naturally, deterministic replay, relevant XMage comparisons and green
 regression/CI evidence. Registry coverage alone does not satisfy that milestone.
 
@@ -106,7 +107,7 @@ both announcement and resolution, incarnation-safe counters and exact tokens.
 
 The [combat foundation](fdn_combat_damage_v1.md) exposes current damage
 allocation and trample in custom-game schema 3, with focused tests and
-deterministic binary replay. Batch C still needs its card interaction tests.
+deterministic binary replay. Batch C's card interaction tests are implemented.
 The [first combat-card slice](fdn_combat_cards_v1.md) adds Beast-Kin Ranger
 and Overrun, plus Dwynen's Elf bonus and attack trigger. The
 [legend-rule slice](fdn_legend_rule_v1.md) completes Dwynen's required choice.
