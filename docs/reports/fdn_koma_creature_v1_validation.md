@@ -15,7 +15,7 @@ ordinary stack departure.
 
 FDN v42 has hash `f4fba61544ae7963`, verified in generated output after
 the core Cargo check. Prior v41 records retain their recognized read-only
-identity `8f1dc68e65c24306`; read-only recognition passed; production mutation-refusal checks remain pending.
+identity `8f1dc68e65c24306`; read-only recognition passed; all 21 production boundary checks passed, including prior-v41 mutation refusals.
 Default v32 generated counter programs and canonical bytes are preserved
 in source; the exact default v32 golden and frozen default session checks passed.
 
@@ -28,7 +28,7 @@ in source; the exact default v32 golden and frozen default session checks passed
 | Catalog, sessions and prior gameplay | 46 definition checks, 136 run-record checks (three existing ignores), 66 FDN session checks, seven custom-session checks and 203 prior gameplay/counterspell checks passed. |
 | Default compatibility and lint | The exact default v32 golden and all 68 default session checks passed. Limited all-targets Clippy and default workspace all-targets Clippy passed with warnings denied. |
 | Python | The preceding source preparation ran 34 focused Python checks successfully; current hosted CI remains required. |
-| Release and external replay | Pending. No Koma natural-terminal or deterministic external replay claim. |
+| Production and external replay | All 21 release production boundary checks and combined-feature release Clippy passed. A symbol-free debug custom-deck binary built and was preserved by hash on both PCs. External replay remains pending. |
 | Hosted CI | Draft [PR #131](https://github.com/jackmaiorino/mtg-kernel/pull/131) is running CI at `c19bd354`; no green claim yet. |
 
 Core source commit: `af94973c`; local integration/catalog source commit:
@@ -67,4 +67,13 @@ The full fixture milestone remains open: seven other distinct card names,
 mulligans, original-deck natural terminals and complete regression/CI
 evidence are still required. This report makes no playing-strength claim.
 
-The initial production check refused a debug build (`native_store_build_profile_not_release`), preserving the production feature boundary. `fdn-koma-production-002` now runs the required release boundary checks, then a symbol-free debug interface build. External replay remains pending; its prepared checker has not been launched.
+The initial production check refused a debug build (`native_store_build_profile_not_release`), preserving the production feature boundary. `fdn-koma-production-002` then exited zero: 21 release boundary checks, combined-feature release Clippy, and the symbol-free debug interface build. The release test build took 11 minutes 39 seconds. External replay remains pending; its prepared checker has not been launched.
+
+The debug interface binary is 5,765,632 bytes with SHA-256
+`bf8b792fa37a4941f6bc7693870966fe06842fce8457cd354237c46b74abaddf`,
+built from remote source `844f9740328027cd3dae8ee3800af4d94cc2e8a7`.
+Verified copies are under `C:/Users/haley/fdn-pinned-binaries/` and
+`C:/Users/Jack/fdn-pinned-binaries/`, each in that hash's directory.
+`fdn-koma-binary-pin-001.json` records the remote copy. Its required E:
+preservation and external launch are deferred while Claude #811 bars E:
+writes. The existing frozen measurement was not interrupted.
