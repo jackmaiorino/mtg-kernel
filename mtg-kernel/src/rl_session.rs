@@ -12703,6 +12703,7 @@ mod tests {
         .expect("the combined fast environment-v2 reset succeeds")
     }
 
+    #[cfg(not(feature = "limited-fdn-fixtures"))]
     fn definition_order(state: &crate::state::GameState, player: PlayerId) -> Vec<u16> {
         state.players[player.index()]
             .hand
@@ -13299,6 +13300,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "limited-fdn-fixtures"))]
     const V5_TRANSCRIPT_INPUTS: [&str; 5] = [
         "{\"request_type\":\"step\",\"schema_version\":5,\"request_id\":\"v5-transcript-1\",\"episode_id\":1,\"expected_step\":0,\"selected_index\":0,\"selected_action_id\":\"none\"}",
         "{\"request_type\":\"reset\",\"schema_version\":5,\"request_id\":\"v5-transcript-2\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}",
@@ -13308,6 +13310,7 @@ mod tests {
     ];
     /// Recaptured at the exact final-card head after its CardDB identity
     /// changed. The V5 schema, protocol, and response layout stay unchanged.
+    #[cfg(not(feature = "limited-fdn-fixtures"))]
     const V5_TRANSCRIPT_SHA256: &str =
         "a583c2309a25d79371ffa729c8eedcfb830b2887c794ee283bbb6b0a2e2541e2";
 
