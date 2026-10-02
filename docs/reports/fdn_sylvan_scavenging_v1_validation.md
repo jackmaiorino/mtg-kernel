@@ -26,10 +26,10 @@ must match the live catalog to publish/resume. Default v32 is unchanged.
 | Python deck/client | 20 passed. |
 | XMage | 12 strict reference cases passed; [Mage PR #12](https://github.com/jackmaiorino/mage/pull/12). |
 | All-target lint | Checks-009 exited zero: Limited all-target Clippy passed with warnings denied (39.98 seconds). Exhaustive example/test adapters handle the appended decision. |
-| Broader regressions/default compatibility | Pending. |
+| Broader regressions/default compatibility | Checks-010 exited zero: 242 prior rules, 125 Limited engine, 62 Limited session/client, 124 default engine and 27 default RL checks pass. Default all-target Clippy and the frozen v32 golden pass; external binary built. |
 | Release publication/resume boundaries | Pending. |
-| External natural completion and replay | Pending. |
-| Hosted CI | Pending. |
+| External natural completion and replay | Two identical fixed-seed custom-deck games reached natural P1 wins at 366 policy steps each. Each cast Scavenging twice and selected counter mode three times and token mode four times; transcript SHA-256 `d663787890f082082ecafe38774c4d588e4f01b674ff152e57721158735080b1` matches. These smoke decks are distinct from the still-incomplete original fixtures. |
+| Hosted CI | Run 37025035376: lint and Ubuntu Python shard 0 pass; remaining jobs are still running. |
 
 The original deck hashes are unchanged:
 
@@ -55,3 +55,12 @@ syntax correction is committed. An attempted source-fix stop found the
 owned launcher already terminal; no other process was stopped.
 
 These are bounded rules checks, with no full-set or playing-strength claim.
+
+External receipt: `C:/Users/Jack/fdn-scavenging-external-001.json` and
+its small manifest. Binary SHA-256
+`e01a810e6b0e438520d843a9389014a10395ad9d53684e0cf6df5657983b4c27`,
+5,848,064 bytes, preserved on E and a separate C copy. Both games use seed
+123 and episode 7. The external launch checked binary-copy reserves and
+bounded steps but lacked a live output-byte guardian; its manifest records
+that limitation and was written after completion. Future launches use the
+existing guarded launcher. No substantial simulation or GPU work occurred.
