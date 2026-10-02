@@ -38,7 +38,8 @@ impl Scan<'_> {
             | LookAtTopMayRevealThen { then, .. } => self.op(then),
             PutBoundObjectInOwnersLibrary { object, .. }
             | MoveBoundObject { object, .. }
-            | PutPlusOnePlusOneCounterOnBoundObject { object } => self.b(object),
+            | PutPlusOnePlusOneCounterOnBoundObject { object }
+            | PutPlusOnePlusOneCounterOnTriggerEventObject { object } => self.b(object),
             ResolveInitiativeTrigger { binding }
             | EnterUndercityRoom { binding, .. }
             | ResolveUndercityThrone { binding } => self.a(&binding.source),
@@ -98,6 +99,7 @@ impl Scan<'_> {
             | RevealUntilCardTypeAndMill { .. }
             | DealDamageDynamic { .. }
             | BindPlusOnePlusOneCounterToTriggerSource
+            | BindPlusOnePlusOneCounterToTriggerEventObject
             | PutSourceOntoBattlefieldAttachedToTarget { .. }
             | TapAttachedCreatureAndDamageControllerByPower
             | BackupTarget { .. }

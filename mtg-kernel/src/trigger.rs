@@ -95,6 +95,12 @@ pub enum TriggerCondition {
     /// (the active player's), so a `false` source still fires only on
     /// turns where that upkeep is the active player's own.
     BeginningOfUpkeep { controller_only: bool },
+    /// Each successful draw by the source's controller, including every
+    /// individual card in a multi-card draw.
+    ControllerDraws,
+    /// A different creature enters under the source's controller. A subtype
+    /// filter restricts the entrant rather than the observing permanent.
+    OtherControlledCreatureEnters { subtype: Option<Subtype> },
 }
 
 pub struct TriggeredAbilityDef {
@@ -138,6 +144,119 @@ pub(crate) fn materialize_trigger_effect(
         }
         effect => effect,
     }
+}
+
+fn battlefield_entry_object(event: &CommittedEvent) -> Option<ObjectId> {
+    match event {
+        CommittedEvent::ZoneChange {
+            object,
+            to: Zone::Battlefield,
+            ..
+        }
+        | CommittedEvent::CreateToken { object, .. } => Some(*object),
+        _ => None,
+    }
+}
+
+fn materialize_trigger_event_effect(
+    trigger: &TriggeredAbilityDef,
+    source: ObjectId,
+    state: &GameState,
+    event: &CommittedEvent,
+) -> EffectOp {
+    if matches!(
+        (trigger.effect)(),
+        EffectOp::BindPlusOnePlusOneCounterToTriggerEventObject
+    ) {
+        if let Some(object) = battlefield_entry_object(event) {
+            return EffectOp::PutPlusOnePlusOneCounterOnTriggerEventObject {
+                object: EffectObjectBinding {
+                    object,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: state.objects.get(object).zone_change_count,
+                },
+            };
+        }
+    }
+    materialize_trigger_effect(trigger, source, state)
+}
+
+const fn etb_trigger(effect: fn() -> EffectOp) -> TriggeredAbilityDef {
+    TriggeredAbilityDef {
+        condition: TriggerCondition::Etb,
+        home_zone: Zone::Battlefield,
+        intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
+        effect,
+    }
+}
+
+const GAIN_ONE_LIFE_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(gain_one_life_effect)];
+const DAZZLING_ANGEL_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::OtherControlledCreatureEnters { subtype: None },
+    ..etb_trigger(gain_one_life_effect)
+}];
+const CLINQUANT_SKYMAGE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControllerDraws,
+    ..etb_trigger(writhing_chrysalis_counter_marker_effect)
+}];
+const DWYNENS_ELITE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::EtbControlsOtherSubtypeCount {
+        subtype: Subtype::Elf,
+        minimum_count: 1,
+    },
+    ..etb_trigger(dwynens_elite_effect)
+}];
+const GOOD_FORTUNE_UNICORN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::OtherControlledCreatureEnters { subtype: None },
+    ..etb_trigger(entering_creature_counter_effect)
+}];
+const GUARDED_HEIR_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(guarded_heir_effect)];
+const YOUTHFUL_VALKYRIE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::OtherControlledCreatureEnters {
+        subtype: Some(Subtype::Angel),
+    },
+    ..etb_trigger(writhing_chrysalis_counter_marker_effect)
+}];
+
+fn gain_one_life_effect() -> EffectOp {
+    EffectOp::GainLife {
+        player: PlayerRef::Controller,
+        amount: 1,
+    }
+}
+
+fn entering_creature_counter_effect() -> EffectOp {
+    EffectOp::BindPlusOnePlusOneCounterToTriggerEventObject
+}
+
+fn dwynens_elite_effect() -> EffectOp {
+    EffectOp::Conditional {
+        cond: EffectCond::ControlsOtherIncarnationSubtypeCount {
+            subtype: Subtype::Elf,
+            minimum_count: 1,
+        },
+        then: Box::new(EffectOp::CreateToken {
+            token_def: crate::card_def::card_id_by_name("Elf Warrior Token")
+                .expect("FDN Elf Warrior token"),
+            controller: PlayerRef::Controller,
+        }),
+        else_: Box::new(EffectOp::Sequence(Vec::new())),
+    }
+}
+
+fn guarded_heir_effect() -> EffectOp {
+    let token_def = crate::card_def::card_id_by_name("Knight Token").expect("FDN Knight token");
+    EffectOp::Sequence(vec![
+        EffectOp::CreateToken {
+            token_def,
+            controller: PlayerRef::Controller,
+        },
+        EffectOp::CreateToken {
+            token_def,
+            controller: PlayerRef::Controller,
+        },
+    ])
 }
 
 fn guttersnipe_effect() -> EffectOp {
@@ -1081,6 +1200,13 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         return &JOB_SELECT_TRIGGERS;
     }
     match card.name {
+        "Blossoming Sands" | "Thornwood Falls" => &GAIN_ONE_LIFE_TRIGGERS,
+        "Dazzling Angel" => &DAZZLING_ANGEL_TRIGGERS,
+        "Clinquant Skymage" => &CLINQUANT_SKYMAGE_TRIGGERS,
+        "Dwynen's Elite" => &DWYNENS_ELITE_TRIGGERS,
+        "Good-Fortune Unicorn" => &GOOD_FORTUNE_UNICORN_TRIGGERS,
+        "Guarded Heir" => &GUARDED_HEIR_TRIGGERS,
+        "Youthful Valkyrie" => &YOUTHFUL_VALKYRIE_TRIGGERS,
         "Guttersnipe" => &GUTTERSNIPE_TRIGGERS,
         "Murmuring Mystic" => &MURMURING_MYSTIC_TRIGGERS,
         "Voldaren Epicure" => &VOLDAREN_EPICURE_TRIGGERS,
@@ -1188,12 +1314,18 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     {
         return true;
     }
-    if matches!(card.name, "Writhing Chrysalis" | "Gixian Infiltrator")
-        && matches!(
-            effect,
-            EffectOp::PutPlusOnePlusOneCounterOnBoundObject { .. }
+    if triggers_for(card_def).iter().any(|trigger| {
+        matches!(
+            ((trigger.effect)(), effect),
+            (
+                EffectOp::BindPlusOnePlusOneCounterToTriggerSource,
+                EffectOp::PutPlusOnePlusOneCounterOnBoundObject { .. }
+            ) | (
+                EffectOp::BindPlusOnePlusOneCounterToTriggerEventObject,
+                EffectOp::PutPlusOnePlusOneCounterOnTriggerEventObject { .. }
+            )
         )
-    {
+    }) {
         return true;
     }
     if card.name == "Weather the Storm" && matches!(effect, EffectOp::CreateStormCopies { .. }) {
@@ -1690,7 +1822,7 @@ fn triggers_from_events(
                             obj.v4.entered_battlefield_turn == Some(state.turn),
                         )
                     } else {
-                        materialize_trigger_effect(def, id, state)
+                        materialize_trigger_event_effect(def, id, state, ev)
                     };
                     let required_optional_cost =
                         required_optional_additional_cost_for_trigger(obj.card_def, &effect);
@@ -2009,6 +2141,25 @@ fn trigger_matches(
     draws_this_turn_at_event: u32,
 ) -> bool {
     match (cond, ev) {
+        (
+            TriggerCondition::ControllerDraws,
+            CommittedEvent::Draw {
+                player,
+                object: Some(_),
+            },
+        ) => *player == controller,
+        (TriggerCondition::OtherControlledCreatureEnters { subtype }, event) => {
+            let Some(object) = battlefield_entry_object(event) else {
+                return false;
+            };
+            let entrant = state.objects.get(object);
+            object != source
+                && entrant.controller == controller
+                && crate::engine::object_has_type(state, object, CardType::Creature)
+                && subtype.is_none_or(|subtype| {
+                    subtype.is_in_subtype_ids(&crate::engine::effective_subtype_ids(state, object))
+                })
+        }
         (
             TriggerCondition::Etb,
             CommittedEvent::ZoneChange {

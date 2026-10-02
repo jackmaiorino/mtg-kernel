@@ -1,5 +1,46 @@
 # FDN fixture batch A validation
 
+## Catalog separation follow-up, 2026-10-01
+
+PR #117's initial full CI exposed twelve Rust golden mismatches and Python
+checks that require the registry to contain precisely the pinned Pauper pool.
+Commits `9cb3a654`, `d8af7ba5` and `e97f8eae` move the six FDN definitions
+into `data/limited/fdn_v1/cards_v1.json`, append them only with the Cargo
+feature `limited-fdn-fixtures`, and select the matching native test fixture.
+The base registry, Python feature goldens and original Pauper serializer pins
+are restored byte-for-byte. Existing Pauper builds retain 162 definitions
+and the frozen v32 identity. Limited builds retain all 168 definitions and
+the separate frozen v33 identity. Publication/resume still require the
+record's catalog to match the selected live build, so a v32 record remains
+refused by an extended v33 build. Default v32 builds can continue using v32
+records as before.
+
+Verification so far: 17 Python Limited tests, 13 Pauper manifest tests and
+8 V2 feature-golden tests passed; the Pauper generator's check passed.
+The formerly failing scorer-packet, joined-record and checkpoint-evaluation
+goldens pass. Hosted CI run `36866508690` on source commit `e97f8eae`
+completed successfully: Rust release tests on Ubuntu and Windows, formatting,
+lint and all four Python shards. The separate HaleysPC debug library rerun
+finished with 1,728 passed, three failed and 49 ignored. Two native-search
+tests exceeded their scheduler deadlines; the third rejected its rollout.
+That debug attempt is a failed full-suite check, retained in
+`C:/Users/haley/fdn-catalog-isolation-002.log`.
+CI now also builds/lints the Limited feature and runs its card, session,
+priority, catalog and incompatible-store-profile checks.
+
+Small manifest: CPU only, GPU ordinal none; Rust/Cargo 1.94.1 and the
+existing MSVC toolchain/cache on HaleysPC, two Cargo build jobs. Local Python
+is 3.11. The owned remote verification commit is `93d5f1f`; current logs are
+`C:/Users/haley/fdn-catalog-isolation-002.log` and the corresponding
+`.exit.txt`. The first local rerun was stopped after identifying its
+incorrect FDN fixture selection; its separate `001.log` is retained.
+Jack's PC remains reserved for the lead and the explicitly assigned
+Spellbench validation. No formal measurement or GPU work was launched.
+
+The remainder of this report records the original batch A checks and
+supported-subset replay. Fixture coverage is unchanged: 19/40 copies per
+deck, 30 unique fixture names still missing, and batch B remains next.
+
 Engineering verification, 2026-10-01. Source commit
 `57971ba0a0e5e921727d5b54a1db8654b59aa195`; HaleysPC verification commit
 `a05bc00462f00a0bd5d2c0f8cc1e34930206601a`. Both owned branches are committed.

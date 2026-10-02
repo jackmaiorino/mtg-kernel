@@ -592,7 +592,8 @@ fn run_native_science_loop_with_opponents_v1(
         }
         NativeRunCatalogProfileV1::Current
         | NativeRunCatalogProfileV1::PauperMetaW1
-        | NativeRunCatalogProfileV1::FdnFixtureBatchA => {}
+        | NativeRunCatalogProfileV1::FdnFixtureBatchA
+        | NativeRunCatalogProfileV1::FdnFixtureBatchB => {}
     }
 
     if ladder_opponent.is_some() && population_opponent.is_some() {

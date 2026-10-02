@@ -235,6 +235,10 @@ pub enum Subtype {
     /// Appended for Conduit Pylons' printed Desert subtype (pauper meta wave
     /// 2 Task 3). Not a creature type.
     Desert,
+    /// FDN types append without changing any existing observation id.
+    Angel,
+    Noble,
+    Unicorn,
 }
 
 impl Subtype {
@@ -300,6 +304,12 @@ impl Subtype {
         Subtype::Squirrel,
         Subtype::Insect,
         Subtype::Fish,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Angel,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Noble,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Unicorn,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -1667,7 +1677,7 @@ mod tests {
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                198
+                208
             } else {
                 192
             }
@@ -1749,8 +1759,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v35_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x8627_2311_c565_a969;
+    fn card_db_hash_v36_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x07b5_59b7_395f_8a23;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
