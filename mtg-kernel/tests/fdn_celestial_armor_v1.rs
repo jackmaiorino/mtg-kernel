@@ -121,6 +121,24 @@ fn restored(state: &GameState) -> GameState {
     serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap()
 }
 
+fn settle_new_entry_target(state: &mut GameState, target: ObjectId) {
+    for _ in 0..60 {
+        let decision = next(state);
+        if matches!(decision, Decision::CastSpellOrPass { .. }) && state.stack.is_empty() {
+            assert!(state.engine.pending_triggers.is_empty());
+            return;
+        }
+        match decision {
+            Decision::ChooseTargets { .. } => {
+                engine::step(state, Action::ChooseTarget(Target::Object(target))).unwrap();
+            }
+            Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+            other => panic!("unexpected reentry decision: {other:?}"),
+        }
+    }
+    panic!("reentry did not settle");
+}
+
 #[test]
 fn printed_artifact_flash_equipment_and_admission_are_exact() {
     assert_eq!(card_id_by_name("Celestial Armor"), Some(204));
@@ -469,4 +487,153 @@ fn restore_preserves_entry_targets_equipping_and_resolved_protection() {
     }
     assert_eq!(state.state_hash(), copy.state_hash());
     assert_eq!(restored(&state).state_hash(), state.state_hash());
+}
+
+#[test]
+fn flash_in_response_to_lethal_damage_protects_the_creature_before_damage_resolves() {
+    let mut state = ready();
+    let target = put(&mut state, PlayerId::P0, "Elvish Mystic", Zone::Battlefield);
+    let bolt = put(&mut state, PlayerId::P1, "Lightning Bolt", Zone::Hand);
+    state.players[1].mana_pool[ManaColor::R.pool_index()] = 1;
+    next(&mut state);
+    engine::step(&mut state, Action::Pass).unwrap();
+    next(&mut state);
+    engine::step(&mut state, Action::CastSpell(bolt)).unwrap();
+    next(&mut state);
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+    next(&mut state);
+    engine::step(&mut state, Action::Pass).unwrap();
+    let armor = announce(&mut state);
+    entry_targets(&mut state);
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+    finish(&mut state);
+    assert_eq!(state.objects.get(target).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(bolt).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(target).damage, 3);
+    assert_eq!(
+        state.objects.get(armor).v4.attached_to.unwrap().object,
+        target
+    );
+    protection(&state, target, true);
+}
+
+#[test]
+fn hexproof_excludes_opponent_targets_but_allows_the_controllers_targets() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready();
+        let target = put(&mut state, PlayerId::P0, "Elvish Mystic", Zone::Battlefield);
+        attach(&mut state, target);
+        state.priority_player = player;
+        let bolt = put(&mut state, player, "Lightning Bolt", Zone::Hand);
+        state.players[player.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+        next(&mut state);
+        engine::step(&mut state, Action::CastSpell(bolt)).unwrap();
+        assert!(
+            matches!(next(&mut state), Decision::ChooseTargets { legal_targets, .. }
+            if legal_targets.contains(&Target::Object(target)) == (player == PlayerId::P0))
+        );
+    }
+}
+
+#[test]
+fn indestructible_prevents_a_resolving_destroy_spell_from_the_same_controller() {
+    let mut state = ready();
+    let target = put(&mut state, PlayerId::P0, "Elvish Mystic", Zone::Battlefield);
+    attach(&mut state, target);
+    let spell = put(&mut state, PlayerId::P0, "Cast Down", Zone::Hand);
+    state.players[0].mana_pool[ManaColor::B.pool_index()] = 1;
+    state.players[0].mana_pool[ManaColor::C.pool_index()] = 1;
+    next(&mut state);
+    engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+    next(&mut state);
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+    finish(&mut state);
+    assert_eq!(state.objects.get(spell).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(target).zone, Zone::Battlefield);
+    protection(&state, target, true);
+}
+
+#[test]
+fn equip_cannot_be_announced_with_an_ability_already_on_the_stack() {
+    let mut state = ready();
+    let target = put(&mut state, PlayerId::P0, "Elvish Mystic", Zone::Battlefield);
+    let armor = attach(&mut state, target);
+    equip(&mut state, armor, target);
+    mana(&mut state, 1, 3);
+    assert!(
+        matches!(next(&mut state), Decision::CastSpellOrPass { activatable_abilities, .. }
+        if !activatable_abilities.contains(&(armor, 0)))
+    );
+    let hash = state.state_hash();
+    assert!(engine::step(&mut state, Action::ActivateAbility(armor, 0)).is_err());
+    assert_eq!(state.state_hash(), hash);
+    finish(&mut state);
+}
+
+#[test]
+fn equip_cannot_attach_a_removed_or_returned_source_incarnation() {
+    for returns in [false, true] {
+        let mut state = ready();
+        let first = put(&mut state, PlayerId::P0, "Elvish Mystic", Zone::Battlefield);
+        let second = put(
+            &mut state,
+            PlayerId::P0,
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let armor = attach(&mut state, first);
+        equip(&mut state, armor, second);
+        next(&mut state);
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(armor, Zone::Hand));
+        if returns {
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(armor, Zone::Battlefield),
+            );
+        }
+        settle_new_entry_target(&mut state, first);
+        assert_eq!(engine::effective_power(&state, second), 1);
+        protection(&state, second, false);
+        assert_eq!(
+            state
+                .objects
+                .get(armor)
+                .v4
+                .attached_to
+                .map(|link| link.object),
+            returns.then_some(first)
+        );
+        state.validate_attachment_relations().unwrap();
+    }
+}
+
+#[test]
+fn old_entry_trigger_protects_its_target_but_cannot_attach_a_returned_armor() {
+    let mut state = ready();
+    let first = put(&mut state, PlayerId::P0, "Elvish Mystic", Zone::Battlefield);
+    let second = put(
+        &mut state,
+        PlayerId::P0,
+        "Llanowar Elves",
+        Zone::Battlefield,
+    );
+    let armor = announce(&mut state);
+    entry_targets(&mut state);
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(first))).unwrap();
+    next(&mut state);
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(armor, Zone::Hand));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(armor, Zone::Battlefield),
+    );
+    settle_new_entry_target(&mut state, second);
+    assert_eq!(
+        state.objects.get(armor).v4.attached_to.unwrap().object,
+        second
+    );
+    assert_eq!(engine::effective_power(&state, first), 1);
+    assert_eq!(engine::effective_power(&state, second), 3);
+    protection(&state, first, true);
+    protection(&state, second, true);
+    state.validate_attachment_relations().unwrap();
 }
