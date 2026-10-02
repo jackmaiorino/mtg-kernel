@@ -3,8 +3,8 @@
 //! Experimental, deterministic, resumable game core for registered card pools.
 //!
 //! Scope: the pinned nine-deck Pauper pool (150 unique roster names,
-//! all fully supported, plus 12 required token definitions), and six additions
-//! for the opt-in FDN Limited session. The full FDN pool remains incomplete. The
+//! all fully supported, plus 12 required token definitions), and the opt-in
+//! FDN fixture definitions. The full FDN pool remains incomplete. The
 //! Java XMage engine remains the reference implementation and claim surface.
 //! This kernel is intended to reduce rules-engine cost in training and search
 //! workloads; an end-to-end training speedup over XMage has not yet been
@@ -45,6 +45,7 @@ pub mod bounded_staleness_async_production_v1;
 pub mod bounded_staleness_async_v1;
 pub mod card_def;
 pub mod combat_damage_v1;
+pub mod legend_rule_v1;
 // Fail-closed canonical JSON codec shared by the native training store's
 // records. Schema validation remains a separate layer.
 pub mod canonical_json_v1;

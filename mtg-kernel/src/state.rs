@@ -1258,6 +1258,10 @@ pub struct GameState {
     /// event log, all owned by the `engine`/`event`/`trigger` modules. See
     /// `engine::EngineState`.
     pub engine: crate::engine::EngineState,
+    /// A choice within one simultaneous SBA pass, outside any resolution.
+    /// Absence preserves all prior snapshot bytes and diagnostic hashes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_legend_rule_v1: Option<crate::legend_rule_v1::PendingLegendRuleV1>,
 }
 
 /// Reproduces exactly the field-hash sequence `#[derive(Hash)]` produced
@@ -1289,6 +1293,10 @@ impl Hash for GameState {
         self.engine.hash(state);
         if self.starting_player != PlayerId::P0 {
             self.starting_player.hash(state);
+        }
+        if let Some(pending) = &self.pending_legend_rule_v1 {
+            "legend-rule-v1".hash(state);
+            pending.hash(state);
         }
     }
 }
@@ -1423,6 +1431,7 @@ impl GameState {
             }),
             randomness: GameRandomnessState::Legacy(SplitMix64::seed(seed)),
             engine: crate::engine::EngineState::default(),
+            pending_legend_rule_v1: None,
         }
     }
 

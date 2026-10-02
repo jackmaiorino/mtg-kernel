@@ -1495,7 +1495,7 @@ pub struct PendingTrigger {
     pub paid_cost_refs: Vec<PaidCostRefV4>,
 }
 
-fn creature_dies_to_state_based_actions(
+pub(crate) fn creature_dies_to_state_based_actions(
     toughness: i32,
     marked_damage: i32,
     deathtouch_damage: bool,
@@ -1512,7 +1512,7 @@ pub fn sba_fixed_point(state: &mut GameState) {
     sba_fixed_point_with_protected_triggers(state, &[]);
 }
 
-fn saga_final_chapter_is_pending(
+pub(crate) fn saga_final_chapter_is_pending(
     state: &GameState,
     source: ObjectId,
     source_zone_change_count: u32,
@@ -1561,6 +1561,9 @@ fn sba_fixed_point_with_protected_triggers(
     protected_triggers: &[PendingTrigger],
 ) {
     loop {
+        if crate::legend_rule_v1::stage(state, protected_triggers) {
+            return;
+        }
         let mut changed = false;
 
         // 704.5g: a creature with toughness 0 or less is put into its
@@ -1715,6 +1718,16 @@ fn sba_fixed_point_with_protected_triggers(
 /// combined newly-triggered abilities in APNAP order (active player's
 /// triggers first).
 pub fn collect_and_process(state: &mut GameState) -> Vec<PendingTrigger> {
+    collect_and_process_with_waiting(state, Vec::new())
+}
+
+pub(crate) fn collect_and_process_with_waiting(
+    state: &mut GameState,
+    mut waiting: Vec<PendingTrigger>,
+) -> Vec<PendingTrigger> {
+    if state.pending_legend_rule_v1.is_some() {
+        return Vec::new();
+    }
     let events: Vec<CommittedEvent> = state.engine.event_log.drain(..).collect();
     // Single-shot: `engine::resolve_top_of_stack` set this immediately
     // before the resolution whose events we're about to match, explicitly
@@ -1728,7 +1741,8 @@ pub fn collect_and_process(state: &mut GameState) -> Vec<PendingTrigger> {
     // trigger must not disappear merely because its source dies during that
     // check, so match the pre-SBA batch while its sources still occupy the
     // zones from which their abilities function.
-    let mut new_triggers = triggers_from_events(state, &events, kicked_source);
+    waiting.extend(triggers_from_events(state, &events, kicked_source));
+    let mut new_triggers = waiting;
 
     // Conversely, SBAs can create new trigger events themselves. Lethal
     // combat damage, for example, moves Clockwork Percussionist to the
@@ -1736,6 +1750,9 @@ pub fn collect_and_process(state: &mut GameState) -> Vec<PendingTrigger> {
     // checkpoint, not some later action. Match that second batch only after
     // the fixed point, then order both batches together under 603.3b.
     sba_fixed_point_with_protected_triggers(state, &new_triggers);
+    if state.pending_legend_rule_v1.is_some() {
+        return Vec::new();
+    }
     let sba_events: Vec<CommittedEvent> = state.engine.event_log.drain(..).collect();
     new_triggers.extend(triggers_from_events(state, &sba_events, None));
 

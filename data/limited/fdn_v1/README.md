@@ -16,11 +16,11 @@ statistics omitted. The two deck files are unchanged copies.
 
 The 286 reference names are an observed gameplay dataset, not a complete
 booster manifest. The inventory tool adds all five basic lands and any
-additional fixture cards. After fixture batches A and B and the first combat-card slice, 23 reference
-names are fully supported, one is partial and 262 remain missing. UG resolves
-25/40 mainboard copies and WG 26/40. The fixtures still need 20 distinct
-fully supported card names. Dwynen has tested Elf bonuses and an attack
-trigger, but remains partial until the legend-rule choice is implemented.
+additional fixture cards. After fixture batches A and B and the combat and
+legend-rule slices, 24 reference names are fully supported and 262 remain missing.
+UG and WG each resolve 26/40 mainboard copies. The fixtures still need 19
+fully supported card names. Dwynen now includes its Elf bonuses, attack
+trigger and a real resumable legend-rule choice.
 Printed collector numbers are not a safe
 filter for draft availability: these real decks also use alternate printings.
 The full target pool, including any Special Guests, needs a separate manifest.
@@ -30,9 +30,9 @@ unchanged 192-definition Pauper registry. The importer combines both files in
 that order and reports their separate SHA-256s. Build the gameplay binary with
 `cargo build --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_env`.
 Default builds retain the Pauper catalog and its v34 identity; the
-Limited feature selects the appended definitions and their v37 identity.
-The older batch A and batch B profiles remain readable and are rejected for
-mutation when they do not match the actual build.
+Limited feature selects the appended definitions and their v38 identity.
+The older batch A, batch B and combat-card profiles remain readable and are
+rejected for mutation when they do not match the actual build.
 
 `kernel_limited_env --foundations-combat-v1` selects custom-game schema 3,
 with full priority windows, damage assignment choices and trample. The
