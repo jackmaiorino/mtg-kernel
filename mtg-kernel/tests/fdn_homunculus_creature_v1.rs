@@ -138,7 +138,7 @@ fn printed_and_copy_definitions_preserve_all_copiable_characteristics() {
         assert_eq!(def.subtypes, &[Subtype::Homunculus]);
         assert_eq!(def.keywords.0, Keywords::NONE.0);
     }
-    assert_eq!(original.mana_cost, token.mana_cost);
+    assert_eq!(original.cost, token.cost);
     assert_eq!(original.types, token.types);
     assert_eq!(original.supertypes, token.supertypes);
     assert!(!original.is_token);
