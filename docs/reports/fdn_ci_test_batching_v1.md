@@ -37,6 +37,14 @@ unproven until CI executes it.
 
 All integration targets, original external games, native CLI checks and
 CUDA host-safe checks retain their existing commands.
+Documentation CI37059298773 failed before compilation in Ubuntu job111012877488:
+Rustup reported recovery of a partially installed1.94.1 toolchain, then a
+conflicting `bin/cargo-clippy`. Each Rust/Python job now installs the unchanged
+pin, minimal profile, Clippy and rustfmt into its own temporary
+[`RUSTUP_HOME`](https://rust-lang.github.io/rustup/environment-variables.html).
+This avoids the damaged image installation and retains the existing compiler,
+linker and registry cache. The observed bootstrap failure is environmental;
+the fresh installation still needs hosted execution on both platforms.
 Test selection and build metadata collection are preserved. This is CPU
 correctness verification; current hosted end-to-end checks remain pending.
 The existing healthy PR136 through139 jobs keep running on their original
