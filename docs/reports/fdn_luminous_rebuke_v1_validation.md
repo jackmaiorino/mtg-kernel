@@ -1,5 +1,11 @@
 # FDN Luminous Rebuke implementation and verification
 
+Hosted CI at `deaa8b29cf26547e4dc28e01341648dc23e50460` passed all eight checks: Rust on
+Ubuntu and Windows, all four Python shards, formatting/lint and path detection.
+Run: https://github.com/jackmaiorino/mtg-kernel/actions/runs/37008853823. Earlier pending entries below record the original
+verification sequence. The subsequent status/report update changes no tested
+code, workflow, fixture or catalog bytes.
+
 Luminous Rebuke is implemented as a white instant for `{4}{W}`, mana value
 five, that destroys target creature. A tapped creature target reduces only
 the generic casting cost by three. Untapping after the cast does not
