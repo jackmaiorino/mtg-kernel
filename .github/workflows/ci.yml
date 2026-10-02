@@ -149,7 +149,7 @@ jobs:
 
       - name: Validate FDN Limited gameplay and catalog separation
         run: |
-          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test fdn_fixture_batch_a_v1 --test fdn_fixture_batch_b_v1 --test limited_session_v1 --test limited_priority_v1 --test limited_combat_v1 --test fdn_combat_cards_v1 --test fdn_legend_rule_v1 --test fdn_targeted_spells_v1 --test fdn_counter_creatures_v1 --test fdn_lifegain_creatures_v1 --test fdn_draw_creatures_v1 --test fdn_homunculus_creature_v1 --test fdn_koma_creature_v1 --test fdn_kiora_creature_v1
+          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test fdn_fixture_batch_a_v1 --test fdn_fixture_batch_b_v1 --test limited_session_v1 --test limited_priority_v1 --test limited_combat_v1 --test fdn_combat_cards_v1 --test fdn_legend_rule_v1 --test fdn_targeted_spells_v1 --test fdn_counter_creatures_v1 --test fdn_lifegain_creatures_v1 --test fdn_draw_creatures_v1 --test fdn_homunculus_creature_v1 --test fdn_koma_creature_v1 --test fdn_kiora_creature_v1 --test fdn_prowler_creature_v1
           cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib limited_session_v1::tests
           cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib rl_session::tests
           cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib card_def::
