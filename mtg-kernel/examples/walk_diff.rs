@@ -814,7 +814,7 @@ fn apply_silent_window(
             )
             .map_err(|e| format!("engine-step-error:OrderTriggers:{e}")),
         SurfaceDecision::Decision(Decision::ChooseTriggerMode { .. }) => {
-            return Err("unhandled-decision:ChooseTriggerMode".to_string());
+            Err("unhandled-decision:ChooseTriggerMode".to_string())
         }
         SurfaceDecision::Decision(Decision::ChooseSpellMode { .. }) => {
             Err("unhandled-decision:ChooseSpellMode".to_string())

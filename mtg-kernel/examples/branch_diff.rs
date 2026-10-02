@@ -773,7 +773,7 @@ fn fixed_continuation_action(decision: &SurfaceDecision) -> Result<SurfaceAction
             SurfaceAction::Action(Action::OrderTriggers((0..pending.len()).collect())),
         ),
         SurfaceDecision::Decision(Decision::ChooseTriggerMode { .. }) => {
-            return Err("unhandled-decision:ChooseTriggerMode".to_string());
+            Err("unhandled-decision:ChooseTriggerMode".to_string())
         }
         SurfaceDecision::Decision(Decision::ChooseSpellMode { .. }) => {
             Err("continuation:unhandled-ChooseSpellMode".to_string())
@@ -1629,7 +1629,7 @@ fn apply_silent_window(
             )
             .map_err(|e| format!("engine-step-error:OrderTriggers:{e}")),
         SurfaceDecision::Decision(Decision::ChooseTriggerMode { .. }) => {
-            return Err("unhandled-decision:ChooseTriggerMode".to_string());
+            Err("unhandled-decision:ChooseTriggerMode".to_string())
         }
         SurfaceDecision::Decision(Decision::ChooseSpellMode { .. }) => {
             Err("unhandled-decision:ChooseSpellMode".to_string())

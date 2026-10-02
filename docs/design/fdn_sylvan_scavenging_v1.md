@@ -48,9 +48,10 @@ coverage is now UG 38/40 and WG 39/40. Celestial Armor, Witness Protection
 and London mulligans remain required by the full fixture goal.
 
 Implemented placement-time modes, exact selected-branch target contracts
-and a resolution-time current-power predicate. All twenty focused rules
-and pending-decision restoration cases pass. Catalog/regression/lint,
-XMage, external replay and hosted CI verification remain in progress.
+and a resolution-time current-power predicate. All twenty-one focused rules
+and pending-decision restoration cases pass. All 46 definition and 141 catalog-history checks pass, with three existing
+ignores. Twelve strict XMage comparisons and twenty Python checks pass.
+Broader regressions, lint, external replay and hosted CI remain pending.
 The existing flat mode row represents both printed spell and trigger modes;
 engine decisions and executable actions distinguish ChooseTriggerMode.
 No new unconditional pending-trigger field changes older state hashes.
