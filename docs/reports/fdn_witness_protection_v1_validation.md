@@ -11,6 +11,15 @@ admission. This is not yet a completed gameplay or full-set support claim.
   remain covered. The first check exposed three stale coverage expectations;
   updated them and retained independent unsupported-deck refusal coverage.
 - Pinned Rust 1.94.1 formatting and `git diff --check`: passed.
+- CI37038033614 at a6b639d0: focused Witness Rust steps passed on Ubuntu and
+  Windows; formatting/lint and all four Python shards passed. The full Rust
+  release and native-store stages passed on both hosts. Ubuntu then failed
+  `card_def::tests::card_defs_len_matches_pool`: the extended catalog contains
+  206 definitions, while the assertion retained the Armor count of 205.
+  Correct the Limited expectation to 206; the default expectation remains 162.
+  All 19 Limited integration targets, seven session restore tests and 66 RL
+  session tests had passed before that assertion. Subsequent checks did not
+  execute; the corrected source still needs complete hosted verification.
 - Catalog-only probe, pinned Rust 1.94.1 and existing build-script dependency
   cache: compilation exit 0 in 1.39 seconds; generator exit 0. This compiles the
   card generator, not the engine. Frozen default v32 remains `64c82a261e078f1a`;
