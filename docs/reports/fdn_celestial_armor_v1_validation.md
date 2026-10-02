@@ -36,7 +36,7 @@ External receipt and archived Python/PowerShell checker:
 mirror `C:/Users/Jack/fdn-armor-external-001-sealed`. Two serial CPU
 correctness games, seed123, episode7, maximum16384 steps each,180-second
 limit. Guardian checks the exact owned Python process,16MiB output cap,
-1MiB projection and60GiB reserve. Observed sealed files14,568 bytes.
+1MiB projection and60GiB reserve. Observed sealed files15,842 bytes including the sealing receipt.
 
 Binary SHA-256 `c0a0897aeba77f8c59e442928eced949e9fd70b0a83f9893f425f3073faa2d40`,
 5,850,112 bytes, preserved by hash on E and on both PCs. Transcript SHA-256
