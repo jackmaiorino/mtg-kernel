@@ -1,5 +1,14 @@
 # Celestial Armor implementation and verification
 
+Hosted CI37031403320 at33d84667 passed Ubuntu Rust and both Ubuntu Python
+shards. Windows Python shard0 found a timing-dependent sentinel-coverage test:
+fake process startup legitimately ranked serial first, while the test required
+the two-device allocation. Apply the already qualified narrow test repair from
+319ac081: fix only the ranking input and still execute/compare every prefix and
+full-length subprocess output. The repaired focused test passed locally in
+11.531 seconds. Windows Rust is still active; preserve that check before
+publishing the test-only repair. Complete corrected-source CI remains required.
+
 The unchanged WG fixture now resolves all40 copies. Armor costs `{2}{W}`,
 has flash, and its entry trigger attaches to a controlled creature and
 independently grants hexproof and indestructible until end of turn.
