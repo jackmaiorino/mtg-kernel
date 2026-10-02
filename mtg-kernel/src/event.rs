@@ -821,6 +821,9 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
             }
         }
         ProposedEvent::LifeGain(g) => {
+            if g.amount <= 0 {
+                return;
+            }
             state.players[g.player.index()].life += g.amount;
             CommittedEvent::LifeGain {
                 player: g.player,
@@ -957,14 +960,37 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
         .collect();
     // Lifelink changes life at the same time as the damage. Capture every
     // source/controller before any member of the simultaneous batch can die.
-    let lifelink_gains = survivors
-        .iter()
-        .filter_map(|event| lifelink_gain_for(state, event))
-        .collect::<Vec<_>>();
+    // CR 119.9: one source damaging several recipients simultaneously is
+    // one life-gain event. Distinct sources remain distinct, in first-event
+    // order, even when they share a controller.
+    let mut lifelink_gains: Vec<(ObjectId, PlayerId, i32)> = Vec::new();
+    for event in &survivors {
+        let Some((player, amount)) = lifelink_gain_for(state, event) else {
+            continue;
+        };
+        let ProposedEvent::Damage(damage) = event else {
+            unreachable!("only damage causes lifelink");
+        };
+        if let Some((_, _, total)) = lifelink_gains
+            .iter_mut()
+            .find(|(source, controller, _)| *source == damage.source && *controller == player)
+        {
+            let Some(next) = total.checked_add(amount) else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    damage.source,
+                ));
+                return;
+            };
+            *total = next;
+        } else {
+            lifelink_gains.push((damage.source, player, amount));
+        }
+    }
     for e in survivors {
         commit(state, e);
     }
-    for (player, amount) in lifelink_gains {
+    for (_, player, amount) in lifelink_gains {
         commit(state, ProposedEvent::life_gain(player, amount));
     }
 }
@@ -1461,6 +1487,117 @@ mod tests {
 
     fn fresh_state() -> GameState {
         GameState::new_from_libraries(&[1, 2, 3], &[4, 5, 6], |c| format!("card-{c}"), 1)
+    }
+
+    fn lifelink_source(state: &mut GameState) -> ObjectId {
+        let source = push_object_into(state, PlayerId::P0, Zone::Battlefield);
+        let definition = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
+        let object = state.objects.get_mut(source);
+        object.card_def = definition;
+        object.v4 = crate::state::ObjectStateV4::from_card_def(definition);
+        object.v4.lifelink_keyword_counters = 1;
+        state.players[0].battlefield.push(source);
+        source
+    }
+
+    fn life_gain_amounts(state: &GameState) -> Vec<i32> {
+        state
+            .engine
+            .event_log
+            .iter()
+            .filter_map(|event| match event {
+                CommittedEvent::LifeGain {
+                    player: PlayerId::P0,
+                    amount,
+                } => Some(*amount),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn lifelink_split_damage_is_one_life_gain_event() {
+        let mut state = fresh_state();
+        let source = lifelink_source(&mut state);
+        let target = push_object_into(&mut state, PlayerId::P1, Zone::Battlefield);
+        propose_and_commit_batch(
+            &mut state,
+            vec![
+                ProposedEvent::damage(source, Target::Object(target), 2),
+                ProposedEvent::damage(source, Target::Player(PlayerId::P1), 3),
+            ],
+        );
+        assert_eq!(state.players[0].life, 25);
+        assert_eq!(state.players[1].life, 17);
+        assert_eq!(state.objects.get(target).damage, 2);
+        assert_eq!(life_gain_amounts(&state), vec![5]);
+    }
+
+    #[test]
+    fn lifelink_distinct_sources_keep_distinct_life_gain_events() {
+        let mut state = fresh_state();
+        let first = lifelink_source(&mut state);
+        let second = lifelink_source(&mut state);
+        propose_and_commit_batch(
+            &mut state,
+            vec![
+                ProposedEvent::damage(first, Target::Player(PlayerId::P1), 2),
+                ProposedEvent::damage(second, Target::Player(PlayerId::P1), 3),
+            ],
+        );
+        assert_eq!(state.players[0].life, 25);
+        assert_eq!(life_gain_amounts(&state), vec![2, 3]);
+    }
+
+    #[test]
+    fn lifelink_sequential_damage_keeps_separate_life_gain_events() {
+        let mut state = fresh_state();
+        let source = lifelink_source(&mut state);
+        for amount in [2, 3] {
+            propose_and_commit(
+                &mut state,
+                ProposedEvent::damage(source, Target::Player(PlayerId::P1), amount),
+            );
+        }
+        assert_eq!(state.players[0].life, 25);
+        assert_eq!(life_gain_amounts(&state), vec![2, 3]);
+    }
+
+    #[test]
+    fn lifelink_split_damage_counts_only_damage_after_prevention() {
+        let mut state = fresh_state();
+        let source = lifelink_source(&mut state);
+        let target = push_object_into(&mut state, PlayerId::P1, Zone::Battlefield);
+        install_combat_damage_prevention(&mut state, target, target);
+        let combat = |target, amount| {
+            ProposedEvent::Damage(DamageProposed {
+                source,
+                target,
+                amount,
+                is_combat: true,
+                touched_by: Vec::new(),
+            })
+        };
+        propose_and_commit_batch(
+            &mut state,
+            vec![
+                combat(Target::Object(target), 2),
+                combat(Target::Player(PlayerId::P1), 3),
+            ],
+        );
+        assert_eq!(state.players[0].life, 23);
+        assert_eq!(state.objects.get(target).damage, 0);
+        assert_eq!(life_gain_amounts(&state), vec![3]);
+    }
+
+    #[test]
+    fn nonpositive_life_gain_does_not_emit_an_event() {
+        let mut state = fresh_state();
+        for amount in [0, -1] {
+            propose_and_commit(&mut state, ProposedEvent::life_gain(PlayerId::P0, amount));
+        }
+        assert_eq!(state.players[0].life, 20);
+        assert!(state.engine.event_log.is_empty());
     }
 
     #[test]
