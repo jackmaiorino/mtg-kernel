@@ -23,6 +23,15 @@ counter-unless-payment effects and spell copies without suppressing legal
 choices. Preserve the default build's existing generated programs and
 catalog identity; bind the changed FDN programs to the new FDN identity.
 
+Pinned XMage `CounterUnlessPaysEffect.java` offers a payable additional
+cost before attempting to counter, even when the spell cannot be
+countered. The kernel must preserve that choice and check protection at
+the actual counter attempt. The nine executed reference cases in
+[Mage PR #7](https://github.com/jackmaiorino/mage/pull/7) include declining
+Force Spike's payable one-mana cost, all three ward paths, and a trample
+damage trigger whose Koma source dies during simultaneous damage. All nine
+passed with strict choices; kernel counterparts remain to be implemented.
+
 | Required check | Evidence |
 | --- | --- |
 | Printed definitions | Exact cost, colors, legendary status, Serpent subtype, 8/12, trample, ward four and spell protection; token 3/3, blue, Serpent, zero mana value and mainboard rejection. |
