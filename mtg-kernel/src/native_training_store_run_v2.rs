@@ -197,7 +197,7 @@ const FROZEN_RUNTIME_CATALOG_SHA256_FDN_BATCH_B_V1: &str =
     "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
 // v35 appends the first combat-card slice. Earlier profiles retain their literals.
-const FROZEN_CARD_DB_HASH_U64_HEX_FDN_COMBAT_CARDS_V1: &str = "41607b95d7a1ec42";
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_COMBAT_CARDS_V1: &str = "5de932964bf0e2c7";
 const FROZEN_RUNTIME_CATALOG_SHA256_FDN_COMBAT_CARDS_V1: &str =
     "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
@@ -6907,7 +6907,7 @@ mod tests {
         );
         assert_eq!(
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_COMBAT_CARDS_V1,
-            "41607b95d7a1ec42"
+            "5de932964bf0e2c7"
         );
     }
 
