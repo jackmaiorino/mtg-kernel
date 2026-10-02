@@ -48,6 +48,133 @@ pub struct Config {
     /// A learning-only opt-in. Zero preserves all prior config bytes/hashes.
     #[serde(default, skip_serializing_if = "entropy_is_zero")]
     pub entropy_coefficient: f32,
+    /// A learning-only opt-in. None preserves all prior config bytes/hashes
+    /// and the single full-batch GAE step per update.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ppo: Option<PpoConfigV1>,
+}
+
+/// Clipped-surrogate PPO over the current batch only. Each update runs
+/// `epochs` passes over its own freshly collected groups, each pass split into
+/// `minibatches` disjoint group sets, one Adam step per minibatch. The batch is
+/// discarded afterwards: no data from an earlier policy enters a later update.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PpoConfigV1 {
+    pub epochs: u32,
+    pub minibatches: u32,
+    pub clip: f32,
+    /// Seeds the per-update, per-epoch minibatch partition.
+    pub shuffle_seed: u64,
+}
+
+impl PpoConfigV1 {
+    fn validate(&self) -> Result<(), String> {
+        ensure(
+            (1..=16).contains(&self.epochs)
+                && (1..=64).contains(&self.minibatches)
+                && self.clip.is_finite()
+                && self.clip > 0.0
+                && self.clip <= 1.0,
+            "public PPO epochs, minibatches or clip outside bounds",
+        )
+    }
+}
+
+/// Adam steps taken by one update: one for the GAE step, epochs x
+/// minibatches under PPO. Optimizer ages are checked against this everywhere.
+fn adam_steps_per_update(config: &Config) -> u64 {
+    config
+        .ppo
+        .map_or(1, |ppo| u64::from(ppo.epochs) * u64::from(ppo.minibatches))
+}
+
+/// Disjoint group-index sets for one PPO epoch: a SplitMix64 Fisher-Yates
+/// permutation keyed by (seed, update, epoch), dealt into contiguous slices of
+/// near-equal size. Each slice is sorted so chunking keeps schedule order.
+fn ppo_minibatches(
+    groups: usize,
+    minibatches: u32,
+    seed: u64,
+    update: usize,
+    epoch: u32,
+) -> Vec<Vec<usize>> {
+    let mut state = seed
+        ^ (update as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        ^ u64::from(epoch).wrapping_mul(0xD1B5_4A32_D192_ED03);
+    let mut next = || {
+        state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    };
+    let mut order: Vec<usize> = (0..groups).collect();
+    for i in (1..groups).rev() {
+        order.swap(i, (next() % (i as u64 + 1)) as usize);
+    }
+    let count = (minibatches as usize).min(groups).max(1);
+    (0..count)
+        .map(|m| {
+            let mut slice = order[m * groups / count..(m + 1) * groups / count].to_vec();
+            slice.sort_unstable();
+            slice
+        })
+        .collect()
+}
+
+/// Behavior log-probability of one physical decision: the sum over its
+/// substeps of log_softmax(recorded logits)[selected], in f64.
+fn behavior_joint_log_probability(substeps: &[(&[u32], usize)]) -> Result<f32, String> {
+    let mut joint = 0.0_f64;
+    for (logits, selected) in substeps {
+        ensure(
+            *selected < logits.len(),
+            "PPO behavior selection outside logits",
+        )?;
+        let values: Vec<f64> = logits
+            .iter()
+            .map(|v| f64::from(f32::from_bits(*v)))
+            .collect();
+        let max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let log_sum = values.iter().map(|v| (v - max).exp()).sum::<f64>().ln() + max;
+        joint += values[*selected] - log_sum;
+    }
+    ensure(joint.is_finite(), "PPO behavior log probability not finite")?;
+    Ok(joint as f32)
+}
+
+/// Receipt-only PPO diagnostics over every ratio seen during the update:
+/// the fraction outside the clip range, the mean |r - 1|, and the
+/// `(r - 1) - ln r` KL estimate. They never enter the config or optimizer.
+fn ppo_ratio_statistics(ratios: &[f32], clip: f32, groups: usize) -> Result<Value, String> {
+    ensure(
+        !ratios.is_empty()
+            && ratios.len().is_multiple_of(groups)
+            && ratios.iter().all(|r| r.is_finite() && *r > 0.0),
+        "PPO ratios missing, misaligned or not finite",
+    )?;
+    let count = ratios.len() as f64;
+    let (lower, upper) = (1.0 - f64::from(clip), 1.0 + f64::from(clip));
+    let outside = ratios
+        .iter()
+        .filter(|r| !(lower..=upper).contains(&f64::from(**r)))
+        .count() as f64;
+    let deviation = ratios
+        .iter()
+        .map(|r| (f64::from(*r) - 1.0).abs())
+        .sum::<f64>();
+    let kl = ratios
+        .iter()
+        .map(|r| (f64::from(*r) - 1.0) - f64::from(*r).ln())
+        .sum::<f64>();
+    let max = ratios.iter().copied().fold(f32::MIN, f32::max);
+    let min = ratios.iter().copied().fold(f32::MAX, f32::min);
+    Ok(
+        json!({"ratios":ratios.len(),"clip_fraction":outside / count,
+        "mean_abs_ratio_deviation":deviation / count,"approx_kl":kl / count,
+        "min_ratio":min,"max_ratio":max}),
+    )
 }
 
 fn entropy_is_zero(value: &f32) -> bool {
@@ -58,7 +185,15 @@ fn validate_entropy(config: &Config) -> Result<(), String> {
     ensure(
         config.entropy_coefficient.is_finite() && (0.0..=1.0).contains(&config.entropy_coefficient),
         "public entropy coefficient must be finite in [0,1]",
-    )
+    )?;
+    if let Some(ppo) = &config.ppo {
+        ppo.validate()?;
+        ensure(
+            config.entropy_coefficient == 0.0,
+            "public PPO takes no entropy term",
+        )?;
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -219,8 +354,10 @@ pub(crate) fn load_for_evaluation(
     validate_projection_mode(&config, &public)?;
     let (mut base, initial) = initialize(&config.source)?;
     ensure(
-        legacy.adam_step == initial.adam_step_v1() + checkpoint.next_update as u64
-            && public.adam_step == checkpoint.next_update as u64,
+        legacy.adam_step
+            == initial.adam_step_v1()
+                + checkpoint.next_update as u64 * adam_steps_per_update(&config)
+            && public.adam_step == checkpoint.next_update as u64 * adam_steps_per_update(&config),
         "public evaluation ages differ",
     )?;
     base.replace_training_parameters_v3(&legacy.parameters)?;
@@ -639,6 +776,70 @@ fn collect_parallel(
         .collect())
 }
 
+/// Applies `task` to every item on up to `workers` scoped threads and returns
+/// the results in item order. Every thread joins before this returns, and the
+/// first failure by item index wins, so the outcome never depends on timing.
+/// One worker, or one item, runs inline on the calling thread.
+fn ordered_parallel_map<'a, T: Sync, R: Send>(
+    items: &'a [T],
+    workers: usize,
+    task: impl Fn(usize, &'a T) -> Result<R, String> + Sync,
+) -> Result<Vec<R>, String> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let workers = workers.min(items.len());
+    if workers <= 1 {
+        return items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| task(index, item))
+            .collect();
+    }
+    let next = AtomicUsize::new(0);
+    let mut results = std::thread::scope(|scope| -> Result<Vec<_>, String> {
+        let mut handles = Vec::new();
+        for worker in 0..workers {
+            let (next, task) = (&next, &task);
+            handles.push(
+                std::thread::Builder::new()
+                    .name(format!("public-post-{worker}"))
+                    .stack_size(16 * 1024 * 1024)
+                    .spawn_scoped(scope, move || {
+                        let mut completed = Vec::new();
+                        loop {
+                            let index = next.fetch_add(1, Ordering::Relaxed);
+                            let Some(item) = items.get(index) else {
+                                break;
+                            };
+                            completed.push((index, task(index, item)));
+                        }
+                        completed
+                    })
+                    .map_err(err)?,
+            );
+        }
+        let mut results = Vec::new();
+        let mut panicked = false;
+        for handle in handles {
+            match handle.join() {
+                Ok(mut rows) => results.append(&mut rows),
+                Err(_) => panicked = true,
+            }
+        }
+        ensure(!panicked, "public post-collection worker panicked")?;
+        Ok(results)
+    })?;
+    results.sort_by_key(|(index, _)| *index);
+    ensure(
+        results.len() == items.len()
+            && results
+                .iter()
+                .enumerate()
+                .all(|(i, (index, _))| i == *index),
+        "parallel public post-collection lost or duplicated an item",
+    )?;
+    results.into_iter().map(|(_, result)| result).collect()
+}
+
 pub fn run(command: Command) -> Result<Value, String> {
     let config = &command.config;
     validate_entropy(config)?;
@@ -708,8 +909,10 @@ pub fn run(command: Command) -> Result<Value, String> {
         })?;
         let (legacy, public) = public_training::snapshot::decode(&saved).map_err(err)?;
         ensure(
-            legacy.adam_step == initial_step + checkpoint.next_update as u64
-                && public.adam_step == checkpoint.next_update as u64,
+            legacy.adam_step
+                == initial_step + checkpoint.next_update as u64 * adam_steps_per_update(config)
+                && public.adam_step
+                    == checkpoint.next_update as u64 * adam_steps_per_update(config),
             "resume optimizer ages differ",
         )?;
         (legacy, public, checkpoint.next_update)
@@ -784,12 +987,17 @@ pub fn run(command: Command) -> Result<Value, String> {
             .map_err(|e| search_opponent::publish_failure(&directory, e))?;
             rollout_seconds = collection_started.elapsed().as_secs_f64() - fork_seconds;
             let publish_started = std::time::Instant::now();
-            for (index, trajectory) in trajectories.iter().enumerate() {
-                trajectory_hashes.push(
-                    publish_json(&directory, &format!("episode-{index:03}.json"), trajectory)?
-                        .sha256,
-                );
-            }
+            // Distinct names in one directory; hashes keep schedule order.
+            trajectory_hashes = ordered_parallel_map(
+                &trajectories,
+                command.collector_workers,
+                |index, trajectory| {
+                    Ok(
+                        publish_json(&directory, &format!("episode-{index:03}.json"), trajectory)?
+                            .sha256,
+                    )
+                },
+            )?;
             trajectory_publish_seconds = publish_started.elapsed().as_secs_f64();
         } else {
             for (index, episode) in config.updates[update].iter().enumerate() {
@@ -833,18 +1041,26 @@ pub fn run(command: Command) -> Result<Value, String> {
         > = Vec::new();
         let mut raw_advantages = Vec::new();
         let mut value_targets = Vec::new();
-        for trajectory in &trajectories {
-            let group_start = records.len();
-            for group in learner_groups(trajectory)? {
-                for (row, tensor, auxiliary) in &group {
-                    let output = policy.replay(tensor, auxiliary)?;
-                    ensure(
-                        bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
-                        "public rollout replay differs from current learner",
-                    )?;
+        // The learner itself replays every trajectory; only the checks run
+        // concurrently. Groups, advantages and targets keep schedule order.
+        let replayed =
+            ordered_parallel_map(&trajectories, command.collector_workers, |_, trajectory| {
+                let groups = learner_groups(trajectory)?;
+                for group in &groups {
+                    for (row, tensor, auxiliary) in group {
+                        let output = policy.replay(tensor, auxiliary)?;
+                        ensure(
+                            bits(&output.logits) == row.logits
+                                && output.value.to_bits() == row.value,
+                            "public rollout replay differs from current learner",
+                        )?;
+                    }
                 }
-                records.push(group);
-            }
+                Ok(groups)
+            })?;
+        for (trajectory, groups) in trajectories.iter().zip(replayed) {
+            let group_start = records.len();
+            records.extend(groups);
             ensure(
                 records.len() > group_start,
                 "episode has no learner physical decisions",
@@ -896,19 +1112,61 @@ pub fn run(command: Command) -> Result<Value, String> {
             replay_started.elapsed().as_secs_f64(),
         );
         let update_started = std::time::Instant::now();
-        device
-            .update_groups(
-                &groups,
-                &value_targets,
-                &advantages,
-                config.learning_rate,
-                config.value_coefficient,
-                config.entropy_coefficient,
-                config.inputs_enabled,
-                config.projection_mode == ProjectionMode::All,
-                config.max_chunk_substeps,
-            )
-            .map_err(err)?;
+        let mut ppo_statistics = None;
+        if let Some(ppo) = &config.ppo {
+            let behavior_joint = steps
+                .iter()
+                .map(|substeps| {
+                    behavior_joint_log_probability(
+                        &substeps
+                            .iter()
+                            .map(|step| (step.expected_logits, step.selected))
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let partitions: Vec<_> = (0..ppo.epochs)
+                .map(|epoch| {
+                    ppo_minibatches(
+                        groups.len(),
+                        ppo.minibatches,
+                        ppo.shuffle_seed,
+                        update,
+                        epoch,
+                    )
+                })
+                .collect();
+            let ratios = device
+                .update_groups_ppo(
+                    &groups,
+                    &value_targets,
+                    &advantages,
+                    &behavior_joint,
+                    &partitions,
+                    ppo.clip,
+                    config.learning_rate,
+                    config.value_coefficient,
+                    config.inputs_enabled,
+                    config.projection_mode == ProjectionMode::All,
+                    config.max_chunk_substeps,
+                )
+                .map_err(err)?;
+            ppo_statistics = Some(ppo_ratio_statistics(&ratios, ppo.clip, groups.len())?);
+        } else {
+            device
+                .update_groups(
+                    &groups,
+                    &value_targets,
+                    &advantages,
+                    config.learning_rate,
+                    config.value_coefficient,
+                    config.entropy_coefficient,
+                    config.inputs_enabled,
+                    config.projection_mode == ProjectionMode::All,
+                    config.max_chunk_substeps,
+                )
+                .map_err(err)?;
+        }
         stage_seconds.insert("device_update_call", update_started.elapsed().as_secs_f64());
         let snapshot_started = std::time::Instant::now();
         (legacy, public) = device.snapshot().map_err(err)?;
@@ -919,8 +1177,8 @@ pub fn run(command: Command) -> Result<Value, String> {
         let install_started = std::time::Instant::now();
         validate_projection_mode(config, &public)?;
         ensure(
-            legacy.adam_step == initial_step + update as u64 + 1
-                && public.adam_step == update as u64 + 1,
+            legacy.adam_step == initial_step + (update as u64 + 1) * adam_steps_per_update(config)
+                && public.adam_step == (update as u64 + 1) * adam_steps_per_update(config),
             "updated optimizer ages differ",
         )?;
         if !config.inputs_enabled {
@@ -969,6 +1227,10 @@ pub fn run(command: Command) -> Result<Value, String> {
             "physical_decisions":trajectories.iter().map(|t|t.terminal.physical_decision_count).sum::<u64>(),"before_state_sha256":before,"after_state_sha256":optimizer_hash,
             "legacy_adam_step":legacy.adam_step,"public_adam_step":public.adam_step,"advantage_statistics":statistics,"collection_seconds":collection_seconds,"seconds":started.elapsed().as_secs_f64(),
             "stage_seconds":stage_seconds,"stage_timing_semantics":"host_wall/v1; CUDA calls may synchronize later; receipt publication excluded"});
+        let mut receipt = receipt;
+        if let Some(statistics) = ppo_statistics {
+            receipt["ppo_statistics"] = statistics;
+        }
         publish_json(&directory, "receipt.json", &receipt)?;
         receipts.push(receipt);
     }
