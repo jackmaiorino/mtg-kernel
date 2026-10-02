@@ -4130,6 +4130,16 @@ fn flat_validate_expected_decision_v1(
     {
         return Err(FlatActionDecisionSliceErrorV1::DecisionMetadataMismatch);
     }
+    // The frozen flat formats have no planeswalker loyalty or combat
+    // prevention fields. Refuse before publishing any incomplete buffers.
+    if session.state.planeswalkers_v1.is_some()
+        || session.state.engine.active_replacements.iter().any(|replacement| {
+            matches!(replacement.kind,
+                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. })
+        })
+    {
+        return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+    }
     Ok(())
 }
 
@@ -13309,6 +13319,49 @@ mod tests {
         assert_eq!(actions, actions_before);
         assert_eq!(refs, refs_before);
         assert_eq!(objects, objects_before);
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn flat_action_slice_refuses_loyalty_and_combat_prevention_before_publish() {
+        let base = FastActorSessionV1::reset_with_limits(81_039, 139, 128, 16_384);
+        for planeswalker in [false, true] {
+            let mut session = base.clone();
+            let object = session.state.players[0].hand[0];
+            let name = if planeswalker {
+                "Ajani, Caller of the Pride"
+            } else {
+                "Llanowar Elves"
+            };
+            let card = crate::card_def::card_id_by_name(name).unwrap();
+            let live = session.state.objects.get_mut(object);
+            live.card_def = card;
+            live.name = name.into();
+            live.v4 = crate::state::ObjectStateV4::from_card_def(card);
+            crate::event::propose_and_commit(
+                &mut session.state,
+                crate::event::ProposedEvent::zone_change(object, crate::state::Zone::Battlefield),
+            );
+            if !planeswalker {
+                crate::event::install_combat_damage_prevention(&mut session.state, object, object);
+            }
+            let mut actions = [poison_flat_action(); 2];
+            let mut refs = [poison_flat_ref(); 2];
+            let mut objects = [poison_flat_object(); 2];
+            let before = (actions, refs, objects);
+            assert_eq!(
+                session.encode_current_flat_action_slice_v1(
+                    flat_current_decision(&session),
+                    &mut FlatActionDecisionSliceBuffersV1 {
+                        actions: &mut actions,
+                        refs: &mut refs,
+                        objects: &mut objects
+                    }
+                ),
+                Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic)
+            );
+            assert_eq!((actions, refs, objects), before);
+        }
     }
 
     #[test]

@@ -1027,6 +1027,15 @@ pub enum EffectOp {
         player: PlayerRef,
         subtype: Subtype,
     },
+    CreatureTargetPowerDamage {
+        source_index: u8,
+        target_index: u8,
+        plus1_plus1: i16,
+        target_spec: crate::card_def::TargetSpec,
+    },
+    PreventCombatDamageToTargetThisTurn {
+        target_index: u8,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -10149,6 +10158,63 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 state,
                 event::ProposedEvent::damage(ctx.source, target, *amount),
             );
+        }
+        EffectOp::CreatureTargetPowerDamage {
+            source_index,
+            target_index,
+            plus1_plus1,
+            target_spec,
+        } => {
+            let source_index = usize::from(*source_index);
+            let target_index = usize::from(*target_index);
+            let legal = |index| {
+                ctx.target_incarnation_matches(index, state)
+                    && crate::engine::effect_target_is_legal(
+                        state,
+                        ctx.source,
+                        ctx.controller,
+                        *target_spec,
+                        &ctx.targets,
+                        index,
+                    )
+            };
+            let source_legal = legal(source_index);
+            let target_legal = legal(target_index);
+            if source_legal {
+                let Target::Object(source) = ctx.targets[source_index] else {
+                    unreachable!("creature source")
+                };
+                if *plus1_plus1 != 0 {
+                    execute(
+                        &EffectOp::AddCountersToTarget {
+                            target_index: source_index as u8,
+                            optional: false,
+                            plus1_plus1: *plus1_plus1,
+                            lifelink: 0,
+                            stun: 0,
+                        },
+                        ctx,
+                        state,
+                    );
+                }
+                if target_legal {
+                    let amount = crate::engine::effective_power(state, source).max(0);
+                    if amount > 0 {
+                        event::propose_and_commit(
+                            state,
+                            event::ProposedEvent::damage(source, ctx.targets[target_index], amount),
+                        );
+                    }
+                }
+            }
+        }
+        EffectOp::PreventCombatDamageToTargetThisTurn { target_index } => {
+            let index = usize::from(*target_index);
+            if ctx.target_incarnation_matches(index, state) {
+                if let Some(Target::Object(object)) = ctx.targets.get(index) {
+                    event::install_combat_damage_prevention(state, ctx.source, *object);
+                }
+            }
         }
         EffectOp::DealDamageDynamic { target, amount } => {
             let target = ctx.resolve_target(*target);

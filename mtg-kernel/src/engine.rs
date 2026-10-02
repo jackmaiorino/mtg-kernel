@@ -1422,13 +1422,16 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::OpponentArtifactOrEnchantmentPermanent
         | TargetSpec::CreatureOtherThanSource
         | TargetSpec::NonblackCreature
-        | TargetSpec::ArtifactOrEnchantmentPermanent => 1,
+        | TargetSpec::ArtifactOrEnchantmentPermanent
+        | TargetSpec::AttackingOrBlockingCreature => 1,
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
         | TargetSpec::ExactlyTwoArtifactPermanents
         | TargetSpec::UpToTwoPlayers
-        | TargetSpec::UpToTwoCardsInGraveyards => 2,
+        | TargetSpec::UpToTwoCardsInGraveyards
+        | TargetSpec::ControlledCreatureThenOpponentCreature
+        | TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker => 2,
     }
 }
 
@@ -2640,6 +2643,37 @@ fn legal_targets_for_controller_from_source(
             })
             .map(Target::Object)
             .collect(),
+        TargetSpec::ControlledCreatureThenOpponentCreature
+        | TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker => {
+            let first = targets_chosen.is_empty();
+            battlefield_objects(state)
+                .filter(|&id| {
+                    let object = state.objects.get(id);
+                    if first {
+                        object.controller == controller && object_has_type(state, id, CardType::Creature)
+                    } else {
+                        object.controller != controller &&
+                            (object_has_type(state, id, CardType::Creature) ||
+                            (spec == TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker &&
+                            object_has_type(state, id, CardType::Planeswalker)))
+                    }
+                })
+                .map(Target::Object)
+                .collect()
+        }
+        TargetSpec::AttackingOrBlockingCreature => battlefield_objects(state)
+            .filter(|&id| {
+                object_has_type(state, id, CardType::Creature)
+                    && (state.engine.combat.attackers.contains(&id)
+                        || state
+                            .engine
+                            .combat
+                            .blocked_by
+                            .iter()
+                            .any(|(_, blockers)| blockers.contains(&id)))
+            })
+            .map(Target::Object)
+            .collect(),
         TargetSpec::ArtifactOrEnchantmentPermanent => state
             .players
             .iter()
@@ -2758,6 +2792,26 @@ fn legal_targets_for_controller_from_source(
         });
     }
     targets
+}
+
+pub(crate) fn effect_target_is_legal(
+    state: &GameState,
+    source: ObjectId,
+    controller: PlayerId,
+    spec: TargetSpec,
+    targets: &[Target],
+    index: usize,
+) -> bool {
+    targets.get(index).is_some_and(|target| {
+        legal_targets_for_controller_from_source(
+            spec,
+            &targets[..index],
+            controller,
+            targeting_source_for_object(state, source),
+            state,
+        )
+        .contains(target)
+    })
 }
 
 /// Whether the already-chosen target prefix can be extended to a complete
@@ -10497,6 +10551,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 !matches!(
                     replacement.kind,
                     event::ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { .. }
+                    | event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. }
                 )
             });
             let p = state.active_player;
@@ -11223,6 +11278,15 @@ fn combat_damage_wave(state: &mut GameState, first_strike_wave: bool) {
 
 pub(crate) fn commit_combat_damage_events(state: &mut GameState, events: Vec<ProposedEvent>) {
     let event_start = state.engine.event_log.len();
+    let events = events
+        .into_iter()
+        .map(|mut event| {
+            if let ProposedEvent::Damage(damage) = &mut event {
+                damage.is_combat = true;
+            }
+            event
+        })
+        .collect();
     event::propose_and_commit_batch(state, events);
     let combat_player_damage = state.engine.event_log[event_start..]
         .iter()

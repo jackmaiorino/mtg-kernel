@@ -47,6 +47,7 @@ pub enum CardType {
     Sorcery,
     Artifact,
     Enchantment,
+    Planeswalker,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -239,6 +240,7 @@ pub enum Subtype {
     Angel,
     Noble,
     Unicorn,
+    Ajani,
 }
 
 impl Subtype {
@@ -568,6 +570,9 @@ pub enum TargetSpec {
     /// Either player's artifact or enchantment. Cathar Commando may target
     /// its controller's own permanent. Existing target identities stay fixed.
     ArtifactOrEnchantmentPermanent,
+    ControlledCreatureThenOpponentCreature,
+    ControlledCreatureThenOpponentCreatureOrPlaneswalker,
+    AttackingOrBlockingCreature,
 }
 
 impl TargetSpec {
@@ -614,6 +619,9 @@ impl TargetSpec {
             TargetSpec::OpponentArtifactOrEnchantmentPermanent => 35,
             TargetSpec::NonblackCreature => 36,
             TargetSpec::ArtifactOrEnchantmentPermanent => 37,
+            TargetSpec::ControlledCreatureThenOpponentCreature => 38,
+            TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker => 39,
+            TargetSpec::AttackingOrBlockingCreature => 40,
         }
     }
 }
@@ -1183,6 +1191,7 @@ pub struct CardDef {
     pub supertypes: &'static [Supertype],
     pub power: Option<i16>,
     pub toughness: Option<i16>,
+    pub starting_loyalty: Option<u16>,
     pub is_land: bool,
     pub produces_mana: &'static [ManaColor],
     /// This card's color identity per 105.1/202.2 (the color of mana
@@ -1677,7 +1686,7 @@ mod tests {
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                211
+                216
             } else {
                 192
             }
@@ -1731,6 +1740,12 @@ mod tests {
             (TargetSpec::OpponentArtifactOrEnchantmentPermanent, 35),
             (TargetSpec::NonblackCreature, 36),
             (TargetSpec::ArtifactOrEnchantmentPermanent, 37),
+            (TargetSpec::ControlledCreatureThenOpponentCreature, 38),
+            (
+                TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker,
+                39,
+            ),
+            (TargetSpec::AttackingOrBlockingCreature, 40),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);
@@ -1759,8 +1774,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v38_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0xd856_4887_6370_d1e2;
+    fn card_db_hash_v39_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x88e0_2f70_cd94_af95;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
@@ -1999,8 +2014,8 @@ mod tests {
             .count();
         assert_eq!(
             full,
-            CARD_DEFS.len(),
-            "all registered definitions are fully supported"
+            CARD_DEFS.len() - usize::from(cfg!(feature = "limited-fdn-fixtures")),
+            "only the explicitly partial reference planeswalker is excluded"
         );
         #[cfg(feature = "limited-fdn-fixtures")]
         assert!(preflight_fully_supported_deck(&[

@@ -1574,6 +1574,10 @@ fn sba_fixed_point_with_protected_triggers(
             if obj.zone != Zone::Battlefield {
                 continue;
             }
+            if crate::planeswalker_v1::zero_loyalty(state, id) {
+                dying.push(id);
+                continue;
+            }
             if !crate::engine::object_has_type(state, id, crate::card_def::CardType::Creature) {
                 continue;
             }

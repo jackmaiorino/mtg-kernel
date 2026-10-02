@@ -104,6 +104,8 @@ impl Scan<'_> {
             | BindTemporaryBoostToTriggerSource { .. }
             | BoostControlledCreaturesUntilEndOfTurn { .. }
             | GainLifeByAttackingSubtypeCount { .. }
+            | CreatureTargetPowerDamage { .. }
+            | PreventCombatDamageToTargetThisTurn { .. }
             | PutSourceOntoBattlefieldAttachedToTarget { .. }
             | TapAttachedCreatureAndDamageControllerByPower
             | BackupTarget { .. }

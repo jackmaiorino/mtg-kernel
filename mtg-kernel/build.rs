@@ -61,6 +61,8 @@ struct CardJson {
     supertypes: Vec<String>,
     power: Option<i32>,
     toughness: Option<i32>,
+    #[serde(default)]
+    starting_loyalty: Option<u16>,
     is_land: bool,
     #[serde(default)]
     produces_mana: Vec<String>,
@@ -2624,6 +2626,10 @@ enum Special {
     /// land" additional cost is modeled independently in
     /// `additional_cost_for`.
     DestroyLand,
+    BiteDown,
+    FellingBlow,
+    FleetingFlight,
+    JoustThrough,
     BoostControlledCreatures {
         power: i32,
         toughness: i32,
@@ -2868,6 +2874,10 @@ impl Special {
             }
             Special::SmashToSmithereens => "smash_to_smithereens".to_string(),
             Special::DestroyLand => "destroy_land".to_string(),
+            Special::BiteDown => "bite_down:controlled_creature_power_to_opponent_creature_or_planeswalker".to_string(),
+            Special::FellingBlow => "felling_blow:counter_then_controlled_creature_power_to_opponent_creature".to_string(),
+            Special::FleetingFlight => "fleeting_flight:counter_flying_and_incarnation_bound_combat_prevention".to_string(),
+            Special::JoustThrough => "joust_through:attacking_or_blocking_creature_damage_and_life".to_string(),
             Special::BoostControlledCreatures { power, toughness, keyword } => {
                 format!("boost_controlled_creatures:{power}:{toughness}:{keyword}:exact_incarnations")
             }
@@ -3119,6 +3129,10 @@ fn special_for(name: &str) -> Special {
         "Toxin Analysis" => Special::ToxinAnalysis,
         "Weather the Storm" => Special::WeatherTheStorm,
         "Monstrous Emergence" => Special::MonstrousEmergence,
+        "Bite Down" => Special::BiteDown,
+        "Felling Blow" => Special::FellingBlow,
+        "Fleeting Flight" => Special::FleetingFlight,
+        "Joust Through" => Special::JoustThrough,
         "Nyxborn Hydra" => Special::NyxbornHydra,
         "Overrun" => Special::BoostControlledCreatures {
             power: 3,
@@ -3309,6 +3323,10 @@ fn effect_recipe_for(card: &CardJson) -> String {
             "target=None;spell=GainLife(Controller,3);trigger=CastSelf:Storm;mana=None".to_string()
         }
         Special::MonstrousEmergence => "target=Creature;spell=DealDamageToTargetEqualToChosenCostCreaturePower;mana=None".to_string(),
+        Special::BiteDown => "target=ControlledCreatureThenOpponentCreatureOrPlaneswalker;spell=CreatureTargetPowerDamage(0,1,counter=0);mana=None".to_string(),
+        Special::FellingBlow => "target=ControlledCreatureThenOpponentCreature;spell=CreatureTargetPowerDamage(0,1,counter=1);mana=None".to_string(),
+        Special::FleetingFlight => "target=Creature;spell=Sequence(AddCounter(Target0),GrantFlying(Target0),PreventCombatDamage(Target0));mana=None".to_string(),
+        Special::JoustThrough => "target=AttackingOrBlockingCreature;spell=Sequence(Damage(Target0,3),GainLife(Controller,1));mana=None".to_string(),
         Special::NyxbornHydra => "target=None;spell=PutSourceOntoBattlefieldWithXPlusOneCounters;bestow=Creature:XGG;mana=None".to_string(),
         Special::PumpOpponentsCreatures { power, toughness } => format!(
             "target=None;spell=PumpAllUntilEndOfTurn(Creature,Opponents,{power},{toughness});mana=None"
@@ -5048,10 +5066,12 @@ fn intrinsic_basic_mana_color(card: &CardJson) -> Option<&'static str> {
 fn is_ordinary_permanent(card: &CardJson) -> bool {
     !card.is_land
         && !card.is_token
-        && card
-            .types
-            .iter()
-            .any(|card_type| matches!(card_type.as_str(), "Artifact" | "Creature" | "Enchantment"))
+        && card.types.iter().any(|card_type| {
+            matches!(
+                card_type.as_str(),
+                "Artifact" | "Creature" | "Enchantment" | "Planeswalker"
+            )
+        })
 }
 
 fn capability_src(capability: EngineCapabilityJson) -> &'static str {
@@ -6759,6 +6779,47 @@ fn codegen(cards: &[CardJson]) -> String {
 
     if cards
         .iter()
+        .any(|card| matches!(special_for(&card.name), Special::BiteDown))
+    {
+        writeln!(out, "fn spell_effect_bite_down() -> Option<EffectOp> {{").unwrap();
+        writeln!(out, "    Some(EffectOp::CreatureTargetPowerDamage {{ source_index: 0, target_index: 1, plus1_plus1: 0, target_spec: TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker }})").unwrap();
+        writeln!(out, "}}").unwrap();
+    }
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::FellingBlow))
+    {
+        writeln!(out, "fn spell_effect_felling_blow() -> Option<EffectOp> {{").unwrap();
+        writeln!(out, "    Some(EffectOp::CreatureTargetPowerDamage {{ source_index: 0, target_index: 1, plus1_plus1: 1, target_spec: TargetSpec::ControlledCreatureThenOpponentCreature }})").unwrap();
+        writeln!(out, "}}").unwrap();
+    }
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::FleetingFlight))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_fleeting_flight() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![EffectOp::AddCountersToTarget {{ target_index: 0, optional: false, plus1_plus1: 1, lifelink: 0, stun: 0 }}, EffectOp::GrantKeywordTargetUntilEndOfTurn {{ object: ObjectRef::Target(0), keyword: Keywords::FLYING }}, EffectOp::PreventCombatDamageToTargetThisTurn {{ target_index: 0 }}]))").unwrap();
+        writeln!(out, "}}").unwrap();
+    }
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::JoustThrough))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_joust_through() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![EffectOp::DealDamage {{ target: TargetRef::Target(0), amount: 3 }}, EffectOp::GainLife {{ player: PlayerRef::Controller, amount: 1 }}]))").unwrap();
+        writeln!(out, "}}").unwrap();
+    }
+
+    if cards
+        .iter()
         .any(|card| matches!(special_for(&card.name), Special::NyxbornHydra))
     {
         writeln!(
@@ -7188,6 +7249,26 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_monstrous_emergence".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::BiteDown => (
+                "TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker",
+                "spell_effect_bite_down".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::FellingBlow => (
+                "TargetSpec::ControlledCreatureThenOpponentCreature",
+                "spell_effect_felling_blow".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::FleetingFlight => (
+                "TargetSpec::Creature",
+                "spell_effect_fleeting_flight".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::JoustThrough => (
+                "TargetSpec::AttackingOrBlockingCreature",
+                "spell_effect_joust_through".to_string(),
+                "no_effect".to_string(),
+            ),
             Special::BoostControlledCreatures { .. } => (
                 "TargetSpec::None",
                 format!("spell_effect_controlled_boost_{card_index}"),
@@ -7280,6 +7361,7 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out, "        produces_mana: &[{produces_src}],").unwrap();
         writeln!(out, "        colors: &[{colors_src}],").unwrap();
         writeln!(out, "        target_spec: {target_spec_src},").unwrap();
+        writeln!(out, "        starting_loyalty: {:?},", c.starting_loyalty).unwrap();
         writeln!(out, "        keywords: {},", keywords_for(c)).unwrap();
         writeln!(out, "        spell_effect: {spell_effect_src},").unwrap();
         writeln!(out, "        mana_ability: {mana_ability_src},").unwrap();
@@ -7522,7 +7604,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v38\n"
+            "kernel_carddb/v39\n"
         } else {
             "kernel_carddb/v34\n"
         },
@@ -7543,6 +7625,9 @@ fn codegen(cards: &[CardJson]) -> String {
         canon.push_str(&c.power.map(|p| p.to_string()).unwrap_or_default());
         canon.push('|');
         canon.push_str(&c.toughness.map(|t| t.to_string()).unwrap_or_default());
+        if let Some(loyalty) = c.starting_loyalty {
+            canon.push_str(&format!(";starting_loyalty={loyalty}"));
+        }
         canon.push('|');
         canon.push_str(if c.is_land { "L" } else { "-" });
         canon.push('|');
@@ -7780,6 +7865,7 @@ fn card_type_variant(t: &str) -> &'static str {
         "Sorcery" => "Sorcery",
         "Artifact" => "Artifact",
         "Enchantment" => "Enchantment",
+        "Planeswalker" => "Planeswalker",
         other => panic!("cards_v1.json: unknown card type {other:?}"),
     }
 }
@@ -7806,6 +7892,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Angel" => "Subtype::Angel",
         "Noble" => "Subtype::Noble",
         "Unicorn" => "Subtype::Unicorn",
+        "Ajani" => "Subtype::Ajani",
         "Ape" => "Subtype::Ape",
         "Aura" => "Subtype::Aura",
         "BIRD" => "Subtype::BirdAllCaps",

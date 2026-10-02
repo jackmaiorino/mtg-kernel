@@ -574,6 +574,154 @@
         "legend_rule_pending"
       ],
       "java_file": "Mage.Sets/src/mage/cards/d/DwynenGiltLeafDaen.java"
+    },
+    {
+      "name": "Bite Down",
+      "engine_capability": "full",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_top_04956_UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "two_targets",
+        "creature_power_damage"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BiteDown.java"
+    },
+    {
+      "name": "Felling Blow",
+      "engine_capability": "full",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_top_04956_UG.dck",
+        "FDN_top_20626_WG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "two_targets",
+        "plus_one_counter",
+        "creature_power_damage"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FellingBlow.java"
+    },
+    {
+      "name": "Fleeting Flight",
+      "engine_capability": "full",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_top_20626_WG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "plus_one_counter",
+        "temporary_flying",
+        "combat_damage_prevention"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FleetingFlight.java"
+    },
+    {
+      "name": "Joust Through",
+      "engine_capability": "full",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_top_20626_WG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "combat_target",
+        "damage",
+        "gain_life"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/j/JoustThrough.java"
+    },
+    {
+      "name": "Ajani, Caller of the Pride",
+      "engine_capability": "partial",
+      "mana_cost": "{1}{W}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Planeswalker"
+      ],
+      "subtypes": [
+        "Ajani"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_planeswalker.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "loyalty_reference_only"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AjaniCallerOfThePride.java",
+      "starting_loyalty": 4
     }
   ]
 }
