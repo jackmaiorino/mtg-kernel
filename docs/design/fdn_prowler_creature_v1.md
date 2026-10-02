@@ -30,3 +30,9 @@ history/default compatibility and external natural-terminal replay before
 closing the slice. Preserve both original deck files.
 
 This is routine rules engineering. No training or playing-strength claim.
+
+Runtime verification: fourteen focused kernel cases, twelve strict XMage
+comparisons, catalog/session/prior-gameplay checks, default compatibility
+and warning-denied Clippy pass. Two custom-deck games finish naturally and
+replay identically. Release production boundaries and hosted CI remain
+pending; see the validation report for exact source and result hashes.
