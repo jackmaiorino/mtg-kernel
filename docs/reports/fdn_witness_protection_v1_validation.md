@@ -44,8 +44,10 @@ admission. This is not yet a completed gameplay or full-set support claim.
 
 - Complete corrected-source Windows Rust regressions and publication/resume
   canaries, followed by current-head CI readiness.
-- Original UG/WG external games, replay and pending London restore on Windows.
-  London PR139 passed those cases and its full Rust job on Ubuntu at d43d59a2.
+
+Original UG/WG external games, exact replay and pending London restore passed
+on Ubuntu in London PR139's full Rust job at d43d59a2 and on Windows in PR140's
+compatible Bash step, job 111036127744 at 36d54594, completed 22:12:10 UTC.
 
 At 12:30 EDT October 2 both PCs had actual live reservations. Haley supervisor
 37648 held the sequential training-comparison window; Jack qualification and
@@ -89,5 +91,7 @@ allocation, not host speed. Give that test deterministic projected ranking
 inputs while still running every prefix/full-length process, output comparison,
 and rejection mutation. Production ranking and the separate fastest-allocation
 test stay unchanged. The repaired focused test passed on Jack's PC in 11.616s.
-Hosted verification of the repair is pending; avoid cancelling the active
-Witness workflow for a report-only update.
+Hosted Windows shard 111036193230 at Armor source f13fd955 passed the repaired
+case and all 286 tests; all four current Python shards passed. Armor is ready
+for review using its unchanged Rust code's passing Ubuntu/Windows evidence.
+The active Witness workflow is preserved for the remaining full Windows checks.

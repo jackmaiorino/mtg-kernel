@@ -2,13 +2,14 @@
 
 Schema 4 adds London mulligans to the original fixture gameplay interface.
 The focused Rust rules, original fixture games and pending-session restore
-passed on Ubuntu. The final XMage suite passed146 cases in16 classes,
+passed on Ubuntu and the compatible Windows PR140 step. The final XMage suite passed146 cases in16 classes,
 including 16 Witness, 7 London and 28 combat comparisons. At publicd43d59a2,
-formatting/all-feature lint and all four Python shards passed. Windows's
-London step ended successfully at 19:15:08 UTC, including its final pending-bottom
-library command. Its integration summaries await the complete job log because
-the historical PowerShell wrapper checks only the final native exit code.
-PR140 changes every Rust step to Bash so each command failure propagates.
+formatting/all-feature lint and all four Python shards passed. Windows job
+111036127744 at PR140 source 36d54594 completed both London commands under Bash
+at 22:12:10 UTC. Its engine, cards, original decks and London tests are unchanged
+from d43d59a2. Bash propagates either command's failure, resolving the historical
+PowerShell wrapper's final-command-only ambiguity. The original games, exact
+replay and pending pregame restore are qualified on both operating systems.
 The full Ubuntu job 110978361641 completed at 21:11 UTC. Its complete log confirms
 all 21 selected Limited integration targets and345 passing cases, including
 all 11 London cases and24 Witness cases. The library restore, 1706 default
@@ -18,7 +19,7 @@ Full Windows and CI-follow-up verification remains pending.
 
 The first hosted attempt, CI37041270977 at87db2401, found an unused import in
 the new module. Removed it; the original lint log is retained. This is a lint
-failure, not a verified rules result. Await the new source's CI results.
+failure, not a verified rules result. The corrected-source results are above.
 
 The same attempt's Ubuntu rules test executed11 cases:10 passed,1 failed.
 The unchanged original UG/WG subprocess case passed: seed123 ran twice with
@@ -39,7 +40,8 @@ Observed checks:
   natural P0 win, and transcript SHA-256
   `f7161673bf17ea48ae29ac1e126cb8d1809c910dccb11403eafaeada8ba8aa02`.
   All three receipts bind both original deck SHA-256s and four actual bottom
-  choices. The complete current-head Ubuntu Rust job passed; Windows is live.
+  choices. The complete current-head Ubuntu Rust job passed. Windows gameplay
+  and restore passed under PR140's compatible Bash step; its full job is live.
 - CI37042426390 at0a876ce3: Ubuntu's London step passed both commands, covering
   all 11 integration cases and the pending-bottom-menu session restore.
   Witness's24 focused cases also passed in the same job. All four Python
@@ -69,14 +71,12 @@ Observed checks:
 
 Pending checks:
 
-- Windows Rust rules/protocol integration tests: announcements before redraw, redraw before
-  bottoming, repeated mulligans, forced zero-card keep, exact private bottom
-  order, invalid/stale-choice rejection, snapshot/JSON restore and earlier
-  schema compatibility.
-- Windows original unchanged UG/WG through the schema-4 subprocess, seed123 twice and
-  swapped seed701. Both players take actual mulligans and bottom four cards in
-  total before playing; require natural terminal outcomes and exact replay.
-- Required existing regressions, default/Limited/native/CUDA lint and CI.
+- Complete Windows regressions and Windows-only native publication/resume
+  canaries. London rules, original games, exact replay and pending restore have
+  passed on both operating systems.
+- Complete PR140's default/Limited/native/CUDA tests, including execution of
+  every grouped library filter and the unchanged isolated timing gate. Its
+  all-feature lint and all four Python shards have passed.
 
 The initial draft bottomed only when keeping. Corrected that design before
 implementation: every mulligan immediately bottoms its current count, then
