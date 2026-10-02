@@ -153,6 +153,7 @@ jobs:
           cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib limited_session_v1::tests
           cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib rl_session::tests
           cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib card_def::
+          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib koma_spell_protection
           cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib native_training_store_run_v2::
           cargo test --release --locked -p mtg-kernel --features "limited-fdn-fixtures native-training-store-v2-production" --lib pre_fdn_profile
           cargo test --release --locked -p mtg-kernel --features "limited-fdn-fixtures native-training-store-v2-production" --lib prior_fdn_batch
