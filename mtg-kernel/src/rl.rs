@@ -851,10 +851,25 @@ pub struct PolicySurfaceContextV5 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicCombatDamageAssignmentV1 {
+    pub source: CardStableRefV1,
+    pub recipient: TargetRefV1,
+    pub amount: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicFoundationsCombatV1 {
+    pub phase: String,
+    pub assignments: Vec<PublicCombatDamageAssignmentV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublicObservationProjectionV5 {
     #[serde(flatten)]
     pub surface: PublicObservationProjectionV2,
     pub policy_surface_context: PolicySurfaceContextV5,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foundations_combat: Option<PublicFoundationsCombatV1>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1033,6 +1048,15 @@ pub enum ActionSemanticV1 {
     },
     Ambiguous {
         reason: String,
+    },
+    ChooseCombatDamageRange {
+        actor: PlayerSeatV1,
+        source: CardStableRefV1,
+        recipient: TargetRefV1,
+        minimum: i32,
+        maximum: i32,
+        split_at: i32,
+        upper_half: bool,
     },
 }
 
@@ -1776,12 +1800,37 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
         projection: PublicObservationProjectionV5 {
             surface: base.projection,
             policy_surface_context,
+            foundations_combat: public_foundations_combat_v1(state)?,
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
         known_hand_cards: base.known_hand_cards,
         visible_projection_hash: 0,
     })
+}
+
+/// Public Foundations combat-damage assignments, present only while a
+/// custom-game combat damage step is pending. Frozen Pauper sessions have
+/// none.
+fn public_foundations_combat_v1(state: &GameState) -> Result<Option<PublicFoundationsCombatV1>> {
+    crate::combat_damage_v1::public_assignment_ids_v1(state)
+        .map(|view| {
+            Ok::<_, RlContractError>(PublicFoundationsCombatV1 {
+                phase: view.phase.to_string(),
+                assignments: view
+                    .assignments
+                    .into_iter()
+                    .map(|assignment| {
+                        Ok(PublicCombatDamageAssignmentV1 {
+                            source: card_ref(state, assignment.source)?,
+                            recipient: target_ref(state, assignment.recipient)?,
+                            amount: assignment.amount,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            })
+        })
+        .transpose()
 }
 
 // Shared projection components, not an ObservationV5. Each version applies
@@ -1917,6 +1966,7 @@ fn build_policy_observation_v6(request: PolicyObservationBuildV5<'_>) -> Result<
         projection: PublicObservationProjectionV5 {
             surface: base.projection,
             policy_surface_context,
+            foundations_combat: public_foundations_combat_v1(state)?,
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
@@ -2845,6 +2895,33 @@ fn core_surface_action_candidates_v1(
                     )?;
                 }
             }
+            Decision::ChooseCombatDamageRange {
+                player,
+                source,
+                recipient,
+                minimum,
+                maximum,
+                split_at,
+            } => {
+                let actor = (*player).into();
+                let source = card_ref(state, *source)?;
+                let recipient = target_ref(state, *recipient)?;
+                for upper_half in [false, true] {
+                    push_action(
+                        &mut out,
+                        ActionSemanticV1::ChooseCombatDamageRange {
+                            actor,
+                            source: source.clone(),
+                            recipient: recipient.clone(),
+                            minimum: *minimum,
+                            maximum: *maximum,
+                            split_at: *split_at,
+                            upper_half,
+                        },
+                        SurfaceAction::Action(Action::ChooseCombatDamageRange { upper_half }),
+                    )?;
+                }
+            }
             Decision::ChooseEffectBoolean { player, source, .. } => {
                 let actor = (*player).into();
                 let source = card_ref(state, *source)?;
@@ -3087,6 +3164,7 @@ pub fn acting_player_for_surface_decision(
             | Decision::ChooseEffectOption { player, .. }
             | Decision::ChooseEffectTargets { player, .. }
             | Decision::ChooseEffectBoolean { player, .. }
+            | Decision::ChooseCombatDamageRange { player, .. }
             | Decision::ChooseOptionalCost { player, .. }
             | Decision::ChooseSpellCopyPayment { player, .. }
             | Decision::ChooseSpellCopyRetarget { player, .. }

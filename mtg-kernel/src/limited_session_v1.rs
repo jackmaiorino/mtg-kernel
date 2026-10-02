@@ -1,7 +1,8 @@
 //! Custom mainboards through a separate JSONL reset/step interface.
 //!
 //! Card names resolve inside the running binary. Schema 1 retains H2 priority
-//! suppression. Schema 2 explicitly opts into engine priority windows. Both
+//! suppression. Schema 2 explicitly opts into engine priority windows.
+//! Schema 3 adds Foundations damage assignment and trample. These modes
 //! retain the unconditional opening hand and policy V5 action representation.
 //! This plumbing does not claim complete Limited rules or FDN support.
 
@@ -19,6 +20,7 @@ use sha2::{Digest, Sha256};
 pub const LIMITED_PROTOCOL_V1: &str = "kernel_limited_jsonl";
 pub const LIMITED_SCHEMA_V1: u32 = 1;
 pub const LIMITED_ENGINE_PRIORITY_SCHEMA_V1: u32 = 2;
+pub const LIMITED_FOUNDATIONS_COMBAT_SCHEMA_V1: u32 = 3;
 /// A process input bound, not a Magic format rule.
 pub const MAX_CUSTOM_DECK_CARDS_V1: usize = 10_000;
 pub const MAX_LIMITED_LINE_BYTES_V1: usize = 8 * 1024 * 1024;
@@ -145,6 +147,8 @@ pub struct LimitedReplyV1 {
     pub schema_version: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub priority_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub combat_rules: Option<String>,
     pub request_id: Option<String>,
     pub kernel_version: String,
     pub card_db_hash: u64,
@@ -158,6 +162,7 @@ impl LimitedReplyV1 {
             protocol: LIMITED_PROTOCOL_V1.to_string(),
             schema_version: LIMITED_SCHEMA_V1,
             priority_mode: None,
+            combat_rules: None,
             request_id,
             kernel_version: KERNEL_VERSION.to_string(),
             card_db_hash: KERNEL_CARDDB_HASH,
@@ -200,6 +205,7 @@ impl LimitedReplyV1 {
 #[derive(Default)]
 pub struct LimitedJsonlServerV1 {
     priority_mode: PriorityModeV1,
+    foundations_combat: bool,
     active: Option<RlEpisodeSessionV1>,
     /// The immediate exchange only, matching the existing JSONL retry model.
     last_exchange: Option<(LimitedRequestV1, String)>,
@@ -218,7 +224,19 @@ impl LimitedJsonlServerV1 {
         }
     }
 
+    /// Foundations assignment and trample, with full engine priority windows.
+    pub fn new_with_foundations_combat_v1() -> Self {
+        Self {
+            priority_mode: PriorityModeV1::EngineWindowsV1,
+            foundations_combat: true,
+            ..Self::default()
+        }
+    }
+
     fn schema_version(&self) -> u32 {
+        if self.foundations_combat {
+            return LIMITED_FOUNDATIONS_COMBAT_SCHEMA_V1;
+        }
         match self.priority_mode {
             PriorityModeV1::HarnessV2 => LIMITED_SCHEMA_V1,
             PriorityModeV1::EngineWindowsV1 => LIMITED_ENGINE_PRIORITY_SCHEMA_V1,
@@ -227,6 +245,9 @@ impl LimitedJsonlServerV1 {
 
     fn serialize_reply(&self, mut reply: LimitedReplyV1) -> String {
         reply.schema_version = self.schema_version();
+        if self.foundations_combat {
+            reply.combat_rules = Some("foundations_v1".to_string());
+        }
         if self.priority_mode == PriorityModeV1::EngineWindowsV1 {
             reply.priority_mode = Some("engine_windows_v1".to_string());
         }
@@ -317,6 +338,7 @@ impl LimitedJsonlServerV1 {
                     deck_ids,
                     [&ids[0], &ids[1]],
                     self.priority_mode,
+                    self.foundations_combat,
                 ) {
                     Ok(session) => {
                         let reply = LimitedReplyV1::state(request_id, session.current_response());
@@ -359,6 +381,89 @@ mod tests {
     use super::*;
 
     #[test]
+    fn foundations_session_snapshot_restores_pending_damage_action_and_binding() {
+        use crate::rl::ActionSemanticV1;
+        let forest = card_id_by_name("Forest").unwrap();
+        let elves = card_id_by_name("Llanowar Elves").unwrap();
+        let paladin = card_id_by_name("Spinewoods Paladin").unwrap();
+        let cards = [vec![forest; 20], vec![elves; 12], vec![paladin; 8]].concat();
+        let identity = content_identity(&cards);
+        let mut session = RlEpisodeSessionV1::reset_with_custom_decks_v1(
+            7,
+            123,
+            8192,
+            16384,
+            [identity.clone(), identity],
+            [&cards, &cards],
+            PriorityModeV1::EngineWindowsV1,
+            true,
+        )
+        .unwrap();
+        for _ in 0..4096 {
+            let before = session.current_response();
+            let RlSessionResponseV1::Decision(decision) = &before else {
+                panic!("game ended before a damage choice");
+            };
+            if matches!(
+                &decision.legal_actions[0].semantic,
+                ActionSemanticV1::ChooseCombatDamageRange { .. }
+            ) {
+                let snapshot = session.snapshot_v5();
+                let before_hash = session.privileged_environment_hash();
+                let action = &decision.legal_actions[0];
+                let after = session
+                    .step(
+                        decision.episode_id,
+                        decision.step,
+                        action.selected_index,
+                        &action.stable_id,
+                    )
+                    .unwrap();
+                let after_hash = session.privileged_environment_hash();
+                session.restore_v5(&snapshot);
+                assert_eq!(session.current_response(), before);
+                assert_eq!(session.privileged_environment_hash(), before_hash);
+                assert_eq!(
+                    session
+                        .step(
+                            decision.episode_id,
+                            decision.step,
+                            action.selected_index,
+                            &action.stable_id
+                        )
+                        .unwrap(),
+                    after
+                );
+                assert_eq!(session.privileged_environment_hash(), after_hash);
+                return;
+            }
+            let rank = |semantic: &ActionSemanticV1| match semantic {
+                ActionSemanticV1::PlayLand { .. } => 0,
+                ActionSemanticV1::CastSpell { .. } => 1,
+                ActionSemanticV1::ChooseAttackerInclusion { include: true, .. }
+                | ActionSemanticV1::ChooseBlockerInclusion { include: true, .. } => 2,
+                ActionSemanticV1::Pass { .. } => 10,
+                ActionSemanticV1::ActivateManaAbility { .. } => 11,
+                _ => 5,
+            };
+            let action = decision
+                .legal_actions
+                .iter()
+                .min_by_key(|action| rank(&action.semantic))
+                .unwrap();
+            session
+                .step(
+                    decision.episode_id,
+                    decision.step,
+                    action.selected_index,
+                    &action.stable_id,
+                )
+                .unwrap();
+        }
+        panic!("damage choice was not reached within the bound");
+    }
+
+    #[test]
     fn engine_priority_session_snapshot_restores_response_binding_and_next_transition() {
         let forest = card_id_by_name("Forest").unwrap();
         let island = card_id_by_name("Island").unwrap();
@@ -372,6 +477,7 @@ mod tests {
             identities,
             [&cards[0], &cards[1]],
             PriorityModeV1::EngineWindowsV1,
+            false,
         )
         .unwrap();
         let original = session.current_response();

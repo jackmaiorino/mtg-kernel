@@ -462,6 +462,7 @@ fn noncombat_action_count(decision: &Decision) -> Result<usize, String> {
         Decision::ChooseCastMode { options, .. } => Ok(options.len()),
         Decision::ChooseKicker { .. }
         | Decision::ChooseEffectBoolean { .. }
+        | Decision::ChooseCombatDamageRange { .. }
         | Decision::ChooseSpellCopyPayment { .. }
         | Decision::ChooseSpellCopyRetarget { .. }
         | Decision::ChooseMadnessCast { .. } => Ok(2),
@@ -602,6 +603,9 @@ fn noncombat_action_by_index(decision: &Decision, index: usize) -> Result<Action
             }
         }
         Decision::ChooseEffectBoolean { .. } => Action::ChooseEffectBoolean(index == 1),
+        Decision::ChooseCombatDamageRange { .. } => Action::ChooseCombatDamageRange {
+            upper_half: index == 1,
+        },
         Decision::ChooseOptionalCost {
             discard_payable,
             sacrifice_payable,

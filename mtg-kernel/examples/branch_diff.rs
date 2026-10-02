@@ -778,6 +778,11 @@ fn fixed_continuation_action(decision: &SurfaceDecision) -> Result<SurfaceAction
         SurfaceDecision::Decision(Decision::ChooseEffectOption { .. }) => {
             Ok(SurfaceAction::Action(Action::ChooseEffectOption(0)))
         }
+        SurfaceDecision::Decision(Decision::ChooseCombatDamageRange { .. }) => {
+            Ok(SurfaceAction::Action(Action::ChooseCombatDamageRange {
+                upper_half: false,
+            }))
+        }
         SurfaceDecision::Decision(Decision::ChooseEffectBoolean { .. }) => {
             Ok(SurfaceAction::Action(Action::ChooseEffectBoolean(false)))
         }

@@ -1115,7 +1115,8 @@ where
         }
         ActionSemanticV1::DeclareAttackers { .. }
         | ActionSemanticV1::DeclareBlockersForAttacker { .. }
-        | ActionSemanticV1::Ambiguous { .. } => {
+        | ActionSemanticV1::Ambiguous { .. }
+        | ActionSemanticV1::ChooseCombatDamageRange { .. } => {
             return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
         }
     }
@@ -2607,7 +2608,8 @@ fn flat_validate_origin_decision_v1(
                 }
             }
         }
-        Decision::DeclareAttackers { .. }
+        Decision::ChooseCombatDamageRange { .. }
+        | Decision::DeclareAttackers { .. }
         | Decision::DeclareBlockers { .. }
         | Decision::GameOver { .. }
         | Decision::Halted { .. } => {
@@ -2738,6 +2740,9 @@ fn flat_validate_semantic_policy_pair_v1(
             ActionSemanticV1::FinishEffectSelection { .. },
             PolicyActionV5::Surface(SurfaceAction::Action(Action::FinishEffectSelection)),
         ) => true,
+        (ActionSemanticV1::ChooseCombatDamageRange { .. }, _) => {
+            return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic)
+        }
         (
             ActionSemanticV1::ChooseEffectBoolean { value, .. },
             PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseEffectBoolean(actual))),
@@ -4476,6 +4481,7 @@ impl RlEpisodeSessionV1 {
     /// The existing catalog constructors and JSONL V5/V6 remain unchanged.
     /// Callers supply already resolved content identities; the engine still
     /// preflights both arrays before any shuffle or session construction.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn reset_with_custom_decks_v1(
         episode_id: u64,
         env_seed: u64,
@@ -4484,10 +4490,16 @@ impl RlEpisodeSessionV1 {
         deck_ids: SessionDeckIdsV1,
         card_ids: [&[u16]; 2],
         priority_mode: crate::surface_v2::PriorityModeV1,
+        foundations_combat: bool,
     ) -> Result<Self, RlSessionError> {
-        let state = build_deck_pair_state(env_seed, card_ids[0], card_ids[1]).map_err(|error| {
-            session_error(RlSessionErrorCode::UnsupportedDeck, &error.to_string())
-        })?;
+        let mut state =
+            build_deck_pair_state(env_seed, card_ids[0], card_ids[1]).map_err(|error| {
+                session_error(RlSessionErrorCode::UnsupportedDeck, &error.to_string())
+            })?;
+        if foundations_combat {
+            crate::combat_damage_v1::enable_foundations_combat_v1(&mut state)
+                .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        }
         let deck_hashes = card_ids
             .map(|cards| fnv1a64(&serde_json::to_vec(cards).expect("card-id arrays serialize")));
         let mut session = Self {

@@ -326,7 +326,8 @@ fn actor(action: &A) -> Option<PlayerSeatV1> {
         | A::DeclareBlockersForAttacker { actor, .. }
         | A::ChooseAttackerInclusion { actor, .. }
         | A::ChooseBlockerInclusion { actor, .. }
-        | A::OrderTriggers { actor, .. } => Some(*actor),
+        | A::OrderTriggers { actor, .. }
+        | A::ChooseCombatDamageRange { actor, .. } => Some(*actor),
         A::Ambiguous { .. } => None,
     }
 }
@@ -907,6 +908,10 @@ pub(super) fn label(
         // These visible records do not contain enough human meaning. In
         // particular effect option paths do not describe their outcomes, and
         // same-source triggers require frozen ability provenance, not an index.
-        A::ChooseEffectNumber { .. } | A::Ambiguous { .. } => return Err(Error::UnsupportedPrompt),
+        // Foundations custom-game combat damage never reaches a Pauper Bo3
+        // human prompt.
+        A::ChooseEffectNumber { .. } | A::ChooseCombatDamageRange { .. } | A::Ambiguous { .. } => {
+            return Err(Error::UnsupportedPrompt)
+        }
     })
 }
