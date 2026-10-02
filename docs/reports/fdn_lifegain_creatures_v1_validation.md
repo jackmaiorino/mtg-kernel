@@ -1,5 +1,11 @@
 # FDN life-gain creature validation
 
+Hosted CI at `9d1f5eb1ac6e7013beaab9b953d79c9c17f102fb` passed all eight checks: Rust on
+Ubuntu and Windows, all four Python shards, formatting/lint and path detection.
+Run: https://github.com/jackmaiorino/mtg-kernel/actions/runs/36966637290. Earlier pending entries below record the original
+verification sequence. The subsequent status/report update changes no tested
+code, workflow, fixture or catalog bytes.
+
 Local source `7feec2b8b35445ddc77c1e5e8ddf05fd391cc4ef` implements
 Exemplar of Light and Sun-Blessed Healer. Matching committed HaleysPC
 source is `7fc174bde3c8670ae1afdd919cbac1e68e994e0c`.
