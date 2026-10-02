@@ -755,14 +755,18 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::NoncreatureArtifactPermanent
                 | TargetSpec::Land
                 | TargetSpec::OpponentArtifactOrEnchantmentPermanent
-                | TargetSpec::ArtifactOrEnchantmentPermanent,
+                | TargetSpec::ArtifactOrEnchantmentPermanent
+                | TargetSpec::AttackingOrBlockingCreature,
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Battlefield,
                 ..
             },
         ) | (
-            TargetSpec::UpToTwoCreatures | TargetSpec::ExactlyTwoArtifactPermanents,
+            TargetSpec::UpToTwoCreatures
+                | TargetSpec::ExactlyTwoArtifactPermanents
+                | TargetSpec::ControlledCreatureThenOpponentCreature
+                | TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker,
             0 | 1,
             StackTargetContractV4::Object {
                 zone: Zone::Battlefield,
@@ -1198,6 +1202,8 @@ pub struct GameState {
     /// Absence preserves all prior snapshot bytes and diagnostic hashes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_legend_rule_v1: Option<crate::legend_rule_v1::PendingLegendRuleV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planeswalkers_v1: Option<crate::planeswalker_v1::PlaneswalkersV1>,
 }
 
 /// Reproduces exactly the field-hash sequence `#[derive(Hash)]` produced
@@ -1232,6 +1238,10 @@ impl Hash for GameState {
         if let Some(pending) = &self.pending_legend_rule_v1 {
             "legend-rule-v1".hash(state);
             pending.hash(state);
+        }
+        if let Some(planeswalkers) = &self.planeswalkers_v1 {
+            "planeswalkers-v1".hash(state);
+            planeswalkers.hash(state);
         }
     }
 }
@@ -1366,6 +1376,7 @@ impl GameState {
             randomness: GameRandomnessState::Legacy(SplitMix64::seed(seed)),
             engine: crate::engine::EngineState::default(),
             pending_legend_rule_v1: None,
+            planeswalkers_v1: None,
         }
     }
 

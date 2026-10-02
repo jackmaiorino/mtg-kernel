@@ -47,6 +47,7 @@ pub enum CardType {
     Sorcery,
     Artifact,
     Enchantment,
+    Planeswalker,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,6 +213,7 @@ pub enum Subtype {
     Angel,
     Noble,
     Unicorn,
+    Ajani,
 }
 
 impl Subtype {
@@ -531,6 +533,9 @@ pub enum TargetSpec {
     /// Either player's artifact or enchantment. Cathar Commando may target
     /// its controller's own permanent. Existing target identities stay fixed.
     ArtifactOrEnchantmentPermanent,
+    ControlledCreatureThenOpponentCreature,
+    ControlledCreatureThenOpponentCreatureOrPlaneswalker,
+    AttackingOrBlockingCreature,
 }
 
 impl TargetSpec {
@@ -576,6 +581,9 @@ impl TargetSpec {
             TargetSpec::Land => 34,
             TargetSpec::OpponentArtifactOrEnchantmentPermanent => 35,
             TargetSpec::ArtifactOrEnchantmentPermanent => 36,
+            TargetSpec::ControlledCreatureThenOpponentCreature => 37,
+            TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker => 38,
+            TargetSpec::AttackingOrBlockingCreature => 39,
         }
     }
 }
@@ -1009,6 +1017,7 @@ pub struct CardDef {
     pub supertypes: &'static [Supertype],
     pub power: Option<i16>,
     pub toughness: Option<i16>,
+    pub starting_loyalty: Option<u16>,
     pub is_land: bool,
     pub produces_mana: &'static [ManaColor],
     /// This card's color identity per 105.1/202.2 (the color of mana
@@ -1439,7 +1448,7 @@ mod tests {
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                181
+                186
             } else {
                 162
             }
@@ -1514,8 +1523,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v36_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x3d41_aa36_a5a7_5d8f;
+    fn card_db_hash_v37_is_frozen() {
+        const EXPECTED_FDN: u64 = 0xfc09_0e5b_2a7b_3e4f;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
@@ -1718,8 +1727,8 @@ mod tests {
             .count();
         assert_eq!(
             full,
-            CARD_DEFS.len(),
-            "all registered definitions are fully supported"
+            CARD_DEFS.len() - usize::from(cfg!(feature = "limited-fdn-fixtures")),
+            "only the explicitly partial reference planeswalker is excluded"
         );
         #[cfg(feature = "limited-fdn-fixtures")]
         assert!(preflight_fully_supported_deck(&[

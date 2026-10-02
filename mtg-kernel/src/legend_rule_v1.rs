@@ -150,7 +150,11 @@ fn prepare(state: &GameState, waiting: &[PendingTrigger]) -> PreparedPassV1 {
                         )
                     })
             });
-        if lethal || invalid_aura || completed_saga {
+        if lethal
+            || invalid_aura
+            || completed_saga
+            || crate::planeswalker_v1::zero_loyalty(state, id)
+        {
             graveyard.push(link(state, id));
         }
     }

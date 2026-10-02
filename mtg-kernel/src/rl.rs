@@ -687,6 +687,23 @@ pub struct EngineContextV2 {
     pub pending_triggers: Vec<PendingTriggerSemanticV2>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_legend_rule: Option<Vec<LegendGroupSemanticV1>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planeswalkers: Option<Vec<PlaneswalkerSemanticV1>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub combat_damage_prevention: Option<Vec<CombatPreventionSemanticV1>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PlaneswalkerSemanticV1 {
+    pub permanent: CardStableRefV1,
+    pub loyalty: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CombatPreventionSemanticV1 {
+    pub permanent: CardStableRefV1,
+    pub turn: u32,
+    pub active_player: PlayerSeatV1,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -5486,6 +5503,47 @@ fn exile_play_permissions_public_v2(state: &GameState) -> Result<Vec<ExilePlayPe
 }
 
 fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<EngineContextV2> {
+    let planeswalkers = if state.planeswalkers_v1.is_some() {
+        state
+            .objects
+            .iter()
+            .filter_map(|(id, _)| {
+                crate::planeswalker_v1::loyalty(state, id).map(|loyalty| {
+                    card_ref(state, id)
+                        .map(|permanent| PlaneswalkerSemanticV1 { permanent, loyalty })
+                })
+            })
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        Vec::new()
+    };
+    let combat_damage_prevention = state
+        .engine
+        .active_replacements
+        .iter()
+        .filter_map(|replacement| {
+            let crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn {
+                object,
+                turn,
+                active_player,
+            } = replacement.kind
+            else {
+                return None;
+            };
+            let live = state.objects.try_get(object.object)?;
+            (live.zone == Zone::Battlefield
+                && live.zone_change_count == object.zone_change_count
+                && turn == state.turn
+                && active_player == state.active_player)
+                .then(|| {
+                    card_ref(state, object.object).map(|permanent| CombatPreventionSemanticV1 {
+                        permanent,
+                        turn,
+                        active_player: active_player.into(),
+                    })
+                })
+        })
+        .collect::<Result<Vec<_>>>()?;
     let current_stage = if state.engine.halted.is_some() {
         EngineDecisionStageV2::Halted
     } else if state.pending_legend_rule_v1.is_some() {
@@ -5516,6 +5574,9 @@ fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<Engin
         state.engine.mana_ability_activations != state.engine.mana_ability_count_at_round_open;
 
     Ok(EngineContextV2 {
+        planeswalkers: (!planeswalkers.is_empty()).then_some(planeswalkers),
+        combat_damage_prevention: (!combat_damage_prevention.is_empty())
+            .then_some(combat_damage_prevention),
         priority_passes: state.engine.priority_passes,
         stack_nonempty: !state.stack.is_empty(),
         stack_activity_since_priority_boundary: state.stack.len()

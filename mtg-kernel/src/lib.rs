@@ -46,6 +46,7 @@ pub mod bounded_staleness_async_v1;
 pub mod card_def;
 pub mod combat_damage_v1;
 pub mod legend_rule_v1;
+pub mod planeswalker_v1;
 // Fail-closed canonical JSON codec shared by the native training store's
 // records. Schema validation remains a separate layer.
 pub mod canonical_json_v1;
