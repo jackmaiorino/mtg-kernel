@@ -1,5 +1,11 @@
 # FDN Prowler implementation and verification
 
+Hosted CI at `b68eb5b42d58976122ae479c9969fc4f39f5d07f` passed all eight checks: Rust on
+Ubuntu and Windows, all four Python shards, formatting/lint and path detection.
+Run: https://github.com/jackmaiorino/mtg-kernel/actions/runs/37004227577. Earlier pending entries below record the original
+verification sequence. The subsequent status/report update changes no tested
+code, workflow, fixture or catalog bytes.
+
 Cackling Prowler is implemented in the opt-in FDN catalog: green 4/3 Hyena
 Rogue for `{3}{G}`, ward `{2}`, and an intervening morbid trigger at the
 beginning of its controller's end step. A qualifying death adds one +1/+1
