@@ -23,7 +23,7 @@ save/restore and incarnation safety without new serialized state.
 | XMage | Eleven strict-choice cases passed in `fdn-mage-rebuke-001`; [Mage PR #10](https://github.com/jackmaiorino/mage/pull/10) records reference boundaries and hashes. |
 | Limited lint | Checks-002 phase 7 passed all-targets Clippy with warnings denied. |
 | Default compatibility and engine regression | Checks-002 phases 8/9 passed: 68 default session cases and the exact v32 golden. Checks-003 exited zero: default workspace all-targets Clippy and 125 Limited/124 default engine cases passed. |
-| Production mutation boundaries | `fdn-rebuke-production-003` is running the release publication/resume and live-profile round trip checks after correcting the launcher compiler-path spelling. |
+| Production mutation boundaries | `fdn-rebuke-production-003` exited zero: 27 release publication/resume and live-profile checks plus combined-feature release Clippy passed. |
 | External natural-terminal replay | `fdn-rebuke-external-001` exited zero: two seed-123 games ended naturally, with identical results and transcripts. |
 | Hosted CI | Draft [kernel PR #134](https://github.com/jackmaiorino/mtg-kernel/pull/134) is running at `deaa8b29`; no green claim. |
 

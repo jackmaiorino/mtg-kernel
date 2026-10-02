@@ -14,13 +14,14 @@ catalog, regression, production and external checks are tracked in its
 [validation report](../reports/fdn_prowler_creature_v1_validation.md).
 
 The [Rebuke slice](fdn_luminous_rebuke_v1.md) adds target-dependent generic
-cost and ordinary creature destruction. Fifteen focused kernel checks pass;
-catalog history, regressions, reference checks, external replay and CI are
-still being verified.
+cost and ordinary creature destruction. Fifteen focused kernel checks,
+eleven XMage comparisons, release boundaries and external replay pass.
+Hosted CI remains pending.
 
 The [Voyage slice](fdn_uncharted_voyage_v1.md) adds owner top-or-bottom
-placement followed by private surveil. Its rules, compatibility and reference
-checks are in progress.
+placement followed by private surveil. Nineteen focused rules checks,
+eleven XMage comparisons, regressions and external replay pass. Release
+mutation boundaries and CI remain pending.
 
 The remaining implementation slices are concrete:
 

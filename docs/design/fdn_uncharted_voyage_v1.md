@@ -40,6 +40,9 @@ choices. Then register a new catalog profile, preserve all older profiles
 and default v32, run relevant XMage and regressions, and verify natural
 external completion/replay and CI before delivering the slice.
 
-The card, interpreter and v46 catalog successor are implemented. Focused
-rules, reference and regression checks are in progress. Both original decks remain unchanged. This is
+The card, interpreter and v46 catalog successor are implemented. Nineteen
+focused rules cases, eleven strict XMage comparisons, affected regressions,
+default compatibility and lint pass. Two custom-deck games finish naturally
+and replay identically. Release mutation boundaries and CI remain pending;
+see `../reports/fdn_uncharted_voyage_v1_validation.md`. Both original decks remain unchanged. This is
 routine rules engineering, with no training or playing-strength claim.
