@@ -25,9 +25,9 @@ attack-event emission path for the new threshold trigger.
 | Default compatibility | Phases 9 and 10: 68 session checks and the frozen default v32 hash check passed. |
 | Python deck/session tools | `fdn-kiora-python-002`: 14 deck and 6 client cases passed on Python 3.12.10. |
 | XMage comparisons | All 9 strict-choice cases passed in `fdn-mage-kiora-003`; [Mage PR #8](https://github.com/jackmaiorino/mage/pull/8) records the source and result hashes. |
-| Production mutation boundaries | Release checks running, including v42 Koma publication/resume refusal and current-profile round trip. |
+| Production mutation boundaries | `fdn-kiora-production-001` exited zero: 23 release checks, including v42 Koma publication/resume refusal and current-profile round trip; combined-feature release Clippy passed. |
 | External natural-terminal replay | Pending. No Kiora external-game claim. |
-| Hosted CI | Pending PR dispatch. |
+| Hosted CI | Draft [PR #132](https://github.com/jackmaiorino/mtg-kernel/pull/132) is running at `f8fce2160`; no green claim yet. |
 
 The verified kernel functional source is local `7ca57acb`, remote
 `0837dfb13135aad0f7ca8f327372387738511471` in
@@ -47,12 +47,20 @@ with zero failures/errors/skips, in 23.521 seconds. Surefire XML SHA-256
 `337c9d8e608e5f3fc010ec61dd6ceb746fd3f1ba470ef3f445a2d4d63ccd3e88`.
 A storage-guard interruption of the first corrected rerun is preserved.
 Cold owned Cargo and Mage caches are compressed with before/after content
-hash checks; no evidence file is deleted. Jack's PC and E: remain untouched
-by builds/tests under Claude #811. External execution awaits binary cold
-preservation after that reservation is released.
+hash checks; no evidence file is deleted. Claude #813 released Jack's PC and E: writes at 07:18 EDT on October 2.
+The old reservation was respected through that release.
 
 Both original deck SHA-256s remain unchanged. Registry coverage is UG 37/40
 and WG 34/40 copies, with six distinct required card names still missing.
 London mulligans, both complete original-deck games and their deterministic
 external replays remain required by the overall goal. These engineering
 results do not establish playing strength or full-set FDN support.
+
+The production check's first release build took 11 minutes 37 seconds.
+The custom-deck binary built successfully with debug symbols disabled:
+5,771,776 bytes, SHA-256
+`b3a3ecd5df88200b1eecf6de4025981d36b7c66491a6bf56c645ae34450fa478`.
+A hash-verified cold copy on HaleysPC protects it from subsequent builds.
+The small production manifest SHA-256 is
+`baab354f914389f9e6aa219ce400988b764a3be1fc54076be960965e5d1f027e`.
+External replay remains pending until all required cold copies are verified.
