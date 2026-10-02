@@ -2,7 +2,7 @@
 
 use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardType, CostComponent, Keywords, Subtype, TargetSpec,
-    CARD_DEFS,
+    CARD_DEFS, KERNEL_CARDDB_HASH,
 };
 use mtg_kernel::effect::EffectOp;
 use mtg_kernel::engine::{self, Action, CostKind, Decision, UnsupportedMechanic};
@@ -147,6 +147,8 @@ fn generated_definitions_ids_and_append_only_token_are_exact() {
     assert_eq!(card_id("Nyxborn Hydra"), 81);
     assert_eq!(card_id("Skeleton Token"), 161);
     assert_eq!(Subtype::Skeleton.stable_id(), 69);
+    assert_eq!(CARD_DEFS.len(), 192); // wave 2 Task 3: 187 -> 192
+    assert_eq!(KERNEL_CARDDB_HASH, 0x064a_7c98_9255_ab3c);
 
     let monstrous = &CARD_DEFS[74];
     assert_eq!(monstrous.capability, CardCapability::Full);
