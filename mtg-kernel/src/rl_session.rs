@@ -36,6 +36,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fmt;
 
+pub(crate) mod human_opening_v1;
+
 pub const RL_SESSION_SCHEMA_VERSION: u32 = 5;
 pub const RL_SESSION_PROTOCOL_VERSION: u32 = 5;
 pub const RL_SESSION_PROTOCOL_NAME: &str = "kernel_rl_jsonl";
@@ -275,7 +277,30 @@ pub enum FlatActionObjectGroupV1 {
     Command = 8,
     KnownSelfLibrary = 9,
     KnownOpponentLibrary = 10,
+    DecisionLocalLibrary = 11,
+    HistoricalPublicSource = 12,
 }
+
+mod flat_action_v3;
+mod v3_spell_target_adapter_v1;
+#[cfg(test)]
+pub(crate) use v3_spell_target_adapter_v1::pyroblast_target_fixture_v1;
+mod flat_action_v4;
+#[cfg(test)]
+pub(crate) use flat_action_v3::{
+    avenging_hunter_hidden_source_with_stack_historical_rows_state_v1,
+    avenging_hunter_undercity_arena_choose_targets_state_v1, goaded_attacker_fixture_state_v3,
+    move_trigger_source_to_graveyard_v1, move_trigger_source_to_known_library_v1,
+    shuffle_trigger_source_into_library_v1,
+};
+pub use flat_action_v3::{FlatActionDecisionBindingV3, FlatActionDecisionSliceV3};
+pub(crate) use flat_action_v4::V4SearchSampleMode;
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+pub(crate) use flat_action_v4::V4SearchStateErrorV1;
+#[cfg(test)]
+pub(crate) use flat_action_v4::{
+    hidden_order_triggers_shared_source_state_v1, hidden_order_triggers_state_v1,
+};
 
 pub const FLAT_ACTION_FLAG_PAY_V1: u16 = 1 << 0;
 pub const FLAT_ACTION_FLAG_CHANGE_TARGET_V1: u16 = 1 << 1;
@@ -517,6 +542,7 @@ pub enum RlSessionErrorCode {
     StaleEnvironmentBinding,
     UnsupportedDeck,
     EnvironmentRandomization,
+    NonNaturalTerminal,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -640,6 +666,7 @@ fn flat_optional_cost_choice_v1(choice: OptionalCostChoice) -> u8 {
         OptionalCostChoice::Decline => 1,
         OptionalCostChoice::Discard => 2,
         OptionalCostChoice::SacrificeLand => 3,
+        OptionalCostChoice::ReturnPermanent => 4,
     }
 }
 
@@ -1180,6 +1207,105 @@ struct FlatVisibleActionObjectComponentsV1 {
     zone_change_count: u32,
 }
 
+/// The next three items mirror `flat_policy_v2.rs`'s
+/// `canonical_known_hand_cards` (and the two key helpers it composes,
+/// `canonical_json_u16_lexical_key` and
+/// `canonical_relative_player_string_order`) exactly, so a
+/// `KnownOpponentHand` action ordinal computed here always lands on the
+/// same row `register_objects` (`flat_policy_v2.rs`) assigns it. Any
+/// change to `canonical_known_hand_cards`'s sort key or tie-breaking in
+/// `flat_policy_v2.rs` must be mirrored here too, or this module's
+/// ordinals will silently drift from the registry's and reintroduce the
+/// `InvalidReference` failure `known_opponent_hand_canonical_ordinal_v1`
+/// fixes.
+///
+/// Same lexical key `canonical_json_u16_lexical_key` (`flat_policy_v2.rs`)
+/// uses to sort known-hand rows by `card_db_id` as canonical JSON would
+/// compare their decimal strings: a shorter number sorts before a longer
+/// one sharing its leading digits, because the unused trailing bytes stay
+/// zero (below any ASCII digit).
+fn canonical_json_u16_lexical_key_v1(value: u16) -> [u8; 5] {
+    let mut reversed = [0_u8; 5];
+    let mut value = value;
+    let mut length = 0;
+    loop {
+        reversed[length] = b'0' + u8::try_from(value % 10).expect("one decimal digit fits u8");
+        length += 1;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    let mut lexical = [0_u8; 5];
+    for index in 0..length {
+        lexical[index] = reversed[length - index - 1];
+    }
+    lexical
+}
+
+/// Mirrors `canonical_relative_player_string_order` (`flat_policy_v2.rs`):
+/// canonical JSON string order places "opponent" before "self".
+fn canonical_relative_seat_order_v1(seat: PlayerId, actor: PlayerId) -> u8 {
+    u8::from(seat == actor)
+}
+
+/// The known-hand canonical position of `target` (arena id `target`, exact
+/// incarnation `target_zone_change_count`) in `owner`'s hand as `actor`
+/// knows it. `state.hand_knowledge` entries are kept in ascending
+/// `ObjectId` (arena id) order, not reveal order: `state.rs`'s
+/// `reveal_hand_card` and `transfer_library_knowledge_to_hand` both push
+/// the new entry then `entries.sort_by_key(|entry| entry.object)`.
+/// Register_objects (`flat_policy_v2.rs`) does not register each row at
+/// that raw arena-id position: it first runs the whole group through
+/// `canonical_known_hand_cards`, which sorts by (card_db_id lexical,
+/// controller, owner, zone) instead, a key that can diverge from arena-id
+/// order whenever a lower-arena-id card happens to have a higher
+/// card_db_id than a higher-arena-id one. An action referencing one of
+/// these cards must land on that same canonical position, or
+/// `validate_cached_tables` (`flat_policy_v2.rs`) cannot find a registry
+/// row at the position the action actually reports and fails closed with
+/// `InvalidReference` even though the card is genuinely known. Ties
+/// (matching keys) keep `hand_knowledge`'s original arena-id order, by a
+/// stable sort, exactly as `canonical_known_hand_cards` does over
+/// `observation.known_hand_cards`, which preserves that same raw order.
+fn known_opponent_hand_canonical_ordinal_v1(
+    state: &crate::state::GameState,
+    actor: PlayerId,
+    owner: PlayerId,
+    target: ObjectId,
+    target_zone_change_count: u32,
+) -> Option<usize> {
+    let entries = &state.hand_knowledge[actor.index()][owner.index()];
+    let mut keyed: Vec<([u8; 5], u8, u8, u8, ObjectId, u32)> = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let object = state.objects.try_get(entry.object)?;
+        keyed.push((
+            canonical_json_u16_lexical_key_v1(object.card_def),
+            canonical_relative_seat_order_v1(object.controller, actor),
+            canonical_relative_seat_order_v1(object.owner, actor),
+            match object.zone {
+                Zone::Battlefield => 0,
+                Zone::Command => 1,
+                Zone::Exile => 2,
+                Zone::Graveyard => 3,
+                Zone::Hand => 4,
+                Zone::Library => 5,
+                Zone::Stack => 6,
+            },
+            entry.object,
+            entry.zone_change_count,
+        ));
+    }
+    // Re-sorted from scratch on every call rather than cached per decision
+    // build: the cost is O(hand size * log(hand size)) and hand size is a
+    // single player's revealed-hand count, so this stays cheap without the
+    // extra bookkeeping a per-(actor, owner) cache would add.
+    keyed.sort_by_key(|&(a, b, c, d, _, _)| (a, b, c, d));
+    keyed
+        .iter()
+        .position(|&(_, _, _, _, id, zcc)| id == target && zcc == target_zone_change_count)
+}
+
 fn flat_visible_action_object_components_v1(
     state: &crate::state::GameState,
     actor: PlayerId,
@@ -1211,12 +1337,14 @@ fn flat_visible_action_object_components_v1(
             if position(&state.players[object.owner.index()].hand).is_none() {
                 return Err(FlatActionDecisionSliceErrorV1::InvalidActionReference);
             }
-            let ordinal = state.hand_knowledge[actor.index()][object.owner.index()]
-                .iter()
-                .position(|entry| {
-                    entry.object == object_id && entry.zone_change_count == object.zone_change_count
-                })
-                .ok_or(FlatActionDecisionSliceErrorV1::HiddenActionReference)?;
+            let ordinal = known_opponent_hand_canonical_ordinal_v1(
+                state,
+                actor,
+                object.owner,
+                object_id,
+                object.zone_change_count,
+            )
+            .ok_or(FlatActionDecisionSliceErrorV1::HiddenActionReference)?;
             (FlatActionObjectGroupV1::KnownOpponentHand, ordinal)
         }
         Zone::Battlefield => {
@@ -1261,8 +1389,15 @@ fn flat_visible_action_object_components_v1(
                 .iter()
                 .find(|entry| {
                     entry.object == object_id && entry.zone_change_count == object.zone_change_count
-                })
-                .ok_or(FlatActionDecisionSliceErrorV1::HiddenActionReference)?;
+                });
+            let Some(knowledge) = knowledge else {
+                if let Some(components) =
+                    pending_trigger_frozen_source_components_v1(state, actor, object_id)?
+                {
+                    return Ok(components);
+                }
+                return Err(FlatActionDecisionSliceErrorV1::HiddenActionReference);
+            };
             let library_position = usize::try_from(knowledge.position)
                 .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
             if state.players[object.owner.index()]
@@ -1291,6 +1426,60 @@ fn flat_visible_action_object_components_v1(
         zone: flat_zone_v1(object.zone),
         zone_change_count: object.zone_change_count,
     })
+}
+
+/// `Zone::Library` fallback for an action reference whose object is a
+/// pending trigger's source that has since moved into its owner's library
+/// (`EffectOp::ShuffleTriggerSourceIntoOwnersLibrary`, `effect.rs`) without
+/// ever being revealed to `actor` -- `library_knowledge` has no entry for
+/// it, so the ordinary known-library lookup above cannot place it.
+///
+/// Rather than raise `HiddenActionReference`, describe the object by the
+/// exact public incarnation `PendingTrigger::source_contract` (`trigger.rs`)
+/// froze when the trigger was queued, reusing the existing
+/// `HistoricalPublicSource` group (never a new discriminant): this is the
+/// same "last known public identity" the observation side already reports
+/// for this case (`rl.rs`'s `PendingTriggerSemanticV2`, via
+/// `visible_card_ref`, reports `source: null` rather than the live hidden
+/// position -- this function mirrors that treatment on the action side
+/// instead of leaving it unencodable). No live library position or index
+/// is ever read here.
+///
+/// `trigger::pending_trigger_choose_targets_gate_v1` is the single shared
+/// gate: it is also consulted, independently, by
+/// `flat_policy_v2.rs`'s `append_pending_trigger_frozen_source_authority_v3`
+/// (layer B), which registers the matching scoring-registry row this
+/// action object reconciles against. Both layers therefore agree on
+/// whether the gate is open and on the exact ordinal without either side
+/// re-deriving the other's logic.
+///
+/// Returns `Ok(None)` -- not an error -- when the gate is closed (the
+/// current decision is not a `ChooseTargets` for `pending_triggers[0]`) or
+/// `object_id` is not that trigger's own source; the caller then keeps the
+/// ordinary `HiddenActionReference` outcome.
+fn pending_trigger_frozen_source_components_v1(
+    state: &crate::state::GameState,
+    actor: PlayerId,
+    object_id: ObjectId,
+) -> Result<Option<FlatVisibleActionObjectComponentsV1>, FlatActionDecisionSliceErrorV1> {
+    let Some((source, contract, ordinal)) =
+        crate::trigger::pending_trigger_choose_targets_gate_v1(state)
+    else {
+        return Ok(None);
+    };
+    if source != object_id {
+        return Ok(None);
+    }
+    Ok(Some(FlatVisibleActionObjectComponentsV1 {
+        card_db_id: contract.card_def,
+        group: FlatActionObjectGroupV1::HistoricalPublicSource,
+        actor_visible_ordinal: usize::try_from(ordinal)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?,
+        owner_relative: flat_relative_seat_v1(contract.owner.into(), actor.into())?,
+        controller_relative: flat_relative_seat_v1(contract.controller.into(), actor.into())?,
+        zone: flat_zone_v1(contract.zone),
+        zone_change_count: contract.zone_change_count,
+    }))
 }
 
 fn flat_card_token_v1(card_db_id: u16) -> Result<u16, FlatActionDecisionSliceErrorV1> {
@@ -1531,13 +1720,36 @@ fn flat_validate_current_decision_relations_v1(
                     )?;
                 }
             }
-            ActionSemanticV1::ActivateAbility { source, .. } => {
+            ActionSemanticV1::ActivateAbility {
+                source,
+                ability_index,
+                ..
+            } => {
+                let object = state
+                    .objects
+                    .try_get(ObjectId(source.arena_id))
+                    .ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?;
+                let definition = crate::card_def::CARD_DEFS
+                    .get(object.card_def as usize)
+                    .ok_or(FlatActionDecisionSliceErrorV1::InvalidActionReference)?;
+                let activation_zone = if let Some(ability) =
+                    definition.activated_abilities.get(*ability_index as usize)
+                {
+                    ability.activation_zone
+                } else if *ability_index as usize == definition.activated_abilities.len() {
+                    // The engine reserves exactly the next slot for an
+                    // equipment-granted battlefield ability. The authoritative
+                    // origin check below still requires that actual offer.
+                    Zone::Battlefield
+                } else {
+                    return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+                };
                 flat_validate_controller_zone_v1(
                     state,
                     current.actor,
                     source,
                     current.actor,
-                    Zone::Battlefield,
+                    activation_zone,
                 )?;
             }
             ActionSemanticV1::PlotSpell { source, .. } => {
@@ -2120,18 +2332,45 @@ fn flat_validate_origin_decision_v1(
                 return Err(invalid());
             }
             for (index, candidate) in candidates.iter().enumerate() {
-                if !matches!(
-                    &candidate.semantic,
+                let matches = match &candidate.semantic {
                     ActionSemanticV1::ChooseEffectOption {
                         actor,
                         source: semantic_source,
                         option_index,
                         option_count: semantic_option_count,
-                    } if actor_matches(*actor, *player)
-                        && flat_ref_matches_object_v1(semantic_source, *source)
-                        && usize::from(*option_index) == index
-                        && semantic_option_count == option_count
-                ) {
+                    } => {
+                        actor_matches(*actor, *player)
+                            && flat_ref_matches_object_v1(semantic_source, *source)
+                            && usize::from(*option_index) == index
+                            && semantic_option_count == option_count
+                    }
+                    // The RL candidate builder relabels a color-valued
+                    // option list (Gate lands choosing their excluded
+                    // color, Prismatic Strands choosing a color to
+                    // prevent) as `ChooseEffectColor` for model
+                    // readability; the underlying engine decision is
+                    // still `Decision::ChooseEffectOption` and the
+                    // executable action is still `Action::
+                    // ChooseEffectOption(index)` (see
+                    // `flat_validate_semantic_policy_pair_v1`). There is
+                    // no `option_index` on this semantic to re-check
+                    // against `index` here (it carries a `color` instead);
+                    // the stronger whole-candidate-list equality check in
+                    // `build_with_extensions` (`original.candidates !=
+                    // current.candidates`) against a fresh, independent
+                    // `core_policy_action_candidates_v5` re-derivation is
+                    // what actually guards index/color correspondence.
+                    ActionSemanticV1::ChooseEffectColor {
+                        actor,
+                        source: semantic_source,
+                        ..
+                    } => {
+                        actor_matches(*actor, *player)
+                            && flat_ref_matches_object_v1(semantic_source, *source)
+                    }
+                    _ => false,
+                };
+                if !matches {
                     return Err(invalid());
                 }
             }
@@ -2209,33 +2448,58 @@ fn flat_validate_origin_decision_v1(
             player,
             discard_payable,
             sacrifice_payable,
+            return_permanent_payable,
         } => {
             if current.actor != *player || candidates.len() != 2 {
                 return Err(invalid());
             }
-            let valid = match (*discard_payable, *sacrifice_payable) {
-                (false, false) => candidates.iter().enumerate().all(|(index, candidate)| {
-                    matches!(
-                        candidate.semantic,
-                        ActionSemanticV1::ChooseOptionalCostUse { actor, use_cost }
-                            if actor_matches(actor, *player) && use_cost == (index == 1)
-                    )
-                }),
-                (true, true) => matches!(
+            let valid = if *return_permanent_payable {
+                // Glint Hawk's return-a-permanent cost (since f013434f):
+                // offered directly through the engine's one-shot
+                // `Action::ChooseOptionalCost` bypass rather than the
+                // Discard/SacrificeLand-only Use/Which stage scheme below,
+                // mirroring `flat_validate_semantic_policy_pair_v1`'s
+                // `ChooseOptionalCostWhich`/`Action::ChooseOptionalCost`
+                // pairing for `Decline`/`ReturnPermanent`.
+                matches!(
                     (&candidates[0].semantic, &candidates[1].semantic),
                     (
                         ActionSemanticV1::ChooseOptionalCostWhich {
                             actor: first_actor,
-                            choice: OptionalCostChoice::Discard,
+                            choice: OptionalCostChoice::Decline,
                         },
                         ActionSemanticV1::ChooseOptionalCostWhich {
                             actor: second_actor,
-                            choice: OptionalCostChoice::SacrificeLand,
+                            choice: OptionalCostChoice::ReturnPermanent,
                         }
                     ) if actor_matches(*first_actor, *player)
                         && actor_matches(*second_actor, *player)
-                ),
-                _ => false,
+                )
+            } else {
+                match (*discard_payable, *sacrifice_payable) {
+                    (false, false) => candidates.iter().enumerate().all(|(index, candidate)| {
+                        matches!(
+                            candidate.semantic,
+                            ActionSemanticV1::ChooseOptionalCostUse { actor, use_cost }
+                                if actor_matches(actor, *player) && use_cost == (index == 1)
+                        )
+                    }),
+                    (true, true) => matches!(
+                        (&candidates[0].semantic, &candidates[1].semantic),
+                        (
+                            ActionSemanticV1::ChooseOptionalCostWhich {
+                                actor: first_actor,
+                                choice: OptionalCostChoice::Discard,
+                            },
+                            ActionSemanticV1::ChooseOptionalCostWhich {
+                                actor: second_actor,
+                                choice: OptionalCostChoice::SacrificeLand,
+                            }
+                        ) if actor_matches(*first_actor, *player)
+                            && actor_matches(*second_actor, *player)
+                    ),
+                    _ => false,
+                }
             };
             if !valid {
                 return Err(invalid());
@@ -2456,6 +2720,22 @@ fn flat_validate_semantic_policy_pair_v1(
             ActionSemanticV1::ChooseEffectOption { option_index, .. },
             PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseEffectOption(actual))),
         ) => option_index == actual,
+        // Same underlying executable action as `ChooseEffectOption` above:
+        // the RL candidate builder relabels a color-valued option list as
+        // `ChooseEffectColor` (see `flat_validate_origin_decision_v1`'s
+        // `Decision::ChooseEffectOption` arm for the matching relabel on
+        // the raw-decision side). `ChooseEffectColor` carries a `color`,
+        // not the raw option index, so unlike the case above there is no
+        // field here to cross-check `actual` against; any `actual` index is
+        // accepted for this pairing shape. `core_policy_action_candidates_v5`
+        // is the only place that ever pairs a `ChooseEffectColor` semantic
+        // with a concrete `policy_action` (both built together from the
+        // same offered-color list), so this is a shape check, not a value
+        // check.
+        (
+            ActionSemanticV1::ChooseEffectColor { .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseEffectOption(_))),
+        ) => true,
         (
             ActionSemanticV1::ChooseEffectTarget { target, .. },
             PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseEffectTarget(actual))),
@@ -2484,8 +2764,31 @@ fn flat_validate_semantic_policy_pair_v1(
         ) => match choice {
             OptionalCostChoice::Discard => *actual,
             OptionalCostChoice::SacrificeLand => !*actual,
-            OptionalCostChoice::Decline => false,
+            // Neither reachable through this H2 use-gate/which-gate
+            // sentinel scheme (see `Decision::ChooseOptionalCost`'s match
+            // in `core_surface_action_candidates_v1`): `Decline` never
+            // reaches the "which" stage through the two-stage
+            // `ChooseOptionalCostStage` shape, and `ReturnPermanent` is
+            // never surfaced through it at all.
+            OptionalCostChoice::Decline | OptionalCostChoice::ReturnPermanent => false,
         },
+        (
+            ActionSemanticV1::ChooseOptionalCostWhich { choice, .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseOptionalCost(actual))),
+        ) => {
+            // `Decline` and `ReturnPermanent` (e.g. Glint Hawk's return-a-
+            // permanent cost, since f013434f) are not decomposed into H2's
+            // two-stage `Use`/`Which` reshape: `core_surface_action_
+            // candidates_v1` presents them as a single candidate answered
+            // by the engine's original one-shot `Action::ChooseOptionalCost`
+            // (see `surface_v2.rs`'s `OptionalCostReshape` doc comment for
+            // why that direct bypass exists). `Discard`/`SacrificeLand`
+            // still only pair through the staged arm above.
+            matches!(
+                choice,
+                OptionalCostChoice::Decline | OptionalCostChoice::ReturnPermanent
+            ) && choice == actual
+        }
         (
             ActionSemanticV1::ChooseSpellCopyPayment { pay, .. },
             PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseSpellCopyPayment(actual))),
@@ -2551,11 +2854,13 @@ fn flat_validate_semantic_policy_pair_v1(
             ActionSemanticV1::FinishTargetSelection { .. },
             PolicyActionV5::Surface(SurfaceAction::Action(Action::FinishEffectSelection)),
         ) => true,
-        (
-            ActionSemanticV1::ChooseEffectColor { .. }
-            | ActionSemanticV1::ChooseEffectNumber { .. },
-            _,
-        ) => return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic),
+        // `ChooseEffectNumber` has no concrete engine `Action` (unlike the
+        // color case above, no `Action::ChooseEffectOption`-style primitive
+        // exists for an arbitrary-range numeric choice), so it stays
+        // rejected pending a contract-level decision kind for it.
+        (ActionSemanticV1::ChooseEffectNumber { .. }, _) => {
+            return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+        }
         (
             ActionSemanticV1::DeclareAttackers { .. }
             | ActionSemanticV1::DeclareBlockersForAttacker { .. }
@@ -3916,6 +4221,7 @@ pub struct RlEpisodeSessionSnapshotV5(RlEpisodeSessionV1);
 enum FlatActionContractModeV1 {
     V1,
     V2,
+    V3,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -3935,6 +4241,8 @@ pub struct FastActorSessionV1 {
     physical_decision_count: u64,
     current: Option<FastActorCurrentDecisionV1>,
     flat_action_contract_mode: FlatActionContractModeV1,
+    // Only enabled on a private, non-stepping encoding copy by the opt-in adapter.
+    v3_spell_target_reference_adapter: bool,
     flat_action_cache_spare: Option<FlatActionDecisionCacheV1>,
     flat_action_cache_spare_v2: Option<FlatActionDecisionCacheV2>,
     terminal: Option<RlSessionTerminalV1>,
@@ -3942,6 +4250,239 @@ pub struct FastActorSessionV1 {
 
 #[derive(Clone)]
 pub struct FastActorSessionSnapshotV1(FastActorSessionV1);
+
+impl FastActorSessionV1 {
+    /// Inherited limits for coordinator continuation diagnostics. Neither
+    /// constructing a fork nor querying these values changes the counters.
+    pub(crate) fn diagnostic_remaining_headroom_v1(&self) -> [u64; 2] {
+        [
+            self.max_physical_decisions
+                .saturating_sub(self.physical_decision_count),
+            self.max_policy_steps.saturating_sub(self.policy_step_count),
+        ]
+    }
+
+    /// Feature-gated boundary audit of the search opponent (lane
+    /// opus-search-opponent): a private copy in which `owner` drew its first
+    /// eligible library card instead of its first eligible hand card, so
+    /// positions, zones and zone-change counts move together as a real
+    /// alternative draw would. Both objects carry no state beyond their card
+    /// definition and no knowledge entry of either player refers to them or
+    /// to the library slot. None when no such pair exists. Never a live
+    /// session mutation.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    pub(crate) fn diagnostic_draw_consistent_swap_clone_v1(&self, owner: PlayerId) -> Option<Self> {
+        use crate::state::Zone;
+        let s = &self.state;
+        let p = owner.index();
+        let pristine = |id: ObjectId, zone: Zone| {
+            let o = s.objects.get(id);
+            o.owner == owner
+                && o.controller == owner
+                && o.zone == zone
+                && o.spell_copy_origin.is_none()
+                && o.attachments.is_empty()
+                && o.v4.attached_to.is_none()
+                && !o.tapped
+                && !o.summoning_sick
+                && o.damage == 0
+                && o.counters == crate::state::Counters::default()
+                && o.plotted_turn.is_none()
+                && !o.v4.is_token
+                && o.v4 == crate::state::ObjectStateV4::from_card_def(o.card_def)
+        };
+        let referenced = |id: ObjectId, slot: Option<usize>| {
+            [PlayerId::P0, PlayerId::P1].iter().any(|observer| {
+                s.known_hand_cards(*observer, owner)
+                    .iter()
+                    .any(|k| k.object == id)
+                    || s.known_library_cards(*observer, owner)
+                        .iter()
+                        .any(|k| k.object == id || Some(k.position as usize) == slot)
+            })
+        };
+        let (hi, hand) = s.players[p]
+            .hand
+            .iter()
+            .copied()
+            .enumerate()
+            .find(|(_, id)| pristine(*id, Zone::Hand) && !referenced(*id, None))?;
+        let definition = s.objects.get(hand).card_def;
+        let (li, library) = s.players[p]
+            .library
+            .iter()
+            .copied()
+            .enumerate()
+            .find(|(i, id)| {
+                s.objects.get(*id).card_def != definition
+                    && pristine(*id, Zone::Library)
+                    && !referenced(*id, Some(*i))
+            })?;
+        let mut copy = self.clone();
+        let state = &mut copy.state;
+        let (drawn, undrawn) = (
+            state.objects.get(hand).zone_change_count,
+            state.objects.get(library).zone_change_count,
+        );
+        state.players[p].hand[hi] = library;
+        state.players[p].library[li] = hand;
+        let moved = state.objects.get_mut(library);
+        moved.zone = Zone::Hand;
+        moved.zone_change_count = drawn;
+        let moved = state.objects.get_mut(hand);
+        moved.zone = Zone::Library;
+        moved.zone_change_count = undrawn;
+        Some(copy)
+    }
+
+    /// Feature-gated offline invariance perturbation; no live session mutation.
+    #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+    pub(crate) fn diagnostic_certificate_perturbed_clone_v1(
+        &self,
+        library: Option<usize>,
+        rng: bool,
+    ) -> Result<Self, String> {
+        if library.is_some() == rng {
+            return Err("choose exactly one certificate perturbation".into());
+        }
+        let mut copy = self.clone();
+        if let Some(owner) = library {
+            if owner > 1
+                || (0..2).any(|observer| !self.state.library_knowledge[observer][owner].is_empty())
+            {
+                return Err("certificate permutation requires unobserved library".into());
+            }
+            if self.state.players[owner].library.len() < 2 {
+                return Err("certificate permutation requires two cards".into());
+            }
+            copy.state.players[owner].library.reverse();
+        } else {
+            copy.state = copy.state.diagnostic_certificate_rng_clone_v1();
+        }
+        if copy.diagnostic_state_hash() == self.diagnostic_state_hash() {
+            return Err("certificate perturbation changed no state".into());
+        }
+        Ok(copy)
+    }
+
+    /// Test-only: `owner`'s objects unseen by `observer`, in the V4 search
+    /// sampler's slot order (the hand unless `owner` is the observer, then the
+    /// library), skipping every object the observer knows.
+    #[cfg(test)]
+    fn diagnostic_unseen_objects_v1(&self, observer: PlayerId, owner: PlayerId) -> Vec<ObjectId> {
+        let state = &self.state;
+        let mut unseen = Vec::new();
+        if owner != observer {
+            for &id in &state.players[owner.index()].hand {
+                let generation = state.objects.get(id).zone_change_count;
+                if !state
+                    .known_hand_cards(observer, owner)
+                    .iter()
+                    .any(|k| k.object == id && k.zone_change_count == generation)
+                {
+                    unseen.push(id);
+                }
+            }
+        }
+        for (position, &id) in state.players[owner.index()].library.iter().enumerate() {
+            let generation = state.objects.get(id).zone_change_count;
+            if !state.known_library_cards(observer, owner).iter().any(|k| {
+                k.position as usize == position
+                    && k.object == id
+                    && k.zone_change_count == generation
+            }) {
+                unseen.push(id);
+            }
+        }
+        unseen
+    }
+
+    /// Test-only different-shuffle partner (FABLE-REVIEW-20260927 exit-teacher
+    /// change 5c): the card identities of the first two unseen `owner` objects
+    /// holding different cards are exchanged. The observer's information set
+    /// is unchanged; the (object id, card) assignment is not.
+    #[cfg(test)]
+    pub(crate) fn diagnostic_exchanged_unseen_cards_clone_v1(
+        &self,
+        observer: PlayerId,
+        owner: PlayerId,
+    ) -> Result<Self, String> {
+        let unseen = self.diagnostic_unseen_objects_v1(observer, owner);
+        let first = *unseen.first().ok_or("no unseen object")?;
+        let card = self.state.objects.get(first).card_def;
+        let second = *unseen
+            .iter()
+            .find(|&&id| self.state.objects.get(id).card_def != card)
+            .ok_or("every unseen object holds one card")?;
+        let mut copy = self.clone();
+        for (target, source) in [(first, second), (second, first)] {
+            let (card_def, name) = {
+                let from = self.state.objects.get(source);
+                (from.card_def, from.name.clone())
+            };
+            let object = copy.state.objects.get_mut(target);
+            if object.v4 != crate::state::ObjectStateV4::from_card_def(object.card_def) {
+                return Err("unseen object is not pristine".into());
+            }
+            object.card_def = card_def;
+            object.name = name;
+            object.v4 = crate::state::ObjectStateV4::from_card_def(card_def);
+        }
+        Ok(copy)
+    }
+
+    /// Test-only power partner: every unseen `owner` object takes the first
+    /// one's card, so the owner's hidden card multiset changes.
+    #[cfg(test)]
+    pub(crate) fn diagnostic_uniform_unseen_cards_clone_v1(
+        &self,
+        observer: PlayerId,
+        owner: PlayerId,
+    ) -> Result<Self, String> {
+        let unseen = self.diagnostic_unseen_objects_v1(observer, owner);
+        let first = *unseen.first().ok_or("no unseen object")?;
+        let (card_def, name) = {
+            let from = self.state.objects.get(first);
+            (from.card_def, from.name.clone())
+        };
+        let mut copy = self.clone();
+        for id in unseen {
+            let object = copy.state.objects.get_mut(id);
+            object.card_def = card_def;
+            object.name = name.clone();
+            object.v4 = crate::state::ObjectStateV4::from_card_def(card_def);
+        }
+        Ok(copy)
+    }
+
+    /// Test-only: the card on top of `owner`'s library (the next draw).
+    #[cfg(test)]
+    pub(crate) fn diagnostic_library_top_card_v1(&self, owner: PlayerId) -> Option<u16> {
+        self.state.players[owner.index()]
+            .library
+            .first()
+            .map(|&id| self.state.objects.get(id).card_def)
+    }
+
+    /// Summary hook over the exact currently offered actions. Returns only
+    /// card identities already known to the acting player in their own hand.
+    pub(crate) fn current_offered_hand_cast_ids_v1(&self) -> Vec<u16> {
+        self.current.as_ref().map_or_else(Vec::new, |current| {
+            current
+                .candidates
+                .iter()
+                .filter_map(|candidate| match &candidate.semantic {
+                    ActionSemanticV1::CastSpell { source, .. }
+                        if source.zone == crate::state::Zone::Hand =>
+                    {
+                        Some(source.card_db_id)
+                    }
+                    _ => None,
+                })
+                .collect()
+        })
+    }
+}
 
 #[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -4154,6 +4695,88 @@ impl RlEpisodeSessionV1 {
         )
     }
 
+    /// Explicit-deck sibling of `reset_with_decks_and_limits_environment_v2`
+    /// (design section 2, W1): the harness's deck-injection seam. `deck_ids`
+    /// is a caller-supplied label pair for receipts and logs only; it is
+    /// never resolved against `RUNTIME_DECKS`. Defaults to P0 starting,
+    /// matching `build_deck_pair_state_environment_v2`'s own default.
+    pub fn reset_with_explicit_decks_and_limits(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_explicit_decks_and_limits_with_randomization(
+            episode_id,
+            pair_environment_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            mainboards,
+            None,
+        )
+    }
+
+    /// Starting-player-aware sibling of the constructor above
+    /// (`P1-METAMORPHIC-AUDIT-DESIGN-V4.md` Section 1.2's discipline, design
+    /// section 2). W6's BO3 ratification stage and W8a's self-play driver
+    /// pass `PreparedMatchGameV1::start().starting_player` here, never the
+    /// plain constructor.
+    pub fn reset_with_explicit_decks_and_limits_with_starting_player_v1(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: PlayerId,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_explicit_decks_and_limits_with_randomization(
+            episode_id,
+            pair_environment_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            mainboards,
+            Some(starting_player),
+        )
+    }
+
+    fn reset_with_explicit_decks_and_limits_with_randomization(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: Option<PlayerId>,
+    ) -> Result<Self, RlSessionError> {
+        let (deck_hashes, state) = build_session_deck_pair_state_from_explicit_decks(
+            &mainboards,
+            pair_environment_seed,
+            starting_player,
+        )?;
+        let mut session = RlEpisodeSessionV1 {
+            deck_ids,
+            deck_hashes,
+            episode_id,
+            max_physical_decisions,
+            max_policy_steps,
+            state,
+            surface: PolicySurfaceV5::new_for_session(),
+            scan_menu: ScanMenuV1::LegalAnswersOnly,
+            environment_revision: 0,
+            policy_step_count: 0,
+            physical_decision_count: 0,
+            current: None,
+            terminal: None,
+        };
+        session.advance_to_decision_or_terminal_profiled(None);
+        Ok(session)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn reset_with_decks_and_limits_profiled_in_audit_mode_with_randomization(
         episode_id: u64,
@@ -4233,6 +4856,14 @@ impl RlEpisodeSessionV1 {
 
     pub fn diagnostic_state_hash(&self) -> u64 {
         self.state.diagnostic_state_hash()
+    }
+
+    /// Read-only access to the underlying game state, for the `GameSummaryV1`
+    /// extractor (design section 3, W3), which needs `state.turn` and
+    /// `state.engine.event_history` directly. Deliberately `&GameState`,
+    /// never `&mut`: the extractor watches, it does not drive.
+    pub fn game_state(&self) -> &crate::state::GameState {
+        &self.state
     }
 
     pub fn privileged_environment_hash(&self) -> u64 {
@@ -4842,6 +5473,87 @@ impl FastActorSessionV1 {
         )
     }
 
+    /// Explicit-deck sibling of
+    /// `reset_with_decks_and_limits_flat_action_v2_environment_v2` (W1).
+    /// Always `FlatActionContractModeV1::V2`: every explicit-deck consumer
+    /// (the paired estimator, the search driver) drives this session type
+    /// for speed and has no reason to select the legacy flat-action
+    /// contract.
+    pub fn reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_randomization(
+            episode_id,
+            pair_environment_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            mainboards,
+            None,
+        )
+    }
+
+    pub fn reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_starting_player_v1(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: PlayerId,
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_randomization(
+            episode_id,
+            pair_environment_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            mainboards,
+            Some(starting_player),
+        )
+    }
+
+    fn reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_randomization(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: Option<PlayerId>,
+    ) -> Result<Self, RlSessionError> {
+        let (deck_hashes, state) = build_session_deck_pair_state_from_explicit_decks(
+            &mainboards,
+            pair_environment_seed,
+            starting_player,
+        )?;
+        let mut session = FastActorSessionV1 {
+            deck_ids,
+            deck_hashes,
+            episode_id,
+            max_physical_decisions,
+            max_policy_steps,
+            state,
+            surface: PolicySurfaceV5::new_for_session(),
+            environment_revision: 0,
+            policy_step_count: 0,
+            physical_decision_count: 0,
+            current: None,
+            flat_action_contract_mode: FlatActionContractModeV1::V2,
+            v3_spell_target_reference_adapter: false,
+            flat_action_cache_spare: None,
+            flat_action_cache_spare_v2: None,
+            terminal: None,
+        };
+        session.advance_to_decision_or_terminal();
+        Ok(session)
+    }
+
     fn reset_with_decks_and_limits_in_flat_action_mode(
         episode_id: u64,
         env_seed: u64,
@@ -4889,6 +5601,7 @@ impl FastActorSessionV1 {
             physical_decision_count: 0,
             current: None,
             flat_action_contract_mode,
+            v3_spell_target_reference_adapter: false,
             flat_action_cache_spare: None,
             flat_action_cache_spare_v2: None,
             terminal: None,
@@ -5400,6 +6113,14 @@ impl FastActorSessionV1 {
 
     pub fn diagnostic_state_hash(&self) -> u64 {
         self.state.diagnostic_state_hash()
+    }
+
+    /// Read-only access to the underlying game state, for the `GameSummaryV1`
+    /// extractor (design section 3, W3), which needs `state.turn` and
+    /// `state.engine.event_history` directly. Deliberately `&GameState`,
+    /// never `&mut`: the extractor watches, it does not drive.
+    pub fn game_state(&self) -> &crate::state::GameState {
+        &self.state
     }
 
     /// Audit-only counterpart to
@@ -5948,6 +6669,11 @@ impl FastActorSessionV1 {
             FlatActionContractModeV1::V2 => {
                 let reusable_cache = self.flat_action_cache_spare_v2.take();
                 let cache_result = flat_build_action_cache_v2(self, &current, reusable_cache);
+                flat_install_action_cache_build_result_v2(&mut current, cache_result);
+            }
+            FlatActionContractModeV1::V3 => {
+                self.flat_action_cache_spare_v2 = None;
+                let cache_result = flat_action_v3::prepare_and_build_v3(self, &mut current);
                 flat_install_action_cache_build_result_v2(&mut current, cache_result);
             }
         }
@@ -6986,6 +7712,7 @@ fn session_error_code(code: &RlSessionErrorCode) -> &'static str {
         RlSessionErrorCode::StaleEnvironmentBinding => "stale_environment_binding",
         RlSessionErrorCode::UnsupportedDeck => "unsupported_deck",
         RlSessionErrorCode::EnvironmentRandomization => "environment_randomization",
+        RlSessionErrorCode::NonNaturalTerminal => "non_natural_terminal",
     }
 }
 
@@ -7123,6 +7850,78 @@ fn supported_runtime_deck_ids() -> String {
         .join(", ")
 }
 
+fn resolve_explicit_decks(mainboards: &[Vec<u16>; 2]) -> Result<[Vec<u16>; 2], RlSessionError> {
+    for (seat, mainboard) in mainboards.iter().enumerate() {
+        if mainboard.len() != crate::sideboard::REGISTERED_MAINBOARD_SIZE_V1 {
+            return Err(session_error(
+                RlSessionErrorCode::UnsupportedDeck,
+                &format!(
+                    "explicit deck for seat {seat} must contain exactly {} cards, got {}",
+                    crate::sideboard::REGISTERED_MAINBOARD_SIZE_V1,
+                    mainboard.len()
+                ),
+            ));
+        }
+        crate::card_def::preflight_fully_supported_deck(mainboard).map_err(|error| {
+            session_error(
+                RlSessionErrorCode::UnsupportedDeck,
+                &format!("seat {seat} explicit deck failed full-support preflight: {error}"),
+            )
+        })?;
+    }
+    Ok([mainboards[0].clone(), mainboards[1].clone()])
+}
+
+/// The `sorted-explicit` hash convention (design section 2): sort the
+/// mainboard, serialize as a JSON u16 array, FNV-1a it with the same
+/// algorithm and constant `build.rs` uses for the catalog's
+/// `fnv1a64-serde-json-u16-array/v1` convention. Deliberately does not
+/// reuse `RuntimeDeckDefinition::runtime_deck_hash`: that hash is over the
+/// unsorted `materialized_mainboard` walk order, a different convention.
+pub(crate) fn explicit_deck_hash_v1(mainboard: &[u16]) -> u64 {
+    let mut sorted = mainboard.to_vec();
+    sorted.sort_unstable();
+    let serialized = serde_json::to_vec(&sorted).expect("a u16 vector always serializes as JSON");
+    fnv1a64(&serialized)
+}
+
+/// Explicit-deck sibling of `build_session_deck_pair_state`: identical
+/// dispatch to the environment-v2 deck-pair builders, sourced from two
+/// caller-supplied 60-card mainboards instead of a `RUNTIME_DECKS` lookup.
+/// Always dispatches to the EnvironmentV2 deck-pair builders directly (no
+/// `ResetRandomization` value is constructed); there is no legacy
+/// explicit-deck path because every consumer of this seam (the paired
+/// estimator, the search driver) needs the paired-seed mechanism.
+fn build_session_deck_pair_state_from_explicit_decks(
+    mainboards: &[Vec<u16>; 2],
+    pair_environment_seed: u64,
+    starting_player: Option<PlayerId>,
+) -> Result<(SessionDeckHashesV1, crate::state::GameState), RlSessionError> {
+    let resolved = resolve_explicit_decks(mainboards)?;
+    let deck_hashes = [
+        explicit_deck_hash_v1(&resolved[0]),
+        explicit_deck_hash_v1(&resolved[1]),
+    ];
+    let state = match starting_player {
+        None => crate::rl::build_deck_pair_state_environment_v2(
+            pair_environment_seed,
+            &resolved[0],
+            &resolved[1],
+        )
+        .map_err(map_deck_pair_build_error_v2)?,
+        Some(starting_player) => {
+            crate::rl::build_deck_pair_state_environment_v2_with_starting_player_v1(
+                pair_environment_seed,
+                &resolved[0],
+                &resolved[1],
+                starting_player,
+            )
+            .map_err(map_deck_pair_build_error_v2)?
+        }
+    };
+    Ok((deck_hashes, state))
+}
+
 fn terminal_from_winner(
     deck_ids: &SessionDeckIdsV1,
     deck_hashes: SessionDeckHashesV1,
@@ -7207,7 +8006,7 @@ mod tests {
     use super::*;
     use crate::card_def::card_id_by_name;
     use crate::effect::EffectOp;
-    use crate::engine::PendingOptionalCostSacrifice;
+    use crate::engine::{PendingOptionalCost, PendingOptionalCostSacrifice};
     use crate::policy_surface_v5::{
         reset_test_exact_surface_hash_calls, test_exact_surface_hash_calls,
     };
@@ -7218,6 +8017,276 @@ mod tests {
     };
     use crate::state::{Counters, GameObject, GameState, ObjectStateV4, SplitMix64, Step, Zone};
     use std::collections::HashSet;
+
+    #[test]
+    fn choose_optional_cost_which_pairs_with_the_direct_action_for_decline_and_return_permanent() {
+        use crate::engine::Action;
+        use crate::surface::SurfaceAction;
+
+        for choice in [
+            OptionalCostChoice::Decline,
+            OptionalCostChoice::ReturnPermanent,
+        ] {
+            let candidate = CorePolicyActionCandidateV1 {
+                semantic: ActionSemanticV1::ChooseOptionalCostWhich {
+                    actor: PlayerSeatV1::P0,
+                    choice,
+                },
+                policy_action: PolicyActionV5::Surface(SurfaceAction::Action(
+                    Action::ChooseOptionalCost(choice),
+                )),
+            };
+            assert_eq!(
+                flat_validate_semantic_policy_pair_v1(&candidate),
+                Ok(()),
+                "{choice:?} should pair with the direct ChooseOptionalCost action"
+            );
+        }
+
+        // A mismatched direct-action choice must still fail closed.
+        let mismatched = CorePolicyActionCandidateV1 {
+            semantic: ActionSemanticV1::ChooseOptionalCostWhich {
+                actor: PlayerSeatV1::P0,
+                choice: OptionalCostChoice::Decline,
+            },
+            policy_action: PolicyActionV5::Surface(SurfaceAction::Action(
+                Action::ChooseOptionalCost(OptionalCostChoice::ReturnPermanent),
+            )),
+        };
+        assert_eq!(
+            flat_validate_semantic_policy_pair_v1(&mismatched),
+            Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)
+        );
+
+        // Discard/SacrificeLand still only pair through the staged action,
+        // never through the direct one-shot bypass.
+        for choice in [
+            OptionalCostChoice::Discard,
+            OptionalCostChoice::SacrificeLand,
+        ] {
+            let staged_only = CorePolicyActionCandidateV1 {
+                semantic: ActionSemanticV1::ChooseOptionalCostWhich {
+                    actor: PlayerSeatV1::P0,
+                    choice,
+                },
+                policy_action: PolicyActionV5::Surface(SurfaceAction::Action(
+                    Action::ChooseOptionalCost(choice),
+                )),
+            };
+            assert_eq!(
+                flat_validate_semantic_policy_pair_v1(&staged_only),
+                Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)
+            );
+        }
+    }
+
+    // Final-review fix round item 1 (Critical): Glint Hawk's ETB (Task 7)
+    // produces a real `Decision::ChooseOptionalCost` with
+    // `return_permanent_payable: true` and the other two flags false. Task
+    // 12 taught `flat_validate_semantic_policy_pair_v1` (the test just
+    // above) to accept the resulting `ChooseOptionalCostWhich` candidates,
+    // but the sibling `flat_validate_origin_decision_v1` was not updated:
+    // its `ChooseOptionalCost` arm still required `ChooseOptionalCostUse`
+    // whenever `(discard_payable, sacrifice_payable) == (false, false)`,
+    // which is also what Glint Hawk's ETB reports. AffinityV2 registers
+    // three Glint Hawks, so this decision must flat-encode on the live
+    // `flat_build_action_cache_v2` path (contract mode V2, the mode this
+    // wave's own deck/search harnesses always use) or a registered deck has
+    // a decision the training serializer cannot represent.
+    #[test]
+    fn glint_hawk_return_permanent_optional_cost_encodes_in_flat_action_contract_v2() {
+        let mut state = GameState::new_from_libraries(&[], &[], card_name, 82_122);
+        let source_card = card_id_by_name("Glint Hawk").unwrap();
+        let source = state.objects.push(GameObject {
+            card_def: source_card,
+            name: "Glint Hawk".to_string(),
+            owner: PlayerId::P0,
+            controller: PlayerId::P0,
+            zone: Zone::Battlefield,
+            tapped: false,
+            summoning_sick: false,
+            damage: 0,
+            counters: Counters::default(),
+            attachments: Vec::new(),
+            v4: ObjectStateV4::from_card_def(source_card),
+            spell_copy_origin: None,
+            plotted_turn: None,
+            zone_change_count: 0,
+        });
+        state.players[PlayerId::P0.index()].battlefield.push(source);
+        // The artifact Glint Hawk can return, exactly as the Task 7
+        // integration test sets up before the ETB decision (see
+        // `glint_hawk_is_sacrificed_unless_an_artifact_is_returned` in
+        // mtg-kernel/tests/pauper_meta_w1_creatures.rs).
+        add_battlefield_object(&mut state, PlayerId::P0, "Ichor Wellspring");
+        state.engine.pending_optional_cost = Some(PendingOptionalCost {
+            player: PlayerId::P0,
+            source,
+            discard: 0,
+            sacrifice_lands: 0,
+            return_permanent_filter: Some(crate::card_def::PermanentFilterDef::Artifact),
+            discard_payable: false,
+            sacrifice_payable: false,
+            return_permanent_payable: true,
+            then: EffectOp::Sequence(Vec::new()),
+            otherwise: Some(EffectOp::Sacrifice {
+                object: crate::effect::ObjectRef::ThisSource,
+            }),
+            spell_resume: None,
+        });
+        assert!(state.stack.is_empty());
+
+        let mut session = FastActorSessionV1::reset_with_limits(82_122, 41_122, 256, 32_768);
+        session.state = state;
+        session.surface = PolicySurfaceV5::new();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.flat_action_cache_spare = None;
+        session.flat_action_cache_spare_v2 = None;
+        session.terminal = None;
+        session.flat_action_contract_mode = FlatActionContractModeV1::V2;
+        session.advance_to_decision_or_terminal();
+
+        let current = session.current.as_ref().expect(
+            "Glint Hawk's return-permanent ChooseOptionalCost must surface as a live \
+             decision, not a terminal",
+        );
+        assert!(
+            matches!(
+                &current.origin_decision,
+                PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+                    Decision::ChooseOptionalCost {
+                        return_permanent_payable: true,
+                        ..
+                    }
+                ))
+            ),
+            "expected Glint Hawk's return-permanent ChooseOptionalCost, got {:?}",
+            current.origin_decision
+        );
+        assert_eq!(
+            current.flat_action_cache_error_v2, None,
+            "flat_build_action_cache_v2 (contract mode V2) must accept Glint Hawk's \
+             return-permanent optional-cost decision"
+        );
+        let cache = current
+            .flat_action_cache_v2
+            .as_ref()
+            .expect("the V2 action cache must be built for the return and decline actions");
+        assert_eq!(cache.actions.len(), 2, "Decline and ReturnPermanent");
+        assert!(
+            cache
+                .actions
+                .iter()
+                .all(|action| action.kind == FlatActionKindV1::ChooseOptionalCostWhich),
+            "both actions must encode as the direct ChooseOptionalCostWhich kind"
+        );
+    }
+
+    /// Records a real unsupported state, not successful frozen-policy support.
+    /// The Map ability is legal after its token ceases to exist, but the V2
+    /// action source contract requires a live zone member at this boundary.
+    #[test]
+    fn flat_v2_rejects_valid_map_explore_after_source_token_ceases() {
+        let nonland = card_id_by_name("Fanatical Offering").unwrap();
+        let mut state = GameState::new_from_libraries(&[nonland], &[], card_name, 82_147);
+        state.step = Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        let map = add_battlefield_object(&mut state, PlayerId::P0, "Map Token");
+        let creature = add_battlefield_object(&mut state, PlayerId::P0, "Voldaren Epicure");
+        state.players[0].mana_pool[crate::mana::ManaColor::B.pool_index()] = 1;
+        crate::engine::step(&mut state, crate::engine::Action::ActivateAbility(map, 0)).unwrap();
+        assert!(matches!(
+            crate::engine::advance_until_decision(&mut state),
+            Decision::ChooseTargets { .. }
+        ));
+        crate::engine::step(
+            &mut state,
+            crate::engine::Action::ChooseTarget(crate::state::Target::Object(creature)),
+        )
+        .unwrap();
+        let mut reached_choice = false;
+        for _ in 0..16 {
+            match crate::engine::advance_until_decision(&mut state) {
+                Decision::CastSpellOrPass { .. } => {
+                    crate::engine::step(&mut state, crate::engine::Action::Pass).unwrap();
+                }
+                Decision::ChooseEffectOption {
+                    player,
+                    source,
+                    option_count: 2,
+                    ..
+                } => {
+                    assert_eq!(player, PlayerId::P0);
+                    assert_eq!(source, map);
+                    reached_choice = true;
+                    break;
+                }
+                _ => panic!("Map must reach the nonland Explore choice"),
+            }
+        }
+        assert!(reached_choice);
+        let pending = state.engine.pending_effect.as_ref().unwrap();
+        assert!(matches!(
+            pending.choice,
+            Some(crate::effect::PendingEffectChoice::ChooseOption {
+                purpose: crate::effect::EffectOptionChoicePurpose::ExploreNonlandTop { .. },
+                ..
+            })
+        ));
+        assert_eq!(state.objects.get(map).card_def, 147);
+        assert!(state.objects.get(map).v4.is_token);
+        assert_eq!(state.objects.get(map).zone, Zone::Graveyard);
+        assert!(!state.players[0].graveyard.contains(&map));
+        assert_eq!(state.objects.get(creature).counters.plus1_plus1, 1);
+
+        // The rules engine can apply both legal choices. Flat inference must
+        // continue rejecting the unsupported source instead of inventing a row.
+        for option in 0..2 {
+            let mut engine_only = state.clone();
+            crate::engine::step(
+                &mut engine_only,
+                crate::engine::Action::ChooseEffectOption(option),
+            )
+            .unwrap();
+        }
+        let mut session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            82_147,
+            82_147,
+            256,
+            32_768,
+            ["Affinity".into(), "Affinity".into()],
+        )
+        .unwrap();
+        session.state = state;
+        session.surface = PolicySurfaceV5::new();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.flat_action_cache_spare_v2 = None;
+        session.terminal = None;
+        session.advance_to_decision_or_terminal();
+        let decision = flat_current_decision(&session);
+        assert_eq!(decision.legal_action_count, 2);
+        let mut actions = [FlatActionCoreV1::default(); 2];
+        let mut refs = [FlatActionRefV2::default(); 2];
+        let mut objects = [FlatActionObjectV2::default(); 1];
+        assert_eq!(
+            session.encode_current_flat_action_slice_v2(
+                decision,
+                &mut FlatActionDecisionSliceBuffersV2 {
+                    actions: &mut actions,
+                    refs: &mut refs,
+                    objects: &mut objects,
+                },
+            ),
+            Err(FlatActionDecisionSliceErrorV1::InvalidActionReference)
+        );
+    }
 
     fn attacker_state(count: usize) -> GameState {
         let mut state = GameState::new_from_libraries(&[], &[], card_name, 91);
@@ -8340,6 +9409,118 @@ mod tests {
         );
     }
 
+    fn nonbattlefield_activation_session_v2(
+        name: &str,
+        zone: Zone,
+    ) -> (FastActorSessionV1, ObjectId, usize) {
+        let mut state = GameState::new_from_libraries(&[], &[], card_name, 93);
+        state.step = Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        add_battlefield_object(&mut state, PlayerId::P0, "Idyllic Beachfront");
+        let source = add_battlefield_object(&mut state, PlayerId::P0, name);
+        state.players[0].battlefield.retain(|id| *id != source);
+        state.objects.get_mut(source).zone = zone;
+        match zone {
+            Zone::Hand => state.players[0].hand.push(source),
+            Zone::Graveyard => state.players[0].graveyard.push(source),
+            _ => panic!("nonbattlefield ability fixture zone"),
+        }
+
+        let mut session = FastActorSessionV1::reset_with_limits(25, 93, 64, 512);
+        session.state = state;
+        session.surface = PolicySurfaceV5::new();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.terminal = None;
+        session.flat_action_cache_spare = None;
+        session.flat_action_cache_spare_v2 = None;
+        session.flat_action_contract_mode = FlatActionContractModeV1::V2;
+        session.advance_to_decision_or_terminal();
+        let index = session
+            .current
+            .as_ref()
+            .expect("live ability offer")
+            .candidates
+            .iter()
+            .position(|candidate| {
+                matches!(
+                    &candidate.semantic,
+                    ActionSemanticV1::ActivateAbility { source: reference, ability_index: 0, .. }
+                        if reference.arena_id == source.0
+                )
+            })
+            .expect("engine must actually offer the nonbattlefield ability");
+        (session, source, index)
+    }
+
+    #[test]
+    fn flat_v2_encodes_hand_and_graveyard_activated_abilities() {
+        for (name, zone, paid_zone) in [
+            ("Lorien Revealed", Zone::Hand, Zone::Graveyard),
+            ("Generous Ent", Zone::Hand, Zone::Graveyard),
+            ("Sacred Cat", Zone::Graveyard, Zone::Exile),
+        ] {
+            let (mut session, source, index) = nonbattlefield_activation_session_v2(name, zone);
+            let current = session.current.as_ref().unwrap();
+            assert_eq!(current.flat_action_cache_error_v2, None, "{name}");
+            assert!(current.flat_action_cache_v2.is_some(), "{name}");
+            flat_validate_origin_decision_v1(current, &session.state)
+                .expect("activation matches the actual engine offer");
+            let decision = flat_current_decision(&session);
+            session
+                .flat_policy_observation_v2(decision)
+                .expect("the neural observation represents the legal activation offer");
+            session
+                .step(decision.episode_id, decision.step, index as u32)
+                .expect("the admitted action executes through the normal session");
+            assert_eq!(session.state.objects.get(source).zone, paid_zone, "{name}");
+        }
+    }
+
+    #[test]
+    fn flat_v2_rejects_activated_ability_wrong_zone_and_index() {
+        let (session, source, index) =
+            nonbattlefield_activation_session_v2("Lorien Revealed", Zone::Hand);
+        let mut wrong_zone = session.clone();
+        wrong_zone.state.players[0].hand.retain(|id| *id != source);
+        wrong_zone.state.players[0].battlefield.push(source);
+        wrong_zone.state.objects.get_mut(source).zone = Zone::Battlefield;
+        let current = wrong_zone.current.as_mut().unwrap();
+        let ActionSemanticV1::ActivateAbility {
+            source: reference, ..
+        } = &mut current.candidates[index].semantic
+        else {
+            unreachable!()
+        };
+        // Keep the reference itself visible and current: the activation-zone
+        // relation, rather than a stale reference, must reject this action.
+        reference.zone = Zone::Battlefield;
+        assert_eq!(
+            flat_validate_current_decision_relations_v1(current, &wrong_zone.state),
+            Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)
+        );
+
+        let mut wrong_index = session.clone();
+        let current = wrong_index.current.as_mut().unwrap();
+        let ActionSemanticV1::ActivateAbility { ability_index, .. } =
+            &mut current.candidates[index].semantic
+        else {
+            unreachable!()
+        };
+        *ability_index = u8::MAX;
+        assert_eq!(
+            flat_validate_current_decision_relations_v1(current, &wrong_index.state),
+            Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)
+        );
+        assert_eq!(
+            flat_validate_origin_decision_v1(current, &wrong_index.state),
+            Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)
+        );
+    }
+
     #[test]
     fn flat_origin_validation_uses_live_state_dependent_mana_choices() {
         let mut state = GameState::new_from_libraries(&[], &[], card_name, 92);
@@ -8405,6 +9586,79 @@ mod tests {
                 crate::engine::Action::ActivateManaAbility(source)
             )) if *source == mountain
         ));
+    }
+
+    /// Pauper meta wave 2 Task 3, brief Step 4: Barrels of Blasting Jelly's
+    /// `{1}: Add one mana of any color` has no tap symbol
+    /// (`ManaAbilityCostDef::None`) and offers five colors from one source,
+    /// so `legal_action_candidates_v1`'s surface must offer it as
+    /// `Action::ActivateManaAbilityChoice`, not the single-choice
+    /// `Action::ActivateManaAbility` (which Heap Gate's own free ability
+    /// above never reaches either, for the same one-choice-vs-many reason).
+    #[test]
+    fn barrels_of_blasting_jelly_tapless_ability_is_an_activate_mana_ability_choice_candidate() {
+        let mut state = GameState::new_from_libraries(&[], &[], card_name, 94);
+        state.step = Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        let barrels = add_battlefield_object(&mut state, PlayerId::P0, "Barrels of Blasting Jelly");
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 1;
+
+        let mut session = FastActorSessionV1::reset_with_limits(24, 94, 8, 8);
+        session.state = state;
+        session.surface = PolicySurfaceV5::new();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.terminal = None;
+        session.advance_to_decision_or_terminal();
+
+        let current = session.current.as_ref().expect("priority decision");
+        flat_validate_origin_decision_v1(current, &session.state)
+            .expect("flat validation shares the live mana-choice contract");
+
+        let mana_actions = current
+            .candidates
+            .iter()
+            .filter_map(
+                |candidate| match (&candidate.semantic, &candidate.policy_action) {
+                    (
+                        ActionSemanticV1::ActivateManaAbility {
+                            source,
+                            mana_choice: Some(color),
+                            cost_target: None,
+                            ..
+                        },
+                        PolicyActionV5::Surface(action),
+                    ) if source.arena_id == barrels.0 => Some((*color, action)),
+                    _ => None,
+                },
+            )
+            .collect::<Vec<_>>();
+        assert_eq!(
+            mana_actions
+                .iter()
+                .map(|(color, _)| *color)
+                .collect::<Vec<_>>(),
+            vec![
+                ManaColor::W,
+                ManaColor::U,
+                ManaColor::B,
+                ManaColor::R,
+                ManaColor::G,
+            ],
+            "the tapless ability offers all five colors from one source"
+        );
+        assert!(
+            mana_actions.iter().all(|(_, action)| matches!(
+                action,
+                crate::surface::SurfaceAction::Action(
+                    crate::engine::Action::ActivateManaAbilityChoice(source, _)
+                ) if *source == barrels
+            )),
+            "a multi-color source surfaces as ActivateManaAbilityChoice, not ActivateManaAbility"
+        );
     }
 
     #[test]
@@ -10562,6 +11816,645 @@ mod tests {
         );
     }
 
+    /// Regression test for the second panel-stopping crash: a formal
+    /// five-deck BO3 evaluator run (and two later engineering crash-sweep
+    /// hits) failed `StaleEnvironmentBinding: frozen sideboard play policy:
+    /// V3 actor-visible encoding: InvalidReference` on a decision that
+    /// legally targeted a card the acting player had already seen revealed
+    /// in the opponent's hand -- a plainly *known* reference, unlike the
+    /// combat-residue bug's hidden-zone one.
+    ///
+    /// `state.hand_knowledge` entries are kept in ascending `ObjectId`
+    /// (arena id) order, not reveal order (`state.rs`'s `reveal_hand_card`
+    /// and `transfer_library_knowledge_to_hand` both `sort_by_key(|entry|
+    /// entry.object)` after inserting). `register_objects`
+    /// (`flat_policy_v2.rs`) does not register each `KnownOpponentHand` row
+    /// at that raw arena-id position: it runs the whole group through
+    /// `canonical_known_hand_cards` first, which sorts by (card_db_id
+    /// lexical, controller, owner, zone) instead, so the model row order is
+    /// independent of incidental arena-id assignment. This function's
+    /// `Zone::Hand` (non-owner) arm used to report the raw arena-id
+    /// position instead of that same canonical position, so whenever two
+    /// known-hand cards have a card_db_id whose canonical order differs
+    /// from their arena-id order, the action's reported ordinal could
+    /// never match the registered row: the same error class as the
+    /// combat-residue bug (a projection using a laxer or differently-keyed
+    /// rule than the V3 registry), from a different projection.
+    /// `known_opponent_hand_canonical_ordinal_v1` now mirrors
+    /// `canonical_known_hand_cards`'s exact ordering, keyed by object
+    /// identity plus incarnation rather than by array position, so it
+    /// lands on the same row `register_objects` does.
+    #[test]
+    fn known_opponent_hand_arena_order_mismatch_does_not_break_v3_action_encoding() {
+        use crate::flat_policy_v2::FlatScoringOwnedBuffersV2;
+        use crate::flat_policy_v3::FlatDecisionEncoderV3;
+
+        let mut session = FastActorSessionV1::reset_with_limits(81_050, 141, 128, 16_384);
+        session.flat_action_contract_mode = FlatActionContractModeV1::V3;
+        let actor_id = session.current.as_ref().unwrap().actor;
+        let opponent = actor_id.opponent();
+
+        // Force two distinct incarnations in the opponent's hand: `higher`
+        // gets a larger card_db_id than `lower`. `higher` is
+        // `opponent_hand[0]` and `lower` is `opponent_hand[1]`; opening
+        // hands are dealt by `draw_card` popping the front of a
+        // post-shuffle library (arena ids assigned contiguously in that
+        // same library order, per `GameState::new_from_libraries_with_
+        // starting_player_v1`) and pushing onto hand, so `higher` has the
+        // smaller ObjectId (arena id) than `lower` by construction --
+        // regardless of which order they are revealed in below.
+        // `state.hand_knowledge`'s raw order is always ascending arena id
+        // ([higher, lower] here), while canonical order (by card_db_id) is
+        // [lower, higher] -- the exact mismatch the crashing matches hit.
+        let opponent_hand = session.state.players[opponent.index()].hand.clone();
+        assert!(opponent_hand.len() >= 2, "fixture hand must hold two cards");
+        let higher = opponent_hand[0];
+        let lower = opponent_hand[1];
+        session.state.objects.get_mut(higher).card_def = 100;
+        session.state.objects.get_mut(lower).card_def = 1;
+        session
+            .state
+            .reveal_hand_card(actor_id, opponent, higher)
+            .unwrap();
+        session
+            .state
+            .reveal_hand_card(actor_id, opponent, lower)
+            .unwrap();
+        assert_eq!(
+            session.state.hand_knowledge[actor_id.index()][opponent.index()]
+                .iter()
+                .map(|entry| entry.object)
+                .collect::<Vec<_>>(),
+            vec![higher, lower],
+            "raw hand_knowledge order is always ascending arena id (higher before \
+             lower), regardless of reveal call order"
+        );
+
+        let own_source = session.state.players[actor_id.index()].hand[0];
+        let origin_decision =
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::ChooseEffectTargets {
+                player: actor_id,
+                source: own_source,
+                selected_count: 0,
+                min_targets: 1,
+                max_targets: 1,
+                legal_targets: vec![Target::Object(lower)],
+                can_finish: false,
+            }));
+        let (substep_index, substep_count) = origin_decision.substep();
+        let candidates =
+            core_policy_action_candidates_v5(&origin_decision, &session.state).unwrap();
+        {
+            let current = session.current.as_mut().unwrap();
+            current.actor = actor_id;
+            current.decision_kind = FastActorDecisionKindV1::Surface;
+            current.origin_decision = origin_decision;
+            current.substep_index = substep_index;
+            current.substep_count = substep_count;
+            current.candidates = candidates;
+        }
+        let mut current = session.current.take().unwrap();
+        let result = flat_action_v3::prepare_and_build_v3(&session, &mut current);
+        flat_install_action_cache_build_result_v2(&mut current, result);
+        session.current = Some(current);
+
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("fixture must present a live decision");
+        };
+        let mut objects = Vec::new();
+        let mut relations = Vec::new();
+        let mut object_subtypes = Vec::new();
+        let mut ability_uses = Vec::new();
+        let mut goads = Vec::new();
+        let mut completed_dungeons = Vec::new();
+        let mut effect_subtype_changes = Vec::new();
+        let mut context_path_elements = Vec::new();
+        let mut actions = Vec::new();
+        let mut action_refs = Vec::new();
+        session
+            .encode_current_flat_scoring_decision_owned_v3(
+                expected,
+                &mut FlatDecisionEncoderV3::default(),
+                &mut FlatScoringOwnedBuffersV2 {
+                    objects: &mut objects,
+                    relations: &mut relations,
+                    object_subtypes: &mut object_subtypes,
+                    ability_uses: &mut ability_uses,
+                    goads: &mut goads,
+                    completed_dungeons: &mut completed_dungeons,
+                    effect_subtype_changes: &mut effect_subtype_changes,
+                    context_path_elements: &mut context_path_elements,
+                    actions: &mut actions,
+                    action_refs: &mut action_refs,
+                },
+            )
+            .expect(
+                "a legal target on a known, arena-order-mismatched opponent hand card \
+                 must encode",
+            );
+    }
+
+    /// Regression test for adversarial-review finding 6a on the arena-order
+    /// fix above: two known opponent-hand cards can share a `card_db_id`,
+    /// tying their `canonical_json_u16_lexical_key_v1` key (and their
+    /// `canonical_relative_seat_order_v1` and zone keys too, since both are
+    /// the opponent's own cards sitting in `Zone::Hand`).
+    /// `known_opponent_hand_canonical_ordinal_v1`'s `keyed.sort_by_key` is a
+    /// stable sort, so tied entries must keep `hand_knowledge`'s raw
+    /// (ascending arena-id) relative order, exactly as
+    /// `canonical_known_hand_cards` (`flat_policy_v2.rs`) preserves that
+    /// same raw order for its own ties.
+    #[test]
+    fn known_opponent_hand_duplicate_card_db_ids_keep_stable_order() {
+        use crate::flat_policy_v2::FlatScoringOwnedBuffersV2;
+        use crate::flat_policy_v3::FlatDecisionEncoderV3;
+
+        let mut session = FastActorSessionV1::reset_with_limits(81_060, 141, 128, 16_384);
+        session.flat_action_contract_mode = FlatActionContractModeV1::V3;
+        let actor_id = session.current.as_ref().unwrap().actor;
+        let opponent = actor_id.opponent();
+
+        let opponent_hand = session.state.players[opponent.index()].hand.clone();
+        assert!(
+            opponent_hand.len() >= 3,
+            "fixture hand must hold three cards"
+        );
+        // `first` and `second` share a card_db_id, tying every canonical
+        // sort key; `third` gets a strictly smaller card_db_id so it
+        // canonically sorts ahead of the tied pair. `first` is
+        // opponent_hand[0] and `second` is opponent_hand[1], so `first` has
+        // the smaller arena id by construction (see the arena-order test
+        // above), which is the raw order the stable sort must preserve for
+        // the tie.
+        let first = opponent_hand[0];
+        let second = opponent_hand[1];
+        let third = opponent_hand[2];
+        session.state.objects.get_mut(first).card_def = 7;
+        session.state.objects.get_mut(second).card_def = 7;
+        session.state.objects.get_mut(third).card_def = 2;
+        // Reveal out of arena-id order to reconfirm (as the arena-order
+        // test does) that raw hand_knowledge order never depends on reveal
+        // call order.
+        session
+            .state
+            .reveal_hand_card(actor_id, opponent, third)
+            .unwrap();
+        session
+            .state
+            .reveal_hand_card(actor_id, opponent, second)
+            .unwrap();
+        session
+            .state
+            .reveal_hand_card(actor_id, opponent, first)
+            .unwrap();
+        assert_eq!(
+            session.state.hand_knowledge[actor_id.index()][opponent.index()]
+                .iter()
+                .map(|entry| entry.object)
+                .collect::<Vec<_>>(),
+            vec![first, second, third],
+            "raw hand_knowledge order is always ascending arena id"
+        );
+
+        // Canonical order: third (card_db_id 2) sorts first; first and
+        // second are tied (card_db_id 7) and must keep their raw relative
+        // order (first before second).
+        {
+            let state = &session.state;
+            assert_eq!(
+                known_opponent_hand_canonical_ordinal_v1(
+                    state,
+                    actor_id,
+                    opponent,
+                    third,
+                    state.objects.get(third).zone_change_count,
+                ),
+                Some(0),
+                "the strictly smaller card_db_id sorts first"
+            );
+            assert_eq!(
+                known_opponent_hand_canonical_ordinal_v1(
+                    state,
+                    actor_id,
+                    opponent,
+                    first,
+                    state.objects.get(first).zone_change_count,
+                ),
+                Some(1),
+                "tied with second, first keeps its raw arena-id order"
+            );
+            assert_eq!(
+                known_opponent_hand_canonical_ordinal_v1(
+                    state,
+                    actor_id,
+                    opponent,
+                    second,
+                    state.objects.get(second).zone_change_count,
+                ),
+                Some(2),
+                "tied with first, second keeps its raw arena-id order"
+            );
+        }
+
+        // Cross-check through the public entry point the fixed match arm
+        // calls: `flat_visible_action_object_components_v1` must report the
+        // same tie-broken ordinal for `second`.
+        let second_object = session.state.objects.get(second);
+        let second_reference = CardStableRefV1 {
+            arena_id: second.0,
+            card_db_id: second_object.card_def,
+            owner: second_object.owner.into(),
+            controller: second_object.controller.into(),
+            zone: second_object.zone,
+            zone_change_count: second_object.zone_change_count,
+        };
+        let components =
+            flat_visible_action_object_components_v1(&session.state, actor_id, &second_reference)
+                .expect("second is a known, live opponent hand card");
+        assert_eq!(components.group, FlatActionObjectGroupV1::KnownOpponentHand);
+        assert_eq!(components.actor_visible_ordinal, 2);
+
+        // Drive the real production path against the tied card.
+        let own_source = session.state.players[actor_id.index()].hand[0];
+        let origin_decision =
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::ChooseEffectTargets {
+                player: actor_id,
+                source: own_source,
+                selected_count: 0,
+                min_targets: 1,
+                max_targets: 1,
+                legal_targets: vec![Target::Object(second)],
+                can_finish: false,
+            }));
+        let (substep_index, substep_count) = origin_decision.substep();
+        let candidates =
+            core_policy_action_candidates_v5(&origin_decision, &session.state).unwrap();
+        {
+            let current = session.current.as_mut().unwrap();
+            current.actor = actor_id;
+            current.decision_kind = FastActorDecisionKindV1::Surface;
+            current.origin_decision = origin_decision;
+            current.substep_index = substep_index;
+            current.substep_count = substep_count;
+            current.candidates = candidates;
+        }
+        let mut current = session.current.take().unwrap();
+        let result = flat_action_v3::prepare_and_build_v3(&session, &mut current);
+        flat_install_action_cache_build_result_v2(&mut current, result);
+        session.current = Some(current);
+
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("fixture must present a live decision");
+        };
+        let mut objects = Vec::new();
+        let mut relations = Vec::new();
+        let mut object_subtypes = Vec::new();
+        let mut ability_uses = Vec::new();
+        let mut goads = Vec::new();
+        let mut completed_dungeons = Vec::new();
+        let mut effect_subtype_changes = Vec::new();
+        let mut context_path_elements = Vec::new();
+        let mut actions = Vec::new();
+        let mut action_refs = Vec::new();
+        session
+            .encode_current_flat_scoring_decision_owned_v3(
+                expected,
+                &mut FlatDecisionEncoderV3::default(),
+                &mut FlatScoringOwnedBuffersV2 {
+                    objects: &mut objects,
+                    relations: &mut relations,
+                    object_subtypes: &mut object_subtypes,
+                    ability_uses: &mut ability_uses,
+                    goads: &mut goads,
+                    completed_dungeons: &mut completed_dungeons,
+                    effect_subtype_changes: &mut effect_subtype_changes,
+                    context_path_elements: &mut context_path_elements,
+                    actions: &mut actions,
+                    action_refs: &mut action_refs,
+                },
+            )
+            .expect("a legal target on a tied-card_db_id opponent hand card must encode");
+    }
+
+    /// Regression test for adversarial-review finding 6b on the arena-order
+    /// fix above: a revealed opponent-hand card can leave the hand (cast,
+    /// discarded, put onto the battlefield, ...) after being revealed.
+    /// `state.forget_hand_object` (called by every hand-leaving transition,
+    /// e.g. `move_hand_to_battlefield`) purges that object's
+    /// `hand_knowledge` entries for every observer, so
+    /// `known_opponent_hand_canonical_ordinal_v1` must recompute the
+    /// remaining cards' canonical ordinals over the smaller surviving set on
+    /// every call (it is never cached) rather than reporting a position
+    /// left over from while the departed card was still present.
+    #[test]
+    fn known_opponent_hand_ordinals_survive_a_card_leaving_hand() {
+        use crate::flat_policy_v2::FlatScoringOwnedBuffersV2;
+        use crate::flat_policy_v3::FlatDecisionEncoderV3;
+
+        let mut session = FastActorSessionV1::reset_with_limits(81_070, 141, 128, 16_384);
+        session.flat_action_contract_mode = FlatActionContractModeV1::V3;
+        let actor_id = session.current.as_ref().unwrap().actor;
+        let opponent = actor_id.opponent();
+
+        let opponent_hand = session.state.players[opponent.index()].hand.clone();
+        assert!(
+            opponent_hand.len() >= 3,
+            "fixture hand must hold three cards"
+        );
+        // Ascending arena id by construction: departing < remaining_low <
+        // remaining_high.
+        let departing = opponent_hand[0];
+        let remaining_low = opponent_hand[1];
+        let remaining_high = opponent_hand[2];
+        session.state.objects.get_mut(departing).card_def = 30;
+        session.state.objects.get_mut(remaining_low).card_def = 10;
+        session.state.objects.get_mut(remaining_high).card_def = 50;
+        for &card in &[departing, remaining_low, remaining_high] {
+            session
+                .state
+                .reveal_hand_card(actor_id, opponent, card)
+                .unwrap();
+        }
+
+        // Before `departing` leaves: canonical order by card_db_id is
+        // remaining_low(10) < departing(30) < remaining_high(50), so
+        // remaining_high starts in the last slot.
+        {
+            let state = &session.state;
+            assert_eq!(
+                known_opponent_hand_canonical_ordinal_v1(
+                    state,
+                    actor_id,
+                    opponent,
+                    remaining_high,
+                    state.objects.get(remaining_high).zone_change_count,
+                ),
+                Some(2),
+                "remaining_high starts in the last canonical slot"
+            );
+        }
+
+        // `departing` leaves the hand through a real production zone-change
+        // path; its hand_knowledge entries are purged for every observer.
+        assert!(session.state.move_hand_to_battlefield(opponent, departing));
+        assert!(
+            !session.state.hand_knowledge[actor_id.index()][opponent.index()]
+                .iter()
+                .any(|entry| entry.object == departing),
+            "a departed card must not linger in hand_knowledge"
+        );
+
+        // After `departing` leaves: only remaining_low(10) and
+        // remaining_high(50) are left, so remaining_high's canonical
+        // position must shift down from 2 to 1, not stay stale at 2 or
+        // point past the end of the shrunk set.
+        {
+            let state = &session.state;
+            assert_eq!(
+                known_opponent_hand_canonical_ordinal_v1(
+                    state,
+                    actor_id,
+                    opponent,
+                    remaining_low,
+                    state.objects.get(remaining_low).zone_change_count,
+                ),
+                Some(0),
+            );
+            assert_eq!(
+                known_opponent_hand_canonical_ordinal_v1(
+                    state,
+                    actor_id,
+                    opponent,
+                    remaining_high,
+                    state.objects.get(remaining_high).zone_change_count,
+                ),
+                Some(1),
+                "remaining_high's canonical position must shift down after departing \
+                 leaves, not stay stale"
+            );
+        }
+
+        // Drive the real production path against one of the surviving
+        // cards.
+        let own_source = session.state.players[actor_id.index()].hand[0];
+        let origin_decision =
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::ChooseEffectTargets {
+                player: actor_id,
+                source: own_source,
+                selected_count: 0,
+                min_targets: 1,
+                max_targets: 1,
+                legal_targets: vec![Target::Object(remaining_high)],
+                can_finish: false,
+            }));
+        let (substep_index, substep_count) = origin_decision.substep();
+        let candidates =
+            core_policy_action_candidates_v5(&origin_decision, &session.state).unwrap();
+        {
+            let current = session.current.as_mut().unwrap();
+            current.actor = actor_id;
+            current.decision_kind = FastActorDecisionKindV1::Surface;
+            current.origin_decision = origin_decision;
+            current.substep_index = substep_index;
+            current.substep_count = substep_count;
+            current.candidates = candidates;
+        }
+        let mut current = session.current.take().unwrap();
+        let result = flat_action_v3::prepare_and_build_v3(&session, &mut current);
+        flat_install_action_cache_build_result_v2(&mut current, result);
+        session.current = Some(current);
+
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("fixture must present a live decision");
+        };
+        let mut objects = Vec::new();
+        let mut relations = Vec::new();
+        let mut object_subtypes = Vec::new();
+        let mut ability_uses = Vec::new();
+        let mut goads = Vec::new();
+        let mut completed_dungeons = Vec::new();
+        let mut effect_subtype_changes = Vec::new();
+        let mut context_path_elements = Vec::new();
+        let mut actions = Vec::new();
+        let mut action_refs = Vec::new();
+        session
+            .encode_current_flat_scoring_decision_owned_v3(
+                expected,
+                &mut FlatDecisionEncoderV3::default(),
+                &mut FlatScoringOwnedBuffersV2 {
+                    objects: &mut objects,
+                    relations: &mut relations,
+                    object_subtypes: &mut object_subtypes,
+                    ability_uses: &mut ability_uses,
+                    goads: &mut goads,
+                    completed_dungeons: &mut completed_dungeons,
+                    effect_subtype_changes: &mut effect_subtype_changes,
+                    context_path_elements: &mut context_path_elements,
+                    actions: &mut actions,
+                    action_refs: &mut action_refs,
+                },
+            )
+            .expect(
+                "a legal target on a surviving known opponent hand card must encode \
+                 after another revealed card left the hand",
+            );
+    }
+
+    // Adversarial-review finding 6c on the arena-order fix above asked for a
+    // regression test covering an in-place incarnation bump
+    // (`zone_change_count` increment) of a *known* (revealed) hand card
+    // that stays in `Zone::Hand` throughout. This case is skipped for lack
+    // of a reachable path to exercise:
+    //   - Every `object.zone_change_count += 1` outside test-only code
+    //     (`state.rs`'s `draw_card` and `move_hand_to_battlefield`;
+    //     `engine.rs`'s `begin_cast`'s zone-finalizer and `move_to_stack`)
+    //     sits in the same block as an `object.zone = <different zone>`
+    //     assignment, i.e. it accompanies a real zone change away from
+    //     `Hand`, never an in-place bump while the card stays put.
+    //   - `event.rs`'s generic `commit_zone_change` (every `MoveObject`
+    //     effect leaf) is not itself zone-guarded against `from_zone ==
+    //     to_zone == Hand`, but no card program in this pool ever issues a
+    //     same-zone-to-hand move, and `commit_zone_change` unconditionally
+    //     calls `state.forget_hand_object(id)` before the move regardless
+    //     of `to_zone`, so even a hypothetical same-zone move would forget
+    //     the object's `hand_knowledge` entries rather than carry a bumped
+    //     incarnation forward as still-known. Only `reveal_hand_card` and
+    //     the draw-time `transfer_library_knowledge_to_hand` (re)populate
+    //     `hand_knowledge`, and neither runs from `commit_zone_change`.
+    // `known_opponent_hand_ordinals_survive_a_card_leaving_hand` above
+    // already covers the adjacent "hand_knowledge shrinks out from under a
+    // computed ordinal" risk for the zone-changing case.
+
+    /// Regression test for adversarial-review finding 6d on the arena-order
+    /// fix above: the fix must hold in both `hand_knowledge` directions, not
+    /// just the direction the original crash-derived fixture happened to
+    /// exercise (every seed `FastActorSessionV1::reset_with_limits` can
+    /// build starts with P0 to act, so the arena-order test above only ever
+    /// exercises P0 observing P1). This drives the identical mismatch with
+    /// the seats swapped: P1 is the acting player observing P0's hand.
+    #[test]
+    fn known_opponent_hand_ordinals_hold_for_p1_observing_p0() {
+        use crate::flat_policy_v2::FlatScoringOwnedBuffersV2;
+        use crate::flat_policy_v3::FlatDecisionEncoderV3;
+
+        let mut session = FastActorSessionV1::reset_with_limits(81_080, 141, 128, 16_384);
+        session.flat_action_contract_mode = FlatActionContractModeV1::V3;
+        let actor_id = PlayerId::P1;
+        let opponent = PlayerId::P0;
+
+        let opponent_hand = session.state.players[opponent.index()].hand.clone();
+        assert!(opponent_hand.len() >= 2, "fixture hand must hold two cards");
+        let higher = opponent_hand[0];
+        let lower = opponent_hand[1];
+        session.state.objects.get_mut(higher).card_def = 100;
+        session.state.objects.get_mut(lower).card_def = 1;
+        session
+            .state
+            .reveal_hand_card(actor_id, opponent, higher)
+            .unwrap();
+        session
+            .state
+            .reveal_hand_card(actor_id, opponent, lower)
+            .unwrap();
+        assert_eq!(
+            session.state.hand_knowledge[actor_id.index()][opponent.index()]
+                .iter()
+                .map(|entry| entry.object)
+                .collect::<Vec<_>>(),
+            vec![higher, lower],
+            "raw hand_knowledge order is always ascending arena id (higher before \
+             lower), regardless of reveal call order"
+        );
+
+        {
+            let state = &session.state;
+            assert_eq!(
+                known_opponent_hand_canonical_ordinal_v1(
+                    state,
+                    actor_id,
+                    opponent,
+                    lower,
+                    state.objects.get(lower).zone_change_count,
+                ),
+                Some(0),
+                "P1 observing P0: lower's smaller card_db_id sorts first canonically"
+            );
+            assert_eq!(
+                known_opponent_hand_canonical_ordinal_v1(
+                    state,
+                    actor_id,
+                    opponent,
+                    higher,
+                    state.objects.get(higher).zone_change_count,
+                ),
+                Some(1),
+            );
+        }
+
+        let own_source = session.state.players[actor_id.index()].hand[0];
+        let origin_decision =
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::ChooseEffectTargets {
+                player: actor_id,
+                source: own_source,
+                selected_count: 0,
+                min_targets: 1,
+                max_targets: 1,
+                legal_targets: vec![Target::Object(lower)],
+                can_finish: false,
+            }));
+        let (substep_index, substep_count) = origin_decision.substep();
+        let candidates =
+            core_policy_action_candidates_v5(&origin_decision, &session.state).unwrap();
+        {
+            let current = session.current.as_mut().unwrap();
+            current.actor = actor_id;
+            current.decision_kind = FastActorDecisionKindV1::Surface;
+            current.origin_decision = origin_decision;
+            current.substep_index = substep_index;
+            current.substep_count = substep_count;
+            current.candidates = candidates;
+        }
+        let mut current = session.current.take().unwrap();
+        let result = flat_action_v3::prepare_and_build_v3(&session, &mut current);
+        flat_install_action_cache_build_result_v2(&mut current, result);
+        session.current = Some(current);
+
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("fixture must present a live decision");
+        };
+        let mut objects = Vec::new();
+        let mut relations = Vec::new();
+        let mut object_subtypes = Vec::new();
+        let mut ability_uses = Vec::new();
+        let mut goads = Vec::new();
+        let mut completed_dungeons = Vec::new();
+        let mut effect_subtype_changes = Vec::new();
+        let mut context_path_elements = Vec::new();
+        let mut actions = Vec::new();
+        let mut action_refs = Vec::new();
+        session
+            .encode_current_flat_scoring_decision_owned_v3(
+                expected,
+                &mut FlatDecisionEncoderV3::default(),
+                &mut FlatScoringOwnedBuffersV2 {
+                    objects: &mut objects,
+                    relations: &mut relations,
+                    object_subtypes: &mut object_subtypes,
+                    ability_uses: &mut ability_uses,
+                    goads: &mut goads,
+                    completed_dungeons: &mut completed_dungeons,
+                    effect_subtype_changes: &mut effect_subtype_changes,
+                    context_path_elements: &mut context_path_elements,
+                    actions: &mut actions,
+                    action_refs: &mut action_refs,
+                },
+            )
+            .expect(
+                "a legal target on a known, arena-order-mismatched P0 hand card seen \
+                 by P1 must encode",
+            );
+    }
+
     #[test]
     fn flat_action_slice_supports_every_order_trigger_length_one_through_seven() {
         for count in 1..=7 {
@@ -11320,12 +13213,18 @@ mod tests {
         let actor_id = base.current.as_ref().unwrap().actor;
         let actor: PlayerSeatV1 = actor_id.into();
         let source = flat_test_ref(&base.state, base.state.players[actor_id.index()].hand[0]);
+        // `ChooseEffectColor` is deliberately NOT in this list: it has a
+        // real executable form (`Action::ChooseEffectOption`, the same
+        // primitive Gate lands and Prismatic Strands already use) and is
+        // covered instead by
+        // `flat_action_slice_rejects_a_mismatched_choose_effect_color_pairing`
+        // below (plus the real self-play regression
+        // `expanded_deck_training_v1::tests::caw_gates_choose_effect_color_v3_regression`
+        // for the accepting case). `ChooseEffectNumber` has no concrete
+        // engine `Action` at all and remains genuinely
+        // schema-only/unexecutable, as does `ChooseLegendPermanent` on the
+        // flat action slice.
         let semantics = [
-            ActionSemanticV1::ChooseEffectColor {
-                actor,
-                source: source.clone(),
-                color: ManaColor::R,
-            },
             ActionSemanticV1::ChooseEffectNumber {
                 actor,
                 source: source.clone(),
@@ -11366,6 +13265,60 @@ mod tests {
             assert_eq!(refs, refs_before);
             assert_eq!(objects, objects_before);
         }
+    }
+
+    /// `ChooseEffectColor` (DECK-GAPS-001, CawGates) is executable now: it
+    /// reuses `Action::ChooseEffectOption` (the same primitive Gate lands
+    /// and Prismatic Strands already step through; proved end to end by the
+    /// real self-play regression
+    /// `expanded_deck_training_v1::tests::caw_gates_choose_effect_color_v3_regression`).
+    /// A candidate still paired with an unrelated action (the shape the
+    /// removed `UnsupportedActionSemantic` case above used to catch,
+    /// indirectly, for every pairing regardless of what it actually was)
+    /// now falls through to the general mismatched-pairing check instead,
+    /// which is `InvalidDecisionRelation`, not `UnsupportedActionSemantic`.
+    #[test]
+    fn flat_action_slice_rejects_a_mismatched_choose_effect_color_pairing() {
+        use crate::engine::Action;
+        use crate::surface::SurfaceAction;
+
+        let mismatched = FastActorSessionV1::reset_with_limits(81_039, 139, 128, 16_384);
+        let actor_id = mismatched.current.as_ref().unwrap().actor;
+        let actor: PlayerSeatV1 = actor_id.into();
+        let source = flat_test_ref(
+            &mismatched.state,
+            mismatched.state.players[actor_id.index()].hand[0],
+        );
+        let semantic = ActionSemanticV1::ChooseEffectColor {
+            actor,
+            source,
+            color: ManaColor::R,
+        };
+        let mut mismatched = mismatched;
+        mismatched.current.as_mut().unwrap().candidates = vec![CorePolicyActionCandidateV1 {
+            semantic,
+            policy_action: PolicyActionV5::Surface(SurfaceAction::Action(Action::Pass)),
+        }];
+        let mut actions = [poison_flat_action(); 2];
+        let mut refs = [poison_flat_ref(); 2];
+        let mut objects = [poison_flat_object(); 2];
+        let actions_before = actions;
+        let refs_before = refs;
+        let objects_before = objects;
+        assert_eq!(
+            mismatched.encode_current_flat_action_slice_v1(
+                flat_current_decision(&mismatched),
+                &mut FlatActionDecisionSliceBuffersV1 {
+                    actions: &mut actions,
+                    refs: &mut refs,
+                    objects: &mut objects,
+                },
+            ),
+            Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)
+        );
+        assert_eq!(actions, actions_before);
+        assert_eq!(refs, refs_before);
+        assert_eq!(objects, objects_before);
     }
 
     #[test]
@@ -11441,11 +13394,27 @@ mod tests {
         assert_eq!(actions, [FlatActionCoreV1::default()]);
         // Independently generated with Python hashlib/struct over the
         // documented little-endian v1 byte stream and frozen CardDB hash.
+        //
+        // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
+        // 13, identity finalisation): `FlatActionCommitmentHasherV1::new`
+        // mixes `KERNEL_CARDDB_HASH` directly into the commitment's SHA-256
+        // domain separator, so the wave's 21 new cards move this value. Old
+        // bytes: [0x70, 0x7d, 0xb3, 0x2c, 0x7c, 0x2d, 0x3e, 0x2b, 0xfe, 0x9f,
+        // 0x19, 0x65, 0xbc, 0xdb, 0x6d, 0xce].
+        //
+        // Re-pinned again for the Phase 1 card lane merge (2026-09):
+        // merging lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into
+        // the Phase 1 branch moved KERNEL_CARDDB_HASH again (from
+        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause
+        // as above. Old (wave-1) bytes: [0x45, 0x8c, 0xce, 0x40, 0xb7, 0x14,
+        // 0x6d, 0x98, 0x81, 0x18, 0xc5, 0x49, 0x46, 0xeb, 0x92, 0x40]. New
+        // value is this test's own live-computed commitment, read directly
+        // from a failing run (never hand-typed).
         assert_eq!(
             encoded.binding.candidate_order_commitment,
             [
-                0x70, 0x7d, 0xb3, 0x2c, 0x7c, 0x2d, 0x3e, 0x2b, 0xfe, 0x9f, 0x19, 0x65, 0xbc, 0xdb,
-                0x6d, 0xce,
+                0x57, 0x66, 0x98, 0x62, 0x89, 0xda, 0x70, 0x3d, 0x25, 0xaf, 0x03, 0x20, 0x52, 0x38,
+                0x0c, 0xce,
             ]
         );
     }
@@ -11488,11 +13457,27 @@ mod tests {
             &[object_v1],
         )
         .unwrap();
+        // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
+        // 13, identity finalisation): `FlatActionCommitmentHasherV1::new`
+        // (like its V2 sibling below) mixes `KERNEL_CARDDB_HASH` into the
+        // commitment's SHA-256 domain separator, so the wave's 21 new cards
+        // move every commitment in this test. Old v1 bytes: [0x38, 0x90,
+        // 0x05, 0xe8, 0xc1, 0x91, 0x00, 0x27, 0xc4, 0x5f, 0x04, 0x3f, 0x40,
+        // 0xe7, 0x7c, 0xd1].
+        //
+        // Re-pinned again for the Phase 1 card lane merge (2026-09): merging
+        // lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the
+        // Phase 1 branch moved KERNEL_CARDDB_HASH again (from
+        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c). Old (wave-1) v1
+        // bytes: [0xc3, 0xa8, 0x8d, 0xde, 0xbc, 0xbc, 0xc3, 0xf3, 0xcb, 0xac,
+        // 0x00, 0x74, 0xda, 0xcd, 0x75, 0x5f]. New value is this test's own
+        // live-computed commitment, read directly from a failing run (never
+        // hand-typed).
         assert_eq!(
             v1,
             [
-                0x38, 0x90, 0x05, 0xe8, 0xc1, 0x91, 0x00, 0x27, 0xc4, 0x5f, 0x04, 0x3f, 0x40, 0xe7,
-                0x7c, 0xd1,
+                0xf8, 0xca, 0x13, 0xd1, 0xd2, 0x16, 0xb6, 0x5a, 0xd7, 0x4d, 0x38, 0xf7, 0x46, 0x0b,
+                0x59, 0x21,
             ]
         );
 
@@ -11518,19 +13503,44 @@ mod tests {
                 .unwrap()
         };
         let common_v2 = commitment_v2(u32::from(u16::MAX));
+        // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
+        // 13, identity finalisation): `FlatActionCommitmentHasherV2::new`
+        // also mixes `KERNEL_CARDDB_HASH` into its SHA-256 domain separator
+        // (see the V1 re-pin note on `v1` above). Old bytes: [0x9f, 0xfa,
+        // 0xca, 0xd5, 0x74, 0x47, 0x33, 0xb5, 0x10, 0x7a, 0xea, 0x33, 0x20,
+        // 0x25, 0xe3, 0x13].
+        //
+        // Re-pinned again for the Phase 1 card lane merge (2026-09): merging
+        // lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the
+        // Phase 1 branch moved KERNEL_CARDDB_HASH again (from
+        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c). Old (wave-1)
+        // bytes: [0xf4, 0x6a, 0x56, 0x15, 0x52, 0x37, 0x5e, 0xcf, 0xaa, 0x0b,
+        // 0x8a, 0xbc, 0x76, 0xa4, 0xcd, 0x05]. New value is this test's own
+        // live-computed commitment, read directly from a failing run (never
+        // hand-typed).
         assert_eq!(
             common_v2,
             [
-                0x9f, 0xfa, 0xca, 0xd5, 0x74, 0x47, 0x33, 0xb5, 0x10, 0x7a, 0xea, 0x33, 0x20, 0x25,
-                0xe3, 0x13,
+                0xd3, 0x9d, 0x49, 0xbd, 0xdb, 0x9a, 0xef, 0x4a, 0xb9, 0xfb, 0x0f, 0xec, 0xd0, 0x9b,
+                0x5e, 0x74,
             ]
         );
         assert_ne!(common_v2, v1);
+        // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
+        // 13, identity finalisation): same root cause as `common_v2` above.
+        // Old bytes: [0xb8, 0x28, 0x15, 0xe9, 0x0f, 0xa5, 0xb2, 0xbc, 0x04,
+        // 0xcb, 0xd3, 0x4d, 0x55, 0xad, 0xc6, 0x06].
+        //
+        // Re-pinned again for the Phase 1 card lane merge (2026-09): same
+        // root cause as `common_v2` above. Old (wave-1) bytes: [0x1f, 0x17,
+        // 0x3b, 0x7e, 0x1d, 0xa5, 0x8e, 0x0e, 0xd3, 0xc6, 0xb9, 0xb3, 0x21,
+        // 0x78, 0xd1, 0xa0]. New value is this test's own live-computed
+        // commitment, read directly from a failing run (never hand-typed).
         assert_eq!(
             commitment_v2(65_536),
             [
-                0xb8, 0x28, 0x15, 0xe9, 0x0f, 0xa5, 0xb2, 0xbc, 0x04, 0xcb, 0xd3, 0x4d, 0x55, 0xad,
-                0xc6, 0x06,
+                0x4f, 0x39, 0xd7, 0xa1, 0xaf, 0xbb, 0x29, 0x35, 0x2b, 0x44, 0x84, 0x9c, 0xf4, 0x20,
+                0xb1, 0xa8,
             ]
         );
     }
@@ -12149,6 +14159,41 @@ mod tests {
     fn environment_hashes_are_diagnostic_dispatched_with_exact_goldens() {
         // Pre-edit captured legacy goldens (episode 1, env seed 99, max 8),
         // recorded from the untouched parent before any production edit.
+        //
+        // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
+        // 13, identity finalisation): the wave's 21 new cards moved
+        // KERNEL_CARDDB_HASH, which `RlEpisodeSessionV1::reset`/
+        // `full_session_on_environment_v2`'s real Burn/Rally-pool state
+        // (and everything the surface/binding hasher derives from it)
+        // embeds. All four constants below are reused verbatim by
+        // `v2_reset_preexisting_entry_points_remain_legacy_randomness` and
+        // `v2_reset_reuses_pre_constructor_pins_and_is_root_sensitive`
+        // (updated identically, same underlying computation); every new
+        // value is this test's own live-computed hash, read directly from a
+        // failing run (never hand-typed):
+        //   final-pool-v8 legacy policy environment: 0xfca3_b546_61ec_28c6 -> 0x6908_0ca5_c012_7e2b
+        //   final-pool-v8 legacy full-session core:  0x9a93_e402_6f8e_ad86 -> 0x3c6d_b17f_22d6_0e43
+        //   final-pool-v9 environment-v2 policy:      0x9ed7_895c_1f47_82ca -> 0xda58_b63d_08f6_6b99
+        //   final-pool-v9 environment-v2 core:        0xf69d_f52f_fdd0_564e -> 0xa1c5_ca41_1ee8_1a2d
+        //
+        // Re-pinned again for the Phase 1 card lane merge (2026-09):
+        // merging lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into
+        // the Phase 1 branch moved KERNEL_CARDDB_HASH again (from
+        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c). Per the cause key
+        // above this table, only the two cause-A (policy) constants embed
+        // KERNEL_CARDDB_HASH and move again; the two cause-B (core)
+        // constants are `GameState::monarch`-shaped (wave 1 Task 11,
+        // already resolved before this merge) and do not depend on card
+        // content at all, so they are confirmed UNCHANGED by this merge (a
+        // live run with the old core literals still in place passed
+        // clean -- not assumed, verified). New policy values are each
+        // test's own live-computed hash, read directly from a failing run
+        // (never hand-typed); the two sibling tests reuse all four values
+        // verbatim, updated/confirmed identically:
+        //   final-pool-v8 legacy policy environment: 0x6908_0ca5_c012_7e2b -> 0x2ad8_a53b_ecdc_221f (cause A)
+        //   final-pool-v8 legacy full-session core:  0x3c6d_b17f_22d6_0e43 -> unchanged (cause B, confirmed)
+        //   final-pool-v9 environment-v2 policy:      0xda58_b63d_08f6_6b99 -> 0x3901_7f97_042a_d80a (cause A)
+        //   final-pool-v9 environment-v2 core:        0xa1c5_ca41_1ee8_1a2d -> unchanged (cause B, confirmed)
         let legacy_full = RlEpisodeSessionV1::reset(1, 99, 8);
         let legacy_fast = FastActorSessionV1::reset(1, 99, 8);
         let v2_full = full_session_on_environment_v2(99);
@@ -12156,19 +14201,20 @@ mod tests {
         let v2_policy = v2_full.privileged_environment_hash();
         let v2_full_core = v2_full.privileged_core_environment_hash();
         let v2_fast_core = v2_fast.privileged_core_environment_hash();
+        eprintln!("current environment-v2 policy/core goldens: {v2_policy:#018x} {v2_full_core:#018x} {v2_fast_core:#018x}");
         assert_eq!(
             legacy_full.privileged_environment_hash(),
-            0xfca3_b546_61ec_28c6,
+            0x2ad8_a53b_ecdc_221f,
             "final-pool-v8 legacy policy environment golden"
         );
         assert_eq!(
             legacy_full.privileged_core_environment_hash(),
-            0x9a93_e402_6f8e_ad86,
+            0x3c6d_b17f_22d6_0e43,
             "final-pool-v8 legacy full-session core golden"
         );
         assert_eq!(
             legacy_fast.privileged_core_environment_hash(),
-            0x9a93_e402_6f8e_ad86,
+            0x3c6d_b17f_22d6_0e43,
             "captured legacy fast-session core golden equals the full one"
         );
 
@@ -12176,20 +14222,22 @@ mod tests {
         // at this first decision (P1's turn 1 main phase) P0's finished
         // combat no longer leaves attackers_declared set (the only state
         // difference), which both the policy and the core hash cover.
+        // Current merged-rule values observed in CI run 36812673206
+        // (Linux job 110211057207); full and fast core paths agree exactly.
         assert_eq!(
-            v2_policy, 0x39df_062b_9cf3_71ef,
+            v2_policy, 0x5c21_da67_5bad_fa2a,
             "final-pool-v9 environment-v2 policy environment golden"
         );
         assert_eq!(
-            v2_full_core, 0x5719_0d4d_4093_f99f,
+            v2_full_core, 0x8d0b_adfb_fe88_c092,
             "final-pool-v9 environment-v2 core environment golden"
         );
         assert_eq!(
             v2_fast_core, v2_full_core,
             "full and fast environment-v2 core hashes are equal"
         );
-        assert_ne!(v2_policy, 0xfca3_b546_61ec_28c6);
-        assert_ne!(v2_full_core, 0x9a93_e402_6f8e_ad86);
+        assert_ne!(v2_policy, 0x6908_0ca5_c012_7e2b);
+        assert_ne!(v2_full_core, 0x3c6d_b17f_22d6_0e43);
     }
 
     #[test]
@@ -12336,6 +14384,194 @@ mod tests {
             .collect()
     }
 
+    fn burn_and_rally_explicit_mainboards() -> [Vec<u16>; 2] {
+        [
+            runtime_deck_by_id("Burn")
+                .expect("Burn is catalog-registered")
+                .card_ids
+                .to_vec(),
+            runtime_deck_by_id("Rally")
+                .expect("Rally is catalog-registered")
+                .card_ids
+                .to_vec(),
+        ]
+    }
+
+    #[test]
+    fn explicit_deck_hash_uses_the_sorted_convention_and_differs_from_the_catalog_hash() {
+        let mainboards = burn_and_rally_explicit_mainboards();
+        let burn_catalog_hash = runtime_deck_by_id("Burn").unwrap().runtime_deck_hash;
+        let rally_catalog_hash = runtime_deck_by_id("Rally").unwrap().runtime_deck_hash;
+        let burn_explicit_hash = explicit_deck_hash_v1(&mainboards[0]);
+        let rally_explicit_hash = explicit_deck_hash_v1(&mainboards[1]);
+        // Measured empirically (cargo test ... -- --nocapture) once
+        // explicit_deck_hash_v1 existed; pinned here per the Step 5
+        // calibration discipline (measure first, hardcode only the
+        // measured value).
+        assert_eq!(burn_catalog_hash, 0x5fdb7b92986b6fc1);
+        assert_eq!(rally_catalog_hash, 0xc9f01c2544412bf);
+        assert_eq!(burn_explicit_hash, 0x9fa377dc966c3b11);
+        assert_eq!(rally_explicit_hash, 0xbb9ab5160fd8ba3f);
+        assert_ne!(
+            burn_explicit_hash, burn_catalog_hash,
+            "sorted-explicit and catalog-materialized hashes must not silently coincide"
+        );
+        assert_ne!(rally_explicit_hash, rally_catalog_hash);
+        // Order-insensitivity: a permuted view of the same multiset hashes the same.
+        let mut reversed = mainboards[0].clone();
+        reversed.reverse();
+        assert_eq!(explicit_deck_hash_v1(&reversed), burn_explicit_hash);
+    }
+
+    #[test]
+    fn resolve_explicit_decks_rejects_the_wrong_mainboard_size() {
+        let mut mainboards = burn_and_rally_explicit_mainboards();
+        mainboards[1].pop();
+        let error = resolve_explicit_decks(&mainboards).expect_err("59 cards must be rejected");
+        assert_eq!(error.code, RlSessionErrorCode::UnsupportedDeck);
+        assert!(
+            error.message.contains("seat 1") && error.message.contains("59"),
+            "message identifies the failing seat and actual count: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn resolve_explicit_decks_rejects_an_unsupported_card_id() {
+        let mut mainboards = burn_and_rally_explicit_mainboards();
+        mainboards[0][0] = u16::MAX;
+        let error = resolve_explicit_decks(&mainboards)
+            .expect_err("out-of-range card id must fail preflight");
+        assert_eq!(error.code, RlSessionErrorCode::UnsupportedDeck);
+        assert!(error.message.contains("seat 0"), "{}", error.message);
+    }
+
+    #[test]
+    fn explicit_deck_reset_full_episode_completes_with_paired_seed_and_both_starting_players() {
+        let mainboards = burn_and_rally_explicit_mainboards();
+        let deck_ids = ["ExplicitBurn".to_owned(), "ExplicitRally".to_owned()];
+        let root = 0x51de_51de_51de_51de;
+
+        let p0_starts =
+            RlEpisodeSessionV1::reset_with_explicit_decks_and_limits_with_starting_player_v1(
+                1,
+                root,
+                2000,
+                200_000,
+                deck_ids.clone(),
+                mainboards.clone(),
+                PlayerId::P0,
+            )
+            .expect("P0-starting explicit-deck reset succeeds");
+        assert_eq!(p0_starts.state.active_player, PlayerId::P0);
+        let p1_starts =
+            RlEpisodeSessionV1::reset_with_explicit_decks_and_limits_with_starting_player_v1(
+                1,
+                root,
+                2000,
+                200_000,
+                deck_ids.clone(),
+                mainboards.clone(),
+                PlayerId::P1,
+            )
+            .expect("P1-starting explicit-deck reset succeeds");
+        assert_eq!(p1_starts.state.active_player, PlayerId::P1);
+        let plain = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits(
+            1, root, 2000, 200_000, deck_ids, mainboards,
+        )
+        .expect("plain explicit-deck reset succeeds");
+        assert_eq!(
+            plain.state.active_player, PlayerId::P0,
+            "the plain constructor defaults to P0, matching build_deck_pair_state_environment_v2's own default"
+        );
+
+        for mut session in [p0_starts, p1_starts] {
+            let mut policy_rng = crate::state::SplitMix64::seed(0x9a9a_9a9a_9a9a_9a9a);
+            let mut steps = 0u32;
+            loop {
+                match session.current_response() {
+                    RlSessionResponseV1::Terminal(terminal) => {
+                        assert!(
+                            matches!(
+                                terminal.terminal_outcome,
+                                TerminalOutcomeV1::P0Win
+                                    | TerminalOutcomeV1::P1Win
+                                    | TerminalOutcomeV1::Draw
+                            ),
+                            "episode reaches a well-formed terminal, not a halt"
+                        );
+                        break;
+                    }
+                    RlSessionResponseV1::Decision(decision) => {
+                        assert!(
+                            steps < 200_000,
+                            "episode must terminate inside the policy-step cap"
+                        );
+                        steps += 1;
+                        let selected_index =
+                            (policy_rng.next_u64() as usize) % decision.legal_actions.len();
+                        let selected_action_id =
+                            decision.legal_actions[selected_index].stable_id.clone();
+                        session
+                            .step(
+                                decision.episode_id,
+                                decision.step,
+                                selected_index as u32,
+                                &selected_action_id,
+                            )
+                            .expect("random-policy step succeeds");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_deck_reset_shares_the_identical_shuffle_for_a_fixed_pair_environment_seed() {
+        let mainboards = burn_and_rally_explicit_mainboards();
+        let deck_ids = ["ExplicitBurn".to_owned(), "ExplicitRally".to_owned()];
+        let a = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits(
+            1,
+            0x1234_5678_9abc_def0,
+            8,
+            1024,
+            deck_ids.clone(),
+            mainboards.clone(),
+        )
+        .unwrap();
+        let b = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits(
+            1,
+            0x1234_5678_9abc_def0,
+            8,
+            1024,
+            deck_ids.clone(),
+            mainboards.clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            definition_order(&a.state, PlayerId::P0),
+            definition_order(&b.state, PlayerId::P0)
+        );
+        assert_eq!(
+            definition_order(&a.state, PlayerId::P1),
+            definition_order(&b.state, PlayerId::P1)
+        );
+        let c = RlEpisodeSessionV1::reset_with_explicit_decks_and_limits(
+            1,
+            0x1234_5678_9abc_def1,
+            8,
+            1024,
+            deck_ids,
+            mainboards,
+        )
+        .unwrap();
+        assert_ne!(
+            definition_order(&a.state, PlayerId::P0),
+            definition_order(&c.state, PlayerId::P0),
+            "a different pair_environment_seed must not coincidentally reproduce the same shuffle"
+        );
+    }
+
     #[test]
     fn v2_reset_preexisting_entry_points_remain_legacy_randomness() {
         let canonical = RlEpisodeSessionV1::reset_with_decks_and_limits(
@@ -12411,18 +14647,22 @@ mod tests {
         assert!(current.flat_action_cache_v2.is_some());
         assert!(current.flat_action_cache_error_v2.is_none());
 
-        // Captured legacy pins are preserved bit-exact.
+        // Captured legacy pins are preserved bit-exact. Re-pinned again for
+        // the Phase 1 card lane merge (2026-09), same root cause and same
+        // four shared values as
+        // `environment_hashes_are_diagnostic_dispatched_with_exact_goldens`'s
+        // own re-pin comment.
         assert_eq!(
             canonical.privileged_environment_hash(),
-            0xfca3_b546_61ec_28c6
+            0x2ad8_a53b_ecdc_221f
         );
         assert_eq!(
             canonical.privileged_core_environment_hash(),
-            0x9a93_e402_6f8e_ad86
+            0x3c6d_b17f_22d6_0e43
         );
         assert_eq!(
             fast_canonical.privileged_core_environment_hash(),
-            0x9a93_e402_6f8e_ad86
+            0x3c6d_b17f_22d6_0e43
         );
     }
 
@@ -12600,17 +14840,17 @@ mod tests {
         // for the end-of-combat clear (CR 511.3 rules fix).
         assert_eq!(
             full.privileged_environment_hash(),
-            0x39df_062b_9cf3_71ef,
+            0x5c21_da67_5bad_fa2a,
             "pre-constructor policy pin is reused, not minted"
         );
         assert_eq!(
             full.privileged_core_environment_hash(),
-            0x5719_0d4d_4093_f99f,
+            0x8d0b_adfb_fe88_c092,
             "pre-constructor core pin is reused, not minted"
         );
         assert_eq!(
             fast.privileged_core_environment_hash(),
-            0x5719_0d4d_4093_f99f,
+            0x8d0b_adfb_fe88_c092,
             "full and fast v2 core hashes are equal and equal the pin"
         );
 
@@ -12648,11 +14888,11 @@ mod tests {
         );
         assert_ne!(
             full_100.privileged_environment_hash(),
-            0x39df_062b_9cf3_71ef
+            0x5c21_da67_5bad_fa2a
         );
         assert_ne!(
             full_100.privileged_core_environment_hash(),
-            0x5719_0d4d_4093_f99f
+            0x8d0b_adfb_fe88_c092
         );
 
         // Root u64::MAX succeeds and stays exact full-width in both.
@@ -12928,8 +15168,22 @@ mod tests {
     ];
     /// Recaptured at the exact final-card head after its CardDB identity
     /// changed. The V5 schema, protocol, and response layout stay unchanged.
+    /// Re-captured again for the pauper-meta-cards-v1 card lane's wave 1
+    /// (Task 13, identity finalisation): the wave's 21 new cards moved
+    /// KERNEL_CARDDB_HASH, embedded in the real Burn-deck decision transcript
+    /// above. Old value:
+    /// "a583c2309a25d79371ffa729c8eedcfb830b2887c794ee283bbb6b0a2e2541e2".
+    ///
+    /// Re-captured again for the Phase 1 card lane merge (2026-09): merging
+    /// lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the Phase 1
+    /// branch moved KERNEL_CARDDB_HASH again (from 0xde59_c501_e943_f3fd to
+    /// 0x064a_7c98_9255_ab3c), embedded in the same transcript. Old
+    /// (wave-1) value:
+    /// "d0494851dbd7d944dab4cbca34e443ceedaf6a7269a0125cd1a7533c7b38f110". New
+    /// value is this test's own live-computed digest, read directly from a
+    /// failing run (never hand-typed).
     const V5_TRANSCRIPT_SHA256: &str =
-        "a583c2309a25d79371ffa729c8eedcfb830b2887c794ee283bbb6b0a2e2541e2";
+        "62208a3deec93510fe8595f23625d6cc4e604965d064350a2c1350955ac5266a";
 
     fn v6_reset_line(request_id: &str, root: u64, max_physical_decisions: u64) -> String {
         format!(

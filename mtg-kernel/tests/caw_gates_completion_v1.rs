@@ -576,6 +576,21 @@ fn prismatic_strands_choice_is_rl_stable_and_prevents_all_chosen_color_damage() 
             )
     ));
 
+    // The actual resolved spell, not just a synthetic installed replacement,
+    // must expose its public shield to either player's observation.
+    for viewer in [PlayerId::P0, PlayerId::P1] {
+        let observation = observe_v2(&state, &HarnessSurfaceV2::new(), viewer, 0).unwrap();
+        let shields: Vec<_> = observation
+            .projection
+            .continuous_effects
+            .iter()
+            .filter(|effect| effect.prevent_damage_from_color_mask != 0)
+            .collect();
+        assert_eq!(shields.len(), 1);
+        assert_eq!(shields[0].prevent_damage_from_color_mask, 8);
+        assert!(shields[0].global && shields[0].source.is_none());
+    }
+
     let red = put_object(
         &mut state,
         PlayerId::P1,

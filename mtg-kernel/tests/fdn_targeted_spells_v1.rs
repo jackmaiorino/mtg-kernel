@@ -181,12 +181,12 @@ fn appended_spell_definitions_and_partial_planeswalker_admission_are_explicit() 
     .enumerate()
     {
         let id = card_id_by_name(name).unwrap();
-        assert_eq!(usize::from(id), 181 + offset);
+        assert_eq!(usize::from(id), 211 + offset);
         assert_eq!(CARD_DEFS[usize::from(id)].capability, CardCapability::Full);
         preflight_fully_supported_deck(&[id]).unwrap();
     }
     let id = card_id_by_name(PW).unwrap();
-    assert_eq!(id, 185);
+    assert_eq!(id, 215);
     assert_eq!(
         CARD_DEFS[usize::from(id)].capability,
         CardCapability::Partial
@@ -194,13 +194,13 @@ fn appended_spell_definitions_and_partial_planeswalker_admission_are_explicit() 
     assert!(preflight_fully_supported_deck(&[id]).is_err());
     assert_eq!(
         TargetSpec::ControlledCreatureThenOpponentCreature.stable_id(),
-        37
+        38
     );
     assert_eq!(
         TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker.stable_id(),
-        38
+        39
     );
-    assert_eq!(TargetSpec::AttackingOrBlockingCreature.stable_id(), 39);
+    assert_eq!(TargetSpec::AttackingOrBlockingCreature.stable_id(), 40);
 }
 
 #[test]

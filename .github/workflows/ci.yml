@@ -140,12 +140,27 @@ jobs:
             cargo-registry-tests-${{ matrix.os }}-
 
       - name: Run Rust release tests
-        run: cargo test --release --locked --workspace --all-targets
+        run: cargo test --release --locked --workspace --all-targets --no-fail-fast
+
+      # Reuse the release test binary from the full suite. Calling Cargo with
+      # --lib changes feature unification and needlessly rebuilds the library.
+      # The existing 40us check still runs alone in its own test process.
+      - name: Check snapshot clone budget on an idle test process
+        shell: pwsh
+        run: |
+          $testBinaries = @(Get-ChildItem -LiteralPath target/release/deps -File | Where-Object { $_.Name -match '^mtg_kernel-[0-9a-f]+(?:\.exe)?$' })
+          if ($testBinaries.Count -ne 1) { throw "Expected one release library test binary, found $($testBinaries.Count)" }
+          $testBinary = $testBinaries[0].FullName
+          & $testBinary snapshot::tests::snapshot_clone_cost_is_bounded --exact --ignored --test-threads=1
+          exit $LASTEXITCODE
 
       - name: Validate native Store production feature boundary
+        shell: pwsh
         run: |
           cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --lib native_store_production_capture_v2::
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --test native_cli_platform_stub_v2
+          exit $LASTEXITCODE
 
       - name: Validate FDN Limited gameplay and catalog separation
         run: |

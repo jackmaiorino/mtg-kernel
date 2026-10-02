@@ -10,6 +10,9 @@ use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
+pub(crate) mod public_inputs_v1;
+pub(crate) mod stack_inputs_v1;
+
 /// Selects which `tanh` implementation the forward pass's activation
 /// primitive (`tanh_in_place_v1`, below) uses. `LibmTanh` is today's
 /// unchanged production behavior (`f32::tanh()`, which resolves to the
@@ -627,11 +630,129 @@ impl NativePolicyValueNetV1 {
     fn forward_with_action_ingress_capture_v1(
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,
-        mut action_ref_pooled_capture: Option<&mut Vec<f32>>,
+        action_ref_pooled_capture: Option<&mut Vec<f32>>,
         activation_mode: ForwardActivationModeV1,
     ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
         let counts = encoded.validate(self.config)?;
+        self.forward_validated_rows_v1(encoded, counts, action_ref_pooled_capture, activation_mode)
+    }
 
+    /// Exact input contract for an explicitly recorded Net8 feature transfer.
+    /// This does not change the model's original parameter-layout identity.
+    pub(crate) fn feature_transfer_config_v3(&self) -> NativePolicyValueModelConfigV1 {
+        use crate::native_flat_tensorizer_v3::*;
+        NativePolicyValueModelConfigV1 {
+            feature_schema_version: FEATURE_SCHEMA_VERSION_V3,
+            feature_registry_version: FEATURE_REGISTRY_VERSION_V3,
+            feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3,
+            feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3,
+            ..self.config
+        }
+    }
+
+    /// Explicit evaluation of Net8 parameters under V3 input semantics. The
+    /// ordinary loader and forward retain their old contracts. Successor
+    /// training checkpoints must record their own feature-transfer identity.
+    pub(crate) fn forward_feature_transfer_v3(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        let counts = encoded.validate(self.feature_transfer_config_v3())?;
+        self.forward_validated_rows_v1(encoded, counts, None, ForwardActivationModeV1::LibmTanh)
+    }
+
+    /// V4 sibling of `feature_transfer_config_v3`, for the fresh-lineage
+    /// (V7 observation-schema) successor contract. Additive: `feature_transfer_config_v3`
+    /// is untouched, and this never compares against its constants.
+    pub(crate) fn feature_transfer_config_v4(&self) -> NativePolicyValueModelConfigV1 {
+        use crate::native_flat_tensorizer_v4::*;
+        NativePolicyValueModelConfigV1 {
+            feature_schema_version: FEATURE_SCHEMA_VERSION_V4,
+            feature_registry_version: FEATURE_REGISTRY_VERSION_V4,
+            feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4,
+            feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4,
+            ..self.config
+        }
+    }
+
+    /// V4 sibling of `forward_feature_transfer_v3`. The ordinary loader and
+    /// forward, and the V3 feature-transfer path, retain their old contracts.
+    pub(crate) fn forward_feature_transfer_v4(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        let counts = encoded.validate(self.feature_transfer_config_v4())?;
+        self.forward_validated_rows_v1(encoded, counts, None, ForwardActivationModeV1::LibmTanh)
+    }
+
+    /// Explicit V4 search-only forward; existing V4 inference remains LibmTanh.
+    pub(crate) fn forward_search_feature_transfer_v4(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        #[cfg(target_arch = "x86_64")]
+        deterministic_math_v1::assert_pinned_mxcsr_state_v1();
+        let counts = encoded.validate(self.feature_transfer_config_v4())?;
+        self.forward_validated_rows_v1(
+            encoded,
+            counts,
+            None,
+            ForwardActivationModeV1::KernelDeterministicTanh,
+        )
+    }
+
+    fn forward_validated_rows_v1(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+        counts: ValidatedCountsV1,
+        action_ref_pooled_capture: Option<&mut Vec<f32>>,
+        activation_mode: ForwardActivationModeV1,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        self.forward_public_validated_rows_v1(
+            encoded,
+            counts,
+            action_ref_pooled_capture,
+            activation_mode,
+            None,
+        )
+    }
+
+    fn forward_public_validated_rows_v1(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+        counts: ValidatedCountsV1,
+        action_ref_pooled_capture: Option<&mut Vec<f32>>,
+        activation_mode: ForwardActivationModeV1,
+        public: Option<(
+            &public_inputs_v1::PublicInputWeightsV1,
+            &crate::public_cost_features_v1::PublicFeatureRowsV1,
+        )>,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        self.forward_stack_and_public_validated_rows_v1(
+            encoded,
+            counts,
+            action_ref_pooled_capture,
+            activation_mode,
+            public,
+            None,
+        )
+    }
+
+    fn forward_stack_and_public_validated_rows_v1(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+        counts: ValidatedCountsV1,
+        mut action_ref_pooled_capture: Option<&mut Vec<f32>>,
+        activation_mode: ForwardActivationModeV1,
+        public: Option<(
+            &public_inputs_v1::PublicInputWeightsV1,
+            &crate::public_cost_features_v1::PublicFeatureRowsV1,
+        )>,
+        stack: Option<(
+            &stack_inputs_v1::StackInputWeightsV1,
+            &crate::public_stack_features_v1::StackFeatureRowsV1,
+        )>,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
         let mut object_input = Vec::with_capacity(counts.object_count * OBJECT_ENCODER_INPUT_V1);
         for object in 0..counts.object_count {
             let features_begin = object * OBJECT_FEATURE_DIM_V1;
@@ -644,11 +765,18 @@ impl NativePolicyValueNetV1 {
                 &self.card_embedding[embedding_begin..embedding_begin + CARD_EMBEDDING_DIM_V1],
             );
         }
-        let object_base_hidden = apply_two_layer_tanh_rows_v1(
+        let object_base_hidden = public_inputs_v1::apply_optional_public_projection_v1(
             &self.object_encoder,
             &object_input,
             counts.object_count,
             activation_mode,
+            public.map(|(weights, rows)| {
+                (
+                    weights.object.as_slice(),
+                    rows.objects.iter().flatten().copied().collect::<Vec<_>>(),
+                    crate::public_cost_features_v1::OBJECT_WIDTH,
+                )
+            }),
         );
 
         let mut edge_pooled = vec![0.0; counts.object_count * HIDDEN_DIM_V1];
@@ -683,6 +811,9 @@ impl NativePolicyValueNetV1 {
             add_indexed_rows_v1(&mut edge_pooled, &edge_hidden, encoded.edge_target_indices);
         }
 
+        if let Some((weights, rows)) = stack {
+            weights.add_messages(rows, &object_base_hidden, &mut edge_pooled, activation_mode);
+        }
         let mut node_update_input = Vec::with_capacity(counts.object_count * NODE_UPDATE_INPUT_V1);
         for object in 0..counts.object_count {
             let begin = object * HIDDEN_DIM_V1;
@@ -701,8 +832,19 @@ impl NativePolicyValueNetV1 {
         let mut state_input = Vec::with_capacity(STATE_ENCODER_INPUT_V1);
         state_input.extend_from_slice(encoded.state);
         state_input.extend_from_slice(&pooled_objects);
-        let state_hidden =
-            apply_two_layer_tanh_rows_v1(&self.state_encoder, &state_input, 1, activation_mode);
+        let state_hidden = public_inputs_v1::apply_optional_public_projection_v1(
+            &self.state_encoder,
+            &state_input,
+            1,
+            activation_mode,
+            public.map(|(weights, rows)| {
+                (
+                    weights.state.as_slice(),
+                    rows.state.clone(),
+                    crate::public_cost_features_v1::STATE_WIDTH,
+                )
+            }),
+        );
 
         let mut action_ref_pooled = vec![0.0; counts.action_count * HIDDEN_DIM_V1];
         if counts.action_ref_count > 0 {
