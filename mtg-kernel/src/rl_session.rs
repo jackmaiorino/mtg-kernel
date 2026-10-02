@@ -1095,6 +1095,10 @@ where
         ActionSemanticV1::ChooseLegendPermanent { .. } => {
             return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
         }
+        #[cfg(feature = "limited-fdn-fixtures")]
+        ActionSemanticV1::ChooseTriggerOrderNext { .. } => {
+            return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+        }
     }
     core.ref_len = u16::try_from(ref_count)
         .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
