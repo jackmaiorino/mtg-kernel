@@ -37,6 +37,11 @@ Observed checks:
   and both XML reports were verified. Retained source:
   `E:/mtg-fdn-fixtures/fdn-mage-witness-hosted-001`, with an independent verified
   mirror at `C:/Users/Jack/fdn-mage-witness-hosted-001-sealed`.
+- Mage run37049882555 at5cc4decd8ffe passed all146 cases in16 classes, including
+  the four new Foundations allocation positions and24 existing combat cases.
+  All source/output hashes and XML counts were independently verified. Sealed
+  evidence: `E:/mtg-fdn-fixtures/fdn-fixture-final-reference-002`; independent
+  mirror: `C:/Users/Jack/fdn-fixture-final-reference-002-sealed`.
 - Pinned Rust 1.94.1 formatting and `git diff --check`: passed.
 - `py -3.11 -m unittest python.tests.test_limited_decks_v1 python.tests.test_limited_session_v1`:
   22 passed in 2.166 seconds. These include schema-4 protocol identity and
