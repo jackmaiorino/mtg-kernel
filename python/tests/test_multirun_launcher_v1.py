@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -590,9 +591,16 @@ class VerdictTests(unittest.TestCase):
                            for arm in ("control", "treatment") for i in range(2)]
             (base / "workload.json").write_text(json.dumps(raw))
             workload = launcher.load_workload(base / "workload.json")
-            choice = launcher.qualify(workload, base / "q", [alloc("1@0"), alloc("1@0+1@1")], 3, inventory(),
-                                      {"jack": launcher.LocalExecutor(workload)}, per_process_mib=0.0,
-                                      stop_on_saturation=False)
+            # This test exercises sentinel coverage for a selected two-device
+            # allocation. Short fake-process startup timings on busy Windows
+            # runners can legitimately rank serial first. Fix only the ranking
+            # input; still execute and compare every prefix and full-length run.
+            with patch.object(launcher, "project_seconds",
+                              side_effect=lambda _stats, slots, _runs, _updates, overhead:
+                              overhead + 100.0 / launcher.concurrency(slots)):
+                choice = launcher.qualify(workload, base / "q", [alloc("1@0"), alloc("1@0+1@1")], 3, inventory(),
+                                          {"jack": launcher.LocalExecutor(workload)}, per_process_mib=0.0,
+                                          stop_on_saturation=False)
             sentinel = choice["sentinel"]
             self.assertTrue(sentinel["passed"])
             self.assertEqual(sentinel["allocation"], "1@jack:0+1@jack:1")

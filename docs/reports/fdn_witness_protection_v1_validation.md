@@ -50,3 +50,23 @@ will be sealed with the completed batch report before pruning.
   claimed from this attempt.
 - Three additional focused cases cover changed-host versus same-host Equipment
   timestamps and lifelink keyword counters on either side of ability removal.
+- CI37037404413 at e51c66bd rejected a test that counted exile through a
+  nonexistent player field. Fixed the assertion to inspect the object arena
+  in a6b639d0. Failed lint output remains retained.
+- CI37038033614 at a6b639d0: the focused Witness Protection step completed
+  successfully on Ubuntu and Windows, and formatting/lint passed. Full Rust
+  and Python jobs are still active; final logs and regression results remain
+  pending.
+
+## CI prerequisite repair
+
+Armor CI37031403320 exposed a Windows-only timing assumption in
+`VerdictTests.test_m1_sentinel_covers_every_placement_and_arm_at_full_length`:
+the fake trainer can legitimately rank serial faster under process-startup
+contention. This test checks sentinel coverage for a selected two-device
+allocation, not host speed. Give that test deterministic projected ranking
+inputs while still running every prefix/full-length process, output comparison,
+and rejection mutation. Production ranking and the separate fastest-allocation
+test stay unchanged. The repaired focused test passed on Jack's PC in 11.616s.
+Hosted verification of the repair is pending; avoid cancelling the active
+Witness workflow for a report-only update.
