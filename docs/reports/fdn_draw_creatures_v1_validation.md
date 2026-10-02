@@ -6,6 +6,17 @@ Run: https://github.com/jackmaiorino/mtg-kernel/actions/runs/36973189527. Earlie
 verification sequence. The subsequent status/report update changes no tested
 code, workflow, fixture or catalog bytes.
 
+The later Windows recheck at01c7334b failed
+`snapshot::tests::snapshot_clone_cost_is_bounded`:67.822microseconds per call
+against40microseconds, with1743 other library tests passing and49 existing
+ignores. Job110986481520's failed log remains the evidence for that attempt.
+The CI repair preserves the test source,80objects,200warmups,2000iterations
+and40microsecond limit. Its runner executes all other library tests normally,
+then the exact timing test in a fresh process with one thread and the same
+compiled executable. Rust steps use Bash to propagate each native failure.
+The existing Ubuntu job remains live; publish after it finishes. Corrected
+end-to-end CI remains required.
+
 Strix Lookout, Mischievous Mystic and Faerie Token are implemented at
 `99171529`, with focused test corrections at `95b4a94a` and `84675f3b`.
 Matching committed HaleysPC source is
