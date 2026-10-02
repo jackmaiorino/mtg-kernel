@@ -70,14 +70,15 @@ fn keep_both_preserves_opening_hands_and_first_turn_draw_skip() {
             state.players.clone().map(|player| player.library),
             libraries
         );
-        // The first priority window is upkeep. Passing through it skips the
-        // starting player's first draw, just as in the historical reset.
-        engine::step(&mut state, Action::Pass).unwrap();
-        engine::advance_until_decision(&mut state);
-        engine::step(&mut state, Action::Pass).unwrap();
-        engine::advance_until_decision(&mut state);
-        assert_eq!(state.step, Step::Main1);
-        assert_eq!(state.players[starting.index()].hand.len(), 7);
+        // Skipping the first draw preserves the draw-step priority window.
+        for next in [Step::Draw, Step::Main1] {
+            engine::step(&mut state, Action::Pass).unwrap();
+            engine::advance_until_decision(&mut state);
+            engine::step(&mut state, Action::Pass).unwrap();
+            engine::advance_until_decision(&mut state);
+            assert_eq!(state.step, next);
+            assert_eq!(state.players[starting.index()].hand.len(), 7);
+        }
     }
 }
 

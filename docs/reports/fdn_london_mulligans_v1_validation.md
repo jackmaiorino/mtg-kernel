@@ -8,6 +8,15 @@ The first hosted attempt, CI37041270977 at87db2401, found an unused import in
 the new module. Removed it; the original lint log is retained. This is a lint
 failure, not a verified rules result. Await the new source's CI results.
 
+The same attempt's Ubuntu rules test executed11 cases:10 passed,1 failed.
+The unchanged original UG/WG subprocess case passed: seed123 ran twice with
+identical transcripts/natural terminals, swapped seed701 reached a natural
+terminal, and each game performed four actual bottom-card selections. The
+remaining failure expected `Main1` immediately after upkeep. The skipped
+first draw still has a draw-step priority window. Correct the test to pass
+both windows and assert the hand stays seven at each. The library/session
+restore test did not execute because the integration command failed first.
+
 Observed checks:
 
 - Pinned Rust 1.94.1 formatting and `git diff --check`: passed.
