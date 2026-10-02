@@ -80,11 +80,12 @@ deterministic binary replay. Batch C still needs its card interaction tests.
 The [first combat-card slice](fdn_combat_cards_v1.md) adds Beast-Kin Ranger
 and Overrun, plus Dwynen's Elf bonus and attack trigger. The
 [legend-rule slice](fdn_legend_rule_v1.md) completes Dwynen's required choice.
-Bite Down, Felling
-Blow, Fleeting Flight and Joust Through remain unimplemented.
+The [targeted-spell slice](fdn_targeted_spells_v1.md) implements Bite Down,
+Felling Blow, Fleeting Flight and Joust Through, with casting, target loss,
+partial legality, combat prevention, loyalty damage and restore tests.
 Wizards removed damage assignment order for FDN; arbitrary multi-blocker
-allocation must be a real choice. Bite Down also needs planeswalker targeting
-before its complete rules behavior can be declared supported. D and E build
+allocation must be a real choice. Bite Down's planeswalker recipient is tested
+with a partial reference definition that deck admission refuses. D and E build
 on event-driven counters and predicates; F shares E's ward implementation.
 G should land as separate mechanic slices, each with interaction tests and
 pending-choice restoration checks.
