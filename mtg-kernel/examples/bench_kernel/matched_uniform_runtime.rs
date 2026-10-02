@@ -1265,6 +1265,8 @@ fn semantic_category(semantic: &ActionSemanticV1) -> &'static str {
         ActionSemanticV1::Ambiguous { .. } => "ambiguous",
         ActionSemanticV1::ChooseCombatDamageRange { .. } => "choose_combat_damage_range",
         ActionSemanticV1::ChooseLegendPermanent { .. } => "choose_legend_permanent",
+        #[cfg(feature = "limited-fdn-fixtures")]
+        ActionSemanticV1::ChooseTriggerOrderNext { .. } => "choose_trigger_order_next",
     }
 }
 
