@@ -2501,6 +2501,8 @@ enum Special {
     /// Destroy target nonlegendary creature. Cast Down is the first
     /// consumer of the append-only target filter and shared destroy leaf.
     DestroyNonlegendaryCreature,
+    /// Destroy any target creature, including legendary creatures.
+    DestroyCreature,
     /// Return target creature or land card from a graveyard to its owner's
     /// hand, then the controller gains a fixed amount of life. Pulse of
     /// Murasa is the first consumer.
@@ -2752,6 +2754,7 @@ impl Special {
             Special::DeemInferior => "deem_inferior".to_string(),
             Special::TapAndSkipNextUntap => "tap_and_skip_next_untap".to_string(),
             Special::DestroyNonlegendaryCreature => "destroy_nonlegendary_creature".to_string(),
+            Special::DestroyCreature => "destroy_creature".to_string(),
             Special::ReturnCreatureOrLandFromGraveyardAndGainLife { amount } => {
                 format!("return_creature_or_land_from_graveyard_and_gain_life:{amount}")
             }
@@ -3000,6 +3003,7 @@ fn special_for(name: &str) -> Special {
         "Deem Inferior" => Special::DeemInferior,
         "Sleep of the Dead" => Special::TapAndSkipNextUntap,
         "Cast Down" => Special::DestroyNonlegendaryCreature,
+        "Luminous Rebuke" => Special::DestroyCreature,
         "Pulse of Murasa" => Special::ReturnCreatureOrLandFromGraveyardAndGainLife { amount: 6 },
         "Breath Weapon" => Special::DamageEachCreatureWithoutSubtype {
             amount: 2,
@@ -3155,6 +3159,9 @@ fn effect_recipe_for(card: &CardJson) -> String {
         }
         Special::DestroyNonlegendaryCreature => {
             "target=NonlegendaryCreature;spell=DestroyObject(Target0);mana=None".to_string()
+        }
+        Special::DestroyCreature => {
+            "target=Creature;spell=DestroyObject(Target0);mana=None".to_string()
         }
         Special::ReturnCreatureOrLandFromGraveyardAndGainLife { amount } => format!(
             "target=CreatureOrLandCardInGraveyard;spell=ReturnTargetToOwnersHandThenGainLife({amount});mana=None"
@@ -4556,6 +4563,9 @@ fn cost_src(mana_cost: &str) -> String {
 
 fn generic_cost_reduction_for(name: &str) -> &'static str {
     match name {
+        "Luminous Rebuke" => {
+            "Some(GenericCostReductionDef { generic_per_count: 3, count: DynamicCountDef::SpellTargetsTappedCreature })"
+        }
         "Myr Enforcer" | "Thoughtcast" | "Refurbished Familiar" => {
             "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerBattlefieldAnyType(&[CardType::Artifact]) })"
         }
@@ -5528,6 +5538,24 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out).unwrap();
     }
 
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::DestroyCreature))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_destroy_creature() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    Some(EffectOp::DestroyObject {{ object: ObjectRef::Target(0) }})"
+        )
+        .unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
     let mut graveyard_return_life_amounts = Vec::new();
     for card in cards {
         if let Special::ReturnCreatureOrLandFromGraveyardAndGainLife { amount } =
@@ -6473,6 +6501,11 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_destroy_nonlegendary_creature".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::DestroyCreature => (
+                "TargetSpec::Creature",
+                "spell_effect_destroy_creature".to_string(),
+                "no_effect".to_string(),
+            ),
             Special::ReturnCreatureOrLandFromGraveyardAndGainLife { amount } => (
                 "TargetSpec::CreatureOrLandCardInGraveyard",
                 format!(
@@ -6868,7 +6901,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v44\n"
+            "kernel_carddb/v45\n"
         } else {
             "kernel_carddb/v32\n"
         },

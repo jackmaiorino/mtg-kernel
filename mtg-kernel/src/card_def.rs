@@ -962,6 +962,8 @@ pub enum DynamicCountDef {
     /// One iff the controller has both a creature with the named subtype
     /// and a creature without it. Of One Mind uses Human.
     ControllerHasCreatureWithAndWithoutSubtype(Subtype),
+    /// One iff a chosen spell target is a tapped battlefield creature.
+    SpellTargetsTappedCreature,
 }
 
 /// Reduces only the generic portion of a spell's mana cost, flooring at
