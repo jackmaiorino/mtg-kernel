@@ -1,0 +1,17 @@
+{
+  "schema": "mtg-kernel-structured-public-features/v1",
+  "base_contract": "flat-v4-python-v7",
+  "card_db_hash": "064a7c989255ab3c",
+  "state_width": 6,
+  "object_width": 32,
+  "colors": ["W", "U", "B", "R", "G", "C"],
+  "state_columns": ["prevention_W", "prevention_U", "prevention_B", "prevention_R", "prevention_G", "damage_cannot_be_prevented"],
+  "object_prefix": ["known_card", "has_front_face_mana_cost", "front_face_mana_value_div16", "generic_div16", "x_symbols_div4"],
+  "object_suffix": "six colored counts, six phyrexian counts, fifteen unordered hybrid-pair counts; all divided by eight",
+  "hybrid_pair_order": "i then j, 0 <= i < j < 6, using colors order",
+  "token_mapping": "zero is an all-zero dummy; otherwise card_id equals token minus one",
+  "information": "Only tokens already present in the actor-visible native V4 object rows. Global effects come only from that actor observation. No registration or hidden-state access.",
+  "cost_meaning": "Registry front-face printed mana cost, not current payment, affinity reduction, alternative cost, activated ability cost, transformed-face cost, or X choice.",
+  "state_meaning": "Current public global shield colors and separate cannot-prevent flag; preserve both if prevention is suspended.",
+  "deployment": "Separate auxiliary contract. Not accepted as unchanged V4 model input, not yet a trained successor."
+}

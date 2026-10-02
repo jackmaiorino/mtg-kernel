@@ -66,3 +66,10 @@ comparisons remain required. Rules references were inspected in XMage at
 `a5c90fe180021e70e2a644ade00eeab07f857a40` and the
 [official FDN release notes](https://magic.wizards.com/en/news/feature/foundations-release-notes).
 Source inspection is not executed parity evidence.
+
+## Rebase onto main (2026-10-02)
+
+After merging main (#112, `kernel_carddb/v34`, 192 Pauper definitions), the
+three combat cards take IDs 208 through 210, the Limited registry has 211
+definitions, and the Limited database is `kernel_carddb/v37`, hash
+`41607b95d7a1ec42`. The measurements above describe the original build.

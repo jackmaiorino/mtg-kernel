@@ -45,11 +45,11 @@ class LimitedDeckTest(unittest.TestCase):
         base = (REPO_ROOT / "data/cards_v1.json").read_bytes()
         extension = (FIXTURES / "cards_v1.json").read_bytes()
         base_registry = limited.registry_from_json(limited.load_json(base))
-        self.assertEqual(len(base_registry), 162)
+        self.assertEqual(len(base_registry), 192)
         self.assertNotIn("Plains", base_registry)
         for name, card in base_registry.items():
             self.assertEqual(self.registry[name], card)
-        self.assertEqual(self.registry["Plains"].card_id, 162)
+        self.assertEqual(self.registry["Plains"].card_id, 192)
         with self.assertRaisesRegex(ValueError, "duplicate name"):
             limited.combined_registry(base, [extension, extension])
         with self.assertRaisesRegex(ValueError, "registry version 2"):

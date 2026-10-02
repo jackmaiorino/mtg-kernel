@@ -26,13 +26,13 @@ filter for draft availability: these real decks also use alternate printings.
 The full target pool, including any Special Guests, needs a separate manifest.
 
 FDN definitions live in `cards_v1.json` in this directory and append to the
-unchanged 162-definition Pauper registry. The importer combines both files in
+unchanged 192-definition Pauper registry. The importer combines both files in
 that order and reports their separate SHA-256s. Build the gameplay binary with
 `cargo build --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_env`.
-Default builds retain the original Pauper catalog and its v32 identity; the
-Limited feature selects the appended definitions and their v36 identity.
-The older v33 batch A, v34 batch B and v35 combat profiles remain readable and are rejected for mutation
-when they do not match the actual build.
+Default builds retain the Pauper catalog and its v34 identity; the
+Limited feature selects the appended definitions and their v38 identity.
+The older batch A, batch B and combat-card profiles remain readable and are
+rejected for mutation when they do not match the actual build.
 
 `kernel_limited_env --foundations-combat-v1` selects custom-game schema 3,
 with full priority windows, damage assignment choices and trample. The
