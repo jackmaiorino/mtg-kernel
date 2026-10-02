@@ -32,14 +32,14 @@ symbols, seed 123 and no GPU. These are small CPU correctness checks.
 | Python | Twenty deck/client checks passed on Python 3.11. Original deck hashes and fail-closed admission remain checked. |
 | XMage | Eleven strict reference cases passed; [Mage PR #11](https://github.com/jackmaiorino/mage/pull/11) records the command, hashes and setup corrections. |
 | External interface | External-001 exited zero. Two fixed-seed games reached natural outcomes with identical results and transcripts; each cast Voyage eight times. |
-| Production mutation boundaries | Production-003 is running release publication/resume checks and combined-feature release Clippy. These are still pending. |
+| Production mutation boundaries | Production-003 exited zero: two prior-profile checks, 26 publication/resume boundaries and one profile roundtrip passed. Combined-feature release Clippy passed with warnings denied. |
 | Hosted CI | Pending; no green claim. The new rules suite is included in the Limited CI command. |
 
 Local retained job prefixes are `C:/Users/Jack/fdn-voyage-checks-001`,
 `-002`, `-004`, `fdn-voyage-build-001` and `fdn-voyage-external-001`.
 Each has a manifest binding source, toolchains, input/output hashes and
 the guarded launcher's reserve and allocation allowance. Logs stay
-outside Git. The remaining release prefix is
+outside Git. The verified release prefix is
 `C:/Users/haley/fdn-voyage-production-003`.
 
 The pinned external binary is 5,821,952 bytes, SHA-256

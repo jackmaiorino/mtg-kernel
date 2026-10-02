@@ -356,9 +356,9 @@ fn temporary_power_reduction_in_response_prevents_the_token() {
         Zone::Battlefield,
     );
     let spell = put(&mut state, PlayerId::P0, "Fleeting Distraction", Zone::Hand);
-    state.players[0].mana_pool[ManaColor::U.pool_index()] = 1;
     end(&mut state);
     choose_token(&mut state);
+    state.players[0].mana_pool[ManaColor::U.pool_index()] = 1;
     engine::step(&mut state, Action::CastSpell(spell)).unwrap();
     assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
     engine::step(&mut state, Action::ChooseTarget(Target::Object(creature))).unwrap();
