@@ -44,9 +44,15 @@ repaired sentinel case. Its other three current Python shards also passed.
 PR140 at 36d54594 propagates Rust failures with Bash, groups unchanged library
 filters and isolates the unchanged timing gate. Both fresh pinned toolchain
 installations, all-feature lint and all four Python shards passed. Ubuntu's
-default/native stages passed; its Limited stage and Windows's default stage
-are live. The grouped filters and exact isolated timing results still need
-completed-log verification. Documentation-only PR141 at 565862f8 has green CI;
+full Rust job 111036127712 completed successfully at 22:50:49 UTC. Its log
+confirms all 21 integration targets and 345 passing cases, all nine grouped
+library filters, and exactly one isolated snapshot case passing at 4.81
+microseconds against the unchanged 40-microsecond limit. The three production
+filters correctly select no Linux cases because those tests are Windows-only.
+Default regressions passed 1705 cases plus the isolated timing case, with 43
+existing ignores; host-safe CUDA passed 15 cases with seven existing ignores.
+Windows's default stage is live, and its native publication/resume and grouped
+filter checks remain pending. Documentation-only PR141 at 565862f8 has green CI;
 its Rust job is correctly skipped. Remaining full Rust execution prevents a
 milestone completion claim.
 
