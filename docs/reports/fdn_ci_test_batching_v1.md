@@ -25,8 +25,30 @@ success therefore requires inspection of all test summaries in its full log.
 | limited-fdn-fixtures | limited_session_v1::tests; rl_session::tests; card_def::; koma_spell_protection; threshold_counts_graveyard; native_training_store_run_v2:: |
 | limited-fdn-fixtures native-training-store-v2-production | pre_fdn_profile; prior_fdn_batch; fdn_profile_record_round_trips |
 
-All integration targets, original external games, default workspace tests,
-native CLI checks and CUDA host-safe checks retain their existing commands.
+The Windows Draw recheck at01c7334b failed the existing snapshot wall-time
+test:67.822microseconds per clone against its unchanged40microsecond budget,
+with1743 other library tests passing. Job110986481520 ran the timing loop
+alongside parallel unit tests. Preserve its80objects,200warmups,2000iterations
+and40microsecond assertion. The workspace runner executes every other library
+test normally, then the exact timing test in a fresh one-thread process using
+the same compiled library. All other workspace executables run unchanged.
+The observed failure is retained in the hosted log; isolated success remains
+unproven until CI executes it.
+
+All integration targets, original external games, native CLI checks and
+CUDA host-safe checks retain their existing commands.
+Documentation CI37059298773 failed before compilation in Ubuntu job111012877488:
+Rustup reported recovery of a partially installed1.94.1 toolchain, then a
+conflicting `bin/cargo-clippy`. Each Rust/Python job now installs the unchanged
+pin, minimal profile, Clippy and rustfmt into its own temporary
+[`RUSTUP_HOME`](https://rust-lang.github.io/rustup/environment-variables.html).
+This avoids the damaged image installation and retains the existing compiler,
+linker and registry cache. The observed bootstrap failure is environmental;
+the fresh installation still needs hosted execution on both platforms.
+The first patch at7dad2e51 was rejected before any job started: `runner.temp`
+is unavailable in job-level `env`. Define it in the installation step and
+publish `RUSTUP_HOME` through `GITHUB_ENV` for subsequent steps, following
+[GitHub's context availability rules](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#context-availability).
 Test selection and build metadata collection are preserved. This is CPU
 correctness verification; current hosted end-to-end checks remain pending.
 The existing healthy PR136 through139 jobs keep running on their original
