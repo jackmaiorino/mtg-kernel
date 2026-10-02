@@ -3,8 +3,8 @@
 This inventories the **36 originally missing names** in the two pinned
 40-card fixtures. Batch A registers six and batch B registers eight, with
 their exact tokens. The first combat-card slice completes Beast-Kin Ranger
-and Overrun. C through G contain **20 names still requiring full support**,
-including Dwynen's partial implementation.
+and Overrun. The legend-rule slice completes Dwynen. C through G contain
+**19 names still requiring full support**.
 The priority-window PR added no cards.
 
 Sources: the pinned `.dck` files under `data/limited/fdn_v1/`, the corresponding
@@ -39,7 +39,7 @@ support is a dependency of the wider pool rather than these two fixtures.
 | C | Fleeting Flight | WG | Counter, temporary flying and combat-damage prevention on the same target. | `f/FleetingFlight.java` |
 | C | Joust Through | WG | Attacking/blocking target restriction; damage then life gain. | `j/JoustThrough.java` |
 | C | Overrun | WG | Temporary team power/toughness increase and trample. | `o/Overrun.java` |
-| C | Dwynen, Gilt-Leaf Daen | UG | Reach; continuous Elf bonus excluding itself; attacking-Elf count life trigger. | `d/DwynenGiltLeafDaen.java` |
+| C | Dwynen, Gilt-Leaf Daen | UG | Reach; continuous Elf bonus excluding itself; attacking-Elf count life trigger; resumable legend-rule choice. | `d/DwynenGiltLeafDaen.java` |
 | D | Gnarlid Colony | WG | Kicker; enter with counters; continuously grant trample to friendly creatures with counters. | `g/GnarlidColony.java` |
 | D | Mossborn Hydra | UG | Enter with a counter; landfall doubles its current counters; trample. | `m/MossbornHydra.java` |
 | D | Exemplar of Light | WG | Flying; life-gain counter trigger; counter-event draw trigger limited once per turn. | `e/ExemplarOfLight.java` |
@@ -78,8 +78,9 @@ The [combat foundation](fdn_combat_damage_v1.md) exposes current damage
 allocation and trample in custom-game schema 3, with focused tests and
 deterministic binary replay. Batch C still needs its card interaction tests.
 The [first combat-card slice](fdn_combat_cards_v1.md) adds Beast-Kin Ranger
-and Overrun, plus Dwynen's Elf bonus and attack trigger. Dwynen remains
-partial until its legend-rule choice is implemented. Bite Down, Felling
+and Overrun, plus Dwynen's Elf bonus and attack trigger. The
+[legend-rule slice](fdn_legend_rule_v1.md) completes Dwynen's required choice.
+Bite Down, Felling
 Blow, Fleeting Flight and Joust Through remain unimplemented.
 Wizards removed damage assignment order for FDN; arbitrary multi-blocker
 allocation must be a real choice. Bite Down also needs planeswalker targeting

@@ -1092,6 +1092,9 @@ where
         | ActionSemanticV1::ChooseCombatDamageRange { .. } => {
             return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
         }
+        ActionSemanticV1::ChooseLegendPermanent { .. } => {
+            return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+        }
     }
     core.ref_len = u16::try_from(ref_count)
         .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
@@ -2345,6 +2348,7 @@ fn flat_validate_origin_decision_v1(
             }
         }
         Decision::ChooseCombatDamageRange { .. }
+        | Decision::ChooseLegendPermanent { .. }
         | Decision::DeclareAttackers { .. }
         | Decision::DeclareBlockers { .. }
         | Decision::GameOver { .. }
@@ -2461,6 +2465,9 @@ fn flat_validate_semantic_policy_pair_v1(
             PolicyActionV5::Surface(SurfaceAction::Action(Action::FinishEffectSelection)),
         ) => true,
         (ActionSemanticV1::ChooseCombatDamageRange { .. }, _) => {
+            return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic)
+        }
+        (ActionSemanticV1::ChooseLegendPermanent { .. }, _) => {
             return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic)
         }
         (
@@ -11311,10 +11318,15 @@ mod tests {
             },
             ActionSemanticV1::ChooseEffectNumber {
                 actor,
-                source,
+                source: source.clone(),
                 number: 2,
                 minimum: 1,
                 maximum: 3,
+            },
+            ActionSemanticV1::ChooseLegendPermanent {
+                actor,
+                keep: source.clone(),
+                candidates: vec![source],
             },
         ];
         for semantic in semantics {

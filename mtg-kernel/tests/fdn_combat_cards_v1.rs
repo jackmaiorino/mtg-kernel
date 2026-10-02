@@ -128,14 +128,7 @@ fn definitions_append_without_reusing_prior_card_ids() {
     {
         let id = card_id_by_name(name).unwrap();
         assert_eq!(usize::from(id), 178 + offset);
-        assert_eq!(
-            CARD_DEFS[usize::from(id)].capability,
-            if offset == 2 {
-                CardCapability::Partial
-            } else {
-                CardCapability::Full
-            }
-        );
+        assert_eq!(CARD_DEFS[usize::from(id)].capability, CardCapability::Full);
     }
     let mut state = ready();
     let ranger = put(

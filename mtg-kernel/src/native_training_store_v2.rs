@@ -678,7 +678,8 @@ fn publish_generation_v2(
         NativeRunCatalogProfileV1::Current
         | NativeRunCatalogProfileV1::FdnFixtureBatchA
         | NativeRunCatalogProfileV1::FdnFixtureBatchB
-        | NativeRunCatalogProfileV1::FdnCombatCards => {
+        | NativeRunCatalogProfileV1::FdnCombatCards
+        | NativeRunCatalogProfileV1::FdnLegendRule => {
             if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
                 return Err(publisher_error_v2(
                     NativeTrainingStorePublisherV2ErrorKind::CurrentCatalogProfileLiveMismatch,
@@ -2033,7 +2034,7 @@ mod windows_publisher_tests {
         assert_eq!(
             run.catalog_profile_v1(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnCombatCards
+                NativeRunCatalogProfileV1::FdnLegendRule
             } else {
                 NativeRunCatalogProfileV1::Current
             }
@@ -2147,7 +2148,7 @@ mod windows_publisher_tests {
         assert_eq!(
             run.catalog_profile_v1(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnCombatCards
+                NativeRunCatalogProfileV1::FdnLegendRule
             } else {
                 NativeRunCatalogProfileV1::Current
             }
@@ -2165,7 +2166,7 @@ mod windows_publisher_tests {
         assert_eq!(
             redecoded.catalog_profile_v1(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnCombatCards
+                NativeRunCatalogProfileV1::FdnLegendRule
             } else {
                 NativeRunCatalogProfileV1::Current
             }

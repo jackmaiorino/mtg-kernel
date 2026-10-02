@@ -685,6 +685,15 @@ pub struct EngineContextV2 {
     pub pending_spell_copy: Option<PendingSpellCopySemanticV2>,
     pub pending_effect: Option<PendingEffectSemanticV4>,
     pub pending_triggers: Vec<PendingTriggerSemanticV2>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_legend_rule: Option<Vec<LegendGroupSemanticV1>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct LegendGroupSemanticV1 {
+    pub controller: PlayerSeatV1,
+    pub candidates: Vec<CardStableRefV1>,
+    pub kept: Option<CardStableRefV1>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1051,6 +1060,11 @@ pub enum ActionSemanticV1 {
         maximum: i32,
         split_at: i32,
         upper_half: bool,
+    },
+    ChooseLegendPermanent {
+        actor: PlayerSeatV1,
+        keep: CardStableRefV1,
+        candidates: Vec<CardStableRefV1>,
     },
 }
 
@@ -2464,6 +2478,24 @@ fn core_surface_action_candidates_v1(
                     )?;
                 }
             }
+            Decision::ChooseLegendPermanent { player, candidates } => {
+                let actor = (*player).into();
+                let references = candidates
+                    .iter()
+                    .map(|&id| card_ref(state, id))
+                    .collect::<Result<Vec<_>>>()?;
+                for (&keep, reference) in candidates.iter().zip(&references) {
+                    push_action(
+                        &mut out,
+                        ActionSemanticV1::ChooseLegendPermanent {
+                            actor,
+                            keep: reference.clone(),
+                            candidates: references.clone(),
+                        },
+                        SurfaceAction::Action(Action::ChooseLegendPermanent(keep)),
+                    )?;
+                }
+            }
             Decision::ChooseCombatDamageRange {
                 player,
                 source,
@@ -2704,6 +2736,7 @@ pub fn acting_player_for_surface_decision(
             | Decision::ChooseEffectTargets { player, .. }
             | Decision::ChooseEffectBoolean { player, .. }
             | Decision::ChooseCombatDamageRange { player, .. }
+            | Decision::ChooseLegendPermanent { player, .. }
             | Decision::ChooseOptionalCost { player, .. }
             | Decision::ChooseSpellCopyPayment { player, .. }
             | Decision::ChooseSpellCopyRetarget { player, .. }
@@ -5455,6 +5488,10 @@ fn exile_play_permissions_public_v2(state: &GameState) -> Result<Vec<ExilePlayPe
 fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<EngineContextV2> {
     let current_stage = if state.engine.halted.is_some() {
         EngineDecisionStageV2::Halted
+    } else if state.pending_legend_rule_v1.is_some() {
+        // This checkpoint holds trigger placement until all SBAs finish.
+        // Its public legend context supplies the exact choice and prefix.
+        EngineDecisionStageV2::PendingTriggers
     } else if state.engine.pending_cast.is_some() {
         EngineDecisionStageV2::PendingCast
     } else if state.engine.pending_activation.is_some() {
@@ -5491,6 +5528,25 @@ fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<Engin
                 None
             },
         current_stage,
+        pending_legend_rule: state
+            .pending_legend_rule_v1
+            .as_ref()
+            .map(|pending| {
+                pending
+                    .public_groups()
+                    .map(|(controller, candidates, kept)| {
+                        Ok(LegendGroupSemanticV1 {
+                            controller: controller.into(),
+                            candidates: candidates
+                                .into_iter()
+                                .map(|id| card_ref(state, id))
+                                .collect::<Result<Vec<_>>>()?,
+                            kept: kept.map(|id| card_ref(state, id)).transpose()?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })
+            .transpose()?,
         pending_cast: state
             .engine
             .pending_cast
@@ -5550,6 +5606,12 @@ fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<Engin
             .engine
             .pending_triggers
             .iter()
+            .chain(
+                state
+                    .pending_legend_rule_v1
+                    .iter()
+                    .flat_map(|pending| pending.waiting_triggers()),
+            )
             .map(|p| {
                 Ok(PendingTriggerSemanticV2 {
                     source: visible_card_ref(state, p.source, acting_player)?,

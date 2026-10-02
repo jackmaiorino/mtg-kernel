@@ -6699,7 +6699,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v34\n"
+            "kernel_carddb/v36\n"
         } else {
             "kernel_carddb/v32\n"
         },

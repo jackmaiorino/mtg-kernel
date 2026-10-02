@@ -1514,8 +1514,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v35_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x633a_3240_30f3_1c47;
+    fn card_db_hash_v36_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x3d41_aa36_a5a7_5d8f;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
@@ -1718,29 +1718,14 @@ mod tests {
             .count();
         assert_eq!(
             full,
-            CARD_DEFS.len() - usize::from(cfg!(feature = "limited-fdn-fixtures")),
-            "all registered definitions except the explicitly partial Dwynen"
+            CARD_DEFS.len(),
+            "all registered definitions are fully supported"
         );
-        assert_eq!(
-            CARD_DEFS
-                .iter()
-                .filter(|def| def.capability == CardCapability::Partial)
-                .count(),
-            usize::from(cfg!(feature = "limited-fdn-fixtures"))
-        );
-
         #[cfg(feature = "limited-fdn-fixtures")]
-        {
-            let dwynen = card_id_by_name("Dwynen, Gilt-Leaf Daen").unwrap();
-            assert!(matches!(
-                preflight_fully_supported_deck(&[dwynen]),
-                Err(DeckPreflightError::NotFullySupported {
-                    index: 0,
-                    capability: CardCapability::Partial,
-                    ..
-                })
-            ));
-        }
+        assert!(preflight_fully_supported_deck(&[
+            card_id_by_name("Dwynen, Gilt-Leaf Daen").unwrap()
+        ])
+        .is_ok());
 
         let supported = ["Island", "Counterspell", "Mountain"]
             .map(|name| card_id_by_name(name).expect("card in registry"));

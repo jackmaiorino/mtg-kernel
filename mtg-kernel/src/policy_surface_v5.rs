@@ -79,6 +79,7 @@ impl PolicyDecisionV5 {
                     | Decision::ChooseEffectTargets { player, .. }
                     | Decision::ChooseEffectBoolean { player, .. }
                     | Decision::ChooseCombatDamageRange { player, .. }
+                    | Decision::ChooseLegendPermanent { player, .. }
                     | Decision::ChooseOptionalCost { player, .. }
                     | Decision::ChooseSpellCopyPayment { player, .. }
                     | Decision::ChooseSpellCopyRetarget { player, .. }

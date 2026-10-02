@@ -1221,6 +1221,10 @@ pub enum Decision {
         maximum: i32,
         split_at: i32,
     },
+    ChooseLegendPermanent {
+        player: PlayerId,
+        candidates: Vec<ObjectId>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1300,6 +1304,7 @@ pub enum Action {
     ChooseCombatDamageRange {
         upper_half: bool,
     },
+    ChooseLegendPermanent(ObjectId),
 }
 
 const CHAIN_COPY_COST: Cost = Cost {
@@ -5542,6 +5547,18 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
         }
         if let Some((mechanic, source)) = state.engine.halted {
             return Decision::Halted { mechanic, source };
+        }
+
+        if state.pending_legend_rule_v1.is_some() {
+            match crate::legend_rule_v1::drain_or_decide(state) {
+                Ok(Some(decision)) => return decision,
+                Ok(None) => continue,
+                Err(_) => {
+                    state.engine.halted =
+                        Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                    continue;
+                }
+            }
         }
 
         if crate::combat_damage_v1::has_pending_assignment(state) {
@@ -10908,6 +10925,12 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    if state.pending_legend_rule_v1.is_some() {
+        return match action {
+            Action::ChooseLegendPermanent(keep) => crate::legend_rule_v1::answer(state, keep),
+            _ => Err("only a legend-rule answer may be taken during its SBA pass".into()),
+        };
+    }
     if crate::combat_damage_v1::has_pending_assignment(state) {
         return match action {
             Action::ChooseCombatDamageRange { upper_half } => {
@@ -10958,6 +10981,7 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
         }
     }
     match action {
+        Action::ChooseLegendPermanent(_) => Err("no legend-rule choice is pending".into()),
         Action::ChooseCombatDamageRange { .. } => Err("no combat damage choice is pending".to_string()),
         Action::Pass => {
             let p = state.priority_player;

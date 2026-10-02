@@ -542,7 +542,7 @@
     },
     {
       "name": "Dwynen, Gilt-Leaf Daen",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{2}{G}{G}",
       "mana_value": 4,
       "colors": [

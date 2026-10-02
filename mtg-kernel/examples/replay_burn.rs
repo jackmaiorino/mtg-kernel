@@ -766,6 +766,9 @@ fn run(
             SurfaceDecision::Decision(Decision::ChooseEffectOption { .. }) => {
                 return Err("unhandled-decision:ChooseEffectOption".to_string())
             }
+            SurfaceDecision::Decision(Decision::ChooseLegendPermanent { .. }) => {
+                return Err("unhandled-decision:ChooseLegendPermanent".to_string())
+            }
             SurfaceDecision::Decision(Decision::ChooseCombatDamageRange { .. }) => {
                 return Err("unhandled-decision:ChooseCombatDamageRange".to_string())
             }
@@ -805,6 +808,7 @@ fn decision_player(d: &SurfaceDecision, state: &GameState) -> Option<PlayerId> {
         | SurfaceDecision::Decision(Decision::ChooseEffectOption { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseEffectBoolean { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseCombatDamageRange { player, .. })
+        | SurfaceDecision::Decision(Decision::ChooseLegendPermanent { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseEffectTargets { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseOptionalCost { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseSpellCopyPayment { player, .. })

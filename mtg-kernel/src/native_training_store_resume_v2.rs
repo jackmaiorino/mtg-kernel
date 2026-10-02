@@ -680,7 +680,8 @@ fn resume_native_training_store_impl_v1(
         NativeRunCatalogProfileV1::Current
         | NativeRunCatalogProfileV1::FdnFixtureBatchA
         | NativeRunCatalogProfileV1::FdnFixtureBatchB
-        | NativeRunCatalogProfileV1::FdnCombatCards => {
+        | NativeRunCatalogProfileV1::FdnCombatCards
+        | NativeRunCatalogProfileV1::FdnLegendRule => {
             if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
                 return Err(resume_error_v2(
                     NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch,
