@@ -1471,7 +1471,7 @@ mod tests {
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                193
+                195
             } else {
                 162
             }
@@ -1546,8 +1546,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v40_is_frozen() {
-        const EXPECTED_FDN: u64 = 0xfbef_8128_c0dd_ad96;
+    fn card_db_hash_v41_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x8f1d_c68e_65c2_4306;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

@@ -25,8 +25,10 @@ The rules reference is the pinned XMage `HomunculusHorde.java` and
 `a5c90fe180021e70e2a644ade00eeab07f857a40`.
 Registry definitions append at IDs 193 and 194. The new Homunculus subtype
 appends after Cleric, preserving existing subtype IDs. The next catalog
-version is v41; its generated identity and historical v40 compatibility
-must be established before the batch is delivered.
+version is v41, generated hash `8f1dc68e65c24306`. Historical v40 remains
+`fbef8128c0ddad96`; its records remain readable and are refused for mutation
+against the new build. Broad checks, production boundaries, external replay
+and hosted CI must pass before the batch is delivered as verified.
 
 This slice adds one of the original UG fixture's missing names. It does
 not change the full goal's remaining cards, mulligans or final gameplay,
