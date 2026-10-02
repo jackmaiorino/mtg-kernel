@@ -214,6 +214,7 @@ pub enum Subtype {
     Noble,
     Unicorn,
     Ajani,
+    Beast,
 }
 
 impl Subtype {
@@ -282,6 +283,8 @@ impl Subtype {
         Subtype::Noble,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Unicorn,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Beast,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -391,6 +394,7 @@ impl Subtype {
                 | Subtype::Phyrexian
                 | Subtype::Horror
                 | Subtype::Nightmare
+                | Subtype::Beast
         )
     }
 }
@@ -993,6 +997,12 @@ pub struct EquipmentDef {
     pub job_select: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntersWithPlusOneCountersDef {
+    pub count: i32,
+    pub if_kicked: bool,
+}
+
 pub struct CardDef {
     pub name: &'static str,
     pub capability: CardCapability,
@@ -1018,6 +1028,10 @@ pub struct CardDef {
     pub power: Option<i16>,
     pub toughness: Option<i16>,
     pub starting_loyalty: Option<u16>,
+    /// Applied during every entry before triggers and state-based actions.
+    pub enters_with_plus_one_counters: Option<EntersWithPlusOneCountersDef>,
+    /// Continuously grants this keyword to controlled creatures with +1/+1 counters.
+    pub controlled_counter_keyword: Option<Keywords>,
     pub is_land: bool,
     pub produces_mana: &'static [ManaColor],
     /// This card's color identity per 105.1/202.2 (the color of mana
@@ -1448,7 +1462,7 @@ mod tests {
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                186
+                188
             } else {
                 162
             }
@@ -1523,8 +1537,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v37_is_frozen() {
-        const EXPECTED_FDN: u64 = 0xfc09_0e5b_2a7b_3e4f;
+    fn card_db_hash_v38_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x39c8_3779_971e_e2c4;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

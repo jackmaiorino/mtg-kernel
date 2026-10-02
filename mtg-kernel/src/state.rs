@@ -44,15 +44,36 @@ pub enum Zone {
 
 /// Counter families required by the Pauper pool. Signed storage is deliberate:
 /// effect validation may reject an underflow without first converting between
-/// unrelated integer shapes, while i16 leaves ample headroom for copied and
-/// doubled counter effects.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// unrelated integer shapes. +1/+1 counters use i32 because a Hydra can
+/// exceed i16 after fifteen landfall triggers. Hashes within the old range
+/// retain the original representation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Counters {
-    pub plus1_plus1: i16,
+    pub plus1_plus1: i32,
     pub minus1_minus1: i16,
     pub minus0_minus1: i16,
     pub stun: i16,
     pub lore: i16,
+}
+
+pub(crate) fn hash_plus_one_counters<H: std::hash::Hasher>(count: i32, state: &mut H) {
+    use std::hash::Hash;
+    if let Ok(legacy) = i16::try_from(count) {
+        legacy.hash(state);
+    } else {
+        b"wide_plus_one_counters_v1".hash(state);
+        count.hash(state);
+    }
+}
+
+impl std::hash::Hash for Counters {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        hash_plus_one_counters(self.plus1_plus1, state);
+        self.minus1_minus1.hash(state);
+        self.minus0_minus1.hash(state);
+        self.stun.hash(state);
+        self.lore.hash(state);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

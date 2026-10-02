@@ -4,7 +4,9 @@ This inventories the **36 originally missing names** in the two pinned
 40-card fixtures. Batch A registers six and batch B registers eight, with
 their exact tokens. The first combat-card slice completes Beast-Kin Ranger
 and Overrun. The legend-rule slice completes Dwynen. C through G contain
-**19 names still requiring full support**.
+**13 names still requiring full support** after the targeted-spell and
+first counter-creature slices. Batch D still needs Exemplar of Light and
+Sun-Blessed Healer; E through G remain outstanding.
 The priority-window PR added no cards.
 
 Sources: the pinned `.dck` files under `data/limited/fdn_v1/`, the corresponding
@@ -83,6 +85,9 @@ and Overrun, plus Dwynen's Elf bonus and attack trigger. The
 The [targeted-spell slice](fdn_targeted_spells_v1.md) implements Bite Down,
 Felling Blow, Fleeting Flight and Joust Through, with casting, target loss,
 partial legality, combat prevention, loyalty damage and restore tests.
+The [counter-creature slice](fdn_counter_creatures_v1.md) implements
+Gnarlid Colony and Mossborn Hydra with entry counters, kicker, continuous
+trample, landfall and wide-counter restoration checks.
 Wizards removed damage assignment order for FDN; arbitrary multi-blocker
 allocation must be a real choice. Bite Down's planeswalker recipient is tested
 with a partial reference definition that deck admission refuses. D and E build

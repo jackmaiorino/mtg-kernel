@@ -17,10 +17,10 @@ statistics omitted. The two deck files are unchanged copies.
 The 286 reference names are an observed gameplay dataset, not a complete
 booster manifest. The inventory tool adds all five basic lands and any
 additional fixture cards. After fixture batches A and B and the combat and
-legend-rule and targeted-spell slices, 28 reference names are fully supported,
-one reference planeswalker is partial and 257 remain missing. UG resolves
-28/40 mainboard copies and WG resolves 29/40. The original fixtures still
-need 15 fully supported card names. Dwynen now includes its Elf bonuses, attack
+legend-rule, targeted-spell and counter-creature slices, 30 reference names are fully supported,
+one reference planeswalker is partial and 255 remain missing. UG resolves
+29/40 mainboard copies and WG resolves 32/40. The original fixtures still
+need 13 fully supported card names. Dwynen now includes its Elf bonuses, attack
 trigger and a real resumable legend-rule choice.
 Printed collector numbers are not a safe
 filter for draft availability: these real decks also use alternate printings.

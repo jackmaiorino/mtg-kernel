@@ -409,7 +409,7 @@ fn felling_blow_checks_targets_individually_and_rejects_returned_incarnations() 
                 resolve(&mut surface, &mut state);
                 assert_eq!(
                     state.objects.get(source).counters.plus1_plus1,
-                    i16::from(!invalid_source)
+                    i32::from(!invalid_source)
                 );
                 assert_eq!(
                     dealt(&state, source, victim),
@@ -445,7 +445,7 @@ fn felling_blow_rechecks_control_and_hexproof_when_it_resolves() {
         resolve(&mut surface, &mut state);
         assert_eq!(
             state.objects.get(source).counters.plus1_plus1,
-            i16::from(change != 0)
+            i32::from(change != 0)
         );
         assert_eq!(dealt(&state, source, victim), 0);
     }

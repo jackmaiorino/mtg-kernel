@@ -149,7 +149,7 @@ jobs:
 
       - name: Validate FDN Limited gameplay and catalog separation
         run: |
-          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test fdn_fixture_batch_a_v1 --test fdn_fixture_batch_b_v1 --test limited_session_v1 --test limited_priority_v1 --test limited_combat_v1 --test fdn_combat_cards_v1 --test fdn_legend_rule_v1 --test fdn_targeted_spells_v1
+          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test fdn_fixture_batch_a_v1 --test fdn_fixture_batch_b_v1 --test limited_session_v1 --test limited_priority_v1 --test limited_combat_v1 --test fdn_combat_cards_v1 --test fdn_legend_rule_v1 --test fdn_targeted_spells_v1 --test fdn_counter_creatures_v1
           cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib limited_session_v1::tests
           cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib flat_action_slice_refuses_loyalty_and_combat_prevention_before_publish
           cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib card_def::

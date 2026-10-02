@@ -28,7 +28,10 @@ pub enum TriggerCondition {
     /// The permanent itself enters while its controller controls the named
     /// number of other permanents with the effective subtype. This is the
     /// trigger-time half of an intervening-if condition.
-    EtbControlsOtherSubtypeCount { subtype: Subtype, minimum_count: u8 },
+    EtbControlsOtherSubtypeCount {
+        subtype: Subtype,
+        minimum_count: u8,
+    },
     /// The permanent itself deals damage. Unused by any Burn 16 card this
     /// increment (kept from increment 2's shape -- see `trigger_matches`).
     DealsDamage,
@@ -74,10 +77,13 @@ pub enum TriggerCondition {
     ControllerDraws,
     /// A different creature enters under the source's controller. A subtype
     /// filter restricts the entrant rather than the observing permanent.
-    OtherControlledCreatureEnters { subtype: Option<Subtype> },
+    OtherControlledCreatureEnters {
+        subtype: Option<Subtype>,
+    },
     /// Declared as an attacker. Being put onto the battlefield attacking
     /// does not satisfy this event.
     Attacks,
+    ControlledLandEnters,
 }
 
 pub struct TriggeredAbilityDef {
@@ -119,6 +125,16 @@ pub(crate) fn materialize_trigger_effect(
         EffectOp::BindPlusOnePlusOneCounterToTriggerSource => {
             let live = state.objects.get(source);
             EffectOp::PutPlusOnePlusOneCounterOnBoundObject {
+                object: EffectObjectBinding {
+                    object: source,
+                    expected_zone: live.zone,
+                    expected_zone_change_count: live.zone_change_count,
+                },
+            }
+        }
+        EffectOp::BindDoublePlusOneCountersToTriggerSource => {
+            let live = state.objects.get(source);
+            EffectOp::DoublePlusOneCountersOnBoundObject {
                 object: EffectObjectBinding {
                     object: source,
                     expected_zone: live.zone,
@@ -212,6 +228,14 @@ const BEAST_KIN_RANGER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef
     condition: TriggerCondition::OtherControlledCreatureEnters { subtype: None },
     ..etb_trigger(beast_kin_ranger_effect)
 }];
+const MOSSBORN_HYDRA_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControlledLandEnters,
+    ..etb_trigger(double_counter_marker_effect)
+}];
+
+fn double_counter_marker_effect() -> EffectOp {
+    EffectOp::BindDoublePlusOneCountersToTriggerSource
+}
 const DWYNEN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Attacks,
     ..etb_trigger(dwynen_attack_effect)
@@ -1073,6 +1097,7 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         return &JOB_SELECT_TRIGGERS;
     }
     match card.name {
+        "Mossborn Hydra" => &MOSSBORN_HYDRA_TRIGGERS,
         "Beast-Kin Ranger" => &BEAST_KIN_RANGER_TRIGGERS,
         "Dwynen, Gilt-Leaf Daen" => &DWYNEN_TRIGGERS,
         "Blossoming Sands" | "Thornwood Falls" => &GAIN_ONE_LIFE_TRIGGERS,
@@ -1200,6 +1225,9 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
             ) | (
                 EffectOp::BindPlusOnePlusOneCounterToTriggerEventObject,
                 EffectOp::PutPlusOnePlusOneCounterOnTriggerEventObject { .. }
+            ) | (
+                EffectOp::BindDoublePlusOneCountersToTriggerSource,
+                EffectOp::DoublePlusOneCountersOnBoundObject { .. }
             )
         )
     }) {
@@ -1987,6 +2015,11 @@ fn trigger_matches(
     draws_this_turn_at_event: u32,
 ) -> bool {
     match (cond, ev) {
+        (TriggerCondition::ControlledLandEnters, event) => battlefield_entry_object(event)
+            .is_some_and(|object| {
+                state.objects.get(object).controller == controller
+                    && crate::engine::object_has_type(state, object, CardType::Land)
+            }),
         (
             TriggerCondition::ControllerDraws,
             CommittedEvent::Draw {

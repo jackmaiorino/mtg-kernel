@@ -3243,7 +3243,7 @@ fn keywords_for(card: &CardJson) -> String {
         | "Writhing Chrysalis"
         | "Vitu-Ghazi Inspector"
         | "Dwynen, Gilt-Leaf Daen" => keywords.push("Keywords::REACH"),
-        "Spinewoods Paladin" | "Avenging Hunter" | "Beast-Kin Ranger" => {
+        "Spinewoods Paladin" | "Avenging Hunter" | "Beast-Kin Ranger" | "Mossborn Hydra" => {
             keywords.push("Keywords::TRAMPLE")
         }
         "Outlaw Medic" | "Sacred Cat" | "Sacred Cat Embalmed Token" | "Guarded Heir" => {
@@ -3400,7 +3400,23 @@ fn enters_battlefield_tapped_unless_for(name: &str) -> &'static str {
 fn kicker_cost_for(name: &str) -> String {
     match name {
         "Goblin Bushwhacker" => cost_src("{R}"),
+        "Gnarlid Colony" => cost_src("{2}{G}"),
         _ => "None".to_string(),
+    }
+}
+
+fn enters_with_plus_one_counters_for(name: &str) -> &'static str {
+    match name {
+        "Gnarlid Colony" => "Some(EntersWithPlusOneCountersDef { count: 2, if_kicked: true })",
+        "Mossborn Hydra" => "Some(EntersWithPlusOneCountersDef { count: 1, if_kicked: false })",
+        _ => "None",
+    }
+}
+
+fn controlled_counter_keyword_for(name: &str) -> &'static str {
+    match name {
+        "Gnarlid Colony" => "Some(Keywords::TRAMPLE)",
+        _ => "None",
     }
 }
 
@@ -4567,6 +4583,7 @@ fn changeling_for(name: &str) -> bool {
 /// event, target, and effect part of the generated card database identity.
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Mossborn Hydra" => "controlled_land_enters:double_plus_one_counters_on_bound_source",
         "Blossoming Sands" | "Thornwood Falls" => "etb:gain_life:1",
         "Dazzling Angel" => "other_controlled_creature_enters:gain_life:1",
         "Beast-Kin Ranger" => "other_controlled_creature_enters:pump_bound_source:1:0:end_of_turn",
@@ -6610,6 +6627,18 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out, "        colors: &[{colors_src}],").unwrap();
         writeln!(out, "        target_spec: {target_spec_src},").unwrap();
         writeln!(out, "        starting_loyalty: {:?},", c.starting_loyalty).unwrap();
+        writeln!(
+            out,
+            "        enters_with_plus_one_counters: {},",
+            enters_with_plus_one_counters_for(&c.name)
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        controlled_counter_keyword: {},",
+            controlled_counter_keyword_for(&c.name)
+        )
+        .unwrap();
         writeln!(out, "        keywords: {},", keywords_for(c)).unwrap();
         writeln!(out, "        spell_effect: {spell_effect_src},").unwrap();
         writeln!(out, "        mana_ability: {mana_ability_src},").unwrap();
@@ -6781,7 +6810,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v37\n"
+            "kernel_carddb/v38\n"
         } else {
             "kernel_carddb/v32\n"
         },
@@ -6804,6 +6833,14 @@ fn codegen(cards: &[CardJson]) -> String {
         canon.push_str(&c.toughness.map(|t| t.to_string()).unwrap_or_default());
         if let Some(loyalty) = c.starting_loyalty {
             canon.push_str(&format!(";starting_loyalty={loyalty}"));
+        }
+        let entry_counters = enters_with_plus_one_counters_for(&c.name);
+        if entry_counters != "None" {
+            canon.push_str(&format!(";entry_counters={entry_counters}"));
+        }
+        let counter_keyword = controlled_counter_keyword_for(&c.name);
+        if counter_keyword != "None" {
+            canon.push_str(&format!(";controlled_counter_keyword={counter_keyword}"));
         }
         canon.push('|');
         canon.push_str(if c.is_land { "L" } else { "-" });
@@ -7047,6 +7084,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Noble" => "Subtype::Noble",
         "Unicorn" => "Subtype::Unicorn",
         "Ajani" => "Subtype::Ajani",
+        "Beast" => "Subtype::Beast",
         "Ape" => "Subtype::Ape",
         "Aura" => "Subtype::Aura",
         "BIRD" => "Subtype::BirdAllCaps",

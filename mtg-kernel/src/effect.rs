@@ -868,6 +868,10 @@ pub enum EffectOp {
     PreventCombatDamageToTargetThisTurn {
         target_index: u8,
     },
+    BindDoublePlusOneCountersToTriggerSource,
+    DoublePlusOneCountersOnBoundObject {
+        object: EffectObjectBinding,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -9721,7 +9725,8 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             state.objects.get_mut(object_id).counters.plus1_plus1 = next;
         }
         EffectOp::BindPlusOnePlusOneCounterToTriggerSource
-        | EffectOp::BindPlusOnePlusOneCounterToTriggerEventObject => {
+        | EffectOp::BindPlusOnePlusOneCounterToTriggerEventObject
+        | EffectOp::BindDoublePlusOneCountersToTriggerSource => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -9735,6 +9740,24 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         }
         EffectOp::CreateStormCopies { binding } => {
             if crate::engine::create_storm_spell_copies(state, ctx, *binding).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
+        EffectOp::DoublePlusOneCountersOnBoundObject { object } => {
+            if validate_effect_object_binding(state, *object).is_err()
+                || object.expected_zone != Zone::Battlefield
+            {
+                return;
+            }
+            let current = state.objects.get(object.object).counters.plus1_plus1;
+            if current <= 0 {
+                return;
+            }
+            if event::add_plus_one_counters(state, object.object, ctx.controller, current).is_err()
+            {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -10133,7 +10156,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             }
             let next = (
-                live.counters.plus1_plus1.checked_add(*plus1_plus1),
+                live.counters
+                    .plus1_plus1
+                    .checked_add(i32::from(*plus1_plus1)),
                 live.v4.lifelink_keyword_counters.checked_add(*lifelink),
                 live.counters.stun.checked_add(*stun),
             );
@@ -10925,7 +10950,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ));
                 return;
             };
-            state.objects.get_mut(ctx.source).counters.plus1_plus1 = amount;
+            state.objects.get_mut(ctx.source).counters.plus1_plus1 = i32::from(amount);
         }
         EffectOp::PutSourceOntoBattlefieldAttachedToTargetWithXPlusOneCounters { target } => {
             let ObjectRef::Target(target_index) = target else {
@@ -10958,7 +10983,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ));
                 return;
             };
-            state.objects.get_mut(ctx.source).counters.plus1_plus1 = amount;
+            state.objects.get_mut(ctx.source).counters.plus1_plus1 = i32::from(amount);
             let link = ObjectLinkV4 {
                 object: target,
                 zone_change_count: state.objects.get(target).zone_change_count,
@@ -11068,7 +11093,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ));
                 return;
             }
-            let count = i16::from(*count);
+            let count = i32::from(*count);
             let counters = &mut state.objects.get_mut(object).counters.plus1_plus1;
             let Some(total) = counters.checked_add(count) else {
                 state.engine.halted = Some((

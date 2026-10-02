@@ -3827,7 +3827,9 @@ fn flat_validate_expected_decision_v1(
     }
     // The frozen flat formats have no planeswalker loyalty or combat
     // prevention fields. Refuse before publishing any incomplete buffers.
-    if session.state.planeswalkers_v1.is_some()
+    if session.state.objects.iter().any(|(_, object)| {
+        i16::try_from(object.counters.plus1_plus1).is_err()
+    }) || session.state.planeswalkers_v1.is_some()
         || session.state.engine.active_replacements.iter().any(|replacement| {
             matches!(replacement.kind,
                 crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. })
@@ -11372,10 +11374,10 @@ mod tests {
     #[cfg(feature = "limited-fdn-fixtures")]
     fn flat_action_slice_refuses_loyalty_and_combat_prevention_before_publish() {
         let base = FastActorSessionV1::reset_with_limits(81_039, 139, 128, 16_384);
-        for planeswalker in [false, true] {
+        for semantic in 0..3 {
             let mut session = base.clone();
             let object = session.state.players[0].hand[0];
-            let name = if planeswalker {
+            let name = if semantic == 1 {
                 "Ajani, Caller of the Pride"
             } else {
                 "Llanowar Elves"
@@ -11389,8 +11391,11 @@ mod tests {
                 &mut session.state,
                 crate::event::ProposedEvent::zone_change(object, crate::state::Zone::Battlefield),
             );
-            if !planeswalker {
+            if semantic == 0 {
                 crate::event::install_combat_damage_prevention(&mut session.state, object, object);
+            }
+            if semantic == 2 {
+                session.state.objects.get_mut(object).counters.plus1_plus1 = 65_536;
             }
             let mut actions = [poison_flat_action(); 2];
             let mut refs = [poison_flat_ref(); 2];

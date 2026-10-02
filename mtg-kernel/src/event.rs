@@ -437,6 +437,65 @@ pub enum CommittedEvent {
         source_zone_change_count: u32,
         controller: PlayerId,
     },
+    /// A positive placement of +1/+1 counters on one exact incarnation.
+    PlusOneCountersAdded {
+        object: ObjectId,
+        zone_change_count: u32,
+        player: PlayerId,
+        count: i32,
+    },
+}
+
+fn initialize_entry_counters(state: &mut GameState, object: ObjectId, kicked: bool) {
+    let live = state.objects.get(object);
+    let definition = &crate::card_def::CARD_DEFS[live.card_def as usize];
+    if definition.is_executable() {
+        if let Some(entry) = definition.enters_with_plus_one_counters {
+            if !entry.if_kicked || kicked {
+                state.objects.get_mut(object).counters.plus1_plus1 = entry.count;
+            }
+        }
+    }
+}
+
+fn log_plus_one_counters_added(
+    state: &mut GameState,
+    object: ObjectId,
+    player: PlayerId,
+    count: i32,
+) {
+    if count <= 0 {
+        return;
+    }
+    let committed = CommittedEvent::PlusOneCountersAdded {
+        object,
+        zone_change_count: state.objects.get(object).zone_change_count,
+        player,
+        count,
+    };
+    state.engine.event_log.push(committed.clone());
+    state.engine.event_history.push(committed);
+}
+
+/// Exact checked placement, shared by counter doubling and ordinary effects.
+pub(crate) fn add_plus_one_counters(
+    state: &mut GameState,
+    object: ObjectId,
+    player: PlayerId,
+    count: i32,
+) -> Result<(), String> {
+    let live = state.objects.get(object);
+    if live.zone != Zone::Battlefield || count < 0 {
+        return Err("invalid +1/+1 counter placement".to_string());
+    }
+    let total = live
+        .counters
+        .plus1_plus1
+        .checked_add(count)
+        .ok_or("+1/+1 counter overflow")?;
+    state.objects.get_mut(object).counters.plus1_plus1 = total;
+    log_plus_one_counters_added(state, object, player, count);
+    Ok(())
 }
 
 /// Runs the replace/prevent pass to a fixed point: repeatedly finds an
@@ -824,6 +883,7 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
             state.players[t.controller.index()].battlefield.push(object);
             let enters_tapped = permanent_enters_battlefield_tapped(state, object, t.controller);
             state.objects.get_mut(object).tapped = enters_tapped;
+            initialize_entry_counters(state, object, false);
             CommittedEvent::CreateToken {
                 object,
                 token_def: t.token_def,
@@ -846,8 +906,23 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
         CommittedEvent::ZoneChange { object, .. } if saga_entered => Some(*object),
         _ => None,
     };
+    let entry_counter_object = match &committed {
+        CommittedEvent::ZoneChange {
+            object,
+            to: Zone::Battlefield,
+            ..
+        }
+        | CommittedEvent::CreateToken { object, .. } => Some(*object),
+        _ => None,
+    };
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
+    if let Some(object) = entry_counter_object {
+        let live = state.objects.get(object);
+        let count = live.counters.plus1_plus1;
+        let controller = live.controller;
+        log_plus_one_counters_added(state, object, controller, count);
+    }
     if let Some(source) = saga_source {
         let chapter = {
             let lore = &mut state.objects.get_mut(source).counters.lore;
@@ -1170,6 +1245,10 @@ fn commit_zone_change(
             obj.tapped = false;
             obj.summoning_sick = false;
         }
+    }
+    if to_zone == Zone::Battlefield {
+        let kicked = from_zone == Zone::Stack && state.engine.pending_kicked_source == Some(id);
+        initialize_entry_counters(state, id, kicked);
     }
     crate::planeswalker_v1::after_zone_change(state, id);
     if to_zone == Zone::Library {
