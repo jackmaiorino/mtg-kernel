@@ -340,9 +340,11 @@ fn equip_requires_four_mana_including_white_and_sorcery_timing() {
         );
         let target = put(&mut state, PlayerId::P0, "Elvish Mystic", Zone::Battlefield);
         mana(&mut state, white, generic);
+        let decision = next(&mut state);
         assert!(
-            matches!(next(&mut state), Decision::CastSpellOrPass { activatable_abilities, .. }
-            if activatable_abilities.contains(&(armor, 0)) == legal)
+            matches!(&decision, Decision::CastSpellOrPass { activatable_abilities, .. }
+            if activatable_abilities.contains(&(armor, 0)) == legal),
+            "white={white} generic={generic} step={step:?} active={active:?}: {decision:?}"
         );
         let hash = state.state_hash();
         if legal {
@@ -386,7 +388,7 @@ fn equip_target_loss_preserves_previous_attachment() {
 }
 
 #[test]
-fn protection_prevents_lethal_damage_but_not_zero_toughness_or_bounce() {
+fn protection_prevents_lethal_damage_and_does_not_survive_bounce() {
     let mut state = ready();
     let target = put(&mut state, PlayerId::P0, "Elvish Mystic", Zone::Battlefield);
     attach(&mut state, target);
