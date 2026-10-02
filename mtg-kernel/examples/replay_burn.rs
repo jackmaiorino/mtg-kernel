@@ -760,6 +760,9 @@ fn run(
             // All four Blast cards are sideboard-only for this pool's
             // maindeck -- unobserved in this corpus (same
             // reasoning as ChooseCastMode/OrderTriggers above).
+            SurfaceDecision::Decision(Decision::ChooseTriggerMode { .. }) => {
+                return Err("unhandled-decision:ChooseTriggerMode".to_string());
+            }
             SurfaceDecision::Decision(Decision::ChooseSpellMode { .. }) => {
                 return Err("unhandled-decision:ChooseSpellMode".to_string())
             }
