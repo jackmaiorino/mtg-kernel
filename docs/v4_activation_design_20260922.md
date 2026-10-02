@@ -1,0 +1,13 @@
+# Exact-prefix V4 controller activation
+
+2026-09-22. Engineering fixture, not a strength gate. This implements the next scope of v4_estimate_route_design_20260922.md. No M1 or whole-match claim follows from a natural game result.
+
+A separate --activate-search options.json --archive archive.json route accepts two ordinary Disabled current packages and a complete consumed archive. Strict options name the game, global decision index, physical actor and an already-versioned mean or E search descriptor. The archive/config/packages must agree except historical runtime. The search package differs only in the validated descriptor for the same model. Only RoundRobin/PriorFree is admitted for this comparison.
+
+Replay the ordinary prefix with its original policy RNG. Compare each earlier completed game's start, terminal and every committed record to the archive. Immediately before the pinned switch, compare all committed current-game prefix records and the live actor-visible root including ordered actions. Do not sample an extra ordinary action at the switch. A discrepancy aborts with an Activation cause before any search. Once activated, only the designated actor uses the named search route; the opponent remains ordinary with its normal RNG. Records use the actual ordinary or search package identity and normal engine receipts. No fallback on search failure.
+
+Stop after the target game. The specialized result contains earlier games plus target, explicit activation/prefix/root/natural/scope_complete fields and typed aborts, but no BO3 winner or inferred complete-match ending. Aborts and incomplete scope remain visible. Fresh process semantic hashes exclude timings. Existing evaluation and Report paths retain their contracts.
+
+Source controls cover mean and E on both physical seats, exact repeat, switch-record identity and action, ordinary opponent, rejected actor/descriptor, and live prefix/root mismatch with zero search. Concrete runtime acceptance still needs g115 with S128/T1024/depth8/seed20260922 at the same two consumed certified fixtures and both controller outcomes. Earlier mean root misses do not imply eventual losses; both archived games originally won. Do not tune on these fixtures or add a new tie rule. Small correctness launches use the owner guard; substantial work requires fresh supported useful-throughput qualification. No paid compute/GPU/training/CP7 selection.
+
+This two-position engineering check estimates no population effect: n=2 consumed positions, one fixed model, no training replicas, no powered effect claim against between-run SD0.76pp. A later whole-match gate needs its own literature note, identifiable joint power design, fresh seed authority, declared incomplete endpoint and monitor/reviewer disposition.

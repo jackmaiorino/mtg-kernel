@@ -8,7 +8,7 @@ use crate::{
     build_mirror_state_from_ids, random_action_for_decision, rng_below, rng_chance,
     DECISION_SAFETY_CAP,
 };
-use mtg_kernel::engine::{self, Action, Decision};
+use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
 use mtg_kernel::rl::{ActionSemanticV1, TerminalClassificationV1};
 use mtg_kernel::rl_session::{
     RlEpisodeSessionV1, RlSessionDecisionV1, RlSessionResponseV1, SessionDeckIdsV1,
@@ -475,13 +475,24 @@ fn noncombat_action_count(decision: &Decision) -> Result<usize, String> {
         Decision::ChooseOptionalCost {
             discard_payable,
             sacrifice_payable,
+            return_permanent_payable,
             ..
-        } => match (*discard_payable, *sacrifice_payable) {
-            (false, false) | (true, true) => Ok(2),
-            flags => Err(format!(
-                "unsupported H2 optional-cost presentation flags {flags:?}"
-            )),
-        },
+        } => {
+            if *return_permanent_payable {
+                // The raw, unreshaped decision (Glint Hawk): always exactly
+                // Decline plus ReturnPermanent, answered through the direct
+                // one-shot `Action::ChooseOptionalCost` bypass below, never
+                // through the H2 Use/Which stage reshape.
+                Ok(2)
+            } else {
+                match (*discard_payable, *sacrifice_payable) {
+                    (false, false) | (true, true) => Ok(2),
+                    flags => Err(format!(
+                        "unsupported H2 optional-cost presentation flags {flags:?}"
+                    )),
+                }
+            }
+        }
         Decision::Discard { count, choices, .. } => {
             if *count != 1 {
                 Err(format!("H2 discard reshape expected count=1, got {count}"))
@@ -594,14 +605,25 @@ fn noncombat_action_by_index(decision: &Decision, index: usize) -> Result<Action
         Decision::ChooseOptionalCost {
             discard_payable,
             sacrifice_payable,
+            return_permanent_payable,
             ..
-        } => match (*discard_payable, *sacrifice_payable, index) {
-            (false, false, 0) => Action::ChooseOptionalCostStage(false),
-            (false, false, 1) => Action::ChooseOptionalCostStage(true),
-            (true, true, 0) => Action::ChooseOptionalCostStage(true),
-            (true, true, 1) => Action::ChooseOptionalCostStage(false),
-            _ => return Err("optional-cost policy index out of range".into()),
-        },
+        } => {
+            if *return_permanent_payable {
+                match index {
+                    0 => Action::ChooseOptionalCost(OptionalCostChoice::Decline),
+                    1 => Action::ChooseOptionalCost(OptionalCostChoice::ReturnPermanent),
+                    _ => return Err("optional-cost policy index out of range".into()),
+                }
+            } else {
+                match (*discard_payable, *sacrifice_payable, index) {
+                    (false, false, 0) => Action::ChooseOptionalCostStage(false),
+                    (false, false, 1) => Action::ChooseOptionalCostStage(true),
+                    (true, true, 0) => Action::ChooseOptionalCostStage(true),
+                    (true, true, 1) => Action::ChooseOptionalCostStage(false),
+                    _ => return Err("optional-cost policy index out of range".into()),
+                }
+            }
+        }
         Decision::ChooseSpellCopyPayment { .. } => Action::ChooseSpellCopyPayment(index == 0),
         Decision::ChooseSpellCopyRetarget { .. } => Action::ChooseSpellCopyRetarget(index == 0),
         Decision::ChooseMadnessCast { .. } => Action::ChooseMadnessCast(index == 1),

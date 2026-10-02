@@ -1,0 +1,33 @@
+# Bounded stack throughput qualification
+
+Question: which collector count and assignment of three complete learner streams to the two available GPUs finishes fastest, including storage and recovery, without changing saved learning outputs?
+
+Use the verified stack trainer060513c8, retained in public-stack-trainer-tools-001. Preserve the balanced ten-game deck/seat schedule from the prior replica1 configuration, but assign fresh deterministic seeds from SHA256 of the new episode IDs before execution. All3 modes, structured/permuted/disabled, have identical schedules and terminal-reward/loss settings; only the input mode differs. The200-update config describes the workload to project, not permission to launch it. No outcomes from these prefixes select models or experiment settings; no CP7 information is used.
+
+Measure one cheap full update, then3 complete updates for each of six allocations:1,4,10 collectors and two reversed host assignments. One GPU runs two learners sequentially while the other runs one. Maximum570 game executions,90 unique arm/seed slots. Each child has a300-second cap; reject cheap native executions reaching90seconds and stop new cases after1800seconds. Preserve failures and healthy live work. Every complete case must reproduce all saved trajectory/checkpoint/optimizer bytes, with zero unresolved failed games. Terminal-only rewards and synchronous frozen-weight batches remain unchanged.
+
+Current eligible devices: Jack GPU1 RTX3050 and HaleysPC GPU0 RTX4060; Jack GPU0 remains reserved for desktop use. Both machines were observed idle. RunPod's last authenticated inventory reports403, and no new paid allocation is authorized. Recheck host ownership at every group launch. Use Jack D SSD scratch with readback-verified compressed recovery to E, and HaleysPC C storage with export/hash verification. This reuses the previously selected D scratch role; it does not repeat the full storage grid or assert a new exhaustive C/D comparison.
+
+The supported bounded path is public_training_dispatch_v2.dispatch_stack_qualification through public_training_storage_v1.dispatch(stack=True). It accepts only1 or3 initial updates, at most3 jobs and ten games per batch. Production uses dispatch_stack_qualified and compute_throughput_v3: complete device/config/binary-bound evidence, serial/parallel collection, no same-GPU queue overlap, matching learning files, current inventory, verified recovery, and the minimum projected qualified allocation. Raw executables remain technically callable; this is launcher enforcement, not OS isolation. The old two-arm paths retain their existing guards.
+
+Record whole-update stage times and owned-process CPU/RSS/I/O plus selected-GPU telemetry every5seconds. A serial baseline is deliberately serial for the scaling comparison. Queued streams do not compete for a GPU. Report idle periods by phase and do not generate extra work just to increase utilization.
+
+Independent Fable review remains unavailable after the known zero-read429 untilSeptember22 07:00EDT. Proceed only with this bounded timing qualification under Jack's research assignment; it is neither reviewer endorsement nor a strength experiment. A separate frozen scientific plan, complete measurement and appropriate paired analysis are still required before drawing any strength conclusion.
+
+## Completed qualification, September 21, 09:25 EDT
+
+**Timing correction, September21 09:34EDT:** a subsequent live inventory found Kimi's Cargo build started during the final `b-w10` case. `public-stack-compute-001/timing-contamination-correction.json` records the process creation and overlapping native executions. Saved-file parity remains valid, but the selected37.06-minute placement forecast is withdrawn pending an uncontended remeasurement. Do not launch using this original compute-choice. The guard checked ownership before each group but did not reject owners starting during the group. Future qualification must check ownership afterward as well. Original receipts and reported projections below remain preserved as historical observations, not accepted allocation evidence.
+
+`E:/mtg-meta-recovery-20260921/public-stack-compute-001/result.json` passes the production allocation and storage guards. All 570 engineering game executions completed naturally: 30 cheap timing executions plus six 90-game cases. These repeat 90 unique arm/seed slots, not 570 independent strength observations. All 540 cross-allocation saved trajectory/checkpoint/optimizer comparisons are exact; the cheap first-update outputs also match. All seven archive receipts report zero mismatches. Controller session56329 ended with exit0; fresh local and remote process checks found no remaining qualification trainer or worker.
+
+| Collectors per learner | A projected minutes | B projected minutes |
+| --- | ---: | ---: |
+| 1 | 87.75 | 53.70 |
+| 4 | 67.20 | 40.58 |
+| 10 | 62.86 | 37.06 |
+
+A places structured on Jack GPU1 and queues permuted then disabled on Haley GPU0. B reverses that assignment. Selected `b-w10` uses ten synchronous collectors per learner, one active learner per GPU, D SSD scratch and verified E archives. Its measured three-update native group took51.77seconds, compared with70.11seconds for B with one collector. The full forecast includes staging and scaled archive/recovery cost. Full qualification wall time was728.83seconds. No paid compute or full training was launched.
+
+The37.06-minute forecast extrapolates two steady updates per learner to200 updates, totaling6,000 games across three streams. It is neither a confidence bound nor a promise for later learned policies. This compares six fixed allocations and the existing D storage role; it does not establish an exhaustive optimum over mixed worker counts, dynamic cross-host reassignment, other disks or cloud hardware. Five-second telemetry can miss short GPU bursts; stage timing and completed work determine the choice. The RunPod evidence remains the explicitly dated00:47UTC authenticated403, not a successful cloud benchmark.
+
+Source implementation remains10f7fa5c with unchanged trainer060513c8. `timing-summary.json` records per-arm complete-update/collection times, actual group durations and recovery costs. Next: declare the bounded scientific comparison and qualify smaller deterministic evaluation chunks before measurement. Keep Kimi's opt-in Escape gate separate; no stack playing-strength conclusion or candidate promotion follows from these timing tests. The independent Fable review gap remains unresolved.
