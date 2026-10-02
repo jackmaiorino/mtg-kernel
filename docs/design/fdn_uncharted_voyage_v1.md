@@ -27,7 +27,9 @@ when control differs. The second chooser is the spell's controller. Losing
 the spell's only target before resolution skips the entire sequence,
 including surveil. A token target's departure and any later library choice
 need explicit reference checks rather than assumptions about physical
-library membership.
+library membership. Surveil binds the complete library but selects its
+first non-token card, matching CR 111.6. A departed token remains indexed
+until the normal state-based sweep; surveil cannot move it a second time.
 
 Required checks: exact characteristics and four-mana payment; owner versus
 controller, both library placements and exact order; own/opposing targets,
@@ -38,6 +40,6 @@ choices. Then register a new catalog profile, preserve all older profiles
 and default v32, run relevant XMage and regressions, and verify natural
 external completion/replay and CI before delivering the slice.
 
-Preparation only so far. The card and interpreter changes are not yet
-implemented or verified. Both original decks remain unchanged. This is
+The card, interpreter and v46 catalog successor are implemented. Focused
+rules, reference and regression checks are in progress. Both original decks remain unchanged. This is
 routine rules engineering, with no training or playing-strength claim.

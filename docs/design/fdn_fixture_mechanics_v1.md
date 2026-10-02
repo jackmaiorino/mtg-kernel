@@ -1,10 +1,10 @@
 # FDN fixture implementation batches
 
 This inventories the **36 originally missing names** in the two pinned
-40-card fixtures. Through the Rebuke slice, the registry covers 32 of those
-names. **Four remain:** Celestial Armor,
-Sylvan Scavenging, Uncharted Voyage and Witness Protection. Source coverage
-is UG 37/40 and WG 38/40 copies; both original deck files retain their pinned
+40-card fixtures. Through the Voyage slice, the registry covers 33 of those
+names. **Three remain:** Celestial Armor,
+Sylvan Scavenging and Witness Protection. Source coverage
+is UG 38/40 and WG 38/40 copies; both original deck files retain their pinned
 hashes. The batch table below preserves the original decomposition.
 
 The [Prowler slice](fdn_prowler_creature_v1.md) implements turn-scoped
@@ -18,11 +18,14 @@ cost and ordinary creature destruction. Fifteen focused kernel checks pass;
 catalog history, regressions, reference checks, external replay and CI are
 still being verified.
 
+The [Voyage slice](fdn_uncharted_voyage_v1.md) adds owner top-or-bottom
+placement followed by private surveil. Its rules, compatibility and reference
+checks are in progress.
+
 The remaining implementation slices are concrete:
 
 | Slice | Work | Required checks |
 | --- | --- | --- |
-| Uncharted Voyage | Let the creature's owner choose top or bottom, then let the caster surveil one. | Owner differs from controller; exact library order; token departure; all-targets-illegal resolution; hidden information; restore at both choices. |
 | Sylvan Scavenging | Add an end-step modal trigger with a controlled-creature counter target or a conditional Raccoon token. | Select mode before its targets; preserve the token mode even below power four; check power at resolution; target loss; exact token; modal and target restore. |
 | Celestial Armor | Add flash Equipment, entry attachment and temporary target hexproof/indestructible, continuous equipped bonuses and equip. | Target loss, legal attachment and movement; target keeps its temporary abilities after Equipment moves; equip timing/payment; destruction and damage protection; restore. |
 | Witness Protection | Apply its Aura's name, type, color, ability-removal and base-stat layers. | Suppress triggers, ward and activations; keep counters and later modifiers; use effective names for legend checks; restore original characteristics when the Aura leaves; attachment and pending-decision restore. |

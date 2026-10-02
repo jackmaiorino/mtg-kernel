@@ -3151,8 +3151,9 @@ fn validate_owner_library_target_binding(
     let live = state.objects.get(object.object);
     if live.owner != owner
         || live.card_def != *card_def
-        || crate::card_def::CARD_DEFS[live.card_def as usize]
-            .has_type(crate::card_def::CardType::Land)
+        || (recipe.target_spec == crate::card_def::TargetSpec::NonlandPermanent
+            && crate::card_def::CARD_DEFS[live.card_def as usize]
+                .has_type(crate::card_def::CardType::Land))
         || (recipe.target_spec == crate::card_def::TargetSpec::Creature
             && !crate::engine::object_has_type(state, object.object, CardType::Creature))
     {
@@ -3212,6 +3213,20 @@ fn validate_owner_library_placement_frame(
     validate_owner_library_target_binding(state, pending, *object, *owner)
 }
 
+// CR 111.6: a departed token may still await its state-based cleanup in
+// the library index during resolution, but surveil only looks at cards.
+fn surveil_top_card(
+    state: &GameState,
+    library: &[EffectObjectBinding],
+) -> Option<EffectObjectBinding> {
+    library.iter().copied().find(|binding| {
+        state
+            .objects
+            .try_get(binding.object)
+            .is_some_and(|object| !crate::card_def::CARD_DEFS[object.card_def as usize].is_token)
+    })
+}
+
 fn validate_surveil_one_metadata(
     state: &GameState,
     pending: &EffectContinuation,
@@ -3225,7 +3240,7 @@ fn validate_surveil_one_metadata(
         || path != [1]
         || !expected_remaining_frames.is_empty()
         || player != pending.ctx.controller
-        || original_library.is_empty()
+        || surveil_top_card(state, original_library).is_none()
         || original_library != bind_library_exact(state, player)
     {
         return Err(
@@ -5092,7 +5107,8 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         canonical_path,
                         expected_remaining_frames,
                     )?;
-                    let top = original_library[0];
+                    let top = surveil_top_card(state, original_library)
+                        .ok_or_else(|| "surveil lost its top card".to_string())?;
                     let expected = EffectTargetCandidate {
                         target: Target::Object(top.object),
                         expected_object: Some(top),
@@ -7398,7 +7414,9 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         event::propose_and_commit(
                             state,
                             event::ProposedEvent::zone_change_preserving_known_identity(
-                                original_library[0].object,
+                                surveil_top_card(state, &original_library)
+                                    .ok_or_else(|| "surveil lost its top card".to_string())?
+                                    .object,
                                 Zone::Graveyard,
                             ),
                         );
@@ -7930,8 +7948,12 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
             EffectOp::SurveilOne { player } => {
                 let player = continuation.ctx.resolve_player(player, state);
                 let original_library = bind_library_exact(state, player);
-                state.reveal_library_top(player, player, usize::from(!original_library.is_empty()));
-                if let Some(&top) = original_library.first() {
+                if let Some(top) = surveil_top_card(state, &original_library) {
+                    let position = original_library
+                        .iter()
+                        .position(|binding| *binding == top)
+                        .expect("surveil top card belongs to the bound library");
+                    state.reveal_library_top(player, player, position + 1);
                     let canonical_path = path.clone();
                     let expected_remaining_frames = continuation.frames.clone();
                     continuation.choice = Some(PendingEffectChoice::SelectTargets {

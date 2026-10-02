@@ -338,7 +338,12 @@ fn an_illegal_only_target_skips_both_placement_and_surveil() {
 fn a_token_target_departs_and_does_not_remain_in_its_owners_library() {
     for option in [0, 1] {
         let mut state = ready();
-        let target = put(&mut state, PlayerId::P1, "Koma's Coil Token", Zone::Battlefield);
+        let target = put(
+            &mut state,
+            PlayerId::P1,
+            "Koma's Coil Token",
+            Zone::Battlefield,
+        );
         cast(&mut state, target);
         owner_choice(&mut state, PlayerId::P1);
         engine::step(&mut state, Action::ChooseEffectOption(option)).unwrap();
@@ -349,6 +354,99 @@ fn a_token_target_departs_and_does_not_remain_in_its_owners_library() {
         assert!(!state.players[1].library.contains(&target));
         assert!(!state.players[1].graveyard.contains(&target));
     }
+}
+
+#[test]
+fn own_token_placement_surveils_the_top_card_without_a_second_token_move() {
+    for option in [0, 1] {
+        for graveyard in [false, true] {
+            let mut state = ready();
+            let original = state.players[0].library.clone();
+            let target = put(
+                &mut state,
+                PlayerId::P0,
+                "Koma's Coil Token",
+                Zone::Battlefield,
+            );
+            cast(&mut state, target);
+            owner_choice(&mut state, PlayerId::P0);
+            engine::step(&mut state, Action::ChooseEffectOption(option)).unwrap();
+            let (_, top) = surveil_choice(&mut state);
+            assert_eq!(top, original[0]);
+            // No state-based action occurs between the two printed effects.
+            assert!(state.players[0].library.contains(&target));
+            assert_eq!(state.objects.get(target).zone_change_count, 1);
+            engine::step(
+                &mut state,
+                if graveyard {
+                    Action::ChooseEffectTarget(Target::Object(top))
+                } else {
+                    Action::FinishEffectSelection
+                },
+            )
+            .unwrap();
+            finish(&mut state);
+            assert_eq!(state.objects.get(target).zone_change_count, 1);
+            assert!(!state.players[0].library.contains(&target));
+            assert!(!state.players[0].graveyard.contains(&target));
+            assert_eq!(
+                state.players[0].library,
+                if graveyard {
+                    original[1..].to_vec()
+                } else {
+                    original
+                }
+            );
+            assert_eq!(state.players[0].graveyard.contains(&top), graveyard);
+        }
+    }
+}
+
+#[test]
+fn a_departed_token_does_not_make_an_empty_caster_library_surveilable() {
+    let mut state = ready_with_libraries(&[], &["Island"]);
+    let target = put(
+        &mut state,
+        PlayerId::P0,
+        "Koma's Coil Token",
+        Zone::Battlefield,
+    );
+    cast(&mut state, target);
+    owner_choice(&mut state, PlayerId::P0);
+    engine::step(&mut state, Action::ChooseEffectOption(0)).unwrap();
+    finish(&mut state);
+    assert!(state.players[0].library.is_empty());
+    assert_eq!(state.objects.get(target).zone_change_count, 1);
+}
+
+#[test]
+fn declining_ward_skips_placement_and_surveil() {
+    let mut state = ready();
+    state.players[0].mana_pool[ManaColor::U.pool_index()] = 6;
+    let original = state.players[0].library.clone();
+    let target = put(
+        &mut state,
+        PlayerId::P1,
+        "Cackling Prowler",
+        Zone::Battlefield,
+    );
+    let spell = cast(&mut state, target);
+    let mut answered = false;
+    for _ in 0..30 {
+        let decision = next(&mut state);
+        if matches!(decision, Decision::ChooseEffectBoolean { .. }) {
+            engine::step(&mut state, Action::ChooseEffectBoolean(false)).unwrap();
+            answered = true;
+            break;
+        }
+        pass(&mut state, decision);
+    }
+    assert!(answered);
+    finish(&mut state);
+    assert_eq!(state.players[0].library, original);
+    assert_eq!(state.objects.get(target).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(spell).zone, Zone::Graveyard);
+    assert_eq!(state.players[0].mana_pool[ManaColor::U.pool_index()], 2);
 }
 
 #[test]
