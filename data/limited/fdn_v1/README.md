@@ -32,9 +32,9 @@ unchanged 162-definition Pauper registry. The importer combines both files in
 that order and reports their separate SHA-256s. Build the gameplay binary with
 `cargo build --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_env`.
 Default builds retain the original Pauper catalog and its v32 identity; the
-Limited feature selects the appended definitions and their v41 identity.
+Limited feature selects the appended definitions and their v42 identity.
 The older v33 batch A, v34 batch B, v35 combat, v36 legend, v37 targeted-spell,
-v38 counter, v39 life-gain and v40 draw profiles remain readable and are rejected for mutation
+v38 counter, v39 life-gain, v40 draw and v41 Horde profiles remain readable and are rejected for mutation
 when they do not match the actual build.
 
 `kernel_limited_env --foundations-combat-v1` selects custom-game schema 3,

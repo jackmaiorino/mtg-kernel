@@ -211,6 +211,11 @@ const FROZEN_CARD_DB_HASH_U64_HEX_FDN_HOMUNCULUS_CREATURE_V1: &str = "8f1dc68e65
 const FROZEN_RUNTIME_CATALOG_SHA256_FDN_HOMUNCULUS_CREATURE_V1: &str =
     "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
+// v42 adds Koma, its Coils and spell-counter protection.
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_KOMA_CREATURE_V1: &str = "f4fba61544ae7963";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_KOMA_CREATURE_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
 const FROZEN_PROTOCOL_V2: &str = "kernel_rl_jsonl";
 const FROZEN_PROTOCOL_VERSION_V2: u32 = 5;
 const FROZEN_SCHEMA_VERSION_V2: u32 = 5;
@@ -1870,6 +1875,7 @@ pub(crate) enum NativeRunCatalogProfileV1 {
     FdnLifegainCreatures,
     FdnDrawCreatures,
     FdnHomunculusCreature,
+    FdnKomaCreature,
 }
 
 impl ValidatedTrainRunV2 {
@@ -2422,6 +2428,9 @@ fn classify_catalog_profile_v1(
         == FROZEN_CARD_DB_HASH_U64_HEX_FDN_HOMUNCULUS_CREATURE_V1
         && environment.runtime_catalog_sha256
             == FROZEN_RUNTIME_CATALOG_SHA256_FDN_HOMUNCULUS_CREATURE_V1;
+    let fdn_koma = environment.card_db_hash_u64_hex
+        == FROZEN_CARD_DB_HASH_U64_HEX_FDN_KOMA_CREATURE_V1
+        && environment.runtime_catalog_sha256 == FROZEN_RUNTIME_CATALOG_SHA256_FDN_KOMA_CREATURE_V1;
     match (
         historical,
         current,
@@ -2434,39 +2443,43 @@ fn classify_catalog_profile_v1(
         fdn_lifegain_creatures,
         fdn_draw_creatures,
         fdn_homunculus,
+        fdn_koma,
     ) {
-        (true, false, false, false, false, false, false, false, false, false, false) => {
+        (true, false, false, false, false, false, false, false, false, false, false, false) => {
             Ok(NativeRunCatalogProfileV1::Historical)
         }
-        (false, true, false, false, false, false, false, false, false, false, false) => {
+        (false, true, false, false, false, false, false, false, false, false, false, false) => {
             Ok(NativeRunCatalogProfileV1::Current)
         }
-        (false, false, true, false, false, false, false, false, false, false, false) => {
+        (false, false, true, false, false, false, false, false, false, false, false, false) => {
             Ok(NativeRunCatalogProfileV1::FdnFixtureBatchA)
         }
-        (false, false, false, true, false, false, false, false, false, false, false) => {
+        (false, false, false, true, false, false, false, false, false, false, false, false) => {
             Ok(NativeRunCatalogProfileV1::FdnFixtureBatchB)
         }
-        (false, false, false, false, true, false, false, false, false, false, false) => {
+        (false, false, false, false, true, false, false, false, false, false, false, false) => {
             Ok(NativeRunCatalogProfileV1::FdnCombatCards)
         }
-        (false, false, false, false, false, true, false, false, false, false, false) => {
+        (false, false, false, false, false, true, false, false, false, false, false, false) => {
             Ok(NativeRunCatalogProfileV1::FdnLegendRule)
         }
-        (false, false, false, false, false, false, true, false, false, false, false) => {
+        (false, false, false, false, false, false, true, false, false, false, false, false) => {
             Ok(NativeRunCatalogProfileV1::FdnTargetedSpells)
         }
-        (false, false, false, false, false, false, false, true, false, false, false) => {
+        (false, false, false, false, false, false, false, true, false, false, false, false) => {
             Ok(NativeRunCatalogProfileV1::FdnCounterCreatures)
         }
-        (false, false, false, false, false, false, false, false, true, false, false) => {
+        (false, false, false, false, false, false, false, false, true, false, false, false) => {
             Ok(NativeRunCatalogProfileV1::FdnLifegainCreatures)
         }
-        (false, false, false, false, false, false, false, false, false, true, false) => {
+        (false, false, false, false, false, false, false, false, false, true, false, false) => {
             Ok(NativeRunCatalogProfileV1::FdnDrawCreatures)
         }
-        (false, false, false, false, false, false, false, false, false, false, true) => {
+        (false, false, false, false, false, false, false, false, false, false, true, false) => {
             Ok(NativeRunCatalogProfileV1::FdnHomunculusCreature)
+        }
+        (false, false, false, false, false, false, false, false, false, false, false, true) => {
+            Ok(NativeRunCatalogProfileV1::FdnKomaCreature)
         }
         _ => Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral)),
     }
@@ -4949,6 +4962,12 @@ pub(crate) fn test_fixture_bytes_fdn_draw_creatures_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_draw_creatures()
 }
 
+#[cfg(all(test, feature = "limited-fdn-fixtures"))]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn test_fixture_bytes_fdn_homunculus_creature_v1() -> Vec<u8> {
+    tests::fixture_bytes_fdn_homunculus_creature()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5146,7 +5165,7 @@ mod tests {
                 // below overrides these two fields back to the HISTORICAL
                 // (rev3) literals for the dedicated dual-profile tests.
                 "card_db_hash_u64_hex": if cfg!(feature = "limited-fdn-fixtures") {
-                    FROZEN_CARD_DB_HASH_U64_HEX_FDN_HOMUNCULUS_CREATURE_V1
+                    FROZEN_CARD_DB_HASH_U64_HEX_FDN_KOMA_CREATURE_V1
                 } else {
                     FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
                 },
@@ -5448,6 +5467,16 @@ mod tests {
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_DRAW_CREATURES_V1.to_owned();
         record.environment.runtime_catalog_sha256 =
             FROZEN_RUNTIME_CATALOG_SHA256_FDN_DRAW_CREATURES_V1.to_owned();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    pub(super) fn fixture_bytes_fdn_homunculus_creature() -> Vec<u8> {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_HOMUNCULUS_CREATURE_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_HOMUNCULUS_CREATURE_V1.to_owned();
         refresh_derived(&mut record);
         to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
     }
@@ -6801,16 +6830,16 @@ mod tests {
     /// the frozen literals were typed wrong when this successor landed.
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn fdn_homunculus_creature_frozen_literal_matches_the_live_build_constant() {
+    fn fdn_koma_creature_frozen_literal_matches_the_live_build_constant() {
         use crate::card_def::KERNEL_CARDDB_HASH;
         use crate::runtime_decks::RUNTIME_DECK_CATALOG_FILE_SHA256;
         assert_eq!(
             format!("{KERNEL_CARDDB_HASH:016x}"),
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_HOMUNCULUS_CREATURE_V1
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_KOMA_CREATURE_V1
         );
         assert_eq!(
             RUNTIME_DECK_CATALOG_FILE_SHA256,
-            FROZEN_RUNTIME_CATALOG_SHA256_FDN_HOMUNCULUS_CREATURE_V1
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_KOMA_CREATURE_V1
         );
     }
 
@@ -6909,22 +6938,22 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn fdn_homunculus_creature_fixture_decodes_with_its_own_profile_and_live_identity() {
+    fn fdn_koma_creature_fixture_decodes_with_its_own_profile_and_live_identity() {
         let validated = decode_train_run_v2(&fixture_bytes()).unwrap();
         assert_eq!(
             validated.catalog_profile_v1(),
-            NativeRunCatalogProfileV1::FdnHomunculusCreature
+            NativeRunCatalogProfileV1::FdnKomaCreature
         );
         assert!(current_profile_matches_live_build_identity_v1(
             validated.record().environment()
         ));
         assert_ne!(
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_HOMUNCULUS_CREATURE_V1,
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_KOMA_CREATURE_V1,
             FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
         );
         assert_eq!(
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_HOMUNCULUS_CREATURE_V1,
-            "8f1dc68e65c24306"
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_KOMA_CREATURE_V1,
+            "f4fba61544ae7963"
         );
     }
 
@@ -7005,6 +7034,23 @@ mod tests {
         assert_eq!(
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_DRAW_CREATURES_V1,
             "fbef8128c0ddad96"
+        );
+        assert!(!current_profile_matches_live_build_identity_v1(
+            validated.record().environment()
+        ));
+    }
+
+    #[test]
+    fn fdn_homunculus_creature_profile_remains_readable_but_is_not_live() {
+        let bytes = fixture_bytes_fdn_homunculus_creature();
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnHomunculusCreature
+        );
+        assert_eq!(
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_HOMUNCULUS_CREATURE_V1,
+            "8f1dc68e65c24306"
         );
         assert!(!current_profile_matches_live_build_identity_v1(
             validated.record().environment()

@@ -10,7 +10,7 @@ The rules reference is pinned XMage `KomaWorldEater.java` and
 `KomasCoilToken.java` at `a5c90fe180021e70e2a644ade00eeab07f857a40`.
 This implementation follows the Horde batch and retains the original UG
 and WG fixtures. Append registry definitions for the creature and token;
-publish a new FDN catalog while preserving old read-only identities and
+publish FDN v42 (`f4fba61544ae7963`) while preserving old read-only identities and
 the default catalog and frozen flat files.
 
 The existing legend rule, generic-mana ward, trample damage choices and
