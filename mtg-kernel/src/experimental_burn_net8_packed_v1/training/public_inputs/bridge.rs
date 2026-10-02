@@ -29,6 +29,99 @@ impl PublicDeviceTrainState {
         object_inputs_enabled: bool,
         max_chunk_substeps: usize,
     ) -> Result<(), Box<dyn Error>> {
+        self.validate_groups(groups, targets, advantages, max_chunk_substeps)?;
+        let mut accumulator = PublicGradientAccumulator::default();
+        self.accumulate_chunks(
+            &mut accumulator,
+            groups,
+            targets,
+            advantages,
+            None,
+            value_coefficient,
+            entropy_coefficient,
+            inputs_enabled,
+            object_inputs_enabled,
+            max_chunk_substeps,
+            groups.len() as f32,
+            true,
+        )?;
+        self.apply(accumulator, learning_rate)
+    }
+
+    /// PPO over the current batch: for each epoch's partition, one Adam step
+    /// per minibatch, normalized by that minibatch's group count. Only the
+    /// first minibatch of the first epoch sees the behavior parameters, so the
+    /// transported-behavior envelope is checked there alone. Returns every
+    /// group ratio observed, in step order, for statistics.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "preserves the explicit numerical and collection input contract"
+    )]
+    pub(crate) fn update_groups_ppo(
+        &mut self,
+        groups: &[PublicTrainingGroup<'_>],
+        targets: &[f32],
+        advantages: &[f32],
+        behavior_joint: &[f32],
+        partitions: &[Vec<Vec<usize>>],
+        clip: f32,
+        learning_rate: f32,
+        value_coefficient: f32,
+        inputs_enabled: bool,
+        object_inputs_enabled: bool,
+        max_chunk_substeps: usize,
+    ) -> Result<Vec<f32>, Box<dyn Error>> {
+        self.validate_groups(groups, targets, advantages, max_chunk_substeps)?;
+        if behavior_joint.len() != groups.len()
+            || behavior_joint.iter().any(|v| !v.is_finite())
+            || partitions.is_empty()
+            || partitions.iter().any(|epoch| {
+                let mut seen: Vec<usize> = epoch.concat();
+                seen.sort_unstable();
+                epoch.iter().any(Vec::is_empty) || seen != (0..groups.len()).collect::<Vec<_>>()
+            })
+        {
+            return Err(training_error("invalid public PPO behavior or partition"));
+        }
+        let mut ratios = Vec::new();
+        for (epoch, minibatches) in partitions.iter().enumerate() {
+            for (index, minibatch) in minibatches.iter().enumerate() {
+                let selected: Vec<_> = minibatch
+                    .iter()
+                    .map(|&g| PublicTrainingGroup {
+                        substeps: groups[g].substeps,
+                    })
+                    .collect();
+                let pick =
+                    |values: &[f32]| minibatch.iter().map(|&g| values[g]).collect::<Vec<_>>();
+                let mut accumulator = PublicGradientAccumulator::default();
+                ratios.extend(self.accumulate_chunks(
+                    &mut accumulator,
+                    &selected,
+                    &pick(targets),
+                    &pick(advantages),
+                    Some((&pick(behavior_joint), clip)),
+                    value_coefficient,
+                    0.0,
+                    inputs_enabled,
+                    object_inputs_enabled,
+                    max_chunk_substeps,
+                    selected.len() as f32,
+                    epoch == 0 && index == 0,
+                )?);
+                self.apply(accumulator, learning_rate)?;
+            }
+        }
+        Ok(ratios)
+    }
+
+    fn validate_groups(
+        &self,
+        groups: &[PublicTrainingGroup<'_>],
+        targets: &[f32],
+        advantages: &[f32],
+        max_chunk_substeps: usize,
+    ) -> Result<(), Box<dyn Error>> {
         use crate::native_flat_tensorizer_v4::*;
         if groups.is_empty()
             || groups.len() > 1_000_000
@@ -70,7 +163,32 @@ impl PublicDeviceTrainState {
                 }
             }
         }
-        let mut accumulator = PublicGradientAccumulator::default();
+        Ok(())
+    }
+
+    /// Packs, uploads and backpropagates `groups` in bounded chunks into
+    /// `accumulator`. `ppo` selects the clipped loss with these behavior joint
+    /// log-probabilities; None is the grouped GAE loss. Returns PPO ratios.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "preserves the explicit numerical and collection input contract"
+    )]
+    fn accumulate_chunks(
+        &self,
+        accumulator: &mut PublicGradientAccumulator,
+        groups: &[PublicTrainingGroup<'_>],
+        targets: &[f32],
+        advantages: &[f32],
+        ppo: Option<(&[f32], f32)>,
+        value_coefficient: f32,
+        entropy_coefficient: f32,
+        inputs_enabled: bool,
+        object_inputs_enabled: bool,
+        max_chunk_substeps: usize,
+        normalization_group_count: f32,
+        check_behavior_envelope: bool,
+    ) -> Result<Vec<f32>, Box<dyn Error>> {
+        let mut ratios = Vec::new();
         let mut start = 0;
         while start < groups.len() {
             let mut end = start;
@@ -114,15 +232,35 @@ impl PublicDeviceTrainState {
                 &advantages[start..end],
                 &self.legacy.device,
             )?;
-            let output = self.chunk_backward_gae(
-                &mut accumulator,
-                &batch,
-                &rows,
-                &plan,
-                value_coefficient,
-                groups.len() as f32,
-                entropy_coefficient,
-            )?;
+            let output = match ppo {
+                None => self.chunk_backward_gae(
+                    accumulator,
+                    &batch,
+                    &rows,
+                    &plan,
+                    value_coefficient,
+                    normalization_group_count,
+                    entropy_coefficient,
+                )?,
+                Some((behavior_joint, clip)) => {
+                    let (output, chunk_ratios) = self.chunk_backward_ppo(
+                        accumulator,
+                        &batch,
+                        &rows,
+                        &plan,
+                        &behavior_joint[start..end],
+                        clip,
+                        value_coefficient,
+                        normalization_group_count,
+                    )?;
+                    ratios.extend(chunk_ratios);
+                    output
+                }
+            };
+            if !check_behavior_envelope {
+                start = end;
+                continue;
+            }
             let close = |actual: f32, bits: u32| {
                 actual.is_finite()
                     && (actual - f32::from_bits(bits)).abs()
@@ -148,6 +286,6 @@ impl PublicDeviceTrainState {
             }
             start = end;
         }
-        self.apply(accumulator, learning_rate)
+        Ok(ratios)
     }
 }

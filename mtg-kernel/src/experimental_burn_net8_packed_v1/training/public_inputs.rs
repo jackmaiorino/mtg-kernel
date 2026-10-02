@@ -153,6 +153,18 @@ impl ProjectionSnapshot {
     }
 }
 
+/// Chunk outputs plus the optional extra readback.
+type ChunkBackwardWithExtraV1 = Result<(ChunkBackwardOutputsV1, Option<Vec<f32>>), Box<dyn Error>>;
+
+/// A chunk loss plus one optional detached tensor to read back with it.
+type ChunkLossV1 = Result<
+    (
+        Tensor<CudaAutodiffBackendV1, 1>,
+        Option<Tensor<CudaBackendV1, 1>>,
+    ),
+    Box<dyn Error>,
+>;
+
 #[derive(Default)]
 pub(crate) struct PublicGradientAccumulator {
     base: burn::optim::GradientsAccumulator<ProductionNet8<CudaAutodiffBackendV1>>,
@@ -238,6 +250,68 @@ impl PublicDeviceTrainState {
         normalization_group_count: f32,
         entropy_coefficient: f32,
     ) -> Result<ChunkBackwardOutputsV1, Box<dyn Error>> {
+        self.chunk_backward_with(accumulator, batch, rows, |logits, values| {
+            let loss = entropy::dense_group_loss_with_entropy(
+                logits,
+                values,
+                plan,
+                value_coefficient,
+                normalization_group_count,
+                entropy_coefficient,
+            )?;
+            Ok((loss, None))
+        })
+        .map(|(output, _)| output)
+    }
+
+    /// Clipped-surrogate sibling of `chunk_backward_gae`. Also returns each
+    /// group's probability ratio against its behavior joint probability.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "preserves the explicit numerical and collection input contract"
+    )]
+    fn chunk_backward_ppo(
+        &self,
+        accumulator: &mut PublicGradientAccumulator,
+        batch: &DevicePackedBatch<CudaAutodiffBackendV1>,
+        rows: &[PublicFeatureRowsV1],
+        plan: &DenseGroupLossPlanGaeV1,
+        behavior_joint: &[f32],
+        clip: f32,
+        value_coefficient: f32,
+        normalization_group_count: f32,
+    ) -> Result<(ChunkBackwardOutputsV1, Vec<f32>), Box<dyn Error>> {
+        let (output, ratios) =
+            self.chunk_backward_with(accumulator, batch, rows, |logits, values| {
+                let (loss, ratios) = dense_group_loss_ppo_v1(
+                    logits,
+                    values,
+                    plan,
+                    behavior_joint,
+                    clip,
+                    value_coefficient,
+                    normalization_group_count,
+                )?;
+                Ok((loss, Some(ratios)))
+            })?;
+        Ok((
+            output,
+            ratios.ok_or_else(|| training_error("missing PPO ratios"))?,
+        ))
+    }
+
+    /// One chunk's forward, loss, backward and gradient accumulation. The loss
+    /// builder may return one extra detached tensor, read back with the outputs.
+    fn chunk_backward_with(
+        &self,
+        accumulator: &mut PublicGradientAccumulator,
+        batch: &DevicePackedBatch<CudaAutodiffBackendV1>,
+        rows: &[PublicFeatureRowsV1],
+        loss_builder: impl FnOnce(
+            Tensor<CudaAutodiffBackendV1, 1>,
+            Tensor<CudaAutodiffBackendV1, 1>,
+        ) -> ChunkLossV1,
+    ) -> ChunkBackwardWithExtraV1 {
         let auxiliary = PublicBatch::upload(rows, batch)?;
         let model = PublicModel {
             base: self.legacy.model.clone(),
@@ -246,14 +320,7 @@ impl PublicDeviceTrainState {
         let (logits, values) = model.forward(batch, &auxiliary);
         let logit_outputs = logits.clone().inner();
         let value_outputs = values.clone().inner();
-        let loss = entropy::dense_group_loss_with_entropy(
-            logits,
-            values,
-            plan,
-            value_coefficient,
-            normalization_group_count,
-            entropy_coefficient,
-        )?;
+        let (loss, extra) = loss_builder(logits, values)?;
         let mut gradients = GradientsParams::from_grads(loss.backward(), &model);
         if batch.empty_relations_v3 {
             register_empty_relation_gradients_v3(&model.base, batch, &mut gradients)?;
@@ -291,11 +358,25 @@ impl PublicDeviceTrainState {
         let gauge_gradient = gradients
             .get::<CudaBackendV1, 1>(gauge.id)
             .ok_or_else(|| training_error("missing gauge gradient"))?;
-        let readback = Transaction::<CudaBackendV1>::default()
+        let mut transaction = Transaction::<CudaBackendV1>::default()
             .register(logit_outputs)
             .register(value_outputs)
-            .register(gauge_gradient)
-            .try_execute()?;
+            .register(gauge_gradient);
+        let has_extra = extra.is_some();
+        if let Some(extra) = extra {
+            transaction = transaction.register(extra);
+        }
+        let mut readback = transaction.try_execute()?;
+        let extra = if has_extra {
+            Some(
+                readback
+                    .pop()
+                    .ok_or_else(|| training_error("public backward readback count"))?
+                    .into_vec::<f32>()?,
+            )
+        } else {
+            None
+        };
         let [logits, values, gauge]: [TensorData; 3] = readback
             .try_into()
             .map_err(|_| training_error("public backward readback count"))?;
@@ -308,13 +389,16 @@ impl PublicDeviceTrainState {
             None => state,
         });
         accumulator.base.accumulate(&self.legacy.model, gradients);
-        Ok(ChunkBackwardOutputsV1 {
-            logit_outputs: logits.into_vec::<f32>()?,
-            value_outputs: values.into_vec::<f32>()?,
-            raw_gauge_residual: gauge.into_vec::<f32>()?[0],
-            #[cfg(test)]
-            device_objective: None,
-        })
+        Ok((
+            ChunkBackwardOutputsV1 {
+                logit_outputs: logits.into_vec::<f32>()?,
+                value_outputs: values.into_vec::<f32>()?,
+                raw_gauge_residual: gauge.into_vec::<f32>()?[0],
+                #[cfg(test)]
+                device_objective: None,
+            },
+            extra,
+        ))
     }
 
     pub(crate) fn apply(
