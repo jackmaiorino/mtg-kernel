@@ -75,6 +75,7 @@ impl PolicyDecisionV5 {
                     | Decision::ChooseCastMode { player, .. }
                     | Decision::ChooseKicker { player, .. }
                     | Decision::ChooseSpellMode { player, .. }
+                    | Decision::ChooseTriggerMode { player, .. }
                     | Decision::ChooseEffectOption { player, .. }
                     | Decision::ChooseEffectTargets { player, .. }
                     | Decision::ChooseEffectBoolean { player, .. }

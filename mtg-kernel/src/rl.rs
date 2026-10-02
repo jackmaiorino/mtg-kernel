@@ -2428,6 +2428,12 @@ fn core_surface_action_candidates_v1(
                 spell,
                 mode_count,
                 legal_modes,
+            }
+            | Decision::ChooseTriggerMode {
+                player,
+                source: spell,
+                mode_count,
+                legal_modes,
             } => {
                 let actor = (*player).into();
                 let source = card_ref(state, *spell)?;
@@ -2440,7 +2446,13 @@ fn core_surface_action_candidates_v1(
                             mode_index,
                             mode_count: *mode_count,
                         },
-                        SurfaceAction::Action(Action::ChooseSpellMode(mode_index)),
+                        SurfaceAction::Action(
+                            if matches!(decision, Decision::ChooseTriggerMode { .. }) {
+                                Action::ChooseTriggerMode(mode_index)
+                            } else {
+                                Action::ChooseSpellMode(mode_index)
+                            },
+                        ),
                     )?;
                 }
             }
@@ -2828,6 +2840,7 @@ pub fn acting_player_for_surface_decision(
             | Decision::ChooseCastMode { player, .. }
             | Decision::ChooseKicker { player, .. }
             | Decision::ChooseSpellMode { player, .. }
+            | Decision::ChooseTriggerMode { player, .. }
             | Decision::ChooseEffectOption { player, .. }
             | Decision::ChooseEffectTargets { player, .. }
             | Decision::ChooseEffectBoolean { player, .. }

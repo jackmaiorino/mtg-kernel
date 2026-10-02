@@ -221,6 +221,7 @@ pub enum Subtype {
     Merfolk,
     Octopus,
     Hyena,
+    Raccoon,
 }
 
 impl Subtype {
@@ -301,6 +302,8 @@ impl Subtype {
         Subtype::Octopus,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Hyena,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Raccoon,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
