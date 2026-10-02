@@ -490,7 +490,7 @@ fn restore_preserves_entry_targets_equipping_and_resolved_protection() {
 }
 
 #[test]
-fn flash_in_response_to_lethal_damage_protects_the_creature_before_damage_resolves() {
+fn flash_in_response_to_opponents_damage_spell_invalidates_the_target() {
     let mut state = ready();
     let target = put(&mut state, PlayerId::P0, "Elvish Mystic", Zone::Battlefield);
     let bolt = put(&mut state, PlayerId::P1, "Lightning Bolt", Zone::Hand);
@@ -509,7 +509,7 @@ fn flash_in_response_to_lethal_damage_protects_the_creature_before_damage_resolv
     finish(&mut state);
     assert_eq!(state.objects.get(target).zone, Zone::Battlefield);
     assert_eq!(state.objects.get(bolt).zone, Zone::Graveyard);
-    assert_eq!(state.objects.get(target).damage, 3);
+    assert_eq!(state.objects.get(target).damage, 0);
     assert_eq!(
         state.objects.get(armor).v4.attached_to.unwrap().object,
         target

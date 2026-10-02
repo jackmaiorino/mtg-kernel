@@ -33,3 +33,10 @@ incorrectly included a mana-producing creature. Its missing generic mana
 was payable from that creature. Use a creature without a mana ability for
 the affordability rejection cases. Validation of the corrected cases and
 new catalog profile is pending.
+
+Fourteen initial rules cases, 46 definition checks, 142 catalog-history
+checks (three existing ignores), twenty Python checks and Limited all-target
+Clippy pass. Six additional response/source-incarnation cases include
+hexproof invalidating an opponent's already-announced damage spell. Its
+correct damage expectation is zero because the only target becomes illegal.
+All ten strict XMage reference cases pass. Expanded validation is pending.
