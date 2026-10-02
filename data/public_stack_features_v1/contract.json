@@ -1,0 +1,25 @@
+{
+  "schema": "mtg-kernel-public-stack-input/v1",
+  "feature_width": 312,
+  "rows": "Every validated StackTarget relation in stack order: one baseline per item, then every declared target including player targets. Existing V4 tensors are unchanged.",
+  "node_binding": "V4 raw-to-tensor projection, never card-token matching. Baseline and player-target rows have no target node.",
+  "layout": {
+    "0": "presence=1",
+    "1": "baseline indicator",
+    "2": "bottom-based stack ordinal / 32",
+    "3": "top-based stack depth / 32",
+    "4": "stack item count / 32",
+    "5": "relation secondary order / 16, zero for baseline",
+    "6..7": "controller one-hot: actor, opponent",
+    "8..11": "kind one-hot: spell, activated, triggered, madness offer",
+    "12..15": "is_copy, is_flashback, madness_offer, kicked",
+    "16..24": "cast method one-hot: absent, normal, alternative, flashback, madness, plotted, escape, bestow, omen",
+    "25..280": "mode_chosen one-hot for all 256 u8 values; zero is primary mode, also used by non-modal items",
+    "281..288": "face_index u8, least-significant bit first",
+    "289..304": "x_value u16, least-significant bit first",
+    "305..308": "target kind one-hot: none, object, actor player, opponent player",
+    "309..311": "announcement-time object-target controller: actor, opponent, none"
+  },
+  "message": "tanh(W * [features, source object-base hidden, target object-base hidden or zeros]), no bias, W initialized to exact zero. Add each message once to its source and once to a distinct object target before legacy node update. No new legacy graph nodes or edges.",
+  "scope": "Finalized public stack only. Does not implement Escape, expose pending private cast choices, change rewards, enable costs/prevention, or establish strength. No truncation of stack or targets."
+}

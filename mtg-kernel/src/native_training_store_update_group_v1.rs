@@ -5322,13 +5322,22 @@ mod tests {
         // `recorded_burn_pair_numerical_witness_v1` (native_trainer_v1.rs)
         // already is. The linux-gnu delta below is the accepted epoch
         // re-baseline, replay-verified (40/40, zero divergence).
+        //
+        // Re-baselined again for PR #111's CR 608.2 / 511.3 rules fixes: the
+        // observation content those fixes deliberately changed (a resolving
+        // spell on the stack during its choices; no stale combat record)
+        // moves both the byte length and the digest. The windows-msvc arm was
+        // read from this test's failing run on x86_64-pc-windows-msvc and the
+        // linux-gnu arm from the same run on x86_64-unknown-linux-gnu (WSL2
+        // Ubuntu 22.04, glibc 2.35, pinned toolchain 1.94.1). The byte length
+        // is cross-target consistent (71_544 on both reviewed targets).
         #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
         const MAIN_GOLDEN_SHA256_V1: &str =
-            "befacadb1ed7cc774587779c087bcd6c429d83fc500ca1744d01b685e1300ddc";
+            "78651fc37457a78923e294b6e99de95d4bd3351364ceb88d4e53f3311fe8425e";
         #[cfg(not(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64")))]
         const MAIN_GOLDEN_SHA256_V1: &str =
-            "73e1af55771e8b8876fba629a21dafb0f8d657e04ab3f790465db60e6ddb8ec8";
-        const MAIN_GOLDEN_LEN_V1: usize = 78_190;
+            "27c70a9ac9740cf1c107aa29d574865f48f8c44df9721f2010a940d322ef4334";
+        const MAIN_GOLDEN_LEN_V1: usize = 71_544;
 
         let run_bytes = test_fixture_bytes_v2();
         let run = decode_train_run_v2(&run_bytes).unwrap();
@@ -5778,8 +5787,16 @@ mod tests {
             // Re-based at the merge epoch under the owner-accepted ruling
             // (collab CLAUDE #236/#241), values read from the hosted
             // linux-gnu CI runs 31855835633 and 31863359780, witnessed by
-            // the 40/40 replay gate. Compared as one tuple so any future
-            // drift reports every pinned quantity in a single failing run.
+            // the 40/40 replay gate. Re-baselined again for PR #111's
+            // CR 608.2 / 511.3 rules fixes (same observation-derived
+            // rationale as the platform-independent pin below): values read
+            // from this test's failing run on x86_64-unknown-linux-gnu
+            // (WSL2 Ubuntu 22.04, glibc 2.35, pinned toolchain 1.94.1).
+            // Compared as one tuple so any future drift reports every
+            // pinned quantity in a single failing run. The canonical
+            // sha256 and byte length match
+            // sync_path_reproduces_mains_golden_store_hash's linux-gnu arm
+            // above, as they must (same synchronous pipeline).
             let canonical_sha256: [u8; 32] = Sha256::digest(group.canonical_bytes()).into();
             let observed = (
                 lower_hex_raw32_v1(canonical_sha256),
@@ -5787,9 +5804,9 @@ mod tests {
                 group.canonical_bytes().len(),
             );
             let pinned = (
-                "befacadb1ed7cc774587779c087bcd6c429d83fc500ca1744d01b685e1300ddc".to_owned(),
-                "48ea5707a925e904e876747abddebbacfee4fad8f0dcf8b345da017eabd0be63".to_owned(),
-                78_190usize,
+                "78651fc37457a78923e294b6e99de95d4bd3351364ceb88d4e53f3311fe8425e".to_owned(),
+                "07475dd527d7adc0c7c023394c7def4b3977cb7cd51b74411daeafca001e0a06".to_owned(),
+                71_544usize,
             );
             assert_eq!(
                 observed, pinned,
@@ -5811,14 +5828,35 @@ mod tests {
         // same class of literal but could not be verified or re-baselined
         // from this Windows host; it needs the identical treatment on a
         // Linux target before this test is fully current there.
+        //
+        // Re-baselined again for PR #111's CR 608.2 / 511.3 rules fixes: the
+        // deck-binding and trajectory-digest fields this pin covers embed the
+        // observations those fixes changed. Value read from this test's
+        // failing run on x86_64-pc-windows-msvc (the projection is
+        // float-free, so it stays platform-independent).
         let value: Value = serde_json::from_slice(group.canonical_bytes()).unwrap();
         let episodes_cj =
             to_canonical_json_bytes_v1(&value["evidence"]["episodes"], episode_null_policy_v1())
                 .unwrap();
         let episodes_sha256: [u8; 32] = Sha256::digest(&episodes_cj).into();
+        // Re-baselined again for the pauper-meta-cards-v1 card lane's wave 1
+        // (Task 13, identity finalisation): the wave's 21 new cards moved
+        // KERNEL_CARDDB_HASH, which this legacy episode projection's deck
+        // bindings and trajectory digests embed. Old value (pre-wave-1):
+        // "2002effe9f1cc7a88d896dffeacb157cab00201a9c401ca9530c1b3338cc1372".
+        //
+        // Re-baselined again for the Phase 1 card lane merge (2026-09):
+        // merging lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into
+        // the Phase 1 branch moved KERNEL_CARDDB_HASH again (from
+        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause.
+        // Old (wave-1) value:
+        // "0fd11d97f708f191e89c0039a0d65a48c2b63a38b68cbeaa86c0dc152c16498f".
+        // New value is this test's own live-computed digest, read directly
+        // from a failing run on this Windows host (never hand-typed), same
+        // discipline as the prior re-baseline note above.
         assert_eq!(
             lower_hex_raw32_v1(episodes_sha256),
-            "2002effe9f1cc7a88d896dffeacb157cab00201a9c401ca9530c1b3338cc1372",
+            "48ace9c3c2232847215101849fbcd751f758cb4527690fe39d9fee20aa6ac45f",
             "the legacy episode projection drifted from the pre-C2 baseline"
         );
     }

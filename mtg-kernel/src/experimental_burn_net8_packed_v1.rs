@@ -8,6 +8,11 @@
 pub(crate) mod bridge;
 pub(crate) mod cell_zero_arm_v1;
 mod training;
+pub use training::entropy::run_gradient_probe as run_public_entropy_gradient_probe_v1;
+pub(crate) use training::public_inputs as public_training;
+pub(crate) use training::stack_inputs as stack_training;
+#[cfg(test)]
+mod v3_adapter_tests;
 
 use crate::common_model_snapshot_v1::{
     common_model_snapshot_paths_v1, load_common_model_snapshot_v1,
@@ -213,47 +218,84 @@ impl<B: Backend> ProductionNet8<B> {
         &self,
         batch: &DevicePackedBatch<B>,
     ) -> (Tensor<B, 1>, Tensor<B, 1>) {
+        self.forward_core_with_public::<D>(batch, None)
+    }
+
+    fn forward_core_with_public<D: ProductionNet8DimsV1>(
+        &self,
+        batch: &DevicePackedBatch<B>,
+        public: Option<(Tensor<B, 2>, Tensor<B, 2>)>,
+    ) -> (Tensor<B, 1>, Tensor<B, 1>) {
+        self.forward_core_with_stack_and_public::<D>(batch, public, None)
+    }
+
+    fn forward_core_with_stack_and_public<D: ProductionNet8DimsV1>(
+        &self,
+        batch: &DevicePackedBatch<B>,
+        public: Option<(Tensor<B, 2>, Tensor<B, 2>)>,
+        stack: Option<(&training::stack_inputs::StackBatch<B>, Tensor<B, 2>)>,
+    ) -> (Tensor<B, 1>, Tensor<B, 1>) {
         let object_card = self
             .card_embedding
             .forward(batch.object_card_ids.clone().unsqueeze_dim::<2>(1))
             .squeeze_dim::<2>(1);
-        let object_base = self.object_encoder.forward(Tensor::cat(
-            vec![batch.object_features.clone(), object_card],
-            1,
-        ));
+        let object_input = Tensor::cat(vec![batch.object_features.clone(), object_card], 1);
+        let object_base = match &public {
+            Some((addition, _)) => self
+                .object_encoder
+                .second
+                .forward(
+                    (self.object_encoder.first.forward(object_input) + addition.clone()).tanh(),
+                )
+                .tanh(),
+            None => self.object_encoder.forward(object_input),
+        };
 
-        let edge_hidden = self.edge_encoder.forward(Tensor::cat(
-            vec![
-                batch.edge_features.clone(),
-                object_base
-                    .clone()
-                    .select(0, batch.edge_source_indices.clone()),
-                object_base
-                    .clone()
-                    .select(0, batch.edge_target_indices.clone()),
-            ],
-            1,
-        ));
-        let source_scatter = batch
-            .edge_source_indices
-            .clone()
-            .unsqueeze_dim::<2>(1)
-            .expand([batch.edge_count, D::HIDDEN_DIM]);
-        let target_scatter = batch
-            .edge_target_indices
-            .clone()
-            .unsqueeze_dim::<2>(1)
-            .expand([batch.edge_count, D::HIDDEN_DIM]);
-        // Preserve the native/Python ordering: all source contributions in
-        // edge order, then all target contributions in edge order.
-        let edge_pooled = Tensor::zeros([batch.object_count, D::HIDDEN_DIM], &batch.device)
-            .scatter(
-                0,
-                source_scatter,
-                edge_hidden.clone(),
-                IndexingUpdateOp::Add,
-            )
-            .scatter(0, target_scatter, edge_hidden, IndexingUpdateOp::Add);
+        let edge_pooled = if batch.empty_relations_v3 && batch.edge_count == 0 {
+            // No relation rows exist. This is the exact empty reduction,
+            // with no synthetic edges or unrelated decision padding.
+            Tensor::zeros([batch.object_count, D::HIDDEN_DIM], &batch.device)
+        } else {
+            let edge_features = batch.edge_features.as_ref().expect("edge storage");
+            let edge_source_indices = batch
+                .edge_source_indices
+                .as_ref()
+                .expect("edge source storage");
+            let edge_target_indices = batch
+                .edge_target_indices
+                .as_ref()
+                .expect("edge target storage");
+            let edge_hidden = self.edge_encoder.forward(Tensor::cat(
+                vec![
+                    edge_features.clone(),
+                    object_base.clone().select(0, edge_source_indices.clone()),
+                    object_base.clone().select(0, edge_target_indices.clone()),
+                ],
+                1,
+            ));
+            let source_scatter = edge_source_indices
+                .clone()
+                .unsqueeze_dim::<2>(1)
+                .expand([batch.edge_count, D::HIDDEN_DIM]);
+            let target_scatter = edge_target_indices
+                .clone()
+                .unsqueeze_dim::<2>(1)
+                .expand([batch.edge_count, D::HIDDEN_DIM]);
+            // Preserve the native/Python ordering: all source contributions in
+            // edge order, then all target contributions in edge order.
+            Tensor::zeros([batch.object_count, D::HIDDEN_DIM], &batch.device)
+                .scatter(
+                    0,
+                    source_scatter,
+                    edge_hidden.clone(),
+                    IndexingUpdateOp::Add,
+                )
+                .scatter(0, target_scatter, edge_hidden, IndexingUpdateOp::Add)
+        };
+        let edge_pooled = match stack {
+            Some((rows, weight)) => rows.add_messages(weight, &object_base, edge_pooled),
+            None => edge_pooled,
+        };
         let object_hidden = self
             .node_update
             .forward(Tensor::cat(vec![object_base, edge_pooled], 1));
@@ -274,29 +316,49 @@ impl<B: Backend> ProductionNet8<B> {
             IndexingUpdateOp::Add,
         )
         .reshape([batch.decision_count, OBJECT_GROUP_COUNT_V1 * D::HIDDEN_DIM]);
-        let state_hidden = self
-            .state_encoder
-            .forward(Tensor::cat(vec![batch.state.clone(), pooled_objects], 1));
+        let state_input = Tensor::cat(vec![batch.state.clone(), pooled_objects], 1);
+        let state_hidden = match public {
+            Some((_, addition)) => self
+                .state_encoder
+                .second
+                .forward((self.state_encoder.first.forward(state_input) + addition).tanh())
+                .tanh(),
+            None => self.state_encoder.forward(state_input),
+        };
 
-        let action_ref_hidden = self.action_ref_encoder.forward(Tensor::cat(
-            vec![
-                batch.action_ref_features.clone(),
-                object_hidden.select(0, batch.action_ref_node_indices.clone()),
-            ],
-            1,
-        ));
-        let action_ref_scatter = batch
-            .action_ref_action_indices
-            .clone()
-            .unsqueeze_dim::<2>(1)
-            .expand([batch.action_ref_count, D::HIDDEN_DIM]);
-        let action_ref_pooled = Tensor::zeros([batch.action_count, D::HIDDEN_DIM], &batch.device)
-            .scatter(
+        let action_ref_pooled = if batch.empty_relations_v3 && batch.action_ref_count == 0 {
+            Tensor::zeros([batch.action_count, D::HIDDEN_DIM], &batch.device)
+        } else {
+            let action_ref_features = batch
+                .action_ref_features
+                .as_ref()
+                .expect("action reference storage");
+            let action_ref_node_indices = batch
+                .action_ref_node_indices
+                .as_ref()
+                .expect("action reference node storage");
+            let action_ref_action_indices = batch
+                .action_ref_action_indices
+                .as_ref()
+                .expect("action reference action storage");
+            let action_ref_hidden = self.action_ref_encoder.forward(Tensor::cat(
+                vec![
+                    action_ref_features.clone(),
+                    object_hidden.select(0, action_ref_node_indices.clone()),
+                ],
+                1,
+            ));
+            let action_ref_scatter = action_ref_action_indices
+                .clone()
+                .unsqueeze_dim::<2>(1)
+                .expand([batch.action_ref_count, D::HIDDEN_DIM]);
+            Tensor::zeros([batch.action_count, D::HIDDEN_DIM], &batch.device).scatter(
                 0,
                 action_ref_scatter,
                 action_ref_hidden,
                 IndexingUpdateOp::Add,
-            );
+            )
+        };
         let action_hidden = self.action_encoder.forward(Tensor::cat(
             vec![batch.action_features.clone(), action_ref_pooled],
             1,
@@ -1274,22 +1336,37 @@ struct DevicePackedBatch<B: Backend> {
     edge_count: usize,
     action_count: usize,
     action_ref_count: usize,
+    /// Enabled only by the guarded V3 successor. Legacy uploads retain
+    /// their exact nonempty forward/optimizer path.
+    empty_relations_v3: bool,
     state: Tensor<B, 2>,
     object_features: Tensor<B, 2>,
     object_card_ids: Tensor<B, 1, Int>,
     object_group_indices: Tensor<B, 1, Int>,
-    edge_features: Tensor<B, 2>,
-    edge_source_indices: Tensor<B, 1, Int>,
-    edge_target_indices: Tensor<B, 1, Int>,
+    edge_features: Option<Tensor<B, 2>>,
+    edge_source_indices: Option<Tensor<B, 1, Int>>,
+    edge_target_indices: Option<Tensor<B, 1, Int>>,
     action_features: Tensor<B, 2>,
     action_decision_indices: Tensor<B, 1, Int>,
-    action_ref_features: Tensor<B, 2>,
-    action_ref_action_indices: Tensor<B, 1, Int>,
-    action_ref_node_indices: Tensor<B, 1, Int>,
+    action_ref_features: Option<Tensor<B, 2>>,
+    action_ref_action_indices: Option<Tensor<B, 1, Int>>,
+    action_ref_node_indices: Option<Tensor<B, 1, Int>>,
 }
 
 impl<B: Backend> DevicePackedBatch<B> {
     fn upload(device: &B::Device, host: &HostPackingWorkspace) -> Self {
+        Self::upload_inner(device, host, false)
+    }
+
+    fn upload_feature_transfer_v3(device: &B::Device, host: &HostPackingWorkspace) -> Self {
+        Self::upload_inner(device, host, true)
+    }
+
+    fn upload_inner(
+        device: &B::Device,
+        host: &HostPackingWorkspace,
+        empty_relations_v3: bool,
+    ) -> Self {
         let decision_count = host.case_indices.len();
         let object_count = host.object_card_ids.len();
         let edge_count = host.edge_source_indices.len();
@@ -1302,6 +1379,7 @@ impl<B: Backend> DevicePackedBatch<B> {
             edge_count,
             action_count,
             action_ref_count,
+            empty_relations_v3,
             state: Tensor::from_data(
                 TensorData::new(host.state.clone(), [decision_count, STATE_DIM_V1]),
                 device,
@@ -1321,21 +1399,27 @@ impl<B: Backend> DevicePackedBatch<B> {
                 TensorData::new(host.object_group_indices.clone(), [object_count]),
                 device,
             ),
-            edge_features: Tensor::from_data(
-                TensorData::new(
-                    host.edge_features.clone(),
-                    [edge_count, EDGE_FEATURE_DIM_V1],
-                ),
-                device,
-            ),
-            edge_source_indices: Tensor::from_data(
-                TensorData::new(host.edge_source_indices.clone(), [edge_count]),
-                device,
-            ),
-            edge_target_indices: Tensor::from_data(
-                TensorData::new(host.edge_target_indices.clone(), [edge_count]),
-                device,
-            ),
+            edge_features: (!empty_relations_v3 || edge_count > 0).then(|| {
+                Tensor::from_data(
+                    TensorData::new(
+                        host.edge_features.clone(),
+                        [edge_count, EDGE_FEATURE_DIM_V1],
+                    ),
+                    device,
+                )
+            }),
+            edge_source_indices: (!empty_relations_v3 || edge_count > 0).then(|| {
+                Tensor::from_data(
+                    TensorData::new(host.edge_source_indices.clone(), [edge_count]),
+                    device,
+                )
+            }),
+            edge_target_indices: (!empty_relations_v3 || edge_count > 0).then(|| {
+                Tensor::from_data(
+                    TensorData::new(host.edge_target_indices.clone(), [edge_count]),
+                    device,
+                )
+            }),
             action_features: Tensor::from_data(
                 TensorData::new(
                     host.action_features.clone(),
@@ -1347,21 +1431,27 @@ impl<B: Backend> DevicePackedBatch<B> {
                 TensorData::new(host.action_decision_indices.clone(), [action_count]),
                 device,
             ),
-            action_ref_features: Tensor::from_data(
-                TensorData::new(
-                    host.action_ref_features.clone(),
-                    [action_ref_count, ACTION_REF_FEATURE_DIM_V1],
-                ),
-                device,
-            ),
-            action_ref_action_indices: Tensor::from_data(
-                TensorData::new(host.action_ref_action_indices.clone(), [action_ref_count]),
-                device,
-            ),
-            action_ref_node_indices: Tensor::from_data(
-                TensorData::new(host.action_ref_node_indices.clone(), [action_ref_count]),
-                device,
-            ),
+            action_ref_features: (!empty_relations_v3 || action_ref_count > 0).then(|| {
+                Tensor::from_data(
+                    TensorData::new(
+                        host.action_ref_features.clone(),
+                        [action_ref_count, ACTION_REF_FEATURE_DIM_V1],
+                    ),
+                    device,
+                )
+            }),
+            action_ref_action_indices: (!empty_relations_v3 || action_ref_count > 0).then(|| {
+                Tensor::from_data(
+                    TensorData::new(host.action_ref_action_indices.clone(), [action_ref_count]),
+                    device,
+                )
+            }),
+            action_ref_node_indices: (!empty_relations_v3 || action_ref_count > 0).then(|| {
+                Tensor::from_data(
+                    TensorData::new(host.action_ref_node_indices.clone(), [action_ref_count]),
+                    device,
+                )
+            }),
         }
     }
 }

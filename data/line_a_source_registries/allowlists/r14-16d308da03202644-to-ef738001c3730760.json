@@ -1,0 +1,1171 @@
+{
+  "destination_card_count": 192,
+  "destination_registry_sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
+  "entries": [
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 0,
+      "name": "Annul"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 1,
+      "name": "Avenging Hunter"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 2,
+      "name": "Azorius Guildgate"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 3,
+      "name": "Basilisk Gate"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 4,
+      "name": "Bind the Monster"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 5,
+      "name": "Black Mage's Rod"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 6,
+      "name": "Blood Fountain"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 9,
+      "name": "Breath Weapon"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 11,
+      "name": "Cast Down"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 12,
+      "name": "Cast into the Fire"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 14,
+      "name": "Citadel Gate"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 15,
+      "name": "Cleansing Wildfire"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 18,
+      "name": "Cryogen Relic"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 23,
+      "name": "Drossforge Bridge"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 24,
+      "name": "Duress"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 25,
+      "name": "Dust to Dust"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 26,
+      "name": "Elvish Mystic"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 28,
+      "name": "Envelop"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 29,
+      "name": "Eviscerator's Insight"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 31,
+      "name": "Extract a Confession"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 32,
+      "name": "Faerie Miscreant"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 33,
+      "name": "Faerie Seer"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 35,
+      "name": "Fanatical Offering"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 38,
+      "name": "Force Spike"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 40,
+      "name": "Fyndhorn Elves"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        },
+        {
+          "destination": [
+            "etb_trigger",
+            "token_creation",
+            "cycling",
+            "reach"
+          ],
+          "destination_present": true,
+          "field": "mechanics",
+          "source": [
+            "etb_trigger",
+            "token_creation",
+            "cycling"
+          ],
+          "source_present": true
+        }
+      ],
+      "id": 42,
+      "name": "Generous Ent"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 43,
+      "name": "Gingerbread Cabin"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 46,
+      "name": "Gorilla Shaman"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 49,
+      "name": "Guardian of the Guildpact"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 50,
+      "name": "Gut Shot"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 52,
+      "name": "Harrier Strix"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 53,
+      "name": "Heap Gate"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 55,
+      "name": "Humbling Elder"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 56,
+      "name": "Hunter's Blowgun"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 58,
+      "name": "Ichor Wellspring"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 59,
+      "name": "Idyllic Beachfront"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 61,
+      "name": "Journey to Nowhere"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 62,
+      "name": "Krark-Clan Shaman"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 64,
+      "name": "Lead the Stampede"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 65,
+      "name": "Lembas"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 67,
+      "name": "Llanowar Elves"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 69,
+      "name": "Makeshift Munitions"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 71,
+      "name": "Masked Vandal"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 73,
+      "name": "Mistvault Bridge"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 74,
+      "name": "Monstrous Emergence"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 75,
+      "name": "Moon-Circuit Hacker"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 78,
+      "name": "Myr Enforcer"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 79,
+      "name": "Nihil Spellbomb"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 80,
+      "name": "Ninja of the Deep Hours"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 81,
+      "name": "Nyxborn Hydra"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 82,
+      "name": "Of One Mind"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 83,
+      "name": "Outlaw Medic"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 84,
+      "name": "Piracy Charm"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 87,
+      "name": "Priest of Titania"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 88,
+      "name": "Prismatic Strands"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 89,
+      "name": "Pulse of Murasa"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 91,
+      "name": "Quirion Ranger"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 94,
+      "name": "Reckoner's Bargain"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 96,
+      "name": "Refurbished Familiar"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 97,
+      "name": "Relic of Progenitus"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 98,
+      "name": "Sacred Cat"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 99,
+      "name": "Saiba Cryptomancer"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 100,
+      "name": "Sea Gate"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 102,
+      "name": "Seat of the Synod"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 103,
+      "name": "Silverbluff Bridge"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 104,
+      "name": "Slagwoods Bridge"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 105,
+      "name": "Sleep of the Dead"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 106,
+      "name": "Snap"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 109,
+      "name": "Spell Pierce"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 110,
+      "name": "Spellstutter Sprite"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 111,
+      "name": "Spinewoods Paladin"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 112,
+      "name": "Squadron Hawk"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 113,
+      "name": "Steel Sabotage"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 115,
+      "name": "The Modern Age"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 117,
+      "name": "Thoughtcast"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 118,
+      "name": "Thraben Charm"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 119,
+      "name": "Timberwatch Elf"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 120,
+      "name": "Tolarian Terror"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 121,
+      "name": "Toxin Analysis"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 122,
+      "name": "Troublemaker Ouphe"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 123,
+      "name": "Twisted Landscape"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 124,
+      "name": "Unexpected Fangs"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 125,
+      "name": "Vault of Whispers"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 126,
+      "name": "Vitu-Ghazi Inspector"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 128,
+      "name": "Weather the Storm"
+    },
+    {
+      "differences": [
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 129,
+      "name": "Wellwisher"
+    },
+    {
+      "differences": [
+        {
+          "destination": [],
+          "destination_present": true,
+          "field": "colors",
+          "source": [
+            "R",
+            "G"
+          ],
+          "source_present": true
+        },
+        {
+          "destination": "full",
+          "destination_present": true,
+          "field": "engine_capability",
+          "source": null,
+          "source_present": false
+        }
+      ],
+      "id": 131,
+      "name": "Writhing Chrysalis"
+    }
+  ],
+  "excluded_fields": [
+    "decks"
+  ],
+  "field_difference_count": 89,
+  "schema": "mtg-kernel-registry-evolution-allowlist/v1",
+  "source_card_count": 136,
+  "source_registry_revision": "1804e9f9f3bc76dd809b3c4aeddbba0a4ed894ec",
+  "source_registry_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+}

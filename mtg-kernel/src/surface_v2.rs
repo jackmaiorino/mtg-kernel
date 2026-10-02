@@ -1192,9 +1192,18 @@ impl HarnessSurfaceV2 {
                     player,
                     discard_payable,
                     sacrifice_payable,
-                } => {
+                    return_permanent_payable,
+                } if *discard_payable || *sacrifice_payable => {
                     // See `OptionalCostReshape`'s doc: begin the two-stage
-                    // sequence at the `Use` gate.
+                    // sequence at the `Use` gate. `return_permanent_payable`
+                    // (Glint Hawk) is not yet reshaped by this two-stage
+                    // Discard/SacrificeLand sentinel scheme; a decision
+                    // where it is the *only* payable option falls through
+                    // to the `_` arm below and is surfaced unreshaped, so
+                    // its caller answers with a raw `Action::
+                    // ChooseOptionalCost(OptionalCostChoice::
+                    // ReturnPermanent)` instead.
+                    let _ = return_permanent_payable;
                     self.optional_cost = Some(OptionalCostReshape {
                         player: *player,
                         discard_payable: *discard_payable,
@@ -1591,6 +1600,11 @@ impl HarnessSurfaceV2 {
             player: reshape.player,
             discard_payable,
             sacrifice_payable,
+            // This reshape only ever begins for a decision with a real
+            // Discard/SacrificeLand choice (see the guard in the caller
+            // that populates `self.optional_cost`), so `ReturnPermanent`
+            // is never part of it.
+            return_permanent_payable: false,
         }))
     }
 }
@@ -1605,6 +1619,40 @@ mod tests {
 
     fn empty_game() -> GameState {
         GameState::new_from_libraries(&[], &[], |c| format!("card-{c}"), 1)
+    }
+
+    /// Sources of this game's committed combat damage to a player, in
+    /// commit order. The combat record is cleared as the end of combat step
+    /// ends (511.3), so a test whose commit auto-advanced past combat reads
+    /// what its declarations did from the permanent event history instead.
+    fn combat_damage_to_player_sources(state: &GameState) -> Vec<ObjectId> {
+        state
+            .engine
+            .event_history
+            .iter()
+            .filter_map(|event| match event {
+                crate::event::CommittedEvent::CombatDamageToPlayer { source, .. } => Some(*source),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Sources of the committed damage dealt to one creature, in commit
+    /// order (in these combat-only fixtures, exactly its combat opponents).
+    fn damage_sources_to(state: &GameState, target: ObjectId) -> Vec<ObjectId> {
+        state
+            .engine
+            .event_history
+            .iter()
+            .filter_map(|event| match event {
+                crate::event::CommittedEvent::Damage {
+                    source,
+                    target: Target::Object(id),
+                    amount,
+                } if *id == target && *amount > 0 => Some(*source),
+                _ => None,
+            })
+            .collect()
     }
 
     fn put_on_battlefield(state: &mut GameState, player: PlayerId, card_name: &str) -> ObjectId {
@@ -1808,10 +1856,12 @@ mod tests {
             !matches!(&second, SurfaceDecision::DeclareBlockersForAttacker { .. }),
             "attacker_b must not get a second real blockers ask, got {second:?}"
         );
-        assert!(state.engine.combat.blockers_declared);
+        // Combat has ended by now (511.3 cleared its record), so the blocks
+        // are read from what they did: the blocker fought only attacker_a.
+        assert_eq!(damage_sources_to(&state, blocker), vec![attacker_a]);
         assert_eq!(
-            state.engine.combat.blocked_by,
-            vec![(attacker_a, vec![blocker])],
+            combat_damage_to_player_sources(&state),
+            vec![attacker_b],
             "attacker_b must end up unblocked, not double-assigned the same blocker"
         );
 

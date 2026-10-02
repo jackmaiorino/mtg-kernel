@@ -1406,9 +1406,27 @@ mod tests {
         // model_parameter_sha256/train_state_sha256/deck_hashes below are
         // unaffected and still verify against the original parent-commit
         // capture unchanged.
+        //
+        // Re-baselined again for the pauper-meta-cards-v1 card lane's wave 1
+        // (Task 13, identity finalisation): the wave's 21 new cards moved
+        // KERNEL_CARDDB_HASH, which the observation (and so
+        // logical_state_sha256) embeds. Old value:
+        // "69e6a7d0fdbccd6013bd1d2a4f49baa42ef30e8f3218d8076c9388020bfad974".
+        //
+        // Re-baselined again for the Phase 1 card lane merge (2026-09):
+        // merging lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into
+        // the Phase 1 branch moved KERNEL_CARDDB_HASH again (from
+        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause.
+        // Old (wave-1) value:
+        // "4a3d928eb8471a85700680aa2d97e20ace04b8bf8550991af9399450b474e3f5".
+        // This value is shared verbatim by
+        // native_training_store_checkpoint_v3.rs's
+        // GENESIS_LOGICAL_STATE_SHA256_GOLDEN_V1 (same shared fixture
+        // scenario). New value is this test's own live-computed digest,
+        // read directly from a failing run (never hand-typed).
         assert_eq!(
             lower_hex_raw32_v1(result.logical_state_sha256()),
-            "69e6a7d0fdbccd6013bd1d2a4f49baa42ef30e8f3218d8076c9388020bfad974"
+            "d77a82c7a9c4928803be6af2d42c494a37c93091dbafbcdd897d8fc9f2918fae"
         );
         assert_eq!(
             lower_hex_raw32_v1(result.model_parameter_sha256()),
@@ -1421,6 +1439,21 @@ mod tests {
 
         let bindings = result.episode_bindings();
         assert_eq!(bindings.len(), 2);
+        eprintln!(
+            "current checkpoint episode goldens: {:?}",
+            bindings
+                .iter()
+                .map(|b| (
+                    lower_hex_raw32_v1(b.trajectory_sha256()),
+                    b.policy_step_count(),
+                    b.physical_decision_count(),
+                    b.learner_policy_step_count(),
+                    b.opponent_policy_step_count(),
+                    b.learner_physical_decision_count(),
+                    b.opponent_physical_decision_count()
+                ))
+                .collect::<Vec<_>>()
+        );
 
         assert_eq!(bindings[0].episode_index(), 2);
         assert_eq!(bindings[0].environment_seed(), 3_233_989_599_464_222_885);
@@ -1432,17 +1465,23 @@ mod tests {
         // Re-baselined once per the owner ruling on record (collab CLAUDE
         // #236, 2026-08-14): observation-derived, see logical_state_sha256
         // above for the full rationale.
+        //
+        // Re-baselined again for the end-of-combat clear (CR 511.3/506.4
+        // rules fix): the checkpoint policy acts on observations that no
+        // longer carry a stale combat record after combat, so both
+        // episodes' trajectories (and hence their lengths) move. The counts
+        // are this test's own live-computed values, read from a failing run.
         assert_eq!(
             lower_hex_raw32_v1(bindings[0].trajectory_sha256()),
-            "f6a0be9ced1bceb1628965d2597e7c3cc7adeaa5ae8de24aa017d52a481b6985"
+            "21dca504b34c30768434a74f82b618c5b5ddbc4c5760ed00edbab53a630ec455"
         );
         assert_eq!(bindings[0].outer_trajectory_sha256_v2(), None);
-        assert_eq!(bindings[0].policy_step_count(), 151);
-        assert_eq!(bindings[0].physical_decision_count(), 141);
-        assert_eq!(bindings[0].learner_policy_step_count(), 63);
-        assert_eq!(bindings[0].opponent_policy_step_count(), 88);
-        assert_eq!(bindings[0].learner_physical_decision_count(), 53);
-        assert_eq!(bindings[0].opponent_physical_decision_count(), 88);
+        assert_eq!(bindings[0].policy_step_count(), 418);
+        assert_eq!(bindings[0].physical_decision_count(), 382);
+        assert_eq!(bindings[0].learner_policy_step_count(), 173);
+        assert_eq!(bindings[0].opponent_policy_step_count(), 245);
+        assert_eq!(bindings[0].learner_physical_decision_count(), 147);
+        assert_eq!(bindings[0].opponent_physical_decision_count(), 235);
 
         assert_eq!(bindings[1].episode_index(), 3);
         assert_eq!(bindings[1].environment_seed(), 3_233_989_599_464_222_885);
@@ -1454,9 +1493,28 @@ mod tests {
         // Re-baselined once per the owner ruling on record (collab CLAUDE
         // #236, 2026-08-14): observation-derived, see logical_state_sha256
         // above for the full rationale.
+        //
+        // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
+        // 13, identity finalisation): the wave's 21 new cards moved
+        // KERNEL_CARDDB_HASH, which the observation embeds. Old value:
+        // "2253bd914bb47db25ab403b212680272cec399a9e4459286b5a6bbcfb2d17b90".
+        //
+        // Re-pinned again for the Phase 1 card lane merge (2026-09): merging
+        // lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the
+        // Phase 1 branch moved KERNEL_CARDDB_HASH again (from
+        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause.
+        // Old (wave-1) value:
+        // "91020a9d924d1a53eeddc9cc59c72c72d7fff44cc10ddf61d775be00d4186778".
+        // deck_hashes/episode_index/environment_seed/learner_seat above, and
+        // bindings[0]'s own step/decision counts, are confirmed unaffected.
+        // New value is this test's own live-computed digest, read directly
+        // from a failing run (never hand-typed).
+        // Main rules fixes changed observation bytes again. CI run
+        // 36812673206 (Linux job 110211057207) confirms both episodes
+        // retain every existing policy and physical decision count.
         assert_eq!(
             lower_hex_raw32_v1(bindings[1].trajectory_sha256()),
-            "2253bd914bb47db25ab403b212680272cec399a9e4459286b5a6bbcfb2d17b90"
+            "e8f3ae4f0b90a8d3184bb0f1f916461cddc64ef04a9e76d2ee178ae68b64837e"
         );
         assert_eq!(bindings[1].outer_trajectory_sha256_v2(), None);
         // Re-baselined once per the owner ruling on record (collab CLAUDE
@@ -1468,12 +1526,14 @@ mod tests {
         // invariant across the epoch even though it was deterministic
         // before and after it. Values are this test's own live-computed
         // counts, read directly from failing runs (never hand-typed).
-        assert_eq!(bindings[1].policy_step_count(), 200);
-        assert_eq!(bindings[1].physical_decision_count(), 167);
+        // Re-baselined again for the end-of-combat clear, as bindings[0]
+        // above.
+        assert_eq!(bindings[1].policy_step_count(), 192);
+        assert_eq!(bindings[1].physical_decision_count(), 161);
         assert_eq!(bindings[1].learner_policy_step_count(), 101);
-        assert_eq!(bindings[1].opponent_policy_step_count(), 99);
+        assert_eq!(bindings[1].opponent_policy_step_count(), 91);
         assert_eq!(bindings[1].learner_physical_decision_count(), 100);
-        assert_eq!(bindings[1].opponent_physical_decision_count(), 67);
+        assert_eq!(bindings[1].opponent_physical_decision_count(), 61);
     }
 
     #[test]

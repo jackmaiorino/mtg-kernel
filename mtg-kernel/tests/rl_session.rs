@@ -1242,3 +1242,72 @@ fn rl_session_phase_profile_counts_errors_and_immediate_retries() {
     assert_eq!(phases["serialize"]["count"], 6);
     assert_eq!(phases["write_flush"]["count"], 6);
 }
+
+fn splitmix64(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut value = *state;
+    value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    value ^ (value >> 31)
+}
+
+/// Spellbench launch-benchmark regression. Under a uniform sweep over the
+/// offered actions, Elves mirrors hit goad and menace combat scans whose
+/// offered answers the session then refused, and CawGates mirrors halted
+/// once Journey to Nowhere's record outlived the token it exiled. Every
+/// offered action must be accepted and no episode may halt on a
+/// linked-exile record. Other terminal reasons are outside this test.
+#[test]
+fn rl_session_accepts_every_offered_action_and_never_halts_on_linked_exile_in_elves_and_cawgates_mirrors(
+) {
+    let mut refused = Vec::new();
+    let mut linked_exile_halts = Vec::new();
+    for deck in ["Elves", "CawGates"] {
+        for seed in 0..24_u64 {
+            let episode_id = 7_000 + seed;
+            let mut session = RlEpisodeSessionV1::reset_with_decks_and_limits(
+                episode_id,
+                seed,
+                600,
+                600 * 128,
+                [deck.to_string(), deck.to_string()],
+            )
+            .unwrap();
+            let mut rng = 0x5EED_0F5B_0000_0000 ^ seed;
+            loop {
+                match session.current_response() {
+                    RlSessionResponseV1::Terminal(terminal) => {
+                        if terminal.terminal_reason.contains("linked-exile") {
+                            linked_exile_halts.push((deck, seed, terminal.terminal_reason));
+                        }
+                        break;
+                    }
+                    RlSessionResponseV1::Decision(decision) => {
+                        let count = decision.legal_actions.len() as u64;
+                        let action =
+                            &decision.legal_actions[(splitmix64(&mut rng) % count) as usize];
+                        if let Err(error) = session.step(
+                            episode_id,
+                            decision.step,
+                            action.selected_index,
+                            &action.stable_id,
+                        ) {
+                            refused.push((
+                                deck,
+                                seed,
+                                decision.step,
+                                format!("{:?}", action.semantic),
+                                error.to_string(),
+                            ));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        refused.is_empty() && linked_exile_halts.is_empty(),
+        "offered actions refused: {refused:#?}\nlinked-exile halts: {linked_exile_halts:#?}"
+    );
+}

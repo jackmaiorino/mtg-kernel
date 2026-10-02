@@ -137,8 +137,8 @@ fn card_id_source(state: &GameState, name: &str) -> ObjectId {
 
 #[test]
 fn definitions_ids_hash_and_generated_programs_are_exact() {
-    assert_eq!(KERNEL_CARDDB_HASH, 0x64c8_2a26_1e07_8f1a);
-    assert_eq!(CARD_DEFS.len(), 162);
+    assert_eq!(KERNEL_CARDDB_HASH, 0x064a_7c98_9255_ab3c);
+    assert_eq!(CARD_DEFS.len(), 192); // wave 2 Task 3: 187 -> 192
     for (name, expected_id) in [
         ("Guardian of the Guildpact", 49),
         ("Journey to Nowhere", 61),
@@ -453,6 +453,60 @@ fn journey_leave_before_enter_and_changed_exile_generation_are_historically_safe
     assert!(stale.engine.linked_exile_records.is_empty());
 }
 
+/// Exiles a token with Journey to Nowhere; the 111.8/704.5d sweep that runs
+/// before the next priority decision ceases the token.
+fn journey_exiles_a_token(seed: u64) -> (GameState, ObjectId, ObjectId) {
+    let mut state = ready_main(seed);
+    let token = put_object(
+        &mut state,
+        PlayerId::P1,
+        "Sacred Cat Embalmed Token",
+        Zone::Battlefield,
+    );
+    let journey = put_object(&mut state, PlayerId::P0, "Journey to Nowhere", Zone::Hand);
+    let target_decision = begin_journey(&mut state, journey);
+    finish_journey_target(&mut state, &target_decision, token);
+    pass_until(&mut state, |state| {
+        state.objects.get(token).zone == Zone::Exile
+    });
+    assert!(
+        !state.exile.contains(&token),
+        "the exiled token ceases to exist"
+    );
+    (state, journey, token)
+}
+
+/// Spellbench launch-benchmark reproduction (CawGates mirror): the record of
+/// a ceased token outlived it and every later observation failed with
+/// "linked-exile exact card incarnation is not uniquely in exile".
+#[test]
+fn journey_exiling_a_token_keeps_no_linked_record_once_the_token_ceases() {
+    let (state, _, _) = journey_exiles_a_token(0x4a4f_5552_4e45_5904);
+    assert!(state.engine.linked_exile_records.is_empty());
+    let surface = mtg_kernel::policy_surface_v5::PolicySurfaceV5::new();
+    for observer in [PlayerId::P0, PlayerId::P1] {
+        mtg_kernel::rl::observe_policy_v5(&state, &surface, observer, 0, 0, 0, 1)
+            .expect("observation after the token ceased");
+    }
+}
+
+/// CR 111.8: a token that has left the battlefield never comes back, so
+/// Journey to Nowhere leaving must not return the ceased token.
+#[test]
+fn journey_leaving_never_returns_a_ceased_token_it_exiled() {
+    let (mut state, journey, token) = journey_exiles_a_token(0x4a4f_5552_4e45_5905);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(journey, Zone::Graveyard),
+    );
+    collect_triggers(&mut state);
+    pass_until(&mut state, |state| {
+        state.stack.is_empty() && state.engine.pending_triggers.is_empty()
+    });
+    assert!(!state.players[1].battlefield.contains(&token));
+    assert_ne!(state.objects.get(token).zone, Zone::Battlefield);
+}
+
 #[test]
 fn prismatic_strands_choice_is_rl_stable_and_prevents_all_chosen_color_damage() {
     let mut state = ready_main(0x5052_4953_4d41_5401);
@@ -523,6 +577,21 @@ fn prismatic_strands_choice_is_rl_stable_and_prevents_all_chosen_color_damage() 
                 }
             )
     ));
+
+    // The actual resolved spell, not just a synthetic installed replacement,
+    // must expose its public shield to either player's observation.
+    for viewer in [PlayerId::P0, PlayerId::P1] {
+        let observation = observe_v2(&state, &HarnessSurfaceV2::new(), viewer, 0).unwrap();
+        let shields: Vec<_> = observation
+            .projection
+            .continuous_effects
+            .iter()
+            .filter(|effect| effect.prevent_damage_from_color_mask != 0)
+            .collect();
+        assert_eq!(shields.len(), 1);
+        assert_eq!(shields[0].prevent_damage_from_color_mask, 8);
+        assert!(shields[0].global && shields[0].source.is_none());
+    }
 
     let red = put_object(
         &mut state,

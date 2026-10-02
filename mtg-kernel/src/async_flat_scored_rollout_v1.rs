@@ -5903,7 +5903,11 @@ mod tests {
                 [10, 0, 3, 0, 0, 0, 0, 0, 2, 1, 2],
                 [12, 8, 3, 0, 0, 0, 0, 0, 8, 8, 8],
                 [14, 4, 5, 1, 0, 0, 0, 0, 2, 2, 2],
-                [15, 1, 5, 0, 0, 0, 0, 0, 2, 1, 2],
+                // Re-baselined for the end-of-combat clear (CR 511.3): the
+                // fifth decision (the next turn's first main phase) no
+                // longer carries the previous combat's stale attacker
+                // object and its CombatAttacker relation.
+                [14, 0, 5, 0, 0, 0, 0, 0, 2, 1, 2],
             ]
         );
         // Re-baselined once per the owner ruling on record (collab CLAUDE
@@ -5915,10 +5919,13 @@ mod tests {
         // structural shape), confirming this is a byte-content shift, not a
         // behavioral regression. Value is this test's own live-computed
         // digest, read directly from a failing run before this update
-        // (never hand-typed).
+        // (never hand-typed). Re-baselined again for the end-of-combat
+        // clear (CR 511.3): all five packets drop the stale
+        // attackers_declared/blockers_declared flags, and the fifth its
+        // stale combat attacker (see the counts above).
         assert_eq!(
             digest,
-            "2683fe1dc81fba1d9b755a8482303394ee9ffc52678908524a540fbf43ebd043"
+            "978388b9e579cd834c93e5cb67f647a6fe621ec1e46891cf06b2011856f42c37"
         );
     }
 

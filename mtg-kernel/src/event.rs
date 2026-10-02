@@ -137,6 +137,19 @@ pub struct CreateTokenProposed {
     pub touched_by: Vec<ReplacementId>,
 }
 
+/// Flips a permanent's face in place, with no zone change: the same
+/// `ObjectId` and the same `zone_change_count` before and after (Delver of
+/// Secrets transforming into Insectile Aberration). `face_index` must name
+/// a face the object's `CardDef::transform_face` defines; `commit` panics
+/// rather than guess at an undefined one, matching the zone-change path's
+/// own `battlefield_face_index` handling.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransformProposed {
+    pub object: ObjectId,
+    pub face_index: u8,
+    pub touched_by: Vec<ReplacementId>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProposedEvent {
     Damage(DamageProposed),
@@ -147,6 +160,7 @@ pub enum ProposedEvent {
     Tap(TapProposed),
     ManaAdd(ManaAddProposed),
     CreateToken(CreateTokenProposed),
+    Transform(TransformProposed),
 }
 
 impl ProposedEvent {
@@ -287,6 +301,16 @@ impl ProposedEvent {
             touched_by: Vec::new(),
         })
     }
+    /// Flips `object`'s face in place with no zone change (Delver of
+    /// Secrets transforming into Insectile Aberration). See
+    /// `TransformProposed`'s doc.
+    pub fn transform_in_place(object: ObjectId, face_index: u8) -> ProposedEvent {
+        ProposedEvent::Transform(TransformProposed {
+            object,
+            face_index,
+            touched_by: Vec::new(),
+        })
+    }
 
     fn touched_by(&self) -> &[ReplacementId] {
         match self {
@@ -298,6 +322,7 @@ impl ProposedEvent {
             ProposedEvent::Tap(e) => &e.touched_by,
             ProposedEvent::ManaAdd(e) => &e.touched_by,
             ProposedEvent::CreateToken(e) => &e.touched_by,
+            ProposedEvent::Transform(e) => &e.touched_by,
         }
     }
 
@@ -311,6 +336,7 @@ impl ProposedEvent {
             ProposedEvent::Tap(e) => &mut e.touched_by,
             ProposedEvent::ManaAdd(e) => &mut e.touched_by,
             ProposedEvent::CreateToken(e) => &mut e.touched_by,
+            ProposedEvent::Transform(e) => &mut e.touched_by,
         };
         v.push(id);
     }
@@ -409,6 +435,22 @@ pub enum CommittedEvent {
         controller: PlayerId,
         chapter: u8,
     },
+    /// 505.2: the beginning of `player`'s own Upkeep step (Delver of
+    /// Secrets). Exactly one Upkeep step happens each turn, belonging to
+    /// the active player, so this fires once per turn.
+    UpkeepBegan {
+        player: PlayerId,
+    },
+    /// `object`'s face flipped to `face_index` in place, with no zone
+    /// change (Delver of Secrets transforming into Insectile Aberration).
+    /// Distinct from the Saga path's exile-then-return
+    /// (`ZoneChange`/`ProposedEvent::transformed_battlefield_return`),
+    /// which creates a new incarnation because that card's own rules text
+    /// says so.
+    Transformed {
+        object: ObjectId,
+        face_index: u8,
+    },
     /// Transient cast-provenance marker consumed from `event_log` by the
     /// trigger collection immediately following this resolution. It is not
     /// appended to permanent `event_history`; the spell stack item and its
@@ -423,6 +465,13 @@ pub enum CommittedEvent {
     /// history before the resulting ability may be placed on the stack.
     InitiativeTrigger {
         binding: crate::state::InitiativeTriggerBindingV1,
+    },
+    /// Nonreplaceable marker for one engine-owned monarch end-step draw
+    /// trigger (306.3). `history_index` is self-authenticating against the
+    /// permanent event history before the resulting ability may be placed
+    /// on the stack, the same discipline `InitiativeTrigger` uses.
+    MonarchTrigger {
+        binding: crate::state::MonarchTriggerBindingV1,
     },
 }
 
@@ -746,6 +795,30 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
                 controller: t.controller,
             }
         }
+        ProposedEvent::Transform(t) => {
+            let obj = state.objects.get_mut(t.object);
+            let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
+            let Some(face) = (t.face_index == 1)
+                .then_some(def.transform_face.as_ref())
+                .flatten()
+            else {
+                panic!("transform_in_place requested an undefined face");
+            };
+            obj.v4.face_index = t.face_index;
+            obj.v4.effective_color_mask = crate::card_def::mana_colors_mask(face.colors);
+            obj.v4.effective_subtype_ids = face
+                .subtypes
+                .iter()
+                .map(|subtype| subtype.stable_id())
+                .collect();
+            obj.v4.effective_subtype_ids.sort_unstable();
+            obj.v4.effective_subtype_ids.dedup();
+            obj.name = face.name.to_string();
+            CommittedEvent::Transformed {
+                object: t.object,
+                face_index: t.face_index,
+            }
+        }
     };
     let saga_entered = matches!(
         committed,
@@ -884,6 +957,17 @@ pub fn log_saga_chapter(state: &mut GameState, source: ObjectId, chapter: u8) {
     state.engine.event_history.push(committed);
 }
 
+/// Logs the nonreplaceable marker for the beginning of `player`'s own
+/// Upkeep step (Delver of Secrets and any future "at the beginning of ...
+/// upkeep" trigger). 505.2: exactly one Upkeep step happens each turn,
+/// belonging to the active player, so callers log this once per turn for
+/// `player == state.active_player`.
+pub fn log_upkeep_began(state: &mut GameState, player: PlayerId) {
+    let committed = CommittedEvent::UpkeepBegan { player };
+    state.engine.event_log.push(committed.clone());
+    state.engine.event_history.push(committed);
+}
+
 pub fn log_initiative_trigger(
     state: &mut GameState,
     player: PlayerId,
@@ -914,6 +998,42 @@ pub fn log_initiative_trigger(
         kind,
     };
     let committed = CommittedEvent::InitiativeTrigger { binding };
+    state.engine.event_log.push(committed.clone());
+    state.engine.event_history.push(committed);
+    Ok(binding)
+}
+
+/// Logs one engine-owned monarch end-step draw trigger (306.3). Unlike
+/// `log_initiative_trigger`, `source` is not validated against one fixed
+/// card name: Azure Fleet Admiral's ETB grant and a combat-damage transfer
+/// (see `engine::deal_combat_damage`) both freeze whichever object caused
+/// the transfer into `EngineState::monarch_source`, and either is a valid
+/// source here as long as it is still a real object incarnation.
+pub fn log_monarch_trigger(
+    state: &mut GameState,
+    player: PlayerId,
+    mut source: crate::state::AbilitySourceContractV4,
+) -> Result<crate::state::MonarchTriggerBindingV1, String> {
+    let live = state
+        .objects
+        .try_get(source.source)
+        .ok_or("Monarch designation source no longer exists")?;
+    if live.card_def != source.card_def
+        || live.owner != source.owner
+        || live.zone_change_count < source.zone_change_count
+        || (live.zone_change_count == source.zone_change_count && live.zone != source.zone)
+    {
+        return Err("Monarch designation source contract is malformed".to_string());
+    }
+    source.controller = player;
+    let history_index = u32::try_from(state.engine.event_history.len())
+        .map_err(|_| "Monarch event history exceeds u32".to_string())?;
+    let binding = crate::state::MonarchTriggerBindingV1 {
+        history_index,
+        player,
+        source,
+    };
+    let committed = CommittedEvent::MonarchTrigger { binding };
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
     Ok(binding)
@@ -998,6 +1118,10 @@ fn commit_zone_change(
     remove_from_zone(state, owner, id, from_zone);
     state.forget_hand_object(id);
     state.clear_object_relations(id);
+    if from_zone == Zone::Battlefield {
+        // 506.4: leaving the battlefield removes it from combat.
+        state.engine.combat.remove_from_combat(id);
+    }
 
     match to_zone {
         Zone::Library => {
@@ -1202,6 +1326,16 @@ fn refresh_paid_creature_power_lki(state: &mut GameState, id: ObjectId, from_zon
 /// indexes and `state.stack`, which this function removes it from. Arena ids
 /// are never freed, so snapshots and provenance may still refer to the inert
 /// historical identity without making it a live target.
+///
+/// Also drops every `state.engine.linked_exile_records` row whose exiled
+/// object is `id`. Because the zone marker and zone-change count stay as
+/// recorded, such a row would otherwise still look like a live, uniquely
+/// exiled incarnation: observation fails its uniqueness proof and
+/// `ReturnObjectsExiledBySource` would put the ceased token back onto the
+/// battlefield, which 111.8 forbids. Rows naming `id` only as their source
+/// are kept: a token source ceases only after leaving the battlefield, and
+/// its leaves-the-battlefield return still resolves from the row by source
+/// contract.
 pub fn cease_to_exist(state: &mut GameState, id: ObjectId) -> bool {
     let owner = state.objects.get(id).owner;
     let zone = state.objects.get(id).zone;
@@ -1209,6 +1343,10 @@ pub fn cease_to_exist(state: &mut GameState, id: ObjectId) -> bool {
     if removed {
         state.forget_hand_object(id);
         state.clear_object_relations(id);
+        state
+            .engine
+            .linked_exile_records
+            .retain(|record| record.exiled != id);
     }
     removed
 }
@@ -1447,5 +1585,100 @@ mod tests {
                 remaining: 95,
             }
         );
+    }
+
+    /// Spellbench launch-benchmark reproduction (CawGates): Journey to Nowhere
+    /// exiled a token, the 111.8/704.5d sweep ceased it, and the linked-exile
+    /// record outlived it, so every later observation failed and Journey
+    /// leaving would have returned the ceased token.
+    #[test]
+    fn cease_to_exist_drops_the_linked_exile_record_of_the_ceased_exiled_object() {
+        use crate::state::{AbilitySourceContractV4, LinkedExileRecordV4, ObjectLinkV4};
+
+        let mut state = fresh_state();
+        let source = push_object_into(&mut state, PlayerId::P0, Zone::Battlefield);
+        let exiled = push_object_into(&mut state, PlayerId::P1, Zone::Exile);
+        state.players[0].battlefield.push(source);
+        state.exile.push(exiled);
+        state.objects.get_mut(exiled).v4.exiled_by = Some(ObjectLinkV4 {
+            object: source,
+            zone_change_count: 0,
+        });
+        state.engine.linked_exile_records.push(LinkedExileRecordV4 {
+            source: AbilitySourceContractV4 {
+                source,
+                card_def: 0,
+                owner: PlayerId::P0,
+                controller: PlayerId::P0,
+                zone: Zone::Battlefield,
+                zone_change_count: 0,
+                attached_to: None,
+            },
+            exiled,
+            exiled_card_def: 0,
+            exiled_owner: PlayerId::P1,
+            exiled_zone_change_count: 0,
+        });
+
+        assert!(cease_to_exist(&mut state, exiled));
+        assert!(!state.exile.contains(&exiled));
+        assert_eq!(state.objects.get(exiled).v4.exiled_by, None);
+        assert!(
+            state.engine.linked_exile_records.is_empty(),
+            "a ceased exiled object must not leave a linked-exile record: {:?}",
+            state.engine.linked_exile_records
+        );
+    }
+
+    /// A token source that left the battlefield has already triggered its
+    /// return, which resolves from the row by source contract, so the row
+    /// must survive the source ceasing to exist.
+    #[test]
+    fn cease_to_exist_keeps_the_linked_exile_record_of_a_ceased_token_source() {
+        use crate::state::{AbilitySourceContractV4, LinkedExileRecordV4};
+
+        let mut state = fresh_state();
+        let token_source = push_object_into(&mut state, PlayerId::P0, Zone::Graveyard);
+        state.players[0].graveyard.push(token_source);
+        let still_exiled = push_object_into(&mut state, PlayerId::P1, Zone::Exile);
+        state.exile.push(still_exiled);
+        let record = LinkedExileRecordV4 {
+            source: AbilitySourceContractV4 {
+                source: token_source,
+                card_def: 0,
+                owner: PlayerId::P0,
+                controller: PlayerId::P0,
+                zone: Zone::Battlefield,
+                zone_change_count: 0,
+                attached_to: None,
+            },
+            exiled: still_exiled,
+            exiled_card_def: 0,
+            exiled_owner: PlayerId::P1,
+            exiled_zone_change_count: 0,
+        };
+        state.objects.get_mut(token_source).zone_change_count = 1;
+        state.engine.linked_exile_records.push(record);
+        assert!(cease_to_exist(&mut state, token_source));
+        assert_eq!(state.engine.linked_exile_records, vec![record]);
+    }
+
+    fn push_object_into(state: &mut GameState, owner: PlayerId, zone: Zone) -> ObjectId {
+        state.objects.push(crate::state::GameObject {
+            card_def: 0,
+            name: "fixture".to_string(),
+            owner,
+            controller: owner,
+            zone,
+            tapped: false,
+            summoning_sick: false,
+            damage: 0,
+            counters: Default::default(),
+            attachments: Vec::new(),
+            v4: crate::state::ObjectStateV4::from_card_def(0),
+            spell_copy_origin: None,
+            plotted_turn: None,
+            zone_change_count: 0,
+        })
     }
 }
