@@ -3230,6 +3230,9 @@ fn keywords_for(card: &CardJson) -> String {
         | "Clinquant Skymage"
         | "Youthful Valkyrie"
         | "Exemplar of Light"
+        | "Strix Lookout"
+        | "Mischievous Mystic"
+        | "Faerie Token"
         | "Bird Illusion Token"
         | "Faerie Miscreant"
         | "Faerie Seer"
@@ -3259,6 +3262,9 @@ fn keywords_for(card: &CardJson) -> String {
     if card.name == "Nyxborn Hydra" {
         keywords.push("Keywords::REACH");
         keywords.push("Keywords::TRAMPLE");
+    }
+    if card.name == "Strix Lookout" {
+        keywords.push("Keywords::VIGILANCE");
     }
     if card.name == "Skeleton Token" {
         keywords.push("Keywords::MENACE");
@@ -4003,6 +4009,24 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
+        "Strix Lookout" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: Some("U"),
+                    generic: 1,
+                },
+                AbilityCostRecipe::Tap,
+            ],
+            effect: AbilityEffectRecipe::DrawThenDiscard {
+                draw: 1,
+                discard: 1,
+            },
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Moon-Circuit Hacker" => &[ActivatedAbilityRecipe {
             cost: &[
                 AbilityCostRecipe::Mana {
@@ -4589,6 +4613,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
         "Mossborn Hydra" => "controlled_land_enters:double_plus_one_counters_on_bound_source",
         "Exemplar of Light" => "controller_gains_positive_life:counter_on_bound_source:1;controller_places_plus_one_counters_on_source:draw:1:limit_per_turn:1",
+        "Mischievous Mystic" => "controller_draws_nth_card_this_turn:2:create_faerie_token:1",
         "Sun-Blessed Healer" => "etb_if_kicked:recheck_kicked:return_own_graveyard_nonland_permanent_mana_value_at_most:2",
         "Blossoming Sands" | "Thornwood Falls" => "etb:gain_life:1",
         "Dazzling Angel" => "other_controlled_creature_enters:gain_life:1",
@@ -6816,7 +6841,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v39\n"
+            "kernel_carddb/v40\n"
         } else {
             "kernel_carddb/v32\n"
         },

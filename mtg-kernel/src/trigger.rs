@@ -209,6 +209,19 @@ const CLINQUANT_SKYMAGE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
     condition: TriggerCondition::ControllerDraws,
     ..etb_trigger(writhing_chrysalis_counter_marker_effect)
 }];
+const MISCHIEVOUS_MYSTIC_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::DrawNth(2),
+    ..etb_trigger(mischievous_mystic_effect)
+}];
+
+fn mischievous_mystic_effect() -> EffectOp {
+    let token_def =
+        crate::card_def::card_id_by_name("Faerie Token").expect("Faerie Token in CARD_DEFS");
+    EffectOp::CreateToken {
+        token_def,
+        controller: PlayerRef::Controller,
+    }
+}
 const DWYNENS_ELITE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::EtbControlsOtherSubtypeCount {
         subtype: Subtype::Elf,
@@ -1135,6 +1148,7 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Blossoming Sands" | "Thornwood Falls" => &GAIN_ONE_LIFE_TRIGGERS,
         "Dazzling Angel" => &DAZZLING_ANGEL_TRIGGERS,
         "Clinquant Skymage" => &CLINQUANT_SKYMAGE_TRIGGERS,
+        "Mischievous Mystic" => &MISCHIEVOUS_MYSTIC_TRIGGERS,
         "Dwynen's Elite" => &DWYNENS_ELITE_TRIGGERS,
         "Good-Fortune Unicorn" => &GOOD_FORTUNE_UNICORN_TRIGGERS,
         "Guarded Heir" => &GUARDED_HEIR_TRIGGERS,

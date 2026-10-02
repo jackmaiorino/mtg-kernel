@@ -595,7 +595,8 @@ fn run_native_science_loop_with_opponents_v1(
         | NativeRunCatalogProfileV1::FdnLegendRule
         | NativeRunCatalogProfileV1::FdnTargetedSpells
         | NativeRunCatalogProfileV1::FdnCounterCreatures
-        | NativeRunCatalogProfileV1::FdnLifegainCreatures => {}
+        | NativeRunCatalogProfileV1::FdnLifegainCreatures
+        | NativeRunCatalogProfileV1::FdnDrawCreatures => {}
     }
 
     if ladder_opponent.is_some() && population_opponent.is_some() {
