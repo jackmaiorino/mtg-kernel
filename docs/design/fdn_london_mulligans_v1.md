@@ -30,6 +30,14 @@ This follows Comprehensive Rules 103.5 and XMage's
 fixtures have no free first mulligan. Rules source:
 https://media.wizards.com/2026/downloads/MagicCompRules%2020260925.txt
 
+Existing XMage reference scenarios in
+`Mage.Tests/src/test/java/org/mage/test/mulligan/LondonMulliganTest.java`:
+`testLondonMulligan_NoMulligan` keeps7/33, `testLondonMulligan_OneMulligan`
+checks7/33 then6/34 before keeping, and `testLondonMulligan_TwoMulligan`
+checks6/34 before the second redraw and5/35 before the final keep. These map
+to the no-mulligan, simultaneous-redraw and repeated-mulligan Rust cases.
+Execution of those existing reference tests remains pending.
+
 Prove these behaviors with named tests:
 
 | Test | Requirement |
