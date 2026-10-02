@@ -3896,6 +3896,14 @@ enum ScanMenuV1 {
     LegalAnswersOnly,
 }
 
+#[cfg(feature = "limited-fdn-fixtures")]
+#[derive(Clone)]
+struct LimitedTriggerOrderV1 {
+    player: PlayerId,
+    pending: Vec<crate::trigger::PendingTrigger>,
+    ordered_prefix: Vec<usize>,
+}
+
 #[derive(Clone)]
 pub struct RlEpisodeSessionV1 {
     deck_ids: SessionDeckIdsV1,
@@ -3911,6 +3919,10 @@ pub struct RlEpisodeSessionV1 {
     current: Option<CurrentDecisionV1>,
     terminal: Option<RlSessionTerminalV1>,
     scan_menu: ScanMenuV1,
+    #[cfg(feature = "limited-fdn-fixtures")]
+    limited_incremental_trigger_order: bool,
+    #[cfg(feature = "limited-fdn-fixtures")]
+    limited_trigger_order: Option<LimitedTriggerOrderV1>,
 }
 
 #[derive(Clone)]
@@ -3999,6 +4011,10 @@ impl RlEpisodeSessionV1 {
             current: None,
             terminal: None,
             scan_menu: ScanMenuV1::LegalAnswersOnly,
+            #[cfg(feature = "limited-fdn-fixtures")]
+            limited_incremental_trigger_order: foundations_combat,
+            #[cfg(feature = "limited-fdn-fixtures")]
+            limited_trigger_order: None,
         };
         session.advance_to_decision_or_terminal_profiled(None);
         Ok(session)
@@ -4193,6 +4209,10 @@ impl RlEpisodeSessionV1 {
                 current: None,
                 terminal: None,
                 scan_menu,
+                #[cfg(feature = "limited-fdn-fixtures")]
+                limited_incremental_trigger_order: false,
+                #[cfg(feature = "limited-fdn-fixtures")]
+                limited_trigger_order: None,
             })
         })?;
         session.advance_to_decision_or_terminal_profiled(profile);
@@ -4385,6 +4405,11 @@ impl RlEpisodeSessionV1 {
             },
         )?;
         measure_optional(&mut profile, RlPhaseV1::StepApply, || {
+            #[cfg(feature = "limited-fdn-fixtures")]
+            if self.limited_trigger_order.is_some() {
+                return self
+                    .apply_limited_trigger_order_action(policy_action, next_environment_revision);
+            }
             self.surface.apply_owned(
                 &mut self.state,
                 policy_action,
@@ -4408,6 +4433,88 @@ impl RlEpisodeSessionV1 {
         }
         self.advance_to_decision_or_terminal_profiled(profile);
         Ok(())
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn apply_limited_trigger_order_action(
+        &mut self,
+        policy_action: PolicyActionV5,
+        next_environment_revision: u64,
+    ) -> Result<(), String> {
+        let bound = self.limited_trigger_order.as_ref().unwrap();
+        let PolicyActionV5::Surface(crate::surface_v2::SurfaceAction::Action(
+            crate::engine::Action::OrderTriggers(order),
+        )) = &policy_action
+        else {
+            return Err("expected the next Limited trigger-order selection".into());
+        };
+        let group_len = self
+            .state
+            .engine
+            .pending_triggers
+            .iter()
+            .take_while(|trigger| trigger.controller == bound.player)
+            .count();
+        if group_len != bound.pending.len()
+            || self.state.engine.pending_triggers.get(..group_len) != Some(bound.pending.as_slice())
+            || order.len() != bound.ordered_prefix.len() + 1
+            || !order.starts_with(&bound.ordered_prefix)
+            || order
+                .last()
+                .is_none_or(|index| *index >= group_len || bound.ordered_prefix.contains(index))
+        {
+            return Err("stale Limited trigger-order prefix or pending group".into());
+        }
+        if order.len() < group_len {
+            // No engine action, priority, trigger placement or resolution
+            // occurs while the policy is still choosing the permutation.
+            self.limited_trigger_order.as_mut().unwrap().ordered_prefix = order.clone();
+            return Ok(());
+        }
+        self.surface.apply_owned(
+            &mut self.state,
+            policy_action,
+            self.environment_revision,
+            next_environment_revision,
+        )?;
+        self.limited_trigger_order = None;
+        Ok(())
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn limited_trigger_order_substeps(
+        &mut self,
+        surfaced: &PolicyDecisionV5,
+    ) -> Result<Option<(u32, u32)>, String> {
+        if let PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::OrderTriggers {
+            player,
+            pending,
+        })) = surfaced
+        {
+            if self.limited_incremental_trigger_order
+                && pending.len() > crate::rl::MAX_TRIGGER_ORDER_OBJECTS
+            {
+                let bound =
+                    self.limited_trigger_order
+                        .get_or_insert_with(|| LimitedTriggerOrderV1 {
+                            player: *player,
+                            pending: pending.clone(),
+                            ordered_prefix: Vec::new(),
+                        });
+                if bound.player != *player || bound.pending != *pending {
+                    return Err("Limited trigger-order pending group changed".into());
+                }
+                return Ok(Some((
+                    u32::try_from(bound.ordered_prefix.len())
+                        .map_err(|_| "trigger-order prefix exceeds u32")?,
+                    u32::try_from(pending.len()).map_err(|_| "trigger-order group exceeds u32")?,
+                )));
+            }
+        }
+        if self.limited_trigger_order.is_some() {
+            return Err("Limited trigger-order decision changed before commitment".into());
+        }
+        Ok(None)
     }
 
     #[cfg(test)]
@@ -4466,6 +4573,23 @@ impl RlEpisodeSessionV1 {
             }
             _ => {}
         }
+        #[cfg(feature = "limited-fdn-fixtures")]
+        let (substep_index, substep_count) = match self.limited_trigger_order_substeps(&surfaced) {
+            Ok(Some(substeps)) => substeps,
+            Ok(None) => surfaced.substep(),
+            Err(error) => {
+                self.terminal = Some(halted_terminal(
+                    &self.deck_ids,
+                    self.deck_hashes,
+                    self.episode_id,
+                    format!("fail_closed:{error}"),
+                    self.policy_step_count,
+                    self.physical_decision_count,
+                ));
+                return;
+            }
+        };
+        #[cfg(not(feature = "limited-fdn-fixtures"))]
         let (substep_index, substep_count) = surfaced.substep();
         if substep_index == 0 && self.physical_decision_count >= self.max_physical_decisions {
             let _ = self.surface.discard_unanswered_scan();
@@ -4532,26 +4656,36 @@ impl RlEpisodeSessionV1 {
                 return;
             }
         };
-        let candidates =
-            match measure_optional(&mut profile, RlPhaseV1::Actions, || match self.scan_menu {
+        let candidates = match measure_optional(&mut profile, RlPhaseV1::Actions, || {
+            #[cfg(feature = "limited-fdn-fixtures")]
+            if let Some(order) = &self.limited_trigger_order {
+                return crate::rl::limited_trigger_order_candidates_v1(
+                    order.player,
+                    &order.pending,
+                    &order.ordered_prefix,
+                    &self.state,
+                );
+            }
+            match self.scan_menu {
                 ScanMenuV1::OriginalPair => legal_action_candidates_v5(&surfaced, &self.state),
                 ScanMenuV1::LegalAnswersOnly => {
                     policy_legal_action_candidates_v5(&surfaced, &self.surface, &self.state)
                 }
-            }) {
-                Ok(candidates) => candidates,
-                Err(err) => {
-                    self.terminal = Some(halted_terminal(
-                        &self.deck_ids,
-                        self.deck_hashes,
-                        self.episode_id,
-                        format!("fail_closed:{err}"),
-                        self.policy_step_count,
-                        self.physical_decision_count,
-                    ));
-                    return;
-                }
-            };
+            }
+        }) {
+            Ok(candidates) => candidates,
+            Err(err) => {
+                self.terminal = Some(halted_terminal(
+                    &self.deck_ids,
+                    self.deck_hashes,
+                    self.episode_id,
+                    format!("fail_closed:{err}"),
+                    self.policy_step_count,
+                    self.physical_decision_count,
+                ));
+                return;
+            }
+        };
         if candidates.is_empty() {
             self.terminal = Some(halted_terminal(
                 &self.deck_ids,
@@ -4611,6 +4745,9 @@ impl RlEpisodeSessionV1 {
             substep_count: Option<u32>,
             observation_projection_hash: Option<u64>,
             legal_action_ids: Vec<String>,
+            #[cfg(feature = "limited-fdn-fixtures")]
+            #[serde(skip_serializing_if = "Option::is_none")]
+            limited_trigger_order_prefix: Option<Vec<usize>>,
         }
 
         #[derive(Serialize)]
@@ -4629,6 +4766,9 @@ impl RlEpisodeSessionV1 {
             substep_count: Option<u32>,
             observation_projection_hash: Option<u64>,
             legal_action_ids: Vec<String>,
+            #[cfg(feature = "limited-fdn-fixtures")]
+            #[serde(skip_serializing_if = "Option::is_none")]
+            limited_trigger_order_prefix: Option<Vec<usize>>,
         }
 
         let current_actor = current.map(|decision| decision.actor);
@@ -4663,6 +4803,11 @@ impl RlEpisodeSessionV1 {
                     substep_count,
                     observation_projection_hash,
                     legal_action_ids,
+                    #[cfg(feature = "limited-fdn-fixtures")]
+                    limited_trigger_order_prefix: self
+                        .limited_trigger_order
+                        .as_ref()
+                        .map(|order| order.ordered_prefix.clone()),
                 })
                 .map_err(|err| err.to_string())
             }
@@ -4683,6 +4828,11 @@ impl RlEpisodeSessionV1 {
                     substep_count,
                     observation_projection_hash,
                     legal_action_ids,
+                    #[cfg(feature = "limited-fdn-fixtures")]
+                    limited_trigger_order_prefix: self
+                        .limited_trigger_order
+                        .as_ref()
+                        .map(|order| order.ordered_prefix.clone()),
                 })
                 .map_err(|err| err.to_string())
             }
@@ -7771,6 +7921,202 @@ mod tests {
         session.terminal = None;
         session.advance_to_decision_or_terminal();
         session
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
+    mod limited_trigger_order_tests {
+        use super::*;
+        use crate::event::{propose_and_commit, ProposedEvent};
+
+        fn large_group(same_source: bool, max_policy_steps: u64) -> RlEpisodeSessionV1 {
+            let island = card_id_by_name("Island").unwrap();
+            let mut session = RlEpisodeSessionV1::reset_with_custom_decks_v1(
+                7,
+                123,
+                8192,
+                max_policy_steps,
+                ["custom-test-p0".into(), "custom-test-p1".into()],
+                [&[island; 40], &[island; 40]],
+                crate::surface_v2::PriorityModeV1::EngineWindowsV1,
+                true,
+            )
+            .unwrap();
+            session.state.step = Step::Main1;
+            session.state.active_player = PlayerId::P0;
+            session.state.priority_player = PlayerId::P0;
+            if same_source {
+                add_battlefield_object(&mut session.state, PlayerId::P0, "Beast-Kin Ranger");
+                let token = card_id_by_name("Faerie Token").unwrap();
+                for _ in 0..9 {
+                    propose_and_commit(
+                        &mut session.state,
+                        ProposedEvent::create_token(token, PlayerId::P0),
+                    );
+                }
+            } else {
+                for _ in 0..9 {
+                    add_battlefield_object(&mut session.state, PlayerId::P0, "Homunculus Horde");
+                }
+                session.state.players[0].draws_this_turn = 0;
+                for _ in 0..2 {
+                    propose_and_commit(&mut session.state, ProposedEvent::draw(PlayerId::P0));
+                }
+            }
+            let triggers = crate::trigger::collect_and_process(&mut session.state);
+            assert_eq!(triggers.len(), 9);
+            session.state.engine.pending_triggers.extend(triggers);
+            session.surface = PolicySurfaceV5::new_with_priority_mode_v1(
+                crate::surface_v2::PriorityModeV1::EngineWindowsV1,
+                SuppressionAuditMode::Off,
+            );
+            session.current = None;
+            session.terminal = None;
+            session.advance_to_decision_or_terminal();
+            session
+        }
+
+        fn choose(session: &mut RlEpisodeSessionV1, trigger_index: usize) {
+            let RlSessionResponseV1::Decision(decision) = session.current_response() else {
+                panic!("expected incremental trigger ordering");
+            };
+            let action = decision
+                .legal_actions
+                .iter()
+                .find(|action| {
+                    matches!(
+                        action.semantic,
+                        ActionSemanticV1::ChooseTriggerOrderNext { trigger_index: index, .. }
+                            if index == trigger_index
+                    )
+                })
+                .unwrap();
+            session
+                .step(
+                    decision.episode_id,
+                    decision.step,
+                    action.selected_index,
+                    &action.stable_id,
+                )
+                .unwrap();
+        }
+
+        #[test]
+        fn limited_trigger_order_nine_choices_commit_once_in_selected_stack_order() {
+            let mut session = large_group(false, 16384);
+            let state_before = session.state.clone();
+            let sources: Vec<_> = session
+                .state
+                .engine
+                .pending_triggers
+                .iter()
+                .rev()
+                .map(|trigger| trigger.source)
+                .collect();
+            for (position, index) in (0..9).rev().enumerate() {
+                let RlSessionResponseV1::Decision(decision) = session.current_response() else {
+                    panic!("expected trigger choice");
+                };
+                assert_eq!(decision.substep_index as usize, position);
+                assert_eq!(decision.substep_count, 9);
+                assert_eq!(decision.physical_decision_id, 0);
+                assert_eq!(decision.legal_actions.len(), 9 - position);
+                choose(&mut session, index);
+                if position < 8 {
+                    assert_eq!(session.state, state_before);
+                    assert_eq!(session.physical_decision_count(), 0);
+                }
+            }
+            assert_eq!(session.policy_step_count(), 9);
+            assert_eq!(session.physical_decision_count(), 1);
+            assert_eq!(
+                session
+                    .state
+                    .stack
+                    .iter()
+                    .map(|item| item.source)
+                    .collect::<Vec<_>>(),
+                sources
+            );
+            assert!(session.state.engine.pending_triggers.is_empty());
+        }
+
+        #[test]
+        fn limited_trigger_order_prefix_restores_and_stale_answers_do_not_mutate() {
+            let mut session = large_group(false, 16384);
+            let old = session.current_response();
+            choose(&mut session, 8);
+            let before = session.current_response();
+            let hash_before = session.privileged_environment_hash();
+            let core_before = session.privileged_core_environment_hash();
+            let snapshot = session.snapshot_v5();
+            let RlSessionResponseV1::Decision(old_decision) = old else {
+                unreachable!()
+            };
+            let stale = &old_decision.legal_actions[0];
+            assert!(session.step(7, 1, 0, &stale.stable_id).is_err());
+            assert_eq!(session.current_response(), before);
+            assert_eq!(session.privileged_environment_hash(), hash_before);
+            choose(&mut session, 3);
+            let after = session.current_response();
+            let hash_after = session.privileged_environment_hash();
+            session.restore_v5(&snapshot);
+            assert_eq!(session.current_response(), before);
+            assert_eq!(session.privileged_environment_hash(), hash_before);
+            assert_eq!(session.privileged_core_environment_hash(), core_before);
+            choose(&mut session, 3);
+            assert_eq!(session.current_response(), after);
+            assert_eq!(session.privileged_environment_hash(), hash_after);
+            assert_eq!(
+                session
+                    .limited_trigger_order
+                    .as_ref()
+                    .unwrap()
+                    .ordered_prefix,
+                vec![8, 3]
+            );
+        }
+
+        #[test]
+        fn limited_trigger_order_same_source_instances_keep_distinct_choices() {
+            let mut session = large_group(true, 16384);
+            let RlSessionResponseV1::Decision(decision) = session.current_response() else {
+                panic!("expected trigger choice");
+            };
+            let ids: HashSet<_> = decision
+                .legal_actions
+                .iter()
+                .map(|action| &action.stable_id)
+                .collect();
+            assert_eq!(ids.len(), 9);
+            let source = session.state.engine.pending_triggers[0].source;
+            assert!(session
+                .state
+                .engine
+                .pending_triggers
+                .iter()
+                .all(|trigger| trigger.source == source));
+            for index in 0..9 {
+                choose(&mut session, index);
+            }
+            assert_eq!(session.state.stack.len(), 9);
+            assert_eq!(session.physical_decision_count(), 1);
+        }
+
+        #[test]
+        fn limited_trigger_order_reserves_the_whole_group_before_placement() {
+            let session = large_group(false, 8);
+            let RlSessionResponseV1::Terminal(terminal) = session.current_response() else {
+                panic!("expected policy cap truncation");
+            };
+            assert_eq!(
+                terminal.terminal_classification,
+                TerminalClassificationV1::Truncated
+            );
+            assert_eq!(session.policy_step_count(), 0);
+            assert_eq!(session.physical_decision_count(), 0);
+            assert!(session.state.stack.is_empty());
+            assert_eq!(session.state.engine.pending_triggers.len(), 9);
+        }
     }
 
     fn goad(state: &mut GameState, attacker: crate::ids::ObjectId) {

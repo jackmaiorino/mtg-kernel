@@ -30,6 +30,20 @@ version is v41, generated hash `8f1dc68e65c24306`. Historical v40 remains
 against the new build. Broad checks, production boundaries, external replay
 and hosted CI must pass before the batch is delivered as verified.
 
+The first external check reached nine simultaneous second-draw triggers
+and exposed the policy adapter's seven-trigger permutation cap. In the
+Foundations custom session, groups above that cap now select one remaining
+trigger at a time in bottom-to-top stack order. Each action names the
+trigger index, source and selected prefix. The engine receives the complete
+permutation once, after the last choice; no placement, priority or resolution
+occurs during prefix selection. Snapshot/restore and the environment binding
+retain that prefix. Policy budgeting reserves all choices before starting.
+Groups of seven or fewer retain their existing menus, as do catalog-based
+V5/V6 sessions and the frozen flat paths. Tests cover nine real Horde
+triggers, nine different instances from one source, a reversed final order,
+unchanged engine state between picks, stale-answer refusal, mid-prefix
+restoration and refusal to start a group exceeding the remaining step cap.
+
 This slice adds one of the original UG fixture's missing names. It does
 not change the full goal's remaining cards, mulligans or final gameplay,
 replay and CI requirements.

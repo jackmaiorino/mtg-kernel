@@ -53,7 +53,7 @@ pub const POLICY_EPISODE_JSONL_FILENAME: &str = "policy_episodes.jsonl";
 pub const MANIFEST_FILENAME: &str = "manifest.json";
 
 const MAX_SUBSET_OBJECTS: usize = 12;
-const MAX_TRIGGER_ORDER_OBJECTS: usize = 7;
+pub(crate) const MAX_TRIGGER_ORDER_OBJECTS: usize = 7;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RlContractError(pub String);
@@ -1111,6 +1111,17 @@ pub enum ActionSemanticV1 {
         keep: CardStableRefV1,
         candidates: Vec<CardStableRefV1>,
     },
+    /// The opt-in Limited session selects a large simultaneous trigger
+    /// group one index at a time, in bottom-to-top stack order. The prefix
+    /// binds each answer to the exact ordering already selected.
+    #[cfg(feature = "limited-fdn-fixtures")]
+    ChooseTriggerOrderNext {
+        actor: PlayerSeatV1,
+        source: CardStableRefV1,
+        trigger_index: usize,
+        ordered_prefix: Vec<usize>,
+        pending_count: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2015,6 +2026,46 @@ fn legal_action_records_v5(
         .collect::<Result<Vec<_>>>()?;
     ensure_unique_policy_action_ids(&out)?;
     Ok(out)
+}
+
+#[cfg(feature = "limited-fdn-fixtures")]
+pub(crate) fn limited_trigger_order_candidates_v1(
+    player: PlayerId,
+    pending: &[crate::trigger::PendingTrigger],
+    ordered_prefix: &[usize],
+    state: &GameState,
+) -> Result<Vec<PolicyLegalActionCandidateV5>> {
+    let mut selected = vec![false; pending.len()];
+    for &index in ordered_prefix {
+        let chosen = selected
+            .get_mut(index)
+            .ok_or_else(|| RlContractError("trigger prefix index is out of range".into()))?;
+        if *chosen {
+            return Err(RlContractError("trigger prefix repeats an index".into()));
+        }
+        *chosen = true;
+    }
+    let mut candidates = Vec::new();
+    for (index, trigger) in pending.iter().enumerate() {
+        if selected[index] {
+            continue;
+        }
+        let mut order = ordered_prefix.to_vec();
+        order.push(index);
+        candidates.push(CorePolicyActionCandidateV1 {
+            semantic: ActionSemanticV1::ChooseTriggerOrderNext {
+                actor: player.into(),
+                source: card_ref(state, trigger.source)?,
+                trigger_index: index,
+                ordered_prefix: ordered_prefix.to_vec(),
+                pending_count: pending.len(),
+            },
+            policy_action: PolicyActionV5::Surface(SurfaceAction::Action(Action::OrderTriggers(
+                order,
+            ))),
+        });
+    }
+    legal_action_records_v5(candidates)
 }
 
 pub(crate) fn core_policy_action_candidates_v5(
