@@ -17,3 +17,6 @@
 
 # The canonical deck-source hash contract materializes CRLF before hashing.
 *.dek text eol=crlf
+
+# Preserve the pinned DraftZero fixture bytes across Windows checkouts.
+data/limited/fdn_v1/*.dck text eol=lf
