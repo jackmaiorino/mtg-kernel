@@ -6,6 +6,21 @@ Run: https://github.com/jackmaiorino/mtg-kernel/actions/runs/37000169016. Earlie
 verification sequence. The subsequent status/report update changes no tested
 code, workflow, fixture or catalog bytes.
 
+The report-only recheck at edbc6dc0 failed the unchanged snapshot timing
+case in Windows job 110990567893: 76.158 microseconds per clone against the
+40-microsecond release budget, with 1746 other library tests passing. Its
+Ubuntu job was still live when preparing the repair. The original gameplay
+source above remains fully qualified; no engine, fixture or catalog changed.
+
+Reuse PR140's CI helpers: run the original timing case alone with its original
+80-object workload and 2000 iterations, propagate every Rust command failure
+with Bash, and compile each library feature once before executing all nine
+unchanged filters in separate processes. All fourteen integration targets are
+preserved. Install the same pinned Rust toolchain in a fresh job directory.
+The helpers and bootstrap are identical to PR140; its Ubuntu Limited stage
+passed at 22:41:36 UTC and both bootstrap steps passed. Kiora's repaired hosted
+execution is pending. No timing threshold or assertion is weakened.
+
 Kiora, the Rising Tide and Scion of the Deep are implemented in the opt-in
 FDN catalog. Kiora's entry draws two, then discards two. Its attack trigger
 checks seven graveyard cards both when created and when resolved; the
