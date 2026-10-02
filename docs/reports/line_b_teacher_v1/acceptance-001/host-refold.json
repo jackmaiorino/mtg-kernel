@@ -1,0 +1,121 @@
+{
+ "schema": "line-b-host-refold-line/v1",
+ "claim": "offline binary32 replica of the update's host refold against the sampler's binary64 value; engineering only",
+ "directory": "D:\\e-scratch\\opus-exit-teacher\\receipts\\acceptance-001",
+ "packets": [
+  {
+   "packet_sha256": "e0df1c83960f13e0b7fce35eb81d477baa40e458e17a2aa49fd09eaee00d1939",
+   "updates": [
+    "cpu-forward-kl-a",
+    "cpu-forward-kl-b",
+    "cuda1-forward-kl-a",
+    "cuda1-forward-kl-b"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 44,
+     "width": 7,
+     "selected": 0,
+     "host_refold_log_probability": -0.40864312648773193,
+     "sampler_log_probability": -0.4086430484907282,
+     "abs_discrepancy": 7.799700374455654e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 58,
+     "width": 5,
+     "selected": 3,
+     "host_refold_log_probability": -0.2006748765707016,
+     "sampler_log_probability": -0.20067484189769771,
+     "abs_discrepancy": 3.467300388471095e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 5,
+     "width": 5,
+     "selected": 1,
+     "host_refold_log_probability": -0.8220138549804688,
+     "sampler_log_probability": -0.8220138241131136,
+     "abs_discrepancy": 3.086735511637073e-08
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 615,
+     "width": 5,
+     "selected": 4,
+     "host_refold_log_probability": -0.7581607103347778,
+     "sampler_log_probability": -0.7581606836185616,
+     "abs_discrepancy": 2.671621623928644e-08
+    },
+    {
+     "trajectory_index": 6,
+     "decision_index": 264,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.0049927555955946445,
+     "sampler_log_probability": -0.004992755896689648,
+     "abs_discrepancy": 3.0109500309682957e-10
+    }
+   ],
+   "max_abs_discrepancy": 7.799700374455654e-08
+  },
+  {
+   "packet_sha256": "13d02e924b8ed0619f7cf3456d491c56bd09ef4b0918392598045d5cbaeecdfc",
+   "updates": [
+    "cpu-reverse-kl-a",
+    "cpu-reverse-kl-b",
+    "cuda1-reverse-kl-a",
+    "cuda1-reverse-kl-b"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 44,
+     "width": 7,
+     "selected": 0,
+     "host_refold_log_probability": -0.40864312648773193,
+     "sampler_log_probability": -0.4086430484907282,
+     "abs_discrepancy": 7.799700374455654e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 58,
+     "width": 5,
+     "selected": 3,
+     "host_refold_log_probability": -0.2006748765707016,
+     "sampler_log_probability": -0.20067484189769771,
+     "abs_discrepancy": 3.467300388471095e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 5,
+     "width": 5,
+     "selected": 1,
+     "host_refold_log_probability": -0.8220138549804688,
+     "sampler_log_probability": -0.8220138241131136,
+     "abs_discrepancy": 3.086735511637073e-08
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 615,
+     "width": 5,
+     "selected": 4,
+     "host_refold_log_probability": -0.7581607103347778,
+     "sampler_log_probability": -0.7581606836185616,
+     "abs_discrepancy": 2.671621623928644e-08
+    },
+    {
+     "trajectory_index": 6,
+     "decision_index": 264,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.0049927555955946445,
+     "sampler_log_probability": -0.004992755896689648,
+     "abs_discrepancy": 3.0109500309682957e-10
+    }
+   ],
+   "max_abs_discrepancy": 7.799700374455654e-08
+  }
+ ]
+}

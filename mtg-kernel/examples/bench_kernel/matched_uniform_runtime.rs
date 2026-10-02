@@ -1783,19 +1783,27 @@ fn runtime_git_blob_contents(entries: &[GitTreeEntryV3]) -> Result<Vec<Option<Ve
         .stderr(Stdio::null())
         .spawn()
         .map_err(|_| "failed to execute git cat-file for tracked tree".to_string())?;
-    {
-        let stdin = child
-            .stdin
-            .as_mut()
-            .ok_or_else(|| "git cat-file stdin was not available".to_string())?;
-        for entry in entries.iter().filter(|entry| entry.kind == b"blob") {
-            writeln!(stdin, "{}", entry.object_id)
-                .map_err(|_| "failed to request a tracked blob".to_string())?;
-        }
-    }
-    let output = child
-        .wait_with_output()
-        .map_err(|_| "git cat-file did not complete for tracked tree".to_string())?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "git cat-file stdin was not available".to_string())?;
+    // Drain responses while submitting requests: either pipe can fill first.
+    let (output, write_result) = std::thread::scope(|scope| {
+        let writer = scope.spawn(move || -> std::io::Result<()> {
+            for entry in entries.iter().filter(|entry| entry.kind == b"blob") {
+                writeln!(stdin, "{}", entry.object_id)?;
+            }
+            drop(stdin);
+            Ok(())
+        });
+        let output = child.wait_with_output();
+        (output, writer.join())
+    });
+    write_result
+        .map_err(|_| "git cat-file request writer panicked".to_string())?
+        .map_err(|_| "failed to request a tracked blob".to_string())?;
+    let output =
+        output.map_err(|_| "git cat-file did not complete for tracked tree".to_string())?;
     if !output.status.success() {
         return Err("git cat-file failed for tracked tree".into());
     }

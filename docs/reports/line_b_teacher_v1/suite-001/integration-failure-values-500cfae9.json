@@ -1,0 +1,70 @@
+{
+ "schema": "opus-search-opponent-integration-failure-values/v1",
+ "purpose": "exact base values of the two failing integration targets for Codex's item 10 comparison at 8e11c411 (CODEX #612); full values, fast profile",
+ "base_log": {
+  "path": "D:/e-scratch/opus-search-opponent/logs/integration-500cfae9-flat_policy_v1-rl_contract.txt",
+  "sha256": "48df298c92af5edae5ad1199af648d419382fc16f58b5a00084b8cc7b867422b",
+  "targets": "flat_policy_v1 and rl_contract only, at 500cfae9"
+ },
+ "lane_head_log": {
+  "path": "D:/e-scratch/opus-search-opponent/logs/integration-ec1aab50.txt",
+  "sha256": "33d8ef0ba90aafe8ece51556cc602fdccb803592e3233b72084d47abd943cff1",
+  "result": "515 passed, 2 failed, 1 ignored over all 68 integration targets at ec1aab50"
+ },
+ "failures": [
+  {
+   "test": "runtime_typed_row_count_and_digest_goldens_are_exact",
+   "base_500cfae9": {
+    "panicked_at": [
+     "mtg-kernel/tests/flat_policy_v1.rs:645:5"
+    ],
+    "left_right": [],
+    "digests": [
+     "burn_seed_11_initial expected dcf189f7e73d811292d3fa73fcd80389aa419b6501bba74fa4be6a2e9861db47 actual da9a1a47089cb74e60a9c1dd62db01bcd72adf05f0e5c1ab91b766909648160f",
+     "rally_seed_23_initial expected 1e85c8617d4eaa307931156f57770d4d7b10a129fd4d1e964f5fb5ebbeab522b actual ab9000046edb3650a8b1845381825cef4a8be91a1e43d06ca42897002700bfda",
+     "burn_rally_seed_37_initial expected a78c4908c83bea17f9112402d7f5e730f1469b3fd0b49a2f827b563a33e4cf5c actual 2cfe24f3b1b68f4a428c1bb96c3cfc3081ecaf4514b35a55c856b842362b35a2",
+     "burn_seed_81701_first_relation expected f58dc75ae132ba83938325c0a77a763f78b5015e5ede9f78ef071bd3f5bd70f6 actual bef64eece4e9a43a7311d06da1775849310c9a1ccbb44641244ce97fa23e178e",
+     "rally_seed_81702_first_relation expected 647c064240b2a248c2b5d0847d2af60078f3c9211289bfa1aec60c899d2533ed actual 92942862734f87cf0ec4f15e0d982d84d8ea9d0c9a5bd727500778417d84f870"
+    ]
+   },
+   "head_ec1aab50": {
+    "panicked_at": [
+     "mtg-kernel/tests/flat_policy_v1.rs:645:5"
+    ],
+    "left_right": [],
+    "digests": [
+     "burn_seed_11_initial expected dcf189f7e73d811292d3fa73fcd80389aa419b6501bba74fa4be6a2e9861db47 actual da9a1a47089cb74e60a9c1dd62db01bcd72adf05f0e5c1ab91b766909648160f",
+     "rally_seed_23_initial expected 1e85c8617d4eaa307931156f57770d4d7b10a129fd4d1e964f5fb5ebbeab522b actual ab9000046edb3650a8b1845381825cef4a8be91a1e43d06ca42897002700bfda",
+     "burn_rally_seed_37_initial expected a78c4908c83bea17f9112402d7f5e730f1469b3fd0b49a2f827b563a33e4cf5c actual 2cfe24f3b1b68f4a428c1bb96c3cfc3081ecaf4514b35a55c856b842362b35a2",
+     "burn_seed_81701_first_relation expected f58dc75ae132ba83938325c0a77a763f78b5015e5ede9f78ef071bd3f5bd70f6 actual bef64eece4e9a43a7311d06da1775849310c9a1ccbb44641244ce97fa23e178e",
+     "rally_seed_81702_first_relation expected 647c064240b2a248c2b5d0847d2af60078f3c9211289bfa1aec60c899d2533ed actual 92942862734f87cf0ec4f15e0d982d84d8ea9d0c9a5bd727500778417d84f870"
+    ]
+   },
+   "lane_head_equals_base": true
+  },
+  {
+   "test": "rl_contract_combat_projection_preserves_indexed_non_token_history",
+   "base_500cfae9": {
+    "panicked_at": [
+     "mtg-kernel/tests/rl_contract.rs:543:5"
+    ],
+    "left_right": [
+     "0",
+     "1"
+    ],
+    "digests": []
+   },
+   "head_ec1aab50": {
+    "panicked_at": [
+     "mtg-kernel/tests/rl_contract.rs:543:5"
+    ],
+    "left_right": [
+     "0",
+     "1"
+    ],
+    "digests": []
+   },
+   "lane_head_equals_base": true
+  }
+ ]
+}

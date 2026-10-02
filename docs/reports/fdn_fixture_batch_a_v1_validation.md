@@ -105,3 +105,14 @@ still has **30 missing names**. They continue to be rejected by deck resolution.
 Mulligans, current arbitrary damage allocation, planeswalkers, the remaining
 card batches and executable XMage comparisons remain outstanding. These
 checks establish engineering behavior, not full FDN support or playing strength.
+
+## Rebase onto main (2026-10-02)
+
+Merging main after #112 moved the Pauper registry to `kernel_carddb/v34`
+with 192 definitions and added the `PauperMetaW1` catalog profile. The six
+FDN definitions now take IDs 192 through 197, `ArtifactOrEnchantmentPermanent`
+takes target ID 37 after main's `NonblackCreature` (36), and the Limited
+database is `kernel_carddb/v35`, hash `86272311c565a969`. The FDN profile is a
+fourth catalog profile; the pre-FDN fixture now pins `PauperMetaW1`. The
+measurements above describe the original v33 build.
+
