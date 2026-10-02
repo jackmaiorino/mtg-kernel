@@ -67,4 +67,4 @@ The full fixture milestone remains open: seven other distinct card names,
 mulligans, original-deck natural terminals and complete regression/CI
 evidence are still required. This report makes no playing-strength claim.
 
-Production boundary checks and a symbol-free debug interface build are running in `fdn-koma-production-001`. External replay remains pending; its prepared checker has not been launched.
+The initial production check refused a debug build (`native_store_build_profile_not_release`), preserving the production feature boundary. `fdn-koma-production-002` now runs the required release boundary checks, then a symbol-free debug interface build. External replay remains pending; its prepared checker has not been launched.
