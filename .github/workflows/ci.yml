@@ -117,6 +117,9 @@ jobs:
     name: Rust tests (${{ matrix.os }})
     needs: detect-changes
     if: needs.detect-changes.outputs.rust_relevant == 'true'
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:

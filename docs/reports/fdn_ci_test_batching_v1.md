@@ -14,6 +14,12 @@ package working directory and runtime environment, propagates failures, and
 preserves the pinned Rust/linker/release settings. Rust jobs use the repository's
 pinned Python3.13.14 for the helper.
 
+Rust steps explicitly use Bash on both hosts, so GitHub's `-e -o pipefail`
+invocation stops on the first failed command. The default Windows PowerShell
+wrapper checks the last native exit code, which cannot establish success of
+every earlier Cargo command in a multiline step. Historical Windows step
+success therefore requires inspection of all test summaries in its full log.
+
 | Feature selection | Existing filters, unchanged |
 | --- | --- |
 | limited-fdn-fixtures | limited_session_v1::tests; rl_session::tests; card_def::; koma_spell_protection; threshold_counts_graveyard; native_training_store_run_v2:: |
