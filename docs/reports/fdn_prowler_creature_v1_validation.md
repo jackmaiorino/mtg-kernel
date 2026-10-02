@@ -27,7 +27,7 @@ cannot inherit an old counter.
 | Catalog | Checks-004 phases 2 and 3 passed: 46 definition checks, 138 native-record checks and 3 existing ignores. Earlier compile failures exposed a missing consumer match arm and overly narrow historical-fixture test configuration; both are corrected. |
 | Sessions and regressions | Checks-004 passed: 66 public Limited session checks, 7 private custom-session checks and 229 prior gameplay cases across fourteen integration suites. |
 | Default compatibility and lint | All 68 default session checks and the exact v32 golden passed. Limited all-targets and default workspace all-targets Clippy passed with warnings denied. |
-| Production mutation boundaries | `fdn-prowler-production-001` is running, including prior-v43 publication/resume refusal and current-profile round trip. |
+| Production mutation boundaries | `fdn-prowler-production-001` exited zero: 25 release checks passed, including prior-v43 publication/resume refusal and current-profile round trip. Combined-feature release Clippy passed with warnings denied. |
 | External natural-terminal replay | `fdn-prowler-external-001` exited zero: two seed-123 games finished naturally with identical results and transcripts. |
 | Hosted CI | Draft [kernel PR #133](https://github.com/jackmaiorino/mtg-kernel/pull/133) is running at `b68eb5b4`; no green claim. |
 
@@ -37,12 +37,14 @@ MSVC linker 14.50.35725.0, two Cargo jobs, no incremental compilation,
 no debug symbols, seed 123 and no GPU. Small manifests bind source/input
 and output hashes. Checks-004 exited zero above the 60 GiB reserve. During release verification,
 the Cargo launcher was observed as `rustup.exe`, exposing a process-name
-mismatch in the original stop guard. The active release build now has a
+mismatch in the original stop guard. The release build received a
 companion guard that checks the exact launcher path, Cargo/rustup image name
 and the verified parent PowerShell script before stopping only its own tree.
 It monitors the 384 MiB allowance and 60 GiB reserve every three seconds;
 `fdn-prowler-production-001.guard-companion.json` records its actual activity.
-The healthy release build was not restarted.
+The healthy release build was not restarted. It finished successfully; the
+companion receipt records `job_completed` and exit zero. No storage stop was
+triggered, so this records observed monitoring rather than a tested kill path.
 Compiler-failure logs remain preserved outside Git; no measurement run was
 started, and no frozen experiment or other agent's tree was changed.
 
