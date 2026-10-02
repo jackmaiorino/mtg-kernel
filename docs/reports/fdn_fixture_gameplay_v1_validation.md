@@ -5,6 +5,17 @@ dependencies, and their custom-game rules. This is an implementation milestone.
 The 286-name reference, drafting, fair Limited search and training integration
 have separate milestones in `fdn_limited_implementation_v1.md`.
 
+October 2, 19:08 UTC completion audit: CI37049183922 atd43d59a2 passed
+formatting/all-feature lint and all four Python shards. Ubuntu's focused
+Witness and London steps passed, including the pending bottom-menu restore
+and original fixed-seed games. Full Rust remains live on both hosts. Mage PR15
+atd98525a0a7c has green current-head reference and labeler checks. Kernel
+PRs128 through135 are ready after complete hosted checks at their recorded
+source commits; their published follow-ups change reports only. Armor's
+older Windows Python failure is the timing-dependent sentinel-coverage test,
+with its focused repair committed locally and passing; preserve its active
+Windows Rust job110918929067 before publishing that test-only repair.
+
 | Requirement | Scenario, action and assertion | Named checks and observed status |
 | --- | --- | --- |
 | Both original 40-card decks load | Resolve the pinned files in original row/copy order; require 40 IDs and no unsupported names; refuse partial, unknown, no-effect and token mainboards. | `test_original_decks_are_40_cards_and_fully_resolve`; `test_cli_resolves_both_unchanged_original_decks_in_copy_order`; `test_unknown_partial_no_effect_and_token_are_all_rejected`. CLI resolution passed on October 2. |
