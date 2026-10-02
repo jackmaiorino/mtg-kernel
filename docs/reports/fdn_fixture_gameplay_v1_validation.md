@@ -5,21 +5,31 @@ dependencies, and their custom-game rules. This is an implementation milestone.
 The 286-name reference, drafting, fair Limited search and training integration
 have separate milestones in `fdn_limited_implementation_v1.md`.
 
-October 2, 19:40 UTC completion audit: CI37049183922 atd43d59a2 passed
-formatting/all-feature lint and all four Python shards. Ubuntu's focused
-Witness and London steps passed, including the pending bottom-menu restore
-and original fixed-seed games. Windows's same London step ended successfully
-at19:15:08UTC, but its integration results require a full-log audit: the
-historical PowerShell wrapper checks only the final native command's exit.
-The final pending bottom-menu library restore succeeded. PR140 makes every
-Rust step use Bash to propagate each command failure on both platforms.
-Full Rust remains live on both hosts. Mage PR15
-atd98525a0a7c has green current-head reference and labeler checks. Kernel
-PRs128 through136 are ready after complete hosted checks at their recorded
-source commits; their published follow-ups change reports only. Armor's
-older Windows Python failure is the timing-dependent sentinel-coverage test,
-with its focused repair committed locally and passing; preserve its active
-Windows Rust job110918929067 before publishing that test-only repair.
+October 2, 21:15 UTC completion audit: CI37049183922 at d43d59a2 passed
+formatting/all-feature lint, all four Python shards and the complete Ubuntu
+Rust job 110978361641. Its full log confirms all 21 selected Limited integration
+targets, 345 passing cases including 11 London and24 Witness cases, the pending
+bottom-menu library restore, and the original fixed-seed games. Seed123's two
+complete receipts are identical; swapped seed701 also terminates naturally.
+Default library regressions passed 1706 cases with 43 existing ignored tests;
+the Limited library, native platform and host-safe CUDA commands completed.
+Windows remains live. Its London step ended successfully at 19:15:08 UTC, but
+its integration results still require a full-log audit: the historical
+PowerShell wrapper checks only the final native command's exit. The final
+pending bottom-menu library command succeeded.
+
+Mage PR15 at d98525a0a7c has green current-head reference and labeler checks.
+Kernel PR136 has all eight current-head checks green. The earlier published
+report follow-ups retain their original source passes, but their new checks
+are still running. Draw PR129 is again a draft: its report-only recheck failed
+the existing snapshot timing gate. Repair990d825d runs that unchanged gate
+outside parallel unit tests; hosted execution is pending. Armor repair f13fd955
+is now public after its prior Windows Rust job passed; its current Python and
+full CI recheck remain pending. PR140 at 36d54594 propagates Rust failures with
+Bash, groups unchanged library filters and isolates the unchanged timing gate.
+It also installs the pinned Rust toolchain in a fresh job directory after a
+partial hosted-image installation broke documentation CI. All these repairs
+still require actual hosted execution before the milestone is complete.
 
 | Requirement | Scenario, action and assertion | Named checks and observed status |
 | --- | --- | --- |
@@ -27,7 +37,7 @@ Windows Rust job110918929067 before publishing that test-only repair.
 | Natural external games | Send original decks through the real schema-4 subprocess; player zero mulligans once and player one twice; bottom four cards total before play; require a natural terminal under the safety cap. | `original_fixtures_play_with_london_in_both_seats_and_replay_exactly`: seed 123 twice and swapped seed 701 passed on Ubuntu. Windows's step succeeded; its integration summaries await the complete job log. |
 | Deterministic replay | Run identical input, seed and actions twice; compare the complete transcript and terminal exactly. | Same original-fixture test; SHA-256/input/terminal receipts are printed by the CI command. Ubuntu passed; Windows integration summaries await the complete job log. |
 | Pending decision restore | Snapshot every pregame phase and a live private bottom menu; preserve choices, binding, RNG, incarnation and the resulting state; reject stale or foreign choices atomically. | `restore_each_pregame_phase_reproduces_choices_rng_and_zone_incarnations` passed on Ubuntu; Windows integration summaries await the complete job log. The final pending-bottom library command succeeded on both hosts. `pending_assignment_rejects_priority_and_restores_exactly` covers combat. |
-| Required card/rules behavior | Exercise costs, targets, loss of targets, triggers, tokens, layers, attachments and combat; validate all earlier session/protocol identities. | CI has 24 Witness cases, 11 London integration cases, the London session restore, 19 earlier Limited integration targets, library/RL/profile tests and default/native/CUDA checks. Complete corrected-source CI remains pending. |
+| Required card/rules behavior | Exercise costs, targets, loss of targets, triggers, tokens, layers, attachments and combat; validate all earlier session/protocol identities. | Current-head Ubuntu passed 24 Witness cases,11 London integration cases, the London session restore, all 19 earlier Limited integration targets, library/RL checks and default/native/CUDA commands. Windows's full job, Windows-only publication/resume canaries and the repaired CI follow-ups remain pending. |
 | Relevant XMage comparisons | Execute London and FDN card positions plus arbitrary damage allocation, trample, deathtouch and first/double strike. Require every selected XML report with no failures/errors/skips. | Mage run 37049882555 at 5cc4decd8ffe passed all 146 cases in all 16 selected classes, with zero failures/errors/skips. Includes four strict combat allocation cases, 24 existing combat cases, seven London cases and 111 earlier FDN card cases. Source/output hashes and XML counts independently verified. Mage PR #15 carries the reference suite. |
 | Reviewable delivery | Commit changes in owned branches, preserve the stacks and get required checks green. | Kernel PR #139 and Mage PR #15 carry the final batches. Source is committed; review and complete CI remain pending. |
 
@@ -46,7 +56,9 @@ CI 37038033614 passed all 19 Limited integration targets on Ubuntu, then
 seven session tests and 66 RL session tests. Its next library target found a
 stale expected catalog count of 205 rather than 206, with 45 other card-definition
 tests passing. Corrected that assertion without changing the catalog or its
-identity. Complete verification of the corrected source remains required.
+identity. Corrected-source Ubuntu job 110977578991 at fdbe23e5 completed
+successfully, with all 20 selected integration targets and334 passing cases.
+Its Windows job remains live, so complete verification is still required.
 
 Both PCs' other owners retain their resource reservations. All heavy Rust
 and Java compilation uses hosted CI. These checks are bounded CPU correctness

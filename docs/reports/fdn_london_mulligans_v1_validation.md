@@ -3,13 +3,18 @@
 Schema 4 adds London mulligans to the original fixture gameplay interface.
 The focused Rust rules, original fixture games and pending-session restore
 passed on Ubuntu. The final XMage suite passed146 cases in16 classes,
-including16 Witness,7 London and28 combat comparisons. At publicd43d59a2,
+including 16 Witness, 7 London and 28 combat comparisons. At publicd43d59a2,
 formatting/all-feature lint and all four Python shards passed. Windows's
-London step ended successfully at19:15:08UTC, including its final pending-bottom
+London step ended successfully at 19:15:08 UTC, including its final pending-bottom
 library command. Its integration summaries await the complete job log because
 the historical PowerShell wrapper checks only the final native exit code.
 PR140 changes every Rust step to Bash so each command failure propagates.
-Full regression/CI verification remains pending.
+The full Ubuntu job 110978361641 completed at 21:11 UTC. Its complete log confirms
+all 21 selected Limited integration targets and345 passing cases, including
+all 11 London cases and24 Witness cases. The library restore, 1706 default
+library tests, Limited library regressions and host-safe CUDA commands passed.
+The 43 default and 7 CUDA ignored tests are existing platform/device exclusions.
+Full Windows and CI-follow-up verification remains pending.
 
 The first hosted attempt, CI37041270977 at87db2401, found an unused import in
 the new module. Removed it; the original lint log is retained. This is a lint
@@ -26,8 +31,17 @@ restore test did not execute because the integration command failed first.
 
 Observed checks:
 
+- CI37049183922 at d43d59a2: seed123 produced two identical complete receipts,
+  each 545 requests with 538 physical and 544 policy decisions, natural P0 win,
+  and transcript SHA-256
+  `02bfc4448318cc2eba465ef9258ff5b7c0db191f304469cd73f6d422bef7d695`.
+  Swapped seed701 used 492 requests with 479 physical and 491 policy decisions,
+  natural P0 win, and transcript SHA-256
+  `f7161673bf17ea48ae29ac1e126cb8d1809c910dccb11403eafaeada8ba8aa02`.
+  All three receipts bind both original deck SHA-256s and four actual bottom
+  choices. The complete current-head Ubuntu Rust job passed; Windows is live.
 - CI37042426390 at0a876ce3: Ubuntu's London step passed both commands, covering
-  all11 integration cases and the pending-bottom-menu session restore.
+  all 11 integration cases and the pending-bottom-menu session restore.
   Witness's24 focused cases also passed in the same job. All four Python
   shards passed. The Windows London step is still active.
 - The same attempt's all-target lint found missing exhaustive arms in the
@@ -43,7 +57,7 @@ Observed checks:
   and both XML reports were verified. Retained source:
   `E:/mtg-fdn-fixtures/fdn-mage-witness-hosted-001`, with an independent verified
   mirror at `C:/Users/Jack/fdn-mage-witness-hosted-001-sealed`.
-- Mage run37049882555 at5cc4decd8ffe passed all146 cases in16 classes, including
+- Mage run37049882555 at 5cc4decd8ffe passed all 146 cases in16 classes, including
   the four new Foundations allocation positions and24 existing combat cases.
   All source/output hashes and XML counts were independently verified. Sealed
   evidence: `E:/mtg-fdn-fixtures/fdn-fixture-final-reference-002`; independent
