@@ -2035,7 +2035,7 @@ mod windows_publisher_tests {
         assert_eq!(
             run.catalog_profile_v1(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnLegendRule
+                NativeRunCatalogProfileV1::FdnTargetedSpells
             } else {
                 NativeRunCatalogProfileV1::Current
             }
@@ -2188,7 +2188,7 @@ mod windows_publisher_tests {
         assert_eq!(
             run.catalog_profile_v1(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnLegendRule
+                NativeRunCatalogProfileV1::FdnTargetedSpells
             } else {
                 NativeRunCatalogProfileV1::Current
             }
@@ -2206,7 +2206,7 @@ mod windows_publisher_tests {
         assert_eq!(
             redecoded.catalog_profile_v1(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnLegendRule
+                NativeRunCatalogProfileV1::FdnTargetedSpells
             } else {
                 NativeRunCatalogProfileV1::Current
             }
