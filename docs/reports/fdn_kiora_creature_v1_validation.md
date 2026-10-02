@@ -1,5 +1,11 @@
 # FDN Kiora implementation and verification
 
+Hosted CI at `f8fce216064e6185858383a2bfeac4994432bf9d` passed all eight checks: Rust on
+Ubuntu and Windows, all four Python shards, formatting/lint and path detection.
+Run: https://github.com/jackmaiorino/mtg-kernel/actions/runs/37000169016. Earlier pending entries below record the original
+verification sequence. The subsequent status/report update changes no tested
+code, workflow, fixture or catalog bytes.
+
 Kiora, the Rising Tide and Scion of the Deep are implemented in the opt-in
 FDN catalog. Kiora's entry draws two, then discards two. Its attack trigger
 checks seven graveyard cards both when created and when resolved; the
