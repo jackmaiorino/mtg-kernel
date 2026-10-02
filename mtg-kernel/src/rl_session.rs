@@ -11779,6 +11779,8 @@ mod tests {
         }
     }
 
+    // This golden is pinned to the default CardDB, without the optional FDN catalog.
+    #[cfg(not(feature = "limited-fdn-fixtures"))]
     #[test]
     fn flat_action_candidate_commitment_matches_independent_pass_vector() {
         let mut session = FastActorSessionV1::reset_with_limits(81_040, 140, 128, 16_384);
@@ -11818,6 +11820,8 @@ mod tests {
         );
     }
 
+    // This golden is pinned to the default CardDB, without the optional FDN catalog.
+    #[cfg(not(feature = "limited-fdn-fixtures"))]
     #[test]
     fn flat_action_v2_token_domain_and_commitment_goldens_are_independent() {
         assert_eq!(flat_card_token_v1(u16::MAX - 1), Ok(u16::MAX));
@@ -12002,6 +12006,8 @@ mod tests {
         ) = (action_buffer, ref_buffer, object_buffer);
     }
 
+    // This golden is pinned to the default CardDB, without the optional FDN catalog.
+    #[cfg(not(feature = "limited-fdn-fixtures"))]
     #[test]
     fn flat_action_v2_serializer_and_production_semantic_commitments_match_python_authority() {
         fn unsigned(row: &serde_json::Value, field: &str) -> u64 {
@@ -12513,6 +12519,8 @@ mod tests {
         session
     }
 
+    // This golden is pinned to the default CardDB, without the optional FDN catalog.
+    #[cfg(not(feature = "limited-fdn-fixtures"))]
     #[test]
     fn environment_hashes_are_diagnostic_dispatched_with_exact_goldens() {
         // Pre-edit captured legacy goldens (episode 1, env seed 99, max 8),
@@ -12704,6 +12712,8 @@ mod tests {
             .collect()
     }
 
+    // This golden is pinned to the default CardDB, without the optional FDN catalog.
+    #[cfg(not(feature = "limited-fdn-fixtures"))]
     #[test]
     fn v2_reset_preexisting_entry_points_remain_legacy_randomness() {
         let canonical = RlEpisodeSessionV1::reset_with_decks_and_limits(
@@ -12959,6 +12969,8 @@ mod tests {
         );
     }
 
+    // This golden is pinned to the default CardDB, without the optional FDN catalog.
+    #[cfg(not(feature = "limited-fdn-fixtures"))]
     #[test]
     fn v2_reset_reuses_pre_constructor_pins_and_is_root_sensitive() {
         use crate::environment_randomization_v2::PhysicalOwnerV2;
@@ -13459,6 +13471,8 @@ mod tests {
         }
     }
 
+    // This golden is pinned to the default CardDB, without the optional FDN catalog.
+    #[cfg(not(feature = "limited-fdn-fixtures"))]
     #[test]
     fn jsonl_v6_frozen_v5_bytes_and_api() {
         use sha2::Digest as _;
