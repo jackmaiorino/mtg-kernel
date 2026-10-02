@@ -1,5 +1,11 @@
 # FDN draw creature validation
 
+Hosted CI at `2861046736faf13fd0cca1c1f76e9771f9ecd17f` passed all eight checks: Rust on
+Ubuntu and Windows, all four Python shards, formatting/lint and path detection.
+Run: https://github.com/jackmaiorino/mtg-kernel/actions/runs/36973189527. Earlier pending entries below record the original
+verification sequence. The subsequent status/report update changes no tested
+code, workflow, fixture or catalog bytes.
+
 Strix Lookout, Mischievous Mystic and Faerie Token are implemented at
 `99171529`, with focused test corrections at `95b4a94a` and `84675f3b`.
 Matching committed HaleysPC source is
