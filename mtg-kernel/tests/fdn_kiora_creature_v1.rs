@@ -115,6 +115,10 @@ fn reach_option(state: &mut GameState) {
 }
 
 fn attack(graveyard_cards: usize) -> (GameState, ObjectId) {
+    attack_with_graveyards(graveyard_cards, 0)
+}
+
+fn attack_with_graveyards(graveyard_cards: usize, opponent_cards: usize) -> (GameState, ObjectId) {
     let mut state = ready();
     let kiora = put(
         &mut state,
@@ -124,6 +128,9 @@ fn attack(graveyard_cards: usize) -> (GameState, ObjectId) {
     );
     for _ in 0..graveyard_cards {
         put(&mut state, PlayerId::P0, "Island", Zone::Graveyard);
+    }
+    for _ in 0..opponent_cards {
+        put(&mut state, PlayerId::P1, "Island", Zone::Graveyard);
     }
     state.step = Step::DeclareAttackers;
     assert!(matches!(
@@ -224,10 +231,7 @@ fn entry_draws_two_before_controller_discards_two_and_restores_that_choice() {
 
 #[test]
 fn attack_with_six_cards_does_not_trigger_even_with_opponent_threshold() {
-    let (mut state, _) = attack(6);
-    for _ in 0..7 {
-        put(&mut state, PlayerId::P1, "Island", Zone::Graveyard);
-    }
+    let (mut state, _) = attack_with_graveyards(6, 7);
     assert!(state.stack.is_empty());
     assert!(state.engine.pending_triggers.is_empty());
     drain(&mut state, None);
