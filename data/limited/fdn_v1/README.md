@@ -16,12 +16,21 @@ statistics omitted. The two deck files are unchanged copies.
 
 The 286 reference names are an observed gameplay dataset, not a complete
 booster manifest. The inventory tool adds all five basic lands and any
-additional fixture cards. Plains is present in the reference but absent from
-the current kernel registry. Printed collector numbers are not a safe
+additional fixture cards. After fixture batch A, 13 reference names are
+supported and 273 remain missing. Both fixtures resolve 19 of their 40
+mainboard copies; 30 distinct fixture names still need implementation.
+Printed collector numbers are not a safe
 filter for draft availability: these real decks also use alternate printings.
 The full target pool, including any Special Guests, needs a separate manifest.
 
-From the repository root, no dependencies or engine build are needed:
+FDN definitions live in `cards_v1.json` in this directory and append to the
+unchanged 192-definition Pauper registry. The importer combines both files in
+that order and reports their separate SHA-256s. Build the gameplay binary with
+`cargo build --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_env`.
+Default builds retain the Pauper catalog and its v34 identity; the
+Limited feature selects the appended definitions and their v35 identity.
+
+From the repository root, no dependencies or engine build are needed for inspection:
 
 ```powershell
 py -3.11 python/tools/limited_decks_v1.py inventory --deck data/limited/fdn_v1/FDN_top_04956_UG.dck --deck data/limited/fdn_v1/FDN_top_20626_WG.dck

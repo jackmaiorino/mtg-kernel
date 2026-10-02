@@ -181,6 +181,15 @@ const FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1: &str =
 // byte-identical initial value requires against CURRENT.
 const FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1: &str = "064a7c989255ab3c";
 
+// Separate FDN batch A identity: the PAUPER_META_W1 card registry plus the
+// six appended FDN fixture definitions, built only under the
+// `limited-fdn-fixtures` feature. The nine-deck runtime catalog itself is
+// unchanged. Never move any earlier profile's literals: already sealed
+// records keep their original meaning.
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_BATCH_A_V1: &str = "86272311c565a969";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_BATCH_A_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
 const FROZEN_PROTOCOL_V2: &str = "kernel_rl_jsonl";
 const FROZEN_PROTOCOL_VERSION_V2: u32 = 5;
 const FROZEN_SCHEMA_VERSION_V2: u32 = 5;
@@ -1834,6 +1843,10 @@ pub(crate) enum NativeRunEnvironmentTrajectoryContractV1 {
 /// their own boundary and otherwise treat `Current`/`PauperMetaW1`
 /// identically; this module itself never refuses to decode or validate any
 /// of the three profiles.
+/// `FdnFixtureBatchA` (built only under the `limited-fdn-fixtures` feature)
+/// pins the PAUPER_META_W1 card registry plus six FDN fixture definitions
+/// against that same runtime catalog and is admitted wherever
+/// `Current`/`PauperMetaW1` are.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeRunCatalogProfileV1 {
     Historical,
@@ -1849,6 +1862,11 @@ pub(crate) enum NativeRunCatalogProfileV1 {
     /// crate currently renders a profile label string at all, so there is
     /// nothing else to update for this label).
     PauperMetaW1,
+    /// FDN batch A: the PAUPER_META_W1 registry plus six FDN fixture
+    /// definitions, selected by the
+    /// (`FROZEN_CARD_DB_HASH_U64_HEX_FDN_BATCH_A_V1`,
+    /// `FROZEN_RUNTIME_CATALOG_SHA256_FDN_BATCH_A_V1`) tuple.
+    FdnFixtureBatchA,
 }
 
 impl ValidatedTrainRunV2 {
@@ -2352,7 +2370,7 @@ fn environment_randomization_section_is_exact_v2(
 /// pauper-meta-cards-v1 card lane's schema migration, design ruling 6
 /// pending).
 ///
-/// Exactly three complete tuples are admissible: the record's own
+/// Exactly four complete tuples are admissible: the record's own
 /// `card_db_hash_u64_hex` and `runtime_catalog_sha256` fields must equal
 /// EITHER both HISTORICAL frozen rev3 literals (`FROZEN_CARD_DB_HASH_U64_HEX_V2`,
 /// `FROZEN_RUNTIME_CATALOG_SHA256_V2`, byte-identical forever), OR both
@@ -2362,9 +2380,11 @@ fn environment_randomization_section_is_exact_v2(
 /// frozen literals (`FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1`,
 /// `FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1` -- it shares CURRENT's runtime
 /// catalog literal since the card lane only appends cards, never touches
-/// the runtime deck catalog); every other combination, including a hybrid
-/// that matches one field's literal from one tuple and the other field's
-/// literal from a different tuple, is rejected. This mirrors
+/// the runtime deck catalog), OR the FDN batch A pair
+/// (`FROZEN_CARD_DB_HASH_U64_HEX_FDN_BATCH_A_V1`,
+/// `FROZEN_RUNTIME_CATALOG_SHA256_FDN_BATCH_A_V1`); every other combination,
+/// including a hybrid that matches one field's literal from one tuple and
+/// the other field's literal from a different tuple, is rejected. This mirrors
 /// `classify_environment_trajectory_contract_v1`'s own shape (whole-tuple
 /// selection before any partial-field tolerance, every hybrid rejected) but
 /// is a distinct, independent classification: a record's trajectory contract
@@ -2408,6 +2428,17 @@ fn classify_catalog_profile_from_identity_v1(
         && runtime_catalog_sha256 == FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1;
     let pauper_meta_w1 = card_db_hash_u64_hex == FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1
         && runtime_catalog_sha256 == FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1;
+    let fdn = card_db_hash_u64_hex == FROZEN_CARD_DB_HASH_U64_HEX_FDN_BATCH_A_V1
+        && runtime_catalog_sha256 == FROZEN_RUNTIME_CATALOG_SHA256_FDN_BATCH_A_V1;
+    if fdn {
+        // Disjoint from every other tuple: the FDN card DB hash literal
+        // differs from all three earlier card DB hash literals.
+        return if historical || current || pauper_meta_w1 {
+            Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral))
+        } else {
+            Ok(NativeRunCatalogProfileV1::FdnFixtureBatchA)
+        };
+    }
     match (historical, current, pauper_meta_w1) {
         (true, false, false) => Ok(NativeRunCatalogProfileV1::Historical),
         (false, true, false) => Ok(NativeRunCatalogProfileV1::Current),
@@ -2477,10 +2508,8 @@ thread_local! {
 
 /// Test-only per-thread override for [`live_catalog_build_identity_v1`].
 /// Installing simulates a build whose live catalog constants differ from the
-/// pinned CURRENT literal (the only way to exercise the CURRENT-profile
-/// mutation-boundary authenticity check's rejection path today, since the
-/// crate's real live constants currently equal the pinned CURRENT literal
-/// exactly -- see `current_frozen_literal_matches_the_live_build_constant`).
+/// pinned profile literal. This exercises rejection for a future catalog
+/// change without changing the compiled database or any frozen profile.
 /// RAII: the override is cleared on drop, including on panic, so no failed
 /// test can leak a shimmed identity into a later same-thread test.
 #[cfg(test)]
@@ -2519,7 +2548,7 @@ impl Drop for LiveCatalogBuildIdentityOverrideGuardV1 {
 /// live constants past that literal (the exact bypass the panel identified,
 /// symmetric to the original rev3 outage this successor exists to fix).
 /// This closes it at the two mutation boundaries (publish, resume): a
-/// CURRENT-profile record's own embedded fields must equal the crate's live
+/// CURRENT- or FDN-profile record's own embedded fields must equal the crate's live
 /// constants at THIS moment, not merely the frozen pin. Returns `true` when
 /// they match. HISTORICAL-profile records never reach this function (each
 /// boundary's exhaustive match rejects them in their own arm first).
@@ -4286,6 +4315,14 @@ pub(crate) fn test_fixture_bytes_v2() -> Vec<u8> {
     tests::fixture_bytes()
 }
 
+/// The pre-FDN PAUPER_META_W1 profile remains readable, but an FDN build
+/// must reject it at mutation boundaries before touching the store.
+#[cfg(all(test, feature = "limited-fdn-fixtures"))]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn test_fixture_bytes_pre_fdn_v1() -> Vec<u8> {
+    tests::fixture_bytes_pre_fdn()
+}
+
 /// The HISTORICAL-profile sibling of [`test_fixture_bytes_v2`]: a coherent
 /// record carrying the frozen rev3 catalog literals instead of the live
 /// nine-deck ones. Test-only: used by the dual-profile decode-acceptance and
@@ -5286,7 +5323,7 @@ mod tests {
     /// overridden back to the frozen rev3 literals (byte-identical to what
     /// every fixture built before the runtime-decks-nine landing carried).
     /// Used only by the dual-profile decode-acceptance and boundary-rejection
-    /// tests; every other test keeps using the CURRENT-profile default.
+    /// tests; live-build tests use the FDN-profile default.
     pub(super) fn fixture_record_historical() -> TrainRunV2 {
         let mut record = fixture_record();
         record.environment.card_db_hash_u64_hex = FROZEN_CARD_DB_HASH_U64_HEX_V2.to_owned();
@@ -5301,6 +5338,21 @@ mod tests {
             CanonicalJsonNullPolicyV1::Forbid,
         )
         .unwrap()
+    }
+
+    fn fixture_record_pre_fdn() -> TrainRunV2 {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1.to_owned();
+        refresh_derived(&mut record);
+        record
+    }
+
+    pub(super) fn fixture_bytes_pre_fdn() -> Vec<u8> {
+        to_canonical_json_bytes_v1(&fixture_record_pre_fdn(), CanonicalJsonNullPolicyV1::Forbid)
+            .unwrap()
     }
 
     fn refresh_derived(record: &mut TrainRunV2) {
@@ -6651,16 +6703,21 @@ mod tests {
     /// card database/runtime catalog changed again (needs a new profile) or
     /// the frozen literals were typed wrong when this successor landed.
     #[test]
-    fn current_frozen_literal_matches_the_live_build_constant() {
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn fdn_batch_a_frozen_literal_matches_the_live_build_constant() {
         use crate::card_def::KERNEL_CARDDB_HASH;
         use crate::runtime_decks::RUNTIME_DECK_CATALOG_FILE_SHA256;
         assert_eq!(
             format!("{KERNEL_CARDDB_HASH:016x}"),
-            FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1
+            if cfg!(feature = "limited-fdn-fixtures") {
+                FROZEN_CARD_DB_HASH_U64_HEX_FDN_BATCH_A_V1
+            } else {
+                FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1
+            }
         );
         assert_eq!(
             RUNTIME_DECK_CATALOG_FILE_SHA256,
-            FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_BATCH_A_V1
         );
     }
 
@@ -6763,6 +6820,43 @@ mod tests {
             validated.record().environment.runtime_catalog_sha256,
             FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1
         );
+        assert_eq!(validated.canonical_bytes(), bytes);
+        assert!(!current_profile_matches_live_build_identity_v1(
+            validated.record().environment()
+        ));
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn fdn_batch_a_fixture_decodes_with_its_own_profile_and_live_identity() {
+        let validated = decode_train_run_v2(&fixture_bytes()).unwrap();
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnFixtureBatchA
+        );
+        assert!(current_profile_matches_live_build_identity_v1(
+            validated.record().environment()
+        ));
+        assert_ne!(
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_BATCH_A_V1,
+            FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
+        );
+        assert_eq!(
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_BATCH_A_V1,
+            "86272311c565a969"
+        );
+    }
+
+    #[test]
+    fn fdn_registry_with_historical_runtime_catalog_is_rejected() {
+        let mut record = fixture_record();
+        record.environment.runtime_catalog_sha256 = FROZEN_RUNTIME_CATALOG_SHA256_V2.to_owned();
+        refresh_derived(&mut record);
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        assert_eq!(
+            decode_train_run_v2(&bytes).unwrap_err().kind(),
+            TrainRunV2ErrorKind::InvalidLiteral
+        );
     }
 
     /// The default fixture (`fixture_bytes()`), unmodified, decodes clean and
@@ -6784,7 +6878,11 @@ mod tests {
         // pin Current.
         assert_eq!(
             validated.catalog_profile_v1(),
-            NativeRunCatalogProfileV1::PauperMetaW1
+            if cfg!(feature = "limited-fdn-fixtures") {
+                NativeRunCatalogProfileV1::FdnFixtureBatchA
+            } else {
+                NativeRunCatalogProfileV1::PauperMetaW1
+            }
         );
         let (live_card_db_hash_u64_hex, live_runtime_catalog_sha256) =
             live_catalog_build_identity_v1();
@@ -7202,7 +7300,9 @@ mod tests {
 
     #[test]
     fn independent_digest_references_and_goldens_match() {
-        let record = fixture_record();
+        // Preserve the pre-FDN (PAUPER_META_W1) record's byte goldens. The FDN live
+        // fixture has a distinct catalog profile and separate acceptance tests.
+        let record = fixture_record_pre_fdn();
         let semantics_bytes =
             reference_canonical_bytes(&record.contracts.standalone_semantics.core);
         let semantics = sha256_hex(&semantics_bytes);
@@ -7210,7 +7310,7 @@ mod tests {
         let run_bytes = reference_canonical_bytes(&record);
         assert_eq!(semantics, record.contracts.standalone_semantics.sha256);
         assert_eq!(identity, record.contracts.identity_bundle_sha256);
-        assert_eq!(run_bytes, fixture_bytes());
+        assert_eq!(run_bytes, fixture_bytes_pre_fdn());
         // Dual-Profile Catalog Successor (collab CLAUDE #220): these three
         // digests are recomputed here because `fixture_record()` now embeds
         // the CURRENT-profile catalog literals (see that function's doc
@@ -7995,7 +8095,7 @@ mod tests {
 
     #[test]
     fn population_program_absence_preserves_legacy_bytes_and_run_hash() {
-        let bytes = fixture_bytes();
+        let bytes = fixture_bytes_pre_fdn();
         let validated = decode_train_run_v2(&bytes).unwrap();
         assert!(validated
             .record()
@@ -8302,7 +8402,7 @@ mod tests {
 
     #[test]
     fn response_exploiter_absence_preserves_existing_bytes_and_population_behavior() {
-        let legacy_bytes = fixture_bytes();
+        let legacy_bytes = fixture_bytes_pre_fdn();
         let legacy = decode_train_run_v2(&legacy_bytes).unwrap();
         assert!(legacy.record().contracts().response_exploiter_v1.is_none());
         // Re-pinned again for the Phase 1 card lane merge (2026-09): shares

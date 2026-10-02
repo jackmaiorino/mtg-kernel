@@ -590,7 +590,9 @@ fn run_native_science_loop_with_opponents_v1(
                 NativeScienceLoopV1ErrorKind::HistoricalCatalogProfile,
             ));
         }
-        NativeRunCatalogProfileV1::Current | NativeRunCatalogProfileV1::PauperMetaW1 => {}
+        NativeRunCatalogProfileV1::Current
+        | NativeRunCatalogProfileV1::PauperMetaW1
+        | NativeRunCatalogProfileV1::FdnFixtureBatchA => {}
     }
 
     if ladder_opponent.is_some() && population_opponent.is_some() {

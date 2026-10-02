@@ -555,6 +555,9 @@ pub enum TargetSpec {
     /// not include black. Appended for Snuff Out without changing any
     /// earlier target identity.
     NonblackCreature,
+    /// Either player's artifact or enchantment. Cathar Commando may target
+    /// its controller's own permanent. Existing target identities stay fixed.
+    ArtifactOrEnchantmentPermanent,
 }
 
 impl TargetSpec {
@@ -600,6 +603,7 @@ impl TargetSpec {
             TargetSpec::Land => 34,
             TargetSpec::OpponentArtifactOrEnchantmentPermanent => 35,
             TargetSpec::NonblackCreature => 36,
+            TargetSpec::ArtifactOrEnchantmentPermanent => 37,
         }
     }
 }
@@ -1658,7 +1662,16 @@ mod tests {
         // Ornament, and Barrels of Blasting Jelly are appended as ids
         // 187-191 (pauper meta wave 2 Task 3), again without renumbering
         // earlier ids.
-        assert_eq!(CARD_DEFS.len(), 192);
+        // The `limited-fdn-fixtures` feature appends six FDN fixture
+        // definitions as ids 192-197 after every Pauper definition.
+        assert_eq!(
+            CARD_DEFS.len(),
+            if cfg!(feature = "limited-fdn-fixtures") {
+                198
+            } else {
+                192
+            }
+        );
     }
 
     #[test]
@@ -1707,6 +1720,7 @@ mod tests {
             (TargetSpec::Land, 34),
             (TargetSpec::OpponentArtifactOrEnchantmentPermanent, 35),
             (TargetSpec::NonblackCreature, 36),
+            (TargetSpec::ArtifactOrEnchantmentPermanent, 37),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);
@@ -1722,6 +1736,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "limited-fdn-fixtures"))]
     fn card_db_hash_v34_is_frozen() {
         // Version 34 folds in `conditional_tap_yield`, the board-dependent
         // per-tap mana amount carried by the three Urza lands, appended
@@ -1730,6 +1745,13 @@ mod tests {
         // characteristics/effect (Forktail Sweep) and Azure Fleet Admiral's
         // `cant_be_blocked_by_monarchs_creatures` static flag.
         assert_eq!(KERNEL_CARDDB_HASH, 0x064a_7c98_9255_ab3c);
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn card_db_hash_v35_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x8627_2311_c565_a969;
+        assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
     #[test]
@@ -1965,7 +1987,11 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 192, "179 pool cards plus thirteen required tokens");
+        assert_eq!(
+            full,
+            CARD_DEFS.len(),
+            "179 pool cards, thirteen required tokens and any Limited additions"
+        );
         assert_eq!(
             CARD_DEFS
                 .iter()

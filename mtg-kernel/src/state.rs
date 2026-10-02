@@ -808,7 +808,8 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::UpToOneTappedCreature
                 | TargetSpec::NoncreatureArtifactPermanent
                 | TargetSpec::Land
-                | TargetSpec::OpponentArtifactOrEnchantmentPermanent,
+                | TargetSpec::OpponentArtifactOrEnchantmentPermanent
+                | TargetSpec::ArtifactOrEnchantmentPermanent,
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Battlefield,

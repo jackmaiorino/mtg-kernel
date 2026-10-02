@@ -1,9 +1,10 @@
 #![cfg_attr(test, recursion_limit = "512")]
 
-//! Experimental, deterministic, resumable game core for a fixed Pauper pool.
+//! Experimental, deterministic, resumable game core for registered card pools.
 //!
-//! Scope: exactly the pinned nine-deck Pauper pool (150 unique roster names,
-//! all fully supported, plus 12 required token definitions). The
+//! Scope: the pinned nine-deck Pauper pool (150 unique roster names,
+//! all fully supported, plus 12 required token definitions), and six additions
+//! for the opt-in FDN Limited session. The full FDN pool remains incomplete. The
 //! Java XMage engine remains the reference implementation and claim surface.
 //! This kernel is intended to reduce rules-engine cost in training and search
 //! workloads; an end-to-end training speedup over XMage has not yet been

@@ -20,14 +20,38 @@ FIXTURES = REPO_ROOT / "data/limited/fdn_v1"
 
 class LimitedDeckTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.registry = limited.registry_from_json(limited.load_json(
-            (REPO_ROOT / "data/cards_v1.json").read_bytes()
-        ))
+        self.registry = limited.fdn_registry()
+
+    def test_registry_extension_keeps_all_original_ids_and_resolves_the_new_batch(self) -> None:
+        cards = limited.load_json((REPO_ROOT / "data/cards_v1.json").read_bytes())["cards"]
+        original_names = json.dumps([card["name"] for card in cards[:162]],
+                                    ensure_ascii=False, separators=(",", ":")).encode()
+        self.assertEqual(hashlib.sha256(original_names).hexdigest(),
+                         "396e3458a989e9b40ca59dabb389bda9dd14b9fa367a871ee84129f292e0c156")
+        names = ["Plains", "Healer's Hawk", "Fleeting Distraction", "Cathar Commando",
+                 "Spectral Sailor", "Treetop Snarespinner"]
+        deck = limited.parse_dck("\n".join(f"10 {name}" for name in names))
+        self.assertEqual(limited.resolve_mainboard(deck, self.registry),
+                         [self.registry[name].card_id for name in names for _ in range(10)])
+
+    def test_extension_rejects_duplicates_and_preserves_base_card_ids(self) -> None:
+        base = (REPO_ROOT / "data/cards_v1.json").read_bytes()
+        extension = (FIXTURES / "cards_v1.json").read_bytes()
+        base_registry = limited.registry_from_json(limited.load_json(base))
+        self.assertEqual(len(base_registry), 192)
+        self.assertNotIn("Plains", base_registry)
+        for name, card in base_registry.items():
+            self.assertEqual(self.registry[name], card)
+        self.assertEqual(self.registry["Plains"].card_id, 192)
+        with self.assertRaisesRegex(ValueError, "duplicate name"):
+            limited.combined_registry(base, [extension, extension])
+        with self.assertRaisesRegex(ValueError, "registry version 2"):
+            limited.combined_registry(base, [b'{"version":3,"cards":[]}'])
 
     def test_real_decks_are_40_cards_and_report_missing_behavior(self) -> None:
         for filename, supported_copies, source_sha256 in [
-            ("FDN_top_04956_UG.dck", 17, "bb618d6eaddf04b0a9e51e9a88cd512a04635e99ebca91b11ace4c305d634c86"),
-            ("FDN_top_20626_WG.dck", 8, "be026f1c86e3aabcb294517188d0c5f4f0cdfa3c5e95ee9dedfc51d3cdf814f7"),
+            ("FDN_top_04956_UG.dck", 19, "bb618d6eaddf04b0a9e51e9a88cd512a04635e99ebca91b11ace4c305d634c86"),
+            ("FDN_top_20626_WG.dck", 19, "be026f1c86e3aabcb294517188d0c5f4f0cdfa3c5e95ee9dedfc51d3cdf814f7"),
         ]:
             with self.subTest(filename=filename):
                 self.assertEqual(hashlib.sha256((FIXTURES / filename).read_bytes()).hexdigest(), source_sha256)
@@ -96,7 +120,7 @@ class LimitedDeckTest(unittest.TestCase):
         by_name = {card["name"]: card for card in report["cards"]}
         self.assertEqual(report["reference_card_count"], 1)
         self.assertEqual(report["required_card_count"], 6)
-        self.assertEqual(by_name["Plains"]["status"], "missing")
+        self.assertEqual(by_name["Plains"]["status"], "full")
         self.assertFalse(by_name["Unknown"]["in_reference"])
         self.assertEqual(by_name["Unknown"]["fixture_copies"], 40)
         for names in ([], ["A", "A"], [42]):
@@ -111,6 +135,9 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 13)
+        self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
+                             for card in report["cards"]), 30)
 
     def test_cli_refusal_has_no_materialized_ids_and_inspection_is_deterministic(self) -> None:
         args = ["--deck", str(FIXTURES / "FDN_top_04956_UG.dck")]
@@ -140,6 +167,8 @@ class LimitedDeckTest(unittest.TestCase):
             self.assertEqual(len(report["card_ids"]), 40)
             self.assertEqual(report["card_id_order"], "dck-row-then-copy/v1")
             self.assertEqual(report["registry_sha256"], hashlib.sha256((REPO_ROOT / "data/cards_v1.json").read_bytes()).hexdigest())
+            self.assertEqual(report["registry_extensions_sha256"],
+                             [hashlib.sha256((FIXTURES / "cards_v1.json").read_bytes()).hexdigest()])
 
 
 if __name__ == "__main__":
