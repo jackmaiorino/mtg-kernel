@@ -11759,6 +11759,55 @@ mod tests {
         assert_eq!(state.players[0].hand.len(), 2);
     }
 
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn threshold_counts_graveyard_cards_without_tokens_or_virtual_spell_copies() {
+        use crate::card_def::card_id_by_name;
+        use crate::state::SpellCopyOriginV4;
+        let island = card_id_by_name("Island").unwrap();
+        let mut state =
+            GameState::new_from_libraries(&[island; 7], &[island; 8], |_| "Island".into(), 123);
+        for player in [PlayerId::P0, PlayerId::P1] {
+            for card in state.players[player.index()].library.clone() {
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(card, Zone::Graveyard),
+                );
+            }
+        }
+        assert_eq!(controller_graveyard_card_count(&state, PlayerId::P0), 7);
+        assert_eq!(controller_graveyard_card_count(&state, PlayerId::P1), 8);
+        event::propose_and_commit(
+            &mut state,
+            event::ProposedEvent::create_token(
+                card_id_by_name("Scion of the Deep Token").unwrap(),
+                PlayerId::P0,
+            ),
+        );
+        let token = state.players[0].battlefield[0];
+        event::propose_and_commit(
+            &mut state,
+            event::ProposedEvent::zone_change(token, Zone::Graveyard),
+        );
+        assert_eq!(state.objects.get(token).zone, Zone::Graveyard);
+        assert_eq!(controller_graveyard_card_count(&state, PlayerId::P0), 7);
+        // A virtual spell temporarily in a graveyard is not a card. The SBA
+        // that makes it cease has not yet run at this predicate boundary.
+        let parent = state.players[0].graveyard[0];
+        let mut copy = state.objects.get(parent).clone();
+        copy.spell_copy_origin = Some(SpellCopyOriginV4 {
+            parent,
+            parent_card_def: island,
+            parent_owner: PlayerId::P0,
+            parent_controller: PlayerId::P0,
+            parent_stack_zone_change_count: 0,
+            parent_was_copy: false,
+        });
+        let copy = state.objects.push(copy);
+        state.players[0].graveyard.push(copy);
+        assert_eq!(controller_graveyard_card_count(&state, PlayerId::P0), 7);
+    }
+
     fn card_ids(names: &[&str]) -> Vec<u16> {
         names
             .iter()

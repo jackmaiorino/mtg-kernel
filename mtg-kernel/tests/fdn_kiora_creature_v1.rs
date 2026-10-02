@@ -177,8 +177,135 @@ fn printed_kiora_and_scion_characteristics_and_admission_are_exact() {
     assert_eq!(token.subtypes, &[Subtype::Octopus]);
     assert_eq!(token.supertypes, &[Supertype::Legendary]);
     assert!(token.is_token);
+    assert!(mtg_kernel::trigger::triggers_for(198).is_empty());
     preflight_fully_supported_deck(&[197]).unwrap();
     assert!(preflight_fully_supported_deck(&[198]).is_err());
+}
+
+#[test]
+fn casting_requires_three_mana_including_blue_and_failed_casts_do_not_mutate() {
+    for (blue, green) in [(2, 0), (0, 3)] {
+        let mut state = ready();
+        let kiora = put(
+            &mut state,
+            PlayerId::P0,
+            "Kiora, the Rising Tide",
+            Zone::Hand,
+        );
+        state.players[0].mana_pool[ManaColor::U.pool_index()] = blue;
+        state.players[0].mana_pool[ManaColor::G.pool_index()] = green;
+        let Decision::CastSpellOrPass {
+            castable_spells, ..
+        } = next(&mut state)
+        else {
+            panic!("casting window");
+        };
+        assert!(!castable_spells.contains(&kiora));
+        let before = state.state_hash();
+        assert!(engine::step(&mut state, Action::CastSpell(kiora)).is_err());
+        assert_eq!(before, state.state_hash());
+    }
+}
+
+#[test]
+fn casting_from_an_otherwise_empty_hand_discards_both_drawn_cards() {
+    let mut state = ready();
+    let kiora = put(
+        &mut state,
+        PlayerId::P0,
+        "Kiora, the Rising Tide",
+        Zone::Hand,
+    );
+    state.players[0].mana_pool[ManaColor::U.pool_index()] = 3;
+    next(&mut state);
+    engine::step(&mut state, Action::CastSpell(kiora)).unwrap();
+    drain(&mut state, None);
+    assert!(state.players[0].hand.is_empty());
+    assert_eq!(state.players[0].library.len(), 38);
+    assert_eq!(state.players[0].graveyard.len(), 2);
+    assert_eq!(state.players[0].draws_this_turn, 2);
+}
+
+#[test]
+fn empty_or_one_card_library_loses_after_drawing_as_much_as_possible() {
+    for available in [0, 1] {
+        let mut state = ready();
+        let remove = state.players[0].library[..40 - available].to_vec();
+        for card in remove {
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(card, Zone::Exile));
+        }
+        let kiora = put(
+            &mut state,
+            PlayerId::P0,
+            "Kiora, the Rising Tide",
+            Zone::Hand,
+        );
+        state.players[0].mana_pool[ManaColor::U.pool_index()] = 3;
+        next(&mut state);
+        engine::step(&mut state, Action::CastSpell(kiora)).unwrap();
+        for _ in 0..100 {
+            match next(&mut state) {
+                Decision::GameOver { .. } => break,
+                Decision::Discard { choices, count, .. } => {
+                    assert_eq!(count as usize, available);
+                    assert_eq!(choices.len(), available);
+                    engine::step(&mut state, Action::Discard(choices)).unwrap();
+                }
+                other => pass_or_order(&mut state, other),
+            }
+        }
+        assert!(state.players[0].has_lost);
+        assert!(!state.players[1].has_lost);
+        assert_eq!(state.players[0].draws_this_turn, available as u32);
+        assert_eq!(state.objects.get(kiora).zone, Zone::Battlefield);
+        assert!(state.players[0].library.is_empty());
+    }
+}
+
+#[test]
+fn kioras_loot_queues_both_second_draw_creature_triggers() {
+    let mut state = ready();
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Mischievous Mystic",
+        Zone::Battlefield,
+    );
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Homunculus Horde",
+        Zone::Battlefield,
+    );
+    let kiora = put(
+        &mut state,
+        PlayerId::P0,
+        "Kiora, the Rising Tide",
+        Zone::Hand,
+    );
+    state.players[0].mana_pool[ManaColor::U.pool_index()] = 3;
+    next(&mut state);
+    engine::step(&mut state, Action::CastSpell(kiora)).unwrap();
+    drain(&mut state, None);
+    for (name, expected) in [
+        ("Mischievous Mystic", 1),
+        ("Faerie Token", 1),
+        ("Homunculus Horde", 1),
+        ("Homunculus Horde Token", 1),
+    ] {
+        let id = card_id_by_name(name).unwrap();
+        assert_eq!(
+            state.players[0]
+                .battlefield
+                .iter()
+                .filter(|&&object| state.objects.get(object).card_def == id)
+                .count(),
+            expected,
+            "{name}"
+        );
+    }
+    assert_eq!(state.players[0].draws_this_turn, 2);
+    assert!(state.players[0].hand.is_empty());
 }
 
 #[test]

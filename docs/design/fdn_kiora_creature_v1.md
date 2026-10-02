@@ -30,11 +30,14 @@ later; source departure and pending-choice restore; and duplicate Scion
 legend choices. Include focused XMage counterparts, catalog/default
 compatibility, prior gameplay, external natural-terminal replay and CI.
 
-The core and nine new gameplay checks compiled on HaleysPC in
-`fdn-kiora-preflight-001`, 29.74 seconds. Generated FDN v43 hash is
-`5a8469de3061a1fb`. Runtime checks and native catalog registration remain
-pending. Publish the next FDN catalog identity with its read-only
-predecessor profile. The Koma v42 identity remains recognized for read-only history and
-refused for mutation against the new catalog. Current status: core implementation and test compilation passed;
-gameplay, catalog/default compatibility and XMage verification are not
-complete. Owned remote source commit: `9850ab9188cc5fe3584faaa5531d19e6166faaf3`.
+The initial nine gameplay checks passed on HaleysPC in
+`fdn-kiora-checks-002`, including pending discard, optional token and legend
+restore. The first runtime attempt exposed a missing attack marker: the
+engine emitted attack events only for its older attack condition. The
+emitter now recognizes Kiora's threshold condition too. The failed attempt
+is retained. Generated FDN v43 hash is `5a8469de3061a1fb`.
+
+The next verification batch covers the extended gameplay checks, v43
+catalog registration, read-only Koma v42 history and mutation refusal,
+unchanged default compatibility and relevant earlier gameplay. XMage,
+external natural-terminal replay and hosted CI remain pending.

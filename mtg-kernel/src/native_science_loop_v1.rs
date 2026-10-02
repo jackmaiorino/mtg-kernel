@@ -598,7 +598,8 @@ fn run_native_science_loop_with_opponents_v1(
         | NativeRunCatalogProfileV1::FdnLifegainCreatures
         | NativeRunCatalogProfileV1::FdnDrawCreatures
         | NativeRunCatalogProfileV1::FdnHomunculusCreature
-        | NativeRunCatalogProfileV1::FdnKomaCreature => {}
+        | NativeRunCatalogProfileV1::FdnKomaCreature
+        | NativeRunCatalogProfileV1::FdnKioraCreature => {}
     }
 
     if ladder_opponent.is_some() && population_opponent.is_some() {
