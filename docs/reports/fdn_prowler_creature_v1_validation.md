@@ -25,7 +25,7 @@ cannot inherit an old counter.
 | Python | All 20 deck/client cases passed on Python 3.11. |
 | XMage | All 12 strict-choice cases passed in `fdn-mage-prowler-001`; [Mage PR #9](https://github.com/jackmaiorino/mage/pull/9) records reference boundaries and hashes. |
 | Catalog | Checks-004 phases 2 and 3 passed: 46 definition checks, 138 native-record checks and 3 existing ignores. Earlier compile failures exposed a missing consumer match arm and overly narrow historical-fixture test configuration; both are corrected. |
-| Sessions and regressions | Checks-004 passed: 66 public Limited session checks, 7 private custom-session checks and 229 prior gameplay cases across fourteen integration suites. |
+| Sessions and regressions | Checks-004 passed: 66 public Limited session checks, 7 private custom-session checks and 220 prior gameplay cases across fourteen integration suites. |
 | Default compatibility and lint | All 68 default session checks and the exact v32 golden passed. Limited all-targets and default workspace all-targets Clippy passed with warnings denied. |
 | Production mutation boundaries | `fdn-prowler-production-001` exited zero: 25 release checks passed, including prior-v43 publication/resume refusal and current-profile round trip. Combined-feature release Clippy passed with warnings denied. |
 | External natural-terminal replay | `fdn-prowler-external-001` exited zero: two seed-123 games finished naturally with identical results and transcripts. |
