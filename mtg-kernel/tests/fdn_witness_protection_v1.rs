@@ -608,3 +608,98 @@ fn removing_witness_before_heir_dies_restores_its_death_trigger() {
         "Knight Token"
     );
 }
+
+fn equip(state: &mut GameState, equipment: ObjectId, target: ObjectId) {
+    state.players[0].mana_pool = [5; 6];
+    next(state);
+    engine::step(state, Action::ActivateAbility(equipment, 0)).unwrap();
+    assert!(matches!(next(state), Decision::ChooseTargets { .. }));
+    engine::step(state, Action::ChooseTarget(Target::Object(target))).unwrap();
+    finish(state);
+}
+
+#[test]
+fn moving_older_armor_to_a_transformed_host_acquires_a_later_timestamp() {
+    let mut state = ready();
+    let first = put(&mut state, PlayerId::P0, "Snarespinner", Zone::Battlefield);
+    let second = put(
+        &mut state,
+        PlayerId::P0,
+        "Llanowar Elves",
+        Zone::Battlefield,
+    );
+    let equipment = armor(&mut state, first);
+    witness(&mut state, second);
+    assert!(!engine::has_effective_keyword(
+        &state,
+        second,
+        Keywords::FLYING
+    ));
+    let old_timestamp = state.objects.get(equipment).v4.layer_timestamp;
+    equip(&mut state, equipment, second);
+    assert!(state.objects.get(equipment).v4.layer_timestamp > old_timestamp);
+    assert!(engine::has_effective_keyword(
+        &state,
+        second,
+        Keywords::FLYING
+    ));
+    assert!(!engine::has_effective_keyword(
+        &state,
+        second,
+        Keywords::HEXPROOF
+    ));
+    assert_eq!(engine::effective_power(&state, second), 3);
+}
+
+#[test]
+fn equipping_the_same_host_does_not_refresh_an_older_armor_timestamp() {
+    let mut state = ready();
+    let creature = put(&mut state, PlayerId::P0, "Snarespinner", Zone::Battlefield);
+    let equipment = armor(&mut state, creature);
+    witness(&mut state, creature);
+    let before = state.objects.get(equipment).v4.layer_timestamp;
+    equip(&mut state, equipment, creature);
+    assert_eq!(state.objects.get(equipment).v4.layer_timestamp, before);
+    assert!(!engine::has_effective_keyword(
+        &state,
+        creature,
+        Keywords::FLYING
+    ));
+}
+
+#[test]
+fn lifelink_keyword_counters_remain_but_follow_layer_six_ordering() {
+    let mut state = ready();
+    let creature = put(&mut state, PlayerId::P0, "Snarespinner", Zone::Battlefield);
+    announce(&mut state, "Unexpected Fangs", creature);
+    finish(&mut state);
+    assert!(engine::has_effective_keyword(
+        &state,
+        creature,
+        Keywords::LIFELINK
+    ));
+    witness(&mut state, creature);
+    assert_eq!(state.objects.get(creature).v4.lifelink_keyword_counters, 1);
+    assert!(!engine::has_effective_keyword(
+        &state,
+        creature,
+        Keywords::LIFELINK
+    ));
+    assert_eq!(engine::effective_power(&state, creature), 2);
+    announce(&mut state, "Unexpected Fangs", creature);
+    finish(&mut state);
+    assert_eq!(state.objects.get(creature).v4.lifelink_keyword_counters, 2);
+    assert!(engine::has_effective_keyword(
+        &state,
+        creature,
+        Keywords::LIFELINK
+    ));
+    assert_eq!(engine::effective_power(&state, creature), 3);
+    let restored = restored(&state);
+    assert_eq!(state.state_hash(), restored.state_hash());
+    assert!(engine::has_effective_keyword(
+        &restored,
+        creature,
+        Keywords::LIFELINK
+    ));
+}
