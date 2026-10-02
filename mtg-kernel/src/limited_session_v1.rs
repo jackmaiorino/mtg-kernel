@@ -381,6 +381,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
     fn foundations_session_snapshot_restores_pending_legend_choice_and_binding() {
         use crate::rl::ActionSemanticV1;
         let forest = card_id_by_name("Forest").unwrap();
