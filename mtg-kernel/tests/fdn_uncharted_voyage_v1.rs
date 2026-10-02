@@ -338,7 +338,7 @@ fn an_illegal_only_target_skips_both_placement_and_surveil() {
 fn a_token_target_departs_and_does_not_remain_in_its_owners_library() {
     for option in [0, 1] {
         let mut state = ready();
-        let target = put(&mut state, PlayerId::P1, "Koma's Coil", Zone::Battlefield);
+        let target = put(&mut state, PlayerId::P1, "Koma's Coil Token", Zone::Battlefield);
         cast(&mut state, target);
         owner_choice(&mut state, PlayerId::P1);
         engine::step(&mut state, Action::ChooseEffectOption(option)).unwrap();
