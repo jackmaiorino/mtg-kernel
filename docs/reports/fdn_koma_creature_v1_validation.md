@@ -15,17 +15,18 @@ ordinary stack departure.
 
 FDN v42 has hash `f4fba61544ae7963`, verified in generated output after
 the core Cargo check. Prior v41 records retain their recognized read-only
-identity `8f1dc68e65c24306`; mutation refusal checks are added and pending.
+identity `8f1dc68e65c24306`; read-only recognition passed; production mutation-refusal checks remain pending.
 Default v32 generated counter programs and canonical bytes are preserved
-in source; the default golden checks remain pending for this batch.
+in source; the exact default v32 golden and frozen default session checks passed.
 
 | Check | Current evidence |
 | --- | --- |
 | Core compilation | `fdn-koma-preflight-001` exited zero; Limited Cargo check passed in 29.59 seconds on HaleysPC. |
 | XMage comparisons | All nine strict-choice cases passed in `fdn-mage-koma-004`; see [Mage PR #7](https://github.com/jackmaiorino/mage/pull/7). |
 | Kernel gameplay | All thirteen cases passed in `fdn-koma-gameplay-003`: casting, counters, ward, combat, noncombat exclusion and pending-choice restore. Earlier compile/setup failures remain preserved. |
-| Counter helper | A feature-gated unit check covers protected physical spells and copies, counterable triggered abilities, and ordinary departure; execution pending. |
-| Catalog, sessions and prior gameplay | Checks prepared; execution pending. |
+| Counter helper | The focused unit check passed: physical spells and copies resist counters; triggered abilities remain counterable; ordinary departure is unchanged. |
+| Catalog, sessions and prior gameplay | 46 definition checks, 136 run-record checks (three existing ignores), 66 FDN session checks, seven custom-session checks and 203 prior gameplay/counterspell checks passed. |
+| Default compatibility and lint | The exact default v32 golden and all 68 default session checks passed. Limited all-targets Clippy and default workspace all-targets Clippy passed with warnings denied. |
 | Python | The preceding source preparation ran 34 focused Python checks successfully; current hosted CI remains required. |
 | Release and external replay | Pending. No Koma natural-terminal or deterministic external replay claim. |
 | Hosted CI | Draft [PR #131](https://github.com/jackmaiorino/mtg-kernel/pull/131) is running CI at `c19bd354`; no green claim yet. |
@@ -50,12 +51,12 @@ Jack's PC remains reserved by Claude #811 through about 08:30 EDT.
 HaleysPC free space dropped below its shared 60 GiB reserve after the
 initial test build. Further local checks there are held until storage
 qualifies. Compression passes `fdn-owned-cache-compress-005` through
-`008` preserve every selected file's before/after SHA-256.
+`010` preserve every selected file's before/after SHA-256.
 They touched only the owned Cargo cache and deleted no files. The
 compression receipts, manifests and logs remain under `C:/Users/haley/`.
-No unrelated process, cache, checkout or frozen run was modified.
+No unrelated process, cache, checkout or frozen run was modified. LZX conversion preserved hashes in three owned archives and 100 owned symbol files, releasing about two GiB in total. The successful default-check runner guards storage again before each remaining phase.
 
-The bounded gameplay-only rerun `fdn-koma-gameplay-003` exited zero after a 66-second build. The preceding rerun was refused by its storage guard before compilation. Remaining library/regression checks are prepared in `fdn-koma-checks-002` and not yet dispatched. Kernel ward
+The bounded gameplay-only rerun `fdn-koma-gameplay-003` exited zero after a 66-second build. The preceding rerun was refused by its storage guard before compilation. Remaining library/regression checks passed in `fdn-koma-checks-002` phases two through eight. A storage interruption stopped its default build; `fdn-koma-checks-003` resumed phases nine through eleven and exited zero. These checks disabled debug symbols to reduce cache growth; the initial thirteen gameplay checks used ordinary debug settings. Kernel ward
 positions use Snap (`{1}{U}`) with no battlefield lands to untap; XMage
 positions use Unsummon (`{U}`). Each pays its exact casting cost before
 offering the same four-mana ward cost. The reference comparison concerns
@@ -65,3 +66,5 @@ these different spells.
 The full fixture milestone remains open: seven other distinct card names,
 mulligans, original-deck natural terminals and complete regression/CI
 evidence are still required. This report makes no playing-strength claim.
+
+Production boundary checks and a symbol-free debug interface build are running in `fdn-koma-production-001`. External replay remains pending; its prepared checker has not been launched.
