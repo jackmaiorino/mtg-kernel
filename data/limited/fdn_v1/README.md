@@ -40,6 +40,9 @@ when they do not match the actual build.
 `kernel_limited_env --foundations-combat-v1` selects custom-game schema 3,
 with full priority windows, damage assignment choices and trample. The
 Python client/tool accepts the matching `--foundations-combat-v1` option.
+Simultaneous groups above seven triggers use `choose_trigger_order_next`
+actions in bottom-to-top stack order. Each action includes the selected
+prefix; placement occurs once after the complete order is selected.
 See `docs/design/fdn_combat_damage_v1.md` for the rules and compatibility
 boundary. Mulligans and the remaining fixture cards still need implementation.
 
