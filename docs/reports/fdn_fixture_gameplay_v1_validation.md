@@ -5,7 +5,7 @@ dependencies, and their custom-game rules. This is an implementation milestone.
 The 286-name reference, drafting, fair Limited search and training integration
 have separate milestones in `fdn_limited_implementation_v1.md`.
 
-October 2, 22:39 UTC completion audit: CI37049183922 at d43d59a2 passed
+October 2, 22:57 UTC completion audit: CI37049183922 at d43d59a2 passed
 formatting/all-feature lint, all four Python shards and the complete Ubuntu
 Rust job 110978361641. Its full log confirms all 21 selected Limited integration
 targets, 345 passing cases including 11 London and24 Witness cases, the pending
@@ -26,12 +26,13 @@ Kernel PR136 has all eight current-head checks green. The earlier published
 report follow-ups retain their original source passes, but their new checks
 are still running. Kiora PR132's report-only Windows job 110990567893 also
 failed the snapshot timing case: 76.158 microseconds against 40, with 1746
-other library tests passing. CI backport 83de53b2 is committed locally and
+other library tests passing. CI backport 83de53b2 is published in PR132 and
 retains all fourteen integration targets and all nine library filters; its
 helpers are identical to PR140's. Workflow lint and Python compilation passed.
-The old Ubuntu job is completing its final CUDA stage before publication, so
-that live job is preserved. Its original gameplay source f8fce216 retains a
-fully green run. Draw PR129's report-only recheck failed the existing snapshot
+The old full Ubuntu job passed at 22:53:39 UTC and was preserved through
+completion before publication. Its original gameplay source f8fce216 retains
+a fully green run; the repaired recheck is pending. Draw PR129's report-only
+recheck failed the existing snapshot
 timing gate. Repair 990d825d runs that unchanged gate outside parallel unit
 tests; both hosted default release steps have now passed, including Windows
 job 111032886034 at 22:32:33 UTC. Full feature checks and the completed log's

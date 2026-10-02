@@ -35,7 +35,7 @@ the same compiled library. All other workspace executables run unchanged.
 The observed failure is retained in the hosted log. PR140's complete Ubuntu
 job 111036127712 at 36d54594 executed exactly one isolated timing case and
 passed at 4.81 microseconds per call. The default library's other 1705 tests
-passed, with 43 existing ignores. Windows's repaired release stage is live;
+passed, with 43 existing ignores. PR140's Windows release stage is live;
 its exact timing receipt remains pending.
 
 All integration targets, original external games, native CLI checks and
