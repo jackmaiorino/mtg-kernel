@@ -610,12 +610,6 @@ pub struct StackSourceContractV4 {
     /// Pending placeholders and virtual copies retain `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finalized_cast_binding: Option<FinalizedCastBindingV1>,
-    /// Timestamp of entering the battlefield or becoming attached to a new host.
-    /// Absent in legacy/default-profile states.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub layer_timestamp: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lifelink_counter_timestamp: Option<u64>,
 }
 
 impl StackSourceContractV4 {
