@@ -7,7 +7,7 @@ use mtg_kernel::event::{self, CommittedEvent, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::rl;
-use mtg_kernel::state::{Counters, GameObject, GameState, ObjectStateV4, Step, Zone};
+use mtg_kernel::state::{Counters, GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 use mtg_kernel::surface_v2::{
     HarnessSurfaceV2, PriorityModeV1, SuppressionAuditMode, SurfaceAction, SurfaceDecision,
 };
@@ -353,6 +353,50 @@ fn landfall_crosses_the_old_counter_limit_without_truncating_public_state() {
     assert_eq!(public.len(), 1);
     assert_eq!(public[0].permanent.arena_id, hydra.0);
     assert_eq!(public[0].count, 65_536);
+}
+
+#[test]
+fn large_hydra_damage_survives_restore_and_kills_at_the_exact_lethal_total() {
+    let mut state = ready();
+    let source = enter(&mut state, PlayerId::P0, "Mossborn Hydra");
+    let target = enter(&mut state, PlayerId::P1, "Mossborn Hydra");
+    state.objects.get_mut(source).counters.plus1_plus1 = 65_536;
+    state.objects.get_mut(target).counters.plus1_plus1 = 65_537;
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::damage(source, Target::Object(target), 65_536),
+    );
+    queue(&mut state);
+    assert_eq!(state.objects.get(target).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(target).damage, 65_536);
+    let projected = rl::observe_v2(&state, &surface(), PlayerId::P0, 0).unwrap();
+    let public = projected
+        .projection
+        .engine_context
+        .wide_marked_damage
+        .unwrap();
+    assert_eq!(public.len(), 1);
+    assert_eq!(
+        public[0].permanent.card_db_id,
+        state.objects.get(target).card_def
+    );
+    assert_eq!(public[0].damage, 65_536);
+    let mut restored: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    assert_eq!(state.state_hash(), restored.state_hash());
+    for game in [&mut state, &mut restored] {
+        event::propose_and_commit(
+            game,
+            ProposedEvent::damage(source, Target::Object(target), 1),
+        );
+        queue(game);
+        assert_eq!(game.objects.get(target).zone, Zone::Graveyard);
+        assert_eq!(game.objects.get(target).damage, 0);
+    }
+    assert_eq!(
+        serde_json::to_vec(&state).unwrap(),
+        serde_json::to_vec(&restored).unwrap()
+    );
 }
 
 #[test]

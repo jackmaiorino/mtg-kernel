@@ -5086,7 +5086,7 @@ mod tests {
                 // below overrides these two fields back to the HISTORICAL
                 // (rev3) literals for the dedicated dual-profile tests.
                 "card_db_hash_u64_hex": if cfg!(feature = "limited-fdn-fixtures") {
-                    FROZEN_CARD_DB_HASH_U64_HEX_FDN_TARGETED_SPELLS_V1
+                    FROZEN_CARD_DB_HASH_U64_HEX_FDN_COUNTER_CREATURES_V1
                 } else {
                     FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
                 },
@@ -6706,22 +6706,22 @@ mod tests {
     // Dual-Profile Catalog Successor (collab CLAUDE #220)
     // ------------------------------------------------------------------
 
-    /// Canary: the FDN targeted-spell profile's frozen literals must equal today's
+    /// Canary: the FDN counter-creature profile's frozen literals must equal today's
     /// live build constants exactly. If this ever fails, either the crate's
     /// card database/runtime catalog changed again (needs a new profile) or
     /// the frozen literals were typed wrong when this successor landed.
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn fdn_targeted_spells_frozen_literal_matches_the_live_build_constant() {
+    fn fdn_counter_creatures_frozen_literal_matches_the_live_build_constant() {
         use crate::card_def::KERNEL_CARDDB_HASH;
         use crate::runtime_decks::RUNTIME_DECK_CATALOG_FILE_SHA256;
         assert_eq!(
             format!("{KERNEL_CARDDB_HASH:016x}"),
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_TARGETED_SPELLS_V1
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_COUNTER_CREATURES_V1
         );
         assert_eq!(
             RUNTIME_DECK_CATALOG_FILE_SHA256,
-            FROZEN_RUNTIME_CATALOG_SHA256_FDN_TARGETED_SPELLS_V1
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_COUNTER_CREATURES_V1
         );
     }
 

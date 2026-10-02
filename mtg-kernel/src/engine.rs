@@ -10771,8 +10771,9 @@ fn assign_attacker_damage_to_blockers(
                 1
             } else {
                 let toughness = effective_toughness(state, blocker);
-                let already = state.objects.get(blocker).damage as i32;
-                (toughness - already).max(0)
+                let already = i64::from(state.objects.get(blocker).damage);
+                i32::try_from((i64::from(toughness) - already).max(0))
+                    .expect("remaining toughness fits i32")
             };
             remaining.min(lethal_needed)
         };
@@ -17181,8 +17182,8 @@ mod tests {
         // even though the source leaves the battlefield during the check.
         // Percussionist's dies event, by contrast, is created by the check
         // itself and must still be collected before the next priority window.
-        let epicure_toughness = effective_toughness(&state, epicure) as u16;
-        let percussionist_toughness = effective_toughness(&state, percussionist) as u16;
+        let epicure_toughness = effective_toughness(&state, epicure) as u32;
+        let percussionist_toughness = effective_toughness(&state, percussionist) as u32;
         state.objects.get_mut(epicure).damage = epicure_toughness;
         state.objects.get_mut(percussionist).damage = percussionist_toughness;
 

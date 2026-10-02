@@ -771,7 +771,14 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
                     );
                     let obj = state.objects.get_mut(id);
                     if !planeswalker || creature {
-                        obj.damage = obj.damage.saturating_add(d.amount.max(0) as u16);
+                        let Some(damage) = obj.damage.checked_add(d.amount.max(0) as u32) else {
+                            state.engine.halted = Some((
+                                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                                d.source,
+                            ));
+                            return;
+                        };
+                        obj.damage = damage;
                         obj.v4.deathtouch_damage |= source_has_deathtouch;
                     }
                 }

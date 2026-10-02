@@ -228,7 +228,7 @@ impl ObjectStateV4 {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameObject {
     /// Index into the (not-yet-built) card database.
     pub card_def: u16,
@@ -239,7 +239,7 @@ pub struct GameObject {
     pub zone: Zone,
     pub tapped: bool,
     pub summoning_sick: bool,
-    pub damage: u16,
+    pub damage: u32,
     pub counters: Counters,
     pub attachments: Vec<ObjectId>,
     pub v4: ObjectStateV4,
@@ -271,6 +271,30 @@ pub struct GameObject {
     /// it, structurally, without this module needing to remember to remove
     /// the stale entry.
     pub zone_change_count: u32,
+}
+
+impl Hash for GameObject {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.card_def.hash(state);
+        self.name.hash(state);
+        self.owner.hash(state);
+        self.controller.hash(state);
+        self.zone.hash(state);
+        self.tapped.hash(state);
+        self.summoning_sick.hash(state);
+        if let Ok(legacy) = u16::try_from(self.damage) {
+            legacy.hash(state);
+        } else {
+            b"wide_marked_damage_v1".hash(state);
+            self.damage.hash(state);
+        }
+        self.counters.hash(state);
+        self.attachments.hash(state);
+        self.v4.hash(state);
+        self.spell_copy_origin.hash(state);
+        self.plotted_turn.hash(state);
+        self.zone_change_count.hash(state);
+    }
 }
 
 impl GameObject {

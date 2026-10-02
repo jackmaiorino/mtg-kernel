@@ -22,6 +22,10 @@ that event as part of Exemplar of Light's implementation.
 value fits, preserving historical state hashes. Overflow halts explicitly;
 values are never wrapped or saturated.
 
+Marked damage expands to checked u32 so large Hydra hits retain their actual
+amount. Lethal comparisons and remaining-lethal calculations use i64
+intermediates. Ordinary damage hashes retain the original u16 bytes.
+
 The frozen flat source files and layouts remain byte-identical. Custom
 schema-v2 observations expose larger counts through the optional
 `engine_context.wide_plus_one_counters` list, keyed by exact permanent
@@ -29,6 +33,9 @@ reference. This list overrides the legacy card counter slot, which is zero
 for a listed permanent. Other states omit the list. Schema-v1 projection
 and native flat publication refuse values they cannot represent, before
 publishing buffers. Effective power/toughness use the actual count.
+The optional `engine_context.wide_marked_damage` list similarly overrides
+the zero legacy damage slot for larger marked totals. A regression covers
+a 65,536-damage hit, restoration, and the next point causing lethal damage.
 
 Focused checks cover real casting and payment, pre-SBA entry, continuous
 grants, one and multiple landfall events, resolution-time counts, bounce,

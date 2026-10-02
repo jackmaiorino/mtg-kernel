@@ -1338,12 +1338,12 @@ pub struct PendingTrigger {
 
 pub(crate) fn creature_dies_to_state_based_actions(
     toughness: i32,
-    marked_damage: i32,
+    marked_damage: i64,
     deathtouch_damage: bool,
     indestructible: bool,
 ) -> bool {
     toughness <= 0
-        || ((marked_damage >= toughness || (marked_damage > 0 && deathtouch_damage))
+        || ((marked_damage >= i64::from(toughness) || (marked_damage > 0 && deathtouch_damage))
             && !indestructible)
 }
 
@@ -1433,7 +1433,7 @@ fn sba_fixed_point_with_protected_triggers(
             // indestructible prevents only that branch.
             if creature_dies_to_state_based_actions(
                 toughness,
-                obj.damage as i32,
+                i64::from(obj.damage),
                 obj.v4.deathtouch_damage,
                 indestructible,
             ) {
