@@ -39,7 +39,8 @@ impl Scan<'_> {
             PutBoundObjectInOwnersLibrary { object, .. }
             | MoveBoundObject { object, .. }
             | PutPlusOnePlusOneCounterOnBoundObject { object }
-            | PutPlusOnePlusOneCounterOnTriggerEventObject { object } => self.b(object),
+            | PutPlusOnePlusOneCounterOnTriggerEventObject { object }
+            | BoostBoundObjectUntilEndOfTurn { object, .. } => self.b(object),
             ResolveInitiativeTrigger { binding }
             | EnterUndercityRoom { binding, .. }
             | ResolveUndercityThrone { binding } => self.a(&binding.source),
@@ -100,6 +101,9 @@ impl Scan<'_> {
             | DealDamageDynamic { .. }
             | BindPlusOnePlusOneCounterToTriggerSource
             | BindPlusOnePlusOneCounterToTriggerEventObject
+            | BindTemporaryBoostToTriggerSource { .. }
+            | BoostControlledCreaturesUntilEndOfTurn { .. }
+            | GainLifeByAttackingSubtypeCount { .. }
             | PutSourceOntoBattlefieldAttachedToTarget { .. }
             | TapAttachedCreatureAndDamageControllerByPower
             | BackupTarget { .. }
@@ -545,7 +549,9 @@ pub(super) fn conflicts(
             Draw { object, .. } => object.is_some_and(|id| s.raw(id)),
             SpellCast { spell, .. } => s.raw(*spell),
             Targeted { target, .. } => s.raw(*target),
-            CombatDamageToPlayer { source, .. } | SagaChapter { source, .. } => s.raw(*source),
+            CombatDamageToPlayer { source, .. }
+            | SagaChapter { source, .. }
+            | DeclaredAttacker { source, .. } => s.raw(*source),
             OptionalAdditionalCostPaid {
                 source,
                 paid_cost_refs,

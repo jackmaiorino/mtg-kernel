@@ -2,7 +2,9 @@
 
 This inventories the **36 originally missing names** in the two pinned
 40-card fixtures. Batch A registers six and batch B registers eight, with
-their exact tokens. C through G contain the **22 still missing names**.
+their exact tokens. The first combat-card slice completes Beast-Kin Ranger
+and Overrun. C through G contain **20 names still requiring full support**,
+including Dwynen's partial implementation.
 The priority-window PR added no cards.
 
 Sources: the pinned `.dck` files under `data/limited/fdn_v1/`, the corresponding
@@ -75,6 +77,10 @@ both announcement and resolution, incarnation-safe counters and exact tokens.
 The [combat foundation](fdn_combat_damage_v1.md) exposes current damage
 allocation and trample in custom-game schema 3, with focused tests and
 deterministic binary replay. Batch C still needs its card interaction tests.
+The [first combat-card slice](fdn_combat_cards_v1.md) adds Beast-Kin Ranger
+and Overrun, plus Dwynen's Elf bonus and attack trigger. Dwynen remains
+partial until its legend-rule choice is implemented. Bite Down, Felling
+Blow, Fleeting Flight and Joust Through remain unimplemented.
 Wizards removed damage assignment order for FDN; arbitrary multi-blocker
 allocation must be a real choice. Bite Down also needs planeswalker targeting
 before its complete rules behavior can be declared supported. D and E build

@@ -480,6 +480,100 @@
       "mechanics": [],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/Knight33Token.java",
       "is_token": true
+    },
+    {
+      "name": "Beast-Kin Ranger",
+      "engine_capability": "full",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elf",
+        "Ranger"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_top_04956_UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "trample",
+        "triggered_temporary_boost"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BeastKinRanger.java"
+    },
+    {
+      "name": "Overrun",
+      "engine_capability": "full",
+      "mana_cost": "{2}{G}{G}{G}",
+      "mana_value": 5,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_top_20626_WG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "temporary_team_boost",
+        "trample"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/o/Overrun.java"
+    },
+    {
+      "name": "Dwynen, Gilt-Leaf Daen",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{G}{G}",
+      "mana_value": 4,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elf",
+        "Warrior"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 3,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_top_04956_UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "reach",
+        "controlled_subtype_lord",
+        "attack_trigger",
+        "legend_rule_pending"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DwynenGiltLeafDaen.java"
     }
   ]
 }

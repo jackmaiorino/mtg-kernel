@@ -2624,6 +2624,11 @@ enum Special {
     /// land" additional cost is modeled independently in
     /// `additional_cost_for`.
     DestroyLand,
+    BoostControlledCreatures {
+        power: i32,
+        toughness: i32,
+        keyword: &'static str,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -2863,6 +2868,9 @@ impl Special {
             }
             Special::SmashToSmithereens => "smash_to_smithereens".to_string(),
             Special::DestroyLand => "destroy_land".to_string(),
+            Special::BoostControlledCreatures { power, toughness, keyword } => {
+                format!("boost_controlled_creatures:{power}:{toughness}:{keyword}:exact_incarnations")
+            }
         }
     }
 }
@@ -3112,6 +3120,11 @@ fn special_for(name: &str) -> Special {
         "Weather the Storm" => Special::WeatherTheStorm,
         "Monstrous Emergence" => Special::MonstrousEmergence,
         "Nyxborn Hydra" => Special::NyxbornHydra,
+        "Overrun" => Special::BoostControlledCreatures {
+            power: 3,
+            toughness: 3,
+            keyword: "TRAMPLE",
+        },
         _ => Special::None,
     }
 }
@@ -3138,7 +3151,13 @@ fn effect_recipe_for(card: &CardJson) -> String {
             } else {
                 "None".to_string()
             };
-            format!("target=None;spell={spell};mana={mana}")
+            let static_bonus = if card.name == "Dwynen, Gilt-Leaf Daen" {
+                ";static=boost_other_controlled_elf_creatures:1:1"
+            } else { "" };
+            format!("target=None;spell={spell};mana={mana}{static_bonus}")
+        }
+        Special::BoostControlledCreatures { power, toughness, keyword } => {
+            format!("target=None;spell=BoostControlledCreatures({power},{toughness},{keyword},exact_incarnations);mana=None")
         }
         Special::GreatFurnace => "target=None;spell=None;mana=AddMana(R)".to_string(),
         Special::DrawCards(count) => {
@@ -3346,10 +3365,14 @@ fn keywords_for(card: &CardJson) -> String {
         | "Spellstutter Sprite"
         | "Glint Hawk"
         | "Fang Dragon" => keywords.push("Keywords::FLYING"),
-        "Generous Ent" | "Writhing Chrysalis" | "Vitu-Ghazi Inspector" | "Webweaver Changeling" => {
-            keywords.push("Keywords::REACH")
+        "Generous Ent"
+        | "Writhing Chrysalis"
+        | "Vitu-Ghazi Inspector"
+        | "Webweaver Changeling"
+        | "Dwynen, Gilt-Leaf Daen" => keywords.push("Keywords::REACH"),
+        "Spinewoods Paladin" | "Avenging Hunter" | "Beast-Kin Ranger" => {
+            keywords.push("Keywords::TRAMPLE")
         }
-        "Spinewoods Paladin" | "Avenging Hunter" => keywords.push("Keywords::TRAMPLE"),
         "Outlaw Medic" | "Sacred Cat" | "Sacred Cat Embalmed Token" | "Guarded Heir" => {
             keywords.push("Keywords::LIFELINK")
         }
@@ -4924,6 +4947,8 @@ fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
         "Blossoming Sands" | "Thornwood Falls" => "etb:gain_life:1",
         "Dazzling Angel" => "other_controlled_creature_enters:gain_life:1",
+        "Beast-Kin Ranger" => "other_controlled_creature_enters:pump_bound_source:1:0:end_of_turn",
+        "Dwynen, Gilt-Leaf Daen" => "source_declared_attacker:gain_life_current_attacking_elf_count",
         "Clinquant Skymage" => "each_controller_draw:counter_on_bound_source:1",
         "Dwynen's Elite" => "etb_if_another_elf:recheck_other_source_incarnation:create_elf_warrior",
         "Good-Fortune Unicorn" => "other_controlled_creature_enters:counter_on_bound_event_object:1",
@@ -6774,9 +6799,26 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out).unwrap();
     }
 
+    for (card_index, card) in cards.iter().enumerate() {
+        if let Special::BoostControlledCreatures {
+            power,
+            toughness,
+            keyword,
+        } = special_for(&card.name)
+        {
+            writeln!(
+                out,
+                "fn spell_effect_controlled_boost_{card_index}() -> Option<EffectOp> {{"
+            )
+            .unwrap();
+            writeln!(out, "    Some(EffectOp::BoostControlledCreaturesUntilEndOfTurn {{ power: {power}, toughness: {toughness}, keywords: Keywords::{keyword} }})").unwrap();
+            writeln!(out, "}}").unwrap();
+        }
+    }
+
     // ---- CARD_DEFS -------------------------------------------------
     writeln!(out, "pub static CARD_DEFS: [CardDef; {}] = [", cards.len()).unwrap();
-    for c in cards {
+    for (card_index, c) in cards.iter().enumerate() {
         let (pips, generic, x_count) = parse_cost(&c.mana_cost);
         let special = special_for(&c.name);
 
@@ -7146,6 +7188,11 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_monstrous_emergence".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::BoostControlledCreatures { .. } => (
+                "TargetSpec::None",
+                format!("spell_effect_controlled_boost_{card_index}"),
+                "no_effect".to_string(),
+            ),
             Special::NyxbornHydra => (
                 "TargetSpec::None",
                 "spell_effect_nyxborn_hydra".to_string(),
@@ -7475,7 +7522,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v36\n"
+            "kernel_carddb/v37\n"
         } else {
             "kernel_carddb/v34\n"
         },

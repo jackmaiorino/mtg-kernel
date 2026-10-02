@@ -101,6 +101,9 @@ pub enum TriggerCondition {
     /// A different creature enters under the source's controller. A subtype
     /// filter restricts the entrant rather than the observing permanent.
     OtherControlledCreatureEnters { subtype: Option<Subtype> },
+    /// Declared as an attacker. Being put onto the battlefield attacking
+    /// does not satisfy this event.
+    Attacks,
 }
 
 pub struct TriggeredAbilityDef {
@@ -127,6 +130,18 @@ pub(crate) fn materialize_trigger_effect(
     state: &GameState,
 ) -> EffectOp {
     match (trigger.effect)() {
+        EffectOp::BindTemporaryBoostToTriggerSource { power, toughness } => {
+            let live = state.objects.get(source);
+            EffectOp::BoostBoundObjectUntilEndOfTurn {
+                object: EffectObjectBinding {
+                    object: source,
+                    expected_zone: live.zone,
+                    expected_zone_change_count: live.zone_change_count,
+                },
+                power,
+                toughness,
+            }
+        }
         EffectOp::BindPlusOnePlusOneCounterToTriggerSource => {
             let live = state.objects.get(source);
             EffectOp::PutPlusOnePlusOneCounterOnBoundObject {
@@ -218,6 +233,29 @@ const YOUTHFUL_VALKYRIE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
     },
     ..etb_trigger(writhing_chrysalis_counter_marker_effect)
 }];
+
+const BEAST_KIN_RANGER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::OtherControlledCreatureEnters { subtype: None },
+    ..etb_trigger(beast_kin_ranger_effect)
+}];
+const DWYNEN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Attacks,
+    ..etb_trigger(dwynen_attack_effect)
+}];
+
+fn beast_kin_ranger_effect() -> EffectOp {
+    EffectOp::BindTemporaryBoostToTriggerSource {
+        power: 1,
+        toughness: 0,
+    }
+}
+
+fn dwynen_attack_effect() -> EffectOp {
+    EffectOp::GainLifeByAttackingSubtypeCount {
+        player: PlayerRef::Controller,
+        subtype: Subtype::Elf,
+    }
+}
 
 fn gain_one_life_effect() -> EffectOp {
     EffectOp::GainLife {
@@ -1200,6 +1238,8 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         return &JOB_SELECT_TRIGGERS;
     }
     match card.name {
+        "Beast-Kin Ranger" => &BEAST_KIN_RANGER_TRIGGERS,
+        "Dwynen, Gilt-Leaf Daen" => &DWYNEN_TRIGGERS,
         "Blossoming Sands" | "Thornwood Falls" => &GAIN_ONE_LIFE_TRIGGERS,
         "Dazzling Angel" => &DAZZLING_ANGEL_TRIGGERS,
         "Clinquant Skymage" => &CLINQUANT_SKYMAGE_TRIGGERS,
@@ -1315,6 +1355,17 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
         return true;
     }
     if triggers_for(card_def).iter().any(|trigger| {
+        if let (
+            EffectOp::BindTemporaryBoostToTriggerSource { power, toughness },
+            EffectOp::BoostBoundObjectUntilEndOfTurn {
+                power: actual_power,
+                toughness: actual_toughness,
+                ..
+            },
+        ) = ((trigger.effect)(), effect)
+        {
+            return power == *actual_power && toughness == *actual_toughness;
+        }
         matches!(
             ((trigger.effect)(), effect),
             (
@@ -2216,6 +2267,18 @@ fn trigger_matches(
                 })
                 .count();
             count >= usize::from(minimum_count)
+        }
+        (
+            TriggerCondition::Attacks,
+            CommittedEvent::DeclaredAttacker {
+                source: event_source,
+                source_zone_change_count,
+                controller: event_controller,
+            },
+        ) => {
+            *event_source == source
+                && *event_controller == controller
+                && state.objects.get(source).zone_change_count == *source_zone_change_count
         }
         (TriggerCondition::DealsDamage, CommittedEvent::Damage { source: s, .. }) => *s == source,
         (
