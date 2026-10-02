@@ -1,7 +1,7 @@
 # FDN Koma implementation and verification
 
 Koma, World-Eater and Koma's Coil are implemented in the opt-in FDN
-catalog. All thirteen focused gameplay checks pass; broader verification remains pending. This batch follows
+catalog. All thirteen focused gameplay checks, production boundaries and the bounded external replay pass; hosted CI remains pending. This batch follows
 [Horde PR #130](https://github.com/jackmaiorino/mtg-kernel/pull/130) and keeps
 the original UG and WG fixture decks.
 
@@ -28,7 +28,7 @@ in source; the exact default v32 golden and frozen default session checks passed
 | Catalog, sessions and prior gameplay | 46 definition checks, 136 run-record checks (three existing ignores), 66 FDN session checks, seven custom-session checks and 203 prior gameplay/counterspell checks passed. |
 | Default compatibility and lint | The exact default v32 golden and all 68 default session checks passed. Limited all-targets Clippy and default workspace all-targets Clippy passed with warnings denied. |
 | Python | The preceding source preparation ran 34 focused Python checks successfully; current hosted CI remains required. |
-| Production and external replay | All 21 release production boundary checks and combined-feature release Clippy passed. A symbol-free debug custom-deck binary built and was preserved by hash on both PCs. External replay remains pending. |
+| Production and external replay | All 21 release production boundary checks and combined-feature release Clippy passed. A symbol-free debug custom-deck binary built and was preserved by hash on both PCs. Two seed-123 external games ended naturally with identical results and transcript hashes. |
 | Hosted CI | Draft [PR #131](https://github.com/jackmaiorino/mtg-kernel/pull/131) is running CI at `c19bd354`; no green claim yet. |
 
 Core source commit: `af94973c`; local integration/catalog source commit:
@@ -47,14 +47,10 @@ The blocked position uses a supported Tolarian Terror with four +1/+1
 counters, matching the kernel's 9/9 blocker test. Earlier reference
 results and failed test-build logs remain outside Git.
 
-Jack's PC remains reserved by Claude #811 through about 08:30 EDT.
-HaleysPC free space dropped below its shared 60 GiB reserve after the
-initial test build. Further local checks there are held until storage
-qualifies. Compression passes `fdn-owned-cache-compress-005` through
-`010` preserve every selected file's before/after SHA-256.
-They touched only the owned Cargo cache and deleted no files. The
-compression receipts, manifests and logs remain under `C:/Users/haley/`.
-No unrelated process, cache, checkout or frozen run was modified. LZX conversion preserved hashes in three owned archives and 100 owned symbol files, releasing about two GiB in total. The successful default-check runner guards storage again before each remaining phase.
+Claude #813 released Jack's PC and E: writes at 07:18 EDT on October 2.
+Storage interruptions and compression receipts remain preserved outside Git.
+Compression touched only owned Cargo and Mage caches, preserved content
+hashes and deleted no files. No frozen measurement was interrupted.
 
 The bounded gameplay-only rerun `fdn-koma-gameplay-003` exited zero after a 66-second build. The preceding rerun was refused by its storage guard before compilation. Remaining library/regression checks passed in `fdn-koma-checks-002` phases two through eight. A storage interruption stopped its default build; `fdn-koma-checks-003` resumed phases nine through eleven and exited zero. These checks disabled debug symbols to reduce cache growth; the initial thirteen gameplay checks used ordinary debug settings. Kernel ward
 positions use Snap (`{1}{U}`) with no battlefield lands to untap; XMage
@@ -67,13 +63,23 @@ The full fixture milestone remains open: seven other distinct card names,
 mulligans, original-deck natural terminals and complete regression/CI
 evidence are still required. This report makes no playing-strength claim.
 
-The initial production check refused a debug build (`native_store_build_profile_not_release`), preserving the production feature boundary. `fdn-koma-production-002` then exited zero: 21 release boundary checks, combined-feature release Clippy, and the symbol-free debug interface build. The release test build took 11 minutes 39 seconds. External replay remains pending; its prepared checker has not been launched.
+The initial production check refused a debug build (`native_store_build_profile_not_release`), preserving the production feature boundary. `fdn-koma-production-002` then exited zero: 21 release boundary checks, combined-feature release Clippy, and the symbol-free debug interface build. The release test build took 11 minutes 39 seconds. The external check `fdn-koma-external-001` subsequently exited zero after the host release.
 
 The debug interface binary is 5,765,632 bytes with SHA-256
 `bf8b792fa37a4941f6bc7693870966fe06842fce8457cd354237c46b74abaddf`,
 built from remote source `844f9740328027cd3dae8ee3800af4d94cc2e8a7`.
 Verified copies are under `C:/Users/haley/fdn-pinned-binaries/` and
 `C:/Users/Jack/fdn-pinned-binaries/`, each in that hash's directory.
-`fdn-koma-binary-pin-001.json` records the remote copy. Its required E:
-preservation and external launch are deferred while Claude #811 bars E:
-writes. The existing frozen measurement was not interrupted.
+The same binary is now verified under `E:/pinned-binaries/` as well.
+
+The bounded external check used 14 Forest, 14 Island, eight Koma and four
+Strix Lookout, seed 123, episode 7. Both games finished naturally with P0
+winning, 582 policy steps and 578 physical decisions. Each cast two Koma
+and six Lookout, made 30 Lookout activations and discards, and exposed Coil
+tokens in four decision menus. Transcript SHA-256:
+`f2e2cf9417f582cdb846ede24a9bfa0462e9dacdecc6fe544fdfb0b44761519e`.
+Result SHA-256 `66f911dbec2256dfbf08c8ac34e723cc5ac82b4e9b7082212083ba117a2fd607`;
+log SHA-256 `d49dee2c0ea0f2884ad3b37b3209a8ff37f90aa2e57098e57b669d9e2e086fd3`.
+These are custom-deck engineering checks, not original-fixture completion
+or playing-strength estimates. The release build source and catalog are
+unchanged. Hosted CI at the existing PR head continues separately.
