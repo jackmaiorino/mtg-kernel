@@ -35,8 +35,14 @@ Kernel functional source is local `6abb312d`, remote `bf4f45f3c7400ecd97307678f0
 `C:/Users/haley/mtg-kernel-fdn-prowler-codex` worktree. Rust/Cargo 1.94.1,
 MSVC linker 14.50.35725.0, two Cargo jobs, no incremental compilation,
 no debug symbols, seed 123 and no GPU. Small manifests bind source/input
-and output hashes. Checks-004 exited zero. Its guard enforced a 384 MiB output allowance and the
-60 GiB free-space reserve, monitoring only its own identified Cargo tree.
+and output hashes. Checks-004 exited zero above the 60 GiB reserve. During release verification,
+the Cargo launcher was observed as `rustup.exe`, exposing a process-name
+mismatch in the original stop guard. The active release build now has a
+companion guard that checks the exact launcher path, Cargo/rustup image name
+and the verified parent PowerShell script before stopping only its own tree.
+It monitors the 384 MiB allowance and 60 GiB reserve every three seconds;
+`fdn-prowler-production-001.guard-companion.json` records its actual activity.
+The healthy release build was not restarted.
 Compiler-failure logs remain preserved outside Git; no measurement run was
 started, and no frozen experiment or other agent's tree was changed.
 
