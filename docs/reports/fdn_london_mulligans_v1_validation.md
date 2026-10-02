@@ -2,8 +2,8 @@
 
 Schema 4 adds London mulligans to the original fixture gameplay interface.
 The focused Rust rules, original fixture games and pending-session restore
-passed on Ubuntu. Windows verification, complete CI and the XMage reference
-execution remain pending.
+passed on Ubuntu. XMage's16 Witness and7 London reference cases also passed.
+Windows verification and complete CI remain pending.
 
 The first hosted attempt, CI37041270977 at87db2401, found an unused import in
 the new module. Removed it; the original lint log is retained. This is a lint
@@ -22,14 +22,21 @@ Observed checks:
 
 - CI37042426390 at0a876ce3: Ubuntu's London step passed both commands, covering
   all11 integration cases and the pending-bottom-menu session restore.
-  Witness's24 focused cases also passed in the same job. Both Ubuntu Python
+  Witness's24 focused cases also passed in the same job. All four Python
   shards passed. The Windows London step is still active.
 - The same attempt's all-target lint found missing exhaustive arms in the
   historical trace walkers. The131a56f7 repair handles London decisions in
   benchmark policies and explicitly refuses them in frozen trace consumers;
   it also updates existing regression drivers. No old reset enables London.
   Pinned formatting and diff checks pass; hosted validation of this repair
-  remains pending.
+  remains pending. The Ubuntu full-suite failure identifies the same missing
+  benchmark decision/semantic arms, covered by that repair.
+- Hosted Mage run37044173670 atd9536815d58: all16 Witness and7 London reference
+  cases passed with zero failures, errors or skips. Maven3.9.9 / Temurin23.0.2+7
+  built from source in04:01minutes. Source Git blobs, downloaded output hashes
+  and both XML reports were verified. Retained source:
+  `E:/mtg-fdn-fixtures/fdn-mage-witness-hosted-001`, with an independent verified
+  mirror at `C:/Users/Jack/fdn-mage-witness-hosted-001-sealed`.
 - Pinned Rust 1.94.1 formatting and `git diff --check`: passed.
 - `py -3.11 -m unittest python.tests.test_limited_decks_v1 python.tests.test_limited_session_v1`:
   22 passed in 2.166 seconds. These include schema-4 protocol identity and
@@ -47,9 +54,6 @@ Pending checks:
   swapped seed701. Both players take actual mulligans and bottom four cards in
   total before playing; require natural terminal outcomes and exact replay.
 - Required existing regressions, default/Limited/native/CUDA lint and CI.
-- Existing XMage `LondonMulliganTest` and16 Witness reference cases: focused
-  hosted Mage workflow37044173670 is active atd9536815d58. Its Java23.0.2 /
-  Maven3.9.9 source build preserves both local PCs' actual reservations.
 
 The initial draft bottomed only when keeping. Corrected that design before
 implementation: every mulligan immediately bottoms its current count, then

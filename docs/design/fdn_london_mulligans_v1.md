@@ -36,7 +36,9 @@ Existing XMage reference scenarios in
 checks7/33 then6/34 before keeping, and `testLondonMulligan_TwoMulligan`
 checks6/34 before the second redraw and5/35 before the final keep. These map
 to the no-mulligan, simultaneous-redraw and repeated-mulligan Rust cases.
-Execution of those existing reference tests remains pending.
+All7 cases in that existing reference class passed in hosted Mage run37044173670
+atd9536815d58, with zero failures, errors or skips. Source Git-blob hashes,
+downloaded output hashes and XML counts were verified.
 
 Prove these behaviors with named tests:
 
