@@ -1,4 +1,4 @@
-//! Homunculus Horde copiable characteristics and second-draw timing.
+//! Koma spell protection, ward, combat triggers and pending-choice restore.
 #![cfg(feature = "limited-fdn-fixtures")]
 
 use mtg_kernel::card_def::{
@@ -11,7 +11,7 @@ use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::{ManaColor, Pip};
-use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Zone};
+use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 use mtg_kernel::surface_v2::{
     HarnessSurfaceV2, PriorityModeV1, SuppressionAuditMode, SurfaceAction, SurfaceDecision,
 };
@@ -439,7 +439,7 @@ fn unblocked_combat_damage_creates_exactly_four_coils() {
 fn fully_blocked_combat_does_not_create_coils() {
     let (mut state, koma, blocker) = combat(Some("Tolarian Terror"));
     let blocker = blocker.unwrap();
-    state.objects.get_mut(blocker).counters.plus_one_plus_one = 4;
+    state.objects.get_mut(blocker).counters.plus1_plus1 = 4;
     enter_damage(&mut state);
     assign(
         &mut state,
