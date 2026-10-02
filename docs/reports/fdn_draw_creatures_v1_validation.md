@@ -13,10 +13,10 @@ See the [rules contract](../design/fdn_draw_creatures_v1.md).
 | Pending decisions | All seven custom-session restore checks passed. A real 40-card Lookout deck reaches a discard choice; restoring preserves the complete response, legal actions, environment hash and next transition. |
 | Catalog | All 46 definition and 134 record checks passed; three existing record tests remain ignored. Live v40 is `fbef8128c0ddad96`. Historical v39 remains `3f6b7e8df71f3195`; older profiles stay readable. |
 | Compatibility | The default v32 CardDB golden passed. Frozen flat v1/v2 source hashes and the pinned deck hashes remain unchanged. |
-| Build/lint | Limited-feature all-target Clippy passed with warnings denied. Default workspace Clippy is running. |
+| Build/lint | Limited-feature all-target Clippy and default workspace Clippy passed with warnings denied. |
 | Python | All 34 focused importer, custom client, flat-V2 golden and Pauper-manifest checks passed using the existing Torch environment. |
 | XMage | All five matching scenarios passed at Mage `3bf7ea717e701b1059e5540ed943f5702d9ef63a`, based on `a5c90fe180021e70e2a644ade00eeab07f857a40`; zero failures/errors/skips and reactor BUILD SUCCESS. [Parity PR #5](https://github.com/jackmaiorino/mage/pull/5) contains tests and report. |
-| Production boundaries | Pending the combined Limited/production release checks for old-profile refusal and the live v40 round trip. |
+| Production boundaries | Running the combined Limited/production release checks for old-profile refusal and the live v40 round trip in `fdn-draw-production-001`. |
 | External replay | Pending release build. The prepared two-game check uses seed 123, episode 7, and 20 Islands, ten Lookouts and ten Mystics. It requires natural terminals, both card names cast, Lookout activations/discards, Faeries present in combat menus and identical transcripts. |
 | Hosted CI | Not yet dispatched for this batch. Passing checks above establish their stated scope only. |
 
