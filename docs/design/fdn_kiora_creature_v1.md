@@ -37,7 +37,8 @@ engine emitted attack events only for its older attack condition. The
 emitter now recognizes Kiora's threshold condition too. The failed attempt
 is retained. Generated FDN v43 hash is `5a8469de3061a1fb`.
 
-The next verification batch covers the extended gameplay checks, v43
-catalog registration, read-only Koma v42 history and mutation refusal,
-unchanged default compatibility and relevant earlier gameplay. XMage,
-external natural-terminal replay and hosted CI remain pending.
+All thirteen expanded gameplay cases, the threshold predicate, definition
+and record checks, default compatibility, prior gameplay and both lint
+configurations pass. Nine strict-choice XMage counterparts also pass.
+Release mutation boundaries are running. External natural-terminal replay
+and hosted CI remain pending; see the validation report for exact evidence.
