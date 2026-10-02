@@ -147,7 +147,7 @@ fn printed_enchantment_token_and_deck_admission_are_exact() {
     assert_eq!(token.colors, &[ManaColor::G]);
     assert_eq!(token.subtypes, &[Subtype::Raccoon]);
     assert!(token.is_token);
-    assert!(token.keywords.is_empty());
+    assert_eq!(token.keywords, mtg_kernel::card_def::Keywords::NONE);
     assert!(token.activated_abilities.is_empty());
     assert!(preflight_fully_supported_deck(&[card_id_by_name(token.name).unwrap()]).is_err());
 }
