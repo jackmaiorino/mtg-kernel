@@ -282,6 +282,26 @@ fn sylvan_scavenging_modes() -> Vec<(TargetSpec, EffectOp)> {
     ]
 }
 
+fn celestial_armor_effect() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::AttachSourceToTarget {
+            object: ObjectRef::Target(0),
+        },
+        EffectOp::GrantKeywordTargetUntilEndOfTurn {
+            object: ObjectRef::Target(0),
+            keyword: Keywords::HEXPROOF | Keywords::INDESTRUCTIBLE,
+        },
+    ])
+}
+
+const CELESTIAL_ARMOR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: celestial_armor_effect,
+}];
+
 fn sylvan_scavenging_effect() -> EffectOp {
     EffectOp::Choice {
         controller: PlayerRef::Controller,
@@ -1291,6 +1311,7 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         return &JOB_SELECT_TRIGGERS;
     }
     match card.name {
+        "Celestial Armor" => &CELESTIAL_ARMOR_TRIGGERS,
         "Exemplar of Light" => &EXEMPLAR_OF_LIGHT_TRIGGERS,
         "Sun-Blessed Healer" => &SUN_BLESSED_HEALER_TRIGGERS,
         "Mossborn Hydra" => &MOSSBORN_HYDRA_TRIGGERS,
@@ -1359,6 +1380,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         return TargetSpec::None;
     };
     match card.name {
+        "Celestial Armor" => TargetSpec::ControlledCreature,
         "Sun-Blessed Healer" => TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(2),
         "Balustrade Spy" => TargetSpec::AnyPlayer,
         "Lotleth Giant" => TargetSpec::TargetOpponent,

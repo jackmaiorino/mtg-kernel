@@ -1273,6 +1273,39 @@
       "java_file": "Mage/src/main/java/mage/game/permanent/token/RaccoonToken.java",
       "is_token": true,
       "object_name": "Raccoon Token"
+    },
+    {
+      "name": "Celestial Armor",
+      "engine_capability": "full",
+      "mana_cost": "{2}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Equipment"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_top_20626_WG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "flash",
+        "etb_attach_controlled_creature",
+        "temporary_hexproof_indestructible",
+        "equipped_plus_two_power_flying",
+        "equip"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CelestialArmor.java"
     }
   ]
 }
