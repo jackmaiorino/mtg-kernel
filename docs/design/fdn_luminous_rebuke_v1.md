@@ -30,3 +30,10 @@ regressions, external natural-terminal replay and CI. Preserve both original
 decks and keep the full fixture goal active.
 
 Routine rules engineering only. No training or playing-strength claim.
+
+Runtime verification: fifteen focused kernel cases, eleven strict XMage
+comparisons, catalog/session/prior-gameplay and engine checks, default
+v32 compatibility and warning-denied Limited/default Clippy pass. Two
+custom-deck games finish naturally and replay identically. Release
+production boundaries and hosted CI remain pending; see the validation
+report for exact source, result hashes and corrected preparation attempts.
