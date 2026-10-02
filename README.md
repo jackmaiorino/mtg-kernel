@@ -26,6 +26,17 @@ cargo test --release --locked --workspace --all-targets
 
 `bash scripts/verify_all.sh` runs the full local gate: formatting, Clippy, Rust tests, and the Python test suite together. CUDA-backed training paths (for example the `cuda-flat-training-capacity-v1` feature) are opt-in Cargo features that require a CUDA toolchain and are not built by default.
 
+## Limited prototype
+
+An opt-in `kernel_limited_env` binary accepts custom mainboards of at least
+40 cards using the currently supported registry. The standalone Python deck
+importer and reset/step adapter are documented in
+[`limited_custom_session_v1.md`](docs/design/limited_custom_session_v1.md).
+Use `--engine-priority-v1` with Limited schema 2 to expose every engine priority
+window; see [`limited_priority_windows_v1.md`](docs/design/limited_priority_windows_v1.md).
+Full Foundations card coverage and complete Limited rules are being developed
+under [issue #110](https://github.com/jackmaiorino/mtg-kernel/issues/110).
+
 ## Cycle-4 routing refusals
 
 | Tool | Refusal |

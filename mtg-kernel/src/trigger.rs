@@ -95,6 +95,15 @@ pub enum TriggerCondition {
     /// (the active player's), so a `false` source still fires only on
     /// turns where that upkeep is the active player's own.
     BeginningOfUpkeep { controller_only: bool },
+    /// Each successful draw by the source's controller, including every
+    /// individual card in a multi-card draw.
+    ControllerDraws,
+    /// A different creature enters under the source's controller. A subtype
+    /// filter restricts the entrant rather than the observing permanent.
+    OtherControlledCreatureEnters { subtype: Option<Subtype> },
+    /// Declared as an attacker. Being put onto the battlefield attacking
+    /// does not satisfy this event.
+    Attacks,
 }
 
 pub struct TriggeredAbilityDef {
@@ -121,6 +130,18 @@ pub(crate) fn materialize_trigger_effect(
     state: &GameState,
 ) -> EffectOp {
     match (trigger.effect)() {
+        EffectOp::BindTemporaryBoostToTriggerSource { power, toughness } => {
+            let live = state.objects.get(source);
+            EffectOp::BoostBoundObjectUntilEndOfTurn {
+                object: EffectObjectBinding {
+                    object: source,
+                    expected_zone: live.zone,
+                    expected_zone_change_count: live.zone_change_count,
+                },
+                power,
+                toughness,
+            }
+        }
         EffectOp::BindPlusOnePlusOneCounterToTriggerSource => {
             let live = state.objects.get(source);
             EffectOp::PutPlusOnePlusOneCounterOnBoundObject {
@@ -138,6 +159,142 @@ pub(crate) fn materialize_trigger_effect(
         }
         effect => effect,
     }
+}
+
+fn battlefield_entry_object(event: &CommittedEvent) -> Option<ObjectId> {
+    match event {
+        CommittedEvent::ZoneChange {
+            object,
+            to: Zone::Battlefield,
+            ..
+        }
+        | CommittedEvent::CreateToken { object, .. } => Some(*object),
+        _ => None,
+    }
+}
+
+fn materialize_trigger_event_effect(
+    trigger: &TriggeredAbilityDef,
+    source: ObjectId,
+    state: &GameState,
+    event: &CommittedEvent,
+) -> EffectOp {
+    if matches!(
+        (trigger.effect)(),
+        EffectOp::BindPlusOnePlusOneCounterToTriggerEventObject
+    ) {
+        if let Some(object) = battlefield_entry_object(event) {
+            return EffectOp::PutPlusOnePlusOneCounterOnTriggerEventObject {
+                object: EffectObjectBinding {
+                    object,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: state.objects.get(object).zone_change_count,
+                },
+            };
+        }
+    }
+    materialize_trigger_effect(trigger, source, state)
+}
+
+const fn etb_trigger(effect: fn() -> EffectOp) -> TriggeredAbilityDef {
+    TriggeredAbilityDef {
+        condition: TriggerCondition::Etb,
+        home_zone: Zone::Battlefield,
+        intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
+        effect,
+    }
+}
+
+const GAIN_ONE_LIFE_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(gain_one_life_effect)];
+const DAZZLING_ANGEL_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::OtherControlledCreatureEnters { subtype: None },
+    ..etb_trigger(gain_one_life_effect)
+}];
+const CLINQUANT_SKYMAGE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControllerDraws,
+    ..etb_trigger(writhing_chrysalis_counter_marker_effect)
+}];
+const DWYNENS_ELITE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::EtbControlsOtherSubtypeCount {
+        subtype: Subtype::Elf,
+        minimum_count: 1,
+    },
+    ..etb_trigger(dwynens_elite_effect)
+}];
+const GOOD_FORTUNE_UNICORN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::OtherControlledCreatureEnters { subtype: None },
+    ..etb_trigger(entering_creature_counter_effect)
+}];
+const GUARDED_HEIR_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(guarded_heir_effect)];
+const YOUTHFUL_VALKYRIE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::OtherControlledCreatureEnters {
+        subtype: Some(Subtype::Angel),
+    },
+    ..etb_trigger(writhing_chrysalis_counter_marker_effect)
+}];
+
+const BEAST_KIN_RANGER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::OtherControlledCreatureEnters { subtype: None },
+    ..etb_trigger(beast_kin_ranger_effect)
+}];
+const DWYNEN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Attacks,
+    ..etb_trigger(dwynen_attack_effect)
+}];
+
+fn beast_kin_ranger_effect() -> EffectOp {
+    EffectOp::BindTemporaryBoostToTriggerSource {
+        power: 1,
+        toughness: 0,
+    }
+}
+
+fn dwynen_attack_effect() -> EffectOp {
+    EffectOp::GainLifeByAttackingSubtypeCount {
+        player: PlayerRef::Controller,
+        subtype: Subtype::Elf,
+    }
+}
+
+fn gain_one_life_effect() -> EffectOp {
+    EffectOp::GainLife {
+        player: PlayerRef::Controller,
+        amount: 1,
+    }
+}
+
+fn entering_creature_counter_effect() -> EffectOp {
+    EffectOp::BindPlusOnePlusOneCounterToTriggerEventObject
+}
+
+fn dwynens_elite_effect() -> EffectOp {
+    EffectOp::Conditional {
+        cond: EffectCond::ControlsOtherIncarnationSubtypeCount {
+            subtype: Subtype::Elf,
+            minimum_count: 1,
+        },
+        then: Box::new(EffectOp::CreateToken {
+            token_def: crate::card_def::card_id_by_name("Elf Warrior Token")
+                .expect("FDN Elf Warrior token"),
+            controller: PlayerRef::Controller,
+        }),
+        else_: Box::new(EffectOp::Sequence(Vec::new())),
+    }
+}
+
+fn guarded_heir_effect() -> EffectOp {
+    let token_def = crate::card_def::card_id_by_name("Knight Token").expect("FDN Knight token");
+    EffectOp::Sequence(vec![
+        EffectOp::CreateToken {
+            token_def,
+            controller: PlayerRef::Controller,
+        },
+        EffectOp::CreateToken {
+            token_def,
+            controller: PlayerRef::Controller,
+        },
+    ])
 }
 
 fn guttersnipe_effect() -> EffectOp {
@@ -1081,6 +1238,15 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         return &JOB_SELECT_TRIGGERS;
     }
     match card.name {
+        "Beast-Kin Ranger" => &BEAST_KIN_RANGER_TRIGGERS,
+        "Dwynen, Gilt-Leaf Daen" => &DWYNEN_TRIGGERS,
+        "Blossoming Sands" | "Thornwood Falls" => &GAIN_ONE_LIFE_TRIGGERS,
+        "Dazzling Angel" => &DAZZLING_ANGEL_TRIGGERS,
+        "Clinquant Skymage" => &CLINQUANT_SKYMAGE_TRIGGERS,
+        "Dwynen's Elite" => &DWYNENS_ELITE_TRIGGERS,
+        "Good-Fortune Unicorn" => &GOOD_FORTUNE_UNICORN_TRIGGERS,
+        "Guarded Heir" => &GUARDED_HEIR_TRIGGERS,
+        "Youthful Valkyrie" => &YOUTHFUL_VALKYRIE_TRIGGERS,
         "Guttersnipe" => &GUTTERSNIPE_TRIGGERS,
         "Murmuring Mystic" => &MURMURING_MYSTIC_TRIGGERS,
         "Voldaren Epicure" => &VOLDAREN_EPICURE_TRIGGERS,
@@ -1188,12 +1354,29 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     {
         return true;
     }
-    if matches!(card.name, "Writhing Chrysalis" | "Gixian Infiltrator")
-        && matches!(
-            effect,
-            EffectOp::PutPlusOnePlusOneCounterOnBoundObject { .. }
+    if triggers_for(card_def).iter().any(|trigger| {
+        if let (
+            EffectOp::BindTemporaryBoostToTriggerSource { power, toughness },
+            EffectOp::BoostBoundObjectUntilEndOfTurn {
+                power: actual_power,
+                toughness: actual_toughness,
+                ..
+            },
+        ) = ((trigger.effect)(), effect)
+        {
+            return power == *actual_power && toughness == *actual_toughness;
+        }
+        matches!(
+            ((trigger.effect)(), effect),
+            (
+                EffectOp::BindPlusOnePlusOneCounterToTriggerSource,
+                EffectOp::PutPlusOnePlusOneCounterOnBoundObject { .. }
+            ) | (
+                EffectOp::BindPlusOnePlusOneCounterToTriggerEventObject,
+                EffectOp::PutPlusOnePlusOneCounterOnTriggerEventObject { .. }
+            )
         )
-    {
+    }) {
         return true;
     }
     if card.name == "Weather the Storm" && matches!(effect, EffectOp::CreateStormCopies { .. }) {
@@ -1312,7 +1495,7 @@ pub struct PendingTrigger {
     pub paid_cost_refs: Vec<PaidCostRefV4>,
 }
 
-fn creature_dies_to_state_based_actions(
+pub(crate) fn creature_dies_to_state_based_actions(
     toughness: i32,
     marked_damage: i32,
     deathtouch_damage: bool,
@@ -1329,7 +1512,7 @@ pub fn sba_fixed_point(state: &mut GameState) {
     sba_fixed_point_with_protected_triggers(state, &[]);
 }
 
-fn saga_final_chapter_is_pending(
+pub(crate) fn saga_final_chapter_is_pending(
     state: &GameState,
     source: ObjectId,
     source_zone_change_count: u32,
@@ -1378,6 +1561,9 @@ fn sba_fixed_point_with_protected_triggers(
     protected_triggers: &[PendingTrigger],
 ) {
     loop {
+        if crate::legend_rule_v1::stage(state, protected_triggers) {
+            return;
+        }
         let mut changed = false;
 
         // 704.5g: a creature with toughness 0 or less is put into its
@@ -1386,6 +1572,10 @@ fn sba_fixed_point_with_protected_triggers(
         let mut dying = Vec::new();
         for (id, obj) in state.objects.iter() {
             if obj.zone != Zone::Battlefield {
+                continue;
+            }
+            if crate::planeswalker_v1::zero_loyalty(state, id) {
+                dying.push(id);
                 continue;
             }
             if !crate::engine::object_has_type(state, id, crate::card_def::CardType::Creature) {
@@ -1532,6 +1722,16 @@ fn sba_fixed_point_with_protected_triggers(
 /// combined newly-triggered abilities in APNAP order (active player's
 /// triggers first).
 pub fn collect_and_process(state: &mut GameState) -> Vec<PendingTrigger> {
+    collect_and_process_with_waiting(state, Vec::new())
+}
+
+pub(crate) fn collect_and_process_with_waiting(
+    state: &mut GameState,
+    mut waiting: Vec<PendingTrigger>,
+) -> Vec<PendingTrigger> {
+    if state.pending_legend_rule_v1.is_some() {
+        return Vec::new();
+    }
     let events: Vec<CommittedEvent> = state.engine.event_log.drain(..).collect();
     // Single-shot: `engine::resolve_top_of_stack` set this immediately
     // before the resolution whose events we're about to match, explicitly
@@ -1545,7 +1745,8 @@ pub fn collect_and_process(state: &mut GameState) -> Vec<PendingTrigger> {
     // trigger must not disappear merely because its source dies during that
     // check, so match the pre-SBA batch while its sources still occupy the
     // zones from which their abilities function.
-    let mut new_triggers = triggers_from_events(state, &events, kicked_source);
+    waiting.extend(triggers_from_events(state, &events, kicked_source));
+    let mut new_triggers = waiting;
 
     // Conversely, SBAs can create new trigger events themselves. Lethal
     // combat damage, for example, moves Clockwork Percussionist to the
@@ -1553,6 +1754,9 @@ pub fn collect_and_process(state: &mut GameState) -> Vec<PendingTrigger> {
     // checkpoint, not some later action. Match that second batch only after
     // the fixed point, then order both batches together under 603.3b.
     sba_fixed_point_with_protected_triggers(state, &new_triggers);
+    if state.pending_legend_rule_v1.is_some() {
+        return Vec::new();
+    }
     let sba_events: Vec<CommittedEvent> = state.engine.event_log.drain(..).collect();
     new_triggers.extend(triggers_from_events(state, &sba_events, None));
 
@@ -1690,7 +1894,7 @@ fn triggers_from_events(
                             obj.v4.entered_battlefield_turn == Some(state.turn),
                         )
                     } else {
-                        materialize_trigger_effect(def, id, state)
+                        materialize_trigger_event_effect(def, id, state, ev)
                     };
                     let required_optional_cost =
                         required_optional_additional_cost_for_trigger(obj.card_def, &effect);
@@ -2010,6 +2214,25 @@ fn trigger_matches(
 ) -> bool {
     match (cond, ev) {
         (
+            TriggerCondition::ControllerDraws,
+            CommittedEvent::Draw {
+                player,
+                object: Some(_),
+            },
+        ) => *player == controller,
+        (TriggerCondition::OtherControlledCreatureEnters { subtype }, event) => {
+            let Some(object) = battlefield_entry_object(event) else {
+                return false;
+            };
+            let entrant = state.objects.get(object);
+            object != source
+                && entrant.controller == controller
+                && crate::engine::object_has_type(state, object, CardType::Creature)
+                && subtype.is_none_or(|subtype| {
+                    subtype.is_in_subtype_ids(&crate::engine::effective_subtype_ids(state, object))
+                })
+        }
+        (
             TriggerCondition::Etb,
             CommittedEvent::ZoneChange {
                 object,
@@ -2065,6 +2288,18 @@ fn trigger_matches(
                 })
                 .count();
             count >= usize::from(minimum_count)
+        }
+        (
+            TriggerCondition::Attacks,
+            CommittedEvent::DeclaredAttacker {
+                source: event_source,
+                source_zone_change_count,
+                controller: event_controller,
+            },
+        ) => {
+            *event_source == source
+                && *event_controller == controller
+                && state.objects.get(source).zone_change_count == *source_zone_change_count
         }
         (TriggerCondition::DealsDamage, CommittedEvent::Damage { source: s, .. }) => *s == source,
         (

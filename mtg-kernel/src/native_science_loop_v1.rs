@@ -590,7 +590,13 @@ fn run_native_science_loop_with_opponents_v1(
                 NativeScienceLoopV1ErrorKind::HistoricalCatalogProfile,
             ));
         }
-        NativeRunCatalogProfileV1::Current | NativeRunCatalogProfileV1::PauperMetaW1 => {}
+        NativeRunCatalogProfileV1::Current
+        | NativeRunCatalogProfileV1::PauperMetaW1
+        | NativeRunCatalogProfileV1::FdnFixtureBatchA
+        | NativeRunCatalogProfileV1::FdnFixtureBatchB
+        | NativeRunCatalogProfileV1::FdnCombatCards
+        | NativeRunCatalogProfileV1::FdnLegendRule
+        | NativeRunCatalogProfileV1::FdnTargetedSpells => {}
     }
 
     if ladder_opponent.is_some() && population_opponent.is_some() {

@@ -1115,7 +1115,11 @@ where
         }
         ActionSemanticV1::DeclareAttackers { .. }
         | ActionSemanticV1::DeclareBlockersForAttacker { .. }
-        | ActionSemanticV1::Ambiguous { .. } => {
+        | ActionSemanticV1::Ambiguous { .. }
+        | ActionSemanticV1::ChooseCombatDamageRange { .. } => {
+            return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+        }
+        ActionSemanticV1::ChooseLegendPermanent { .. } => {
             return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
         }
     }
@@ -2607,7 +2611,9 @@ fn flat_validate_origin_decision_v1(
                 }
             }
         }
-        Decision::DeclareAttackers { .. }
+        Decision::ChooseCombatDamageRange { .. }
+        | Decision::ChooseLegendPermanent { .. }
+        | Decision::DeclareAttackers { .. }
         | Decision::DeclareBlockers { .. }
         | Decision::GameOver { .. }
         | Decision::Halted { .. } => {
@@ -2738,6 +2744,12 @@ fn flat_validate_semantic_policy_pair_v1(
             ActionSemanticV1::FinishEffectSelection { .. },
             PolicyActionV5::Surface(SurfaceAction::Action(Action::FinishEffectSelection)),
         ) => true,
+        (ActionSemanticV1::ChooseCombatDamageRange { .. }, _) => {
+            return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic)
+        }
+        (ActionSemanticV1::ChooseLegendPermanent { .. }, _) => {
+            return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic)
+        }
         (
             ActionSemanticV1::ChooseEffectBoolean { value, .. },
             PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseEffectBoolean(actual))),
@@ -4118,6 +4130,16 @@ fn flat_validate_expected_decision_v1(
     {
         return Err(FlatActionDecisionSliceErrorV1::DecisionMetadataMismatch);
     }
+    // The frozen flat formats have no planeswalker loyalty or combat
+    // prevention fields. Refuse before publishing any incomplete buffers.
+    if session.state.planeswalkers_v1.is_some()
+        || session.state.engine.active_replacements.iter().any(|replacement| {
+            matches!(replacement.kind,
+                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. })
+        })
+    {
+        return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+    }
     Ok(())
 }
 
@@ -4472,6 +4494,53 @@ pub(crate) struct FastActorSemanticBindingAuditV2 {
 }
 
 impl RlEpisodeSessionV1 {
+    /// Custom-deck construction for the separate Limited wire interface.
+    /// The existing catalog constructors and JSONL V5/V6 remain unchanged.
+    /// Callers supply already resolved content identities; the engine still
+    /// preflights both arrays before any shuffle or session construction.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn reset_with_custom_decks_v1(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        card_ids: [&[u16]; 2],
+        priority_mode: crate::surface_v2::PriorityModeV1,
+        foundations_combat: bool,
+    ) -> Result<Self, RlSessionError> {
+        let mut state =
+            build_deck_pair_state(env_seed, card_ids[0], card_ids[1]).map_err(|error| {
+                session_error(RlSessionErrorCode::UnsupportedDeck, &error.to_string())
+            })?;
+        if foundations_combat {
+            crate::combat_damage_v1::enable_foundations_combat_v1(&mut state)
+                .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        }
+        let deck_hashes = card_ids
+            .map(|cards| fnv1a64(&serde_json::to_vec(cards).expect("card-id arrays serialize")));
+        let mut session = Self {
+            deck_ids,
+            deck_hashes,
+            episode_id,
+            max_physical_decisions,
+            max_policy_steps,
+            state,
+            surface: PolicySurfaceV5::new_with_priority_mode_v1(
+                priority_mode,
+                SuppressionAuditMode::Off,
+            ),
+            environment_revision: 0,
+            policy_step_count: 0,
+            physical_decision_count: 0,
+            current: None,
+            terminal: None,
+            scan_menu: ScanMenuV1::LegalAnswersOnly,
+        };
+        session.advance_to_decision_or_terminal_profiled(None);
+        Ok(session)
+    }
+
     pub fn reset(episode_id: u64, env_seed: u64, max_physical_decisions: u64) -> Self {
         let max_policy_steps = max_physical_decisions.saturating_mul(128).max(1);
         Self::reset_with_limits(
@@ -13153,14 +13222,22 @@ mod tests {
         // `expanded_deck_training_v1::tests::caw_gates_choose_effect_color_v3_regression`
         // for the accepting case). `ChooseEffectNumber` has no concrete
         // engine `Action` at all and remains genuinely
-        // schema-only/unexecutable.
-        let semantics = [ActionSemanticV1::ChooseEffectNumber {
-            actor,
-            source,
-            number: 2,
-            minimum: 1,
-            maximum: 3,
-        }];
+        // schema-only/unexecutable, as does `ChooseLegendPermanent` on the
+        // flat action slice.
+        let semantics = [
+            ActionSemanticV1::ChooseEffectNumber {
+                actor,
+                source: source.clone(),
+                number: 2,
+                minimum: 1,
+                maximum: 3,
+            },
+            ActionSemanticV1::ChooseLegendPermanent {
+                actor,
+                keep: source.clone(),
+                candidates: vec![source],
+            },
+        ];
         for semantic in semantics {
             let mut session = base.clone();
             session.current.as_mut().unwrap().candidates = vec![CorePolicyActionCandidateV1 {
@@ -13242,6 +13319,49 @@ mod tests {
         assert_eq!(actions, actions_before);
         assert_eq!(refs, refs_before);
         assert_eq!(objects, objects_before);
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn flat_action_slice_refuses_loyalty_and_combat_prevention_before_publish() {
+        let base = FastActorSessionV1::reset_with_limits(81_039, 139, 128, 16_384);
+        for planeswalker in [false, true] {
+            let mut session = base.clone();
+            let object = session.state.players[0].hand[0];
+            let name = if planeswalker {
+                "Ajani, Caller of the Pride"
+            } else {
+                "Llanowar Elves"
+            };
+            let card = crate::card_def::card_id_by_name(name).unwrap();
+            let live = session.state.objects.get_mut(object);
+            live.card_def = card;
+            live.name = name.into();
+            live.v4 = crate::state::ObjectStateV4::from_card_def(card);
+            crate::event::propose_and_commit(
+                &mut session.state,
+                crate::event::ProposedEvent::zone_change(object, crate::state::Zone::Battlefield),
+            );
+            if !planeswalker {
+                crate::event::install_combat_damage_prevention(&mut session.state, object, object);
+            }
+            let mut actions = [poison_flat_action(); 2];
+            let mut refs = [poison_flat_ref(); 2];
+            let mut objects = [poison_flat_object(); 2];
+            let before = (actions, refs, objects);
+            assert_eq!(
+                session.encode_current_flat_action_slice_v1(
+                    flat_current_decision(&session),
+                    &mut FlatActionDecisionSliceBuffersV1 {
+                        actions: &mut actions,
+                        refs: &mut refs,
+                        objects: &mut objects
+                    }
+                ),
+                Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic)
+            );
+            assert_eq!((actions, refs, objects), before);
+        }
     }
 
     #[test]

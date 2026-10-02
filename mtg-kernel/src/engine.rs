@@ -59,6 +59,7 @@ use crate::state::{
 };
 use crate::trigger::{self, PendingTrigger};
 use serde::{Deserialize, Serialize};
+use std::hash::Hash;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EngineState {
@@ -969,7 +970,7 @@ pub enum OptionalCostChoice {
 /// then). An attacker with no entry in `blocked_by` is unblocked; one whose
 /// entry lists no blockers stays blocked (509.1h). A permanent leaves these
 /// lists the moment it leaves the battlefield (`remove_from_combat`, 506.4).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CombatState {
     pub attackers_declared: bool,
     pub blockers_declared: bool,
@@ -981,12 +982,37 @@ pub struct CombatState {
     /// lethal from first to last. The replay trace's ordered
     /// `chosen_indices` therefore already carries the reference's effective
     /// damage-assignment order; sorting these ids changes combat outcomes.
-    /// This is reference-AI behavior, not a rules-level ordering guarantee;
-    /// a future surface can carry an explicit damage allocation instead.
+    /// This is reference-AI behavior, not a rules-level ordering guarantee.
+    /// Foundations custom games traverse this list for presentation but
+    /// expose arbitrary legal allocations through `foundations_v1`.
     pub blocked_by: Vec<(ObjectId, Vec<ObjectId>)>,
+    /// Explicit custom-game rules. Absent in frozen Pauper sessions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foundations_v1: Option<crate::combat_damage_v1::FoundationsCombatV1>,
+}
+
+// Preserve the original derived field sequence when the extension is absent.
+impl std::hash::Hash for CombatState {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.attackers_declared.hash(state);
+        self.blockers_declared.hash(state);
+        self.attackers.hash(state);
+        self.blocked_by.hash(state);
+        if let Some(rules) = &self.foundations_v1 {
+            "foundations_combat/v1".hash(state);
+            rules.hash(state);
+        }
+    }
 }
 
 impl CombatState {
+    fn reset_preserving_rules(&mut self) {
+        let enabled = self.foundations_v1.is_some();
+        *self = Self::default();
+        if enabled {
+            self.foundations_v1 = Some(Default::default());
+        }
+    }
     /// 506.4: a permanent that leaves the battlefield is removed from
     /// combat. It stops being an attacking or blocking creature, so its id
     /// (which the object arena reuses for the card's later incarnations,
@@ -1222,6 +1248,21 @@ pub enum Decision {
         default: Option<bool>,
         purpose: effect::EffectBooleanChoicePurpose,
     },
+    /// Refine the amount assigned to one recipient. There are exactly two
+    /// answers: [minimum, split_at] and [split_at + 1, maximum]. No player
+    /// receives priority until all assignments in the wave are complete.
+    ChooseCombatDamageRange {
+        player: PlayerId,
+        source: ObjectId,
+        recipient: Target,
+        minimum: i32,
+        maximum: i32,
+        split_at: i32,
+    },
+    ChooseLegendPermanent {
+        player: PlayerId,
+        candidates: Vec<ObjectId>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1298,6 +1339,10 @@ pub enum Action {
     /// battlefield object, currently Saruli Caretaker's other untapped
     /// controlled creature. Appended for action identity stability.
     ActivateManaAbilityWithCostTarget(ObjectId, ManaColor, ObjectId),
+    ChooseCombatDamageRange {
+        upper_half: bool,
+    },
+    ChooseLegendPermanent(ObjectId),
 }
 
 const CHAIN_COPY_COST: Cost = Cost {
@@ -1376,13 +1421,17 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::Land
         | TargetSpec::OpponentArtifactOrEnchantmentPermanent
         | TargetSpec::CreatureOtherThanSource
-        | TargetSpec::NonblackCreature => 1,
+        | TargetSpec::NonblackCreature
+        | TargetSpec::ArtifactOrEnchantmentPermanent
+        | TargetSpec::AttackingOrBlockingCreature => 1,
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
         | TargetSpec::ExactlyTwoArtifactPermanents
         | TargetSpec::UpToTwoPlayers
-        | TargetSpec::UpToTwoCardsInGraveyards => 2,
+        | TargetSpec::UpToTwoCardsInGraveyards
+        | TargetSpec::ControlledCreatureThenOpponentCreature
+        | TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker => 2,
     }
 }
 
@@ -2619,6 +2668,48 @@ fn legal_targets_for_controller_from_source(
             })
             .map(Target::Object)
             .collect(),
+        TargetSpec::ControlledCreatureThenOpponentCreature
+        | TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker => {
+            let first = targets_chosen.is_empty();
+            battlefield_objects(state)
+                .filter(|&id| {
+                    let object = state.objects.get(id);
+                    if first {
+                        object.controller == controller && object_has_type(state, id, CardType::Creature)
+                    } else {
+                        object.controller != controller &&
+                            (object_has_type(state, id, CardType::Creature) ||
+                            (spec == TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker &&
+                            object_has_type(state, id, CardType::Planeswalker)))
+                    }
+                })
+                .map(Target::Object)
+                .collect()
+        }
+        TargetSpec::AttackingOrBlockingCreature => battlefield_objects(state)
+            .filter(|&id| {
+                object_has_type(state, id, CardType::Creature)
+                    && (state.engine.combat.attackers.contains(&id)
+                        || state
+                            .engine
+                            .combat
+                            .blocked_by
+                            .iter()
+                            .any(|(_, blockers)| blockers.contains(&id)))
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::ArtifactOrEnchantmentPermanent => state
+            .players
+            .iter()
+            .flat_map(|player| player.battlefield.iter().copied())
+            .filter(|&id| {
+                state.objects.get(id).zone == Zone::Battlefield
+                    && (object_has_type(state, id, CardType::Artifact)
+                        || object_has_type(state, id, CardType::Enchantment))
+            })
+            .map(Target::Object)
+            .collect(),
         TargetSpec::OpponentArtifactOrEnchantmentPermanent => state.players
             [controller.opponent().index()]
         .battlefield
@@ -2726,6 +2817,26 @@ fn legal_targets_for_controller_from_source(
         });
     }
     targets
+}
+
+pub(crate) fn effect_target_is_legal(
+    state: &GameState,
+    source: ObjectId,
+    controller: PlayerId,
+    spec: TargetSpec,
+    targets: &[Target],
+    index: usize,
+) -> bool {
+    targets.get(index).is_some_and(|target| {
+        legal_targets_for_controller_from_source(
+            spec,
+            &targets[..index],
+            controller,
+            targeting_source_for_object(state, source),
+            state,
+        )
+        .contains(target)
+    })
 }
 
 /// Whether the already-chosen target prefix can be extended to a complete
@@ -5917,6 +6028,30 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
         }
         if let Some((mechanic, source)) = state.engine.halted {
             return Decision::Halted { mechanic, source };
+        }
+
+        if state.pending_legend_rule_v1.is_some() {
+            match crate::legend_rule_v1::drain_or_decide(state) {
+                Ok(Some(decision)) => return decision,
+                Ok(None) => continue,
+                Err(_) => {
+                    state.engine.halted =
+                        Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                    continue;
+                }
+            }
+        }
+
+        if crate::combat_damage_v1::has_pending_assignment(state) {
+            match crate::combat_damage_v1::drain_or_decide(state) {
+                Ok(Some(decision)) => return decision,
+                Ok(None) => continue,
+                Err(_) => {
+                    state.engine.halted =
+                        Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                    continue;
+                }
+            }
         }
 
         if let Some(pending) = state.engine.pending_land_play.as_ref() {
@@ -9238,7 +9373,9 @@ fn triggered_stack_item_expected_target_spec(
     {
         return Err("attached-source trigger lost its host LKI".to_string());
     }
-    if let EffectOp::PutPlusOnePlusOneCounterOnBoundObject { object } = inline_effect {
+    if let EffectOp::PutPlusOnePlusOneCounterOnBoundObject { object }
+    | EffectOp::BoostBoundObjectUntilEndOfTurn { object, .. } = inline_effect
+    {
         let Some(source_contract) = ability_source_contract else {
             return Err("bound-source trigger lost its historical source contract".to_string());
         };
@@ -10153,6 +10290,13 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
 /// obviously-combat-shaped divergence. See `Decision::DeclareAttackers`'s
 /// doc and the replay comparator's handling of an empty `eligible`.
 fn advance_step(state: &mut GameState) {
+    if state.step == Step::CombatDamage && crate::combat_damage_v1::needs_normal_wave(state) {
+        state.players[0].mana_pool = [0; 6];
+        state.players[1].mana_pool = [0; 6];
+        crate::combat_damage_v1::start_normal_wave(state);
+        reset_priority(state);
+        return;
+    }
     let cur_idx = STEP_ORDER
         .iter()
         .position(|&s| s == state.step)
@@ -10209,7 +10353,7 @@ fn advance_step(state: &mut GameState) {
     // combat. Without this the record of this combat's attackers and
     // blockers survived into the second main phase and the next turn.
     if state.step == Step::EndCombat {
-        state.engine.combat = CombatState::default();
+        state.engine.combat.reset_preserving_rules();
     }
 
     state.step = next;
@@ -10388,10 +10532,14 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             collect_and_queue_triggers(state);
         }
         Step::BeginCombat => {
-            state.engine.combat = CombatState::default();
+            state.engine.combat.reset_preserving_rules();
         }
         Step::CombatDamage => {
-            deal_combat_damage(state);
+            if state.engine.combat.foundations_v1.is_some() {
+                crate::combat_damage_v1::start_first_wave(state);
+            } else {
+                deal_combat_damage(state);
+            }
         }
         Step::End => {
             let p = state.active_player;
@@ -10428,6 +10576,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 !matches!(
                     replacement.kind,
                     event::ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { .. }
+                    | event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. }
                 )
             });
             let p = state.active_player;
@@ -10476,6 +10625,56 @@ pub struct StaticSelfBoostDef {
     pub power: i32,
     pub toughness: i32,
     pub grant_haste: bool,
+}
+
+/// A continuously recomputed bonus from a controlled subtype lord.
+pub struct StaticControlledSubtypeBoostDef {
+    pub subtype: card_def::Subtype,
+    pub exclude_source: bool,
+    pub power: i32,
+    pub toughness: i32,
+}
+
+pub(crate) fn static_controlled_subtype_boost_for(
+    name: &str,
+) -> Option<StaticControlledSubtypeBoostDef> {
+    match name {
+        "Dwynen, Gilt-Leaf Daen" => Some(StaticControlledSubtypeBoostDef {
+            subtype: card_def::Subtype::Elf,
+            exclude_source: true,
+            power: 1,
+            toughness: 1,
+        }),
+        _ => None,
+    }
+}
+
+fn controlled_subtype_boost(state: &GameState, recipient: ObjectId) -> (i32, i32) {
+    if !cfg!(feature = "limited-fdn-fixtures") {
+        return (0, 0);
+    }
+    let object = state.objects.get(recipient);
+    if object.zone != Zone::Battlefield || !object_has_type(state, recipient, CardType::Creature) {
+        return (0, 0);
+    }
+    let subtypes = effective_subtype_ids(state, recipient);
+    state.players[object.controller.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter_map(|source| {
+            let definition = &card_def::CARD_DEFS[state.objects.get(source).card_def as usize];
+            if !definition.is_executable() {
+                return None;
+            }
+            let boost = static_controlled_subtype_boost_for(definition.name)?;
+            ((!boost.exclude_source || source != recipient)
+                && boost.subtype.is_in_subtype_ids(&subtypes))
+            .then_some((boost.power, boost.toughness))
+        })
+        .fold((0, 0), |(power, toughness), (p, t)| {
+            (power + p, toughness + t)
+        })
 }
 
 fn controls_an_artifact(controller: PlayerId, state: &GameState) -> bool {
@@ -10588,6 +10787,7 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
         + obj.counters.plus1_plus1 as i32
         - obj.counters.minus1_minus1 as i32;
     power += bestow_host_counter_bonus(state, id);
+    power += controlled_subtype_boost(state, id).0;
     if def.is_executable() {
         if let Some(boost) = static_self_boost_for(def.name) {
             if (boost.condition)(obj.controller, state) {
@@ -10636,6 +10836,7 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
         - obj.counters.minus1_minus1 as i32
         - obj.counters.minus0_minus1 as i32;
     toughness += bestow_host_counter_bonus(state, id);
+    toughness += controlled_subtype_boost(state, id).1;
     if def.is_executable() {
         if let Some(boost) = static_self_boost_for(def.name) {
             if (boost.condition)(obj.controller, state) {
@@ -11097,7 +11298,20 @@ fn combat_damage_wave(state: &mut GameState, first_strike_wave: bool) {
         }
     }
 
+    commit_combat_damage_events(state, events);
+}
+
+pub(crate) fn commit_combat_damage_events(state: &mut GameState, events: Vec<ProposedEvent>) {
     let event_start = state.engine.event_log.len();
+    let events = events
+        .into_iter()
+        .map(|mut event| {
+            if let ProposedEvent::Damage(damage) = &mut event {
+                damage.is_combat = true;
+            }
+            event
+        })
+        .collect();
     event::propose_and_commit_batch(state, events);
     let combat_player_damage = state.engine.event_log[event_start..]
         .iter()
@@ -11560,6 +11774,20 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    if state.pending_legend_rule_v1.is_some() {
+        return match action {
+            Action::ChooseLegendPermanent(keep) => crate::legend_rule_v1::answer(state, keep),
+            _ => Err("only a legend-rule answer may be taken during its SBA pass".into()),
+        };
+    }
+    if crate::combat_damage_v1::has_pending_assignment(state) {
+        return match action {
+            Action::ChooseCombatDamageRange { upper_half } => {
+                crate::combat_damage_v1::answer_range(state, upper_half)
+            }
+            _ => Err("only a combat damage answer may be taken during assignment".to_string()),
+        };
+    }
     if state.engine.pending_land_play.is_some() && !matches!(&action, Action::ChooseEffectOption(_))
     {
         return Err(
@@ -11602,6 +11830,8 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
         }
     }
     match action {
+        Action::ChooseLegendPermanent(_) => Err("no legend-rule choice is pending".into()),
+        Action::ChooseCombatDamageRange { .. } => Err("no combat damage choice is pending".to_string()),
         Action::Pass => {
             let p = state.priority_player;
             state.engine.priority_passes[p.index()] = true;
@@ -13268,6 +13498,21 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
     }
     state.engine.combat.attackers = attackers;
     state.engine.combat.attackers_declared = true;
+    for &source in &state.engine.combat.attackers {
+        let object = state.objects.get(source);
+        if trigger::triggers_for(object.card_def)
+            .iter()
+            .any(|def| matches!(def.condition, trigger::TriggerCondition::Attacks))
+        {
+            let event = CommittedEvent::DeclaredAttacker {
+                source,
+                source_zone_change_count: object.zone_change_count,
+                controller: object.controller,
+            };
+            state.engine.event_log.push(event.clone());
+            state.engine.event_history.push(event);
+        }
+    }
     collect_and_queue_triggers(state);
     reset_priority(state);
     Ok(())

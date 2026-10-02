@@ -50,6 +50,11 @@ pub enum ReplacementEffectKind {
         turn: u32,
         active_player: PlayerId,
     },
+    PreventCombatDamageToObjectUntilEndOfTurn {
+        object: crate::state::ObjectLinkV4,
+        turn: u32,
+        active_player: PlayerId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -67,6 +72,7 @@ pub struct DamageProposed {
     pub target: Target,
     pub amount: i32,
     pub touched_by: Vec<ReplacementId>,
+    pub is_combat: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -170,6 +176,7 @@ impl ProposedEvent {
             target,
             amount,
             touched_by: Vec::new(),
+            is_combat: false,
         })
     }
     pub fn zone_change(object: ObjectId, to_zone: Zone) -> ProposedEvent {
@@ -473,6 +480,12 @@ pub enum CommittedEvent {
     MonarchTrigger {
         binding: crate::state::MonarchTriggerBindingV1,
     },
+    /// Exact declaration-time source for an attack trigger.
+    DeclaredAttacker {
+        source: ObjectId,
+        source_zone_change_count: u32,
+        controller: PlayerId,
+    },
 }
 
 /// Runs the replace/prevent pass to a fixed point: repeatedly finds an
@@ -516,6 +529,7 @@ pub fn apply_replacements(
                             &r.kind,
                             ReplacementEffectKind::PreventNextDamage { .. }
                                 | ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { .. }
+                                | ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. }
                         ))
                     && replacement_applies(r, &proposed, state)
             })
@@ -543,6 +557,23 @@ fn replacement_applies(
             ReplacementEffectKind::PreventNextDamage { target, remaining },
             ProposedEvent::Damage(d),
         ) => *remaining > 0 && d.target == *target,
+        (
+            ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn {
+                object,
+                turn,
+                active_player,
+            },
+            ProposedEvent::Damage(d),
+        ) => {
+            d.is_combat
+                && *turn == state.turn
+                && *active_player == state.active_player
+                && d.target == Target::Object(object.object)
+                && state.objects.try_get(object.object).is_some_and(|live| {
+                    live.zone == Zone::Battlefield
+                        && live.zone_change_count == object.zone_change_count
+                })
+        }
         (
             ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn {
                 color,
@@ -606,6 +637,10 @@ fn replacement_apply(
             ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { .. },
             ProposedEvent::Damage(_),
         ) => None,
+        (
+            ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. },
+            ProposedEvent::Damage(_),
+        ) => None,
         (_, other) => Some(other),
     }
 }
@@ -636,6 +671,40 @@ pub fn install_color_damage_prevention(
         },
     });
     Ok(id)
+}
+
+pub(crate) fn install_combat_damage_prevention(
+    state: &mut GameState,
+    source: ObjectId,
+    object: ObjectId,
+) {
+    let Some(live) = state.objects.try_get(object) else {
+        return;
+    };
+    if live.zone != Zone::Battlefield {
+        return;
+    }
+    let binding = crate::state::ObjectLinkV4 {
+        object,
+        zone_change_count: live.zone_change_count,
+    };
+    let Some(id) = state.engine.next_replacement_id.checked_add(1) else {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        ));
+        return;
+    };
+    state.engine.next_replacement_id = id;
+    state.engine.active_replacements.push(ActiveReplacement {
+        id,
+        source,
+        kind: ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn {
+            object: binding,
+            turn: state.turn,
+            active_player: state.active_player,
+        },
+    });
 }
 
 fn lifelink_gain_for(state: &GameState, event: &ProposedEvent) -> Option<(PlayerId, i32)> {
@@ -677,9 +746,24 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
                 );
             match d.target {
                 Target::Object(id) => {
+                    let planeswalker = crate::engine::object_has_type(
+                        state,
+                        id,
+                        crate::card_def::CardType::Planeswalker,
+                    );
+                    if planeswalker {
+                        crate::planeswalker_v1::damage(state, id, d.amount);
+                    }
+                    let creature = crate::engine::object_has_type(
+                        state,
+                        id,
+                        crate::card_def::CardType::Creature,
+                    );
                     let obj = state.objects.get_mut(id);
-                    obj.damage = obj.damage.saturating_add(d.amount.max(0) as u16);
-                    obj.v4.deathtouch_damage |= source_has_deathtouch;
+                    if !planeswalker || creature {
+                        obj.damage = obj.damage.saturating_add(d.amount.max(0) as u16);
+                        obj.v4.deathtouch_damage |= source_has_deathtouch;
+                    }
                 }
                 Target::Player(p) => {
                     state.players[p.index()].life -= d.amount;
@@ -1207,6 +1291,7 @@ fn commit_zone_change(
             obj.summoning_sick = false;
         }
     }
+    crate::planeswalker_v1::after_zone_change(state, id);
     if to_zone == Zone::Library {
         let position = state.players[owner.index()]
             .library

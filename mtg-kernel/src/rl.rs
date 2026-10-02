@@ -691,6 +691,32 @@ pub struct EngineContextV2 {
     pub pending_spell_copy: Option<PendingSpellCopySemanticV2>,
     pub pending_effect: Option<PendingEffectSemanticV4>,
     pub pending_triggers: Vec<PendingTriggerSemanticV2>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_legend_rule: Option<Vec<LegendGroupSemanticV1>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planeswalkers: Option<Vec<PlaneswalkerSemanticV1>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub combat_damage_prevention: Option<Vec<CombatPreventionSemanticV1>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PlaneswalkerSemanticV1 {
+    pub permanent: CardStableRefV1,
+    pub loyalty: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CombatPreventionSemanticV1 {
+    pub permanent: CardStableRefV1,
+    pub turn: u32,
+    pub active_player: PlayerSeatV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct LegendGroupSemanticV1 {
+    pub controller: PlayerSeatV1,
+    pub candidates: Vec<CardStableRefV1>,
+    pub kept: Option<CardStableRefV1>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -726,6 +752,8 @@ pub struct PrivateOptionalCostContextV2 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct HarnessSurfaceContextV2 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine_priority_version: Option<u32>,
     pub current_stage: SurfaceDecisionStageV2,
     pub combat_priority_spent: [bool; 2],
     pub combat_priority_rearmed_by_stack_activity: bool,
@@ -849,10 +877,25 @@ pub struct PolicySurfaceContextV5 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicCombatDamageAssignmentV1 {
+    pub source: CardStableRefV1,
+    pub recipient: TargetRefV1,
+    pub amount: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicFoundationsCombatV1 {
+    pub phase: String,
+    pub assignments: Vec<PublicCombatDamageAssignmentV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublicObservationProjectionV5 {
     #[serde(flatten)]
     pub surface: PublicObservationProjectionV2,
     pub policy_surface_context: PolicySurfaceContextV5,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foundations_combat: Option<PublicFoundationsCombatV1>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1031,6 +1074,20 @@ pub enum ActionSemanticV1 {
     },
     Ambiguous {
         reason: String,
+    },
+    ChooseCombatDamageRange {
+        actor: PlayerSeatV1,
+        source: CardStableRefV1,
+        recipient: TargetRefV1,
+        minimum: i32,
+        maximum: i32,
+        split_at: i32,
+        upper_half: bool,
+    },
+    ChooseLegendPermanent {
+        actor: PlayerSeatV1,
+        keep: CardStableRefV1,
+        candidates: Vec<CardStableRefV1>,
     },
 }
 
@@ -1774,12 +1831,37 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
         projection: PublicObservationProjectionV5 {
             surface: base.projection,
             policy_surface_context,
+            foundations_combat: public_foundations_combat_v1(state)?,
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
         known_hand_cards: base.known_hand_cards,
         visible_projection_hash: 0,
     })
+}
+
+/// Public Foundations combat-damage assignments, present only while a
+/// custom-game combat damage step is pending. Frozen Pauper sessions have
+/// none.
+fn public_foundations_combat_v1(state: &GameState) -> Result<Option<PublicFoundationsCombatV1>> {
+    crate::combat_damage_v1::public_assignment_ids_v1(state)
+        .map(|view| {
+            Ok::<_, RlContractError>(PublicFoundationsCombatV1 {
+                phase: view.phase.to_string(),
+                assignments: view
+                    .assignments
+                    .into_iter()
+                    .map(|assignment| {
+                        Ok(PublicCombatDamageAssignmentV1 {
+                            source: card_ref(state, assignment.source)?,
+                            recipient: target_ref(state, assignment.recipient)?,
+                            amount: assignment.amount,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            })
+        })
+        .transpose()
 }
 
 // Shared projection components, not an ObservationV5. Each version applies
@@ -1915,6 +1997,7 @@ fn build_policy_observation_v6(request: PolicyObservationBuildV5<'_>) -> Result<
         projection: PublicObservationProjectionV5 {
             surface: base.projection,
             policy_surface_context,
+            foundations_combat: public_foundations_combat_v1(state)?,
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
@@ -2843,6 +2926,51 @@ fn core_surface_action_candidates_v1(
                     )?;
                 }
             }
+            Decision::ChooseLegendPermanent { player, candidates } => {
+                let actor = (*player).into();
+                let references = candidates
+                    .iter()
+                    .map(|&id| card_ref(state, id))
+                    .collect::<Result<Vec<_>>>()?;
+                for (&keep, reference) in candidates.iter().zip(&references) {
+                    push_action(
+                        &mut out,
+                        ActionSemanticV1::ChooseLegendPermanent {
+                            actor,
+                            keep: reference.clone(),
+                            candidates: references.clone(),
+                        },
+                        SurfaceAction::Action(Action::ChooseLegendPermanent(keep)),
+                    )?;
+                }
+            }
+            Decision::ChooseCombatDamageRange {
+                player,
+                source,
+                recipient,
+                minimum,
+                maximum,
+                split_at,
+            } => {
+                let actor = (*player).into();
+                let source = card_ref(state, *source)?;
+                let recipient = target_ref(state, *recipient)?;
+                for upper_half in [false, true] {
+                    push_action(
+                        &mut out,
+                        ActionSemanticV1::ChooseCombatDamageRange {
+                            actor,
+                            source: source.clone(),
+                            recipient: recipient.clone(),
+                            minimum: *minimum,
+                            maximum: *maximum,
+                            split_at: *split_at,
+                            upper_half,
+                        },
+                        SurfaceAction::Action(Action::ChooseCombatDamageRange { upper_half }),
+                    )?;
+                }
+            }
             Decision::ChooseEffectBoolean { player, source, .. } => {
                 let actor = (*player).into();
                 let source = card_ref(state, *source)?;
@@ -3085,6 +3213,8 @@ pub fn acting_player_for_surface_decision(
             | Decision::ChooseEffectOption { player, .. }
             | Decision::ChooseEffectTargets { player, .. }
             | Decision::ChooseEffectBoolean { player, .. }
+            | Decision::ChooseCombatDamageRange { player, .. }
+            | Decision::ChooseLegendPermanent { player, .. }
             | Decision::ChooseOptionalCost { player, .. }
             | Decision::ChooseSpellCopyPayment { player, .. }
             | Decision::ChooseSpellCopyRetarget { player, .. }
@@ -5941,8 +6071,53 @@ fn exile_play_permissions_public_v2(state: &GameState) -> Result<Vec<ExilePlayPe
 }
 
 fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<EngineContextV2> {
+    let planeswalkers = if state.planeswalkers_v1.is_some() {
+        state
+            .objects
+            .iter()
+            .filter_map(|(id, _)| {
+                crate::planeswalker_v1::loyalty(state, id).map(|loyalty| {
+                    card_ref(state, id)
+                        .map(|permanent| PlaneswalkerSemanticV1 { permanent, loyalty })
+                })
+            })
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        Vec::new()
+    };
+    let combat_damage_prevention = state
+        .engine
+        .active_replacements
+        .iter()
+        .filter_map(|replacement| {
+            let crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn {
+                object,
+                turn,
+                active_player,
+            } = replacement.kind
+            else {
+                return None;
+            };
+            let live = state.objects.try_get(object.object)?;
+            (live.zone == Zone::Battlefield
+                && live.zone_change_count == object.zone_change_count
+                && turn == state.turn
+                && active_player == state.active_player)
+                .then(|| {
+                    card_ref(state, object.object).map(|permanent| CombatPreventionSemanticV1 {
+                        permanent,
+                        turn,
+                        active_player: active_player.into(),
+                    })
+                })
+        })
+        .collect::<Result<Vec<_>>>()?;
     let current_stage = if state.engine.halted.is_some() {
         EngineDecisionStageV2::Halted
+    } else if state.pending_legend_rule_v1.is_some() {
+        // This checkpoint holds trigger placement until all SBAs finish.
+        // Its public legend context supplies the exact choice and prefix.
+        EngineDecisionStageV2::PendingTriggers
     } else if state.engine.pending_cast.is_some() {
         EngineDecisionStageV2::PendingCast
     } else if state.engine.pending_activation.is_some() {
@@ -5967,6 +6142,9 @@ fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<Engin
         state.engine.mana_ability_activations != state.engine.mana_ability_count_at_round_open;
 
     Ok(EngineContextV2 {
+        planeswalkers: (!planeswalkers.is_empty()).then_some(planeswalkers),
+        combat_damage_prevention: (!combat_damage_prevention.is_empty())
+            .then_some(combat_damage_prevention),
         priority_passes: state.engine.priority_passes,
         stack_nonempty: !state.stack.is_empty(),
         stack_activity_since_priority_boundary: state.stack.len()
@@ -5979,6 +6157,25 @@ fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<Engin
                 None
             },
         current_stage,
+        pending_legend_rule: state
+            .pending_legend_rule_v1
+            .as_ref()
+            .map(|pending| {
+                pending
+                    .public_groups()
+                    .map(|(controller, candidates, kept)| {
+                        Ok(LegendGroupSemanticV1 {
+                            controller: controller.into(),
+                            candidates: candidates
+                                .into_iter()
+                                .map(|id| card_ref(state, id))
+                                .collect::<Result<Vec<_>>>()?,
+                            kept: kept.map(|id| card_ref(state, id)).transpose()?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })
+            .transpose()?,
         pending_cast: state
             .engine
             .pending_cast
@@ -6038,6 +6235,12 @@ fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<Engin
             .engine
             .pending_triggers
             .iter()
+            .chain(
+                state
+                    .pending_legend_rule_v1
+                    .iter()
+                    .flat_map(|pending| pending.waiting_triggers()),
+            )
             .map(|p| {
                 Ok(PendingTriggerSemanticV2 {
                     source: visible_card_ref(state, p.source, acting_player)?,
@@ -6570,6 +6773,7 @@ fn surface_context_v2(
     };
 
     Ok(HarnessSurfaceContextV2 {
+        engine_priority_version: raw.engine_priority_version,
         current_stage,
         combat_priority_spent: raw.combat_priority_spent,
         combat_priority_rearmed_by_stack_activity: state.stack.len()
