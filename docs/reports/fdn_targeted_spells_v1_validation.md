@@ -16,7 +16,7 @@ See [rules contract](../design/fdn_targeted_spells_v1.md).
 | Native buffers | The new loyalty/prevention refusal check passed and preserved destination buffers. |
 | Default compatibility | All 28 state tests, the exact environment-hash golden, the v32 CardDB hash tripwire and two default session restore checks passed. |
 | Build and lint | Default workspace and feature-enabled all-target Clippy passed with warnings denied. External binary built. |
-| Production boundaries | Ten v32/v33/v34/v35/v36 publisher/resume refusal checks passed. The live v37 round trip initially failed on an obsolete Windows-only expectation; its correction is committed and the release rerun is active. |
+| Production boundaries | All 11 Windows release checks passed: ten v32/v33/v34/v35/v36 publisher/resume refusals and the live v37 construct/seal/decode/validate round trip. Combined Limited/production Clippy passed with warnings denied. Rerun 010 exited zero from clean committed remote source `94abfc3c`. |
 | Python | All 41 passed: deck import 14, client six, flat-V2 goldens eight and Pauper manifest 13. |
 | External replay | Two identical seed-123/episode-7 games ended naturally. Each cast Bite Down twice, Felling Blow once, Fleeting Flight twice and Joust Through once. |
 | Hosted CI | Head `80f716f5` passed lint and both Linux Python shards before the Windows assertion correction. Updated source `08db5e0c` has a fresh run; remaining hosted gates are pending. |
@@ -65,7 +65,7 @@ missing target-contract shapes and a payment timing assertion, and 005
 an incorrect survival assertion. 008 passed the ten refusal checks but
 found a stale live-profile assertion; 009 was refused at build preflight
 because its copied assertion fix had not yet been committed remotely. The
-remote fix is committed before 010, which runs with the guard enabled.
+remote fix was committed before 010, which passed with the guard enabled.
 Passing checks above retain their tested source identities.
 Full local Rust-suite success and executed XMage parity are not claimed.
 
