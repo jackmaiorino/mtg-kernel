@@ -2,8 +2,14 @@
 
 Schema 4 adds London mulligans to the original fixture gameplay interface.
 The focused Rust rules, original fixture games and pending-session restore
-passed on Ubuntu. XMage's16 Witness and7 London reference cases also passed.
-Windows verification and complete CI remain pending.
+passed on Ubuntu. The final XMage suite passed146 cases in16 classes,
+including16 Witness,7 London and28 combat comparisons. At publicd43d59a2,
+formatting/all-feature lint and all four Python shards passed. Windows's
+London step ended successfully at19:15:08UTC, including its final pending-bottom
+library command. Its integration summaries await the complete job log because
+the historical PowerShell wrapper checks only the final native exit code.
+PR140 changes every Rust step to Bash so each command failure propagates.
+Full regression/CI verification remains pending.
 
 The first hosted attempt, CI37041270977 at87db2401, found an unused import in
 the new module. Removed it; the original lint log is retained. This is a lint
@@ -53,8 +59,6 @@ Pending checks:
   bottoming, repeated mulligans, forced zero-card keep, exact private bottom
   order, invalid/stale-choice rejection, snapshot/JSON restore and earlier
   schema compatibility.
-- Windows pending bottoming session restore: identical legal menu, binding, response
-  and resulting privileged environment hash; invalid action leaves it intact.
 - Windows original unchanged UG/WG through the schema-4 subprocess, seed123 twice and
   swapped seed701. Both players take actual mulligans and bottom four cards in
   total before playing; require natural terminal outcomes and exact replay.

@@ -51,8 +51,12 @@ Implemented placement-time modes, exact selected-branch target contracts
 and a resolution-time current-power predicate. All twenty-one focused rules
 and pending-decision restoration cases pass. All 46 definition and 141 catalog-history checks pass, with three existing
 ignores. Twelve strict XMage comparisons and twenty Python checks pass.
-Limited all-target Clippy passes with warnings denied. Broader regressions,
-external replay, release boundaries and hosted CI remain pending.
+Limited all-target Clippy passes with warnings denied. Broader regressions and default compatibility pass. Two external smoke
+games complete naturally with matching replay hashes and both trigger modes.
+All 31 release publication/resume boundary checks and combined-feature
+release library Clippy pass. All eight hosted CI checks passed at7d4c5518;
+the complete Windows log confirms all18 Limited targets executed, with290
+passing integration tests. See the validation report for the exact source.
 The existing flat mode row represents both printed spell and trigger modes;
 engine decisions and executable actions distinguish ChooseTriggerMode.
 No new unconditional pending-trigger field changes older state hashes.
