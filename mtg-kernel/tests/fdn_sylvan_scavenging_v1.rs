@@ -453,9 +453,15 @@ fn simultaneous_triggers_order_before_modes_and_targets() {
     assert!(
         matches!(end(&mut state), Decision::OrderTriggers { ref pending, .. } if pending.len() == 2)
     );
-    let hash = state.state_hash();
-    assert!(engine::step(&mut state, Action::ChooseTriggerMode(0)).is_err());
-    assert_eq!(state.state_hash(), hash);
+    for action in [
+        Action::ChooseTriggerMode(0),
+        Action::Pass,
+        Action::ChooseTarget(Target::Object(creature)),
+    ] {
+        let hash = state.state_hash();
+        assert!(engine::step(&mut state, action).is_err());
+        assert_eq!(state.state_hash(), hash);
+    }
     engine::step(&mut state, Action::OrderTriggers(vec![1, 0])).unwrap();
     assert_mode(next(&mut state), PlayerId::P0, second, &[0, 1]);
     engine::step(&mut state, Action::ChooseTriggerMode(0)).unwrap();
@@ -552,6 +558,27 @@ fn selected_mode_target_spec_is_authenticated_on_restore() {
     end(&mut state);
     engine::step(&mut state, Action::ChooseTriggerMode(0)).unwrap();
     state.engine.pending_triggers[0].target_spec = TargetSpec::None;
+    let mut copy = restored(&state);
+    assert!(matches!(
+        engine::advance_until_decision(&mut copy),
+        Decision::Halted { .. }
+    ));
+}
+
+#[test]
+fn unselected_modal_root_cannot_be_restored_onto_the_stack() {
+    let mut state = ready();
+    scavenging(&mut state, PlayerId::P0);
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Cackling Prowler",
+        Zone::Battlefield,
+    );
+    end(&mut state);
+    let root = state.engine.pending_triggers[0].effect.clone();
+    choose_token(&mut state);
+    state.stack[0].inline_effect = Some(root);
     let mut copy = restored(&state);
     assert!(matches!(
         engine::advance_until_decision(&mut copy),

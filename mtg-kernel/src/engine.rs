@@ -11281,6 +11281,22 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
         }
     }
     if let Some(pending_trigger) = state.engine.pending_triggers.first() {
+        let group = state
+            .engine
+            .pending_triggers
+            .iter()
+            .take_while(|trigger| trigger.controller == pending_trigger.controller)
+            .collect::<Vec<_>>();
+        if group
+            .iter()
+            .any(|trigger| pending_trigger_modes(state, trigger).is_some())
+            && group.iter().any(|trigger| !trigger.placement_ordered)
+            && !matches!(&action, Action::OrderTriggers(_))
+        {
+            return Err(
+                "modal trigger placement must complete ordering before other actions".into(),
+            );
+        }
         if pending_trigger.placement_ordered
             && pending_trigger_modes(state, pending_trigger).is_some()
         {
