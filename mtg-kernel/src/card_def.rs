@@ -222,6 +222,7 @@ pub enum Subtype {
     Octopus,
     Hyena,
     Raccoon,
+    Citizen,
 }
 
 impl Subtype {
@@ -304,6 +305,8 @@ impl Subtype {
         Subtype::Hyena,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Raccoon,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Citizen,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -791,6 +794,28 @@ pub enum OptionalAdditionalCostDef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttachmentDef {
     AuraCreature { prevents_untap: bool },
+    AuraCreatureOverride(CreatureCharacteristicsOverrideDef),
+}
+
+impl AttachmentDef {
+    pub const fn is_creature_aura(self) -> bool {
+        matches!(
+            self,
+            Self::AuraCreature { .. } | Self::AuraCreatureOverride(_)
+        )
+    }
+}
+
+/// Layer 3 through 7b characteristics supplied by an attached creature Aura.
+/// Printed identity, supertypes and later-layer modifications are preserved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CreatureCharacteristicsOverrideDef {
+    pub name: &'static str,
+    pub subtype: Subtype,
+    pub colors: &'static [ManaColor],
+    pub power: i16,
+    pub toughness: i16,
+    pub loses_abilities: bool,
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -1564,8 +1589,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v48_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x8664_e1fd_2536_2caa;
+    fn card_db_hash_v49_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x3eee_8a1c_bc87_4e18;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

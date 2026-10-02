@@ -3957,10 +3957,9 @@ fn returning_aura_hosts(
 ) -> Result<Vec<EffectObjectBinding>, String> {
     validate_effect_object_binding(state, aura)?;
     if aura.expected_zone != Zone::Graveyard
-        || !matches!(
-            crate::card_def::CARD_DEFS[state.objects.get(aura.object).card_def as usize].attachment,
-            Some(crate::card_def::AttachmentDef::AuraCreature { .. })
-        )
+        || !crate::card_def::CARD_DEFS[state.objects.get(aura.object).card_def as usize]
+            .attachment
+            .is_some_and(crate::card_def::AttachmentDef::is_creature_aura)
     {
         return Err("returning Aura is not a creature Aura in its graveyard".to_string());
     }
@@ -4402,6 +4401,8 @@ fn apply_undercity_throne_result(
             .checked_add(3)
             .ok_or("Throne +1/+1 counter overflow")?;
         let expires_at_turn = until_players_next_turn_expiry(state, binding.player)?;
+        let timestamp =
+            cfg!(feature = "limited-fdn-fixtures").then(|| crate::engine::next_timestamp(state));
         state
             .engine
             .until_next_turn_keywords
@@ -4411,6 +4412,7 @@ fn apply_undercity_throne_result(
                 holder: binding.player,
                 expires_at_turn,
                 keywords: Keywords::HEXPROOF,
+                timestamp,
             });
         state.engine.until_next_turn_keywords.sort_by_key(|effect| {
             (
@@ -10535,9 +10537,27 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 object: target,
                 zone_change_count: state.objects.get(target).zone_change_count,
             };
-            state.objects.get_mut(ctx.source).v4.attached_to = Some(link);
-            if !state.objects.get(target).attachments.contains(&ctx.source) {
-                state.objects.get_mut(target).attachments.push(ctx.source);
+            if cfg!(feature = "limited-fdn-fixtures") {
+                let source_generation = state.objects.get(ctx.source).zone_change_count;
+                if state
+                    .attach_object_exact(
+                        ctx.source,
+                        source_generation,
+                        target,
+                        link.zone_change_count,
+                    )
+                    .is_err()
+                {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                }
+            } else {
+                state.objects.get_mut(ctx.source).v4.attached_to = Some(link);
+                if !state.objects.get(target).attachments.contains(&ctx.source) {
+                    state.objects.get_mut(target).attachments.push(ctx.source);
+                }
             }
         }
         EffectOp::TapAttachedCreatureAndDamageControllerByPower => {
@@ -10818,7 +10838,12 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ));
                 return;
             };
+            let keyword_timestamp = (cfg!(feature = "limited-fdn-fixtures") && *lifelink > 0)
+                .then(|| crate::engine::next_timestamp(state));
             let object = state.objects.get_mut(object);
+            if keyword_timestamp.is_some() {
+                object.v4.lifelink_counter_timestamp = keyword_timestamp;
+            }
             object.counters.plus1_plus1 = next_plus;
             object.v4.lifelink_keyword_counters = next_lifelink;
             object.counters.stun = next_stun;

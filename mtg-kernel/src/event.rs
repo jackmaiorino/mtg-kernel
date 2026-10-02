@@ -449,6 +449,11 @@ pub enum CommittedEvent {
         active_player: PlayerId,
         creature_died_this_turn: bool,
     },
+    /// Immediately precedes a departure whose printed abilities were absent.
+    PrintedAbilitiesRemovedBeforeZoneChange {
+        object: ObjectId,
+        zone_change_count: u32,
+    },
 }
 
 fn initialize_entry_counters(state: &mut GameState, object: ObjectId, kicked: bool) {
@@ -750,6 +755,14 @@ pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
 /// Applies the (possibly rewritten) proposal to `GameState` and appends the
 /// resulting `CommittedEvent` to the event log for this resolution.
 pub fn commit(state: &mut GameState, event: ProposedEvent) {
+    commit_with_ability_lki(state, event, None);
+}
+
+fn commit_with_ability_lki(
+    state: &mut GameState,
+    event: ProposedEvent,
+    abilities_removed_before: Option<bool>,
+) {
     let committed = match event {
         ProposedEvent::Damage(d) => {
             let source_has_deathtouch = d.amount > 0
@@ -800,12 +813,26 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
         ProposedEvent::ZoneChange(z) => {
             let from = state.objects.get(z.object).zone;
             let controller_before = state.objects.get(z.object).controller;
+            if from == Zone::Battlefield
+                && abilities_removed_before.unwrap_or_else(|| {
+                    !crate::continuous_characteristics_v1::printed_abilities_active(state, z.object)
+                })
+            {
+                let marker = CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange {
+                    object: z.object,
+                    zone_change_count: state.objects.get(z.object).zone_change_count,
+                };
+                state.engine.event_log.push(marker.clone());
+                state.engine.event_history.push(marker);
+            }
             #[cfg(feature = "limited-fdn-fixtures")]
             let creature_died = from == Zone::Battlefield
                 && z.to_zone == Zone::Graveyard
-                && crate::card_def::CARD_DEFS[state.objects.get(z.object).card_def as usize]
-                    .types_for_face(state.objects.get(z.object).v4.face_index)
-                    .contains(&crate::card_def::CardType::Creature);
+                && crate::engine::object_has_type(
+                    state,
+                    z.object,
+                    crate::card_def::CardType::Creature,
+                );
             commit_zone_change(
                 state,
                 z.object,
@@ -908,6 +935,10 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
                 plotted_turn: None,
                 zone_change_count: 0,
             });
+            if cfg!(feature = "limited-fdn-fixtures") {
+                let timestamp = crate::engine::next_timestamp(state);
+                state.objects.get_mut(object).v4.layer_timestamp = Some(timestamp);
+            }
             state.players[t.controller.index()].battlefield.push(object);
             let enters_tapped = permanent_enters_battlefield_tapped(state, object, t.controller);
             state.objects.get_mut(object).tapped = enters_tapped;
@@ -1005,9 +1036,28 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
             lifelink_gains.push((damage.source, player, amount));
         }
     }
-    for e in survivors {
-        commit(state, e);
+    if cfg!(feature = "limited-fdn-fixtures") {
+        let ability_removals = survivors
+            .iter()
+            .map(|event| match event {
+                ProposedEvent::ZoneChange(change) => {
+                    !crate::continuous_characteristics_v1::printed_abilities_active(
+                        state,
+                        change.object,
+                    )
+                }
+                _ => false,
+            })
+            .collect::<Vec<_>>();
+        for (event, removed) in survivors.into_iter().zip(ability_removals) {
+            commit_with_ability_lki(state, event, Some(removed));
+        }
+    } else {
+        for event in survivors {
+            commit(state, event);
+        }
     }
+
     for (_, player, amount) in lifelink_gains {
         commit(state, ProposedEvent::life_gain(player, amount));
     }
@@ -1304,6 +1354,10 @@ fn commit_zone_change(
         }
     }
     if to_zone == Zone::Battlefield {
+        if cfg!(feature = "limited-fdn-fixtures") {
+            let timestamp = crate::engine::next_timestamp(state);
+            state.objects.get_mut(id).v4.layer_timestamp = Some(timestamp);
+        }
         let kicked = from_zone == Zone::Stack && state.engine.pending_kicked_source == Some(id);
         initialize_entry_counters(state, id, kicked);
     }

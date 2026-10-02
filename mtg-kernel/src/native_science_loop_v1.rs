@@ -604,7 +604,8 @@ fn run_native_science_loop_with_opponents_v1(
         | NativeRunCatalogProfileV1::FdnLuminousRebuke
         | NativeRunCatalogProfileV1::FdnUnchartedVoyage
         | NativeRunCatalogProfileV1::FdnSylvanScavenging
-        | NativeRunCatalogProfileV1::FdnCelestialArmor => {}
+        | NativeRunCatalogProfileV1::FdnCelestialArmor
+        | NativeRunCatalogProfileV1::FdnWitnessProtection => {}
     }
 
     if ladder_opponent.is_some() && population_opponent.is_some() {
