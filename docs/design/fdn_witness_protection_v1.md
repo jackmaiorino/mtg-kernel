@@ -25,7 +25,7 @@ Acceptance tests map scenarios to behavior:
 | Counters, pumps and Equipment | Base becomes 1/1 while later-layer bonuses remain |
 | Armor before/after Witness | Older flying/protection disappear; later grants survive |
 | Printed mana, activated, static and triggered abilities | Remove legal activations, mana payment sources, lord boosts, ward and future triggers |
-| Guarded Heir dies | No Knight trigger when its abilities were removed before leaving |
+| Clockwork Percussionist dies | No impulse-draw trigger when its abilities were removed before leaving |
 | Already announced ability | Resolve despite subsequent ability removal |
 | Aura/host leaves or returns | Restore printed characteristics; never follow an old incarnation |
 | Two different legends renamed | Present the normal same-name legend choice |

@@ -130,7 +130,12 @@ fn definition_cost_and_creature_aura_admission() {
 fn exact_blue_cost_is_required() {
     for (blue, generic, legal) in [(0, 1, false), (1, 0, true)] {
         let mut state = ready();
-        put(&mut state, PlayerId::P1, "Snarespinner", Zone::Battlefield);
+        put(
+            &mut state,
+            PlayerId::P1,
+            "Treetop Snarespinner",
+            Zone::Battlefield,
+        );
         let aura = put(&mut state, PlayerId::P0, "Witness Protection", Zone::Hand);
         state.players[0].mana_pool[1] = blue;
         state.players[0].mana_pool[5] = generic;
@@ -144,7 +149,12 @@ fn exact_blue_cost_is_required() {
 fn a_noncreature_is_not_a_legal_target() {
     let mut state = ready();
     let land = put(&mut state, PlayerId::P0, "Island", Zone::Battlefield);
-    let creature = put(&mut state, PlayerId::P1, "Snarespinner", Zone::Battlefield);
+    let creature = put(
+        &mut state,
+        PlayerId::P1,
+        "Treetop Snarespinner",
+        Zone::Battlefield,
+    );
     let aura = put(&mut state, PlayerId::P0, "Witness Protection", Zone::Hand);
     state.players[0].mana_pool[1] = 1;
     next(&mut state);
@@ -239,7 +249,12 @@ fn counters_and_later_pumps_modify_the_new_base() {
 #[test]
 fn older_temporary_flying_is_removed_but_power_bonus_remains() {
     let mut state = ready();
-    let creature = put(&mut state, PlayerId::P0, "Snarespinner", Zone::Battlefield);
+    let creature = put(
+        &mut state,
+        PlayerId::P0,
+        "Treetop Snarespinner",
+        Zone::Battlefield,
+    );
     announce(&mut state, "Fleeting Flight", creature);
     finish(&mut state);
     witness(&mut state, creature);
@@ -254,7 +269,12 @@ fn older_temporary_flying_is_removed_but_power_bonus_remains() {
 #[test]
 fn older_armor_loses_flying_and_temporary_abilities_but_keeps_plus_two_power() {
     let mut state = ready();
-    let creature = put(&mut state, PlayerId::P0, "Snarespinner", Zone::Battlefield);
+    let creature = put(
+        &mut state,
+        PlayerId::P0,
+        "Treetop Snarespinner",
+        Zone::Battlefield,
+    );
     armor(&mut state, creature);
     witness(&mut state, creature);
     for keyword in [
@@ -277,7 +297,12 @@ fn older_armor_loses_flying_and_temporary_abilities_but_keeps_plus_two_power() {
 #[test]
 fn later_armor_grants_flying_hexproof_and_indestructible() {
     let mut state = ready();
-    let creature = put(&mut state, PlayerId::P0, "Snarespinner", Zone::Battlefield);
+    let creature = put(
+        &mut state,
+        PlayerId::P0,
+        "Treetop Snarespinner",
+        Zone::Battlefield,
+    );
     witness(&mut state, creature);
     armor(&mut state, creature);
     for keyword in [
@@ -365,7 +390,12 @@ fn removed_gnarlid_static_ability_stops_granting_trample() {
         "Gnarlid Colony",
         Zone::Battlefield,
     );
-    let creature = put(&mut state, PlayerId::P0, "Snarespinner", Zone::Battlefield);
+    let creature = put(
+        &mut state,
+        PlayerId::P0,
+        "Treetop Snarespinner",
+        Zone::Battlefield,
+    );
     state.objects.get_mut(creature).counters.plus1_plus1 = 1;
     assert!(engine::has_effective_keyword(
         &state,
@@ -381,9 +411,14 @@ fn removed_gnarlid_static_ability_stops_granting_trample() {
 }
 
 #[test]
-fn guarded_heir_has_no_death_trigger_after_ability_removal() {
+fn percussionist_has_no_death_trigger_after_ability_removal() {
     let mut state = ready();
-    let creature = put(&mut state, PlayerId::P0, "Guarded Heir", Zone::Battlefield);
+    let creature = put(
+        &mut state,
+        PlayerId::P0,
+        "Clockwork Percussionist",
+        Zone::Battlefield,
+    );
     witness(&mut state, creature);
     event::propose_and_commit(
         &mut state,
@@ -397,7 +432,12 @@ fn guarded_heir_has_no_death_trigger_after_ability_removal() {
 #[test]
 fn simultaneous_aura_then_creature_departure_uses_pre_move_ability_state() {
     let mut state = ready();
-    let creature = put(&mut state, PlayerId::P0, "Guarded Heir", Zone::Battlefield);
+    let creature = put(
+        &mut state,
+        PlayerId::P0,
+        "Clockwork Percussionist",
+        Zone::Battlefield,
+    );
     let aura = witness(&mut state, creature);
     event::propose_and_commit_batch(
         &mut state,
@@ -413,20 +453,28 @@ fn simultaneous_aura_then_creature_departure_uses_pre_move_ability_state() {
 #[test]
 fn aura_removal_restores_printed_abilities_and_characteristics() {
     let mut state = ready();
-    let creature = put(&mut state, PlayerId::P0, "Snarespinner", Zone::Battlefield);
+    let creature = put(
+        &mut state,
+        PlayerId::P0,
+        "Treetop Snarespinner",
+        Zone::Battlefield,
+    );
     let aura = witness(&mut state, creature);
     event::propose_and_commit(
         &mut state,
         ProposedEvent::zone_change(aura, Zone::Graveyard),
     );
     checkpoint(&mut state);
-    assert_eq!(engine::effective_name(&state, creature), "Snarespinner");
+    assert_eq!(
+        engine::effective_name(&state, creature),
+        "Treetop Snarespinner"
+    );
     assert_eq!(
         (
             engine::effective_power(&state, creature),
             engine::effective_toughness(&state, creature)
         ),
-        (1, 3)
+        (1, 4)
     );
     assert!(engine::has_effective_keyword(
         &state,
@@ -438,7 +486,12 @@ fn aura_removal_restores_printed_abilities_and_characteristics() {
 #[test]
 fn host_reentry_is_a_new_unenchanted_incarnation() {
     let mut state = ready();
-    let creature = put(&mut state, PlayerId::P0, "Snarespinner", Zone::Battlefield);
+    let creature = put(
+        &mut state,
+        PlayerId::P0,
+        "Treetop Snarespinner",
+        Zone::Battlefield,
+    );
     let aura = witness(&mut state, creature);
     event::propose_and_commit(&mut state, ProposedEvent::zone_change(creature, Zone::Hand));
     event::propose_and_commit(
@@ -458,7 +511,12 @@ fn host_reentry_is_a_new_unenchanted_incarnation() {
 #[test]
 fn pending_targeting_restores_and_replays_identically() {
     let mut state = ready();
-    let creature = put(&mut state, PlayerId::P1, "Snarespinner", Zone::Battlefield);
+    let creature = put(
+        &mut state,
+        PlayerId::P1,
+        "Treetop Snarespinner",
+        Zone::Battlefield,
+    );
     let aura = put(&mut state, PlayerId::P0, "Witness Protection", Zone::Hand);
     state.players[0].mana_pool[1] = 1;
     next(&mut state);
@@ -586,9 +644,14 @@ fn transformed_koma_does_not_trigger_ward_for_the_next_opponent_spell() {
 }
 
 #[test]
-fn removing_witness_before_heir_dies_restores_its_death_trigger() {
+fn removing_witness_before_percussionist_dies_restores_its_death_trigger() {
     let mut state = ready();
-    let heir = put(&mut state, PlayerId::P0, "Guarded Heir", Zone::Battlefield);
+    let heir = put(
+        &mut state,
+        PlayerId::P0,
+        "Clockwork Percussionist",
+        Zone::Battlefield,
+    );
     let aura = witness(&mut state, heir);
     event::propose_and_commit(
         &mut state,
@@ -602,11 +665,8 @@ fn removing_witness_before_heir_dies_restores_its_death_trigger() {
     checkpoint(&mut state);
     assert_eq!(state.engine.pending_triggers.len(), 1);
     finish(&mut state);
-    assert_eq!(state.players[0].battlefield.len(), 1);
-    assert_eq!(
-        engine::effective_name(&state, state.players[0].battlefield[0]),
-        "Knight Token"
-    );
+    assert!(state.players[0].battlefield.is_empty());
+    assert_eq!(state.players[0].exile.len(), 1);
 }
 
 fn equip(state: &mut GameState, equipment: ObjectId, target: ObjectId) {
@@ -621,7 +681,12 @@ fn equip(state: &mut GameState, equipment: ObjectId, target: ObjectId) {
 #[test]
 fn moving_older_armor_to_a_transformed_host_acquires_a_later_timestamp() {
     let mut state = ready();
-    let first = put(&mut state, PlayerId::P0, "Snarespinner", Zone::Battlefield);
+    let first = put(
+        &mut state,
+        PlayerId::P0,
+        "Treetop Snarespinner",
+        Zone::Battlefield,
+    );
     let second = put(
         &mut state,
         PlayerId::P0,
@@ -654,7 +719,12 @@ fn moving_older_armor_to_a_transformed_host_acquires_a_later_timestamp() {
 #[test]
 fn equipping_the_same_host_does_not_refresh_an_older_armor_timestamp() {
     let mut state = ready();
-    let creature = put(&mut state, PlayerId::P0, "Snarespinner", Zone::Battlefield);
+    let creature = put(
+        &mut state,
+        PlayerId::P0,
+        "Treetop Snarespinner",
+        Zone::Battlefield,
+    );
     let equipment = armor(&mut state, creature);
     witness(&mut state, creature);
     let before = state.objects.get(equipment).v4.layer_timestamp;
@@ -670,7 +740,12 @@ fn equipping_the_same_host_does_not_refresh_an_older_armor_timestamp() {
 #[test]
 fn lifelink_keyword_counters_remain_but_follow_layer_six_ordering() {
     let mut state = ready();
-    let creature = put(&mut state, PlayerId::P0, "Snarespinner", Zone::Battlefield);
+    let creature = put(
+        &mut state,
+        PlayerId::P0,
+        "Treetop Snarespinner",
+        Zone::Battlefield,
+    );
     announce(&mut state, "Unexpected Fangs", creature);
     finish(&mut state);
     assert!(engine::has_effective_keyword(
