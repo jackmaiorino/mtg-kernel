@@ -4978,7 +4978,8 @@ pub(crate) fn test_fixture_bytes_fdn_koma_creature_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_koma_creature()
 }
 
-#[cfg(all(test, windows, feature = "native-training-store-v2-production"))]
+#[cfg(all(test, feature = "limited-fdn-fixtures"))]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn test_fixture_bytes_fdn_kiora_creature_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_kiora_creature()
 }
