@@ -40,3 +40,9 @@ Clippy pass. Six additional response/source-incarnation cases include
 hexproof invalidating an opponent's already-announced damage spell. Its
 correct damage expectation is zero because the only target becomes illegal.
 All ten strict XMage reference cases pass. Expanded validation is pending.
+
+All twenty expanded rules cases now pass. Prior gameplay, default/Limited
+compatibility and both all-target lint builds pass. The unchanged WG deck
+completes two identical natural external games with Armor casting and
+matching transcript hashes. Release production boundaries and CI remain
+pending; that feature requires release mode. See the validation report.
