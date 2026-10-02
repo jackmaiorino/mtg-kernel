@@ -666,7 +666,14 @@ fn removing_witness_before_percussionist_dies_restores_its_death_trigger() {
     assert_eq!(state.engine.pending_triggers.len(), 1);
     finish(&mut state);
     assert!(state.players[0].battlefield.is_empty());
-    assert_eq!(state.players[0].exile.len(), 1);
+    assert_eq!(
+        state
+            .objects
+            .iter()
+            .filter(|(_, object)| object.zone == Zone::Exile && object.owner == PlayerId::P0)
+            .count(),
+        1
+    );
 }
 
 fn equip(state: &mut GameState, equipment: ObjectId, target: ObjectId) {
