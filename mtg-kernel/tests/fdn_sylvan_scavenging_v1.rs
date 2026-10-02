@@ -580,8 +580,15 @@ fn unselected_modal_root_cannot_be_restored_onto_the_stack() {
     choose_token(&mut state);
     state.stack[0].inline_effect = Some(root);
     let mut copy = restored(&state);
-    assert!(matches!(
-        engine::advance_until_decision(&mut copy),
-        Decision::Halted { .. }
-    ));
+    for _ in 0..4 {
+        let decision = engine::advance_until_decision(&mut copy);
+        if matches!(decision, Decision::Halted { .. }) {
+            return;
+        }
+        // Stack provenance is checked when the item resolves, after the
+        // normal response window. It may never yield a resolution-time mode.
+        assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+        engine::step(&mut copy, Action::Pass).unwrap();
+    }
+    panic!("unselected modal root reached resolution without rejection");
 }
