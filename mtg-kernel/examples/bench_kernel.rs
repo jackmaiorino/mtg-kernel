@@ -282,6 +282,9 @@ fn random_action_for_decision(
         Decision::ChooseSpellMode { legal_modes, .. } => {
             Action::ChooseSpellMode(legal_modes[rng_below(rng, legal_modes.len())])
         }
+        Decision::ChooseTriggerMode { legal_modes, .. } => {
+            Action::ChooseTriggerMode(legal_modes[rng_below(rng, legal_modes.len())])
+        }
         Decision::ChooseEffectOption { option_count, .. } => {
             Action::ChooseEffectOption(rng_below(rng, *option_count as usize) as u16)
         }
