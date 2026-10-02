@@ -24,10 +24,11 @@ cannot inherit an old counter.
 | Generated identity | FDN v44 `cc304ceaf678738f`, 200 definitions. Default Pauper v32 and all earlier frozen profile literals remain unchanged in source. |
 | Python | All 20 deck/client cases passed on Python 3.11. |
 | XMage | All 12 strict-choice cases passed in `fdn-mage-prowler-001`; [Mage PR #9](https://github.com/jackmaiorino/mage/pull/9) records reference boundaries and hashes. |
-| Catalog, sessions, regressions and lint | Checks-004 is running. Earlier compile failures exposed a missing consumer match arm and overly narrow historical-fixture test configuration; both are corrected. |
+| Catalog | Checks-004 phases 2 and 3 passed: 46 definition checks, 138 native-record checks and 3 existing ignores. Earlier compile failures exposed a missing consumer match arm and overly narrow historical-fixture test configuration; both are corrected. |
+| Sessions, regressions and lint | Checks-004 remaining phases are running. |
 | Production mutation boundaries | Pending release verification, including prior-v43 publication/resume refusal and current-profile round trip. |
 | External natural-terminal replay | Pending Prowler interface build and cold binary preservation. |
-| Hosted CI | Pending PR dispatch. |
+| Hosted CI | Draft PR dispatch; no green claim. |
 
 Kernel functional source is local `6abb312d`, remote `bf4f45f` in the owned
 `C:/Users/haley/mtg-kernel-fdn-prowler-codex` worktree. Rust/Cargo 1.94.1,
