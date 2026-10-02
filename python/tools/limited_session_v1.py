@@ -33,12 +33,14 @@ def _uint(value: Any, field: str) -> int:
 
 
 class LimitedClientV1:
-    def __init__(self, command: Sequence[str], *, timeout_s: float = 10.0) -> None:
+    def __init__(self, command: Sequence[str], *, timeout_s: float = 10.0,
+                 engine_priority: bool = False) -> None:
         if timeout_s <= 0:
             raise ValueError("timeout_s must be positive")
         self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE)
         self.timeout_s = timeout_s
+        self.schema_version = 2 if engine_priority else 1
         self.lines: queue.Queue[bytes | None] = queue.Queue()
         self.stderr: deque[bytes] = deque(maxlen=20)
         self.next_request = 0
@@ -66,7 +68,7 @@ class LimitedClientV1:
     def exchange(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self.closed:
             raise LimitedSessionError("client is closed")
-        request = {**payload, "schema_version": 1, "request_id": str(self.next_request)}
+        request = {**payload, "schema_version": self.schema_version, "request_id": str(self.next_request)}
         self.next_request += 1
         raw = (json.dumps(request, ensure_ascii=False, separators=(",", ":"), allow_nan=False) + "\n").encode("utf-8")
         if len(raw) > MAX_LINE_BYTES:
@@ -81,8 +83,12 @@ class LimitedClientV1:
             if len(line) > MAX_LINE_BYTES:
                 raise LimitedSessionError("engine response exceeds the line-size limit")
             reply = load_json(line)
-            if reply.get("protocol") != "kernel_limited_jsonl" or type(reply.get("schema_version")) is not int or reply["schema_version"] != 1:
+            if reply.get("protocol") != "kernel_limited_jsonl" or type(reply.get("schema_version")) is not int or reply["schema_version"] != self.schema_version:
                 raise LimitedSessionError("unexpected Limited protocol identity")
+            if self.schema_version == 2 and reply.get("priority_mode") != "engine_windows_v1":
+                raise LimitedSessionError("unexpected Limited priority mode")
+            if self.schema_version == 1 and "priority_mode" in reply:
+                raise LimitedSessionError("unexpected priority mode in schema 1")
             if reply.get("request_id") != request["request_id"]:
                 raise LimitedSessionError("response request_id mismatch")
             _uint(reply.get("card_db_hash"), "card_db_hash")
@@ -165,19 +171,19 @@ class LimitedClientV1:
 
 
 def smoke(command: Sequence[str], decks: tuple[ImportedDeck, ImportedDeck], *, seed: int = 1,
-          max_steps: int = 4096) -> dict[str, Any]:
-    with LimitedClientV1(command) as client:
+          max_steps: int = 4096, engine_priority: bool = False) -> dict[str, Any]:
+    with LimitedClientV1(command, engine_priority=engine_priority) as client:
         reply = client.reset(decks, env_seed=seed, max_steps=max_steps)
         for _ in range(max_steps):
             if reply["response_type"] == "terminal":
-                return {"schema": "kernel_limited_smoke/v1", "env_seed": seed,
+                return {"schema": f"kernel_limited_smoke/v{client.schema_version}", "env_seed": seed,
                         "transcript_sha256": client.transcript.hexdigest(), "terminal": reply["terminal"]}
             decision = reply["decision"]
             actions = decision["legal_actions"]
             index = next((i for i, action in enumerate(actions) if action.get("semantic", {}).get("action_kind") == "pass"), 0)
             reply = client.step(decision, index)
         if reply["response_type"] == "terminal":
-            return {"schema": "kernel_limited_smoke/v1", "env_seed": seed,
+            return {"schema": f"kernel_limited_smoke/v{client.schema_version}", "env_seed": seed,
                     "transcript_sha256": client.transcript.hexdigest(), "terminal": reply["terminal"]}
         raise LimitedSessionError("smoke exceeded its step bound")
 
@@ -188,12 +194,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--deck", type=Path, action="append", required=True)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--max-steps", type=int, default=4096)
+    parser.add_argument("--engine-priority-v1", action="store_true",
+                        help="opt into schema 2 and expose engine priority windows")
     args = parser.parse_args(argv)
     try:
         if len(args.deck) != 2 or args.max_steps < 1 or not 0 <= args.seed <= 18_446_744_073_709_551_615:
             raise ValueError("provide two --deck paths, a u64 seed and a positive step bound")
         decks = tuple(parse_dck(path.read_text(encoding="utf-8-sig")) for path in args.deck)
-        result = smoke([str(args.binary.resolve())], decks, seed=args.seed, max_steps=args.max_steps)
+        command = [str(args.binary.resolve())]
+        if args.engine_priority_v1:
+            command.append("--engine-priority-v1")
+        result = smoke(command, decks, seed=args.seed, max_steps=args.max_steps,
+                       engine_priority=args.engine_priority_v1)
         print(json.dumps(result, sort_keys=True, indent=2))
         return 0 if result["terminal"].get("terminal_classification") == "natural" else 2
     except (OSError, ValueError, LimitedSessionError) as exc:

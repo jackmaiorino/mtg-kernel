@@ -2,13 +2,22 @@ use mtg_kernel::limited_session_v1::{LimitedJsonlServerV1, MAX_LIMITED_LINE_BYTE
 use std::io::{self, BufRead, Read, Write};
 
 fn main() -> io::Result<()> {
-    if std::env::args_os().len() != 1 {
-        eprintln!("usage: kernel_limited_env");
-        std::process::exit(2);
-    }
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    let engine_priority = match args.as_slice() {
+        [] => false,
+        [flag] if flag == "--engine-priority-v1" => true,
+        _ => {
+            eprintln!("usage: kernel_limited_env [--engine-priority-v1]");
+            std::process::exit(2);
+        }
+    };
     let mut input = io::stdin().lock();
     let mut output = io::stdout().lock();
-    let mut server = LimitedJsonlServerV1::new();
+    let mut server = if engine_priority {
+        LimitedJsonlServerV1::new_with_engine_priority_v1()
+    } else {
+        LimitedJsonlServerV1::new()
+    };
     loop {
         let mut line = Vec::new();
         let read = input

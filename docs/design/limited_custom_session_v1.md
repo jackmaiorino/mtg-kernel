@@ -4,6 +4,8 @@ Issue 110, implementation milestone 2. `kernel_limited_env` is a separate
 JSONL binary. It resolves exact card names against its compiled registry and
 uses the existing policy V5 session core. The catalog-only V5/V6 interface
 in `kernel_rl_env` retains its existing request schemas and deck resolution.
+The default schema-1 process retains this behavior. The separate opt-in
+schema-2 priority mode is documented in `limited_priority_windows_v1.md`.
 
 ## Request and response
 

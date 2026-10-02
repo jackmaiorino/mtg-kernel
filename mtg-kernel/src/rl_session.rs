@@ -4483,6 +4483,7 @@ impl RlEpisodeSessionV1 {
         max_policy_steps: u64,
         deck_ids: SessionDeckIdsV1,
         card_ids: [&[u16]; 2],
+        priority_mode: crate::surface_v2::PriorityModeV1,
     ) -> Result<Self, RlSessionError> {
         let state = build_deck_pair_state(env_seed, card_ids[0], card_ids[1]).map_err(|error| {
             session_error(RlSessionErrorCode::UnsupportedDeck, &error.to_string())
@@ -4496,7 +4497,10 @@ impl RlEpisodeSessionV1 {
             max_physical_decisions,
             max_policy_steps,
             state,
-            surface: PolicySurfaceV5::new_for_session(),
+            surface: PolicySurfaceV5::new_with_priority_mode_v1(
+                priority_mode,
+                SuppressionAuditMode::Off,
+            ),
             environment_revision: 0,
             policy_step_count: 0,
             physical_decision_count: 0,

@@ -22,6 +22,13 @@ for line in sys.stdin:
         time.sleep(10)
     reply = {"protocol":"kernel_limited_jsonl", "schema_version":1,
              "request_id":request["request_id"], "card_db_hash":1, "kernel_version":"test"}
+    if mode.startswith("engine-priority"):
+        reply["schema_version"] = 2
+        reply["priority_mode"] = "engine_windows_v1"
+        if mode == "engine-priority-wrong":
+            reply["priority_mode"] = "harness_v2"
+        elif request["schema_version"] != 2:
+            raise RuntimeError("schema-2 request required")
     if request["request_type"] == "reset":
         if request["decks"][1]["cards"][0]["name"] == "Missing":
             reply.update(response_type="error", error={"code":"unsupported_deck","message":"seat 1"})
@@ -89,6 +96,19 @@ class LimitedClientTest(unittest.TestCase):
                     client.step(active["decision"], index)
             self.assertEqual(client.next_request, 1)
             self.assertEqual(client.step(active["decision"], 0)["response_type"], "terminal")
+
+    def test_engine_priority_requires_explicit_schema_and_mode(self) -> None:
+        first = smoke(self.command("engine-priority"), self.decks, engine_priority=True)
+        second = smoke(self.command("engine-priority"), self.decks, engine_priority=True)
+        self.assertEqual(first, second)
+        self.assertEqual(first["schema"], "kernel_limited_smoke/v2")
+        for mode, enabled in (("normal", True), ("engine-priority-wrong", True),
+                              ("engine-priority", False)):
+            with self.subTest(mode=mode, enabled=enabled):
+                with LimitedClientV1(self.command(mode), engine_priority=enabled) as client:
+                    with self.assertRaises(LimitedSessionError):
+                        client.reset(self.decks)
+                    self.assertTrue(client.closed)
 
 
 if __name__ == "__main__":

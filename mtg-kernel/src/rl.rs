@@ -726,6 +726,8 @@ pub struct PrivateOptionalCostContextV2 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct HarnessSurfaceContextV2 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine_priority_version: Option<u32>,
     pub current_stage: SurfaceDecisionStageV2,
     pub combat_priority_spent: [bool; 2],
     pub combat_priority_rearmed_by_stack_activity: bool,
@@ -6570,6 +6572,7 @@ fn surface_context_v2(
     };
 
     Ok(HarnessSurfaceContextV2 {
+        engine_priority_version: raw.engine_priority_version,
         current_stage,
         combat_priority_spent: raw.combat_priority_spent,
         combat_priority_rearmed_by_stack_activity: state.stack.len()
