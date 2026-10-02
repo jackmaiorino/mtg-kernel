@@ -338,7 +338,7 @@ fn equip_requires_four_mana_including_white_and_sorcery_timing() {
             "Celestial Armor",
             Zone::Battlefield,
         );
-        let target = put(&mut state, PlayerId::P0, "Elvish Mystic", Zone::Battlefield);
+        let target = put(&mut state, PlayerId::P0, "Guttersnipe", Zone::Battlefield);
         mana(&mut state, white, generic);
         let decision = next(&mut state);
         assert!(

@@ -17,11 +17,11 @@ statistics omitted. The two deck files are unchanged copies.
 The 286 reference names are an observed gameplay dataset, not a complete
 booster manifest. The inventory tool adds all five basic lands and any
 additional fixture cards. After fixture batches A and B and the combat and
-legend-rule, targeted-spell, counter-creature, life-gain, draw, Horde, Koma, Kiora, Prowler, Rebuke, Voyage and Scavenging slices,
-41 reference names have full registry support, one reference planeswalker
-is partial and 244 remain missing. UG resolves 38/40 mainboard copies and
-WG resolves 39/40. The original fixtures still
-need 2 fully supported card names. Dwynen now includes its Elf bonuses, attack
+legend-rule, targeted-spell, counter-creature, life-gain, draw, Horde, Koma, Kiora, Prowler, Rebuke, Voyage, Scavenging and Armor slices,
+42 reference names have full registry support, one reference planeswalker
+is partial and 243 remain missing. UG resolves 38/40 mainboard copies and
+WG resolves 40/40. The original fixtures still
+need Witness Protection. Dwynen now includes its Elf bonuses, attack
 trigger and a real resumable legend-rule choice.
 Printed collector numbers are not a safe
 filter for draft availability: these real decks also use alternate printings.
@@ -32,9 +32,9 @@ unchanged 162-definition Pauper registry. The importer combines both files in
 that order and reports their separate SHA-256s. Build the gameplay binary with
 `cargo build --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_env`.
 Default builds retain the original Pauper catalog and its v32 identity; the
-Limited feature selects the appended definitions and their v47 identity.
+Limited feature selects the appended definitions and their v48 identity.
 The older v33 batch A, v34 batch B, v35 combat, v36 legend, v37 targeted-spell,
-v38 counter, v39 life-gain, v40 draw, v41 Horde, v42 Koma, v43 Kiora, v44 Prowler v45 Rebuke and v46 Voyage profiles remain readable and are
+v38 counter, v39 life-gain, v40 draw, v41 Horde, v42 Koma, v43 Kiora, v44 Prowler v45 Rebuke, v46 Voyage and v47 Scavenging profiles remain readable and are
 rejected for mutation
 when they do not match the actual build.
 

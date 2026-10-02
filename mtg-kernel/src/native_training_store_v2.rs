@@ -690,7 +690,8 @@ fn publish_generation_v2(
         | NativeRunCatalogProfileV1::FdnProwlerCreature
         | NativeRunCatalogProfileV1::FdnLuminousRebuke
         | NativeRunCatalogProfileV1::FdnUnchartedVoyage
-        | NativeRunCatalogProfileV1::FdnSylvanScavenging => {
+        | NativeRunCatalogProfileV1::FdnSylvanScavenging
+        | NativeRunCatalogProfileV1::FdnCelestialArmor => {
             if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
                 return Err(publisher_error_v2(
                     NativeTrainingStorePublisherV2ErrorKind::CurrentCatalogProfileLiveMismatch,
@@ -2045,7 +2046,7 @@ mod windows_publisher_tests {
         assert_eq!(
             run.catalog_profile_v1(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnSylvanScavenging
+                NativeRunCatalogProfileV1::FdnCelestialArmor
             } else {
                 NativeRunCatalogProfileV1::Current
             }
@@ -2416,6 +2417,29 @@ mod windows_publisher_tests {
         assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Latest).exists());
     }
 
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn publish_rejects_prior_fdn_batch_sylvan_scavenging_before_mutating_any_store_files() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_sylvan_scavenging_v1;
+        let store = TestStoreV2::with_skeleton("prior-fdn-sylvan-scavenging");
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_sylvan_scavenging_v1()).unwrap();
+        assert_eq!(
+            run.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnSylvanScavenging
+        );
+        let live = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        let executor = fresh_executor_v2(&live);
+        let genesis = genesis_authorities_v2(&live, &executor);
+        let result = publish_genesis_v2(&root, &run, &genesis);
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStorePublisherV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+        assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Run).exists());
+        assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Latest).exists());
+    }
+
     /// Construct, publish, reread and validate the selected live catalog profile.
     #[test]
     fn fdn_profile_record_round_trips_through_construct_seal_decode_validate() {
@@ -2427,7 +2451,7 @@ mod windows_publisher_tests {
         assert_eq!(
             run.catalog_profile_v1(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnSylvanScavenging
+                NativeRunCatalogProfileV1::FdnCelestialArmor
             } else {
                 NativeRunCatalogProfileV1::Current
             }
@@ -2445,7 +2469,7 @@ mod windows_publisher_tests {
         assert_eq!(
             redecoded.catalog_profile_v1(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnSylvanScavenging
+                NativeRunCatalogProfileV1::FdnCelestialArmor
             } else {
                 NativeRunCatalogProfileV1::Current
             }

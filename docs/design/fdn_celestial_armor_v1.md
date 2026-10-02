@@ -23,7 +23,13 @@ during trigger targets and equip targets. Preserve default v32 and catalog
 history, then check strict XMage cases, affected regressions, external natural
 completion/replay and hosted CI.
 
-Armor appends at ID 204 under FDN v48. The original fixture bytes remain
-unchanged. A fully supported WG deck is the coverage target for this slice;
+Armor appends at ID 204 under FDN v48, `8664e1fd25362caa`. The original fixture bytes remain
+unchanged. WG now resolves all forty original copies;
 UG still needs Witness Protection. London mulligans remain required by the
 overall fixture gameplay goal. This is bounded rules engineering.
+
+First check: thirteen rules cases pass; one equip affordability fixture
+incorrectly included a mana-producing creature. Its missing generic mana
+was payable from that creature. Use a creature without a mana ability for
+the affordability rejection cases. Validation of the corrected cases and
+new catalog profile is pending.
