@@ -136,7 +136,7 @@ fn printed_and_copy_definitions_preserve_all_copiable_characteristics() {
         assert_eq!(def.mana_value, 4);
         assert_eq!(def.colors, &[ManaColor::U]);
         assert_eq!(def.subtypes, &[Subtype::Homunculus]);
-        assert_eq!(def.keywords.0, Keywords::empty().0);
+        assert_eq!(def.keywords.0, Keywords::NONE.0);
     }
     assert_eq!(original.mana_cost, token.mana_cost);
     assert_eq!(original.types, token.types);
