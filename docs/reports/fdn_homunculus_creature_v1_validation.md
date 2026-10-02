@@ -1,5 +1,11 @@
 # FDN Homunculus Horde validation
 
+Hosted CI at `e35f4754aff84724b69db2a73a98dab81f6d6ffe` passed all eight checks: Rust on
+Ubuntu and Windows, all four Python shards, formatting/lint and path detection.
+Run: https://github.com/jackmaiorino/mtg-kernel/actions/runs/36985482516. Earlier pending entries below record the original
+verification sequence. The subsequent status/report update changes no tested
+code, workflow, fixture or catalog bytes.
+
 Homunculus Horde and its token copy are implemented at `d3e09847`, with
 test corrections at `90a8f1cd` and `9b75805b` and v41 compatibility at
 `288fce15`. The card batch was checked on matching HaleysPC commit
