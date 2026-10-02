@@ -1,5 +1,11 @@
 # FDN Koma implementation and verification
 
+Hosted CI at `c19bd3544f6bcb2f306ce70577881bcd64725b3d` passed all eight checks: Rust on
+Ubuntu and Windows, all four Python shards, formatting/lint and path detection.
+Run: https://github.com/jackmaiorino/mtg-kernel/actions/runs/36991952282. Earlier pending entries below record the original
+verification sequence. The subsequent status/report update changes no tested
+code, workflow, fixture or catalog bytes.
+
 Koma, World-Eater and Koma's Coil are implemented in the opt-in FDN
 catalog. All thirteen focused gameplay checks, production boundaries and the bounded external replay pass; hosted CI remains pending. This batch follows
 [Horde PR #130](https://github.com/jackmaiorino/mtg-kernel/pull/130) and keeps
