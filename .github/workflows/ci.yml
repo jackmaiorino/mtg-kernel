@@ -156,7 +156,7 @@ jobs:
           cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib london_session_snapshot_restores
 
       - name: Run Rust release tests
-        run: cargo test --release --locked --workspace --all-targets
+        run: python python/tools/run_rust_workspace_tests.py
 
       - name: Validate native Store production feature boundary
         run: |
