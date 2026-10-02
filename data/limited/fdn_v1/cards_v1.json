@@ -1189,6 +1189,34 @@
         "destroy_creature"
       ],
       "java_file": "Mage.Sets/src/mage/cards/l/LuminousRebuke.java"
+    },
+    {
+      "name": "Uncharted Voyage",
+      "engine_capability": "full",
+      "mana_cost": "{3}{U}",
+      "mana_value": 4,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_top_04956_UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "owner_library_top_or_bottom",
+        "surveil_one"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/u/UnchartedVoyage.java"
     }
   ]
 }

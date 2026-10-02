@@ -5875,6 +5875,7 @@ fn pending_effect_semantic_v4(
                                 ..
                             }
                             | crate::effect::EffectTargetSelectionPurpose::ScryLibrary { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryOne { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand {
                                 ..
                             }
@@ -5945,7 +5946,8 @@ fn pending_effect_semantic_v4(
                         },
                         ordered: *ordered,
                         purpose: match purpose {
-                            crate::effect::EffectTargetSelectionPurpose::OrderIntoGraveyard {
+                            crate::effect::EffectTargetSelectionPurpose::SurveilLibraryOne { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::OrderIntoGraveyard {
                                 ..
                             }
                             | crate::effect::EffectTargetSelectionPurpose::OrderMilledIntoGraveyard => {

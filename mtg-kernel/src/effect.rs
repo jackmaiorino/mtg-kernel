@@ -887,6 +887,14 @@ pub enum EffectOp {
         aura: EffectObjectBinding,
         host: EffectObjectBinding,
     },
+    /// Uncharted Voyage's owner-selected top-or-bottom move.
+    PutObjectInOwnersLibraryTopOrBottom {
+        object: ObjectRef,
+    },
+    /// Privately inspect one top card, then keep it or move it to the graveyard.
+    SurveilOne {
+        player: PlayerRef,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -1163,6 +1171,13 @@ pub enum EffectFrame {
         canonical_path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
     },
+    SurveilLibraryOne {
+        player: PlayerId,
+        original_library: Vec<EffectObjectBinding>,
+        put_in_graveyard: bool,
+        path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -1378,6 +1393,12 @@ pub enum EffectTargetSelectionPurpose {
         original_candidates: Vec<EffectObjectBinding>,
         canonical_path: Vec<u16>,
     },
+    SurveilLibraryOne {
+        player: PlayerId,
+        original_library: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1471,6 +1492,12 @@ pub enum EffectOptionChoicePurpose {
         binding: InitiativeTriggerBindingV1,
         from_room: Option<UndercityRoomV1>,
         legal_rooms: Vec<UndercityRoomV1>,
+        canonical_path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
+    OwnerLibraryTopOrBottom {
+        object: EffectObjectBinding,
+        owner: PlayerId,
         canonical_path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
     },
@@ -1578,6 +1605,9 @@ pub enum EffectAnsweredChoiceGuard {
         host: EffectObjectBinding,
         canonical_path: Vec<u16>,
         remaining_frames: Vec<EffectFrame>,
+    },
+    SurveilLibraryOne {
+        frame: Box<EffectFrame>,
     },
 }
 
@@ -1753,6 +1783,8 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::SearchLibraryToHandUpTo { .. }
         | EffectOp::UntapUpToLands { .. }
         | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. }
+        | EffectOp::PutObjectInOwnersLibraryTopOrBottom { .. }
+        | EffectOp::SurveilOne { .. }
         | EffectOp::CounterUnlessPaysGeneric { .. }
         | EffectOp::CounterTargetUnlessPaysGeneric { .. }
         | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
@@ -1850,6 +1882,12 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
                         .push(EffectFrame::Program { op: selected, path });
                 }
                 EffectOptionChoicePurpose::OwnerLibrarySecondOrBottom {
+                    object,
+                    owner,
+                    canonical_path,
+                    expected_remaining_frames,
+                }
+                | EffectOptionChoicePurpose::OwnerLibraryTopOrBottom {
                     object,
                     owner,
                     canonical_path,
@@ -2587,6 +2625,28 @@ fn complete_resumable_target_selection(
                     canonical_path,
                 });
         }
+        EffectTargetSelectionPurpose::SurveilLibraryOne {
+            player,
+            original_library,
+            canonical_path,
+            expected_remaining_frames,
+        } => {
+            if path != canonical_path || objects.len() > 1 {
+                return Err("surveil answer changed its path or cardinality".to_string());
+            }
+            let frame = EffectFrame::SurveilLibraryOne {
+                player,
+                original_library,
+                put_in_graveyard: !objects.is_empty(),
+                path: canonical_path,
+                expected_remaining_frames,
+            };
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::SurveilLibraryOne {
+                    frame: Box::new(frame.clone()),
+                });
+            continuation.frames.push(frame);
+        }
         EffectTargetSelectionPurpose::ScryLibrary {
             player,
             requested_count,
@@ -3006,13 +3066,64 @@ fn validate_effect_target_candidate(
     Ok(())
 }
 
+struct OwnerLibraryRecipe {
+    target_spec: crate::card_def::TargetSpec,
+    first_placement: event::LibraryPlacement,
+    path: Vec<u16>,
+    remainder: Vec<EffectFrame>,
+}
+
+fn owner_library_recipe(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<OwnerLibraryRecipe, String> {
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    match root.as_ref() {
+        EffectOp::PutObjectInOwnersLibrarySecondOrBottom {
+            object: ObjectRef::Target(0),
+        } => Ok(OwnerLibraryRecipe {
+            target_spec: crate::card_def::TargetSpec::NonlandPermanent,
+            first_placement: event::LibraryPlacement::SecondFromTop,
+            path: vec![],
+            remainder: vec![],
+        }),
+        EffectOp::Sequence(ops)
+            if matches!(
+                ops.as_slice(),
+                [
+                    EffectOp::PutObjectInOwnersLibraryTopOrBottom {
+                        object: ObjectRef::Target(0)
+                    },
+                    EffectOp::SurveilOne {
+                        player: PlayerRef::Controller
+                    }
+                ]
+            ) =>
+        {
+            Ok(OwnerLibraryRecipe {
+                target_spec: crate::card_def::TargetSpec::Creature,
+                first_placement: event::LibraryPlacement::Top,
+                path: vec![0],
+                remainder: vec![EffectFrame::Program {
+                    op: EffectOp::SurveilOne {
+                        player: PlayerRef::Controller,
+                    },
+                    path: vec![1],
+                }],
+            })
+        }
+        _ => Err("owner-library choice lost its definition-owned recipe".to_string()),
+    }
+}
+
 fn validate_owner_library_target_binding(
     state: &GameState,
     pending: &EffectContinuation,
     object: EffectObjectBinding,
     owner: PlayerId,
 ) -> Result<(), String> {
-    if pending.resolving_item.v4.target_spec != Some(crate::card_def::TargetSpec::NonlandPermanent)
+    let recipe = owner_library_recipe(state, pending)?;
+    if pending.resolving_item.v4.target_spec != Some(recipe.target_spec)
         || pending.ctx.targets.as_slice() != [Target::Object(object.object)]
     {
         return Err("owner-library choice no longer matches the resolving target".to_string());
@@ -3042,6 +3153,8 @@ fn validate_owner_library_target_binding(
         || live.card_def != *card_def
         || crate::card_def::CARD_DEFS[live.card_def as usize]
             .has_type(crate::card_def::CardType::Land)
+        || (recipe.target_spec == crate::card_def::TargetSpec::Creature
+            && !crate::engine::object_has_type(state, object.object, CardType::Creature))
     {
         return Err("owner-library choice changed its target owner or definition".to_string());
     }
@@ -3079,8 +3192,9 @@ fn validate_owner_library_placement_frame(
     else {
         return Err("owner-library answer guard does not contain its typed frame".to_string());
     };
+    let recipe = owner_library_recipe(state, pending)?;
     let expected_placement = match option_index {
-        0 => event::LibraryPlacement::SecondFromTop,
+        0 => recipe.first_placement,
         1 => event::LibraryPlacement::Bottom,
         _ => return Err("owner-library answered option index is outside 0..2".to_string()),
     };
@@ -3089,11 +3203,69 @@ fn validate_owner_library_placement_frame(
     }
     let mut expected_path = canonical_path.clone();
     expected_path.push(*option_index);
-    if !canonical_path.is_empty() || !expected_remaining_frames.is_empty() || path != &expected_path
+    if canonical_path != &recipe.path
+        || expected_remaining_frames != &recipe.remainder
+        || path != &expected_path
     {
         return Err("owner-library answered option path changed".to_string());
     }
     validate_owner_library_target_binding(state, pending, *object, *owner)
+}
+
+fn validate_surveil_one_metadata(
+    state: &GameState,
+    pending: &EffectContinuation,
+    player: PlayerId,
+    original_library: &[EffectObjectBinding],
+    path: &[u16],
+    expected_remaining_frames: &[EffectFrame],
+) -> Result<(), String> {
+    let recipe = owner_library_recipe(state, pending)?;
+    if recipe.first_placement != event::LibraryPlacement::Top
+        || path != [1]
+        || !expected_remaining_frames.is_empty()
+        || player != pending.ctx.controller
+        || original_library.is_empty()
+        || original_library != bind_library_exact(state, player)
+    {
+        return Err(
+            "surveil choice changed its player, library or printed continuation".to_string(),
+        );
+    }
+    for &binding in original_library {
+        validate_effect_object_binding(state, binding)?;
+        if binding.expected_zone != Zone::Library
+            || state.objects.get(binding.object).owner != player
+        {
+            return Err("surveil choice lost its private library binding".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn validate_surveil_one_frame(
+    state: &GameState,
+    pending: &EffectContinuation,
+    frame: &EffectFrame,
+) -> Result<(), String> {
+    let EffectFrame::SurveilLibraryOne {
+        player,
+        original_library,
+        path,
+        expected_remaining_frames,
+        ..
+    } = frame
+    else {
+        return Err("surveil answer guard changed frame kind".to_string());
+    };
+    validate_surveil_one_metadata(
+        state,
+        pending,
+        *player,
+        original_library,
+        path,
+        expected_remaining_frames,
+    )
 }
 
 fn generic_mana_cost(generic: u8) -> Cost {
@@ -4494,6 +4666,21 @@ fn validate_answered_choice_guard(
             }
             validate_owner_library_placement_frame(state, pending, frame)?;
         }
+        Some(EffectAnsweredChoiceGuard::SurveilLibraryOne { frame }) => {
+            let EffectFrame::SurveilLibraryOne {
+                expected_remaining_frames,
+                ..
+            } = frame.as_ref()
+            else {
+                return Err("surveil answer guard changed frame kind".to_string());
+            };
+            let mut expected = expected_remaining_frames.clone();
+            expected.push((**frame).clone());
+            if pending.choice.is_some() || pending.frames != expected {
+                return Err("surveil answered continuation changed".to_string());
+            }
+            validate_surveil_one_frame(state, pending, frame)?;
+        }
         Some(EffectAnsweredChoiceGuard::CounterUnlessPaysGeneric { frame }) => {
             if pending.choice.is_some() {
                 return Err("answered Ward guard still carries a live choice".to_string());
@@ -4889,6 +5076,43 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     if partition != original {
                         return Err("hand-to-library candidates do not partition the bound hand"
                             .to_string());
+                    }
+                }
+                EffectTargetSelectionPurpose::SurveilLibraryOne {
+                    player: library_player,
+                    original_library,
+                    canonical_path,
+                    expected_remaining_frames,
+                } => {
+                    validate_surveil_one_metadata(
+                        state,
+                        pending,
+                        *library_player,
+                        original_library,
+                        canonical_path,
+                        expected_remaining_frames,
+                    )?;
+                    let top = original_library[0];
+                    let expected = EffectTargetCandidate {
+                        target: Target::Object(top.object),
+                        expected_object: Some(top),
+                    };
+                    if chooser != library_player
+                        || path != canonical_path
+                        || pending.frames != *expected_remaining_frames
+                        || *min_targets != 0
+                        || *max_targets != 1
+                        || *ordered
+                        || selected.len() + legal.len() != 1
+                        || selected
+                            .iter()
+                            .chain(legal)
+                            .any(|candidate| candidate != &expected)
+                    {
+                        return Err(
+                            "surveil prompt changed its chooser, shape or bound top card"
+                                .to_string(),
+                        );
                     }
                 }
                 EffectTargetSelectionPurpose::ScryLibrary {
@@ -5776,6 +6000,11 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 canonical_path,
                 expected_remaining_frames,
             } => {
+                if owner_library_recipe(state, pending)?.first_placement
+                    != event::LibraryPlacement::SecondFromTop
+                {
+                    return Err("second-or-bottom choice changed its printed operation".to_string());
+                }
                 if !path.is_empty() || !canonical_path.is_empty() {
                     return Err(
                         "owner-library placement choice is not the generated root path".to_string(),
@@ -5811,6 +6040,40 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     return Err(
                         "owner-library placement choice changed its bound object, owner, or printed option order"
                         .to_string(),
+                    );
+                }
+                validate_owner_library_target_binding(state, pending, *object, *owner)?;
+            }
+            EffectOptionChoicePurpose::OwnerLibraryTopOrBottom {
+                object,
+                owner,
+                canonical_path,
+                expected_remaining_frames,
+            } => {
+                let recipe = owner_library_recipe(state, pending)?;
+                let expected_options = vec![
+                    EffectOp::PutBoundObjectInOwnersLibrary {
+                        object: *object,
+                        owner: *owner,
+                        placement: event::LibraryPlacement::Top,
+                    },
+                    EffectOp::PutBoundObjectInOwnersLibrary {
+                        object: *object,
+                        owner: *owner,
+                        placement: event::LibraryPlacement::Bottom,
+                    },
+                ];
+                if recipe.first_placement != event::LibraryPlacement::Top
+                    || player != owner
+                    || path != canonical_path
+                    || canonical_path != &recipe.path
+                    || expected_remaining_frames != &recipe.remainder
+                    || pending.frames != recipe.remainder
+                    || options != &expected_options
+                {
+                    return Err(
+                        "top-or-bottom choice changed its owner, options or printed remainder"
+                            .to_string(),
                     );
                 }
                 validate_owner_library_target_binding(state, pending, *object, *owner)?;
@@ -7107,6 +7370,40 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         state.engine.linked_exile_records.push(record);
                     }
                 }
+                EffectFrame::SurveilLibraryOne {
+                    player,
+                    original_library,
+                    put_in_graveyard,
+                    path,
+                    expected_remaining_frames,
+                } => {
+                    let answered = EffectFrame::SurveilLibraryOne {
+                        player,
+                        original_library: original_library.clone(),
+                        put_in_graveyard,
+                        path,
+                        expected_remaining_frames: expected_remaining_frames.clone(),
+                    };
+                    if continuation.frames != expected_remaining_frames
+                        || continuation.answered_choice_guard.as_ref()
+                            != Some(&EffectAnsweredChoiceGuard::SurveilLibraryOne {
+                                frame: Box::new(answered.clone()),
+                            })
+                    {
+                        return Err("surveil answered frame/guard mismatch".to_string());
+                    }
+                    validate_surveil_one_frame(state, &continuation, &answered)?;
+                    continuation.answered_choice_guard = None;
+                    if put_in_graveyard {
+                        event::propose_and_commit(
+                            state,
+                            event::ProposedEvent::zone_change_preserving_known_identity(
+                                original_library[0].object,
+                                Zone::Graveyard,
+                            ),
+                        );
+                    }
+                }
                 EffectFrame::OwnerLibraryPlacement {
                     object,
                     owner,
@@ -7630,6 +7927,35 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         canonical_path,
                     });
             }
+            EffectOp::SurveilOne { player } => {
+                let player = continuation.ctx.resolve_player(player, state);
+                let original_library = bind_library_exact(state, player);
+                state.reveal_library_top(player, player, usize::from(!original_library.is_empty()));
+                if let Some(&top) = original_library.first() {
+                    let canonical_path = path.clone();
+                    let expected_remaining_frames = continuation.frames.clone();
+                    continuation.choice = Some(PendingEffectChoice::SelectTargets {
+                        player,
+                        path,
+                        selected: vec![],
+                        legal: vec![EffectTargetCandidate {
+                            target: Target::Object(top.object),
+                            expected_object: Some(top),
+                        }],
+                        min_targets: 0,
+                        max_targets: 1,
+                        ordered: false,
+                        purpose: EffectTargetSelectionPurpose::SurveilLibraryOne {
+                            player,
+                            original_library,
+                            canonical_path,
+                            expected_remaining_frames,
+                        },
+                    });
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
             EffectOp::Scry { player, count } => {
                 let player = continuation.ctx.resolve_player(player, state);
                 let original_library_len = state.players[player.index()]
@@ -8116,7 +8442,9 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     return Ok(ResumableProgress::Suspended);
                 }
             }
-            EffectOp::PutObjectInOwnersLibrarySecondOrBottom { object } => {
+            EffectOp::PutObjectInOwnersLibrarySecondOrBottom { object }
+            | EffectOp::PutObjectInOwnersLibraryTopOrBottom { object } => {
+                let recipe = owner_library_recipe(state, &continuation)?;
                 let object = continuation.ctx.resolve_object(object);
                 let live = state
                     .objects
@@ -8143,7 +8471,7 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         EffectOp::PutBoundObjectInOwnersLibrary {
                             object: binding,
                             owner,
-                            placement: event::LibraryPlacement::SecondFromTop,
+                            placement: recipe.first_placement,
                         },
                         EffectOp::PutBoundObjectInOwnersLibrary {
                             object: binding,
@@ -8151,11 +8479,20 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                             placement: event::LibraryPlacement::Bottom,
                         },
                     ],
-                    purpose: EffectOptionChoicePurpose::OwnerLibrarySecondOrBottom {
-                        object: binding,
-                        owner,
-                        canonical_path,
-                        expected_remaining_frames,
+                    purpose: if recipe.first_placement == event::LibraryPlacement::Top {
+                        EffectOptionChoicePurpose::OwnerLibraryTopOrBottom {
+                            object: binding,
+                            owner,
+                            canonical_path,
+                            expected_remaining_frames,
+                        }
+                    } else {
+                        EffectOptionChoicePurpose::OwnerLibrarySecondOrBottom {
+                            object: binding,
+                            owner,
+                            canonical_path,
+                            expected_remaining_frames,
+                        }
                     },
                 });
                 state.engine.pending_effect = Some(continuation);
@@ -11448,6 +11785,8 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::SearchLibraryToHandUpTo { .. }
         | EffectOp::UntapUpToLands { .. }
         | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. }
+        | EffectOp::PutObjectInOwnersLibraryTopOrBottom { .. }
+        | EffectOp::SurveilOne { .. }
         | EffectOp::PutBoundObjectInOwnersLibrary { .. }
         | EffectOp::CounterUnlessPaysGeneric { .. }
         | EffectOp::CounterTargetUnlessPaysGeneric { .. }
