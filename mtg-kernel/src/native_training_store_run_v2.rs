@@ -5126,7 +5126,7 @@ mod tests {
                 // below overrides these two fields back to the HISTORICAL
                 // (rev3) literals for the dedicated dual-profile tests.
                 "card_db_hash_u64_hex": if cfg!(feature = "limited-fdn-fixtures") {
-                    FROZEN_CARD_DB_HASH_U64_HEX_FDN_LIFEGAIN_CREATURES_V1
+                    FROZEN_CARD_DB_HASH_U64_HEX_FDN_DRAW_CREATURES_V1
                 } else {
                     FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
                 },
