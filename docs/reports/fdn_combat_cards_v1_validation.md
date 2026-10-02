@@ -72,4 +72,4 @@ Source inspection is not executed parity evidence.
 After merging main (#112, `kernel_carddb/v34`, 192 Pauper definitions), the
 three combat cards take IDs 208 through 210, the Limited registry has 211
 definitions, and the Limited database is `kernel_carddb/v37`, hash
-`41607b95d7a1ec42`. The measurements above describe the original build.
+`5de932964bf0e2c7`. The measurements above describe the original build.
