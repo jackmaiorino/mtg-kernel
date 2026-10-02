@@ -1,7 +1,7 @@
 # FDN Koma implementation and verification
 
 Koma, World-Eater and Koma's Coil are implemented in the opt-in FDN
-catalog. Gameplay verification remains pending. This batch follows
+catalog. All thirteen focused gameplay checks pass; broader verification remains pending. This batch follows
 [Horde PR #130](https://github.com/jackmaiorino/mtg-kernel/pull/130) and keeps
 the original UG and WG fixture decks.
 
@@ -23,12 +23,12 @@ in source; the default golden checks remain pending for this batch.
 | --- | --- |
 | Core compilation | `fdn-koma-preflight-001` exited zero; Limited Cargo check passed in 29.59 seconds on HaleysPC. |
 | XMage comparisons | All nine strict-choice cases passed in `fdn-mage-koma-004`; see [Mage PR #7](https://github.com/jackmaiorino/mage/pull/7). |
-| Kernel gameplay | Thirteen integration cases added. After test-build fixes, nine passed, including counters, combat and departed-source restore. Four ward setups used unsupported Unsummon; `e98c8fb3` replaces it with supported Snap and exact two-mana payment. The corrected ward checks remain pending. |
+| Kernel gameplay | All thirteen cases passed in `fdn-koma-gameplay-003`: casting, counters, ward, combat, noncombat exclusion and pending-choice restore. Earlier compile/setup failures remain preserved. |
 | Counter helper | A feature-gated unit check covers protected physical spells and copies, counterable triggered abilities, and ordinary departure; execution pending. |
 | Catalog, sessions and prior gameplay | Checks prepared; execution pending. |
 | Python | The preceding source preparation ran 34 focused Python checks successfully; current hosted CI remains required. |
 | Release and external replay | Pending. No Koma natural-terminal or deterministic external replay claim. |
-| Hosted CI | Required, pending dispatch for this branch. |
+| Hosted CI | Draft [PR #131](https://github.com/jackmaiorino/mtg-kernel/pull/131) is running CI at `c19bd354`; no green claim yet. |
 
 Core source commit: `af94973c`; local integration/catalog source commit:
 `d644f86a`, followed by test correction `b076f733`. The owned remote
@@ -55,7 +55,7 @@ They touched only the owned Cargo cache and deleted no files. The
 compression receipts, manifests and logs remain under `C:/Users/haley/`.
 No unrelated process, cache, checkout or frozen run was modified.
 
-The bounded gameplay-only rerun is `fdn-koma-gameplay-002`. Kernel ward
+The bounded gameplay-only rerun `fdn-koma-gameplay-003` exited zero after a 66-second build. The preceding rerun was refused by its storage guard before compilation. Remaining library/regression checks are prepared in `fdn-koma-checks-002` and not yet dispatched. Kernel ward
 positions use Snap (`{1}{U}`) with no battlefield lands to untap; XMage
 positions use Unsummon (`{U}`). Each pays its exact casting cost before
 offering the same four-mana ward cost. The reference comparison concerns
