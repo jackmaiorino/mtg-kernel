@@ -343,7 +343,7 @@ fn declining_payable_ward_counters_the_opposing_bounce_spell() {
         Zone::Battlefield,
     );
     let mut surf = surface();
-    let bounce = cast_at(&mut surf, &mut state, PlayerId::P1, "Unsummon", koma, 5);
+    let bounce = cast_at(&mut surf, &mut state, PlayerId::P1, "Snap", koma, 6);
     assert_eq!(drain(&mut surf, &mut state, Some(false)), 1);
     assert_eq!(state.objects.get(koma).zone, Zone::Battlefield);
     assert_eq!(state.objects.get(bounce).zone, Zone::Graveyard);
@@ -360,7 +360,7 @@ fn paying_four_for_ward_resolves_the_bounce_and_restores_the_payment_choice() {
         Zone::Battlefield,
     );
     let mut surf = surface();
-    cast_at(&mut surf, &mut state, PlayerId::P1, "Unsummon", koma, 5);
+    cast_at(&mut surf, &mut state, PlayerId::P1, "Snap", koma, 6);
     for _ in 0..2 {
         assert!(matches!(
             next(&mut surf, &mut state),
@@ -397,7 +397,7 @@ fn unpayable_ward_counters_without_a_payment_choice() {
         Zone::Battlefield,
     );
     let mut surf = surface();
-    let bounce = cast_at(&mut surf, &mut state, PlayerId::P1, "Unsummon", koma, 1);
+    let bounce = cast_at(&mut surf, &mut state, PlayerId::P1, "Snap", koma, 2);
     assert_eq!(drain(&mut surf, &mut state, None), 0);
     assert_eq!(state.objects.get(koma).zone, Zone::Battlefield);
     assert_eq!(state.objects.get(bounce).zone, Zone::Graveyard);
@@ -413,7 +413,7 @@ fn own_controller_bounce_does_not_trigger_ward() {
         Zone::Battlefield,
     );
     let mut surf = surface();
-    cast_at(&mut surf, &mut state, PlayerId::P0, "Unsummon", koma, 1);
+    cast_at(&mut surf, &mut state, PlayerId::P0, "Snap", koma, 2);
     assert_eq!(drain(&mut surf, &mut state, None), 0);
     assert_eq!(state.objects.get(koma).zone, Zone::Hand);
 }
