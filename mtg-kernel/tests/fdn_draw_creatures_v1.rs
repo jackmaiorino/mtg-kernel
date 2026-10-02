@@ -10,7 +10,8 @@ use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Zone};
 use mtg_kernel::surface_v2::{
-    HarnessSurfaceV2, PriorityModeV1, SuppressionAuditMode, SurfaceAction, SurfaceDecision,
+    HarnessSurfaceV2, PriorityModeV1, SuppressionAuditMode, SuppressionReason, SurfaceAction,
+    SurfaceDecision,
 };
 use mtg_kernel::trigger;
 
@@ -73,7 +74,16 @@ fn drain(surface: &mut HarnessSurfaceV2, state: &mut GameState) {
         if matches!(decision, Decision::CastSpellOrPass { .. }) && state.stack.is_empty() {
             assert!(state.engine.pending_triggers.is_empty());
             assert!(state.engine.pending_discard.is_none());
-            assert!(surface.suppressions().is_empty());
+            // Combat may have auto-declared the only legal empty block set.
+            // Actual priority and card choices must remain available.
+            assert!(
+                surface
+                    .suppressions()
+                    .iter()
+                    .all(|entry| entry.reason == SuppressionReason::NoEligibleBlockersForAttacker),
+                "{:?}",
+                surface.suppressions()
+            );
             return;
         }
         let action = match decision {
