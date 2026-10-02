@@ -144,7 +144,7 @@ jobs:
 
       - name: Validate London mulligans and original fixture games
         run: |
-          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test london_mulligans_v1
+          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test london_mulligans_v1 -- --nocapture
           cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib london_session_snapshot_restores
 
       - name: Run Rust release tests

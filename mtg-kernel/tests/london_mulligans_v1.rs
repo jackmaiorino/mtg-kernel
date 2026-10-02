@@ -414,12 +414,10 @@ fn original_fixture(source: &str) -> Value {
 
 #[cfg(feature = "limited-fdn-fixtures")]
 fn external_fixture_game(swapped: bool, seed: u64) -> (String, Value) {
-    let ug = original_fixture(include_str!(
-        "../../data/limited/fdn_v1/FDN_top_04956_UG.dck"
-    ));
-    let wg = original_fixture(include_str!(
-        "../../data/limited/fdn_v1/FDN_top_20626_WG.dck"
-    ));
+    let ug_source = include_str!("../../data/limited/fdn_v1/FDN_top_04956_UG.dck");
+    let wg_source = include_str!("../../data/limited/fdn_v1/FDN_top_20626_WG.dck");
+    let ug = original_fixture(ug_source);
+    let wg = original_fixture(wg_source);
     let decks = if swapped { [wg, ug] } else { [ug, wg] };
     let mut child = Command::new(env!("CARGO_BIN_EXE_kernel_limited_env"))
         .arg("--london-mulligans-v1")
@@ -456,7 +454,22 @@ fn external_fixture_game(swapped: bool, seed: u64) -> (String, Value) {
             );
             assert_eq!(reply["terminal"]["terminal_code"], "natural_game_over");
             assert_eq!(bottom_choices, 4); // P0 takes one, P1 takes two.
-            return (format!("{:x}", transcript.finalize()), reply);
+            let transcript_sha256 = format!("{:x}", transcript.finalize());
+            eprintln!(
+                "{}",
+                json!({
+                    "event": "fdn_london_fixture_game_v1",
+                    "seed": seed, "swapped": swapped, "requests": index + 1,
+                    "bottom_choices": bottom_choices,
+                    "input_fixture_sha256s": {
+                        "UG": format!("{:x}", Sha256::digest(ug_source.as_bytes())),
+                        "WG": format!("{:x}", Sha256::digest(wg_source.as_bytes()))
+                    },
+                    "transcript_sha256": transcript_sha256,
+                    "terminal": reply["terminal"]
+                })
+            );
+            return (transcript_sha256, reply);
         }
         let actions = reply["decision"]["legal_actions"].as_array().unwrap();
         let first = &actions[0]["semantic"];
