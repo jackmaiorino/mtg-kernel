@@ -1,0 +1,29 @@
+# V4 search core engineering checks
+
+2026-09-22. Additive crate-private implementation of the reviewed core proposal. No playing caller, package integration, training, or strength gate. g115 is unchanged and M1 is unmet.
+
+First fixed check: E:/mtg-meta-recovery-20260921/v4-core-controls-001 through check-v4-core.py, ownership guard, four BelowNormal Cargo jobs, release pinned toolchain, ten source snapshots. COMPLETE:29/29 passed,0.78s tests /307.9696092s invocation, exit0. All ten source hashes verified. This is a small correctness workload under COMPUTE-POLICY, not a qualified substantial evaluation launch.
+
+Implemented controls cover both seats, repeated exact Outcome, original state unchanged, legal selection and visits, fresh tensor digest at every cached-node traversal, coverage and transition/depth accounting, inadequate-budget/headroom rejection, clipping/perspective, seed-domain separation, and fault-injected tensor-witness mismatch. Existing sampler/leaf/consume checks run in the same filtered suite.
+
+Counter bounds: simulation and transition counters stop at u32 limits. Remaining depth strictly decreases, is in each key, and prevents a tree node from recurring in one simulation path. Each node/action is backed up at most once per simulation; value sums are bounded by 10000*u32::MAX, within i64. Root plus at most one forward per completed simulation requires u64 forward/clip counters. Raw extrema/clip census includes the root-prior forward, even though its value is unused for backup.
+
+Remaining acceptance: actual natural/truncated/halted branch checks, invalid evaluator outputs, non-root cached-hit coverage evidence, production-session surface preservation, two consumed archived g115 roots, and certificate fixture behavior. The fixed synthetic fixtures reset PolicySurface at ingress; they alone cannot certify carried production cache state. Plan a report-only production hook and replay of exactly the consumed roots; compare complete collection off/on, repeat output hashes, root tensors, and original/policy scratch equality. No action override, behavior probability rewrite, or search trajectory training import.
+
+Independent source review completed at E:/mtg-meta-recovery-20260921/v4-core-source-review-001, reusing completed core-design session5374ad2b-b511-43da-8814-0fd82cad57d4. Actual source reads confirmed. Disposition is recorded below; fixture acceptance does not authorize playing integration.
+
+## Source review disposition
+
+v4-core-source-review-001 complete, exit0, result.is_error=false, actual source reads. Same session5374ad2b-b511-43da-8814-0fd82cad57d4. Verdict: proceed as additive fixture core, no production acceptance. Reviewer verified sampler sequencing, key/depth uniqueness, single backup per path node, coverage/work conservation, arithmetic bounds, clipping/sign and tensor digest. No changes to Disabled guards or training exclusion.
+
+Accepted: headroom only rejects obvious insufficiency; whole remaining decision groups can still truncate, and any such result aborts search. Count unavailable roots in the future route without resampling or hiding exclusions. Keep coverage's repeated forwards pending cost measurement. Root-prior forward belongs in census even though its value is unused. Add exit MXCSR verification after current build is terminal.
+
+Acceptance requests retained: natural terminal sign through opponent nodes/both seats; actual truncation despite preflight; sampler rejection through public search entry preserving original; sampled-world seed sensitivity; genuine transposition sharing; archived g115 roots with witness/clip census. These remain controls to implement, not reviewer-certified results. Qualify the suggested Bolt test: casting Bolt need not produce a natural terminal in one policy step, and a root edge backed up from earlier nonterminal cutoffs need not have value_sum=10000*visits. Build a fixture that actually resolves the terminal, and assert per-backup signs or exact all-terminal behavior only where demonstrated.
+
+## Expanded controls and production replay preparation
+
+Controls002 COMPLETE31/31pass,0.76stest/278.3073206sinvocation,exit0,all10sourcehashesverified at B/v4-core-controls-002, same guarded ten-file helper. Adds exit MXCSR verification and natural win/loss/draw census. New tests use both-seat low-life Bolt fixtures with128 simulations/1024 transitions/depth8 to require both terminal signs; these are synthetic correctness checks, not a playing-strength sample. A test-only policy-cap setter keeps one step of headroom, allowing the entry preflight while the next surfaced decision truncates. Search must return NonNaturalTerminal and leave the original unchanged. A same-incarnation initiative-source fixture must reject through the search entry without changing the original. Both-seat natural wins/losses, actual truncation and sampler rejection controls passed.
+
+Prepared outside the source tree: B/prepare-v4-core-replay-hook.py and B/check-v4-core-replay.py. Not applied/launched yet. Report-only hook plans64 simulations/512 transitions/depth8/seed20260922 on exactly the two consumed archived roots, repeated internally with fresh tensor witnesses. A rejection is an explicit unavailable result, never a retry or action fallback. Build/replay helper retains ownership checks, source commit, pinned checkpoint/toolchain/binary and off/on/repeat collection validation. Existing collection selects ordinary policy actions; the hook reports only. This is bounded compatibility work, not a qualified substantial evaluation path or a gate.
+
+Production hook now applied: search_core_diagnostic defaults false, input binding checked, original session/policy scratch and seat RNG checked after two identical witnessed searches. Unavailable errors retained in result. Source commit below is preparation, not runtime acceptance; guarded binary build and consumed-root replay pending.

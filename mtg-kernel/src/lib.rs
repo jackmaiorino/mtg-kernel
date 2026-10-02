@@ -61,13 +61,28 @@ pub(crate) mod common_model_snapshot_v1;
 pub mod effect;
 pub mod engine;
 pub mod event;
+pub mod expanded_deck_training_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 mod experimental_burn_net8_packed_v1;
+pub mod human_opening_v1;
+pub mod native_expanded_training_run_v1;
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+pub use experimental_burn_net8_packed_v1::run_public_entropy_gradient_probe_v1;
 pub mod fast_sampler;
 pub(crate) mod flat_action_contract_v2;
 pub mod flat_policy_v1;
 pub mod flat_policy_v2;
+pub mod flat_policy_v3;
+pub mod flat_policy_v4;
 pub mod ids;
+pub mod line_b_teacher_target_v1;
+pub mod phase1_agent_v1;
+pub mod phase1_bo3_collection_v1;
+pub mod phase1_bo3_learning_v1;
+pub mod phase1_registry_transfer_v1;
+pub mod policy_observation_v6;
+pub mod policy_observation_v7;
+pub mod unclamped_softmax_sampler_v1;
 // Calibration-only harness for the kernel-native search opponent: every
 // function in this module either is, or exists only to call,
 // `run_native_checkpoint_with_search_opponent_eval_v1`
@@ -99,6 +114,8 @@ pub mod model_guided_search_authority_v1;
 // out of scope here. See the module's own doc comment for the sharing
 // architecture against v1 and the quantization contract modules below.
 pub mod model_guided_search_core_v1;
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+pub(crate) mod model_guided_search_core_v4;
 // Model-guided searcher (CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md Section
 // 1.2, implementation item 1): pure PUCT prior-quantization contract
 // (apportionment, expansion order, selection bonus). Disjoint stage-1 core,
@@ -149,6 +166,9 @@ pub mod native_checkpoint_inference_v1;
 // at module scope instead of item-by-item.
 #[allow(dead_code)]
 pub mod native_checkpoint_shadow_stdio_v1;
+// Inference-only transport of a Store-validated checkpoint to the frozen
+// native-inference-export/v1 bundle read by the sideboard play importer.
+pub mod native_checkpoint_export_v1;
 // Test-time-search wrapper S1 feasibility preflight
 // (LEAD_TEST_TIME_SEARCH_DESIGN_SKETCH_V2.md Section 5, S1), CP7-free. The
 // corpus builder plays seeded self-play with both seats on one checkpoint
@@ -178,6 +198,8 @@ pub mod native_cuda_qualification_metrics_v1;
 pub mod native_flat_tensorizer_diagnostic_v1;
 #[allow(dead_code)]
 pub(crate) mod native_flat_tensorizer_v2;
+pub(crate) mod native_flat_tensorizer_v3;
+pub(crate) mod native_flat_tensorizer_v4;
 // Multi-buffer SHA-512 for the tensorizer digest tails (byte-identical to sha2).
 pub(crate) mod sha512_multi_v1;
 // Deterministic-CPU-forward audit probe (model-guided-searcher design v1,
@@ -197,7 +219,7 @@ pub mod native_opponent_sampler_v1;
 // frozen forever; this module owns only the new ladder identity strings.
 #[allow(dead_code)]
 pub mod native_opponent_policy_v2;
-#[cfg(test)]
+#[allow(dead_code)]
 pub(crate) mod native_policy_anchor_v1;
 // Cell-centered advantage-baseline state for terminal_reinforce_value/v4:
 // strict-lag EMA, canonical hashing, and the checkpoint wire form.
@@ -388,9 +410,19 @@ pub mod native_training_store_run_v2;
 pub mod native_training_store_reference_latest_v2;
 // Private-construction persistence receipt and the strict native generation
 // store boundary. The high-level publisher/read/recovery path lands here.
+pub mod game_summary_v1;
+pub mod human_bo3_v1;
+pub mod human_match_v1;
+pub mod human_match_v2;
+pub mod learned_bo3_v1;
+pub mod learned_sideboard_v1;
 #[cfg(test)]
 mod native_gate3_terminal_blind_coefficient_screen_v1;
 pub mod native_training_store_v2;
+pub mod paired_bo1_harness_v1;
+pub mod phase1_w8a_live_swap_self_play_v1;
+pub mod sideboard_play_policy_v1;
+pub mod sideboard_search_campaign_v1;
 // MEASUREMENT HARNESS ONLY (throughput remeasure task, 2026-08-25): times
 // the real read-only `validate_native_training_store_v2` genesis-to-latest
 // walk against an externally supplied Store copy. Test-only, ignored by
@@ -415,8 +447,12 @@ pub mod surface;
 pub mod surface_v2;
 pub mod trace;
 pub mod trigger;
+pub mod xmage_observed_inference_v1;
 
 pub const KERNEL_VERSION: &str = "0.0.4-spike";
+
+pub mod public_cost_features_v1;
+pub(crate) mod public_stack_features_v1;
 
 /// Runs the opt-in production-parameter Burn/CUDA diagnostic. This surface is
 /// intentionally hidden from normal documentation and absent from normal
