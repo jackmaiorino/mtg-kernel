@@ -1375,6 +1375,7 @@ fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::ControlledCreature
         | TargetSpec::EnchantmentPermanent
         | TargetSpec::CreatureCardInOwnGraveyard
+        | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_)
         | TargetSpec::TargetOpponent
         | TargetSpec::OpponentControlledCreature
         | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. }
@@ -2693,6 +2694,30 @@ fn legal_targets_for_controller_from_source(
             })
             .map(Target::Object)
             .collect(),
+        TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(maximum) => state.players
+            [controller.index()]
+        .graveyard
+        .iter()
+        .copied()
+        .filter(|&id| {
+            let object = state.objects.get(id);
+            let definition = &card_def::CARD_DEFS[object.card_def as usize];
+            object.owner == controller
+                && object.zone == Zone::Graveyard
+                && !object.v4.is_token
+                && definition.mana_value <= maximum
+                && !definition.has_type(CardType::Land)
+                && [
+                    CardType::Creature,
+                    CardType::Artifact,
+                    CardType::Enchantment,
+                    CardType::Planeswalker,
+                ]
+                .iter()
+                .any(|&kind| definition.has_type(kind))
+        })
+        .map(Target::Object)
+        .collect(),
     };
     targets.retain(|target| {
         let Target::Object(object) = *target else {
@@ -9886,6 +9911,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             for (_, object) in state.objects.iter_mut() {
                 object.v4.ability_uses_this_turn.clear();
             }
+            state.trigger_uses_v1 = None;
             // See `PlayPermissionExpiry`'s doc: the *holder's* own Untap
             // marks the start of their "next turn" for an "until end of
             // your next turn" impulse-draw permission (Clockwork

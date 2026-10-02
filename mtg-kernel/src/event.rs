@@ -458,13 +458,13 @@ fn initialize_entry_counters(state: &mut GameState, object: ObjectId, kicked: bo
     }
 }
 
-fn log_plus_one_counters_added(
+pub(crate) fn log_plus_one_counters_added(
     state: &mut GameState,
     object: ObjectId,
     player: PlayerId,
     count: i32,
 ) {
-    if count <= 0 {
+    if count <= 0 || !cfg!(feature = "limited-fdn-fixtures") {
         return;
     }
     let committed = CommittedEvent::PlusOneCountersAdded {
@@ -1245,6 +1245,12 @@ fn commit_zone_change(
         // apart from "moved since, for any reason" without needing a
         // zone-specific special case.
         obj.zone_change_count += 1;
+        if let Some(uses) = &mut state.trigger_uses_v1 {
+            uses.retain(|entry| entry.source.object != id);
+            if uses.is_empty() {
+                state.trigger_uses_v1 = None;
+            }
+        }
         obj.v4.reset_for_zone_change(obj.card_def, to_zone, turn);
         obj.name = crate::card_def::CARD_DEFS[obj.card_def as usize]
             .object_name

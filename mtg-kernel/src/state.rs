@@ -82,6 +82,15 @@ pub struct ObjectLinkV4 {
     pub zone_change_count: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TriggerUseV1 {
+    pub source: ObjectLinkV4,
+    pub ability_index: u16,
+    pub turn: u32,
+    pub active_player: PlayerId,
+    pub uses: u16,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AbilityKindV4 {
@@ -818,7 +827,9 @@ pub fn stack_target_contract_is_structurally_valid(
                 ..
             },
         ) | (
-            TargetSpec::CreatureOrLandCardInGraveyard | TargetSpec::CreatureCardInOwnGraveyard,
+            TargetSpec::CreatureOrLandCardInGraveyard
+                | TargetSpec::CreatureCardInOwnGraveyard
+                | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_),
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Graveyard,
@@ -1249,6 +1260,8 @@ pub struct GameState {
     pub pending_legend_rule_v1: Option<crate::legend_rule_v1::PendingLegendRuleV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub planeswalkers_v1: Option<crate::planeswalker_v1::PlaneswalkersV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_uses_v1: Option<Vec<TriggerUseV1>>,
 }
 
 /// Reproduces exactly the field-hash sequence `#[derive(Hash)]` produced
@@ -1287,6 +1300,10 @@ impl Hash for GameState {
         if let Some(planeswalkers) = &self.planeswalkers_v1 {
             "planeswalkers-v1".hash(state);
             planeswalkers.hash(state);
+        }
+        if let Some(uses) = &self.trigger_uses_v1 {
+            "trigger-uses-v1".hash(state);
+            uses.hash(state);
         }
     }
 }
@@ -1422,6 +1439,7 @@ impl GameState {
             engine: crate::engine::EngineState::default(),
             pending_legend_rule_v1: None,
             planeswalkers_v1: None,
+            trigger_uses_v1: None,
         }
     }
 

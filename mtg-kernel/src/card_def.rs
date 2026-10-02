@@ -215,6 +215,7 @@ pub enum Subtype {
     Unicorn,
     Ajani,
     Beast,
+    Cleric,
 }
 
 impl Subtype {
@@ -285,6 +286,8 @@ impl Subtype {
         Subtype::Unicorn,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Beast,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Cleric,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -395,6 +398,7 @@ impl Subtype {
                 | Subtype::Horror
                 | Subtype::Nightmare
                 | Subtype::Beast
+                | Subtype::Cleric
         )
     }
 }
@@ -540,6 +544,7 @@ pub enum TargetSpec {
     ControlledCreatureThenOpponentCreature,
     ControlledCreatureThenOpponentCreatureOrPlaneswalker,
     AttackingOrBlockingCreature,
+    NonlandPermanentCardInOwnGraveyardManaValueAtMost(u16),
 }
 
 impl TargetSpec {
@@ -588,6 +593,7 @@ impl TargetSpec {
             TargetSpec::ControlledCreatureThenOpponentCreature => 37,
             TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker => 38,
             TargetSpec::AttackingOrBlockingCreature => 39,
+            TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_) => 40,
         }
     }
 }
@@ -1462,7 +1468,7 @@ mod tests {
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                188
+                190
             } else {
                 162
             }
@@ -1537,8 +1543,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v38_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x39c8_3779_971e_e2c4;
+    fn card_db_hash_v39_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x3f6b_7e8d_f71f_3195;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

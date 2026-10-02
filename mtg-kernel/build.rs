@@ -3229,6 +3229,7 @@ fn keywords_for(card: &CardJson) -> String {
         | "Dazzling Angel"
         | "Clinquant Skymage"
         | "Youthful Valkyrie"
+        | "Exemplar of Light"
         | "Bird Illusion Token"
         | "Faerie Miscreant"
         | "Faerie Seer"
@@ -3246,9 +3247,11 @@ fn keywords_for(card: &CardJson) -> String {
         "Spinewoods Paladin" | "Avenging Hunter" | "Beast-Kin Ranger" | "Mossborn Hydra" => {
             keywords.push("Keywords::TRAMPLE")
         }
-        "Outlaw Medic" | "Sacred Cat" | "Sacred Cat Embalmed Token" | "Guarded Heir" => {
-            keywords.push("Keywords::LIFELINK")
-        }
+        "Outlaw Medic"
+        | "Sacred Cat"
+        | "Sacred Cat Embalmed Token"
+        | "Guarded Heir"
+        | "Sun-Blessed Healer" => keywords.push("Keywords::LIFELINK"),
         "Guardian of the Guildpact" => keywords.push("Keywords::PROTECTION_FROM_MONOCOLORED"),
         "Samurai Token" => keywords.push("Keywords::VIGILANCE"),
         _ => {}
@@ -3401,6 +3404,7 @@ fn kicker_cost_for(name: &str) -> String {
     match name {
         "Goblin Bushwhacker" => cost_src("{R}"),
         "Gnarlid Colony" => cost_src("{2}{G}"),
+        "Sun-Blessed Healer" => cost_src("{1}{W}"),
         _ => "None".to_string(),
     }
 }
@@ -4584,6 +4588,8 @@ fn changeling_for(name: &str) -> bool {
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
         "Mossborn Hydra" => "controlled_land_enters:double_plus_one_counters_on_bound_source",
+        "Exemplar of Light" => "controller_gains_positive_life:counter_on_bound_source:1;controller_places_plus_one_counters_on_source:draw:1:limit_per_turn:1",
+        "Sun-Blessed Healer" => "etb_if_kicked:recheck_kicked:return_own_graveyard_nonland_permanent_mana_value_at_most:2",
         "Blossoming Sands" | "Thornwood Falls" => "etb:gain_life:1",
         "Dazzling Angel" => "other_controlled_creature_enters:gain_life:1",
         "Beast-Kin Ranger" => "other_controlled_creature_enters:pump_bound_source:1:0:end_of_turn",
@@ -6810,7 +6816,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v38\n"
+            "kernel_carddb/v39\n"
         } else {
             "kernel_carddb/v32\n"
         },
@@ -7085,6 +7091,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Unicorn" => "Subtype::Unicorn",
         "Ajani" => "Subtype::Ajani",
         "Beast" => "Subtype::Beast",
+        "Cleric" => "Subtype::Cleric",
         "Ape" => "Subtype::Ape",
         "Aura" => "Subtype::Aura",
         "BIRD" => "Subtype::BirdAllCaps",

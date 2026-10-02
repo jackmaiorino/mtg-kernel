@@ -1,44 +1,37 @@
 # FDN life-gain creatures
 
-The next fixture pair is Exemplar of Light and Sun-Blessed Healer. Both
-remain unsupported until their complete behavior is implemented and tested.
+Exemplar of Light (ID 188) and Sun-Blessed Healer (ID 189) append to the
+Limited feature. The original UG and WG fixtures retain their exact bytes.
+The extension contains 190 definitions, with Ajani still partial.
 
-| Card | Required behavior |
+| Card | Behavior |
 | --- | --- |
-| Exemplar of Light | `{2}{W}{W}`, 3/3 Angel, flying. Each positive life-gain event controlled by its controller creates one incarnation-bound counter trigger. Its controller placing one or more counters on it creates one draw trigger per turn, with the limit consumed when it triggers. The limit survives control changes and restore, and resets for a new incarnation or turn. |
-| Sun-Blessed Healer | `{1}{W}`, 3/1 Human Cleric, lifelink, kicker `{1}{W}`. A kicked entry creates a targeted return trigger for a nonland permanent card in its controller's graveyard with mana value at most two. Both trigger-time and resolution-time kicker gates and exact target incarnation are required. |
+| Exemplar of Light | `{2}{W}{W}`, 3/3 Angel, flying. Each positive life-gain event gives one incarnation-bound counter trigger. Its controller placing one or more counters on it gives one draw trigger per turn. The limit is consumed when the ability triggers, survives control changes and restore, and resets for a new incarnation or turn. |
+| Sun-Blessed Healer | `{1}{W}`, 3/1 Human Cleric, lifelink, kicker `{1}{W}`. A kicked entry targets a nonland permanent card in its controller's graveyard with mana value at most two. The resolution rechecks kicker and target identity. Returning an Aura chooses a legal creature at resolution, ignoring hexproof and respecting protection. If no host exists, the Aura stays in the graveyard. |
 
-The first prerequisite corrects life-gain event granularity. One source
-dealing simultaneous damage to several recipients causes one gain event;
-different sources cause separate events, and sequential damage remains
-separate. Replacement/prevention determines the actual total before grouping.
-Zero or negative proposed gain emits no gain event.
-See [Comprehensive Rules](https://media.wizards.com/2026/downloads/MagicCompRules%2020260619.pdf),
-119.9 and 702.15e, and
+The once-per-turn ledger uses the source incarnation, ability index, round
+counter and active player. It is public in custom observations and survives
+save/restore. Zone departure prunes the old incarnation; Untap clears the
+ledger. Frozen flat formats refuse the extra state before publishing buffers.
+
+Positive counter-placement effects emit the common committed counter event.
+Feature gating preserves the default catalog's existing event-history hashes.
+One source dealing simultaneous lifelink damage to multiple recipients causes
+one gain event; different sources and sequential damage cause separate events.
+Prevention determines the surviving amount. Zero or negative proposed gain
+emits no event.
+
+The new live catalog is `kernel_carddb/v39`, hash `3f6b7e8df71f3195`.
+Every earlier catalog pair retains its original literal and read compatibility.
+Publisher and resume paths require the actual live build identity.
+
+Rules references: [Comprehensive Rules](https://media.wizards.com/2026/downloads/MagicCompRules%2020260619.pdf),
+119.9, 303.4f and 702.15e, and
 [official release notes](https://magic.wizards.com/en/news/feature/ravnica-remastered-release-notes).
+Matching XMage classes are `ExemplarOfLight.java` and `SunBlessedHealer.java`
+at `a5c90fe180021e70e2a644ade00eeab07f857a40`.
 
-Next, every positive counter-placement effect must use the committed counter
-event already added for entry/doubling. The once-per-turn limit must be
-public in custom observations, saved/restored, and refused by frozen flat
-formats that lack a representation. It must not reuse an activated-ability
-usage slot. The graveyard target filter must cover all permanent types,
-exclude lands and opponent graveyards, and recheck mana value and identity.
-
-Validation will cover split damage, distinct sources, prevention, multiple
-life-gain events, controller-only placement, one draw per turn, bounce,
-restore during the draw and return decisions, kicker costs, all target-filter
-boundaries, and interactions with Dazzling Angel and Good-Fortune Unicorn.
-Matching XMage implementations are `ExemplarOfLight.java` and
-`SunBlessedHealer.java` at `a5c90fe180021e70e2a644ade00eeab07f857a40`.
-
-This branch currently contains only the life-gain prerequisite and its five
-focused tests. Card implementation and catalog succession remain pending.
-
-The prerequisite passes all 14 event tests in both default and Limited
-builds, 21 fixture-B and 24 targeted-spell regressions, the exact default
-environment-hash golden, and feature-enabled library Clippy with warnings
-denied. Tested local source is `8931c1a4`; remote source is
-`aefdd0a`. Logs remain outside Git at
-`C:/Users/haley/fdn-lifegain-tests-001.log/.exit` and `-002.log/.exit`,
-both exit zero. Checks are CPU only, two Cargo build jobs; no GPU or
-formal run was launched.
+See `docs/reports/fdn_lifegain_creatures_v1_validation.md` for executed checks
+and remaining verification. This pair is one implementation batch. The full
+fixture milestone still requires the remaining cards, mulligans, original-deck
+terminal games, replay, relevant parity checks and CI.

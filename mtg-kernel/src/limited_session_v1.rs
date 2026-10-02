@@ -554,6 +554,113 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
+    fn foundations_session_snapshot_restores_returning_aura_choice_and_binding() {
+        use crate::rl::{ActionSemanticV1, PlayerSeatV1};
+        let plains = card_id_by_name("Plains").unwrap();
+        let healer = card_id_by_name("Sun-Blessed Healer").unwrap();
+        let aura = card_id_by_name("Bind the Monster").unwrap();
+        let cards = [vec![plains; 20], vec![healer; 10], vec![aura; 10]].concat();
+        let identity = content_identity(&cards);
+        let mut session = RlEpisodeSessionV1::reset_with_custom_decks_v1(
+            7,
+            123,
+            8192,
+            16384,
+            [identity.clone(), identity],
+            [&cards, &cards],
+            PriorityModeV1::EngineWindowsV1,
+            true,
+        )
+        .unwrap();
+        for _ in 0..4096 {
+            let before = session.current_response();
+            let RlSessionResponseV1::Decision(decision) = &before else {
+                panic!("game ended before the returning Aura choice: {before:?}");
+            };
+            if matches!(&decision.legal_actions[0].semantic,
+                ActionSemanticV1::ChooseEffectTarget { source, .. } if source.card_db_id == healer)
+            {
+                let snapshot = session.snapshot_v5();
+                let before_hash = session.privileged_environment_hash();
+                let action = decision.legal_actions.last().unwrap();
+                let after = session
+                    .step(
+                        decision.episode_id,
+                        decision.step,
+                        action.selected_index,
+                        &action.stable_id,
+                    )
+                    .unwrap();
+                let after_hash = session.privileged_environment_hash();
+                session.restore_v5(&snapshot);
+                assert_eq!(session.current_response(), before);
+                assert_eq!(session.privileged_environment_hash(), before_hash);
+                assert_eq!(
+                    session
+                        .step(
+                            decision.episode_id,
+                            decision.step,
+                            action.selected_index,
+                            &action.stable_id
+                        )
+                        .unwrap(),
+                    after
+                );
+                assert_eq!(session.privileged_environment_hash(), after_hash);
+                return;
+            }
+            let seat = if decision.acting_player == PlayerSeatV1::P0 {
+                0
+            } else {
+                1
+            };
+            let public = &decision.observation.projection.surface;
+            let has_healer = public.battlefield[seat]
+                .iter()
+                .any(|card| card.stable.card_db_id == healer);
+            let has_grave_aura = public.graveyards[seat]
+                .iter()
+                .any(|card| card.stable.card_db_id == aura);
+            let rank = |semantic: &ActionSemanticV1| match semantic {
+                ActionSemanticV1::PlayLand { .. } => 0,
+                ActionSemanticV1::CastSpell { source, .. }
+                    if source.card_db_id == healer && (!has_healer || has_grave_aura) =>
+                {
+                    1
+                }
+                ActionSemanticV1::ChooseKicker { pay, .. } if *pay == has_grave_aura => 0,
+                ActionSemanticV1::ChooseKicker { .. } => 9,
+                ActionSemanticV1::Discard { cards, .. }
+                    if cards.iter().any(|card| card.card_db_id == aura) =>
+                {
+                    0
+                }
+                ActionSemanticV1::ChooseAttackerInclusion { include: false, .. }
+                | ActionSemanticV1::ChooseBlockerInclusion { include: false, .. } => 2,
+                ActionSemanticV1::CastSpell { .. } => 12,
+                ActionSemanticV1::Pass { .. } => 10,
+                ActionSemanticV1::ActivateManaAbility { .. } => 11,
+                _ => 5,
+            };
+            let action = decision
+                .legal_actions
+                .iter()
+                .min_by_key(|action| rank(&action.semantic))
+                .unwrap();
+            session
+                .step(
+                    decision.episode_id,
+                    decision.step,
+                    action.selected_index,
+                    &action.stable_id,
+                )
+                .unwrap();
+        }
+        panic!("returning Aura choice was not reached");
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
     fn foundations_session_snapshot_restores_pending_legend_choice_and_binding() {
         use crate::rl::ActionSemanticV1;
         let forest = card_id_by_name("Forest").unwrap();

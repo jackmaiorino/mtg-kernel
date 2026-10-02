@@ -786,6 +786,71 @@
         "double_counters"
       ],
       "java_file": "Mage.Sets/src/mage/cards/m/MossbornHydra.java"
+    },
+    {
+      "name": "Exemplar of Light",
+      "engine_capability": "full",
+      "mana_cost": "{2}{W}{W}",
+      "mana_value": 4,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Angel"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_top_20626_WG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "flying",
+        "gain_life_trigger",
+        "counter_trigger",
+        "once_each_turn"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/ExemplarOfLight.java"
+    },
+    {
+      "name": "Sun-Blessed Healer",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Cleric"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_top_20626_WG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "lifelink",
+        "kicker",
+        "kicked_etb",
+        "reanimate"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SunBlessedHealer.java"
     }
   ]
 }

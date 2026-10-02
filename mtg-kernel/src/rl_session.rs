@@ -3831,6 +3831,7 @@ fn flat_validate_expected_decision_v1(
         i16::try_from(object.counters.plus1_plus1).is_err()
             || u16::try_from(object.damage).is_err()
     }) || session.state.planeswalkers_v1.is_some()
+        || session.state.trigger_uses_v1.is_some()
         || session.state.engine.active_replacements.iter().any(|replacement| {
             matches!(replacement.kind,
                 crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. })
@@ -11375,11 +11376,13 @@ mod tests {
     #[cfg(feature = "limited-fdn-fixtures")]
     fn flat_action_slice_refuses_loyalty_and_combat_prevention_before_publish() {
         let base = FastActorSessionV1::reset_with_limits(81_039, 139, 128, 16_384);
-        for semantic in 0..4 {
+        for semantic in 0..5 {
             let mut session = base.clone();
             let object = session.state.players[0].hand[0];
             let name = if semantic == 1 {
                 "Ajani, Caller of the Pride"
+            } else if semantic == 4 {
+                "Exemplar of Light"
             } else {
                 "Llanowar Elves"
             };
@@ -11400,6 +11403,12 @@ mod tests {
             }
             if semantic == 3 {
                 session.state.objects.get_mut(object).damage = 65_536;
+            }
+            if semantic == 4 {
+                crate::event::add_plus_one_counters(&mut session.state, object, PlayerId::P0, 1)
+                    .unwrap();
+                crate::trigger::collect_and_process(&mut session.state);
+                assert!(session.state.trigger_uses_v1.is_some());
             }
             let mut actions = [poison_flat_action(); 2];
             let mut refs = [poison_flat_ref(); 2];

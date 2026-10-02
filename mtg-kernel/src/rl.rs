@@ -696,6 +696,17 @@ pub struct EngineContextV2 {
     pub wide_plus_one_counters: Option<Vec<WidePlusOneCountersSemanticV1>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wide_marked_damage: Option<Vec<WideMarkedDamageSemanticV1>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_uses: Option<Vec<TriggerUseSemanticV1>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TriggerUseSemanticV1 {
+    pub source: CardStableRefV1,
+    pub ability_index: u16,
+    pub turn: u32,
+    pub active_player: PlayerSeatV1,
+    pub uses: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -5596,6 +5607,23 @@ fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<Engin
         state.engine.mana_ability_activations != state.engine.mana_ability_count_at_round_open;
 
     Ok(EngineContextV2 {
+        trigger_uses: state
+            .trigger_uses_v1
+            .as_ref()
+            .map(|uses| {
+                uses.iter()
+                    .map(|entry| {
+                        card_ref(state, entry.source.object).map(|source| TriggerUseSemanticV1 {
+                            source,
+                            ability_index: entry.ability_index,
+                            turn: entry.turn,
+                            active_player: entry.active_player.into(),
+                            uses: entry.uses,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })
+            .transpose()?,
         wide_marked_damage: {
             let damage = state
                 .objects
@@ -5903,6 +5931,9 @@ fn pending_effect_semantic_v4(
                                 ..
                             } => TargetSelectionPurposeV4::SearchResult,
                             crate::effect::EffectTargetSelectionPurpose::UntapLands {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::AttachReturningAura {
                                 ..
                             } => TargetSelectionPurposeV4::PermanentSelection,
                             crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
