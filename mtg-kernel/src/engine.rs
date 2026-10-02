@@ -12720,10 +12720,13 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
     state.engine.combat.attackers_declared = true;
     for &source in &state.engine.combat.attackers {
         let object = state.objects.get(source);
-        if trigger::triggers_for(object.card_def)
-            .iter()
-            .any(|def| matches!(def.condition, trigger::TriggerCondition::Attacks))
-        {
+        if trigger::triggers_for(object.card_def).iter().any(|def| {
+            matches!(
+                def.condition,
+                trigger::TriggerCondition::Attacks
+                    | trigger::TriggerCondition::AttacksWithControllerGraveyardCardCountAtLeast(_)
+            )
+        }) {
             let event = CommittedEvent::DeclaredAttacker {
                 source,
                 source_zone_change_count: object.zone_change_count,
