@@ -487,7 +487,7 @@ fn unicorn_triggers_are_not_targets_and_refer_to_the_exact_entrant() {
         drain(&mut surface, &mut state);
         assert_eq!(
             state.objects.get(entrant).counters.plus1_plus1,
-            i16::from(!blink_entrant)
+            i32::from(!blink_entrant)
         );
     }
 }
