@@ -17,6 +17,13 @@ compiled executable. Rust steps use Bash to propagate each native failure.
 The existing Ubuntu job remains live; publish after it finishes. Corrected
 end-to-end CI remains required.
 
+The full failed job log and exact snapshot source are sealed at
+`E:/mtg-fdn-fixtures/fdn-draw-ci-timing-failure-001`, with a verified independent
+mirror at `C:/Users/Jack/fdn-draw-ci-timing-failure-001-sealed`.
+Each copy is276505bytes, under its16MiB cap with60GiB reserves checked.
+Log SHA-256 is `f4e36ca083540062079d92ac1cd74ccfd634994d9230296e66d83b4d6a2baad6`.
+The original failed result is retained; the isolated timing result is pending.
+
 Strix Lookout, Mischievous Mystic and Faerie Token are implemented at
 `99171529`, with focused test corrections at `95b4a94a` and `84675f3b`.
 Matching committed HaleysPC source is
