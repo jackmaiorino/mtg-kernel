@@ -30,7 +30,11 @@ later; source departure and pending-choice restore; and duplicate Scion
 legend choices. Include focused XMage counterparts, catalog/default
 compatibility, prior gameplay, external natural-terminal replay and CI.
 
-Publish the next FDN catalog identity only after its generated hash is
-known. The Koma v42 identity remains recognized for read-only history and
-refused for mutation against the new catalog. Current status: design and
-core rules preparation; implementation verification is not complete.
+The core and nine new gameplay checks compiled on HaleysPC in
+`fdn-kiora-preflight-001`, 29.74 seconds. Generated FDN v43 hash is
+`5a8469de3061a1fb`. Runtime checks and native catalog registration remain
+pending. Publish the next FDN catalog identity with its read-only
+predecessor profile. The Koma v42 identity remains recognized for read-only history and
+refused for mutation against the new catalog. Current status: core implementation and test compilation passed;
+gameplay, catalog/default compatibility and XMage verification are not
+complete. Owned remote source commit: `9850ab9188cc5fe3584faaa5531d19e6166faaf3`.
