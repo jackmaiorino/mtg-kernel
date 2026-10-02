@@ -213,7 +213,7 @@ fn opponent_owner_chooses_exact_top_or_bottom_before_caster_surveils() {
         assert_eq!(state.players[0].library, own_before);
         assert_eq!(top, own_before[0]);
         assert_eq!(state.step, Step::Main1);
-        engine::step(&mut state, Action::FinishEffectTargets).unwrap();
+        engine::step(&mut state, Action::FinishEffectSelection).unwrap();
         finish(&mut state);
         assert_eq!(state.objects.get(spell).zone, Zone::Graveyard);
         assert_eq!(state.objects.get(target).zone, Zone::Library);
@@ -234,7 +234,7 @@ fn owner_differs_from_controller_and_receives_the_card_in_their_library() {
     surveil_choice(&mut state);
     assert_eq!(state.players[1].library[0], target);
     assert!(!state.players[0].library.contains(&target));
-    engine::step(&mut state, Action::FinishEffectTargets).unwrap();
+    engine::step(&mut state, Action::FinishEffectSelection).unwrap();
     finish(&mut state);
 }
 
@@ -252,7 +252,7 @@ fn own_top_target_can_be_kept_or_put_in_graveyard_by_surveil() {
         let action = if graveyard {
             Action::ChooseEffectTarget(Target::Object(top))
         } else {
-            Action::FinishEffectTargets
+            Action::FinishEffectSelection
         };
         engine::step(&mut state, action).unwrap();
         finish(&mut state);
@@ -343,7 +343,7 @@ fn a_token_target_departs_and_does_not_remain_in_its_owners_library() {
         owner_choice(&mut state, PlayerId::P1);
         engine::step(&mut state, Action::ChooseEffectOption(option)).unwrap();
         surveil_choice(&mut state);
-        engine::step(&mut state, Action::FinishEffectTargets).unwrap();
+        engine::step(&mut state, Action::FinishEffectSelection).unwrap();
         finish(&mut state);
         assert!(!state.players[1].battlefield.contains(&target));
         assert!(!state.players[1].library.contains(&target));
@@ -374,7 +374,7 @@ fn ward_payment_resolves_before_the_owner_placement_choice() {
     assert_eq!(state.players[0].mana_pool, [0; 6]);
     engine::step(&mut state, Action::ChooseEffectOption(1)).unwrap();
     surveil_choice(&mut state);
-    engine::step(&mut state, Action::FinishEffectTargets).unwrap();
+    engine::step(&mut state, Action::FinishEffectSelection).unwrap();
     finish(&mut state);
 }
 
@@ -389,7 +389,7 @@ fn pending_owner_choice_restores_with_the_same_selected_placement_and_surveil() 
         for instance in [&mut state, &mut copy] {
             engine::step(instance, Action::ChooseEffectOption(option)).unwrap();
             surveil_choice(instance);
-            engine::step(instance, Action::FinishEffectTargets).unwrap();
+            engine::step(instance, Action::FinishEffectSelection).unwrap();
             finish(instance);
         }
         assert_eq!(state.state_hash(), copy.state_hash());
@@ -410,7 +410,7 @@ fn pending_private_surveil_choice_restores_for_keep_or_graveyard() {
             let action = if graveyard {
                 Action::ChooseEffectTarget(Target::Object(top))
             } else {
-                Action::FinishEffectTargets
+                Action::FinishEffectSelection
             };
             engine::step(instance, action).unwrap();
             finish(instance);
@@ -435,7 +435,7 @@ fn answered_owner_and_surveil_frames_restore_before_their_moves() {
         for instance in [&mut state, &mut copy] {
             if owner_answer {
                 surveil_choice(instance);
-                engine::step(instance, Action::FinishEffectTargets).unwrap();
+                engine::step(instance, Action::FinishEffectSelection).unwrap();
             }
             finish(instance);
         }
