@@ -4,6 +4,7 @@
 //! suppression. Schema 2 explicitly opts into engine priority windows.
 //! Schema 3 adds Foundations damage assignment and trample. These modes
 //! retain the unconditional opening hand and policy V5 action representation.
+//! Schema 4 adds London mulligans before normal turn progression.
 //! This plumbing does not claim complete Limited rules or FDN support.
 
 use crate::card_def::{card_id_by_name, CARD_DEFS, KERNEL_CARDDB_HASH};
@@ -21,6 +22,7 @@ pub const LIMITED_PROTOCOL_V1: &str = "kernel_limited_jsonl";
 pub const LIMITED_SCHEMA_V1: u32 = 1;
 pub const LIMITED_ENGINE_PRIORITY_SCHEMA_V1: u32 = 2;
 pub const LIMITED_FOUNDATIONS_COMBAT_SCHEMA_V1: u32 = 3;
+pub const LIMITED_LONDON_MULLIGANS_SCHEMA_V1: u32 = 4;
 /// A process input bound, not a Magic format rule.
 pub const MAX_CUSTOM_DECK_CARDS_V1: usize = 10_000;
 pub const MAX_LIMITED_LINE_BYTES_V1: usize = 8 * 1024 * 1024;
@@ -149,6 +151,8 @@ pub struct LimitedReplyV1 {
     pub priority_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub combat_rules: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mulligan_rules: Option<String>,
     pub request_id: Option<String>,
     pub kernel_version: String,
     pub card_db_hash: u64,
@@ -163,6 +167,7 @@ impl LimitedReplyV1 {
             schema_version: LIMITED_SCHEMA_V1,
             priority_mode: None,
             combat_rules: None,
+            mulligan_rules: None,
             request_id,
             kernel_version: KERNEL_VERSION.to_string(),
             card_db_hash: KERNEL_CARDDB_HASH,
@@ -206,6 +211,7 @@ impl LimitedReplyV1 {
 pub struct LimitedJsonlServerV1 {
     priority_mode: PriorityModeV1,
     foundations_combat: bool,
+    london_mulligans: bool,
     active: Option<RlEpisodeSessionV1>,
     /// The immediate exchange only, matching the existing JSONL retry model.
     last_exchange: Option<(LimitedRequestV1, String)>,
@@ -233,7 +239,20 @@ impl LimitedJsonlServerV1 {
         }
     }
 
+    /// Full engine priority, Foundations combat and two-player London mulligans.
+    pub fn new_with_london_mulligans_v1() -> Self {
+        Self {
+            priority_mode: PriorityModeV1::EngineWindowsV1,
+            foundations_combat: true,
+            london_mulligans: true,
+            ..Self::default()
+        }
+    }
+
     fn schema_version(&self) -> u32 {
+        if self.london_mulligans {
+            return LIMITED_LONDON_MULLIGANS_SCHEMA_V1;
+        }
         if self.foundations_combat {
             return LIMITED_FOUNDATIONS_COMBAT_SCHEMA_V1;
         }
@@ -245,6 +264,9 @@ impl LimitedJsonlServerV1 {
 
     fn serialize_reply(&self, mut reply: LimitedReplyV1) -> String {
         reply.schema_version = self.schema_version();
+        if self.london_mulligans {
+            reply.mulligan_rules = Some("london_v1".to_string());
+        }
         if self.foundations_combat {
             reply.combat_rules = Some("foundations_v1".to_string());
         }
@@ -330,16 +352,31 @@ impl LimitedJsonlServerV1 {
                     }
                 }
                 let deck_ids = [&ids[0], &ids[1]].map(|deck| content_identity(deck));
-                match RlEpisodeSessionV1::reset_with_custom_decks_v1(
-                    *episode_id,
-                    *env_seed,
-                    *max_physical_decisions,
-                    *max_policy_steps,
-                    deck_ids,
-                    [&ids[0], &ids[1]],
-                    self.priority_mode,
-                    self.foundations_combat,
-                ) {
+                let session = if self.london_mulligans {
+                    RlEpisodeSessionV1::reset_with_custom_decks_and_london_v1(
+                        *episode_id,
+                        *env_seed,
+                        *max_physical_decisions,
+                        *max_policy_steps,
+                        deck_ids,
+                        [&ids[0], &ids[1]],
+                        self.priority_mode,
+                        self.foundations_combat,
+                        true,
+                    )
+                } else {
+                    RlEpisodeSessionV1::reset_with_custom_decks_v1(
+                        *episode_id,
+                        *env_seed,
+                        *max_physical_decisions,
+                        *max_policy_steps,
+                        deck_ids,
+                        [&ids[0], &ids[1]],
+                        self.priority_mode,
+                        self.foundations_combat,
+                    )
+                };
+                match session {
                     Ok(session) => {
                         let reply = LimitedReplyV1::state(request_id, session.current_response());
                         self.active = Some(session);
@@ -379,6 +416,83 @@ impl LimitedJsonlServerV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn london_session_snapshot_restores_pending_bottom_menu_binding_and_transition() {
+        let cards = [card_id_by_name("Forest").unwrap(); 40];
+        let mut session = RlEpisodeSessionV1::reset_with_custom_decks_and_london_v1(
+            7,
+            123,
+            8192,
+            16384,
+            [content_identity(&cards), content_identity(&cards)],
+            [&cards, &cards],
+            PriorityModeV1::EngineWindowsV1,
+            true,
+            true,
+        )
+        .unwrap();
+        for action_index in [1, 0] {
+            let RlSessionResponseV1::Decision(decision) = session.current_response() else {
+                panic!("opening decision")
+            };
+            let action = &decision.legal_actions[action_index];
+            session
+                .step(
+                    decision.episode_id,
+                    decision.step,
+                    action.selected_index,
+                    &action.stable_id,
+                )
+                .unwrap();
+        }
+        let before = session.current_response();
+        let RlSessionResponseV1::Decision(decision) = &before else {
+            panic!("bottom decision")
+        };
+        assert_eq!(decision.legal_actions.len(), 7);
+        assert!(matches!(
+            decision.legal_actions[0].semantic,
+            crate::rl::ActionSemanticV1::ChooseLondonBottom { remaining: 1, .. }
+        ));
+        let snapshot = session.snapshot_v5();
+        let before_hash = session.privileged_environment_hash();
+        let action = &decision.legal_actions[0];
+        assert!(session
+            .step(
+                decision.episode_id,
+                decision.step,
+                action.selected_index,
+                "stale"
+            )
+            .is_err());
+        assert_eq!(session.current_response(), before);
+        assert_eq!(session.privileged_environment_hash(), before_hash);
+        let after = session
+            .step(
+                decision.episode_id,
+                decision.step,
+                action.selected_index,
+                &action.stable_id,
+            )
+            .unwrap();
+        let after_hash = session.privileged_environment_hash();
+        session.restore_v5(&snapshot);
+        assert_eq!(session.current_response(), before);
+        assert_eq!(session.privileged_environment_hash(), before_hash);
+        assert_eq!(
+            session
+                .step(
+                    decision.episode_id,
+                    decision.step,
+                    action.selected_index,
+                    &action.stable_id
+                )
+                .unwrap(),
+            after
+        );
+        assert_eq!(session.privileged_environment_hash(), after_hash);
+    }
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]

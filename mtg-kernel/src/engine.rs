@@ -1249,6 +1249,15 @@ pub enum Decision {
         mode_count: u8,
         legal_modes: Vec<u8>,
     },
+    ChooseLondonMulligan {
+        player: PlayerId,
+        mulligan_count: u8,
+    },
+    ChooseLondonBottom {
+        player: PlayerId,
+        remaining: u8,
+        candidates: Vec<ObjectId>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1330,6 +1339,10 @@ pub enum Action {
     },
     ChooseLegendPermanent(ObjectId),
     ChooseTriggerMode(u8),
+    ChooseLondonMulligan {
+        mulligan: bool,
+    },
+    ChooseLondonBottom(ObjectId),
 }
 
 const CHAIN_COPY_COST: Cost = Cost {
@@ -5769,6 +5782,18 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
         }
         if let Some((mechanic, source)) = state.engine.halted {
             return Decision::Halted { mechanic, source };
+        }
+
+        if crate::london_mulligan_v1::has_pending(state) {
+            match crate::london_mulligan_v1::drain_or_decide(state) {
+                Ok(Some(decision)) => return decision,
+                Ok(None) => continue,
+                Err(_) => {
+                    state.engine.halted =
+                        Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                    continue;
+                }
+            }
         }
 
         if state.pending_legend_rule_v1.is_some() {
@@ -11372,6 +11397,9 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    if crate::london_mulligan_v1::has_pending(state) {
+        return crate::london_mulligan_v1::answer(state, action);
+    }
     if state.pending_legend_rule_v1.is_some() {
         return match action {
             Action::ChooseLegendPermanent(keep) => crate::legend_rule_v1::answer(state, keep),
@@ -11468,6 +11496,9 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
             Ok(())
         }
         Action::ChooseLegendPermanent(_) => Err("no legend-rule choice is pending".into()),
+        Action::ChooseLondonMulligan { .. } | Action::ChooseLondonBottom(_) => {
+            Err("no London mulligan choice is pending".into())
+        }
         Action::ChooseCombatDamageRange { .. } => Err("no combat damage choice is pending".to_string()),
         Action::Pass => {
             let p = state.priority_player;

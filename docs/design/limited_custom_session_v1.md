@@ -59,10 +59,24 @@ transcript SHA-256 and terminal counts. The two land-only fixtures test deck
 plumbing, shuffle/draw, choices, terminal reporting and replay determinism.
 They are not FDN gameplay or playing-strength evidence.
 
-The current interface still uses unconditional seven-card opening hands and
-policy V5's suppressed priority windows. Mulligans, complete Limited combat,
-planeswalkers, the FDN cards and fair unknown-deck sampling remain subsequent
-milestones. No existing trainer or evaluation launcher is wired to this binary.
+Schema 1 retains unconditional seven-card opening hands and policy V5's
+suppressed priority windows. Schema 2 adds engine priority; schema 3 adds
+Foundations combat. Schema 4 adds two-player London mulligans and is selected
+with `--london-mulligans-v1`. Its replies identify `mulligan_rules: london_v1`,
+`combat_rules: foundations_v1` and `priority_mode: engine_windows_v1`.
+
+The schema-4 opening menu contains `choose_london_mulligan` actions with
+`mulligan: false` (keep) and `mulligan: true`. Both announcements precede each
+redraw. A mulligan redraws seven, then exposes `choose_london_bottom` actions
+one card at a time, before the next announcement round. Selection order is
+the library suffix order, from its nearer card to its deepest card. Counts,
+kept status and phase are public; each acting player sees their own hand and
+privately known bottom cards. Pregame snapshots retain exact hand incarnations,
+round state and RNG. Earlier schemas omit the added state/projection fields.
+
+Full-set coverage, draft/deck construction and fair unknown-deck sampling remain
+later milestones. No existing trainer or evaluation launcher is wired to this
+binary. The schema-4 rules and external tests must pass before claiming support.
 
 ## Verification
 

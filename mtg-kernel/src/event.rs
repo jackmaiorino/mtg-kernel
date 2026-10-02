@@ -220,6 +220,15 @@ impl ProposedEvent {
             touched_by: Vec::new(),
         })
     }
+    /// A privately selected bottom card is known only to its owner.
+    pub fn private_bottom_library_insert(object: ObjectId) -> ProposedEvent {
+        let mut event = Self::private_top_library_insert(object);
+        if let ProposedEvent::ZoneChange(proposal) = &mut event {
+            proposal.library_placement = LibraryPlacement::Bottom;
+        }
+        event
+    }
+
     /// Moves one publicly identified object to an exact position in its
     /// owner's library. Both observers retain that public identity at its
     /// new incarnation while every pre-existing known position shifts
