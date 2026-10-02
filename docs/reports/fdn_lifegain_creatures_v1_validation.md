@@ -12,13 +12,13 @@ See the [rules contract](../design/fdn_lifegain_creatures_v1.md).
 | Pending decisions | All six custom-session restore checks passed. A real 40-card custom deck reaches the returned-Aura attachment choice; restored response, legal actions, environment hash and next transition match. |
 | Catalog | All 46 definition and 133 record checks passed; three existing record tests remain ignored. Live v39 is `3f6b7e8df71f3195`. Earlier catalog literals remain readable. Historical v34 remains `d2b479e9d5990f07`. |
 | Compatibility | All 28 default state checks, exact environment-hash golden and frozen v32 CardDB golden passed. The native flat refusal check passed, including an actual Exemplar trigger-use ledger, with destination buffers unchanged. Frozen flat source bytes are unchanged. |
-| Build/lint | Feature all-target Clippy, default workspace Clippy and combined Limited/production release Clippy passed with warnings denied. The external release binary build is pending in phase five of `fdn-lifegain-pair-production-001`. |
+| Build/lint | Feature all-target Clippy, default workspace Clippy and combined Limited/production release Clippy passed with warnings denied. The external release binary built; all five production-runner phases exited zero. |
 | Python | All 34 focused importer, custom client, flat-V2 golden and Pauper-manifest checks passed using the existing Torch environment. |
 | Events | All 14 feature event checks passed. Positive gains emit events after prevention; simultaneous lifelink damage is grouped by source and controller. |
 | XMage | All six matching scenarios passed at Mage `b273481ec8a`, based on `a5c90fe180021e70e2a644ade00eeab07f857a40`. Surefire reports zero failures/errors/skips and reactor BUILD SUCCESS. [Parity PR #4](https://github.com/jackmaiorino/mage/pull/4) contains the tests and report. |
 | Production boundaries | All 15 Windows release checks passed: two v32 refusals, twelve earlier-FDN publisher/resume refusals and live v39 construct/seal/decode/validate round trip. The runner uses clean committed remote source and the strict source guard. |
-| External replay | Pending release build. The prepared two-game check uses seed 123, episode 7, and a 40-card deck containing 20 Plains, ten Exemplars and ten Healers. It requires natural terminals, both card names cast, paid kicker and identical transcripts. |
-| Hosted CI | Not yet dispatched for this new card pair. Passing checks above establish their stated scope only. |
+| External replay | Two seed-123/episode-7 games ended naturally at 379 policy steps and 370 physical decisions, with identical full results and transcripts. Each cast six Exemplars and seven Healers, and paid kicker three times. |
+| Hosted CI | [PR #128](https://github.com/jackmaiorino/mtg-kernel/pull/128), head `9d1f5eb1`, run `36966637290`: queued when this report was updated. Keep draft until hosted validation passes. |
 
 The six XMage cases cover two separate gains from Dazzling Angel, one
 multi-counter placement from Felling Blow, draws on both players' turns,
@@ -27,6 +27,13 @@ Bind Monster return onto an opposing hexproof creature. The last case
 also has an opposing protected creature; the Aura chooses the hexproof
 host, attaches before its entry ability, taps that host and deals its
 entry damage to the Healer's controller.
+
+The external transport/replay deck contains 20 Plains, ten Exemplars and
+ten Healers. Its natural outcome is `p1_win`. The tested binary has a
+hash-verified cold copy at
+`E:/pinned-binaries/adf19400bfc000f04238c0881170bba70b247b18359da04425f93419bd092b13/kernel_limited_env.exe`.
+This constructed check does not establish completion of either original
+fixture deck.
 
 Original fixture coverage is UG 29/40 and WG 34/40; their pinned bytes are
 unchanged. Eleven distinct fixture names remain unsupported: Cackling
@@ -56,6 +63,9 @@ compute was launched.
 | Frozen flat v2 source | `080e417c010c51e04b8dac82574503e2c4a1d38669d15f1019ee82f7a7105e0a` |
 | XMage test source | `89a6a8f6c52645f783493d9f780c3fdda31bb2ce3f0912fabc558777835bb739` |
 | XMage result XML | `73d474c78750e1c83dd1d27d2516f51b122e081890cbdeed0574c1ab1374a8fa` |
+| External input deck | `ff627790ec926253368d242e268cbe122ef4b6042efdb630c8416474580c9609` |
+| Tested binary | `adf19400bfc000f04238c0881170bba70b247b18359da04425f93419bd092b13` |
+| External transcript | `702442950b19a22fd7de577947c3380f8bb9a7c2d8952afff07f20edf04f04d2` |
 
 Logs stay outside Git under `C:/Users/haley/`:
 `fdn-lifegain-pair-checks-001-{1,2,3}.log/.log.exit`,
@@ -64,7 +74,10 @@ Logs stay outside Git under `C:/Users/haley/`:
 `fdn-lifegain-pair-default-001-{1,2,3,4}.log/.log.exit`,
 and `fdn-mage-lifegain-003.log/.exit`.
 The completed production checks are
-`fdn-lifegain-pair-production-001-{1,2,3,4}.log/.log.exit`.
+`fdn-lifegain-pair-production-001-{1,2,3,4,5}.log/.log.exit`;
+the runner's terminal file is `fdn-lifegain-pair-production-001.exit` (zero).
+External replay evidence is `fdn-lifegain-external-001.py/.json/.log/.exit`
+(zero).
 
 Earlier failures remain preserved. Focused iterations corrected test
 setup and the returned-Aura continuation guard. Broad checks found the
