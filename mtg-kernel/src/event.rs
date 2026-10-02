@@ -444,6 +444,11 @@ pub enum CommittedEvent {
         player: PlayerId,
         count: i32,
     },
+    /// Morbid is captured when this step begins, before any later death.
+    BeginningEndStep {
+        active_player: PlayerId,
+        creature_died_this_turn: bool,
+    },
 }
 
 fn initialize_entry_counters(state: &mut GameState, object: ObjectId, kicked: bool) {
@@ -795,6 +800,12 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
         ProposedEvent::ZoneChange(z) => {
             let from = state.objects.get(z.object).zone;
             let controller_before = state.objects.get(z.object).controller;
+            #[cfg(feature = "limited-fdn-fixtures")]
+            let creature_died = from == Zone::Battlefield
+                && z.to_zone == Zone::Graveyard
+                && crate::card_def::CARD_DEFS[state.objects.get(z.object).card_def as usize]
+                    .types_for_face(state.objects.get(z.object).v4.face_index)
+                    .contains(&crate::card_def::CardType::Creature);
             commit_zone_change(
                 state,
                 z.object,
@@ -806,6 +817,13 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
                 z.battlefield_face_index,
                 z.battlefield_controller,
             );
+            #[cfg(feature = "limited-fdn-fixtures")]
+            if creature_died && state.objects.get(z.object).zone == Zone::Graveyard {
+                state.creature_death_turn_v1 = Some(crate::state::CreatureDeathTurnV1 {
+                    turn: state.turn,
+                    active_player: state.active_player,
+                });
+            }
             CommittedEvent::ZoneChange {
                 object: z.object,
                 from,

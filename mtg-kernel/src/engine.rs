@@ -9922,6 +9922,10 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 object.v4.ability_uses_this_turn.clear();
             }
             state.trigger_uses_v1 = None;
+            #[cfg(feature = "limited-fdn-fixtures")]
+            {
+                state.creature_death_turn_v1 = None;
+            }
             // See `PlayPermissionExpiry`'s doc: the *holder's* own Untap
             // marks the start of their "next turn" for an "until end of
             // your next turn" impulse-draw permission (Clockwork
@@ -10025,6 +10029,18 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 crate::combat_damage_v1::start_first_wave(state);
             } else {
                 deal_combat_damage(state);
+            }
+        }
+        Step::End => {
+            #[cfg(feature = "limited-fdn-fixtures")]
+            {
+                let marker = event::CommittedEvent::BeginningEndStep {
+                    active_player: state.active_player,
+                    creature_died_this_turn: state.creature_died_this_turn_v1(),
+                };
+                state.engine.event_log.push(marker.clone());
+                state.engine.event_history.push(marker);
+                collect_and_queue_triggers(state);
             }
         }
         Step::Cleanup => {

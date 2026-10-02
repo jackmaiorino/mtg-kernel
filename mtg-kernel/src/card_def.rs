@@ -220,6 +220,7 @@ pub enum Subtype {
     /// Appended for Kiora and Scion of the Deep; existing ids remain fixed.
     Merfolk,
     Octopus,
+    Hyena,
 }
 
 impl Subtype {
@@ -298,6 +299,8 @@ impl Subtype {
         Subtype::Merfolk,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Octopus,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Hyena,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
