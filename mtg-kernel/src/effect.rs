@@ -225,6 +225,9 @@ pub enum EffectCond {
         subtype: Subtype,
         minimum_count: u8,
     },
+    /// Resolution-only check for a live, incarnation-bound spell target.
+    /// Legal targeting and payable counter-unless-pay choices remain available.
+    TargetSpellCanBeCountered(u8),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -11499,6 +11502,16 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
             Some(Target::Object(id)) => state.objects.get(*id).zone == *zone,
             _ => false,
         },
+        EffectCond::TargetSpellCanBeCountered(index) => {
+            eval_cond(&EffectCond::TargetInZone(*index, Zone::Stack), ctx, state)
+                && match ctx.targets.get(usize::from(*index)) {
+                    Some(Target::Object(object)) => {
+                        !crate::card_def::CARD_DEFS[state.objects.get(*object).card_def as usize]
+                            .spell_cannot_be_countered
+                    }
+                    _ => false,
+                }
+        }
         EffectCond::TargetIsColor(idx, _)
             if !ctx.target_incarnation_matches(*idx as usize, state) =>
         {

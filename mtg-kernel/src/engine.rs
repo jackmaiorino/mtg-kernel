@@ -9360,6 +9360,8 @@ fn apply_spell_departure(state: &mut GameState, departure: SpellDeparture) -> Re
 /// flashback/copy-aware departure contract; abilities leave the stack without
 /// moving their source or any already-paid cost object. An absent id is a
 /// valid no-op for a later Ward trigger whose targeter was already countered.
+/// A protected spell also remains untouched; Some returns the found item in
+/// that case, so counter-unless-payment effects do not treat it as stale.
 pub(crate) fn counter_stack_item_by_id(
     state: &mut GameState,
     stack_item_id: StackItemId,
@@ -9380,6 +9382,14 @@ pub(crate) fn counter_stack_item_by_id(
     };
     let item = state.stack[position].clone();
     validated_stack_item_target_spec(&item, state)?;
+    if item.kind == StackItemKind::Spell
+        && card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize]
+            .spell_cannot_be_countered
+    {
+        // Some means the bound target still exists. A protected spell remains
+        // on the stack after the attempt, so callers finish the effect normally.
+        return Ok(Some(item));
+    }
     let departure = if item.kind == StackItemKind::Spell {
         Some(plan_spell_departure(state, &item, Zone::Graveyard)?)
     } else {

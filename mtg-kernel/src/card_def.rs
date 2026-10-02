@@ -1022,6 +1022,9 @@ pub struct CardDef {
     /// Static Ward cost materialized when an opposing spell or ability
     /// finishes targeting this permanent. `None` means no implemented Ward.
     pub ward_cost: Option<WardCostDef>,
+    /// Printed protection applying to this card as a spell, including copies.
+    /// It does not protect the permanent's activated or triggered abilities.
+    pub spell_cannot_be_countered: bool,
     /// Printed Equipment behavior shared by attachments, effective
     /// characteristics, cast triggers, and RL continuous-effect projection.
     pub equipment: Option<EquipmentDef>,
@@ -2016,12 +2019,13 @@ mod tests {
         assert_eq!(counterspell.target_spec, TargetSpec::AnySpellOnStack);
         assert_eq!(dispel.target_spec, TargetSpec::InstantSpellOnStack);
         assert_eq!((counterspell.spell_effect)(), (dispel.spell_effect)());
+        #[cfg(not(feature = "limited-fdn-fixtures"))]
+        let expected_condition = EffectCond::TargetInZone(0, Zone::Stack);
+        #[cfg(feature = "limited-fdn-fixtures")]
+        let expected_condition = EffectCond::TargetSpellCanBeCountered(0);
         assert!(matches!(
             (counterspell.spell_effect)(),
-            Some(EffectOp::Conditional {
-                cond: EffectCond::TargetInZone(0, Zone::Stack),
-                ..
-            })
+            Some(EffectOp::Conditional { cond, .. }) if cond == expected_condition
         ));
     }
 

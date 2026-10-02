@@ -218,6 +218,23 @@ const HOMUNCULUS_HORDE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef
     ..etb_trigger(homunculus_horde_effect)
 }];
 
+const KOMA_WORLD_EATER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::DealsCombatDamageToPlayer,
+    ..etb_trigger(koma_coils_effect)
+}];
+
+fn koma_coils_effect() -> EffectOp {
+    let token_def = crate::card_def::card_id_by_name("Koma's Coil Token")
+        .expect("Koma's Coil Token in CARD_DEFS");
+    EffectOp::Sequence(vec![
+        EffectOp::CreateToken {
+            token_def,
+            controller: PlayerRef::Controller,
+        };
+        4
+    ])
+}
+
 fn homunculus_horde_effect() -> EffectOp {
     let token_def = crate::card_def::card_id_by_name("Homunculus Horde Token")
         .expect("Homunculus Horde Token in CARD_DEFS");
@@ -1163,6 +1180,7 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Clinquant Skymage" => &CLINQUANT_SKYMAGE_TRIGGERS,
         "Mischievous Mystic" => &MISCHIEVOUS_MYSTIC_TRIGGERS,
         "Homunculus Horde" | "Homunculus Horde Token" => &HOMUNCULUS_HORDE_TRIGGERS,
+        "Koma, World-Eater" => &KOMA_WORLD_EATER_TRIGGERS,
         "Dwynen's Elite" => &DWYNENS_ELITE_TRIGGERS,
         "Good-Fortune Unicorn" => &GOOD_FORTUNE_UNICORN_TRIGGERS,
         "Guarded Heir" => &GUARDED_HEIR_TRIGGERS,
