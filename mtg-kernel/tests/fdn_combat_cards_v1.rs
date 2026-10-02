@@ -121,13 +121,13 @@ fn declare(surface: &mut HarnessSurfaceV2, state: &mut GameState, attackers: Vec
 
 #[test]
 fn definitions_append_without_reusing_prior_card_ids() {
-    assert_eq!(CARD_DEFS.len(), 181);
+    assert_eq!(CARD_DEFS.len(), 211);
     for (offset, name) in ["Beast-Kin Ranger", "Overrun", "Dwynen, Gilt-Leaf Daen"]
         .into_iter()
         .enumerate()
     {
         let id = card_id_by_name(name).unwrap();
-        assert_eq!(usize::from(id), 178 + offset);
+        assert_eq!(usize::from(id), 208 + offset);
         assert_eq!(
             CARD_DEFS[usize::from(id)].capability,
             if offset == 2 {

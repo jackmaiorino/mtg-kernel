@@ -1,0 +1,6039 @@
+{
+ "schema": "kernel_pauper_sideboard_policy_draft/v1",
+ "status": "DRAFT for owner ratification (design ruling 3); not loaded by the kernel",
+ "source_workflow": "wf_e7ed6020-f45 (author, adversarial verify, repair, memo) on 2026-09-09",
+ "registered_75s": "registered_nine_75s.json",
+ "coverage": {
+  "ordered_matchups": "all_registered_deck_pairs",
+  "postboard_game_index_minimum": 2,
+  "game_indices_authored": [
+   2,
+   3
+  ],
+  "play_draw": "intentionally ignored; game 3 duplicates game 2"
+ },
+ "plans": [
+  {
+   "self_deck_id": "Wildfire",
+   "opponent_deck_id": "Wildfire",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Duress",
+     "card_id": 24,
+     "count": 3
+    },
+    {
+     "name": "Troublemaker Ouphe",
+     "card_id": 122,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Nihil Spellbomb",
+     "card_id": 79,
+     "count": 1
+    },
+    {
+     "name": "Eviscerator's Insight",
+     "card_id": 29,
+     "count": 1
+    },
+    {
+     "name": "Blood Fountain",
+     "card_id": 6,
+     "count": 1
+    },
+    {
+     "name": "Lembas",
+     "card_id": 65,
+     "count": 1
+    },
+    {
+     "name": "Makeshift Munitions",
+     "card_id": 69,
+     "count": 1
+    }
+   ],
+   "rationale": "Fixed per reviewer: Extract a Confession is removed from the plan. Confirmed against ExtractAConfession.java: it is a pure edict (opponent sacrifices a creature, or their highest-power creature with evidence collected) with zero interaction with instants or sorceries, so it never actually strips or answers Cast Down, Cleansing Wildfire, or Fanatical Offering as the prior rationale claimed; it can only ever pick off a mirror creature. Duress alone does the real work here, stripping the mirror's Cast Down, Cleansing Wildfire, or Fanatical Offering from hand before they resolve, while Troublemaker Ouphe's bargained ETB exiles an artifact land or Refurbished Familiar for tempo in a matchup thick with artifacts. With one fewer card coming in (5 for 5 instead of 6 for 6), only one Nihil Spellbomb needs to come out instead of two; Eviscerator's Insight, Blood Fountain, one Lembas, and Makeshift Munitions remain the weakest value pieces once both decks are racing to answer each other's removal rather than grinding card advantage.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Wildfire",
+   "opponent_deck_id": "Wildfire",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Duress",
+     "card_id": 24,
+     "count": 3
+    },
+    {
+     "name": "Troublemaker Ouphe",
+     "card_id": 122,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Nihil Spellbomb",
+     "card_id": 79,
+     "count": 1
+    },
+    {
+     "name": "Eviscerator's Insight",
+     "card_id": 29,
+     "count": 1
+    },
+    {
+     "name": "Blood Fountain",
+     "card_id": 6,
+     "count": 1
+    },
+    {
+     "name": "Lembas",
+     "card_id": 65,
+     "count": 1
+    },
+    {
+     "name": "Makeshift Munitions",
+     "card_id": 69,
+     "count": 1
+    }
+   ],
+   "rationale": "Fixed per reviewer: Extract a Confession is removed from the plan. Confirmed against ExtractAConfession.java: it is a pure edict (opponent sacrifices a creature, or their highest-power creature with evidence collected) with zero interaction with instants or sorceries, so it never actually strips or answers Cast Down, Cleansing Wildfire, or Fanatical Offering as the prior rationale claimed; it can only ever pick off a mirror creature. Duress alone does the real work here, stripping the mirror's Cast Down, Cleansing Wildfire, or Fanatical Offering from hand before they resolve, while Troublemaker Ouphe's bargained ETB exiles an artifact land or Refurbished Familiar for tempo in a matchup thick with artifacts. With one fewer card coming in (5 for 5 instead of 6 for 6), only one Nihil Spellbomb needs to come out instead of two; Eviscerator's Insight, Blood Fountain, one Lembas, and Makeshift Munitions remain the weakest value pieces once both decks are racing to answer each other's removal rather than grinding card advantage.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Wildfire",
+   "opponent_deck_id": "Rally",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Breath Weapon",
+     "card_id": 9,
+     "count": 2
+    },
+    {
+     "name": "Weather the Storm",
+     "card_id": 128,
+     "count": 3
+    },
+    {
+     "name": "Duress",
+     "card_id": 24,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Eviscerator's Insight",
+     "card_id": 29,
+     "count": 1
+    },
+    {
+     "name": "Blood Fountain",
+     "card_id": 6,
+     "count": 1
+    },
+    {
+     "name": "Nihil Spellbomb",
+     "card_id": 79,
+     "count": 2
+    },
+    {
+     "name": "Lembas",
+     "card_id": 65,
+     "count": 2
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 1
+    }
+   ],
+   "rationale": "Breath Weapon sweeps Rally's army of one-toughness haste goblins and vampires (Clockwork Percussionist, Voldaren Epicure, Goblin Bushwhacker, Goblin Tomb Raider), while Weather the Storm's life gain and Duress stripping Rally at the Hornburg blunt their alpha-strike finish. Eviscerator's Insight, Blood Fountain, two Nihil Spellbombs, two Lembas, and Nyxborn Hydra are cut because they are too slow and graveyard-irrelevant to matter before Rally's clock runs out.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Wildfire",
+   "opponent_deck_id": "Rally",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Breath Weapon",
+     "card_id": 9,
+     "count": 2
+    },
+    {
+     "name": "Weather the Storm",
+     "card_id": 128,
+     "count": 3
+    },
+    {
+     "name": "Duress",
+     "card_id": 24,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Eviscerator's Insight",
+     "card_id": 29,
+     "count": 1
+    },
+    {
+     "name": "Blood Fountain",
+     "card_id": 6,
+     "count": 1
+    },
+    {
+     "name": "Nihil Spellbomb",
+     "card_id": 79,
+     "count": 2
+    },
+    {
+     "name": "Lembas",
+     "card_id": 65,
+     "count": 2
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 1
+    }
+   ],
+   "rationale": "Breath Weapon sweeps Rally's army of one-toughness haste goblins and vampires (Clockwork Percussionist, Voldaren Epicure, Goblin Bushwhacker, Goblin Tomb Raider), while Weather the Storm's life gain and Duress stripping Rally at the Hornburg blunt their alpha-strike finish. Eviscerator's Insight, Blood Fountain, two Nihil Spellbombs, two Lembas, and Nyxborn Hydra are cut because they are too slow and graveyard-irrelevant to matter before Rally's clock runs out.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Wildfire",
+   "opponent_deck_id": "Affinity",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Troublemaker Ouphe",
+     "card_id": 122,
+     "count": 2
+    },
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 1
+    },
+    {
+     "name": "Duress",
+     "card_id": 24,
+     "count": 2
+    },
+    {
+     "name": "Breath Weapon",
+     "card_id": 9,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Eviscerator's Insight",
+     "card_id": 29,
+     "count": 1
+    },
+    {
+     "name": "Blood Fountain",
+     "card_id": 6,
+     "count": 1
+    },
+    {
+     "name": "Lembas",
+     "card_id": 65,
+     "count": 2
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 1
+    },
+    {
+     "name": "Nihil Spellbomb",
+     "card_id": 79,
+     "count": 1
+    }
+   ],
+   "rationale": "Fixed per reviewer: the prior plan's 'artifact-and-blue-heavy' description of Affinity was wrong. The registered 60 carries only 5 blue cards (Thoughtcast x4, Cryogen Relic x1) against 14 black cards (Reckoner's Bargain, Black Mage's Rod, Toxin Analysis, Refurbished Familiar, Fanatical Offering) and 7 red cards (Galvanic Blast, Krark-Clan Shaman); it is a black/red artifact deck with a light blue splash. That miscount had committed 2 of 6 slots to Pyroblast, a color hoser that can only ever interact with those same 5 blue cards, while Affinity's own Refurbished Familiar and Krark-Clan Shaman, 7 real recurring bodies, went unanswered. Confirmed via RefurbishedFamiliar.java (2/1) and KrarkClanShaman.java (1/1) and BreathWeapon.java (2 damage to each non-Dragon creature) that Breath Weapon kills both cleanly. Troublemaker Ouphe still exiles an artifact land, Myr Enforcer, or Black Mage's Rod, and Duress still pulls Reckoner's Bargain or Toxin Analysis before they can be cast. Pyroblast is trimmed to a single copy (still live against Thoughtcast or Cryogen Relic on the games it matters) and Breath Weapon comes in to hit the actual creature base. Cards_out are unchanged: Eviscerator's Insight, Blood Fountain, two Lembas, Nyxborn Hydra, and one Nihil Spellbomb remain the slowest value pieces that don't affect the artifact race.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Wildfire",
+   "opponent_deck_id": "Affinity",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Troublemaker Ouphe",
+     "card_id": 122,
+     "count": 2
+    },
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 1
+    },
+    {
+     "name": "Duress",
+     "card_id": 24,
+     "count": 2
+    },
+    {
+     "name": "Breath Weapon",
+     "card_id": 9,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Eviscerator's Insight",
+     "card_id": 29,
+     "count": 1
+    },
+    {
+     "name": "Blood Fountain",
+     "card_id": 6,
+     "count": 1
+    },
+    {
+     "name": "Lembas",
+     "card_id": 65,
+     "count": 2
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 1
+    },
+    {
+     "name": "Nihil Spellbomb",
+     "card_id": 79,
+     "count": 1
+    }
+   ],
+   "rationale": "Fixed per reviewer: the prior plan's 'artifact-and-blue-heavy' description of Affinity was wrong. The registered 60 carries only 5 blue cards (Thoughtcast x4, Cryogen Relic x1) against 14 black cards (Reckoner's Bargain, Black Mage's Rod, Toxin Analysis, Refurbished Familiar, Fanatical Offering) and 7 red cards (Galvanic Blast, Krark-Clan Shaman); it is a black/red artifact deck with a light blue splash. That miscount had committed 2 of 6 slots to Pyroblast, a color hoser that can only ever interact with those same 5 blue cards, while Affinity's own Refurbished Familiar and Krark-Clan Shaman, 7 real recurring bodies, went unanswered. Confirmed via RefurbishedFamiliar.java (2/1) and KrarkClanShaman.java (1/1) and BreathWeapon.java (2 damage to each non-Dragon creature) that Breath Weapon kills both cleanly. Troublemaker Ouphe still exiles an artifact land, Myr Enforcer, or Black Mage's Rod, and Duress still pulls Reckoner's Bargain or Toxin Analysis before they can be cast. Pyroblast is trimmed to a single copy (still live against Thoughtcast or Cryogen Relic on the games it matters) and Breath Weapon comes in to hit the actual creature base. Cards_out are unchanged: Eviscerator's Insight, Blood Fountain, two Lembas, Nyxborn Hydra, and one Nihil Spellbomb remain the slowest value pieces that don't affect the artifact race.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Wildfire",
+   "opponent_deck_id": "Elves",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Breath Weapon",
+     "card_id": 9,
+     "count": 2
+    },
+    {
+     "name": "Duress",
+     "card_id": 24,
+     "count": 3
+    },
+    {
+     "name": "Weather the Storm",
+     "card_id": 128,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Nihil Spellbomb",
+     "card_id": 79,
+     "count": 2
+    },
+    {
+     "name": "Eviscerator's Insight",
+     "card_id": 29,
+     "count": 1
+    },
+    {
+     "name": "Blood Fountain",
+     "card_id": 6,
+     "count": 1
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 1
+    },
+    {
+     "name": "Lembas",
+     "card_id": 65,
+     "count": 2
+    }
+   ],
+   "rationale": "Breath Weapon wipes Elves' wall of one-toughness mana dorks and go-wide creatures (Fyndhorn Elves, Elvish Mystic, Llanowar Elves, Priest of Titania, Quirion Ranger, Wellwisher), while Duress and Weather the Storm strip Lead the Stampede or Winding Way and buy life against the swarm. Graveyard-hate Nihil Spellbomb, Eviscerator's Insight, Blood Fountain, Nyxborn Hydra, and extra Lembas are cut since Elves never uses its graveyard and slow value can't keep pace with their board development.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Wildfire",
+   "opponent_deck_id": "Elves",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Breath Weapon",
+     "card_id": 9,
+     "count": 2
+    },
+    {
+     "name": "Duress",
+     "card_id": 24,
+     "count": 3
+    },
+    {
+     "name": "Weather the Storm",
+     "card_id": 128,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Nihil Spellbomb",
+     "card_id": 79,
+     "count": 2
+    },
+    {
+     "name": "Eviscerator's Insight",
+     "card_id": 29,
+     "count": 1
+    },
+    {
+     "name": "Blood Fountain",
+     "card_id": 6,
+     "count": 1
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 1
+    },
+    {
+     "name": "Lembas",
+     "card_id": 65,
+     "count": 2
+    }
+   ],
+   "rationale": "Breath Weapon wipes Elves' wall of one-toughness mana dorks and go-wide creatures (Fyndhorn Elves, Elvish Mystic, Llanowar Elves, Priest of Titania, Quirion Ranger, Wellwisher), while Duress and Weather the Storm strip Lead the Stampede or Winding Way and buy life against the swarm. Graveyard-hate Nihil Spellbomb, Eviscerator's Insight, Blood Fountain, Nyxborn Hydra, and extra Lembas are cut since Elves never uses its graveyard and slow value can't keep pace with their board development.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Wildfire",
+   "opponent_deck_id": "Spy",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Duress",
+     "card_id": 24,
+     "count": 3
+    },
+    {
+     "name": "Extract a Confession",
+     "card_id": 31,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Makeshift Munitions",
+     "card_id": 69,
+     "count": 1
+    },
+    {
+     "name": "Blood Fountain",
+     "card_id": 6,
+     "count": 1
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 1
+    },
+    {
+     "name": "Eviscerator's Insight",
+     "card_id": 29,
+     "count": 1
+    }
+   ],
+   "rationale": "Duress strips Dread Return, Winding Way, or Land Grant before Spy can assemble its self-mill-into-reanimation plan, and Extract a Confession forces a sacrifice that can pick off Balustrade Spy when it is their only relevant creature; the maindeck's four Nihil Spellbombs already cover graveyard hate so none is needed from the board. Makeshift Munitions, Blood Fountain, Nyxborn Hydra, and Eviscerator's Insight are cut because Spy's wall of high-toughness defenders (Overgrown Battlement, Saruli Caretaker, Wall of Roots) shrugs off small pings and slow card draw.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Wildfire",
+   "opponent_deck_id": "Spy",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Duress",
+     "card_id": 24,
+     "count": 3
+    },
+    {
+     "name": "Extract a Confession",
+     "card_id": 31,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Makeshift Munitions",
+     "card_id": 69,
+     "count": 1
+    },
+    {
+     "name": "Blood Fountain",
+     "card_id": 6,
+     "count": 1
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 1
+    },
+    {
+     "name": "Eviscerator's Insight",
+     "card_id": 29,
+     "count": 1
+    }
+   ],
+   "rationale": "Duress strips Dread Return, Winding Way, or Land Grant before Spy can assemble its self-mill-into-reanimation plan, and Extract a Confession forces a sacrifice that can pick off Balustrade Spy when it is their only relevant creature; the maindeck's four Nihil Spellbombs already cover graveyard hate so none is needed from the board. Makeshift Munitions, Blood Fountain, Nyxborn Hydra, and Eviscerator's Insight are cut because Spy's wall of high-toughness defenders (Overgrown Battlement, Saruli Caretaker, Wall of Roots) shrugs off small pings and slow card draw.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Wildfire",
+   "opponent_deck_id": "Burn",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Weather the Storm",
+     "card_id": 128,
+     "count": 4
+    },
+    {
+     "name": "Duress",
+     "card_id": 24,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Nihil Spellbomb",
+     "card_id": 79,
+     "count": 3
+    },
+    {
+     "name": "Eviscerator's Insight",
+     "card_id": 29,
+     "count": 1
+    },
+    {
+     "name": "Blood Fountain",
+     "card_id": 6,
+     "count": 1
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 1
+    },
+    {
+     "name": "Makeshift Munitions",
+     "card_id": 69,
+     "count": 1
+    }
+   ],
+   "rationale": "Weather the Storm's storm-doubled life gain directly answers Burn's damage race and Duress strips a Lightning Bolt or Fireblast before it can close out the game. Three Nihil Spellbombs, Eviscerator's Insight, Blood Fountain, Nyxborn Hydra, and Makeshift Munitions are too slow or graveyard-focused to matter before Burn's clock kills us.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Wildfire",
+   "opponent_deck_id": "Burn",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Weather the Storm",
+     "card_id": 128,
+     "count": 4
+    },
+    {
+     "name": "Duress",
+     "card_id": 24,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Nihil Spellbomb",
+     "card_id": 79,
+     "count": 3
+    },
+    {
+     "name": "Eviscerator's Insight",
+     "card_id": 29,
+     "count": 1
+    },
+    {
+     "name": "Blood Fountain",
+     "card_id": 6,
+     "count": 1
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 1
+    },
+    {
+     "name": "Makeshift Munitions",
+     "card_id": 69,
+     "count": 1
+    }
+   ],
+   "rationale": "Weather the Storm's storm-doubled life gain directly answers Burn's damage race and Duress strips a Lightning Bolt or Fireblast before it can close out the game. Three Nihil Spellbombs, Eviscerator's Insight, Blood Fountain, Nyxborn Hydra, and Makeshift Munitions are too slow or graveyard-focused to matter before Burn's clock kills us.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Wildfire",
+   "opponent_deck_id": "Terror",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 3
+    },
+    {
+     "name": "Duress",
+     "card_id": 24,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Nihil Spellbomb",
+     "card_id": 79,
+     "count": 2
+    },
+    {
+     "name": "Eviscerator's Insight",
+     "card_id": 29,
+     "count": 1
+    },
+    {
+     "name": "Blood Fountain",
+     "card_id": 6,
+     "count": 1
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 1
+    },
+    {
+     "name": "Makeshift Munitions",
+     "card_id": 69,
+     "count": 1
+    }
+   ],
+   "rationale": "Pyroblast blows out Counterspell, Tolarian Terror, or Cryptic Serpent since Terror's entire deck is blue, and Duress strips a Counterspell or Deem Inferior before it can protect their threats. Two Nihil Spellbombs, Eviscerator's Insight, Blood Fountain, Nyxborn Hydra, and Makeshift Munitions are cut as slow value or narrow pings that don't matter once we hold hard answers to their few real threats.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Wildfire",
+   "opponent_deck_id": "Terror",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 3
+    },
+    {
+     "name": "Duress",
+     "card_id": 24,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Nihil Spellbomb",
+     "card_id": 79,
+     "count": 2
+    },
+    {
+     "name": "Eviscerator's Insight",
+     "card_id": 29,
+     "count": 1
+    },
+    {
+     "name": "Blood Fountain",
+     "card_id": 6,
+     "count": 1
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 1
+    },
+    {
+     "name": "Makeshift Munitions",
+     "card_id": 69,
+     "count": 1
+    }
+   ],
+   "rationale": "Pyroblast blows out Counterspell, Tolarian Terror, or Cryptic Serpent since Terror's entire deck is blue, and Duress strips a Counterspell or Deem Inferior before it can protect their threats. Two Nihil Spellbombs, Eviscerator's Insight, Blood Fountain, Nyxborn Hydra, and Makeshift Munitions are cut as slow value or narrow pings that don't matter once we hold hard answers to their few real threats.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Wildfire",
+   "opponent_deck_id": "CawGates",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Troublemaker Ouphe",
+     "card_id": 122,
+     "count": 2
+    },
+    {
+     "name": "Duress",
+     "card_id": 24,
+     "count": 3
+    },
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Nihil Spellbomb",
+     "card_id": 79,
+     "count": 2
+    },
+    {
+     "name": "Eviscerator's Insight",
+     "card_id": 29,
+     "count": 1
+    },
+    {
+     "name": "Blood Fountain",
+     "card_id": 6,
+     "count": 1
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 1
+    },
+    {
+     "name": "Lembas",
+     "card_id": 65,
+     "count": 2
+    }
+   ],
+   "rationale": "Troublemaker Ouphe exiles Journey to Nowhere or The Modern Age, and Pyroblast and Duress take out Counterspell and their card-draw spells before CawGates can lock the game down with Basilisk Gate and Squadron Hawk. Nihil Spellbomb, Eviscerator's Insight, Blood Fountain, Nyxborn Hydra, and two Lembas are trimmed since graveyard hate and slow value do nothing against a control shell that wins on card advantage and evasive beats.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Wildfire",
+   "opponent_deck_id": "CawGates",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Troublemaker Ouphe",
+     "card_id": 122,
+     "count": 2
+    },
+    {
+     "name": "Duress",
+     "card_id": 24,
+     "count": 3
+    },
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Nihil Spellbomb",
+     "card_id": 79,
+     "count": 2
+    },
+    {
+     "name": "Eviscerator's Insight",
+     "card_id": 29,
+     "count": 1
+    },
+    {
+     "name": "Blood Fountain",
+     "card_id": 6,
+     "count": 1
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 1
+    },
+    {
+     "name": "Lembas",
+     "card_id": 65,
+     "count": 2
+    }
+   ],
+   "rationale": "Troublemaker Ouphe exiles Journey to Nowhere or The Modern Age, and Pyroblast and Duress take out Counterspell and their card-draw spells before CawGates can lock the game down with Basilisk Gate and Squadron Hawk. Nihil Spellbomb, Eviscerator's Insight, Blood Fountain, Nyxborn Hydra, and two Lembas are trimmed since graveyard hate and slow value do nothing against a control shell that wins on card advantage and evasive beats.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Wildfire",
+   "opponent_deck_id": "Faeries",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 3
+    },
+    {
+     "name": "Breath Weapon",
+     "card_id": 9,
+     "count": 2
+    },
+    {
+     "name": "Duress",
+     "card_id": 24,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Nihil Spellbomb",
+     "card_id": 79,
+     "count": 2
+    },
+    {
+     "name": "Eviscerator's Insight",
+     "card_id": 29,
+     "count": 1
+    },
+    {
+     "name": "Blood Fountain",
+     "card_id": 6,
+     "count": 1
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 1
+    },
+    {
+     "name": "Lembas",
+     "card_id": 65,
+     "count": 2
+    }
+   ],
+   "rationale": "Pyroblast picks off any Faeries creature or counterspell since their whole deck is blue, and Breath Weapon sweeps their board of one- and two-toughness fliers like Spellstutter Sprite and Faerie Miscreant while Duress strips a Counterspell before it protects their tempo plays. Nihil Spellbomb, Eviscerator's Insight, Blood Fountain, Nyxborn Hydra, and two Lembas are cut because Faeries never fills a graveyard and slow card selection can't keep pace with their evasive clock.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Wildfire",
+   "opponent_deck_id": "Faeries",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 3
+    },
+    {
+     "name": "Breath Weapon",
+     "card_id": 9,
+     "count": 2
+    },
+    {
+     "name": "Duress",
+     "card_id": 24,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Nihil Spellbomb",
+     "card_id": 79,
+     "count": 2
+    },
+    {
+     "name": "Eviscerator's Insight",
+     "card_id": 29,
+     "count": 1
+    },
+    {
+     "name": "Blood Fountain",
+     "card_id": 6,
+     "count": 1
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 1
+    },
+    {
+     "name": "Lembas",
+     "card_id": 65,
+     "count": 2
+    }
+   ],
+   "rationale": "Pyroblast picks off any Faeries creature or counterspell since their whole deck is blue, and Breath Weapon sweeps their board of one- and two-toughness fliers like Spellstutter Sprite and Faerie Miscreant while Duress strips a Counterspell before it protects their tempo plays. Nihil Spellbomb, Eviscerator's Insight, Blood Fountain, Nyxborn Hydra, and two Lembas are cut because Faeries never fills a graveyard and slow card selection can't keep pace with their evasive clock.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Rally",
+   "opponent_deck_id": "Wildfire",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Cast into the Fire",
+     "card_id": 12,
+     "count": 2
+    },
+    {
+     "name": "Searing Blaze",
+     "card_id": 101,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Reckless Impulse",
+     "card_id": 93,
+     "count": 2
+    },
+    {
+     "name": "Experimental Synthesizer",
+     "card_id": 30,
+     "count": 1
+    }
+   ],
+   "rationale": "Cast into the Fire clears Wildfire's small blockers (Krark-Clan Shaman, the 0/1 Eldrazi Spawn tokens off Writhing Chrysalis, 2/1 flying Refurbished Familiar) or exiles a Drossforge Bridge/Slagwoods Bridge to cripple their fragile fixing, while Searing Blaze adds a second removal-plus-reach line so we race past Cast Down and their card-draw engine (Ichor Wellspring, Nihil Spellbomb) before it grinds us out. Reckless Impulse and one Experimental Synthesizer are the weakest cuts since neither adds board presence, and this matchup is won with pressure and disruption, not incremental card selection, against a deck that already out-values us long-term.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Rally",
+   "opponent_deck_id": "Wildfire",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Cast into the Fire",
+     "card_id": 12,
+     "count": 2
+    },
+    {
+     "name": "Searing Blaze",
+     "card_id": 101,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Reckless Impulse",
+     "card_id": 93,
+     "count": 2
+    },
+    {
+     "name": "Experimental Synthesizer",
+     "card_id": 30,
+     "count": 1
+    }
+   ],
+   "rationale": "Cast into the Fire clears Wildfire's small blockers (Krark-Clan Shaman, the 0/1 Eldrazi Spawn tokens off Writhing Chrysalis, 2/1 flying Refurbished Familiar) or exiles a Drossforge Bridge/Slagwoods Bridge to cripple their fragile fixing, while Searing Blaze adds a second removal-plus-reach line so we race past Cast Down and their card-draw engine (Ichor Wellspring, Nihil Spellbomb) before it grinds us out. Reckless Impulse and one Experimental Synthesizer are the weakest cuts since neither adds board presence, and this matchup is won with pressure and disruption, not incremental card selection, against a deck that already out-values us long-term.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Rally",
+   "opponent_deck_id": "Rally",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "End the Festivities",
+     "card_id": 27,
+     "count": 2
+    },
+    {
+     "name": "Cast into the Fire",
+     "card_id": 12,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Reckless Impulse",
+     "card_id": 93,
+     "count": 4
+    }
+   ],
+   "rationale": "End the Festivities one-sidedly sweeps the mirror's mostly-1-toughness board (Human Soldier tokens, unkicked Goblin Bushwhacker, Voldaren Epicure, Clockwork Percussionist) while pinging the opponent's face, and Cast into the Fire kills two more of those bodies or a Great Furnace at instant speed to blunt their Galvanic Blast metalcraft. All four Reckless Impulse come out because in a mirror decided by who empties their hand onto the board first, a card-selection sorcery that does nothing on the stack is the weakest thing to be holding.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Rally",
+   "opponent_deck_id": "Rally",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "End the Festivities",
+     "card_id": 27,
+     "count": 2
+    },
+    {
+     "name": "Cast into the Fire",
+     "card_id": 12,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Reckless Impulse",
+     "card_id": 93,
+     "count": 4
+    }
+   ],
+   "rationale": "End the Festivities one-sidedly sweeps the mirror's mostly-1-toughness board (Human Soldier tokens, unkicked Goblin Bushwhacker, Voldaren Epicure, Clockwork Percussionist) while pinging the opponent's face, and Cast into the Fire kills two more of those bodies or a Great Furnace at instant speed to blunt their Galvanic Blast metalcraft. All four Reckless Impulse come out because in a mirror decided by who empties their hand onto the board first, a card-selection sorcery that does nothing on the stack is the weakest thing to be holding.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Rally",
+   "opponent_deck_id": "Affinity",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Cast into the Fire",
+     "card_id": 12,
+     "count": 2
+    },
+    {
+     "name": "Searing Blaze",
+     "card_id": 101,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Reckless Impulse",
+     "card_id": 93,
+     "count": 3
+    },
+    {
+     "name": "Chain Lightning",
+     "card_id": 13,
+     "count": 1
+    }
+   ],
+   "rationale": "Cast into the Fire exiles an artifact land (Drossforge Bridge, Silverbluff Bridge, Mistvault Bridge, Great Furnace) to slow their affinity cost reduction or picks off two 1-toughness bodies, while Searing Blaze snipes 2/1 flying Refurbished Familiar or chips a Myr Enforcer for 3 plus 3 to the dome. Three Reckless Impulse and the extra Chain Lightning are the cuts because they add nothing to our own artifact count, whereas keeping Experimental Synthesizer's bodies in play lets our own Galvanic Blast hit metalcraft's 4 damage to answer Myr Enforcer.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Rally",
+   "opponent_deck_id": "Affinity",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Cast into the Fire",
+     "card_id": 12,
+     "count": 2
+    },
+    {
+     "name": "Searing Blaze",
+     "card_id": 101,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Reckless Impulse",
+     "card_id": 93,
+     "count": 3
+    },
+    {
+     "name": "Chain Lightning",
+     "card_id": 13,
+     "count": 1
+    }
+   ],
+   "rationale": "Cast into the Fire exiles an artifact land (Drossforge Bridge, Silverbluff Bridge, Mistvault Bridge, Great Furnace) to slow their affinity cost reduction or picks off two 1-toughness bodies, while Searing Blaze snipes 2/1 flying Refurbished Familiar or chips a Myr Enforcer for 3 plus 3 to the dome. Three Reckless Impulse and the extra Chain Lightning are the cuts because they add nothing to our own artifact count, whereas keeping Experimental Synthesizer's bodies in play lets our own Galvanic Blast hit metalcraft's 4 damage to answer Myr Enforcer.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Rally",
+   "opponent_deck_id": "Elves",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "End the Festivities",
+     "card_id": 27,
+     "count": 2
+    },
+    {
+     "name": "Searing Blaze",
+     "card_id": 101,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Reckless Impulse",
+     "card_id": 93,
+     "count": 4
+    }
+   ],
+   "rationale": "End the Festivities wipes Elves' mana-dork start (0/1 Fyndhorn Elves, Elvish Mystic, Llanowar Elves, 1/1 Quirion Ranger) in one shot, and Searing Blaze kills a bigger dork or blocker like Priest of Titania while dealing 3 to the face, both cutting off the ramp that fuels Lead the Stampede and Generous Ent/Avenging Hunter. All four Reckless Impulse are cut since a slow card-selection spell does nothing to stop Elves going wide, and this matchup is won by clearing blockers and racing before their card advantage refills the board.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Rally",
+   "opponent_deck_id": "Elves",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "End the Festivities",
+     "card_id": 27,
+     "count": 2
+    },
+    {
+     "name": "Searing Blaze",
+     "card_id": 101,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Reckless Impulse",
+     "card_id": 93,
+     "count": 4
+    }
+   ],
+   "rationale": "End the Festivities wipes Elves' mana-dork start (0/1 Fyndhorn Elves, Elvish Mystic, Llanowar Elves, 1/1 Quirion Ranger) in one shot, and Searing Blaze kills a bigger dork or blocker like Priest of Titania while dealing 3 to the face, both cutting off the ramp that fuels Lead the Stampede and Generous Ent/Avenging Hunter. All four Reckless Impulse are cut since a slow card-selection spell does nothing to stop Elves going wide, and this matchup is won by clearing blockers and racing before their card advantage refills the board.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Rally",
+   "opponent_deck_id": "Spy",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Relic of Progenitus",
+     "card_id": 97,
+     "count": 4
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Reckless Impulse",
+     "card_id": 93,
+     "count": 2
+    },
+    {
+     "name": "Experimental Synthesizer",
+     "card_id": 30,
+     "count": 2
+    }
+   ],
+   "rationale": "Relic of Progenitus exiles a card from their graveyard each turn or wipes it outright, stripping the reanimation targets Dread Return needs and shutting down the self-mill plan built on Balustrade Spy, Lead the Stampede, and Winding Way. We accept the reviewer's fix and run all four copies instead of splitting with Searing Blaze: the original claim that Searing Blaze snipes 'a wall (Overgrown Battlement, Saruli Caretaker)' was wrong, Overgrown Battlement is a 0/4 that Searing Blaze's 1 or 3 damage can never kill, and Saruli Caretaker (0/3) only dies with landfall active. Searing Blaze's real best target, Balustrade Spy (2/3, dies only to the 3-damage landfall mode), is too conditional to earn a slot over graveyard hate that works every turn. Reckless Impulse and Experimental Synthesizer stay the cuts since disrupting the combo matters more than more card selection, and Spy's wall-heavy board already blunts our ground creatures on its own.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Rally",
+   "opponent_deck_id": "Spy",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Relic of Progenitus",
+     "card_id": 97,
+     "count": 4
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Reckless Impulse",
+     "card_id": 93,
+     "count": 2
+    },
+    {
+     "name": "Experimental Synthesizer",
+     "card_id": 30,
+     "count": 2
+    }
+   ],
+   "rationale": "Relic of Progenitus exiles a card from their graveyard each turn or wipes it outright, stripping the reanimation targets Dread Return needs and shutting down the self-mill plan built on Balustrade Spy, Lead the Stampede, and Winding Way. We accept the reviewer's fix and run all four copies instead of splitting with Searing Blaze: the original claim that Searing Blaze snipes 'a wall (Overgrown Battlement, Saruli Caretaker)' was wrong, Overgrown Battlement is a 0/4 that Searing Blaze's 1 or 3 damage can never kill, and Saruli Caretaker (0/3) only dies with landfall active. Searing Blaze's real best target, Balustrade Spy (2/3, dies only to the 3-damage landfall mode), is too conditional to earn a slot over graveyard hate that works every turn. Reckless Impulse and Experimental Synthesizer stay the cuts since disrupting the combo matters more than more card selection, and Spy's wall-heavy board already blunts our ground creatures on its own.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Rally",
+   "opponent_deck_id": "Burn",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "End the Festivities",
+     "card_id": 27,
+     "count": 2
+    },
+    {
+     "name": "Searing Blaze",
+     "card_id": 101,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Reckless Impulse",
+     "card_id": 93,
+     "count": 2
+    },
+    {
+     "name": "Experimental Synthesizer",
+     "card_id": 30,
+     "count": 1
+    }
+   ],
+   "rationale": "End the Festivities pings Burn's face for 1 and kills their 1-toughness creatures (Voldaren Epicure and Masked Meower are both 1/1) without needing a legal target. We accept the reviewer's fix and bring in Searing Blaze instead of a second Cast into the Fire: Cast into the Fire never touches the opponent's life total (its modes are 1 damage to up to two creatures, or exile an artifact), which contradicted our own framing that this matchup is a pure race where every card must contribute damage, while Searing Blaze always hits a creature and the face together and, with landfall active, its 3 damage is the one card here that can kill Guttersnipe (2/2) outright instead of just Voldaren Epicure or Masked Meower. Reckless Impulse and Experimental Synthesizer are still the weakest cards since neither affects the board or a life total in a matchup decided purely by clock speed.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Rally",
+   "opponent_deck_id": "Burn",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "End the Festivities",
+     "card_id": 27,
+     "count": 2
+    },
+    {
+     "name": "Searing Blaze",
+     "card_id": 101,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Reckless Impulse",
+     "card_id": 93,
+     "count": 2
+    },
+    {
+     "name": "Experimental Synthesizer",
+     "card_id": 30,
+     "count": 1
+    }
+   ],
+   "rationale": "End the Festivities pings Burn's face for 1 and kills their 1-toughness creatures (Voldaren Epicure and Masked Meower are both 1/1) without needing a legal target. We accept the reviewer's fix and bring in Searing Blaze instead of a second Cast into the Fire: Cast into the Fire never touches the opponent's life total (its modes are 1 damage to up to two creatures, or exile an artifact), which contradicted our own framing that this matchup is a pure race where every card must contribute damage, while Searing Blaze always hits a creature and the face together and, with landfall active, its 3 damage is the one card here that can kill Guttersnipe (2/2) outright instead of just Voldaren Epicure or Masked Meower. Reckless Impulse and Experimental Synthesizer are still the weakest cards since neither affects the board or a life total in a matchup decided purely by clock speed.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Rally",
+   "opponent_deck_id": "Terror",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Red Elemental Blast",
+     "card_id": 95,
+     "count": 2
+    },
+    {
+     "name": "Relic of Progenitus",
+     "card_id": 97,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Reckless Impulse",
+     "card_id": 93,
+     "count": 2
+    },
+    {
+     "name": "Experimental Synthesizer",
+     "card_id": 30,
+     "count": 2
+    }
+   ],
+   "rationale": "Red Elemental Blast counters Counterspell or Dispel to protect our plays, or blows up Tolarian Terror, Cryptic Serpent, or Murmuring Mystic outright, while Relic of Progenitus strips the instants and sorceries (Thought Scour, Mental Note, Ponder) from their graveyard that make those cost-reduced finishers cheap. Reckless Impulse and Experimental Synthesizer come out because they are spells that die to the same countermagic we are trying to play around, and this control matchup rewards disruption over more card selection.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Rally",
+   "opponent_deck_id": "Terror",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Red Elemental Blast",
+     "card_id": 95,
+     "count": 2
+    },
+    {
+     "name": "Relic of Progenitus",
+     "card_id": 97,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Reckless Impulse",
+     "card_id": 93,
+     "count": 2
+    },
+    {
+     "name": "Experimental Synthesizer",
+     "card_id": 30,
+     "count": 2
+    }
+   ],
+   "rationale": "Red Elemental Blast counters Counterspell or Dispel to protect our plays, or blows up Tolarian Terror, Cryptic Serpent, or Murmuring Mystic outright, while Relic of Progenitus strips the instants and sorceries (Thought Scour, Mental Note, Ponder) from their graveyard that make those cost-reduced finishers cheap. Reckless Impulse and Experimental Synthesizer come out because they are spells that die to the same countermagic we are trying to play around, and this control matchup rewards disruption over more card selection.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Rally",
+   "opponent_deck_id": "CawGates",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "End the Festivities",
+     "card_id": 27,
+     "count": 2
+    },
+    {
+     "name": "Red Elemental Blast",
+     "card_id": 95,
+     "count": 1
+    },
+    {
+     "name": "Cast into the Fire",
+     "card_id": 12,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Reckless Impulse",
+     "card_id": 93,
+     "count": 2
+    },
+    {
+     "name": "Experimental Synthesizer",
+     "card_id": 30,
+     "count": 2
+    }
+   ],
+   "rationale": "We accept the reviewer's fix: the claim that Prismatic Strands only stops combat damage was wrong. Its text (PrismaticStrands.java) is 'Prevent all damage that sources of the color of your choice would deal this turn,' so naming red blanks every red source that turn, our burn spells included, not just our attackers. End the Festivities and Cast into the Fire are exactly as vulnerable to a red Prismatic Strands as our creatures are; the plan wins on disruption and tempo, not by dodging the prevention. We also take the reviewer's swap of Searing Blaze for a second Cast into the Fire: its 1-damage-to-up-to-two-creatures mode kills two of Squadron Hawk or Sacred Cat (both 1/1) off one card at instant speed, better two-for-one value here than Searing Blaze's single target. End the Festivities still wipes the same 1-toughness bodies while pinging their face, and Red Elemental Blast still answers Counterspell or Spell Pierce off their blue manabase. Reckless Impulse and Experimental Synthesizer remain the cuts since they add no pressure against Journey to Nowhere and Thraben Charm, and every card here still dies to Guardian of the Guildpact's protection from monocolored, so the matchup comes down to clearing small blockers before that finisher matters.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Rally",
+   "opponent_deck_id": "CawGates",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "End the Festivities",
+     "card_id": 27,
+     "count": 2
+    },
+    {
+     "name": "Red Elemental Blast",
+     "card_id": 95,
+     "count": 1
+    },
+    {
+     "name": "Cast into the Fire",
+     "card_id": 12,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Reckless Impulse",
+     "card_id": 93,
+     "count": 2
+    },
+    {
+     "name": "Experimental Synthesizer",
+     "card_id": 30,
+     "count": 2
+    }
+   ],
+   "rationale": "We accept the reviewer's fix: the claim that Prismatic Strands only stops combat damage was wrong. Its text (PrismaticStrands.java) is 'Prevent all damage that sources of the color of your choice would deal this turn,' so naming red blanks every red source that turn, our burn spells included, not just our attackers. End the Festivities and Cast into the Fire are exactly as vulnerable to a red Prismatic Strands as our creatures are; the plan wins on disruption and tempo, not by dodging the prevention. We also take the reviewer's swap of Searing Blaze for a second Cast into the Fire: its 1-damage-to-up-to-two-creatures mode kills two of Squadron Hawk or Sacred Cat (both 1/1) off one card at instant speed, better two-for-one value here than Searing Blaze's single target. End the Festivities still wipes the same 1-toughness bodies while pinging their face, and Red Elemental Blast still answers Counterspell or Spell Pierce off their blue manabase. Reckless Impulse and Experimental Synthesizer remain the cuts since they add no pressure against Journey to Nowhere and Thraben Charm, and every card here still dies to Guardian of the Guildpact's protection from monocolored, so the matchup comes down to clearing small blockers before that finisher matters.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Rally",
+   "opponent_deck_id": "Faeries",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "End the Festivities",
+     "card_id": 27,
+     "count": 2
+    },
+    {
+     "name": "Red Elemental Blast",
+     "card_id": 95,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Reckless Impulse",
+     "card_id": 93,
+     "count": 2
+    },
+    {
+     "name": "Experimental Synthesizer",
+     "card_id": 30,
+     "count": 2
+    }
+   ],
+   "rationale": "End the Festivities wipes Faeries' mostly 1-toughness flying board (Faerie Seer, Spellstutter Sprite, Faerie Miscreant) in one shot while chipping the opponent's face, and Red Elemental Blast counters their Counterspell or Dispel, or kills a Spellstutter Sprite, protecting our own spells from their countermagic. Reckless Impulse and Experimental Synthesizer are the weakest cuts since they are themselves just spells vulnerable to Force Spike and Counterspell, and they add nothing that removal or a blue hoser doesn't already do better here.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Rally",
+   "opponent_deck_id": "Faeries",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "End the Festivities",
+     "card_id": 27,
+     "count": 2
+    },
+    {
+     "name": "Red Elemental Blast",
+     "card_id": 95,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Reckless Impulse",
+     "card_id": 93,
+     "count": 2
+    },
+    {
+     "name": "Experimental Synthesizer",
+     "card_id": 30,
+     "count": 2
+    }
+   ],
+   "rationale": "End the Festivities wipes Faeries' mostly 1-toughness flying board (Faerie Seer, Spellstutter Sprite, Faerie Miscreant) in one shot while chipping the opponent's face, and Red Elemental Blast counters their Counterspell or Dispel, or kills a Spellstutter Sprite, protecting our own spells from their countermagic. Reckless Impulse and Experimental Synthesizer are the weakest cuts since they are themselves just spells vulnerable to Force Spike and Counterspell, and they add nothing that removal or a blue hoser doesn't already do better here.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Affinity",
+   "opponent_deck_id": "Wildfire",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Gorilla Shaman",
+     "card_id": 46,
+     "count": 1
+    },
+    {
+     "name": "Unexpected Fangs",
+     "card_id": 124,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Hunter's Blowgun",
+     "card_id": 56,
+     "count": 1
+    },
+    {
+     "name": "Black Mage's Rod",
+     "card_id": 5,
+     "count": 1
+    }
+   ],
+   "rationale": "Wildfire's grind leans on a wall of zero- and one-mana-value artifacts (Drossforge Bridge, Slagwoods Bridge, Ichor Wellspring, Nihil Spellbomb, Blood Fountain), so Gorilla Shaman can blow those up for as little as one mana while Unexpected Fangs' permanent lifelink counter buys time through their Cast Down and Krark-Clan Shaman removal war. Black Mage's Rod and Hunter's Blowgun are the weakest cards here because their equipped creature is the first thing Cast Down answers, stranding an equipment that never gets to trigger.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Affinity",
+   "opponent_deck_id": "Wildfire",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Gorilla Shaman",
+     "card_id": 46,
+     "count": 1
+    },
+    {
+     "name": "Unexpected Fangs",
+     "card_id": 124,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Hunter's Blowgun",
+     "card_id": 56,
+     "count": 1
+    },
+    {
+     "name": "Black Mage's Rod",
+     "card_id": 5,
+     "count": 1
+    }
+   ],
+   "rationale": "Wildfire's grind leans on a wall of zero- and one-mana-value artifacts (Drossforge Bridge, Slagwoods Bridge, Ichor Wellspring, Nihil Spellbomb, Blood Fountain), so Gorilla Shaman can blow those up for as little as one mana while Unexpected Fangs' permanent lifelink counter buys time through their Cast Down and Krark-Clan Shaman removal war. Black Mage's Rod and Hunter's Blowgun are the weakest cards here because their equipped creature is the first thing Cast Down answers, stranding an equipment that never gets to trigger.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Affinity",
+   "opponent_deck_id": "Rally",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Hydroblast",
+     "card_id": 57,
+     "count": 3
+    },
+    {
+     "name": "Breath Weapon",
+     "card_id": 9,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Hunter's Blowgun",
+     "card_id": 56,
+     "count": 1
+    },
+    {
+     "name": "Black Mage's Rod",
+     "card_id": 5,
+     "count": 1
+    },
+    {
+     "name": "Fanatical Offering",
+     "card_id": 35,
+     "count": 1
+    },
+    {
+     "name": "Cryogen Relic",
+     "card_id": 18,
+     "count": 1
+    }
+   ],
+   "rationale": "Rally's whole clock is red (Goblin Bushwhacker, Burning-Tree Emissary, Voldaren Epicure, Lightning Bolt), so Hydroblast doubles as one-mana removal for their haste creatures or a counter for the burn spell aimed at our face, and Breath Weapon's two damage wipes their one-toughness swarm before Rally at the Hornburg or Bushwhacker can turn it lethal. Black Mage's Rod, Hunter's Blowgun, Fanatical Offering, and Cryogen Relic are too slow and equipment-dependent to matter before this deck's turn-three or turn-four kill.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Affinity",
+   "opponent_deck_id": "Rally",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Hydroblast",
+     "card_id": 57,
+     "count": 3
+    },
+    {
+     "name": "Breath Weapon",
+     "card_id": 9,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Hunter's Blowgun",
+     "card_id": 56,
+     "count": 1
+    },
+    {
+     "name": "Black Mage's Rod",
+     "card_id": 5,
+     "count": 1
+    },
+    {
+     "name": "Fanatical Offering",
+     "card_id": 35,
+     "count": 1
+    },
+    {
+     "name": "Cryogen Relic",
+     "card_id": 18,
+     "count": 1
+    }
+   ],
+   "rationale": "Rally's whole clock is red (Goblin Bushwhacker, Burning-Tree Emissary, Voldaren Epicure, Lightning Bolt), so Hydroblast doubles as one-mana removal for their haste creatures or a counter for the burn spell aimed at our face, and Breath Weapon's two damage wipes their one-toughness swarm before Rally at the Hornburg or Bushwhacker can turn it lethal. Black Mage's Rod, Hunter's Blowgun, Fanatical Offering, and Cryogen Relic are too slow and equipment-dependent to matter before this deck's turn-three or turn-four kill.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Affinity",
+   "opponent_deck_id": "Affinity",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Gorilla Shaman",
+     "card_id": 46,
+     "count": 1
+    },
+    {
+     "name": "Krark-Clan Shaman",
+     "card_id": 62,
+     "count": 1
+    },
+    {
+     "name": "Unexpected Fangs",
+     "card_id": 124,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Hunter's Blowgun",
+     "card_id": 56,
+     "count": 1
+    },
+    {
+     "name": "Fanatical Offering",
+     "card_id": 35,
+     "count": 1
+    },
+    {
+     "name": "Cryogen Relic",
+     "card_id": 18,
+     "count": 1
+    }
+   ],
+   "rationale": "Both copies of this deck live and die on their many mana-value-zero artifact lands and cheap artifacts for affinity and metalcraft, so Gorilla Shaman cheaply strips the opponent's manabase while a second Krark-Clan Shaman adds another repeatable answer in the small-creature trading war, and Unexpected Fangs' permanent lifelink counter swings a stalled board race. Hunter's Blowgun, Fanatical Offering, and Cryogen Relic are the least impactful cards on either side of a mirror decided by who runs out of cheap artifacts and removal first.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Affinity",
+   "opponent_deck_id": "Affinity",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Gorilla Shaman",
+     "card_id": 46,
+     "count": 1
+    },
+    {
+     "name": "Krark-Clan Shaman",
+     "card_id": 62,
+     "count": 1
+    },
+    {
+     "name": "Unexpected Fangs",
+     "card_id": 124,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Hunter's Blowgun",
+     "card_id": 56,
+     "count": 1
+    },
+    {
+     "name": "Fanatical Offering",
+     "card_id": 35,
+     "count": 1
+    },
+    {
+     "name": "Cryogen Relic",
+     "card_id": 18,
+     "count": 1
+    }
+   ],
+   "rationale": "Both copies of this deck live and die on their many mana-value-zero artifact lands and cheap artifacts for affinity and metalcraft, so Gorilla Shaman cheaply strips the opponent's manabase while a second Krark-Clan Shaman adds another repeatable answer in the small-creature trading war, and Unexpected Fangs' permanent lifelink counter swings a stalled board race. Hunter's Blowgun, Fanatical Offering, and Cryogen Relic are the least impactful cards on either side of a mirror decided by who runs out of cheap artifacts and removal first.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Affinity",
+   "opponent_deck_id": "Elves",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Breath Weapon",
+     "card_id": 9,
+     "count": 1
+    },
+    {
+     "name": "Krark-Clan Shaman",
+     "card_id": 62,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Hunter's Blowgun",
+     "card_id": 56,
+     "count": 1
+    },
+    {
+     "name": "Fanatical Offering",
+     "card_id": 35,
+     "count": 1
+    }
+   ],
+   "rationale": "Elves' entire mana engine (Fyndhorn Elves, Elvish Mystic, Priest of Titania, Llanowar Elves, Quirion Ranger) is built on one-toughness dorks, so Breath Weapon wipes their ramp in a single card and a fourth Krark-Clan Shaman gives a repeatable follow-up answer to whatever resolves after. Hunter's Blowgun and the singleton Fanatical Offering are the weakest cards because neither slows Elves down before Lead the Stampede and Winding Way refill their hand and Generous Ent or Avenging Hunter close it out.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Affinity",
+   "opponent_deck_id": "Elves",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Breath Weapon",
+     "card_id": 9,
+     "count": 1
+    },
+    {
+     "name": "Krark-Clan Shaman",
+     "card_id": 62,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Hunter's Blowgun",
+     "card_id": 56,
+     "count": 1
+    },
+    {
+     "name": "Fanatical Offering",
+     "card_id": 35,
+     "count": 1
+    }
+   ],
+   "rationale": "Elves' entire mana engine (Fyndhorn Elves, Elvish Mystic, Priest of Titania, Llanowar Elves, Quirion Ranger) is built on one-toughness dorks, so Breath Weapon wipes their ramp in a single card and a fourth Krark-Clan Shaman gives a repeatable follow-up answer to whatever resolves after. Hunter's Blowgun and the singleton Fanatical Offering are the weakest cards because neither slows Elves down before Lead the Stampede and Winding Way refill their hand and Generous Ent or Avenging Hunter close it out.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Affinity",
+   "opponent_deck_id": "Spy",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Unexpected Fangs",
+     "card_id": 124,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Hunter's Blowgun",
+     "card_id": 56,
+     "count": 1
+    }
+   ],
+   "rationale": "Fixed per reviewer: the prior version wrongly credited Spy's self-mill to green mana dorks copied from the Elves rationale, and on that basis boarded in Krark-Clan Shaman. Checking the source (BalustradeSpy.java, UndercityInformer.java), Spy's actual self-mill engine is Balustrade Spy's ETB and Undercity Informer's sac ability, and Balustrade Spy has flying, so Krark-Clan Shaman's 'creature without flying' filter (KrarkClanShaman.java) cannot even target it; its 1 damage also would not kill Undercity Informer's 3 toughness or the registered list's Tinder Wall (0/3). Krark-Clan Shaman is dropped from this plan since it answers nothing Spy is actually doing. The rest of the reviewer's suggestion is adopted as a clean 1-for-1: Unexpected Fangs' permanent lifelink counter (UnexpectedFangs.java) lets a blocker or attacker race and claw back life against Lotleth Giant's Undergrowth burn trigger and the big ramped or Dread-Return-reanimated green threats (Generous Ent, Sagu Wildling, Troll of Khazad-dum), while the singleton Hunter's Blowgun is slow equipment that does nothing to blunt the mill-into-reanimation plan and is the easiest cut.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Affinity",
+   "opponent_deck_id": "Spy",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Unexpected Fangs",
+     "card_id": 124,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Hunter's Blowgun",
+     "card_id": 56,
+     "count": 1
+    }
+   ],
+   "rationale": "Fixed per reviewer: the prior version wrongly credited Spy's self-mill to green mana dorks copied from the Elves rationale, and on that basis boarded in Krark-Clan Shaman. Checking the source (BalustradeSpy.java, UndercityInformer.java), Spy's actual self-mill engine is Balustrade Spy's ETB and Undercity Informer's sac ability, and Balustrade Spy has flying, so Krark-Clan Shaman's 'creature without flying' filter (KrarkClanShaman.java) cannot even target it; its 1 damage also would not kill Undercity Informer's 3 toughness or the registered list's Tinder Wall (0/3). Krark-Clan Shaman is dropped from this plan since it answers nothing Spy is actually doing. The rest of the reviewer's suggestion is adopted as a clean 1-for-1: Unexpected Fangs' permanent lifelink counter (UnexpectedFangs.java) lets a blocker or attacker race and claw back life against Lotleth Giant's Undergrowth burn trigger and the big ramped or Dread-Return-reanimated green threats (Generous Ent, Sagu Wildling, Troll of Khazad-dum), while the singleton Hunter's Blowgun is slow equipment that does nothing to blunt the mill-into-reanimation plan and is the easiest cut.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Affinity",
+   "opponent_deck_id": "Burn",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Hydroblast",
+     "card_id": 57,
+     "count": 4
+    },
+    {
+     "name": "Unexpected Fangs",
+     "card_id": 124,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Hunter's Blowgun",
+     "card_id": 56,
+     "count": 1
+    },
+    {
+     "name": "Black Mage's Rod",
+     "card_id": 5,
+     "count": 1
+    },
+    {
+     "name": "Fanatical Offering",
+     "card_id": 35,
+     "count": 1
+    },
+    {
+     "name": "Cryogen Relic",
+     "card_id": 18,
+     "count": 1
+    },
+    {
+     "name": "Nihil Spellbomb",
+     "card_id": 79,
+     "count": 1
+    }
+   ],
+   "rationale": "Burn's clock is almost entirely red spells (Lightning Bolt, Fireblast, Fiery Temper, Grab the Prize), so a full set of Hydroblast can counter or destroy the exact card that would otherwise close the game, and Unexpected Fangs' permanent lifelink counter turns a blocker into a life swing in the race. Hunter's Blowgun, Black Mage's Rod, Fanatical Offering, Cryogen Relic, and one Nihil Spellbomb are reactive value or slow equipment that cost a card and a turn we don't have against this fast a clock.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Affinity",
+   "opponent_deck_id": "Burn",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Hydroblast",
+     "card_id": 57,
+     "count": 4
+    },
+    {
+     "name": "Unexpected Fangs",
+     "card_id": 124,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Hunter's Blowgun",
+     "card_id": 56,
+     "count": 1
+    },
+    {
+     "name": "Black Mage's Rod",
+     "card_id": 5,
+     "count": 1
+    },
+    {
+     "name": "Fanatical Offering",
+     "card_id": 35,
+     "count": 1
+    },
+    {
+     "name": "Cryogen Relic",
+     "card_id": 18,
+     "count": 1
+    },
+    {
+     "name": "Nihil Spellbomb",
+     "card_id": 79,
+     "count": 1
+    }
+   ],
+   "rationale": "Burn's clock is almost entirely red spells (Lightning Bolt, Fireblast, Fiery Temper, Grab the Prize), so a full set of Hydroblast can counter or destroy the exact card that would otherwise close the game, and Unexpected Fangs' permanent lifelink counter turns a blocker into a life swing in the race. Hunter's Blowgun, Black Mage's Rod, Fanatical Offering, Cryogen Relic, and one Nihil Spellbomb are reactive value or slow equipment that cost a card and a turn we don't have against this fast a clock.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Affinity",
+   "opponent_deck_id": "Terror",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 4
+    },
+    {
+     "name": "Red Elemental Blast",
+     "card_id": 95,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Hunter's Blowgun",
+     "card_id": 56,
+     "count": 1
+    },
+    {
+     "name": "Fanatical Offering",
+     "card_id": 35,
+     "count": 1
+    },
+    {
+     "name": "Krark-Clan Shaman",
+     "card_id": 62,
+     "count": 1
+    },
+    {
+     "name": "Reckoner's Bargain",
+     "card_id": 94,
+     "count": 1
+    },
+    {
+     "name": "Cryogen Relic",
+     "card_id": 18,
+     "count": 1
+    }
+   ],
+   "rationale": "Every nonland card Terror plays (Tolarian Terror, Cryptic Serpent, Counterspell, Murmuring Mystic, Brainstorm) is blue, so Pyroblast and Red Elemental Blast can counter their finishers and counterspells or destroy a resolved Serpent for one mana, protecting our own spells from Counterspell and Dispel along the way. Hunter's Blowgun, Fanatical Offering, a Krark-Clan Shaman, a Reckoner's Bargain, and Cryogen Relic are the slowest value pieces, doing little against a low-creature-count control deck compared to hard interaction.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Affinity",
+   "opponent_deck_id": "Terror",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 4
+    },
+    {
+     "name": "Red Elemental Blast",
+     "card_id": 95,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Hunter's Blowgun",
+     "card_id": 56,
+     "count": 1
+    },
+    {
+     "name": "Fanatical Offering",
+     "card_id": 35,
+     "count": 1
+    },
+    {
+     "name": "Krark-Clan Shaman",
+     "card_id": 62,
+     "count": 1
+    },
+    {
+     "name": "Reckoner's Bargain",
+     "card_id": 94,
+     "count": 1
+    },
+    {
+     "name": "Cryogen Relic",
+     "card_id": 18,
+     "count": 1
+    }
+   ],
+   "rationale": "Every nonland card Terror plays (Tolarian Terror, Cryptic Serpent, Counterspell, Murmuring Mystic, Brainstorm) is blue, so Pyroblast and Red Elemental Blast can counter their finishers and counterspells or destroy a resolved Serpent for one mana, protecting our own spells from Counterspell and Dispel along the way. Hunter's Blowgun, Fanatical Offering, a Krark-Clan Shaman, a Reckoner's Bargain, and Cryogen Relic are the slowest value pieces, doing little against a low-creature-count control deck compared to hard interaction.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Affinity",
+   "opponent_deck_id": "CawGates",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 4
+    },
+    {
+     "name": "Red Elemental Blast",
+     "card_id": 95,
+     "count": 1
+    },
+    {
+     "name": "Breath Weapon",
+     "card_id": 9,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Hunter's Blowgun",
+     "card_id": 56,
+     "count": 1
+    },
+    {
+     "name": "Fanatical Offering",
+     "card_id": 35,
+     "count": 1
+    },
+    {
+     "name": "Cryogen Relic",
+     "card_id": 18,
+     "count": 1
+    },
+    {
+     "name": "Krark-Clan Shaman",
+     "card_id": 62,
+     "count": 1
+    },
+    {
+     "name": "Reckoner's Bargain",
+     "card_id": 94,
+     "count": 1
+    },
+    {
+     "name": "Toxin Analysis",
+     "card_id": 121,
+     "count": 1
+    }
+   ],
+   "rationale": "CawGates' interaction and card selection (Counterspell, Brainstorm, Lorien Revealed, Preordain, Spell Pierce, The Modern Age) are all blue, so Pyroblast and Red Elemental Blast counter their answers or kill a resolved Modern Age, while Breath Weapon's two damage sweeps their one-toughness creatures like Squadron Hawk and Sacred Cat. Hunter's Blowgun, Fanatical Offering, Cryogen Relic, a Krark-Clan Shaman, a Reckoner's Bargain, and a Toxin Analysis are the weakest cards since this matchup is decided by protecting our threats from countermagic, not combat tricks.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Affinity",
+   "opponent_deck_id": "CawGates",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 4
+    },
+    {
+     "name": "Red Elemental Blast",
+     "card_id": 95,
+     "count": 1
+    },
+    {
+     "name": "Breath Weapon",
+     "card_id": 9,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Hunter's Blowgun",
+     "card_id": 56,
+     "count": 1
+    },
+    {
+     "name": "Fanatical Offering",
+     "card_id": 35,
+     "count": 1
+    },
+    {
+     "name": "Cryogen Relic",
+     "card_id": 18,
+     "count": 1
+    },
+    {
+     "name": "Krark-Clan Shaman",
+     "card_id": 62,
+     "count": 1
+    },
+    {
+     "name": "Reckoner's Bargain",
+     "card_id": 94,
+     "count": 1
+    },
+    {
+     "name": "Toxin Analysis",
+     "card_id": 121,
+     "count": 1
+    }
+   ],
+   "rationale": "CawGates' interaction and card selection (Counterspell, Brainstorm, Lorien Revealed, Preordain, Spell Pierce, The Modern Age) are all blue, so Pyroblast and Red Elemental Blast counter their answers or kill a resolved Modern Age, while Breath Weapon's two damage sweeps their one-toughness creatures like Squadron Hawk and Sacred Cat. Hunter's Blowgun, Fanatical Offering, Cryogen Relic, a Krark-Clan Shaman, a Reckoner's Bargain, and a Toxin Analysis are the weakest cards since this matchup is decided by protecting our threats from countermagic, not combat tricks.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Affinity",
+   "opponent_deck_id": "Faeries",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 4
+    },
+    {
+     "name": "Red Elemental Blast",
+     "card_id": 95,
+     "count": 1
+    },
+    {
+     "name": "Breath Weapon",
+     "card_id": 9,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Hunter's Blowgun",
+     "card_id": 56,
+     "count": 1
+    },
+    {
+     "name": "Fanatical Offering",
+     "card_id": 35,
+     "count": 1
+    },
+    {
+     "name": "Cryogen Relic",
+     "card_id": 18,
+     "count": 1
+    },
+    {
+     "name": "Krark-Clan Shaman",
+     "card_id": 62,
+     "count": 1
+    },
+    {
+     "name": "Reckoner's Bargain",
+     "card_id": 94,
+     "count": 1
+    },
+    {
+     "name": "Toxin Analysis",
+     "card_id": 121,
+     "count": 1
+    }
+   ],
+   "rationale": "Faeries' whole board (Spellstutter Sprite, Faerie Miscreant, Faerie Seer, Harrier Strix, Moon-Circuit Hacker) is blue and mostly one toughness, so Pyroblast and Red Elemental Blast can outright destroy their creatures or counter Counterspell and Force Spike, and Breath Weapon's two damage clears whatever survives in one card. Hunter's Blowgun, Fanatical Offering, Cryogen Relic, a Krark-Clan Shaman, a Reckoner's Bargain, and a Toxin Analysis contribute the least when the plan is to blank their tempo shell with hard color hate and a sweeper.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Affinity",
+   "opponent_deck_id": "Faeries",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 4
+    },
+    {
+     "name": "Red Elemental Blast",
+     "card_id": 95,
+     "count": 1
+    },
+    {
+     "name": "Breath Weapon",
+     "card_id": 9,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Hunter's Blowgun",
+     "card_id": 56,
+     "count": 1
+    },
+    {
+     "name": "Fanatical Offering",
+     "card_id": 35,
+     "count": 1
+    },
+    {
+     "name": "Cryogen Relic",
+     "card_id": 18,
+     "count": 1
+    },
+    {
+     "name": "Krark-Clan Shaman",
+     "card_id": 62,
+     "count": 1
+    },
+    {
+     "name": "Reckoner's Bargain",
+     "card_id": 94,
+     "count": 1
+    },
+    {
+     "name": "Toxin Analysis",
+     "card_id": 121,
+     "count": 1
+    }
+   ],
+   "rationale": "Faeries' whole board (Spellstutter Sprite, Faerie Miscreant, Faerie Seer, Harrier Strix, Moon-Circuit Hacker) is blue and mostly one toughness, so Pyroblast and Red Elemental Blast can outright destroy their creatures or counter Counterspell and Force Spike, and Breath Weapon's two damage clears whatever survives in one card. Hunter's Blowgun, Fanatical Offering, Cryogen Relic, a Krark-Clan Shaman, a Reckoner's Bargain, and a Toxin Analysis contribute the least when the plan is to blank their tempo shell with hard color hate and a sweeper.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Elves",
+   "opponent_deck_id": "Wildfire",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Vitu-Ghazi Inspector",
+     "card_id": 126,
+     "count": 4
+    },
+    {
+     "name": "Monstrous Emergence",
+     "card_id": 74,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Wellwisher",
+     "card_id": 129,
+     "count": 2
+    },
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 3
+    }
+   ],
+   "rationale": "Monstrous Emergence uses our own creatures' power to kill Krark-Clan Shaman before its sacrifice-an-artifact-for-1-damage-to-all-nonfliers ability wipes our one-toughness mana dorks, or to blow up a Writhing Chrysalis token or a flying Refurbished Familiar, while Vitu-Ghazi Inspector's 1/3 reach body and evidence-collect life gain outlast the Cast Down and Toxin Analysis removal war. Wellwisher's lifegain needs a board that survives that same grind, Quirion Ranger's bounce-and-untap trick is too slow to matter, and one Nyxborn Hydra comes out because a scaling X spell is a poor rate against four copies of Cast Down.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Elves",
+   "opponent_deck_id": "Wildfire",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Vitu-Ghazi Inspector",
+     "card_id": 126,
+     "count": 4
+    },
+    {
+     "name": "Monstrous Emergence",
+     "card_id": 74,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Wellwisher",
+     "card_id": 129,
+     "count": 2
+    },
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 3
+    }
+   ],
+   "rationale": "Monstrous Emergence uses our own creatures' power to kill Krark-Clan Shaman before its sacrifice-an-artifact-for-1-damage-to-all-nonfliers ability wipes our one-toughness mana dorks, or to blow up a Writhing Chrysalis token or a flying Refurbished Familiar, while Vitu-Ghazi Inspector's 1/3 reach body and evidence-collect life gain outlast the Cast Down and Toxin Analysis removal war. Wellwisher's lifegain needs a board that survives that same grind, Quirion Ranger's bounce-and-untap trick is too slow to matter, and one Nyxborn Hydra comes out because a scaling X spell is a poor rate against four copies of Cast Down.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Elves",
+   "opponent_deck_id": "Rally",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Vitu-Ghazi Inspector",
+     "card_id": 126,
+     "count": 4
+    },
+    {
+     "name": "Pulse of Murasa",
+     "card_id": 89,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 4
+    },
+    {
+     "name": "Wellwisher",
+     "card_id": 129,
+     "count": 2
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 1
+    }
+   ],
+   "rationale": "Vitu-Ghazi Inspector's 1/3 reach body blocks down Goblin Tomb Raider, Voldaren Epicure, and Clockwork Percussionist for free while its evidence-collect mode gains life against a deck built to empty its hand in one Goblin Bushwhacker-kicked turn, and Pulse of Murasa turns a creature that dies blocking into 6 life and a card back. Quirion Ranger's land-bounce utility and Wellwisher's board-dependent lifegain do nothing before turn four against this clock, so all four Quirion Rangers, both Wellwishers, and one excess Nyxborn Hydra come out.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Elves",
+   "opponent_deck_id": "Rally",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Vitu-Ghazi Inspector",
+     "card_id": 126,
+     "count": 4
+    },
+    {
+     "name": "Pulse of Murasa",
+     "card_id": 89,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 4
+    },
+    {
+     "name": "Wellwisher",
+     "card_id": 129,
+     "count": 2
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 1
+    }
+   ],
+   "rationale": "Vitu-Ghazi Inspector's 1/3 reach body blocks down Goblin Tomb Raider, Voldaren Epicure, and Clockwork Percussionist for free while its evidence-collect mode gains life against a deck built to empty its hand in one Goblin Bushwhacker-kicked turn, and Pulse of Murasa turns a creature that dies blocking into 6 life and a card back. Quirion Ranger's land-bounce utility and Wellwisher's board-dependent lifegain do nothing before turn four against this clock, so all four Quirion Rangers, both Wellwishers, and one excess Nyxborn Hydra come out.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Elves",
+   "opponent_deck_id": "Affinity",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Vitu-Ghazi Inspector",
+     "card_id": 126,
+     "count": 4
+    },
+    {
+     "name": "Monstrous Emergence",
+     "card_id": 74,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Wellwisher",
+     "card_id": 129,
+     "count": 2
+    },
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Timberwatch Elf",
+     "card_id": 119,
+     "count": 2
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 1
+    }
+   ],
+   "rationale": "Vitu-Ghazi Inspector's reach shuts down Refurbished Familiar's evasion and its 1/3 body eats their small affinity creatures, while Monstrous Emergence uses a big Nyxborn Hydra or a pumped Timberwatch Elf to one-shot Myr Enforcer or kill Krark-Clan Shaman before its sacrifice-an-artifact ping wipes our one-toughness mana dorks. Wellwisher and Quirion Ranger need a board that Galvanic Blast, Black Mage's Rod, and Krark-Clan Shaman keep tearing down, and two Timberwatch Elf copies plus one Nyxborn Hydra come out since dumping extra mana into a single pumped or X-cost threat is a losing trade against that much cheap removal.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Elves",
+   "opponent_deck_id": "Affinity",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Vitu-Ghazi Inspector",
+     "card_id": 126,
+     "count": 4
+    },
+    {
+     "name": "Monstrous Emergence",
+     "card_id": 74,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Wellwisher",
+     "card_id": 129,
+     "count": 2
+    },
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Timberwatch Elf",
+     "card_id": 119,
+     "count": 2
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 1
+    }
+   ],
+   "rationale": "Vitu-Ghazi Inspector's reach shuts down Refurbished Familiar's evasion and its 1/3 body eats their small affinity creatures, while Monstrous Emergence uses a big Nyxborn Hydra or a pumped Timberwatch Elf to one-shot Myr Enforcer or kill Krark-Clan Shaman before its sacrifice-an-artifact ping wipes our one-toughness mana dorks. Wellwisher and Quirion Ranger need a board that Galvanic Blast, Black Mage's Rod, and Krark-Clan Shaman keep tearing down, and two Timberwatch Elf copies plus one Nyxborn Hydra come out since dumping extra mana into a single pumped or X-cost threat is a losing trade against that much cheap removal.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Elves",
+   "opponent_deck_id": "Elves",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Monstrous Emergence",
+     "card_id": 74,
+     "count": 3
+    },
+    {
+     "name": "Vitu-Ghazi Inspector",
+     "card_id": 126,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Wellwisher",
+     "card_id": 129,
+     "count": 2
+    },
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Masked Vandal",
+     "card_id": 71,
+     "count": 1
+    }
+   ],
+   "rationale": "Accepting the reviewer's correction: Monstrous Emergence still turns whichever Elf we already control into removal for their Priest of Titania, a pumped Timberwatch Elf, or any mana dork, deciding the board-development race the mirror is won or lost on, and Vitu-Ghazi Inspector adds another Elf body that feeds the same tribal counts on our side. The earlier plan wrongly claimed Masked Vandal had no legal target in the mirror; Nyxborn Hydra's type is Enchantment Creature on the battlefield whether hardcast or bestowed (confirmed in NyxbornHydra.java), and Masked Vandal's ETB targets any artifact or enchantment an opponent controls (confirmed in MaskedVandal.java), so it is a real, unconditional answer to the opponent's biggest scaling Hydra threat, not a vanilla body. Only one copy of Masked Vandal comes out, keeping three in the deck as removal, and two Quirion Rangers come out in its place since their bounce-and-untap value is too slow to matter once the Hydra and Priest of Titania draws take over. Wellwisher's lifegain still rarely decides a mirror combat math settles first, so both copies come out.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Elves",
+   "opponent_deck_id": "Elves",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Monstrous Emergence",
+     "card_id": 74,
+     "count": 3
+    },
+    {
+     "name": "Vitu-Ghazi Inspector",
+     "card_id": 126,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Wellwisher",
+     "card_id": 129,
+     "count": 2
+    },
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Masked Vandal",
+     "card_id": 71,
+     "count": 1
+    }
+   ],
+   "rationale": "Accepting the reviewer's correction: Monstrous Emergence still turns whichever Elf we already control into removal for their Priest of Titania, a pumped Timberwatch Elf, or any mana dork, deciding the board-development race the mirror is won or lost on, and Vitu-Ghazi Inspector adds another Elf body that feeds the same tribal counts on our side. The earlier plan wrongly claimed Masked Vandal had no legal target in the mirror; Nyxborn Hydra's type is Enchantment Creature on the battlefield whether hardcast or bestowed (confirmed in NyxbornHydra.java), and Masked Vandal's ETB targets any artifact or enchantment an opponent controls (confirmed in MaskedVandal.java), so it is a real, unconditional answer to the opponent's biggest scaling Hydra threat, not a vanilla body. Only one copy of Masked Vandal comes out, keeping three in the deck as removal, and two Quirion Rangers come out in its place since their bounce-and-untap value is too slow to matter once the Hydra and Priest of Titania draws take over. Wellwisher's lifegain still rarely decides a mirror combat math settles first, so both copies come out.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Elves",
+   "opponent_deck_id": "Spy",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Monstrous Emergence",
+     "card_id": 74,
+     "count": 2
+    },
+    {
+     "name": "Vitu-Ghazi Inspector",
+     "card_id": 126,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Masked Vandal",
+     "card_id": 71,
+     "count": 2
+    },
+    {
+     "name": "Wellwisher",
+     "card_id": 129,
+     "count": 2
+    }
+   ],
+   "rationale": "Monstrous Emergence kills Overgrown Battlement, Saruli Caretaker, Wall of Roots, or Elves of Deep Shadow to strangle the ramp that fuels Balustrade Spy triggers and Dread Return reanimation, and Vitu-Ghazi Inspector's reach and body race past their flying Sagu Wildling since this list has zero removal or counterspells to punish an extra threat. Masked Vandal's exile trigger has almost no legal target beyond two copies of Lotus Petal, and Wellwisher's lifegain is wasted on a deck with no burn or racing damage plan.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Elves",
+   "opponent_deck_id": "Spy",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Monstrous Emergence",
+     "card_id": 74,
+     "count": 2
+    },
+    {
+     "name": "Vitu-Ghazi Inspector",
+     "card_id": 126,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Masked Vandal",
+     "card_id": 71,
+     "count": 2
+    },
+    {
+     "name": "Wellwisher",
+     "card_id": 129,
+     "count": 2
+    }
+   ],
+   "rationale": "Monstrous Emergence kills Overgrown Battlement, Saruli Caretaker, Wall of Roots, or Elves of Deep Shadow to strangle the ramp that fuels Balustrade Spy triggers and Dread Return reanimation, and Vitu-Ghazi Inspector's reach and body race past their flying Sagu Wildling since this list has zero removal or counterspells to punish an extra threat. Masked Vandal's exile trigger has almost no legal target beyond two copies of Lotus Petal, and Wellwisher's lifegain is wasted on a deck with no burn or racing damage plan.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Elves",
+   "opponent_deck_id": "Burn",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Vitu-Ghazi Inspector",
+     "card_id": 126,
+     "count": 4
+    },
+    {
+     "name": "Pulse of Murasa",
+     "card_id": 89,
+     "count": 2
+    },
+    {
+     "name": "Spinewoods Paladin",
+     "card_id": 111,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 4
+    },
+    {
+     "name": "Wellwisher",
+     "card_id": 129,
+     "count": 2
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 1
+    }
+   ],
+   "rationale": "Vitu-Ghazi Inspector's 1/3 reach body blocks Masked Meower and Voldaren Epicure for free while gaining life against a deck aimed entirely at our face, Pulse of Murasa turns a creature that traded away into 6 life and a card back, and Spinewoods Paladin's 5/4 trample body with 3 life on entry survives a Lightning Bolt or Fiery Temper that would two-for-one a smaller threat. Quirion Ranger and Wellwisher trade too slowly to matter before Fireblast closes the game, and one Nyxborn Hydra comes out because its scaling cost is time this matchup does not give us.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Elves",
+   "opponent_deck_id": "Burn",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Vitu-Ghazi Inspector",
+     "card_id": 126,
+     "count": 4
+    },
+    {
+     "name": "Pulse of Murasa",
+     "card_id": 89,
+     "count": 2
+    },
+    {
+     "name": "Spinewoods Paladin",
+     "card_id": 111,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 4
+    },
+    {
+     "name": "Wellwisher",
+     "card_id": 129,
+     "count": 2
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 1
+    }
+   ],
+   "rationale": "Vitu-Ghazi Inspector's 1/3 reach body blocks Masked Meower and Voldaren Epicure for free while gaining life against a deck aimed entirely at our face, Pulse of Murasa turns a creature that traded away into 6 life and a card back, and Spinewoods Paladin's 5/4 trample body with 3 life on entry survives a Lightning Bolt or Fiery Temper that would two-for-one a smaller threat. Quirion Ranger and Wellwisher trade too slowly to matter before Fireblast closes the game, and one Nyxborn Hydra comes out because its scaling cost is time this matchup does not give us.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Elves",
+   "opponent_deck_id": "Terror",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Vitu-Ghazi Inspector",
+     "card_id": 126,
+     "count": 4
+    },
+    {
+     "name": "Monstrous Emergence",
+     "card_id": 74,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Masked Vandal",
+     "card_id": 71,
+     "count": 3
+    },
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 2
+    }
+   ],
+   "rationale": "Vitu-Ghazi Inspector's reach eats Murmuring Mystic's 1/1 flying Bird Illusion tokens and its resilient body rebuilds our board cheaply after a Deem Inferior, while Monstrous Emergence kills Cryptic Serpent outright since it carries no ward, unlike Tolarian Terror. Masked Vandal's exile trigger is entirely dead since Terror runs no artifacts or enchantments, and Quirion Ranger plus two X-cost Nyxborn Hydra copies come out because dumping extra mana into one card is exactly the blowout Counterspell is built to deliver.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Elves",
+   "opponent_deck_id": "Terror",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Vitu-Ghazi Inspector",
+     "card_id": 126,
+     "count": 4
+    },
+    {
+     "name": "Monstrous Emergence",
+     "card_id": 74,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Masked Vandal",
+     "card_id": 71,
+     "count": 3
+    },
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 2
+    }
+   ],
+   "rationale": "Vitu-Ghazi Inspector's reach eats Murmuring Mystic's 1/1 flying Bird Illusion tokens and its resilient body rebuilds our board cheaply after a Deem Inferior, while Monstrous Emergence kills Cryptic Serpent outright since it carries no ward, unlike Tolarian Terror. Masked Vandal's exile trigger is entirely dead since Terror runs no artifacts or enchantments, and Quirion Ranger plus two X-cost Nyxborn Hydra copies come out because dumping extra mana into one card is exactly the blowout Counterspell is built to deliver.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Elves",
+   "opponent_deck_id": "CawGates",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Vitu-Ghazi Inspector",
+     "card_id": 126,
+     "count": 3
+    },
+    {
+     "name": "Monstrous Emergence",
+     "card_id": 74,
+     "count": 2
+    },
+    {
+     "name": "Spinewoods Paladin",
+     "card_id": 111,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Wellwisher",
+     "card_id": 129,
+     "count": 2
+    },
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 3
+    }
+   ],
+   "rationale": "Vitu-Ghazi Inspector's reach covers Squadron Hawk and the 2/3 flying Vector Glider half of The Modern Age while it rebuilds our board after a Journey to Nowhere, Monstrous Emergence removes Sacred Cat or Outlaw Medic before their lifelink offsets our damage, and Spinewoods Paladin's trample plus 3 life gives us a threat that costs them their best removal just to answer. Nyxborn Hydra's X cost is exactly what Counterspell and Spell Pierce want to punish, and Wellwisher and Quirion Ranger add little against a deck that wins on card quality rather than combat racing.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Elves",
+   "opponent_deck_id": "CawGates",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Vitu-Ghazi Inspector",
+     "card_id": 126,
+     "count": 3
+    },
+    {
+     "name": "Monstrous Emergence",
+     "card_id": 74,
+     "count": 2
+    },
+    {
+     "name": "Spinewoods Paladin",
+     "card_id": 111,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Wellwisher",
+     "card_id": 129,
+     "count": 2
+    },
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 3
+    }
+   ],
+   "rationale": "Vitu-Ghazi Inspector's reach covers Squadron Hawk and the 2/3 flying Vector Glider half of The Modern Age while it rebuilds our board after a Journey to Nowhere, Monstrous Emergence removes Sacred Cat or Outlaw Medic before their lifelink offsets our damage, and Spinewoods Paladin's trample plus 3 life gives us a threat that costs them their best removal just to answer. Nyxborn Hydra's X cost is exactly what Counterspell and Spell Pierce want to punish, and Wellwisher and Quirion Ranger add little against a deck that wins on card quality rather than combat racing.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Elves",
+   "opponent_deck_id": "Faeries",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Vitu-Ghazi Inspector",
+     "card_id": 126,
+     "count": 4
+    },
+    {
+     "name": "Monstrous Emergence",
+     "card_id": 74,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Wellwisher",
+     "card_id": 129,
+     "count": 2
+    },
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 3
+    }
+   ],
+   "rationale": "Vitu-Ghazi Inspector's reach is the only way our ground-bound Elves stop Faerie Seer, Spellstutter Sprite, Harrier Strix, and Faerie Miscreant from flying over every turn, and Monstrous Emergence trades one card for a one- or two-toughness flier before it snowballs into card advantage through Moon-Circuit Hacker or Ninja of the Deep Hours. Nyxborn Hydra's X cost is precisely what Counterspell, Force Spike, and Spellstutter Sprite are built to punish, and Wellwisher and Quirion Ranger rarely matter when all the damage is arriving in the air.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Elves",
+   "opponent_deck_id": "Faeries",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Vitu-Ghazi Inspector",
+     "card_id": 126,
+     "count": 4
+    },
+    {
+     "name": "Monstrous Emergence",
+     "card_id": 74,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Wellwisher",
+     "card_id": 129,
+     "count": 2
+    },
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Nyxborn Hydra",
+     "card_id": 81,
+     "count": 3
+    }
+   ],
+   "rationale": "Vitu-Ghazi Inspector's reach is the only way our ground-bound Elves stop Faerie Seer, Spellstutter Sprite, Harrier Strix, and Faerie Miscreant from flying over every turn, and Monstrous Emergence trades one card for a one- or two-toughness flier before it snowballs into card advantage through Moon-Circuit Hacker or Ninja of the Deep Hours. Nyxborn Hydra's X cost is precisely what Counterspell, Force Spike, and Spellstutter Sprite are built to punish, and Wellwisher and Quirion Ranger rarely matter when all the damage is arriving in the air.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Spy",
+   "opponent_deck_id": "Wildfire",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Masked Vandal",
+     "card_id": 71,
+     "count": 1
+    },
+    {
+     "name": "Mesmeric Fiend",
+     "card_id": 158,
+     "count": 2
+    },
+    {
+     "name": "Fume Spitter",
+     "card_id": 157,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Land Grant",
+     "card_id": 152,
+     "count": 2
+    }
+   ],
+   "rationale": "Masked Vandal (a full four copies) has a rich target list in Wildfire's Ichor Wellspring, Blood Fountain, Nihil Spellbomb and Nyxborn Hydra, Mesmeric Fiend strips a Cast Down or discard spell before it can strand our Balustrade Spy or Dread Return, and Fume Spitter kills their one-toughness Krark-Clan Shamans and Refurbished Familiars. Quirion Ranger and two Land Grants are the weakest cuts because a fragile 1/1 body and extra land-tutoring do nothing against a removal-and-discard-heavy grinder that already outvalues us on cards.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Spy",
+   "opponent_deck_id": "Wildfire",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Masked Vandal",
+     "card_id": 71,
+     "count": 1
+    },
+    {
+     "name": "Mesmeric Fiend",
+     "card_id": 158,
+     "count": 2
+    },
+    {
+     "name": "Fume Spitter",
+     "card_id": 157,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Land Grant",
+     "card_id": 152,
+     "count": 2
+    }
+   ],
+   "rationale": "Masked Vandal (a full four copies) has a rich target list in Wildfire's Ichor Wellspring, Blood Fountain, Nihil Spellbomb and Nyxborn Hydra, Mesmeric Fiend strips a Cast Down or discard spell before it can strand our Balustrade Spy or Dread Return, and Fume Spitter kills their one-toughness Krark-Clan Shamans and Refurbished Familiars. Quirion Ranger and two Land Grants are the weakest cuts because a fragile 1/1 body and extra land-tutoring do nothing against a removal-and-discard-heavy grinder that already outvalues us on cards.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Spy",
+   "opponent_deck_id": "Rally",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Fume Spitter",
+     "card_id": 157,
+     "count": 2
+    },
+    {
+     "name": "Healer of the Glade",
+     "card_id": 146,
+     "count": 2
+    },
+    {
+     "name": "Masked Vandal",
+     "card_id": 71,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Land Grant",
+     "card_id": 152,
+     "count": 2
+    },
+    {
+     "name": "Lead the Stampede",
+     "card_id": 64,
+     "count": 1
+    }
+   ],
+   "rationale": "Fume Spitter one-shots Rally's Goblin Bushwhacker, Clockwork Percussionist and Voldaren Epicure, Healer of the Glade buys life against the haste-fueled alpha strike, and Masked Vandal exiles a Great Furnace, Experimental Synthesizer or Clockwork Percussionist to blunt their artifact-fueled curve. Quirion Ranger, two Land Grants and a Lead the Stampede are cut because none of them block or interact with a hyper-aggro clock that kills before our card selection matters.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Spy",
+   "opponent_deck_id": "Rally",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Fume Spitter",
+     "card_id": 157,
+     "count": 2
+    },
+    {
+     "name": "Healer of the Glade",
+     "card_id": 146,
+     "count": 2
+    },
+    {
+     "name": "Masked Vandal",
+     "card_id": 71,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Land Grant",
+     "card_id": 152,
+     "count": 2
+    },
+    {
+     "name": "Lead the Stampede",
+     "card_id": 64,
+     "count": 1
+    }
+   ],
+   "rationale": "Fume Spitter one-shots Rally's Goblin Bushwhacker, Clockwork Percussionist and Voldaren Epicure, Healer of the Glade buys life against the haste-fueled alpha strike, and Masked Vandal exiles a Great Furnace, Experimental Synthesizer or Clockwork Percussionist to blunt their artifact-fueled curve. Quirion Ranger, two Land Grants and a Lead the Stampede are cut because none of them block or interact with a hyper-aggro clock that kills before our card selection matters.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Spy",
+   "opponent_deck_id": "Affinity",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Masked Vandal",
+     "card_id": 71,
+     "count": 1
+    },
+    {
+     "name": "Fume Spitter",
+     "card_id": 157,
+     "count": 2
+    },
+    {
+     "name": "Healer of the Glade",
+     "card_id": 146,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Land Grant",
+     "card_id": 152,
+     "count": 2
+    },
+    {
+     "name": "Lead the Stampede",
+     "card_id": 64,
+     "count": 1
+    }
+   ],
+   "rationale": "Masked Vandal has near-endless targets in Affinity's bridges, Ichor Wellspring, Myr Enforcer and Black Mage's Rod, Fume Spitter kills their one-toughness Krark-Clan Shaman and Refurbished Familiar, and Healer of the Glade offsets their fast artifact-aggro clock. Quirion Ranger, two Land Grants and a Lead the Stampede are the weakest cards here since they neither block Affinity's cheap creatures nor interact with their artifact engine.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Spy",
+   "opponent_deck_id": "Affinity",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Masked Vandal",
+     "card_id": 71,
+     "count": 1
+    },
+    {
+     "name": "Fume Spitter",
+     "card_id": 157,
+     "count": 2
+    },
+    {
+     "name": "Healer of the Glade",
+     "card_id": 146,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Land Grant",
+     "card_id": 152,
+     "count": 2
+    },
+    {
+     "name": "Lead the Stampede",
+     "card_id": 64,
+     "count": 1
+    }
+   ],
+   "rationale": "Masked Vandal has near-endless targets in Affinity's bridges, Ichor Wellspring, Myr Enforcer and Black Mage's Rod, Fume Spitter kills their one-toughness Krark-Clan Shaman and Refurbished Familiar, and Healer of the Glade offsets their fast artifact-aggro clock. Quirion Ranger, two Land Grants and a Lead the Stampede are the weakest cards here since they neither block Affinity's cheap creatures nor interact with their artifact engine.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Spy",
+   "opponent_deck_id": "Elves",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Fume Spitter",
+     "card_id": 157,
+     "count": 2
+    },
+    {
+     "name": "Masked Vandal",
+     "card_id": 71,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Land Grant",
+     "card_id": 152,
+     "count": 1
+    }
+   ],
+   "rationale": "Fume Spitter unravels Elves' entire mana base by killing Elvish Mystic, Llanowar Elves, Fyndhorn Elves, Priest of Titania and Wellwisher, all one-toughness dorks, while Masked Vandal has a full-time target in their four copies of Nyxborn Hydra, a true Enchantment Creature. Quirion Ranger and a Land Grant are the cuts because our own fragile 1/1 utility body and an extra land tutor add nothing to a race decided by denying their dork-driven mana explosion.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Spy",
+   "opponent_deck_id": "Elves",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Fume Spitter",
+     "card_id": 157,
+     "count": 2
+    },
+    {
+     "name": "Masked Vandal",
+     "card_id": 71,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Land Grant",
+     "card_id": 152,
+     "count": 1
+    }
+   ],
+   "rationale": "Fume Spitter unravels Elves' entire mana base by killing Elvish Mystic, Llanowar Elves, Fyndhorn Elves, Priest of Titania and Wellwisher, all one-toughness dorks, while Masked Vandal has a full-time target in their four copies of Nyxborn Hydra, a true Enchantment Creature. Quirion Ranger and a Land Grant are the cuts because our own fragile 1/1 utility body and an extra land tutor add nothing to a race decided by denying their dork-driven mana explosion.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Spy",
+   "opponent_deck_id": "Spy",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Faerie Macabre",
+     "card_id": 155,
+     "count": 2
+    },
+    {
+     "name": "Mesmeric Fiend",
+     "card_id": 158,
+     "count": 2
+    },
+    {
+     "name": "Fume Spitter",
+     "card_id": 157,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Land Grant",
+     "card_id": 152,
+     "count": 2
+    },
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Lead the Stampede",
+     "card_id": 64,
+     "count": 1
+    }
+   ],
+   "rationale": "Faerie Macabre exiles the creature cards fueling the opponent's Dread Return and directly shrinks the graveyard count that powers their Lotleth Giant, Mesmeric Fiend strips their Balustrade Spy, Dread Return or Lotleth Giant before it resolves, and Fume Spitter picks off their Elves of Deep Shadow or Quirion Ranger to slow their mana. Two Land Grants, two Quirion Rangers and a Lead the Stampede are cut because in a mirrored graveyard race, disruption and denial matter far more than redundant ramp and card selection both players already have plenty of.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Spy",
+   "opponent_deck_id": "Spy",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Faerie Macabre",
+     "card_id": 155,
+     "count": 2
+    },
+    {
+     "name": "Mesmeric Fiend",
+     "card_id": 158,
+     "count": 2
+    },
+    {
+     "name": "Fume Spitter",
+     "card_id": 157,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Land Grant",
+     "card_id": 152,
+     "count": 2
+    },
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Lead the Stampede",
+     "card_id": 64,
+     "count": 1
+    }
+   ],
+   "rationale": "Faerie Macabre exiles the creature cards fueling the opponent's Dread Return and directly shrinks the graveyard count that powers their Lotleth Giant, Mesmeric Fiend strips their Balustrade Spy, Dread Return or Lotleth Giant before it resolves, and Fume Spitter picks off their Elves of Deep Shadow or Quirion Ranger to slow their mana. Two Land Grants, two Quirion Rangers and a Lead the Stampede are cut because in a mirrored graveyard race, disruption and denial matter far more than redundant ramp and card selection both players already have plenty of.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Spy",
+   "opponent_deck_id": "Burn",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Healer of the Glade",
+     "card_id": 146,
+     "count": 4
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Land Grant",
+     "card_id": 152,
+     "count": 2
+    }
+   ],
+   "rationale": "Four copies of Healer of the Glade add roughly twelve life against Burn's Lightning Bolt, Fireblast, Fiery Temper and Grab the Prize, buying the turns needed to assemble Balustrade Spy into Dread Return or Lotleth Giant. Quirion Ranger and two Land Grants are the weakest cards because neither gains life nor blocks damage, and mana is not the bottleneck against a deck that carries no land destruction.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Spy",
+   "opponent_deck_id": "Burn",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Healer of the Glade",
+     "card_id": 146,
+     "count": 4
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Land Grant",
+     "card_id": 152,
+     "count": 2
+    }
+   ],
+   "rationale": "Four copies of Healer of the Glade add roughly twelve life against Burn's Lightning Bolt, Fireblast, Fiery Temper and Grab the Prize, buying the turns needed to assemble Balustrade Spy into Dread Return or Lotleth Giant. Quirion Ranger and two Land Grants are the weakest cards because neither gains life nor blocks damage, and mana is not the bottleneck against a deck that carries no land destruction.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Spy",
+   "opponent_deck_id": "Terror",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Mesmeric Fiend",
+     "card_id": 158,
+     "count": 2
+    },
+    {
+     "name": "Faerie Macabre",
+     "card_id": 155,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Land Grant",
+     "card_id": 152,
+     "count": 2
+    }
+   ],
+   "rationale": "Mesmeric Fiend strips a Counterspell or Dispel before we tap out for Dread Return or Lotleth Giant, and Faerie Macabre exiles instants and sorceries from Terror's own graveyard to raise the effective casting cost of their graveyard-cost-reduced Tolarian Terror and Cryptic Serpent. Quirion Ranger and two Land Grants are cut since Terror has no fast clock to punish our ramp and neither card interacts with their countermagic or graveyard-fueled finishers.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Spy",
+   "opponent_deck_id": "Terror",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Mesmeric Fiend",
+     "card_id": 158,
+     "count": 2
+    },
+    {
+     "name": "Faerie Macabre",
+     "card_id": 155,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Land Grant",
+     "card_id": 152,
+     "count": 2
+    }
+   ],
+   "rationale": "Mesmeric Fiend strips a Counterspell or Dispel before we tap out for Dread Return or Lotleth Giant, and Faerie Macabre exiles instants and sorceries from Terror's own graveyard to raise the effective casting cost of their graveyard-cost-reduced Tolarian Terror and Cryptic Serpent. Quirion Ranger and two Land Grants are cut since Terror has no fast clock to punish our ramp and neither card interacts with their countermagic or graveyard-fueled finishers.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Spy",
+   "opponent_deck_id": "CawGates",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Masked Vandal",
+     "card_id": 71,
+     "count": 1
+    },
+    {
+     "name": "Mesmeric Fiend",
+     "card_id": 158,
+     "count": 2
+    },
+    {
+     "name": "Flaring Pain",
+     "card_id": 156,
+     "count": 1
+    },
+    {
+     "name": "Fume Spitter",
+     "card_id": 157,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Land Grant",
+     "card_id": 152,
+     "count": 2
+    },
+    {
+     "name": "Lead the Stampede",
+     "card_id": 64,
+     "count": 1
+    }
+   ],
+   "rationale": "Masked Vandal turns off Journey to Nowhere or The Modern Age (returning our exiled creature), Mesmeric Fiend strips a Counterspell or removal spell pre-emptively, Fume Spitter kills their many Sacred Cats and Squadron Hawks, and Flaring Pain guarantees our Lotleth Giant's damage goes through even if they Prismatic Strands it away. Quirion Ranger, two Land Grants and a Lead the Stampede are the weakest cards against a controlling deck that isn't racing our life total, so ramp redundancy matters less than answering their removal and their fog.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Spy",
+   "opponent_deck_id": "CawGates",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Masked Vandal",
+     "card_id": 71,
+     "count": 1
+    },
+    {
+     "name": "Mesmeric Fiend",
+     "card_id": 158,
+     "count": 2
+    },
+    {
+     "name": "Flaring Pain",
+     "card_id": 156,
+     "count": 1
+    },
+    {
+     "name": "Fume Spitter",
+     "card_id": 157,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Land Grant",
+     "card_id": 152,
+     "count": 2
+    },
+    {
+     "name": "Lead the Stampede",
+     "card_id": 64,
+     "count": 1
+    }
+   ],
+   "rationale": "Masked Vandal turns off Journey to Nowhere or The Modern Age (returning our exiled creature), Mesmeric Fiend strips a Counterspell or removal spell pre-emptively, Fume Spitter kills their many Sacred Cats and Squadron Hawks, and Flaring Pain guarantees our Lotleth Giant's damage goes through even if they Prismatic Strands it away. Quirion Ranger, two Land Grants and a Lead the Stampede are the weakest cards against a controlling deck that isn't racing our life total, so ramp redundancy matters less than answering their removal and their fog.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Spy",
+   "opponent_deck_id": "Faeries",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Fume Spitter",
+     "card_id": 157,
+     "count": 2
+    },
+    {
+     "name": "Mesmeric Fiend",
+     "card_id": 158,
+     "count": 2
+    },
+    {
+     "name": "Vitu-Ghazi Inspector",
+     "card_id": 126,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Land Grant",
+     "card_id": 152,
+     "count": 2
+    },
+    {
+     "name": "Lead the Stampede",
+     "card_id": 64,
+     "count": 1
+    }
+   ],
+   "rationale": "Fume Spitter kills nearly their entire army, Spellstutter Sprite, Faerie Miscreant, Faerie Seer, Harrier Strix and Saiba Cryptomancer are all one-toughness, Mesmeric Fiend strips a Counterspell or Force Spike before we commit to Dread Return, and Vitu-Ghazi Inspector's reach blocks their evasive fliers while gaining life. Quirion Ranger, two Land Grants and a Lead the Stampede are cut because card selection is less urgent than answering a fast, all-flying tempo clock.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Spy",
+   "opponent_deck_id": "Faeries",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Fume Spitter",
+     "card_id": 157,
+     "count": 2
+    },
+    {
+     "name": "Mesmeric Fiend",
+     "card_id": 158,
+     "count": 2
+    },
+    {
+     "name": "Vitu-Ghazi Inspector",
+     "card_id": 126,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Quirion Ranger",
+     "card_id": 91,
+     "count": 2
+    },
+    {
+     "name": "Land Grant",
+     "card_id": 152,
+     "count": 2
+    },
+    {
+     "name": "Lead the Stampede",
+     "card_id": 64,
+     "count": 1
+    }
+   ],
+   "rationale": "Fume Spitter kills nearly their entire army, Spellstutter Sprite, Faerie Miscreant, Faerie Seer, Harrier Strix and Saiba Cryptomancer are all one-toughness, Mesmeric Fiend strips a Counterspell or Force Spike before we commit to Dread Return, and Vitu-Ghazi Inspector's reach blocks their evasive fliers while gaining life. Quirion Ranger, two Land Grants and a Lead the Stampede are cut because card selection is less urgent than answering a fast, all-flying tempo clock.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Burn",
+   "opponent_deck_id": "Wildfire",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Searing Blaze",
+     "card_id": 101,
+     "count": 4
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sneaky Snacker",
+     "card_id": 107,
+     "count": 4
+    }
+   ],
+   "rationale": "Wildfire's clock runs through cheap artifact creatures and value engines (Krark-Clan Shaman, Refurbished Familiar, Writhing Chrysalis, Ichor Wellspring) backed by Cast Down removal, so Searing Blaze trades up into those small bodies while still burning the grindy deck's life total. Sneaky Snacker is the weakest cut because its {U}{B} cost is uncastable off this deck's all-Mountain manabase, so it never blocks or attacks before Cast Down or Krark-Clan Shaman's sacrifice ability kills it anyway.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Burn",
+   "opponent_deck_id": "Wildfire",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Searing Blaze",
+     "card_id": 101,
+     "count": 4
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sneaky Snacker",
+     "card_id": 107,
+     "count": 4
+    }
+   ],
+   "rationale": "Wildfire's clock runs through cheap artifact creatures and value engines (Krark-Clan Shaman, Refurbished Familiar, Writhing Chrysalis, Ichor Wellspring) backed by Cast Down removal, so Searing Blaze trades up into those small bodies while still burning the grindy deck's life total. Sneaky Snacker is the weakest cut because its {U}{B} cost is uncastable off this deck's all-Mountain manabase, so it never blocks or attacks before Cast Down or Krark-Clan Shaman's sacrifice ability kills it anyway.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Burn",
+   "opponent_deck_id": "Rally",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Searing Blaze",
+     "card_id": 101,
+     "count": 4
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sneaky Snacker",
+     "card_id": 107,
+     "count": 4
+    }
+   ],
+   "rationale": "Fixed per reviewer: the prior version cut Guttersnipe x4 instead of Sneaky Snacker, which was wrong, so the reviewer's suggested swap is accepted. Rally wins by dumping hasty one-drops (Clockwork Percussionist, Voldaren Epicure, Goblin Tomb Raider, Burning-Tree Emissary) onto the board for a Goblin Bushwhacker alpha strike, so Searing Blaze removes a body and adds three points of reach in a race decided by tempo. Sneaky Snacker, not Guttersnipe, is the correct cut: Sneaky Snacker costs {U}{B} (confirmed in SneakySnacker.java) and this deck's mainboard runs 18 Mountains and nothing else, so all four copies are 100% uncastable regardless of opponent, exactly as every other plan for this deck already treats it. Guttersnipe is a real, if conditional, reach engine ({2}{R} 2/2 that deals 2 damage to each opponent whenever an instant or sorcery is cast, per Guttersnipe.java) and stays in the 60: a hyper-aggro race punishes guaranteed-dead cards far more than it punishes one conditional-upside body, so the four dead Snackers come out and Guttersnipe stays.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Burn",
+   "opponent_deck_id": "Rally",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Searing Blaze",
+     "card_id": 101,
+     "count": 4
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sneaky Snacker",
+     "card_id": 107,
+     "count": 4
+    }
+   ],
+   "rationale": "Fixed per reviewer: the prior version cut Guttersnipe x4 instead of Sneaky Snacker, which was wrong, so the reviewer's suggested swap is accepted. Rally wins by dumping hasty one-drops (Clockwork Percussionist, Voldaren Epicure, Goblin Tomb Raider, Burning-Tree Emissary) onto the board for a Goblin Bushwhacker alpha strike, so Searing Blaze removes a body and adds three points of reach in a race decided by tempo. Sneaky Snacker, not Guttersnipe, is the correct cut: Sneaky Snacker costs {U}{B} (confirmed in SneakySnacker.java) and this deck's mainboard runs 18 Mountains and nothing else, so all four copies are 100% uncastable regardless of opponent, exactly as every other plan for this deck already treats it. Guttersnipe is a real, if conditional, reach engine ({2}{R} 2/2 that deals 2 damage to each opponent whenever an instant or sorcery is cast, per Guttersnipe.java) and stays in the 60: a hyper-aggro race punishes guaranteed-dead cards far more than it punishes one conditional-upside body, so the four dead Snackers come out and Guttersnipe stays.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Burn",
+   "opponent_deck_id": "Affinity",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Searing Blaze",
+     "card_id": 101,
+     "count": 4
+    },
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sneaky Snacker",
+     "card_id": 107,
+     "count": 4
+    },
+    {
+     "name": "Faithless Looting",
+     "card_id": 34,
+     "count": 2
+    }
+   ],
+   "rationale": "Affinity's pressure comes from cheap artifact creatures (Refurbished Familiar, Krark-Clan Shaman, Myr Enforcer) fueled by its Thoughtcast and Cryogen Relic blue splash, so Searing Blaze answers the small bodies while Pyroblast snipes the card draw and stun pieces keeping the plan running. Sneaky Snacker and Faithless Looting are the softest inclusions: Snacker cannot be cast off the deck's Mountain-only mana base, and Looting spends a card filtering instead of pressuring a deck that is racing us on board presence.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Burn",
+   "opponent_deck_id": "Affinity",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Searing Blaze",
+     "card_id": 101,
+     "count": 4
+    },
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sneaky Snacker",
+     "card_id": 107,
+     "count": 4
+    },
+    {
+     "name": "Faithless Looting",
+     "card_id": 34,
+     "count": 2
+    }
+   ],
+   "rationale": "Affinity's pressure comes from cheap artifact creatures (Refurbished Familiar, Krark-Clan Shaman, Myr Enforcer) fueled by its Thoughtcast and Cryogen Relic blue splash, so Searing Blaze answers the small bodies while Pyroblast snipes the card draw and stun pieces keeping the plan running. Sneaky Snacker and Faithless Looting are the softest inclusions: Snacker cannot be cast off the deck's Mountain-only mana base, and Looting spends a card filtering instead of pressuring a deck that is racing us on board presence.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Burn",
+   "opponent_deck_id": "Elves",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Searing Blaze",
+     "card_id": 101,
+     "count": 4
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sneaky Snacker",
+     "card_id": 107,
+     "count": 4
+    }
+   ],
+   "rationale": "Elves needs turn-one mana dorks (Fyndhorn Elves, Elvish Mystic, Llanowar Elves, Priest of Titania) to power Lead the Stampede and its bigger green threats, so Searing Blaze kills the dork on sight while burning the player, denying the ramp before it compounds. Sneaky Snacker is the clear cut since its {U}{B} cost cannot be paid by this deck's Mountains, making it a guaranteed dead draw against an opponent that punishes any wasted turn.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Burn",
+   "opponent_deck_id": "Elves",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Searing Blaze",
+     "card_id": 101,
+     "count": 4
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sneaky Snacker",
+     "card_id": 107,
+     "count": 4
+    }
+   ],
+   "rationale": "Elves needs turn-one mana dorks (Fyndhorn Elves, Elvish Mystic, Llanowar Elves, Priest of Titania) to power Lead the Stampede and its bigger green threats, so Searing Blaze kills the dork on sight while burning the player, denying the ramp before it compounds. Sneaky Snacker is the clear cut since its {U}{B} cost cannot be paid by this deck's Mountains, making it a guaranteed dead draw against an opponent that punishes any wasted turn.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Burn",
+   "opponent_deck_id": "Spy",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Relic of Progenitus",
+     "card_id": 97,
+     "count": 4
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sneaky Snacker",
+     "card_id": 107,
+     "count": 4
+    }
+   ],
+   "rationale": "Spy's win condition runs through its graveyard, self-milling with Balustrade Spy and reanimating with Dread Return while Lotleth Giant scales off graveyard count, so four copies of Relic of Progenitus can exile a card on demand or blow up both graveyards outright to strip the engine before it goes off. Sneaky Snacker is the easiest cut because its {U}{B} cost is uncastable off the Mountain-only manabase, and against Spy's wall-heavy defense (Overgrown Battlement, Saruli Caretaker, Gatecreeper Vine) a 2/1 flier was not pressuring anything regardless.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Burn",
+   "opponent_deck_id": "Spy",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Relic of Progenitus",
+     "card_id": 97,
+     "count": 4
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sneaky Snacker",
+     "card_id": 107,
+     "count": 4
+    }
+   ],
+   "rationale": "Spy's win condition runs through its graveyard, self-milling with Balustrade Spy and reanimating with Dread Return while Lotleth Giant scales off graveyard count, so four copies of Relic of Progenitus can exile a card on demand or blow up both graveyards outright to strip the engine before it goes off. Sneaky Snacker is the easiest cut because its {U}{B} cost is uncastable off the Mountain-only manabase, and against Spy's wall-heavy defense (Overgrown Battlement, Saruli Caretaker, Gatecreeper Vine) a 2/1 flier was not pressuring anything regardless.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Burn",
+   "opponent_deck_id": "Burn",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Searing Blaze",
+     "card_id": 101,
+     "count": 4
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sneaky Snacker",
+     "card_id": 107,
+     "count": 4
+    }
+   ],
+   "rationale": "Fixed per reviewer: the card swap was already correct but the rationale misdescribed the target, claiming Searing Blaze kills the opponent's Sneaky Snacker. The opponent runs the same registered Burn list (18 Mountains, zero U or B sources per registered_nine_75s.json), so their Sneaky Snacker is exactly as uncastable for them as ours is for us and will never be on their battlefield. In the mirror both decks race with direct damage, so Searing Blaze is a pure two-for-one that kills the opponent's real fragile bodies (Voldaren Epicure 1/1, Masked Meower 1/1, and Guttersnipe 2/2 if it resolves) while adding three points to a race both players are running to zero. Sneaky Snacker remains the weakest card to cut from our own 60 since its {U}{B} cost is one this all-Mountain list cannot produce, making it a guaranteed dead draw regardless of what the opponent presents, at exactly the moment speed decides the game.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Burn",
+   "opponent_deck_id": "Burn",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Searing Blaze",
+     "card_id": 101,
+     "count": 4
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sneaky Snacker",
+     "card_id": 107,
+     "count": 4
+    }
+   ],
+   "rationale": "Fixed per reviewer: the card swap was already correct but the rationale misdescribed the target, claiming Searing Blaze kills the opponent's Sneaky Snacker. The opponent runs the same registered Burn list (18 Mountains, zero U or B sources per registered_nine_75s.json), so their Sneaky Snacker is exactly as uncastable for them as ours is for us and will never be on their battlefield. In the mirror both decks race with direct damage, so Searing Blaze is a pure two-for-one that kills the opponent's real fragile bodies (Voldaren Epicure 1/1, Masked Meower 1/1, and Guttersnipe 2/2 if it resolves) while adding three points to a race both players are running to zero. Sneaky Snacker remains the weakest card to cut from our own 60 since its {U}{B} cost is one this all-Mountain list cannot produce, making it a guaranteed dead draw regardless of what the opponent presents, at exactly the moment speed decides the game.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Burn",
+   "opponent_deck_id": "Terror",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 4
+    },
+    {
+     "name": "Red Elemental Blast",
+     "card_id": 95,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sneaky Snacker",
+     "card_id": 107,
+     "count": 4
+    },
+    {
+     "name": "Faithless Looting",
+     "card_id": 34,
+     "count": 2
+    }
+   ],
+   "rationale": "Terror's entire nonland suite is blue, from Counterspell protecting its plan to the cost-reduced Tolarian Terror and Cryptic Serpent finishers, so Pyroblast and Red Elemental Blast can counter the counterspell or blow up the threat outright. Sneaky Snacker and Faithless Looting are the weakest cards to cut: Snacker cannot be cast off the Mountain-only manabase, and Looting's discard risks pitching burn spells for card selection we do not need once direct answers to their blue cards are available.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Burn",
+   "opponent_deck_id": "Terror",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 4
+    },
+    {
+     "name": "Red Elemental Blast",
+     "card_id": 95,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sneaky Snacker",
+     "card_id": 107,
+     "count": 4
+    },
+    {
+     "name": "Faithless Looting",
+     "card_id": 34,
+     "count": 2
+    }
+   ],
+   "rationale": "Terror's entire nonland suite is blue, from Counterspell protecting its plan to the cost-reduced Tolarian Terror and Cryptic Serpent finishers, so Pyroblast and Red Elemental Blast can counter the counterspell or blow up the threat outright. Sneaky Snacker and Faithless Looting are the weakest cards to cut: Snacker cannot be cast off the Mountain-only manabase, and Looting's discard risks pitching burn spells for card selection we do not need once direct answers to their blue cards are available.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Burn",
+   "opponent_deck_id": "CawGates",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 3
+    },
+    {
+     "name": "Red Elemental Blast",
+     "card_id": 95,
+     "count": 2
+    },
+    {
+     "name": "Searing Blaze",
+     "card_id": 101,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sneaky Snacker",
+     "card_id": 107,
+     "count": 4
+    },
+    {
+     "name": "Faithless Looting",
+     "card_id": 34,
+     "count": 2
+    },
+    {
+     "name": "Highway Robbery",
+     "card_id": 54,
+     "count": 1
+    }
+   ],
+   "rationale": "CawGates protects its lifelink and prevention plan (Sacred Cat, Outlaw Medic, Prismatic Strands) with Counterspell, The Modern Age, and Spell Pierce, so Pyroblast and Red Elemental Blast strip that countermagic while Searing Blaze kills the small lifelinkers before they can stabilize the race. Sneaky Snacker, two Faithless Lootings, and a Highway Robbery are the least impactful cards once direct interaction is available: Snacker cannot even be cast off this deck's Mountains, and the extra filtering does not close a race against a deck built to grind.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Burn",
+   "opponent_deck_id": "CawGates",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 3
+    },
+    {
+     "name": "Red Elemental Blast",
+     "card_id": 95,
+     "count": 2
+    },
+    {
+     "name": "Searing Blaze",
+     "card_id": 101,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sneaky Snacker",
+     "card_id": 107,
+     "count": 4
+    },
+    {
+     "name": "Faithless Looting",
+     "card_id": 34,
+     "count": 2
+    },
+    {
+     "name": "Highway Robbery",
+     "card_id": 54,
+     "count": 1
+    }
+   ],
+   "rationale": "CawGates protects its lifelink and prevention plan (Sacred Cat, Outlaw Medic, Prismatic Strands) with Counterspell, The Modern Age, and Spell Pierce, so Pyroblast and Red Elemental Blast strip that countermagic while Searing Blaze kills the small lifelinkers before they can stabilize the race. Sneaky Snacker, two Faithless Lootings, and a Highway Robbery are the least impactful cards once direct interaction is available: Snacker cannot even be cast off this deck's Mountains, and the extra filtering does not close a race against a deck built to grind.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Burn",
+   "opponent_deck_id": "Faeries",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 3
+    },
+    {
+     "name": "Red Elemental Blast",
+     "card_id": 95,
+     "count": 2
+    },
+    {
+     "name": "Searing Blaze",
+     "card_id": 101,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sneaky Snacker",
+     "card_id": 107,
+     "count": 4
+    },
+    {
+     "name": "Faithless Looting",
+     "card_id": 34,
+     "count": 2
+    },
+    {
+     "name": "Highway Robbery",
+     "card_id": 54,
+     "count": 1
+    }
+   ],
+   "rationale": "Faeries protects its tempo plan with Counterspell, Spellstutter Sprite, and Force Spike, and most of its clock is one-toughness fliers (Faerie Seer, Faerie Miscreant, Harrier Strix), so Pyroblast and Red Elemental Blast counter the counterspell or kill Spellstutter Sprite outright while Searing Blaze picks off the rest of the fliers for reach. Sneaky Snacker, two Faithless Lootings, and a Highway Robbery are the weakest cards to cut: Snacker cannot be cast off the Mountain-only manabase, and card filtering matters less than direct interaction against a deck built to counter everything else.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Burn",
+   "opponent_deck_id": "Faeries",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 3
+    },
+    {
+     "name": "Red Elemental Blast",
+     "card_id": 95,
+     "count": 2
+    },
+    {
+     "name": "Searing Blaze",
+     "card_id": 101,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sneaky Snacker",
+     "card_id": 107,
+     "count": 4
+    },
+    {
+     "name": "Faithless Looting",
+     "card_id": 34,
+     "count": 2
+    },
+    {
+     "name": "Highway Robbery",
+     "card_id": 54,
+     "count": 1
+    }
+   ],
+   "rationale": "Faeries protects its tempo plan with Counterspell, Spellstutter Sprite, and Force Spike, and most of its clock is one-toughness fliers (Faerie Seer, Faerie Miscreant, Harrier Strix), so Pyroblast and Red Elemental Blast counter the counterspell or kill Spellstutter Sprite outright while Searing Blaze picks off the rest of the fliers for reach. Sneaky Snacker, two Faithless Lootings, and a Highway Robbery are the weakest cards to cut: Snacker cannot be cast off the Mountain-only manabase, and card filtering matters less than direct interaction against a deck built to counter everything else.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Terror",
+   "opponent_deck_id": "Wildfire",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Hydroblast",
+     "card_id": 57,
+     "count": 4
+    },
+    {
+     "name": "Annul",
+     "card_id": 0,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sleep of the Dead",
+     "card_id": 105,
+     "count": 2
+    },
+    {
+     "name": "Cryptic Serpent",
+     "card_id": 19,
+     "count": 2
+    },
+    {
+     "name": "Deep Analysis",
+     "card_id": 21,
+     "count": 1
+    },
+    {
+     "name": "Mental Note",
+     "card_id": 72,
+     "count": 2
+    }
+   ],
+   "rationale": "Hydroblast and Annul turn off Wildfire's red removal and burn (Krark-Clan Shaman, Cleansing Wildfire) and its dense artifact suite (Ichor Wellspring, Blood Fountain, Lembas, Nihil Spellbomb, Refurbished Familiar) before those cards generate value. A second Cryptic Serpent, Sleep of the Dead's single tap, one Deep Analysis, and two Mental Note are the weakest cards since Wildfire's Cast Down answers a lone stuck threat anyway and this matchup rewards proactive answers over more card selection.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Terror",
+   "opponent_deck_id": "Wildfire",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Hydroblast",
+     "card_id": 57,
+     "count": 4
+    },
+    {
+     "name": "Annul",
+     "card_id": 0,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sleep of the Dead",
+     "card_id": 105,
+     "count": 2
+    },
+    {
+     "name": "Cryptic Serpent",
+     "card_id": 19,
+     "count": 2
+    },
+    {
+     "name": "Deep Analysis",
+     "card_id": 21,
+     "count": 1
+    },
+    {
+     "name": "Mental Note",
+     "card_id": 72,
+     "count": 2
+    }
+   ],
+   "rationale": "Hydroblast and Annul turn off Wildfire's red removal and burn (Krark-Clan Shaman, Cleansing Wildfire) and its dense artifact suite (Ichor Wellspring, Blood Fountain, Lembas, Nihil Spellbomb, Refurbished Familiar) before those cards generate value. A second Cryptic Serpent, Sleep of the Dead's single tap, one Deep Analysis, and two Mental Note are the weakest cards since Wildfire's Cast Down answers a lone stuck threat anyway and this matchup rewards proactive answers over more card selection.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Terror",
+   "opponent_deck_id": "Rally",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Hydroblast",
+     "card_id": 57,
+     "count": 4
+    },
+    {
+     "name": "Blue Elemental Blast",
+     "card_id": 7,
+     "count": 1
+    },
+    {
+     "name": "Gut Shot",
+     "card_id": 50,
+     "count": 4
+    },
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Cryptic Serpent",
+     "card_id": 19,
+     "count": 4
+    },
+    {
+     "name": "Sleep of the Dead",
+     "card_id": 105,
+     "count": 2
+    },
+    {
+     "name": "Deep Analysis",
+     "card_id": 21,
+     "count": 2
+    },
+    {
+     "name": "Mental Note",
+     "card_id": 72,
+     "count": 2
+    }
+   ],
+   "rationale": "Hydroblast and Blue Elemental Blast pick off Rally's mono red burn and creatures, Gut Shot cheaply kills their early low toughness threats off two life instead of a card, and Envelop is aimed squarely at Rally at the Hornburg, the sorcery that powers their alpha strike. Cryptic Serpent, Sleep of the Dead, Deep Analysis, and two Mental Note are cut because they are too slow or too life costly to survive a deck built to kill by turn four.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Terror",
+   "opponent_deck_id": "Rally",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Hydroblast",
+     "card_id": 57,
+     "count": 4
+    },
+    {
+     "name": "Blue Elemental Blast",
+     "card_id": 7,
+     "count": 1
+    },
+    {
+     "name": "Gut Shot",
+     "card_id": 50,
+     "count": 4
+    },
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Cryptic Serpent",
+     "card_id": 19,
+     "count": 4
+    },
+    {
+     "name": "Sleep of the Dead",
+     "card_id": 105,
+     "count": 2
+    },
+    {
+     "name": "Deep Analysis",
+     "card_id": 21,
+     "count": 2
+    },
+    {
+     "name": "Mental Note",
+     "card_id": 72,
+     "count": 2
+    }
+   ],
+   "rationale": "Hydroblast and Blue Elemental Blast pick off Rally's mono red burn and creatures, Gut Shot cheaply kills their early low toughness threats off two life instead of a card, and Envelop is aimed squarely at Rally at the Hornburg, the sorcery that powers their alpha strike. Cryptic Serpent, Sleep of the Dead, Deep Analysis, and two Mental Note are cut because they are too slow or too life costly to survive a deck built to kill by turn four.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Terror",
+   "opponent_deck_id": "Affinity",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Annul",
+     "card_id": 0,
+     "count": 4
+    },
+    {
+     "name": "Hydroblast",
+     "card_id": 57,
+     "count": 4
+    },
+    {
+     "name": "Gut Shot",
+     "card_id": 50,
+     "count": 3
+    },
+    {
+     "name": "Blue Elemental Blast",
+     "card_id": 7,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Cryptic Serpent",
+     "card_id": 19,
+     "count": 4
+    },
+    {
+     "name": "Sleep of the Dead",
+     "card_id": 105,
+     "count": 2
+    },
+    {
+     "name": "Deep Analysis",
+     "card_id": 21,
+     "count": 2
+    },
+    {
+     "name": "Mental Note",
+     "card_id": 72,
+     "count": 2
+    },
+    {
+     "name": "Dispel",
+     "card_id": 22,
+     "count": 2
+    }
+   ],
+   "rationale": "Annul and Hydroblast counter Affinity's core the moment it's cast (Myr Enforcer, Refurbished Familiar, Ichor Wellspring, Nihil Spellbomb, Black Mage's Rod, Galvanic Blast, Krark-Clan Shaman), while Gut Shot and Blue Elemental Blast clean up whatever slips through. Cryptic Serpent, Sleep of the Dead, Deep Analysis, two Mental Note, and Dispel are the weakest cards because this becomes a control draw where proactive hate beats a slow top end and life payment against a deck that also carries burn.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Terror",
+   "opponent_deck_id": "Affinity",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Annul",
+     "card_id": 0,
+     "count": 4
+    },
+    {
+     "name": "Hydroblast",
+     "card_id": 57,
+     "count": 4
+    },
+    {
+     "name": "Gut Shot",
+     "card_id": 50,
+     "count": 3
+    },
+    {
+     "name": "Blue Elemental Blast",
+     "card_id": 7,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Cryptic Serpent",
+     "card_id": 19,
+     "count": 4
+    },
+    {
+     "name": "Sleep of the Dead",
+     "card_id": 105,
+     "count": 2
+    },
+    {
+     "name": "Deep Analysis",
+     "card_id": 21,
+     "count": 2
+    },
+    {
+     "name": "Mental Note",
+     "card_id": 72,
+     "count": 2
+    },
+    {
+     "name": "Dispel",
+     "card_id": 22,
+     "count": 2
+    }
+   ],
+   "rationale": "Annul and Hydroblast counter Affinity's core the moment it's cast (Myr Enforcer, Refurbished Familiar, Ichor Wellspring, Nihil Spellbomb, Black Mage's Rod, Galvanic Blast, Krark-Clan Shaman), while Gut Shot and Blue Elemental Blast clean up whatever slips through. Cryptic Serpent, Sleep of the Dead, Deep Analysis, two Mental Note, and Dispel are the weakest cards because this becomes a control draw where proactive hate beats a slow top end and life payment against a deck that also carries burn.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Terror",
+   "opponent_deck_id": "Elves",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Gut Shot",
+     "card_id": 50,
+     "count": 4
+    },
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 1
+    },
+    {
+     "name": "Piracy Charm",
+     "card_id": 84,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Dispel",
+     "card_id": 22,
+     "count": 2
+    },
+    {
+     "name": "Deep Analysis",
+     "card_id": 21,
+     "count": 2
+    },
+    {
+     "name": "Mental Note",
+     "card_id": 72,
+     "count": 2
+    }
+   ],
+   "rationale": "Gut Shot picks off Elves' one toughness mana dorks (Fyndhorn Elves, Elvish Mystic, Llanowar Elves, Quirion Ranger, Wellwisher) before Priest of Titania and Lead the Stampede spiral into a huge turn, Envelop is aimed at Lead the Stampede or Winding Way, and Piracy Charm's minus one toughness mode is a second dork kill. Dispel is dead since Elves' registered sixty runs no instants, and Deep Analysis and two Mental Note are too slow when the priority is strangling the mana engine early.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Terror",
+   "opponent_deck_id": "Elves",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Gut Shot",
+     "card_id": 50,
+     "count": 4
+    },
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 1
+    },
+    {
+     "name": "Piracy Charm",
+     "card_id": 84,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Dispel",
+     "card_id": 22,
+     "count": 2
+    },
+    {
+     "name": "Deep Analysis",
+     "card_id": 21,
+     "count": 2
+    },
+    {
+     "name": "Mental Note",
+     "card_id": 72,
+     "count": 2
+    }
+   ],
+   "rationale": "Gut Shot picks off Elves' one toughness mana dorks (Fyndhorn Elves, Elvish Mystic, Llanowar Elves, Quirion Ranger, Wellwisher) before Priest of Titania and Lead the Stampede spiral into a huge turn, Envelop is aimed at Lead the Stampede or Winding Way, and Piracy Charm's minus one toughness mode is a second dork kill. Dispel is dead since Elves' registered sixty runs no instants, and Deep Analysis and two Mental Note are too slow when the priority is strangling the mana engine early.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Terror",
+   "opponent_deck_id": "Spy",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 1
+    },
+    {
+     "name": "Piracy Charm",
+     "card_id": 84,
+     "count": 1
+    },
+    {
+     "name": "Gut Shot",
+     "card_id": 50,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Mental Note",
+     "card_id": 72,
+     "count": 2
+    },
+    {
+     "name": "Dispel",
+     "card_id": 22,
+     "count": 2
+    }
+   ],
+   "rationale": "FIXED per reviewer, whose refutation is accepted: SleepOfTheDead.java shows it taps any target creature and keeps it from untapping through its controller's next untap step, so instead of cutting it we keep both copies as the deck's only repeatable way past Spy's wall of defenders (Overgrown Battlement x4, Saruli Caretaker x4, Gatecreeper Vine x3, Wall of Roots x3, Tinder Wall x2) that otherwise stonewalls our non-evasive finishers; we cut Mental Note instead, since card selection matters less than clearing a lane for a threat in this grindy, defender-heavy matchup. Envelop is still live on every key sorcery in the combo (Dread Return reanimating Troll of Khazad-dum or Lotleth Giant, plus Lead the Stampede and Winding Way). Piracy Charm's rationale is corrected too: PiracyCharm.java shows the discard mode's target player chooses what to discard, so it cannot strip a specific card like Balustrade Spy or Dread Return; its live use here is the minus one toughness mode killing Elves of Deep Shadow or Quirion Ranger, same as Gut Shot, which also slows their mana. Dispel stays cut because Spy's registered sixty (confirmed against registered_nine_75s.json) runs no instants to counter.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Terror",
+   "opponent_deck_id": "Spy",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 1
+    },
+    {
+     "name": "Piracy Charm",
+     "card_id": 84,
+     "count": 1
+    },
+    {
+     "name": "Gut Shot",
+     "card_id": 50,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Mental Note",
+     "card_id": 72,
+     "count": 2
+    },
+    {
+     "name": "Dispel",
+     "card_id": 22,
+     "count": 2
+    }
+   ],
+   "rationale": "FIXED per reviewer, whose refutation is accepted: SleepOfTheDead.java shows it taps any target creature and keeps it from untapping through its controller's next untap step, so instead of cutting it we keep both copies as the deck's only repeatable way past Spy's wall of defenders (Overgrown Battlement x4, Saruli Caretaker x4, Gatecreeper Vine x3, Wall of Roots x3, Tinder Wall x2) that otherwise stonewalls our non-evasive finishers; we cut Mental Note instead, since card selection matters less than clearing a lane for a threat in this grindy, defender-heavy matchup. Envelop is still live on every key sorcery in the combo (Dread Return reanimating Troll of Khazad-dum or Lotleth Giant, plus Lead the Stampede and Winding Way). Piracy Charm's rationale is corrected too: PiracyCharm.java shows the discard mode's target player chooses what to discard, so it cannot strip a specific card like Balustrade Spy or Dread Return; its live use here is the minus one toughness mode killing Elves of Deep Shadow or Quirion Ranger, same as Gut Shot, which also slows their mana. Dispel stays cut because Spy's registered sixty (confirmed against registered_nine_75s.json) runs no instants to counter.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Terror",
+   "opponent_deck_id": "Burn",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Hydroblast",
+     "card_id": 57,
+     "count": 4
+    },
+    {
+     "name": "Blue Elemental Blast",
+     "card_id": 7,
+     "count": 1
+    },
+    {
+     "name": "Gut Shot",
+     "card_id": 50,
+     "count": 4
+    },
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Cryptic Serpent",
+     "card_id": 19,
+     "count": 4
+    },
+    {
+     "name": "Deep Analysis",
+     "card_id": 21,
+     "count": 2
+    },
+    {
+     "name": "Sleep of the Dead",
+     "card_id": 105,
+     "count": 2
+    },
+    {
+     "name": "Mental Note",
+     "card_id": 72,
+     "count": 2
+    }
+   ],
+   "rationale": "Hydroblast and Blue Elemental Blast answer Burn's spells and creatures, including Guttersnipe whose trigger punishes every spell we cast, Gut Shot kills their small creatures for two life instead of a card, and Envelop denies Faithless Looting or Highway Robbery's card selection. Cryptic Serpent, Deep Analysis's five life flashback, Sleep of the Dead, and two Mental Note are cut because this matchup is a life total race where clunky or life costing cards get us killed first.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Terror",
+   "opponent_deck_id": "Burn",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Hydroblast",
+     "card_id": 57,
+     "count": 4
+    },
+    {
+     "name": "Blue Elemental Blast",
+     "card_id": 7,
+     "count": 1
+    },
+    {
+     "name": "Gut Shot",
+     "card_id": 50,
+     "count": 4
+    },
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Cryptic Serpent",
+     "card_id": 19,
+     "count": 4
+    },
+    {
+     "name": "Deep Analysis",
+     "card_id": 21,
+     "count": 2
+    },
+    {
+     "name": "Sleep of the Dead",
+     "card_id": 105,
+     "count": 2
+    },
+    {
+     "name": "Mental Note",
+     "card_id": 72,
+     "count": 2
+    }
+   ],
+   "rationale": "Hydroblast and Blue Elemental Blast answer Burn's spells and creatures, including Guttersnipe whose trigger punishes every spell we cast, Gut Shot kills their small creatures for two life instead of a card, and Envelop denies Faithless Looting or Highway Robbery's card selection. Cryptic Serpent, Deep Analysis's five life flashback, Sleep of the Dead, and two Mental Note are cut because this matchup is a life total race where clunky or life costing cards get us killed first.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Terror",
+   "opponent_deck_id": "Terror",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Piracy Charm",
+     "card_id": 84,
+     "count": 1
+    },
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 1
+    },
+    {
+     "name": "Gut Shot",
+     "card_id": 50,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Cryptic Serpent",
+     "card_id": 19,
+     "count": 2
+    },
+    {
+     "name": "Sleep of the Dead",
+     "card_id": 105,
+     "count": 2
+    }
+   ],
+   "rationale": "Piracy Charm's islandwalk mode makes Tolarian Terror or Cryptic Serpent unblockable since the mirror opponent's manabase is all Islands, Envelop snipes their Deem Inferior, Deep Analysis, or Ponder before it resolves, and Gut Shot cleans up Murmuring Mystic's Bird Illusion tokens or closes the game. A second Cryptic Serpent and Sleep of the Dead's single tap are cut because the mirror is won by an unanswerable evasive finisher and countermagic, not by more redundant top end.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Terror",
+   "opponent_deck_id": "Terror",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Piracy Charm",
+     "card_id": 84,
+     "count": 1
+    },
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 1
+    },
+    {
+     "name": "Gut Shot",
+     "card_id": 50,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Cryptic Serpent",
+     "card_id": 19,
+     "count": 2
+    },
+    {
+     "name": "Sleep of the Dead",
+     "card_id": 105,
+     "count": 2
+    }
+   ],
+   "rationale": "Piracy Charm's islandwalk mode makes Tolarian Terror or Cryptic Serpent unblockable since the mirror opponent's manabase is all Islands, Envelop snipes their Deem Inferior, Deep Analysis, or Ponder before it resolves, and Gut Shot cleans up Murmuring Mystic's Bird Illusion tokens or closes the game. A second Cryptic Serpent and Sleep of the Dead's single tap are cut because the mirror is won by an unanswerable evasive finisher and countermagic, not by more redundant top end.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Terror",
+   "opponent_deck_id": "CawGates",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Annul",
+     "card_id": 0,
+     "count": 4
+    },
+    {
+     "name": "Gut Shot",
+     "card_id": 50,
+     "count": 3
+    },
+    {
+     "name": "Piracy Charm",
+     "card_id": 84,
+     "count": 1
+    },
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Cryptic Serpent",
+     "card_id": 19,
+     "count": 2
+    },
+    {
+     "name": "Sleep of the Dead",
+     "card_id": 105,
+     "count": 2
+    },
+    {
+     "name": "Deep Analysis",
+     "card_id": 21,
+     "count": 2
+    },
+    {
+     "name": "Mental Note",
+     "card_id": 72,
+     "count": 3
+    }
+   ],
+   "rationale": "Annul strips Journey to Nowhere or The Modern Age before it removes our threats or generates value, Gut Shot kills Sacred Cat, Squadron Hawk, and Outlaw Medic for free, and Piracy Charm's islandwalk (CawGates runs Island and Idyllic Beachfront) turns Tolarian Terror unblockable even past the protection from monocolored Guardian of the Guildpact. A second Cryptic Serpent, Sleep of the Dead, Deep Analysis, and three Mental Note are the weakest cards against a controlling deck that can exile or out grind a lone stuck threat.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Terror",
+   "opponent_deck_id": "CawGates",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Annul",
+     "card_id": 0,
+     "count": 4
+    },
+    {
+     "name": "Gut Shot",
+     "card_id": 50,
+     "count": 3
+    },
+    {
+     "name": "Piracy Charm",
+     "card_id": 84,
+     "count": 1
+    },
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Cryptic Serpent",
+     "card_id": 19,
+     "count": 2
+    },
+    {
+     "name": "Sleep of the Dead",
+     "card_id": 105,
+     "count": 2
+    },
+    {
+     "name": "Deep Analysis",
+     "card_id": 21,
+     "count": 2
+    },
+    {
+     "name": "Mental Note",
+     "card_id": 72,
+     "count": 3
+    }
+   ],
+   "rationale": "Annul strips Journey to Nowhere or The Modern Age before it removes our threats or generates value, Gut Shot kills Sacred Cat, Squadron Hawk, and Outlaw Medic for free, and Piracy Charm's islandwalk (CawGates runs Island and Idyllic Beachfront) turns Tolarian Terror unblockable even past the protection from monocolored Guardian of the Guildpact. A second Cryptic Serpent, Sleep of the Dead, Deep Analysis, and three Mental Note are the weakest cards against a controlling deck that can exile or out grind a lone stuck threat.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Terror",
+   "opponent_deck_id": "Faeries",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Gut Shot",
+     "card_id": 50,
+     "count": 4
+    },
+    {
+     "name": "Piracy Charm",
+     "card_id": 84,
+     "count": 1
+    },
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Cryptic Serpent",
+     "card_id": 19,
+     "count": 2
+    },
+    {
+     "name": "Deep Analysis",
+     "card_id": 21,
+     "count": 2
+    },
+    {
+     "name": "Sleep of the Dead",
+     "card_id": 105,
+     "count": 2
+    }
+   ],
+   "rationale": "Gut Shot sweeps Faeries' one toughness flying army (Faerie Seer, Spellstutter Sprite, Harrier Strix, Faerie Miscreant, Humbling Elder) for two life apiece, Piracy Charm's islandwalk makes our finisher unblockable since Faeries runs eighteen Islands, and Envelop catches Of One Mind. Cryptic Serpent, Deep Analysis, and Sleep of the Dead are cut because they are too slow, too life costly, or too narrow to matter in a fast evasive tempo race.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Terror",
+   "opponent_deck_id": "Faeries",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Gut Shot",
+     "card_id": 50,
+     "count": 4
+    },
+    {
+     "name": "Piracy Charm",
+     "card_id": 84,
+     "count": 1
+    },
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Cryptic Serpent",
+     "card_id": 19,
+     "count": 2
+    },
+    {
+     "name": "Deep Analysis",
+     "card_id": 21,
+     "count": 2
+    },
+    {
+     "name": "Sleep of the Dead",
+     "card_id": 105,
+     "count": 2
+    }
+   ],
+   "rationale": "Gut Shot sweeps Faeries' one toughness flying army (Faerie Seer, Spellstutter Sprite, Harrier Strix, Faerie Miscreant, Humbling Elder) for two life apiece, Piracy Charm's islandwalk makes our finisher unblockable since Faeries runs eighteen Islands, and Envelop catches Of One Mind. Cryptic Serpent, Deep Analysis, and Sleep of the Dead are cut because they are too slow, too life costly, or too narrow to matter in a fast evasive tempo race.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "CawGates",
+   "opponent_deck_id": "Wildfire",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Dust to Dust",
+     "card_id": 25,
+     "count": 3
+    },
+    {
+     "name": "Hydroblast",
+     "card_id": 57,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Spell Pierce",
+     "card_id": 109,
+     "count": 2
+    },
+    {
+     "name": "Sacred Cat",
+     "card_id": 98,
+     "count": 2
+    },
+    {
+     "name": "Outlaw Medic",
+     "card_id": 83,
+     "count": 1
+    }
+   ],
+   "rationale": "Dust to Dust strips Wildfire's dense artifact package (Ichor Wellspring, Nihil Spellbomb, Blood Fountain, and its indestructible Bridge lands) that fuels its grinding value plan, while Hydroblast snipes Krark-Clan Shaman or counters Cleansing Wildfire before it can fix their mana. Spell Pierce's tax is trivial once this midrange deck hits its land drops, and the extra Sacred Cats and Outlaw Medic are undersized bodies that just trade into Cast Down for free.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "CawGates",
+   "opponent_deck_id": "Wildfire",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Dust to Dust",
+     "card_id": 25,
+     "count": 3
+    },
+    {
+     "name": "Hydroblast",
+     "card_id": 57,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Spell Pierce",
+     "card_id": 109,
+     "count": 2
+    },
+    {
+     "name": "Sacred Cat",
+     "card_id": 98,
+     "count": 2
+    },
+    {
+     "name": "Outlaw Medic",
+     "card_id": 83,
+     "count": 1
+    }
+   ],
+   "rationale": "Dust to Dust strips Wildfire's dense artifact package (Ichor Wellspring, Nihil Spellbomb, Blood Fountain, and its indestructible Bridge lands) that fuels its grinding value plan, while Hydroblast snipes Krark-Clan Shaman or counters Cleansing Wildfire before it can fix their mana. Spell Pierce's tax is trivial once this midrange deck hits its land drops, and the extra Sacred Cats and Outlaw Medic are undersized bodies that just trade into Cast Down for free.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "CawGates",
+   "opponent_deck_id": "Rally",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Hydroblast",
+     "card_id": 57,
+     "count": 2
+    },
+    {
+     "name": "Blue Elemental Blast",
+     "card_id": 7,
+     "count": 3
+    },
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "The Modern Age",
+     "card_id": 115,
+     "count": 3
+    },
+    {
+     "name": "Preordain",
+     "card_id": 86,
+     "count": 2
+    },
+    {
+     "name": "Squadron Hawk",
+     "card_id": 112,
+     "count": 1
+    },
+    {
+     "name": "Outlaw Medic",
+     "card_id": 83,
+     "count": 1
+    }
+   ],
+   "rationale": "Hydroblast and Blue Elemental Blast answer Rally's mono-red creature swarm (Goblin Bushwhacker, Burning-Tree Emissary, Clockwork Percussionist) or counter its burn (Lightning Bolt, Galvanic Blast, Chain Lightning), and Envelop can outright blank Rally at the Hornburg, the sorcery that turns the whole board sideways. The Modern Age and a spare Preordain/Squadron Hawk/Outlaw Medic are too slow to matter before this hyper-aggro deck ends the game, so they are the easiest cuts for pure interaction.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "CawGates",
+   "opponent_deck_id": "Rally",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Hydroblast",
+     "card_id": 57,
+     "count": 2
+    },
+    {
+     "name": "Blue Elemental Blast",
+     "card_id": 7,
+     "count": 3
+    },
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "The Modern Age",
+     "card_id": 115,
+     "count": 3
+    },
+    {
+     "name": "Preordain",
+     "card_id": 86,
+     "count": 2
+    },
+    {
+     "name": "Squadron Hawk",
+     "card_id": 112,
+     "count": 1
+    },
+    {
+     "name": "Outlaw Medic",
+     "card_id": 83,
+     "count": 1
+    }
+   ],
+   "rationale": "Hydroblast and Blue Elemental Blast answer Rally's mono-red creature swarm (Goblin Bushwhacker, Burning-Tree Emissary, Clockwork Percussionist) or counter its burn (Lightning Bolt, Galvanic Blast, Chain Lightning), and Envelop can outright blank Rally at the Hornburg, the sorcery that turns the whole board sideways. The Modern Age and a spare Preordain/Squadron Hawk/Outlaw Medic are too slow to matter before this hyper-aggro deck ends the game, so they are the easiest cuts for pure interaction.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "CawGates",
+   "opponent_deck_id": "Affinity",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Dust to Dust",
+     "card_id": 25,
+     "count": 3
+    },
+    {
+     "name": "Hydroblast",
+     "card_id": 57,
+     "count": 2
+    },
+    {
+     "name": "Blue Elemental Blast",
+     "card_id": 7,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "The Modern Age",
+     "card_id": 115,
+     "count": 3
+    },
+    {
+     "name": "Spell Pierce",
+     "card_id": 109,
+     "count": 2
+    },
+    {
+     "name": "Preordain",
+     "card_id": 86,
+     "count": 2
+    },
+    {
+     "name": "Outlaw Medic",
+     "card_id": 83,
+     "count": 1
+    }
+   ],
+   "rationale": "Dust to Dust is the premier answer to Affinity's huge artifact count (Myr Enforcer, Refurbished Familiar, the Bridge/Seat/Vault manabase) that powers its affinity discounts, while Hydroblast and Blue Elemental Blast pick off Krark-Clan Shaman or counter Galvanic Blast. The Modern Age is too slow against a deck that floods the board by turn three, and Spell Pierce's tax is easily paid once Affinity's mana-producing artifacts are online, so both come out along with a Preordain that does nothing to the board.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "CawGates",
+   "opponent_deck_id": "Affinity",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Dust to Dust",
+     "card_id": 25,
+     "count": 3
+    },
+    {
+     "name": "Hydroblast",
+     "card_id": 57,
+     "count": 2
+    },
+    {
+     "name": "Blue Elemental Blast",
+     "card_id": 7,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "The Modern Age",
+     "card_id": 115,
+     "count": 3
+    },
+    {
+     "name": "Spell Pierce",
+     "card_id": 109,
+     "count": 2
+    },
+    {
+     "name": "Preordain",
+     "card_id": 86,
+     "count": 2
+    },
+    {
+     "name": "Outlaw Medic",
+     "card_id": 83,
+     "count": 1
+    }
+   ],
+   "rationale": "Dust to Dust is the premier answer to Affinity's huge artifact count (Myr Enforcer, Refurbished Familiar, the Bridge/Seat/Vault manabase) that powers its affinity discounts, while Hydroblast and Blue Elemental Blast pick off Krark-Clan Shaman or counter Galvanic Blast. The Modern Age is too slow against a deck that floods the board by turn three, and Spell Pierce's tax is easily paid once Affinity's mana-producing artifacts are online, so both come out along with a Preordain that does nothing to the board.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "CawGates",
+   "opponent_deck_id": "Elves",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Spell Pierce",
+     "card_id": 109,
+     "count": 2
+    }
+   ],
+   "rationale": "Envelop is the only live tool in the box against an artifact-free mono-green deck immune to our color hosers, but it directly answers Elves' two card-advantage engines, Lead the Stampede and Winding Way, that let it refill its hand and go wide. Spell Pierce's tax becomes trivial the moment Elves' mana dorks (Fyndhorn Elves, Priest of Titania) come online, making it the clear cut.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "CawGates",
+   "opponent_deck_id": "Elves",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Spell Pierce",
+     "card_id": 109,
+     "count": 2
+    }
+   ],
+   "rationale": "Envelop is the only live tool in the box against an artifact-free mono-green deck immune to our color hosers, but it directly answers Elves' two card-advantage engines, Lead the Stampede and Winding Way, that let it refill its hand and go wide. Spell Pierce's tax becomes trivial the moment Elves' mana dorks (Fyndhorn Elves, Priest of Titania) come online, making it the clear cut.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "CawGates",
+   "opponent_deck_id": "Spy",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Spell Pierce",
+     "card_id": 109,
+     "count": 2
+    }
+   ],
+   "rationale": "Envelop is again the only live sideboard card against this artifact-light Golgari deck, and it hits exactly where it hurts: Dread Return (their reanimation spell), Lead the Stampede, Winding Way, and Land Grant, the sorceries that fuel the self-mill-into-Lotleth-Giant combo. Spell Pierce's tax is trivial once Spy's wall of mana dorks (Overgrown Battlement, Saruli Caretaker, Wall of Roots) is online, so it is the cut.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "CawGates",
+   "opponent_deck_id": "Spy",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Spell Pierce",
+     "card_id": 109,
+     "count": 2
+    }
+   ],
+   "rationale": "Envelop is again the only live sideboard card against this artifact-light Golgari deck, and it hits exactly where it hurts: Dread Return (their reanimation spell), Lead the Stampede, Winding Way, and Land Grant, the sorceries that fuel the self-mill-into-Lotleth-Giant combo. Spell Pierce's tax is trivial once Spy's wall of mana dorks (Overgrown Battlement, Saruli Caretaker, Wall of Roots) is online, so it is the cut.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "CawGates",
+   "opponent_deck_id": "Burn",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Hydroblast",
+     "card_id": 57,
+     "count": 2
+    },
+    {
+     "name": "Blue Elemental Blast",
+     "card_id": 7,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "The Modern Age",
+     "card_id": 115,
+     "count": 4
+    },
+    {
+     "name": "Preordain",
+     "card_id": 86,
+     "count": 1
+    }
+   ],
+   "rationale": "Hydroblast and Blue Elemental Blast are nearly universal answers against a mono-red deck, destroying its creatures (Guttersnipe, Voldaren Epicure, Masked Meower) or countering its burn (Lightning Bolt, Fireblast, Fiery Temper, Lava Dart) outright. The Modern Age needs three turns to pay off and Burn ends games long before that, so it comes out entirely along with one redundant Preordain in favor of pure interaction.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "CawGates",
+   "opponent_deck_id": "Burn",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Hydroblast",
+     "card_id": 57,
+     "count": 2
+    },
+    {
+     "name": "Blue Elemental Blast",
+     "card_id": 7,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "The Modern Age",
+     "card_id": 115,
+     "count": 4
+    },
+    {
+     "name": "Preordain",
+     "card_id": 86,
+     "count": 1
+    }
+   ],
+   "rationale": "Hydroblast and Blue Elemental Blast are nearly universal answers against a mono-red deck, destroying its creatures (Guttersnipe, Voldaren Epicure, Masked Meower) or countering its burn (Lightning Bolt, Fireblast, Fiery Temper, Lava Dart) outright. The Modern Age needs three turns to pay off and Burn ends games long before that, so it comes out entirely along with one redundant Preordain in favor of pure interaction.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "CawGates",
+   "opponent_deck_id": "Terror",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 2
+    },
+    {
+     "name": "Dispel",
+     "card_id": 22,
+     "count": 2
+    },
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sacred Cat",
+     "card_id": 98,
+     "count": 2
+    },
+    {
+     "name": "Prismatic Strands",
+     "card_id": 88,
+     "count": 2
+    },
+    {
+     "name": "Outlaw Medic",
+     "card_id": 83,
+     "count": 1
+    }
+   ],
+   "rationale": "Pyroblast can destroy or counter Terror's cost-reduced blue finishers (Tolarian Terror, Cryptic Serpent) or even their own Counterspell, while Dispel and Envelop strip away the countermagic (Counterspell, Dispel) and card draw (Deep Analysis) protecting those threats. Sacred Cat's 1/1 body does little against a deck that rarely races with combat damage, and a couple of Prismatic Strands and the second Outlaw Medic matter less here than raw interaction in a matchup decided by card advantage.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "CawGates",
+   "opponent_deck_id": "Terror",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 2
+    },
+    {
+     "name": "Dispel",
+     "card_id": 22,
+     "count": 2
+    },
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sacred Cat",
+     "card_id": 98,
+     "count": 2
+    },
+    {
+     "name": "Prismatic Strands",
+     "card_id": 88,
+     "count": 2
+    },
+    {
+     "name": "Outlaw Medic",
+     "card_id": 83,
+     "count": 1
+    }
+   ],
+   "rationale": "Pyroblast can destroy or counter Terror's cost-reduced blue finishers (Tolarian Terror, Cryptic Serpent) or even their own Counterspell, while Dispel and Envelop strip away the countermagic (Counterspell, Dispel) and card draw (Deep Analysis) protecting those threats. Sacred Cat's 1/1 body does little against a deck that rarely races with combat damage, and a couple of Prismatic Strands and the second Outlaw Medic matter less here than raw interaction in a matchup decided by card advantage.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "CawGates",
+   "opponent_deck_id": "CawGates",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 2
+    },
+    {
+     "name": "Dispel",
+     "card_id": 22,
+     "count": 2
+    },
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Prismatic Strands",
+     "card_id": 88,
+     "count": 2
+    },
+    {
+     "name": "Sacred Cat",
+     "card_id": 98,
+     "count": 2
+    },
+    {
+     "name": "Outlaw Medic",
+     "card_id": 83,
+     "count": 1
+    }
+   ],
+   "rationale": "Pyroblast punishes the mirror's blue-heavy core (Counterspell, Brainstorm, Lorien Revealed, The Modern Age) by destroying or countering it outright, while Dispel and Envelop strip away the opponent's own Counterspell and Lorien Revealed to protect our threats. Prismatic Strands and Sacred Cat are built to survive a fast damage race, which this control mirror rarely becomes, so they are the weakest cards to trim for more interaction.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "CawGates",
+   "opponent_deck_id": "CawGates",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 2
+    },
+    {
+     "name": "Dispel",
+     "card_id": 22,
+     "count": 2
+    },
+    {
+     "name": "Envelop",
+     "card_id": 28,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Prismatic Strands",
+     "card_id": 88,
+     "count": 2
+    },
+    {
+     "name": "Sacred Cat",
+     "card_id": 98,
+     "count": 2
+    },
+    {
+     "name": "Outlaw Medic",
+     "card_id": 83,
+     "count": 1
+    }
+   ],
+   "rationale": "Pyroblast punishes the mirror's blue-heavy core (Counterspell, Brainstorm, Lorien Revealed, The Modern Age) by destroying or countering it outright, while Dispel and Envelop strip away the opponent's own Counterspell and Lorien Revealed to protect our threats. Prismatic Strands and Sacred Cat are built to survive a fast damage race, which this control mirror rarely becomes, so they are the weakest cards to trim for more interaction.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "CawGates",
+   "opponent_deck_id": "Faeries",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 3
+    },
+    {
+     "name": "Dispel",
+     "card_id": 22,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sacred Cat",
+     "card_id": 98,
+     "count": 2
+    },
+    {
+     "name": "Prismatic Strands",
+     "card_id": 88,
+     "count": 2
+    },
+    {
+     "name": "Outlaw Medic",
+     "card_id": 83,
+     "count": 1
+    }
+   ],
+   "rationale": "Pyroblast destroys or counters Faeries' entire mono-blue clock (Spellstutter Sprite, Faerie Miscreant, Ninja of the Deep Hours, Moon-Circuit Hacker) while Dispel strips away the Counterspell/Snap/Force Spike that protects their tempo plays. Sacred Cat cannot block their evasive fliers, and a couple of Prismatic Strands plus the second Outlaw Medic matter less than raw interaction in a race decided by chip damage from the air.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "CawGates",
+   "opponent_deck_id": "Faeries",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Pyroblast",
+     "card_id": 90,
+     "count": 3
+    },
+    {
+     "name": "Dispel",
+     "card_id": 22,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Sacred Cat",
+     "card_id": 98,
+     "count": 2
+    },
+    {
+     "name": "Prismatic Strands",
+     "card_id": 88,
+     "count": 2
+    },
+    {
+     "name": "Outlaw Medic",
+     "card_id": 83,
+     "count": 1
+    }
+   ],
+   "rationale": "Pyroblast destroys or counters Faeries' entire mono-blue clock (Spellstutter Sprite, Faerie Miscreant, Ninja of the Deep Hours, Moon-Circuit Hacker) while Dispel strips away the Counterspell/Snap/Force Spike that protects their tempo plays. Sacred Cat cannot block their evasive fliers, and a couple of Prismatic Strands plus the second Outlaw Medic matter less than raw interaction in a race decided by chip damage from the air.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Faeries",
+   "opponent_deck_id": "Wildfire",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Annul",
+     "card_id": 0,
+     "count": 3
+    },
+    {
+     "name": "Steel Sabotage",
+     "card_id": 113,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Force Spike",
+     "card_id": 38,
+     "count": 2
+    },
+    {
+     "name": "Humbling Elder",
+     "card_id": 55,
+     "count": 2
+    },
+    {
+     "name": "Saiba Cryptomancer",
+     "card_id": 99,
+     "count": 1
+    }
+   ],
+   "rationale": "Wildfire's grind depends on artifact and enchantment value (Ichor Wellspring plus the Cleansing Wildfire bridge-land package) and its Fanatical Offering sacrifice line, so Annul and Steel Sabotage counter or bounce those pieces before they generate value. Force Spike fades once the bridge lands give Wildfire spare mana, and Humbling Elder and Saiba Cryptomancer are fragile 1/1s that Wildfire's removal or a stray attacker trades away for free. Corrected: the reviewer is right that Krark-Clan Shaman belongs to Affinity, not Wildfire, per the archetype summaries, so that line is dropped; the card choices needed no change.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Faeries",
+   "opponent_deck_id": "Wildfire",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Annul",
+     "card_id": 0,
+     "count": 3
+    },
+    {
+     "name": "Steel Sabotage",
+     "card_id": 113,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Force Spike",
+     "card_id": 38,
+     "count": 2
+    },
+    {
+     "name": "Humbling Elder",
+     "card_id": 55,
+     "count": 2
+    },
+    {
+     "name": "Saiba Cryptomancer",
+     "card_id": 99,
+     "count": 1
+    }
+   ],
+   "rationale": "Wildfire's grind depends on artifact and enchantment value (Ichor Wellspring plus the Cleansing Wildfire bridge-land package) and its Fanatical Offering sacrifice line, so Annul and Steel Sabotage counter or bounce those pieces before they generate value. Force Spike fades once the bridge lands give Wildfire spare mana, and Humbling Elder and Saiba Cryptomancer are fragile 1/1s that Wildfire's removal or a stray attacker trades away for free. Corrected: the reviewer is right that Krark-Clan Shaman belongs to Affinity, not Wildfire, per the archetype summaries, so that line is dropped; the card choices needed no change.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Faeries",
+   "opponent_deck_id": "Rally",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Blue Elemental Blast",
+     "card_id": 7,
+     "count": 4
+    },
+    {
+     "name": "Bind the Monster",
+     "card_id": 4,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Of One Mind",
+     "card_id": 82,
+     "count": 4
+    },
+    {
+     "name": "Harrier Strix",
+     "card_id": 52,
+     "count": 2
+    },
+    {
+     "name": "Saiba Cryptomancer",
+     "card_id": 99,
+     "count": 1
+    }
+   ],
+   "rationale": "Rally is all-in on hasty one and two power creatures backed by red burn, so Blue Elemental Blast both destroys their creatures and counters Chain Lightning or Lightning Bolt, while Bind the Monster taps down their best attacker turn after turn for a trivial one or two life. Of One Mind's card draw does nothing to slow a board that can be lethal by turn four, and the fragile Harrier Strix and lone Saiba Cryptomancer add little pressure or blocking against a deck built to go wide with haste. Corrected: dropped the Galvanic Blast reference, which belongs to Affinity's list, not Rally's; the card choices needed no change.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Faeries",
+   "opponent_deck_id": "Rally",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Blue Elemental Blast",
+     "card_id": 7,
+     "count": 4
+    },
+    {
+     "name": "Bind the Monster",
+     "card_id": 4,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Of One Mind",
+     "card_id": 82,
+     "count": 4
+    },
+    {
+     "name": "Harrier Strix",
+     "card_id": 52,
+     "count": 2
+    },
+    {
+     "name": "Saiba Cryptomancer",
+     "card_id": 99,
+     "count": 1
+    }
+   ],
+   "rationale": "Rally is all-in on hasty one and two power creatures backed by red burn, so Blue Elemental Blast both destroys their creatures and counters Chain Lightning or Lightning Bolt, while Bind the Monster taps down their best attacker turn after turn for a trivial one or two life. Of One Mind's card draw does nothing to slow a board that can be lethal by turn four, and the fragile Harrier Strix and lone Saiba Cryptomancer add little pressure or blocking against a deck built to go wide with haste. Corrected: dropped the Galvanic Blast reference, which belongs to Affinity's list, not Rally's; the card choices needed no change.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Faeries",
+   "opponent_deck_id": "Affinity",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Annul",
+     "card_id": 0,
+     "count": 3
+    },
+    {
+     "name": "Steel Sabotage",
+     "card_id": 113,
+     "count": 2
+    },
+    {
+     "name": "Bind the Monster",
+     "card_id": 4,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Of One Mind",
+     "card_id": 82,
+     "count": 4
+    },
+    {
+     "name": "Force Spike",
+     "card_id": 38,
+     "count": 2
+    },
+    {
+     "name": "Saiba Cryptomancer",
+     "card_id": 99,
+     "count": 1
+    }
+   ],
+   "rationale": "Affinity's plan is roughly forty artifacts deep (the affinity-land mana base, Myr Enforcer, Frogmite-style free creatures, and Thoughtcast), so Annul and Steel Sabotage strip or bounce those pieces before they resolve or attack, and Bind the Monster locks down whichever smaller artifact creature gets through. Of One Mind's card draw and Force Spike's fading soft counter do not slow a deck that curves out on turns one through three with free or nearly free artifacts. Corrected: dropped the Ichor Wellspring citation, which belongs to Wildfire's list, not Affinity's; the card choices needed no change.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Faeries",
+   "opponent_deck_id": "Affinity",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Annul",
+     "card_id": 0,
+     "count": 3
+    },
+    {
+     "name": "Steel Sabotage",
+     "card_id": 113,
+     "count": 2
+    },
+    {
+     "name": "Bind the Monster",
+     "card_id": 4,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Of One Mind",
+     "card_id": 82,
+     "count": 4
+    },
+    {
+     "name": "Force Spike",
+     "card_id": 38,
+     "count": 2
+    },
+    {
+     "name": "Saiba Cryptomancer",
+     "card_id": 99,
+     "count": 1
+    }
+   ],
+   "rationale": "Affinity's plan is roughly forty artifacts deep (the affinity-land mana base, Myr Enforcer, Frogmite-style free creatures, and Thoughtcast), so Annul and Steel Sabotage strip or bounce those pieces before they resolve or attack, and Bind the Monster locks down whichever smaller artifact creature gets through. Of One Mind's card draw and Force Spike's fading soft counter do not slow a deck that curves out on turns one through three with free or nearly free artifacts. Corrected: dropped the Ichor Wellspring citation, which belongs to Wildfire's list, not Affinity's; the card choices needed no change.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Faeries",
+   "opponent_deck_id": "Elves",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Bind the Monster",
+     "card_id": 4,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Harrier Strix",
+     "card_id": 52,
+     "count": 2
+    },
+    {
+     "name": "Saiba Cryptomancer",
+     "card_id": 99,
+     "count": 1
+    }
+   ],
+   "rationale": "Elves' summary lists no artifacts or enchantments, so Annul has no legal target here and is cut from the plan. Bind the Monster remains the one premium tool, cheaply tapping down and permanently locking Priest of Titania or another key elf so it can never tap for mana or combat again against a go-wide creature deck. Dispel stays in the maindeck since Elves plays zero instants and there is nothing better in the sideboard worth bringing in for that slot, so cutting it buys nothing. The fragile Harrier Strix and lone Saiba Cryptomancer add little against a board that already outnumbers our blockers. Corrected: dropped the 2 Annul per the reviewer's catch that Nyxborn Hydra is not part of the given Elves summary, and trimmed cards_out to match, leaving Bind the Monster as the sole change.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Faeries",
+   "opponent_deck_id": "Elves",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Bind the Monster",
+     "card_id": 4,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Harrier Strix",
+     "card_id": 52,
+     "count": 2
+    },
+    {
+     "name": "Saiba Cryptomancer",
+     "card_id": 99,
+     "count": 1
+    }
+   ],
+   "rationale": "Elves' summary lists no artifacts or enchantments, so Annul has no legal target here and is cut from the plan. Bind the Monster remains the one premium tool, cheaply tapping down and permanently locking Priest of Titania or another key elf so it can never tap for mana or combat again against a go-wide creature deck. Dispel stays in the maindeck since Elves plays zero instants and there is nothing better in the sideboard worth bringing in for that slot, so cutting it buys nothing. The fragile Harrier Strix and lone Saiba Cryptomancer add little against a board that already outnumbers our blockers. Corrected: dropped the 2 Annul per the reviewer's catch that Nyxborn Hydra is not part of the given Elves summary, and trimmed cards_out to match, leaving Bind the Monster as the sole change.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Faeries",
+   "opponent_deck_id": "Spy",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Bind the Monster",
+     "card_id": 4,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Dispel",
+     "card_id": 22,
+     "count": 2
+    },
+    {
+     "name": "Saiba Cryptomancer",
+     "card_id": 99,
+     "count": 1
+    }
+   ],
+   "rationale": "With no red cards, only two Lotus Petal for artifact hate to bite on, and no instants worth holding Dispel up for, our best lever is Bind the Monster, which cheaply taps down and locks whichever low-power creature (Balustrade Spy, Overgrown Battlement, Saruli Caretaker) they commit early, denying its mana or repeated attacks while the Dread Return plan comes together. Dispel is dead since Spy's list is entirely sorcery-speed creatures and card selection, and the lone Saiba Cryptomancer's fragile flash body does not pressure a deck happy to sit back and mill.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Faeries",
+   "opponent_deck_id": "Spy",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Bind the Monster",
+     "card_id": 4,
+     "count": 3
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Dispel",
+     "card_id": 22,
+     "count": 2
+    },
+    {
+     "name": "Saiba Cryptomancer",
+     "card_id": 99,
+     "count": 1
+    }
+   ],
+   "rationale": "With no red cards, only two Lotus Petal for artifact hate to bite on, and no instants worth holding Dispel up for, our best lever is Bind the Monster, which cheaply taps down and locks whichever low-power creature (Balustrade Spy, Overgrown Battlement, Saruli Caretaker) they commit early, denying its mana or repeated attacks while the Dread Return plan comes together. Dispel is dead since Spy's list is entirely sorcery-speed creatures and card selection, and the lone Saiba Cryptomancer's fragile flash body does not pressure a deck happy to sit back and mill.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Faeries",
+   "opponent_deck_id": "Burn",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Blue Elemental Blast",
+     "card_id": 7,
+     "count": 4
+    },
+    {
+     "name": "Bind the Monster",
+     "card_id": 4,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Of One Mind",
+     "card_id": 82,
+     "count": 4
+    },
+    {
+     "name": "Force Spike",
+     "card_id": 38,
+     "count": 2
+    }
+   ],
+   "rationale": "Burn is almost entirely red, so Blue Elemental Blast counters Lightning Bolt, Fireblast, or Fiery Temper before they hit our face, or destroys a resolved Guttersnipe or Voldaren Epicure outright, while Bind the Monster cheaply taps down whichever one or two power creature is attacking us. Of One Mind's card draw is too slow when we are racing a clock, and Force Spike stops mattering once eighteen Mountains give Burn spare mana for its spells.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Faeries",
+   "opponent_deck_id": "Burn",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Blue Elemental Blast",
+     "card_id": 7,
+     "count": 4
+    },
+    {
+     "name": "Bind the Monster",
+     "card_id": 4,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Of One Mind",
+     "card_id": 82,
+     "count": 4
+    },
+    {
+     "name": "Force Spike",
+     "card_id": 38,
+     "count": 2
+    }
+   ],
+   "rationale": "Burn is almost entirely red, so Blue Elemental Blast counters Lightning Bolt, Fireblast, or Fiery Temper before they hit our face, or destroys a resolved Guttersnipe or Voldaren Epicure outright, while Bind the Monster cheaply taps down whichever one or two power creature is attacking us. Of One Mind's card draw is too slow when we are racing a clock, and Force Spike stops mattering once eighteen Mountains give Burn spare mana for its spells.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Faeries",
+   "opponent_deck_id": "Terror",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Bind the Monster",
+     "card_id": 4,
+     "count": 3
+    },
+    {
+     "name": "Dispel",
+     "card_id": 22,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Harrier Strix",
+     "card_id": 52,
+     "count": 2
+    },
+    {
+     "name": "Saiba Cryptomancer",
+     "card_id": 99,
+     "count": 1
+    },
+    {
+     "name": "Humbling Elder",
+     "card_id": 55,
+     "count": 1
+    }
+   ],
+   "rationale": "Terror's list is eighteen instants deep (Brainstorm, Counterspell, Thought Scour, Mental Note), so the extra Dispel snipes their counterspells and cantrips at a mana discount, while Bind the Monster taps down a modest-power threat like Murmuring Mystic (best saved off the bigger, cost-reduced Tolarian Terror or Cryptic Serpent, since its self-damage scales with the bound creature's power). Harrier Strix, Saiba Cryptomancer, and one Humbling Elder are fragile bodies that add little in a matchup decided by countermagic and threat quality, not go-wide creatures.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Faeries",
+   "opponent_deck_id": "Terror",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Bind the Monster",
+     "card_id": 4,
+     "count": 3
+    },
+    {
+     "name": "Dispel",
+     "card_id": 22,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Harrier Strix",
+     "card_id": 52,
+     "count": 2
+    },
+    {
+     "name": "Saiba Cryptomancer",
+     "card_id": 99,
+     "count": 1
+    },
+    {
+     "name": "Humbling Elder",
+     "card_id": 55,
+     "count": 1
+    }
+   ],
+   "rationale": "Terror's list is eighteen instants deep (Brainstorm, Counterspell, Thought Scour, Mental Note), so the extra Dispel snipes their counterspells and cantrips at a mana discount, while Bind the Monster taps down a modest-power threat like Murmuring Mystic (best saved off the bigger, cost-reduced Tolarian Terror or Cryptic Serpent, since its self-damage scales with the bound creature's power). Harrier Strix, Saiba Cryptomancer, and one Humbling Elder are fragile bodies that add little in a matchup decided by countermagic and threat quality, not go-wide creatures.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Faeries",
+   "opponent_deck_id": "CawGates",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Annul",
+     "card_id": 0,
+     "count": 3
+    },
+    {
+     "name": "Bind the Monster",
+     "card_id": 4,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Force Spike",
+     "card_id": 38,
+     "count": 2
+    },
+    {
+     "name": "Saiba Cryptomancer",
+     "card_id": 99,
+     "count": 1
+    },
+    {
+     "name": "Harrier Strix",
+     "card_id": 52,
+     "count": 2
+    }
+   ],
+   "rationale": "Annul counters Journey to Nowhere or The Modern Age before they can exile our best creature or start drawing them cards, protecting our clock against a deck built around removal and gate ramp, while Bind the Monster locks down a low-power threat like Sacred Cat or Outlaw Medic (never Guardian of the Guildpact, whose protection from monocolored stops the aura outright). Force Spike, Harrier Strix, and Saiba Cryptomancer are cut because they fizzle or trade down for free once Basilisk Gate and the guildgates give CawGates spare mana and cheap removal.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Faeries",
+   "opponent_deck_id": "CawGates",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Annul",
+     "card_id": 0,
+     "count": 3
+    },
+    {
+     "name": "Bind the Monster",
+     "card_id": 4,
+     "count": 2
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Force Spike",
+     "card_id": 38,
+     "count": 2
+    },
+    {
+     "name": "Saiba Cryptomancer",
+     "card_id": 99,
+     "count": 1
+    },
+    {
+     "name": "Harrier Strix",
+     "card_id": 52,
+     "count": 2
+    }
+   ],
+   "rationale": "Annul counters Journey to Nowhere or The Modern Age before they can exile our best creature or start drawing them cards, protecting our clock against a deck built around removal and gate ramp, while Bind the Monster locks down a low-power threat like Sacred Cat or Outlaw Medic (never Guardian of the Guildpact, whose protection from monocolored stops the aura outright). Force Spike, Harrier Strix, and Saiba Cryptomancer are cut because they fizzle or trade down for free once Basilisk Gate and the guildgates give CawGates spare mana and cheap removal.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Faeries",
+   "opponent_deck_id": "Faeries",
+   "game_index": 2,
+   "cards_in": [
+    {
+     "name": "Bind the Monster",
+     "card_id": 4,
+     "count": 3
+    },
+    {
+     "name": "Dispel",
+     "card_id": 22,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Of One Mind",
+     "card_id": 82,
+     "count": 4
+    }
+   ],
+   "rationale": "Neither list runs artifacts or red cards, so Bind the Monster is the one premium tool available: it taps down and locks their best evasive threat (Spellstutter Sprite, Ninja of the Deep Hours, or Faerie Miscreant) at a trivial one-power life cost, and the extra Dispel snipes their Counterspell or Snap in a race decided by countermagic. Of One Mind's card draw is cut because the mirror is won by tempo and efficient interaction, not raw card count.",
+   "legality_problems": []
+  },
+  {
+   "self_deck_id": "Faeries",
+   "opponent_deck_id": "Faeries",
+   "game_index": 3,
+   "cards_in": [
+    {
+     "name": "Bind the Monster",
+     "card_id": 4,
+     "count": 3
+    },
+    {
+     "name": "Dispel",
+     "card_id": 22,
+     "count": 1
+    }
+   ],
+   "cards_out": [
+    {
+     "name": "Of One Mind",
+     "card_id": 82,
+     "count": 4
+    }
+   ],
+   "rationale": "Neither list runs artifacts or red cards, so Bind the Monster is the one premium tool available: it taps down and locks their best evasive threat (Spellstutter Sprite, Ninja of the Deep Hours, or Faerie Miscreant) at a trivial one-power life cost, and the extra Dispel snipes their Counterspell or Snap in a race decided by countermagic. Of One Mind's card draw is cut because the mirror is won by tempo and efficient interaction, not raw card count.",
+   "legality_problems": []
+  }
+ ]
+}

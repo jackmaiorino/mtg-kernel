@@ -3908,9 +3908,12 @@ mod tests {
             source,
             discard: 1,
             sacrifice_lands: 1,
+            return_permanent_filter: None,
             discard_payable: true,
             sacrifice_payable: true,
+            return_permanent_payable: false,
             then: mtg_kernel::effect::EffectOp::Sequence(vec![]),
+            otherwise: None,
             spell_resume: None,
         });
 
@@ -4002,9 +4005,12 @@ mod tests {
             source,
             discard: 1,
             sacrifice_lands: 1,
+            return_permanent_filter: None,
             discard_payable: true,
             sacrifice_payable: false, // no lands controlled in this reduced repro, same as the real trace at that point
+            return_permanent_payable: false,
             then: mtg_kernel::effect::EffectOp::Sequence(vec![]),
+            otherwise: None,
             spell_resume: None,
         });
 

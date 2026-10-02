@@ -1,0 +1,9 @@
+{
+  "schema": "public-stack-column-permutation/v1",
+  "width": 312,
+  "operation": "model_feature[j] = raw_feature[columns[j]]",
+  "scope": "One fresh permutation per scored actor decision, shared by that decision's stack rows. Only added feature columns are permuted; source/target nodes and source/target embeddings are unchanged.",
+  "generator": "Fisher-Yates with rejection-sampled SplitMix64 draws from separate per-seat policy streams, reset for each game; no game-state RNG reads and no sampler-stream draws.",
+  "replay": "Capture the complete column permutation with the raw validated rows. Absent permutation means identity and preserves all prior serialized rows.",
+  "limitations": "Retains the feature-value multiset, counts, graph bindings, source/target embeddings, and legacy hashed inputs. Not a no-information control. A fixed permutation would be learnably invertible and is not used."
+}
