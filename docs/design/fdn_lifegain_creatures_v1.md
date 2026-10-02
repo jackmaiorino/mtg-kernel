@@ -33,3 +33,12 @@ Matching XMage implementations are `ExemplarOfLight.java` and
 
 This branch currently contains only the life-gain prerequisite and its five
 focused tests. Card implementation and catalog succession remain pending.
+
+The prerequisite passes all 14 event tests in both default and Limited
+builds, 21 fixture-B and 24 targeted-spell regressions, the exact default
+environment-hash golden, and feature-enabled library Clippy with warnings
+denied. Tested local source is `8931c1a4`; remote source is
+`aefdd0a`. Logs remain outside Git at
+`C:/Users/haley/fdn-lifegain-tests-001.log/.exit` and `-002.log/.exit`,
+both exit zero. Checks are CPU only, two Cargo build jobs; no GPU or
+formal run was launched.
