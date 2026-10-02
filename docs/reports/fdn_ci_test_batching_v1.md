@@ -45,6 +45,10 @@ pin, minimal profile, Clippy and rustfmt into its own temporary
 This avoids the damaged image installation and retains the existing compiler,
 linker and registry cache. The observed bootstrap failure is environmental;
 the fresh installation still needs hosted execution on both platforms.
+The first patch at7dad2e51 was rejected before any job started: `runner.temp`
+is unavailable in job-level `env`. Define it in the installation step and
+publish `RUSTUP_HOME` through `GITHUB_ENV` for subsequent steps, following
+[GitHub's context availability rules](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#context-availability).
 Test selection and build metadata collection are preserved. This is CPU
 correctness verification; current hosted end-to-end checks remain pending.
 The existing healthy PR136 through139 jobs keep running on their original

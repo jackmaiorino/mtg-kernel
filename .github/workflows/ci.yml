@@ -77,15 +77,16 @@ jobs:
   rust-quality:
     name: Rust formatting and lint
     runs-on: ubuntu-24.04
-    env:
-      RUSTUP_HOME: ${{ runner.temp }}/fdn-rustup
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Install pinned Rust in a fresh toolchain directory
         shell: bash
+        env:
+          RUSTUP_HOME: ${{ runner.temp }}/fdn-rustup
         run: |
+          printf 'RUSTUP_HOME=%s\n' "$RUSTUP_HOME" >> "$GITHUB_ENV"
           fdn_rust_channel=$(sed -n 's/^channel = "\([^"]*\)".*$/\1/p' rust-toolchain.toml)
           test -n "$fdn_rust_channel"
           rustup toolchain install "$fdn_rust_channel" --profile minimal --component clippy --component rustfmt --no-self-update
@@ -136,15 +137,16 @@ jobs:
           - ubuntu-24.04
           - windows-2025
     runs-on: ${{ matrix.os }}
-    env:
-      RUSTUP_HOME: ${{ runner.temp }}/fdn-rustup
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Install pinned Rust in a fresh toolchain directory
         shell: bash
+        env:
+          RUSTUP_HOME: ${{ runner.temp }}/fdn-rustup
         run: |
+          printf 'RUSTUP_HOME=%s\n' "$RUSTUP_HOME" >> "$GITHUB_ENV"
           fdn_rust_channel=$(sed -n 's/^channel = "\([^"]*\)".*$/\1/p' rust-toolchain.toml)
           test -n "$fdn_rust_channel"
           rustup toolchain install "$fdn_rust_channel" --profile minimal --component clippy --component rustfmt --no-self-update
@@ -212,14 +214,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       MTG_KERNEL_RL_ENV_BIN: ${{ github.workspace }}/${{ matrix.kernel_bin }}
-      RUSTUP_HOME: ${{ runner.temp }}/fdn-rustup
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Install pinned Rust in a fresh toolchain directory
         shell: bash
+        env:
+          RUSTUP_HOME: ${{ runner.temp }}/fdn-rustup
         run: |
+          printf 'RUSTUP_HOME=%s\n' "$RUSTUP_HOME" >> "$GITHUB_ENV"
           fdn_rust_channel=$(sed -n 's/^channel = "\([^"]*\)".*$/\1/p' rust-toolchain.toml)
           test -n "$fdn_rust_channel"
           rustup toolchain install "$fdn_rust_channel" --profile minimal --component clippy --component rustfmt --no-self-update
