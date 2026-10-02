@@ -216,6 +216,7 @@ pub enum Subtype {
     Ajani,
     Beast,
     Cleric,
+    Homunculus,
 }
 
 impl Subtype {
@@ -288,6 +289,8 @@ impl Subtype {
         Subtype::Beast,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Cleric,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Homunculus,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:

@@ -213,6 +213,19 @@ const MISCHIEVOUS_MYSTIC_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityD
     condition: TriggerCondition::DrawNth(2),
     ..etb_trigger(mischievous_mystic_effect)
 }];
+const HOMUNCULUS_HORDE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::DrawNth(2),
+    ..etb_trigger(homunculus_horde_effect)
+}];
+
+fn homunculus_horde_effect() -> EffectOp {
+    let token_def = crate::card_def::card_id_by_name("Homunculus Horde Token")
+        .expect("Homunculus Horde Token in CARD_DEFS");
+    EffectOp::CreateToken {
+        token_def,
+        controller: PlayerRef::Controller,
+    }
+}
 
 fn mischievous_mystic_effect() -> EffectOp {
     let token_def =
@@ -1149,6 +1162,7 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Dazzling Angel" => &DAZZLING_ANGEL_TRIGGERS,
         "Clinquant Skymage" => &CLINQUANT_SKYMAGE_TRIGGERS,
         "Mischievous Mystic" => &MISCHIEVOUS_MYSTIC_TRIGGERS,
+        "Homunculus Horde" | "Homunculus Horde Token" => &HOMUNCULUS_HORDE_TRIGGERS,
         "Dwynen's Elite" => &DWYNENS_ELITE_TRIGGERS,
         "Good-Fortune Unicorn" => &GOOD_FORTUNE_UNICORN_TRIGGERS,
         "Guarded Heir" => &GUARDED_HEIR_TRIGGERS,
