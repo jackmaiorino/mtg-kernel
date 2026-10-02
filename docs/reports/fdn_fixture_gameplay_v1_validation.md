@@ -24,11 +24,20 @@ pregame restore on both operating systems. The full Windows Rust job is live.
 Mage PR15 at d98525a0a7c has green current-head reference and labeler checks.
 Kernel PR136 has all eight current-head checks green. The earlier published
 report follow-ups retain their original source passes, but their new checks
-are still running. Draw PR129's report-only recheck failed the existing snapshot
+are still running. Kiora PR132's report-only Windows job 110990567893 also
+failed the snapshot timing case: 76.158 microseconds against 40, with 1746
+other library tests passing. CI backport 83de53b2 is committed locally and
+retains all fourteen integration targets and all nine library filters; its
+helpers are identical to PR140's. Workflow lint and Python compilation passed.
+The old Ubuntu job is completing its final CUDA stage before publication, so
+that live job is preserved. Its original gameplay source f8fce216 retains a
+fully green run. Draw PR129's report-only recheck failed the existing snapshot
 timing gate. Repair 990d825d runs that unchanged gate outside parallel unit
 tests; both hosted default release steps have now passed, including Windows
 job 111032886034 at 22:32:33 UTC. Full feature checks and the completed log's
-exact isolated timing result remain pending. Armor PR137 is ready for review:
+exact isolated timing result remain pending. Draw PR129 is ready for review
+using its unchanged gameplay source's full pass and both affected release
+steps. Armor PR137 is ready for review:
 its unchanged Rust code retains passing Ubuntu/Windows evidence, and the
 affected Windows Python shard at f13fd955 passed all 286 tests, including the
 repaired sentinel case. Its other three current Python shards also passed.
