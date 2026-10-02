@@ -4241,6 +4241,12 @@ pub(crate) fn test_fixture_bytes_fdn_batch_b_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_batch_b()
 }
 
+#[cfg(all(test, feature = "limited-fdn-fixtures"))]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn test_fixture_bytes_fdn_combat_cards_v1() -> Vec<u8> {
+    tests::fixture_bytes_fdn_combat_cards()
+}
+
 /// The HISTORICAL-profile sibling of [`test_fixture_bytes_v2`]: a coherent
 /// record carrying the frozen rev3 catalog literals instead of the live
 /// nine-deck ones. Test-only: used by the dual-profile decode-acceptance and
@@ -5270,6 +5276,16 @@ mod tests {
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_BATCH_B_V1.to_owned();
         record.environment.runtime_catalog_sha256 =
             FROZEN_RUNTIME_CATALOG_SHA256_FDN_BATCH_B_V1.to_owned();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    pub(super) fn fixture_bytes_fdn_combat_cards() -> Vec<u8> {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_COMBAT_CARDS_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_COMBAT_CARDS_V1.to_owned();
         refresh_derived(&mut record);
         to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
     }
@@ -6752,13 +6768,7 @@ mod tests {
 
     #[test]
     fn fdn_combat_cards_profile_remains_readable_but_is_not_live() {
-        let mut record = fixture_record();
-        record.environment.card_db_hash_u64_hex =
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_COMBAT_CARDS_V1.to_owned();
-        record.environment.runtime_catalog_sha256 =
-            FROZEN_RUNTIME_CATALOG_SHA256_FDN_COMBAT_CARDS_V1.to_owned();
-        refresh_derived(&mut record);
-        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        let bytes = fixture_bytes_fdn_combat_cards();
         let validated = decode_train_run_v2(&bytes).unwrap();
         assert_eq!(
             validated.catalog_profile_v1(),
