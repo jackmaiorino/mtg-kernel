@@ -25,7 +25,7 @@ must match the live catalog to publish/resume. Default v32 is unchanged.
 | Catalog history | Checks-002 phase 3: 141 passed, three existing ignores. |
 | Python deck/client | 20 passed. |
 | XMage | 12 strict reference cases passed; [Mage PR #12](https://github.com/jackmaiorino/mage/pull/12). |
-| All-target lint | In progress. Appended decision propagation exposed old exhaustive example/test matches; corrected adapters are being checked. |
+| All-target lint | Checks-009 exited zero: Limited all-target Clippy passed with warnings denied (39.98 seconds). Exhaustive example/test adapters handle the appended decision. |
 | Broader regressions/default compatibility | Pending. |
 | Release publication/resume boundaries | Pending. |
 | External natural completion and replay | Pending. |
