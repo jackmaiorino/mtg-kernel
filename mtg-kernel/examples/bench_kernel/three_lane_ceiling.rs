@@ -573,6 +573,10 @@ fn noncombat_action_by_index(decision: &Decision, index: usize) -> Result<Action
         ),
         Decision::ChooseKicker { .. } => Action::ChooseKicker(index == 1),
         Decision::ChooseTriggerMode { legal_modes, .. } => Action::ChooseTriggerMode(
+            *legal_modes
+                .get(index)
+                .ok_or_else(|| "trigger-mode policy index out of range".to_string())?,
+        ),
         Decision::ChooseSpellMode { legal_modes, .. } => Action::ChooseSpellMode(
             *legal_modes
                 .get(index)
