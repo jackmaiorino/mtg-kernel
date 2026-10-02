@@ -23,7 +23,7 @@ in source; the default golden checks remain pending for this batch.
 | --- | --- |
 | Core compilation | `fdn-koma-preflight-001` exited zero; Limited Cargo check passed in 29.59 seconds on HaleysPC. |
 | XMage comparisons | All nine strict-choice cases passed in `fdn-mage-koma-004`; see [Mage PR #7](https://github.com/jackmaiorino/mage/pull/7). |
-| Kernel gameplay | Thirteen integration cases added. The initial test build failed on a missing `Target` import and misspelled counter field, corrected in `b076f733`. No kernel gameplay pass is claimed yet. |
+| Kernel gameplay | Thirteen integration cases added. After test-build fixes, nine passed, including counters, combat and departed-source restore. Four ward setups used unsupported Unsummon; `e98c8fb3` replaces it with supported Snap and exact two-mana payment. The corrected ward checks remain pending. |
 | Counter helper | A feature-gated unit check covers protected physical spells and copies, counterable triggered abilities, and ordinary departure; execution pending. |
 | Catalog, sessions and prior gameplay | Checks prepared; execution pending. |
 | Python | The preceding source preparation ran 34 focused Python checks successfully; current hosted CI remains required. |
@@ -49,11 +49,18 @@ results and failed test-build logs remain outside Git.
 Jack's PC remains reserved by Claude #811 through about 08:30 EDT.
 HaleysPC free space dropped below its shared 60 GiB reserve after the
 initial test build. Further local checks there are held until storage
-qualifies. Three compression passes, `fdn-owned-cache-compress-005`,
-`006` and `007`, preserved every selected file's before/after SHA-256.
+qualifies. Compression passes `fdn-owned-cache-compress-005` through
+`008` preserve every selected file's before/after SHA-256.
 They touched only the owned Cargo cache and deleted no files. The
 compression receipts, manifests and logs remain under `C:/Users/haley/`.
 No unrelated process, cache, checkout or frozen run was modified.
+
+The bounded gameplay-only rerun is `fdn-koma-gameplay-002`. Kernel ward
+positions use Snap (`{1}{U}`) with no battlefield lands to untap; XMage
+positions use Unsummon (`{U}`). Each pays its exact casting cost before
+offering the same four-mana ward cost. The reference comparison concerns
+ward behavior; it does not assert identical whole-game traces across
+these different spells.
 
 The full fixture milestone remains open: seven other distinct card names,
 mulligans, original-deck natural terminals and complete regression/CI
