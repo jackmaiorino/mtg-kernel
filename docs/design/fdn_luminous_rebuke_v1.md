@@ -35,5 +35,5 @@ Runtime verification: fifteen focused kernel cases, eleven strict XMage
 comparisons, catalog/session/prior-gameplay and engine checks, default
 v32 compatibility and warning-denied Limited/default Clippy pass. Two
 custom-deck games finish naturally and replay identically. Release
-production boundaries and hosted CI remain pending; see the validation
+production boundaries pass; hosted CI remains pending. See the validation
 report for exact source, result hashes and corrected preparation attempts.
