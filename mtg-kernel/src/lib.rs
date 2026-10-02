@@ -97,6 +97,7 @@ pub mod unclamped_softmax_sampler_v1;
 #[cfg_attr(not(windows), allow(dead_code))]
 pub mod kernel_native_search_calibration_runner_v1;
 pub mod kernel_native_search_opponent_v1;
+pub mod limited_session_v1;
 pub mod mana;
 // Model-guided searcher authority record SCHEMA ONLY (design item 4,
 // `CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md` Section 1.4 / 5.3). No

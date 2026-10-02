@@ -4472,6 +4472,42 @@ pub(crate) struct FastActorSemanticBindingAuditV2 {
 }
 
 impl RlEpisodeSessionV1 {
+    /// Custom-deck construction for the separate Limited wire interface.
+    /// The existing catalog constructors and JSONL V5/V6 remain unchanged.
+    /// Callers supply already resolved content identities; the engine still
+    /// preflights both arrays before any shuffle or session construction.
+    pub(crate) fn reset_with_custom_decks_v1(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        card_ids: [&[u16]; 2],
+    ) -> Result<Self, RlSessionError> {
+        let state = build_deck_pair_state(env_seed, card_ids[0], card_ids[1]).map_err(|error| {
+            session_error(RlSessionErrorCode::UnsupportedDeck, &error.to_string())
+        })?;
+        let deck_hashes = card_ids
+            .map(|cards| fnv1a64(&serde_json::to_vec(cards).expect("card-id arrays serialize")));
+        let mut session = Self {
+            deck_ids,
+            deck_hashes,
+            episode_id,
+            max_physical_decisions,
+            max_policy_steps,
+            state,
+            surface: PolicySurfaceV5::new_for_session(),
+            environment_revision: 0,
+            policy_step_count: 0,
+            physical_decision_count: 0,
+            current: None,
+            terminal: None,
+            scan_menu: ScanMenuV1::LegalAnswersOnly,
+        };
+        session.advance_to_decision_or_terminal_profiled(None);
+        Ok(session)
+    }
+
     pub fn reset(episode_id: u64, env_seed: u64, max_physical_decisions: u64) -> Self {
         let max_policy_steps = max_physical_decisions.saturating_mul(128).max(1);
         Self::reset_with_limits(
