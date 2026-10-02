@@ -1064,6 +1064,70 @@
       "mechanics": [],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/KomasCoilToken.java",
       "is_token": true
+    },
+    {
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "sideboard_only": false,
+      "name": "Kiora, the Rising Tide",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Merfolk",
+        "Noble"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 3,
+      "toughness": 2,
+      "decks": [
+        "FDN_top_04956_UG.dck"
+      ],
+      "complexity": "moderate",
+      "mechanics": [
+        "draw",
+        "discard",
+        "threshold",
+        "attack_trigger",
+        "create_token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/k/KioraTheRisingTide.java"
+    },
+    {
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "sideboard_only": false,
+      "name": "Scion of the Deep Token",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Octopus"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 8,
+      "toughness": 8,
+      "decks": [],
+      "complexity": "simple",
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/ScionOfTheDeepToken.java",
+      "is_token": true
     }
   ]
 }

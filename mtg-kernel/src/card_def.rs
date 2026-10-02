@@ -217,6 +217,9 @@ pub enum Subtype {
     Beast,
     Cleric,
     Homunculus,
+    /// Appended for Kiora and Scion of the Deep; existing ids remain fixed.
+    Merfolk,
+    Octopus,
 }
 
 impl Subtype {
@@ -291,6 +294,10 @@ impl Subtype {
         Subtype::Cleric,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Homunculus,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Merfolk,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Octopus,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:

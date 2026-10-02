@@ -3354,6 +3354,7 @@ fn object_name_for(name: &str) -> &str {
         "Sacred Cat Embalmed Token" => "Sacred Cat",
         "Homunculus Horde Token" => "Homunculus Horde",
         "Koma's Coil Token" => "Koma's Coil",
+        "Scion of the Deep Token" => "Scion of the Deep",
         _ => name,
     }
 }
@@ -4624,6 +4625,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Mischievous Mystic" => "controller_draws_nth_card_this_turn:2:create_faerie_token:1",
         "Homunculus Horde" | "Homunculus Horde Token" => "controller_draws_nth_card_this_turn:2:create_homunculus_horde_copy_token:1",
         "Koma, World-Eater" => "source_combat_damage_to_player:create_blue_3_3_serpent_coil_tokens:4",
+        "Kiora, the Rising Tide" => "etb:draw:2:then_discard:2;attacks_if_controller_graveyard_cards_at_least:7:recheck_threshold:optional_create_legendary_blue_8_8_octopus_scion:1",
         "Sun-Blessed Healer" => "etb_if_kicked:recheck_kicked:return_own_graveyard_nonland_permanent_mana_value_at_most:2",
         "Blossoming Sands" | "Thornwood Falls" => "etb:gain_life:1",
         "Dazzling Angel" => "other_controlled_creature_enters:gain_life:1",
@@ -6865,7 +6867,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v42\n"
+            "kernel_carddb/v43\n"
         } else {
             "kernel_carddb/v32\n"
         },
@@ -7180,6 +7182,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Island" => "Subtype::Island",
         "Knight" => "Subtype::Knight",
         "MONK" => "Subtype::Monk",
+        "Merfolk" => "Subtype::Merfolk",
         "MOONFOLK" => "Subtype::Moonfolk",
         "Monkey" => "Subtype::Monkey",
         "Mountain" => "Subtype::Mountain",
@@ -7187,6 +7190,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "NINJA" => "Subtype::NinjaAllCaps",
         "Ninja" => "Subtype::Ninja",
         "Ouphe" => "Subtype::Ouphe",
+        "Octopus" => "Subtype::Octopus",
         "Pirate" => "Subtype::Pirate",
         "Plains" => "Subtype::Plains",
         "ROGUE" => "Subtype::RogueAllCaps",

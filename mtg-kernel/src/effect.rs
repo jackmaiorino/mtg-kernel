@@ -228,6 +228,8 @@ pub enum EffectCond {
     /// Resolution-only check for a live, incarnation-bound spell target.
     /// Legal targeting and payable counter-unless-pay choices remain available.
     TargetSpellCanBeCountered(u8),
+    /// Kiora's resolution-time intervening threshold condition.
+    ControllerGraveyardCardCountAtLeast(u8),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -11471,6 +11473,22 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
     }
 }
 
+/// Shared trigger-time and resolution-time threshold predicate. Tokens and
+/// virtual spell copies are not cards, including before their next SBA.
+pub(crate) fn controller_graveyard_card_count(state: &GameState, controller: PlayerId) -> usize {
+    state.players[controller.index()]
+        .graveyard
+        .iter()
+        .filter(|&&id| {
+            let object = state.objects.get(id);
+            object.zone == Zone::Graveyard
+                && object.owner == controller
+                && !crate::card_def::CARD_DEFS[object.card_def as usize].is_token
+                && object.spell_copy_origin.is_none()
+        })
+        .count()
+}
+
 fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
     match cond {
         EffectCond::Always => true,
@@ -11596,6 +11614,9 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
         EffectCond::OpponentHasCardsInHand => !state.players[ctx.controller.opponent().index()]
             .hand
             .is_empty(),
+        EffectCond::ControllerGraveyardCardCountAtLeast(minimum) => {
+            controller_graveyard_card_count(state, ctx.controller) >= usize::from(*minimum)
+        }
     }
 }
 
