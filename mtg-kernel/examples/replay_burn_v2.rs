@@ -1773,6 +1773,7 @@ fn decision_player(d: &SurfaceDecision, state: &GameState) -> Option<PlayerId> {
         | SurfaceDecision::Decision(Decision::DeclareBlockers { player, .. })
         | SurfaceDecision::Decision(Decision::Discard { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseSpellMode { player, .. })
+        | SurfaceDecision::Decision(Decision::ChooseTriggerMode { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseEffectOption { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseEffectBoolean { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseCombatDamageRange { player, .. })

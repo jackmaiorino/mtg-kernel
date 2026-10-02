@@ -467,7 +467,8 @@ fn noncombat_action_count(decision: &Decision) -> Result<usize, String> {
         | Decision::ChooseSpellCopyRetarget { .. }
         | Decision::ChooseMadnessCast { .. } => Ok(2),
         Decision::ChooseLegendPermanent { candidates, .. } => Ok(candidates.len()),
-        Decision::ChooseSpellMode { legal_modes, .. } => Ok(legal_modes.len()),
+        Decision::ChooseSpellMode { legal_modes, .. }
+        | Decision::ChooseTriggerMode { legal_modes, .. } => Ok(legal_modes.len()),
         Decision::ChooseEffectOption { option_count, .. } => Ok(*option_count as usize),
         Decision::ChooseEffectTargets {
             legal_targets,
@@ -571,6 +572,7 @@ fn noncombat_action_by_index(decision: &Decision, index: usize) -> Result<Action
                 .ok_or_else(|| "cast-mode policy index out of range".to_string())?,
         ),
         Decision::ChooseKicker { .. } => Action::ChooseKicker(index == 1),
+        Decision::ChooseTriggerMode { legal_modes, .. } => Action::ChooseTriggerMode(
         Decision::ChooseSpellMode { legal_modes, .. } => Action::ChooseSpellMode(
             *legal_modes
                 .get(index)
