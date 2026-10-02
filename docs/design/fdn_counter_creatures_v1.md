@@ -44,6 +44,7 @@ the pending response, stable action identity and next environment binding.
 
 Reference implementations are the pinned XMage `GnarlidColony.java` and
 `MossbornHydra.java` at `a5c90fe180021e70e2a644ade00eeab07f857a40`.
-Source inspection is not an executed XMage comparison. The full fixture
-goal still requires Exemplar of Light, Sun-Blessed Healer, the remaining
-mechanic slices, mulligans, complete original-deck games and executed parity.
+Five matching XMage scenarios now pass at `2a0b7edfb59`; see the validation
+report for their scope. The full fixture goal still requires Exemplar of
+Light, Sun-Blessed Healer, remaining mechanic slices, mulligans, complete
+original-deck games and the remaining rules comparisons.

@@ -15,9 +15,9 @@ See [rules contract](../design/fdn_counter_creatures_v1.md).
 | Build/lint | Feature and default workspace all-target Clippy passed with warnings denied. External binary built. |
 | Python | All 41 focused importer, client, flat-V2 golden and Pauper-manifest checks passed. |
 | External replay | Two identical seed-123/episode-7 games ended naturally at 381 policy steps and 367 physical decisions. Each cast five Colonies and two Hydras, and paid kicker twice. |
-| Production boundaries | Release checks running from clean committed remote source, strict source guard enabled. Passing is not yet claimed. |
-| XMage | Five matching scenarios committed at Mage `d05387387e8`, based on `a5c90fe1800`, and dispatched on HaleysPC. Execution is pending. |
-| Hosted CI | Pending for this new branch. |
+| Production boundaries | All 13 Windows release checks passed: twelve older-profile publisher/resume refusals and a live v38 construct/seal/decode/validate round trip. Combined Limited/production Clippy passed. Clean committed remote source, strict source guard enabled; run 010 exited zero. |
+| XMage | All five matching scenarios passed at Mage `2a0b7edfb59`, based on `a5c90fe1800`: ordinary/kicked Colony, controlled counter trample, Hydra entry and controlled/opposing landfall. Surefire reports zero failures/errors/skips and reactor BUILD SUCCESS. |
+| Hosted CI | PR #124 is open. Head `d6ff281f` passed formatting/lint; remaining hosted checks are pending. |
 
 The external deck has 20 Forest, eight Llanowar Elves, eight Gnarlid Colony
 and four Mossborn Hydra. Its natural outcome is `p1_win`. This is a
@@ -48,9 +48,14 @@ paid compute was launched.
 
 Logs stay outside Git under `C:/Users/haley/`:
 `fdn-counter-tests-009.log/.exit`, `fdn-counter-external-001.py/.json/.log/.exit`,
-`fdn-counter-production-010.log/.exit`, and `fdn-mage-counter-001.log/.exit`.
+`fdn-counter-production-010.log/.exit`, and `fdn-mage-counter-002.log/.exit`.
 Earlier failures are retained. Runs 001/002 caught attempted changes to
 frozen flat sources; those files were restored before passing run 003.
 Runs 004-007 caught old assertions using the narrower counter type.
 Run 008 passed gameplay but found a stale shared catalog fixture. Run 009
 passed after that fixture was updated and wide damage was implemented.
+XMage 001 passed four cases but found that the test scheduled a land play
+while Hydra remained on the stack. Adding the explicit stack-resolution
+wait fixed the schedule, after which 002 passed all five. Source and XML
+SHA-256s are `92539ba6453e76eef7d454e10afe862b78cfc23adab01de2a463f6840834fed3`
+and `fe164ed54f56dd55c6359634f5633964f572b1e0ca083d995312698211c588e9`.
