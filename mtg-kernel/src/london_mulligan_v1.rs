@@ -5,7 +5,7 @@
 
 use crate::engine::{Action, Decision};
 use crate::event::{self, ProposedEvent};
-use crate::ids::{ObjectId, PlayerId};
+use crate::ids::PlayerId;
 use crate::state::{GameState, ObjectLinkV4, Step, Zone};
 use serde::{Deserialize, Serialize};
 

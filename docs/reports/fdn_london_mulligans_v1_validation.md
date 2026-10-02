@@ -4,6 +4,10 @@ Schema 4 adds London mulligans to the original fixture gameplay interface.
 The source implementation, focused tests and documentation are prepared;
 Rust gameplay verification and complete CI remain pending.
 
+The first hosted attempt, CI37041270977 at87db2401, found an unused import in
+the new module. Removed it; the original lint log is retained. This is a lint
+failure, not a verified rules result. Await the new source's CI results.
+
 Observed checks:
 
 - Pinned Rust 1.94.1 formatting and `git diff --check`: passed.
