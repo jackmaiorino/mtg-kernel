@@ -26,7 +26,7 @@ attack-event emission path for the new threshold trigger.
 | Python deck/session tools | `fdn-kiora-python-002`: 14 deck and 6 client cases passed on Python 3.12.10. |
 | XMage comparisons | All 9 strict-choice cases passed in `fdn-mage-kiora-003`; [Mage PR #8](https://github.com/jackmaiorino/mage/pull/8) records the source and result hashes. |
 | Production mutation boundaries | `fdn-kiora-production-001` exited zero: 23 release checks, including v42 Koma publication/resume refusal and current-profile round trip; combined-feature release Clippy passed. |
-| External natural-terminal replay | Pending. No Kiora external-game claim. |
+| External natural-terminal replay | `fdn-kiora-external-001` exited zero; two seed-123 games ended naturally with identical complete results and transcript hashes. |
 | Hosted CI | Draft [PR #132](https://github.com/jackmaiorino/mtg-kernel/pull/132) is running at `f8fce2160`; no green claim yet. |
 
 The verified kernel functional source is local `7ca57acb`, remote
@@ -60,7 +60,16 @@ The production check's first release build took 11 minutes 37 seconds.
 The custom-deck binary built successfully with debug symbols disabled:
 5,771,776 bytes, SHA-256
 `b3a3ecd5df88200b1eecf6de4025981d36b7c66491a6bf56c645ae34450fa478`.
-A hash-verified cold copy on HaleysPC protects it from subsequent builds.
+Hash-verified cold copies on HaleysPC, Jack's PC and E: protect it from subsequent builds.
 The small production manifest SHA-256 is
 `baab354f914389f9e6aa219ce400988b764a3be1fc54076be960965e5d1f027e`.
-External replay remains pending until all required cold copies are verified.
+The external deck used 12 Forest, 12 Island, eight Kiora, four Strix Lookout
+and four Mischievous Mystic. Both games ended naturally with P1 winning,
+779 policy steps and 771 physical decisions. Each cast seven Kiora, made
+four optional token choices and four legend choices, and exposed Scions
+in six decision menus. Transcript SHA-256:
+`7a4933f94b293bea96d1e27e6e6a466454fa490279f84303a763a76406a84551`.
+Result SHA-256 `04945be7c2bd3397493bb2923fb7f36df28f59387a6450af998bfbdb0ff531a8`;
+log SHA-256 `e307559aba8a6febcd5f900560357cd71c0d64ab7e938cc86c1f4815bc188582`.
+These custom games exercise the card and existing interactions. They do not
+complete the original-fixture milestone or estimate playing strength.
