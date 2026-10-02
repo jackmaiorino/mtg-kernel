@@ -2473,6 +2473,31 @@ fn targeting_source_is_monocolored(source: TargetingSource) -> bool {
         .is_some_and(|def| (card_def::mana_colors_mask(def.colors) & 0x1f).count_ones() == 1)
 }
 
+/// The source a triggered ability targets from. An Initiative or Undercity
+/// trigger records Avenging Hunter's contract only as the designation's
+/// provenance: the initiative's own triggers have no source, and a room
+/// ability's source is the dungeon card (309.4c), which is colorless and not
+/// a permanent. None of them is subject to a source-dependent restriction
+/// such as protection from monocolored, so they target without a source.
+/// `None` stands for that colorless nonpermanent source because the current
+/// source-dependent filters (protection from monocolored,
+/// `CreatureOtherThanSource`) treat the two alike. A restriction such a
+/// source could fail, like protection from colorless, needs an explicit
+/// dungeon source instead.
+fn triggered_ability_targeting_source(
+    source: ObjectId,
+    source_contract: Option<AbilitySourceContractV4>,
+    effect: &EffectOp,
+) -> Option<TargetingSource> {
+    if matches!(effect, EffectOp::ResolveInitiativeTrigger { .. }) {
+        return None;
+    }
+    source_contract.map(|contract| TargetingSource {
+        object: source,
+        card_def: contract.card_def,
+    })
+}
+
 fn legal_targets_for_controller(
     spec: TargetSpec,
     targets_chosen: &[Target],
@@ -2845,13 +2870,11 @@ fn target_prefix_can_complete_for_controller(
 }
 
 /// The source a pending triggered ability targets from: its frozen source
-/// incarnation's definition, exactly as `Decision::ChooseTargets` and
-/// `Action::ChooseTarget` see it.
+/// incarnation's definition (or no source for an Initiative/Undercity
+/// trigger), exactly as `Decision::ChooseTargets` and `Action::ChooseTarget`
+/// see it.
 fn pending_trigger_targeting_source(pending: &PendingTrigger) -> Option<TargetingSource> {
-    pending.source_contract.map(|contract| TargetingSource {
-        object: pending.source,
-        card_def: contract.card_def,
-    })
+    triggered_ability_targeting_source(pending.source, pending.source_contract, &pending.effect)
 }
 
 /// 603.3d: whether a pending triggered ability's chosen target prefix can
@@ -8829,10 +8852,7 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
         }
         let need = target_count(pending.target_spec);
         if pending.targets.len() < usize::from(need) {
-            let trigger_source = pending.source_contract.map(|contract| TargetingSource {
-                object: pending.source,
-                card_def: contract.card_def,
-            });
+            let trigger_source = pending_trigger_targeting_source(&pending);
             if !target_prefix_can_complete_for_controller_and_source(
                 pending.target_spec,
                 &pending.targets,
@@ -9732,25 +9752,30 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
                 spec,
                 &chosen,
                 item.controller,
-                Some(match item.kind {
-                    StackItemKind::Spell => TargetingSource {
+                match item.kind {
+                    StackItemKind::Spell => Some(TargetingSource {
                         object: item.source,
                         card_def: state.objects.get(item.source).card_def,
-                    },
+                    }),
                     StackItemKind::TriggeredAbility => {
                         let source_contract = item
                             .v4
                             .ability_source_contract
                             .ok_or("triggered stack item lost its source incarnation")?;
-                        TargetingSource {
-                            object: item.source,
-                            card_def: source_contract.card_def,
-                        }
+                        let effect = item
+                            .inline_effect
+                            .as_ref()
+                            .ok_or("triggered stack item lost its effect program")?;
+                        triggered_ability_targeting_source(
+                            item.source,
+                            Some(source_contract),
+                            effect,
+                        )
                     }
                     StackItemKind::MadnessOffer | StackItemKind::ActivatedAbility => {
                         unreachable!("handled or untargeted")
                     }
-                }),
+                },
                 state,
             )
             .contains(&target),
