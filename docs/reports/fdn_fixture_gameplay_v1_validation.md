@@ -4,16 +4,16 @@
 
 The complete implementation stack incorporates main fe479186 and all original
 fixture card/token dependencies, combat, pending choices and London mulligans.
-The prepared CI composition is `48b51912`, including the arena storage change
-described below. Its publication is deferred while the existing Linux job at
-public source `7cbfa1cd` runs. Full qualification of the prepared source remains
-pending. Earlier isolated-stack passes below do not qualify this change.
+The current published CI composition is `92881658`, including the arena storage
+change described below. Its hosted qualification is queued in run `37115415284`.
+Full qualification of that source remains pending. Earlier isolated-stack
+passes below do not qualify this change.
 
 The cards, London rules, original decks, Voyage walker correction and V6
 observation/prompt repair retain the previously tested behavior. London
 `f904c95c` and CI `7cbfa1cd` repair the Windows profile import and reservation
-regression. The report branch incorporates prepared CI `48b51912` and differs
-only in Markdown. Its earlier report-only Rust skips provide no gameplay proof.
+regression. The report branch incorporates CI `92881658` and differs only in
+Markdown. Its earlier report-only Rust skips provide no gameplay proof.
 
 Windows job `111147114674` at `7cbfa1cd` passed all 24 Witness and 12 London
 integration cases, the three original external games and the repaired private
@@ -23,7 +23,16 @@ snapshot check at 62.836 microseconds against 40, despite the timing-child
 priority change. Later native/Limited/CUDA steps were skipped, so the overall
 Windows job remains a failure. All four Python shards at that source passed.
 
-Prepared CI `48b51912` shares the arena's ordered object storage through
+Linux job `111147114731` at the same `7cbfa1cd` source completed the entire
+default/native/Limited/host-safe CUDA matrix successfully. All 21 selected
+integration targets passed 347 cases with no integration failures or ignores.
+The isolated snapshot measured 7.084 microseconds. All three complete game
+receipts equal Windows `7cbfa1cd` and the prior Linux receipts; repeated seed123
+is exact and swapped seed701 ends naturally. The private bottom-menu restore
+also passed. These results qualify the earlier Linux source, while the Windows
+failure and the new arena's hosted qualification remain outstanding.
+
+CI `92881658`, with code introduced by `48b51912`, shares the arena's storage through
 `Arc<Vec<T>>`, detaching before any mutation. This avoids copying every object
 at snapshot capture; the first mutation of shared storage still clones the
 objects. Two arena regressions cover every mutation entry point, stable append
@@ -32,6 +41,7 @@ bytes and independent mutation after restore. Serde's `rc` feature changes no
 dependency version or lockfile. The entire frozen 80-object workload and timing
 function remain unchanged. Formatting and diff checks pass; hosted compilation,
 the regressions, original games and full matrix must still qualify this change.
+Mutating arena APIs now require `T: Clone`, already implemented by `GameObject`.
 The changed arena module's five unit tests passed separately on Windows with
 Rust 1.94.1 and the workspace's exact dependency versions/checksums, including
 both mutation-isolation and legacy-serialization cases. This narrow standalone
@@ -52,8 +62,8 @@ Full terminal logs confirm the following results:
 Ubuntu executes 720 tests with 27 skips; Windows executes 746 with 1 skip.
 The unchanged original-deck copy-order resolution cases pass on both platforms,
 and the repaired WMI descendant-reservation case passes on Windows. These
-results qualify the current Python regression source and procedure. They do
-not replace the current full Rust matrix or prove Limited gameplay by themselves.
+results qualify the Python tests and procedure at that prior source. They do
+not qualify the changed arena's environment or replace its full Rust matrix.
 
 Windows job111116304498 atcd7f451b passed24Witness cases and all12London
 integration cases. The original external game test verifies the pinned input
@@ -61,7 +71,7 @@ hashes below, runs seed123 twice with complete receipt equality, and runs
 swapped seed701. All three receipts report natural/natural_game_over and a
 P0 win. Each game performs four explicit bottom choices.
 
-| Current Linux/Windows original game | Requests | Physical decisions | Policy steps | Transcript SHA-256 |
+| Earlier Linux/Windows game atcd7f451b/7cbfa1cd | Requests | Physical decisions | Policy steps | Transcript SHA-256 |
 | --- | --- | --- | --- | --- |
 | Seed123, twice with identical complete receipts | 545 | 538 | 544 | 7738afcf0a9afff429a1e2e699e631897d2d8a9faba13f698a12a1b04d95c6e1 |
 | Seed701, seats swapped | 492 | 479 | 491 | 610fda6441c5ccf7d98e3e71fdb8e8c67f9c7dfe658ef0b988ebc6a64eef2f6a |
@@ -85,7 +95,7 @@ the pinned original deck hashes, terminal records and transcript hashes.
 The repeated seed123 receipts are identical; swapped seed701 ends naturally.
 This proves composed-source game completion and replay on both platforms.
 The private bottom-menu library case also passes on Windows at `7cbfa1cd`.
-Remaining Windows feature checks and the prepared arena change still require
+Remaining Windows feature checks and the published arena change still require
 their hosted results.
 
 Draw Windows job111114931404 atb296504e passed its default release and native
