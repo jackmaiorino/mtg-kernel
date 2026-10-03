@@ -241,9 +241,12 @@ fn build_wave(state: &GameState, phase: DamagePhaseV1, first: &[ObjectLinkV4]) -
                 if !live(state, incarnation) {
                     continue;
                 }
-                let lethal = (engine::effective_toughness(state, blocker)
-                    - i32::from(state.objects.get(blocker).damage))
-                .max(0);
+                let lethal = i32::try_from(
+                    (i64::from(engine::effective_toughness(state, blocker))
+                        - i64::from(state.objects.get(blocker).damage))
+                    .max(0),
+                )
+                .expect("remaining toughness is no greater than its i32 value");
                 let lethal = if engine::has_effective_keyword(state, attacker, Keywords::DEATHTOUCH)
                 {
                     lethal.min(1)

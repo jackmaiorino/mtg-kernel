@@ -4,7 +4,9 @@ This inventories the **36 originally missing names** in the two pinned
 40-card fixtures. Batch A registers six and batch B registers eight, with
 their exact tokens. The first combat-card slice completes Beast-Kin Ranger
 and Overrun. The legend-rule slice completes Dwynen. C through G contain
-**19 names still requiring full support**.
+**13 names still requiring full support** after the targeted-spell and
+first counter-creature slices. Batch D still needs Exemplar of Light and
+Sun-Blessed Healer; E through G remain outstanding.
 The priority-window PR added no cards.
 
 Sources: the pinned `.dck` files under `data/limited/fdn_v1/`, the corresponding
@@ -80,11 +82,15 @@ deterministic binary replay. Batch C still needs its card interaction tests.
 The [first combat-card slice](fdn_combat_cards_v1.md) adds Beast-Kin Ranger
 and Overrun, plus Dwynen's Elf bonus and attack trigger. The
 [legend-rule slice](fdn_legend_rule_v1.md) completes Dwynen's required choice.
-Bite Down, Felling
-Blow, Fleeting Flight and Joust Through remain unimplemented.
+The [targeted-spell slice](fdn_targeted_spells_v1.md) implements Bite Down,
+Felling Blow, Fleeting Flight and Joust Through, with casting, target loss,
+partial legality, combat prevention, loyalty damage and restore tests.
+The [counter-creature slice](fdn_counter_creatures_v1.md) implements
+Gnarlid Colony and Mossborn Hydra with entry counters, kicker, continuous
+trample, landfall and wide-counter restoration checks.
 Wizards removed damage assignment order for FDN; arbitrary multi-blocker
-allocation must be a real choice. Bite Down also needs planeswalker targeting
-before its complete rules behavior can be declared supported. D and E build
+allocation must be a real choice. Bite Down's planeswalker recipient is tested
+with a partial reference definition that deck admission refuses. D and E build
 on event-driven counters and predicates; F shares E's ward implementation.
 G should land as separate mechanic slices, each with interaction tests and
 pending-choice restoration checks.

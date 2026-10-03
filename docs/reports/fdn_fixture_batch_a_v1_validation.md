@@ -115,4 +115,3 @@ takes target ID 37 after main's `NonblackCreature` (36), and the Limited
 database is `kernel_carddb/v35`, hash `86272311c565a969`. The FDN profile is a
 fourth catalog profile; the pre-FDN fixture now pins `PauperMetaW1`. The
 measurements above describe the original v33 build.
-

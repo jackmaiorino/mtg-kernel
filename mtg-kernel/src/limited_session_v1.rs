@@ -466,6 +466,91 @@ mod tests {
             assert!(verified, "{name} second target choice was not reached");
         }
     }
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn foundations_session_snapshot_restores_kicker_choice_and_binding() {
+        use crate::rl::ActionSemanticV1;
+        let forest = card_id_by_name("Forest").unwrap();
+        for name in ["Gnarlid Colony"] {
+            let spell = card_id_by_name(name).unwrap();
+            let cards = [vec![forest; 30], vec![spell; 10]].concat();
+            let identity = content_identity(&cards);
+            let mut session = RlEpisodeSessionV1::reset_with_custom_decks_v1(
+                7,
+                123,
+                8192,
+                16384,
+                [identity.clone(), identity],
+                [&cards, &cards],
+                PriorityModeV1::EngineWindowsV1,
+                true,
+            )
+            .unwrap();
+            let mut verified = false;
+            for _ in 0..4096 {
+                let before = session.current_response();
+                let RlSessionResponseV1::Decision(decision) = &before else {
+                    panic!("{name} game ended before the kicker choice");
+                };
+                if matches!(&decision.legal_actions[0].semantic,
+                    ActionSemanticV1::ChooseKicker { source, .. } if source.card_db_id == spell)
+                {
+                    let snapshot = session.snapshot_v5();
+                    let before_hash = session.privileged_environment_hash();
+                    let action = &decision.legal_actions[1];
+                    let after = session
+                        .step(
+                            decision.episode_id,
+                            decision.step,
+                            action.selected_index,
+                            &action.stable_id,
+                        )
+                        .unwrap();
+                    let after_hash = session.privileged_environment_hash();
+                    session.restore_v5(&snapshot);
+                    assert_eq!(session.current_response(), before);
+                    assert_eq!(session.privileged_environment_hash(), before_hash);
+                    assert_eq!(
+                        session
+                            .step(
+                                decision.episode_id,
+                                decision.step,
+                                action.selected_index,
+                                &action.stable_id
+                            )
+                            .unwrap(),
+                        after
+                    );
+                    assert_eq!(session.privileged_environment_hash(), after_hash);
+                    verified = true;
+                    break;
+                }
+                let rank = |semantic: &ActionSemanticV1| match semantic {
+                    ActionSemanticV1::PlayLand { .. } => 0,
+                    ActionSemanticV1::CastSpell { .. } => 1,
+                    ActionSemanticV1::ChooseAttackerInclusion { include: false, .. }
+                    | ActionSemanticV1::ChooseBlockerInclusion { include: false, .. } => 2,
+                    ActionSemanticV1::Pass { .. } => 10,
+                    ActionSemanticV1::ActivateManaAbility { .. } => 11,
+                    _ => 5,
+                };
+                let action = decision
+                    .legal_actions
+                    .iter()
+                    .min_by_key(|action| rank(&action.semantic))
+                    .unwrap();
+                session
+                    .step(
+                        decision.episode_id,
+                        decision.step,
+                        action.selected_index,
+                        &action.stable_id,
+                    )
+                    .unwrap();
+            }
+            assert!(verified, "{name} kicker choice was not reached");
+        }
+    }
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]

@@ -44,15 +44,36 @@ pub enum Zone {
 
 /// Counter families required by the Pauper pool. Signed storage is deliberate:
 /// effect validation may reject an underflow without first converting between
-/// unrelated integer shapes, while i16 leaves ample headroom for copied and
-/// doubled counter effects.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// unrelated integer shapes. +1/+1 counters use i32 because a Hydra can
+/// exceed i16 after fifteen landfall triggers. Hashes within the old range
+/// retain the original representation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Counters {
-    pub plus1_plus1: i16,
+    pub plus1_plus1: i32,
     pub minus1_minus1: i16,
     pub minus0_minus1: i16,
     pub stun: i16,
     pub lore: i16,
+}
+
+pub(crate) fn hash_plus_one_counters<H: std::hash::Hasher>(count: i32, state: &mut H) {
+    use std::hash::Hash;
+    if let Ok(legacy) = i16::try_from(count) {
+        legacy.hash(state);
+    } else {
+        b"wide_plus_one_counters_v1".hash(state);
+        count.hash(state);
+    }
+}
+
+impl std::hash::Hash for Counters {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        hash_plus_one_counters(self.plus1_plus1, state);
+        self.minus1_minus1.hash(state);
+        self.minus0_minus1.hash(state);
+        self.stun.hash(state);
+        self.lore.hash(state);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -225,7 +246,7 @@ impl ObjectStateV4 {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameObject {
     /// Index into the (not-yet-built) card database.
     pub card_def: u16,
@@ -236,7 +257,7 @@ pub struct GameObject {
     pub zone: Zone,
     pub tapped: bool,
     pub summoning_sick: bool,
-    pub damage: u16,
+    pub damage: u32,
     pub counters: Counters,
     pub attachments: Vec<ObjectId>,
     pub v4: ObjectStateV4,
@@ -268,6 +289,30 @@ pub struct GameObject {
     /// it, structurally, without this module needing to remember to remove
     /// the stale entry.
     pub zone_change_count: u32,
+}
+
+impl Hash for GameObject {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.card_def.hash(state);
+        self.name.hash(state);
+        self.owner.hash(state);
+        self.controller.hash(state);
+        self.zone.hash(state);
+        self.tapped.hash(state);
+        self.summoning_sick.hash(state);
+        if let Ok(legacy) = u16::try_from(self.damage) {
+            legacy.hash(state);
+        } else {
+            b"wide_marked_damage_v1".hash(state);
+            self.damage.hash(state);
+        }
+        self.counters.hash(state);
+        self.attachments.hash(state);
+        self.v4.hash(state);
+        self.spell_copy_origin.hash(state);
+        self.plotted_turn.hash(state);
+        self.zone_change_count.hash(state);
+    }
 }
 
 impl GameObject {

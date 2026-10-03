@@ -596,7 +596,9 @@ fn run_native_science_loop_with_opponents_v1(
         | NativeRunCatalogProfileV1::FdnFixtureBatchB
         | NativeRunCatalogProfileV1::FdnCombatCards
         | NativeRunCatalogProfileV1::FdnLegendRule
-        | NativeRunCatalogProfileV1::FdnTargetedSpells => {}
+        | NativeRunCatalogProfileV1::FdnTargetedSpells
+        | NativeRunCatalogProfileV1::FdnCounterCreatures
+        | NativeRunCatalogProfileV1::FdnCounterCreaturesRebased => {}
     }
 
     if ladder_opponent.is_some() && population_opponent.is_some() {

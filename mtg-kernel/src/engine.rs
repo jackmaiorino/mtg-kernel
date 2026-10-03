@@ -10729,7 +10729,7 @@ fn bestow_host_counter_bonus(state: &GameState, host: ObjectId) -> i32 {
                 .iter()
                 .copied()
                 .filter(|&aura| valid_bestow_attachment_host(state, aura) == Some(host))
-                .map(|aura| i32::from(state.objects.get(aura).counters.plus1_plus1))
+                .map(|aura| state.objects.get(aura).counters.plus1_plus1)
                 .sum()
         })
         .unwrap_or(0)
@@ -10784,7 +10784,7 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
     let obj = state.objects.get(id);
     let def = &card_def::CARD_DEFS[obj.card_def as usize];
     let mut power = def.power_for_face(obj.v4.face_index).unwrap_or(0) as i32
-        + obj.counters.plus1_plus1 as i32
+        + obj.counters.plus1_plus1
         - obj.counters.minus1_minus1 as i32;
     power += bestow_host_counter_bonus(state, id);
     power += controlled_subtype_boost(state, id).0;
@@ -10832,7 +10832,7 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
     let obj = state.objects.get(id);
     let def = &card_def::CARD_DEFS[obj.card_def as usize];
     let mut toughness = def.toughness_for_face(obj.v4.face_index).unwrap_or(0) as i32
-        + obj.counters.plus1_plus1 as i32
+        + obj.counters.plus1_plus1
         - obj.counters.minus1_minus1 as i32
         - obj.counters.minus0_minus1 as i32;
     toughness += bestow_host_counter_bonus(state, id);
@@ -10898,6 +10898,21 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
         return true;
     }
     if def.keywords_for_face(obj.v4.face_index).has(kw) {
+        return true;
+    }
+    if obj.zone == Zone::Battlefield
+        && obj.counters.plus1_plus1 > 0
+        && object_has_type(state, id, CardType::Creature)
+        && state.objects.iter().any(|(_, source)| {
+            let source_def = &card_def::CARD_DEFS[source.card_def as usize];
+            source.zone == Zone::Battlefield
+                && source.controller == obj.controller
+                && source_def.is_executable()
+                && source_def
+                    .controlled_counter_keyword
+                    .is_some_and(|keyword| keyword.has(kw))
+        })
+    {
         return true;
     }
     if kw.has(Keywords::LIFELINK) && obj.v4.lifelink_keyword_counters > 0 {
@@ -11532,8 +11547,9 @@ fn assign_attacker_damage_to_blockers(
                 1
             } else {
                 let toughness = effective_toughness(state, blocker);
-                let already = state.objects.get(blocker).damage as i32;
-                (toughness - already).max(0)
+                let already = i64::from(state.objects.get(blocker).damage);
+                i32::try_from((i64::from(toughness) - already).max(0))
+                    .expect("remaining toughness fits i32")
             };
             remaining.min(lethal_needed)
         };
@@ -18403,8 +18419,8 @@ mod tests {
         // even though the source leaves the battlefield during the check.
         // Percussionist's dies event, by contrast, is created by the check
         // itself and must still be collected before the next priority window.
-        let epicure_toughness = effective_toughness(&state, epicure) as u16;
-        let percussionist_toughness = effective_toughness(&state, percussionist) as u16;
+        let epicure_toughness = effective_toughness(&state, epicure) as u32;
+        let percussionist_toughness = effective_toughness(&state, percussionist) as u32;
         state.objects.get_mut(epicure).damage = epicure_toughness;
         state.objects.get_mut(percussionist).damage = percussionist_toughness;
 

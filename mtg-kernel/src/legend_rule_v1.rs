@@ -122,7 +122,7 @@ fn prepare(state: &GameState, waiting: &[PendingTrigger]) -> PreparedPassV1 {
         let lethal = engine::object_has_type(state, id, CardType::Creature)
             && trigger::creature_dies_to_state_based_actions(
                 engine::effective_toughness(state, id),
-                i32::from(object.damage),
+                i64::from(object.damage),
                 object.v4.deathtouch_damage,
                 engine::has_effective_keyword(state, id, Keywords::INDESTRUCTIBLE),
             );

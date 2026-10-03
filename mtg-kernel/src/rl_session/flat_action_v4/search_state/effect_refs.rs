@@ -39,6 +39,7 @@ impl Scan<'_> {
             PutBoundObjectInOwnersLibrary { object, .. }
             | MoveBoundObject { object, .. }
             | PutPlusOnePlusOneCounterOnBoundObject { object }
+            | DoublePlusOneCountersOnBoundObject { object }
             | PutPlusOnePlusOneCounterOnTriggerEventObject { object }
             | BoostBoundObjectUntilEndOfTurn { object, .. } => self.b(object),
             ResolveInitiativeTrigger { binding }
@@ -101,6 +102,7 @@ impl Scan<'_> {
             | DealDamageDynamic { .. }
             | BindPlusOnePlusOneCounterToTriggerSource
             | BindPlusOnePlusOneCounterToTriggerEventObject
+            | BindDoublePlusOneCountersToTriggerSource
             | BindTemporaryBoostToTriggerSource { .. }
             | BoostControlledCreaturesUntilEndOfTurn { .. }
             | GainLifeByAttackingSubtypeCount { .. }
@@ -548,6 +550,7 @@ pub(super) fn conflicts(
             | CreateToken { object, .. }
             | Sacrificed { object, .. }
             | Transformed { object, .. } => s.raw(*object),
+            PlusOneCountersAdded { object, .. } => s.raw(*object),
             Draw { object, .. } => object.is_some_and(|id| s.raw(id)),
             SpellCast { spell, .. } => s.raw(*spell),
             Targeted { target, .. } => s.raw(*target),
@@ -564,4 +567,47 @@ pub(super) fn conflicts(
             LifeLoss { .. } | LifeGain { .. } | ManaAdded { .. } | UpkeepBegan { .. } => false,
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ids::PlayerId;
+    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::state::Zone;
+
+    #[test]
+    fn bound_counter_doubling_keeps_the_referenced_incarnation_out_of_resampling() {
+        let mut state = ready_state();
+        let object = put(&mut state, PlayerId::P1, "Forest", Zone::Library);
+        let other = put(&mut state, PlayerId::P1, "Island", Zone::Library);
+        let binding = EffectObjectBinding {
+            object,
+            expected_zone: Zone::Library,
+            expected_zone_change_count: state.objects.get(object).zone_change_count,
+        };
+        let op = EffectOp::DoublePlusOneCountersOnBoundObject { object: binding };
+        assert!(op_conflicts(&state, &[object], &op));
+        assert!(!op_conflicts(&state, &[other], &op));
+        state.objects.get_mut(object).zone_change_count += 1;
+        assert!(!op_conflicts(&state, &[object], &op));
+    }
+
+    #[test]
+    fn counter_placement_history_keeps_its_physical_object_out_of_resampling() {
+        let mut state = ready_state();
+        let object = put(&mut state, PlayerId::P1, "Forest", Zone::Library);
+        let other = put(&mut state, PlayerId::P1, "Island", Zone::Library);
+        state
+            .engine
+            .event_log
+            .push(crate::event::CommittedEvent::PlusOneCountersAdded {
+                object,
+                zone_change_count: state.objects.get(object).zone_change_count,
+                player: PlayerId::P1,
+                count: 1,
+            });
+        assert!(conflicts(&state, &[object], None));
+        assert!(!conflicts(&state, &[other], None));
+    }
 }

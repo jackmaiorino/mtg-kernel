@@ -697,6 +697,23 @@ pub struct EngineContextV2 {
     pub planeswalkers: Option<Vec<PlaneswalkerSemanticV1>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub combat_damage_prevention: Option<Vec<CombatPreventionSemanticV1>>,
+    /// Exact counts overriding the legacy i16 card field when it is zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wide_plus_one_counters: Option<Vec<WidePlusOneCountersSemanticV1>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wide_marked_damage: Option<Vec<WideMarkedDamageSemanticV1>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct WideMarkedDamageSemanticV1 {
+    pub permanent: CardStableRefV1,
+    pub damage: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct WidePlusOneCountersSemanticV1 {
+    pub permanent: CardStableRefV1,
+    pub count: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -5244,9 +5261,11 @@ fn public_card(state: &GameState, id: ObjectId) -> Result<CardPublicV1> {
         card_name: card_name(object.card_def),
         tapped: object.tapped,
         summoning_sick: object.summoning_sick,
-        damage: object.damage,
+        damage: u16::try_from(object.damage)
+            .map_err(|_| RlContractError("schema-v1 cannot represent wide damage".into()))?,
         counters: CountersV1 {
-            plus1_plus1: object.counters.plus1_plus1,
+            plus1_plus1: i16::try_from(object.counters.plus1_plus1)
+                .map_err(|_| RlContractError("schema-v1 cannot represent wide counters".into()))?,
             minus1_minus1: object.counters.minus1_minus1,
             minus0_minus1: object.counters.minus0_minus1,
             stun: object.counters.stun,
@@ -5277,9 +5296,12 @@ fn public_card_v2(
         },
         tapped: object.tapped,
         summoning_sick: object.summoning_sick,
-        damage: object.damage,
+        // engine_context.wide_marked_damage overrides this legacy slot.
+        damage: u16::try_from(object.damage).unwrap_or(0),
         counters: CountersV1 {
-            plus1_plus1: object.counters.plus1_plus1,
+            // Extended counts live in engine_context.wide_plus_one_counters.
+            // Zero is the legacy placeholder; flat publication refuses this state.
+            plus1_plus1: i16::try_from(object.counters.plus1_plus1).unwrap_or(0),
             minus1_minus1: object.counters.minus1_minus1,
             minus0_minus1: object.counters.minus0_minus1,
             stun: object.counters.stun,
@@ -6142,6 +6164,39 @@ fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<Engin
         state.engine.mana_ability_activations != state.engine.mana_ability_count_at_round_open;
 
     Ok(EngineContextV2 {
+        wide_marked_damage: {
+            let damage = state
+                .objects
+                .iter()
+                .filter(|(_, object)| {
+                    object.zone == Zone::Battlefield && u16::try_from(object.damage).is_err()
+                })
+                .map(|(id, object)| {
+                    card_ref(state, id).map(|permanent| WideMarkedDamageSemanticV1 {
+                        permanent,
+                        damage: object.damage,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            (!damage.is_empty()).then_some(damage)
+        },
+        wide_plus_one_counters: {
+            let counters = state
+                .objects
+                .iter()
+                .filter(|(_, object)| {
+                    object.zone == Zone::Battlefield
+                        && i16::try_from(object.counters.plus1_plus1).is_err()
+                })
+                .map(|(id, object)| {
+                    card_ref(state, id).map(|permanent| WidePlusOneCountersSemanticV1 {
+                        permanent,
+                        count: object.counters.plus1_plus1,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            (!counters.is_empty()).then_some(counters)
+        },
         planeswalkers: (!planeswalkers.is_empty()).then_some(planeswalkers),
         combat_damage_prevention: (!combat_damage_prevention.is_empty())
             .then_some(combat_damage_prevention),

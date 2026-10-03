@@ -30,7 +30,10 @@ pub enum TriggerCondition {
     /// The permanent itself enters while its controller controls the named
     /// number of other permanents with the effective subtype. This is the
     /// trigger-time half of an intervening-if condition.
-    EtbControlsOtherSubtypeCount { subtype: Subtype, minimum_count: u8 },
+    EtbControlsOtherSubtypeCount {
+        subtype: Subtype,
+        minimum_count: u8,
+    },
     /// The permanent itself enters while its controller has at least this
     /// many creature cards in their own graveyard. This is the trigger-time
     /// half of an intervening-if condition; the matching resolution-time
@@ -94,16 +97,21 @@ pub enum TriggerCondition {
     /// the shape); either way, exactly one Upkeep step happens per turn
     /// (the active player's), so a `false` source still fires only on
     /// turns where that upkeep is the active player's own.
-    BeginningOfUpkeep { controller_only: bool },
+    BeginningOfUpkeep {
+        controller_only: bool,
+    },
     /// Each successful draw by the source's controller, including every
     /// individual card in a multi-card draw.
     ControllerDraws,
     /// A different creature enters under the source's controller. A subtype
     /// filter restricts the entrant rather than the observing permanent.
-    OtherControlledCreatureEnters { subtype: Option<Subtype> },
+    OtherControlledCreatureEnters {
+        subtype: Option<Subtype>,
+    },
     /// Declared as an attacker. Being put onto the battlefield attacking
     /// does not satisfy this event.
     Attacks,
+    ControlledLandEnters,
 }
 
 pub struct TriggeredAbilityDef {
@@ -145,6 +153,16 @@ pub(crate) fn materialize_trigger_effect(
         EffectOp::BindPlusOnePlusOneCounterToTriggerSource => {
             let live = state.objects.get(source);
             EffectOp::PutPlusOnePlusOneCounterOnBoundObject {
+                object: EffectObjectBinding {
+                    object: source,
+                    expected_zone: live.zone,
+                    expected_zone_change_count: live.zone_change_count,
+                },
+            }
+        }
+        EffectOp::BindDoublePlusOneCountersToTriggerSource => {
+            let live = state.objects.get(source);
+            EffectOp::DoublePlusOneCountersOnBoundObject {
                 object: EffectObjectBinding {
                     object: source,
                     expected_zone: live.zone,
@@ -238,6 +256,14 @@ const BEAST_KIN_RANGER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef
     condition: TriggerCondition::OtherControlledCreatureEnters { subtype: None },
     ..etb_trigger(beast_kin_ranger_effect)
 }];
+const MOSSBORN_HYDRA_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControlledLandEnters,
+    ..etb_trigger(double_counter_marker_effect)
+}];
+
+fn double_counter_marker_effect() -> EffectOp {
+    EffectOp::BindDoublePlusOneCountersToTriggerSource
+}
 const DWYNEN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Attacks,
     ..etb_trigger(dwynen_attack_effect)
@@ -1238,6 +1264,7 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         return &JOB_SELECT_TRIGGERS;
     }
     match card.name {
+        "Mossborn Hydra" => &MOSSBORN_HYDRA_TRIGGERS,
         "Beast-Kin Ranger" => &BEAST_KIN_RANGER_TRIGGERS,
         "Dwynen, Gilt-Leaf Daen" => &DWYNEN_TRIGGERS,
         "Blossoming Sands" | "Thornwood Falls" => &GAIN_ONE_LIFE_TRIGGERS,
@@ -1374,6 +1401,9 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
             ) | (
                 EffectOp::BindPlusOnePlusOneCounterToTriggerEventObject,
                 EffectOp::PutPlusOnePlusOneCounterOnTriggerEventObject { .. }
+            ) | (
+                EffectOp::BindDoublePlusOneCountersToTriggerSource,
+                EffectOp::DoublePlusOneCountersOnBoundObject { .. }
             )
         )
     }) {
@@ -1497,12 +1527,12 @@ pub struct PendingTrigger {
 
 pub(crate) fn creature_dies_to_state_based_actions(
     toughness: i32,
-    marked_damage: i32,
+    marked_damage: i64,
     deathtouch_damage: bool,
     indestructible: bool,
 ) -> bool {
     toughness <= 0
-        || ((marked_damage >= toughness || (marked_damage > 0 && deathtouch_damage))
+        || ((marked_damage >= i64::from(toughness) || (marked_damage > 0 && deathtouch_damage))
             && !indestructible)
 }
 
@@ -1592,7 +1622,7 @@ fn sba_fixed_point_with_protected_triggers(
             // indestructible prevents only that branch.
             if creature_dies_to_state_based_actions(
                 toughness,
-                obj.damage as i32,
+                i64::from(obj.damage),
                 obj.v4.deathtouch_damage,
                 indestructible,
             ) {
@@ -2213,6 +2243,11 @@ fn trigger_matches(
     draws_this_turn_at_event: u32,
 ) -> bool {
     match (cond, ev) {
+        (TriggerCondition::ControlledLandEnters, event) => battlefield_entry_object(event)
+            .is_some_and(|object| {
+                state.objects.get(object).controller == controller
+                    && crate::engine::object_has_type(state, object, CardType::Land)
+            }),
         (
             TriggerCondition::ControllerDraws,
             CommittedEvent::Draw {

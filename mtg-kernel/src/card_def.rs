@@ -241,6 +241,7 @@ pub enum Subtype {
     Noble,
     Unicorn,
     Ajani,
+    Beast,
 }
 
 impl Subtype {
@@ -312,6 +313,8 @@ impl Subtype {
         Subtype::Noble,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Unicorn,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Beast,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -424,6 +427,7 @@ impl Subtype {
                 | Subtype::Squirrel
                 | Subtype::Insect
                 | Subtype::Fish
+                | Subtype::Beast
         )
     }
 }
@@ -1167,6 +1171,12 @@ pub struct EquipmentDef {
     pub granted_activated_ability: Option<GrantedActivatedAbilityDef>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntersWithPlusOneCountersDef {
+    pub count: i32,
+    pub if_kicked: bool,
+}
+
 pub struct CardDef {
     pub name: &'static str,
     pub capability: CardCapability,
@@ -1192,6 +1202,10 @@ pub struct CardDef {
     pub power: Option<i16>,
     pub toughness: Option<i16>,
     pub starting_loyalty: Option<u16>,
+    /// Applied during every entry before triggers and state-based actions.
+    pub enters_with_plus_one_counters: Option<EntersWithPlusOneCountersDef>,
+    /// Continuously grants this keyword to controlled creatures with +1/+1 counters.
+    pub controlled_counter_keyword: Option<Keywords>,
     pub is_land: bool,
     pub produces_mana: &'static [ManaColor],
     /// This card's color identity per 105.1/202.2 (the color of mana
@@ -1686,7 +1700,7 @@ mod tests {
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                216
+                218
             } else {
                 192
             }
@@ -1774,8 +1788,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v39_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x88e0_2f70_cd94_af95;
+    fn card_db_hash_v40_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0xb3dc_8eb6_d0a6_407d;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

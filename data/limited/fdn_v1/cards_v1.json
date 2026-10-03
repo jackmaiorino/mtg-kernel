@@ -722,6 +722,70 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/a/AjaniCallerOfThePride.java",
       "starting_loyalty": 4
+    },
+    {
+      "name": "Gnarlid Colony",
+      "engine_capability": "full",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Beast"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_top_20626_WG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "kicker",
+        "enters_with_counters",
+        "continuous_trample"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GnarlidColony.java"
+    },
+    {
+      "name": "Mossborn Hydra",
+      "engine_capability": "full",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elemental",
+        "Hydra"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 0,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_top_04956_UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "trample",
+        "enters_with_counters",
+        "landfall",
+        "double_counters"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MossbornHydra.java"
     }
   ]
 }
