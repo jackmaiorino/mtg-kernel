@@ -1,5 +1,30 @@
 # FDN Homunculus Horde validation
 
+## Integration with current main
+
+Integrated the current-main draw prefix 8ec65480, preserving the expanded
+192-definition default/v34 catalog. Homunculus and its token produce
+225 definitions/Limited v43 with generated identity f9e239337d933849.
+The catalog-only generator compiled and emitted this literal; it does not
+qualify engine gameplay. Original and prior composed FDN profiles remain
+readable, while native publication/resume still require the exact live tuple.
+
+Retain main's explicit-mainboard regression cases and keep only its fixed
+default transcript goldens gated off in Limited builds. The grouped filters
+preserve all twelve integration targets, the four original Limited filters
+(including the full RL session group), three production filters and the
+unchanged isolated timing case. Returning-Aura/counter reference handling
+and lossless terminal-tactic fixture conversions remain included. Formatting,
+workflow lint, diff checks and 20 focused Python deck/session cases passed.
+Composed-source Rust/gameplay/native/production hosted checks remain pending.
+Earlier isolated-source qualification below remains historical.
+
+Hosted CI at `e35f4754aff84724b69db2a73a98dab81f6d6ffe` passed all eight checks: Rust on
+Ubuntu and Windows, all four Python shards, formatting/lint and path detection.
+Run: https://github.com/jackmaiorino/mtg-kernel/actions/runs/36985482516. Earlier pending entries below record the original
+verification sequence. The subsequent status/report update changes no tested
+code, workflow, fixture or catalog bytes.
+
 Homunculus Horde and its token copy are implemented at `d3e09847`, with
 test corrections at `90a8f1cd` and `9b75805b` and v41 compatibility at
 `288fce15`. The card batch was checked on matching HaleysPC commit

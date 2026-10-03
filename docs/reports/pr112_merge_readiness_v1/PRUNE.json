@@ -1,0 +1,43 @@
+{
+  "schema": "pr112-readiness-scratch-closure/v1",
+  "retention": "all failed and successful records, logs, fixture outputs and binaries retained",
+  "scope": "only three explicitly named owned scratch roots; build cache retained",
+  "archives": [
+    {
+      "name": "native-check-001",
+      "scratch": "D:\\e-scratch\\pr112-native-check-001",
+      "cold_archive": "E:\\mtg-pr112-merge-readiness-20261001\\native-check-001-full-archive",
+      "backup": "D:\\pr112-native-evidence-backup\\native-check-001-full-archive",
+      "bytes": 451710478,
+      "archive_index_sha256": "b0316b481aebb48eb08fd44f8883666ee3408a087023ddd4d0bf3c6bf3a5df38",
+      "source_commit": "bba7779a13081dd150e8ea4524d50be3f3b6d519",
+      "status": "scratch duplicates deleted after two retained verified copies",
+      "deleted_utc": "2026-10-01T08:30:32.342724+00:00",
+      "regeneration_recipe": "Use the immutable binary and exact argv/seeds in the preserved completion and manifest. All original output bytes are also retained in both archives."
+    },
+    {
+      "name": "pr114-native-check-001",
+      "scratch": "D:\\e-scratch\\pr114-native-check-001",
+      "cold_archive": "E:\\mtg-pr112-merge-readiness-20261001\\pr114-native-check-001-full-archive",
+      "backup": "D:\\pr112-native-evidence-backup\\pr114-native-check-001-full-archive",
+      "bytes": 291461022,
+      "archive_index_sha256": "e0e19b51bea733911cec2b519befe2ac72685e68b5c8b78b1b32497c2435b894",
+      "source_commit": "87c8271e031e55adb35a771fb1698f825d7b818c",
+      "status": "scratch duplicates deleted after two retained verified copies",
+      "deleted_utc": "2026-10-01T08:30:32.886673+00:00",
+      "regeneration_recipe": "Use the immutable binary and exact argv/seeds in the preserved completion and manifest. All original output bytes are also retained in both archives."
+    },
+    {
+      "name": "native-check-002",
+      "scratch": "D:\\e-scratch\\pr112-native-check-002",
+      "cold_archive": "E:\\mtg-pr112-merge-readiness-20261001\\native-check-002-full-archive",
+      "backup": "D:\\pr112-native-evidence-backup\\native-check-002-full-archive",
+      "bytes": 356390403,
+      "archive_index_sha256": "899d8b746c6a0c8d76c1528848724d5095b5d5d65e5382fad8b21e15773b0d4a",
+      "source_commit": "7868e9e47b0992a1bf482d48573275e28558ed9a",
+      "status": "scratch duplicates deleted after two retained verified copies",
+      "deleted_utc": "2026-10-01T08:30:33.552888+00:00",
+      "regeneration_recipe": "Use the immutable binary and exact argv/seeds in the preserved completion and manifest. All original output bytes are also retained in both archives."
+    }
+  ]
+}

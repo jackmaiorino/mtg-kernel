@@ -1,0 +1,1831 @@
+{
+ "schema": "line-b-engineering-acceptance-receipt/v1",
+ "name": "acceptance-003",
+ "provenance": {
+  "binary": "E:\\pinned-binaries\\467114faaeef3b38a0f4ca4aaf9df2fb7a2ab0e54697b251349c1da761c37920\\expanded_deck_training_v1.exe",
+  "binary_sha256": "467114faaeef3b38a0f4ca4aaf9df2fb7a2ab0e54697b251349c1da761c37920",
+  "tool_head": "c3e949af5321c2679e79b7210db072a1114bbd46"
+ },
+ "seed_name": "acceptance-001",
+ "claim": "engineering receipt: identity, determinism and telemetry only; no outcome claim",
+ "template": {
+  "path": "E:\\mtg-postboard-campaign-20260920\\broader-exposure-pilot-001\\broader\\config.json",
+  "sha256": "d2e4ace81253e6a393d5b3687250f77f5c4af433afd28dda97fa5ee2ab533529",
+  "iteration": 0
+ },
+ "student": {
+  "checkpoint": {
+   "path": "D:/phase1-live/campaign-002/g/block115/run/iterations/000199/attempt-000000/update/checkpoint.json",
+   "sha256": "88c0b997708c2b5156b44f3940ad9d5d682f78ac24d346978bb3c9f34c59e8d1"
+  },
+  "feature_transfer": {
+   "expected_feature_contract_digest": "c4af415a3b0cf1e9c9960dbe2bc2d134c63e9f08206a9a364e113121fea5538b",
+   "expected_feature_encoding_digest": "271c0e5a0fdce75663c897e89a9d7280ab1a3bbb6679bd10ecb5f524991952de"
+  },
+  "play_import": {
+   "path": "E:/mtg-kernel-learned-sideboarding-evidence/bo3-post480-preparation-001/phase1-training-qualification-001/campaign-001/block1/catalog/b-descriptor-windows.json",
+   "sha256": "6c2fcb3730e23df685836527f69ef3c2092c0bd121d7aedfc26e54072c60e808"
+  }
+ },
+ "rollouts": 16,
+ "teacher_workers": 8,
+ "games": [
+  {
+   "root_seed": 6628434370262565984,
+   "teacher_seed": 17041532798192593053
+  },
+  {
+   "root_seed": 9210072264881176776,
+   "teacher_seed": 10346752491943171115
+  },
+  {
+   "root_seed": 3828163833704105083,
+   "teacher_seed": 6710058462881162764
+  },
+  {
+   "root_seed": 16635486868122470874,
+   "teacher_seed": 14710707658103874444
+  },
+  null,
+  null,
+  {
+   "root_seed": 12026424780570687470,
+   "teacher_seed": 3016160674220049376
+  },
+  null,
+  null,
+  null
+ ],
+ "learner_lists": [
+  "published-09972f4f8a1ff9d8",
+  "published-6f07fa1e70875d83",
+  "published-21659427193c1e62",
+  "published-44ae71e1e126b63d",
+  "Rally/1e349fa4fa7a",
+  "Rally/1e349fa4fa7a",
+  "published-8b2659507fe45b64",
+  "Terror/9f78b1c320c4",
+  "Burn/767fd2c27db3",
+  "Burn/767fd2c27db3"
+ ],
+ "collect": {
+  "seconds": 2.771,
+  "workers": 8,
+  "trajectories_sha256": [
+   "71d7f5cc610530edf6222c9997a893f308665d409c89bad1b6aeab3cd570372b",
+   "a0b68af1ff96af12206a8f53164bc654ba36a63d09133046fa8ff6b69e13d80d",
+   "576ba877fee5fdc4c6c99fccf7abe66423a273f12a7c09c69e7391a35ffaf9cf",
+   "83c85d87fc6e447eb318b84dde726fdd9b1f6f78ca8ec9197fd08ce61ec557d0",
+   "ab2db973e0f00a8c558aeb5373adc67fbbfd5a26757ea1b8fcc01ebe41913414",
+   "b4cfe4f29b0470e2bf5f8694b611b73672b72c992e9801017a478d6aeff8a498",
+   "ce61b824d9cbfc3fe031ad5dd6b2ef3ba117f5dca0a6213b18091930aa343965",
+   "573f2caf2dac186532df4a3d1ec4865a8841b7189816220f96f83e0ba9f44f54",
+   "648c3a9cc20d50ebb8a83e65d1fbfe52b5b5de1243ebaaf53ebd94413101661e",
+   "9d5fddf7cbc59476ecf89f9e10bba5acd7a0c27c738a8b1f997240938de8535f"
+  ]
+ },
+ "updates": {
+  "cuda1-control-a": {
+   "seconds": 13.07,
+   "before_state_sha256": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+   "after_state_sha256": "7e14ba8cca8dbd13617dd29b068d9f9ee8442060b0d13cb678327f6a28026625",
+   "adam_step": 32401,
+   "checkpoint": {
+    "path": "D:\\e-scratch\\astra-exit-teacher\\receipts\\acceptance-003\\cuda1-control-a\\checkpoint.json",
+    "sha256": "4751b159c3d70557e930f2aa415f0a0a80940f44d9758bb8bf67f6941dae446a"
+   },
+   "frozen_tensor_sha256": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+   "scorer_bias_gauge": {
+    "anchor_preserved": true,
+    "cross_substep_bound": 9.911759150962997e-05,
+    "derived_absolute_bound": 0.00010209948403943501,
+    "high_precision_residual": 8.023096076392733e-18,
+    "per_substep_bound_sum": 2.9818925298050422e-06,
+    "raw_gradient_residual": 1.4547367754857987e-09,
+    "substep_count": 1205,
+    "within_bound": true
+   },
+   "teacher": null
+  },
+  "cuda1-control-b": {
+   "seconds": 11.614,
+   "before_state_sha256": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+   "after_state_sha256": "7e14ba8cca8dbd13617dd29b068d9f9ee8442060b0d13cb678327f6a28026625",
+   "adam_step": 32401,
+   "checkpoint": {
+    "path": "D:\\e-scratch\\astra-exit-teacher\\receipts\\acceptance-003\\cuda1-control-b\\checkpoint.json",
+    "sha256": "4751b159c3d70557e930f2aa415f0a0a80940f44d9758bb8bf67f6941dae446a"
+   },
+   "frozen_tensor_sha256": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+   "scorer_bias_gauge": {
+    "anchor_preserved": true,
+    "cross_substep_bound": 9.911759150962997e-05,
+    "derived_absolute_bound": 0.00010209948403943501,
+    "high_precision_residual": 8.023096076392733e-18,
+    "per_substep_bound_sum": 2.9818925298050422e-06,
+    "raw_gradient_residual": 1.4547367754857987e-09,
+    "substep_count": 1205,
+    "within_bound": true
+   },
+   "teacher": null
+  },
+  "cuda1-reverse-kl-a": {
+   "seconds": 26.808,
+   "before_state_sha256": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+   "after_state_sha256": "6d5b034202e454bca137d06d5dc0e673127432a281c844f32903486880c5f58a",
+   "adam_step": 32401,
+   "checkpoint": {
+    "path": "D:\\e-scratch\\astra-exit-teacher\\receipts\\acceptance-003\\cuda1-reverse-kl-a\\checkpoint.json",
+    "sha256": "d6ed8ae509e30ddb5dd5c96e1bc36280b70553306b7565b623b05b9e218bf5ab"
+   },
+   "frozen_tensor_sha256": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+   "scorer_bias_gauge": {
+    "anchor_preserved": true,
+    "cross_substep_bound": 9.954354149755864e-05,
+    "derived_absolute_bound": 0.00010252571814015399,
+    "high_precision_residual": 8.029872339970767e-18,
+    "per_substep_bound_sum": 2.982176642595343e-06,
+    "raw_gradient_residual": -8.444658305961639e-10,
+    "substep_count": 1210,
+    "within_bound": true
+   },
+   "teacher": {
+    "census": {
+     "censored_rollouts": 0,
+     "censored_roots": 0,
+     "complete_roots": 5,
+     "no_eligible_root_games": 0,
+     "physical_decisions": 32204,
+     "policy_steps": 37579,
+     "rollouts": 384,
+     "selected_roots": 5,
+     "teacher_games": 5
+    },
+    "census_by_list": {
+     "published-09972f4f8a1ff9d8": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 112,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-21659427193c1e62": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-44ae71e1e126b63d": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-6f07fa1e70875d83": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-8b2659507fe45b64": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 32,
+      "selected_roots": 1,
+      "teacher_games": 1
+     }
+    },
+    "coefficient": 0.1,
+    "cuda_envelope": {
+     "declared_envelope": 0.001,
+     "max_abs_log_probability_discrepancy": 3.7091152442769726e-06,
+     "max_host_refold_abs_discrepancy": 4.819468152339468e-08,
+     "roots": [
+      {
+       "bound": 0.04850670337677002,
+       "host_refold_abs_discrepancy": 4.819468152339468e-08,
+       "max_abs_log_probability_discrepancy": 3.588237267537764e-06,
+       "root": 0
+      },
+      {
+       "bound": 0.020991026878356932,
+       "host_refold_abs_discrepancy": 3.4673004106755556e-08,
+       "max_abs_log_probability_discrepancy": 2.95322504317852e-06,
+       "root": 1
+      },
+      {
+       "bound": 0.058008632659912115,
+       "host_refold_abs_discrepancy": 3.086735511637073e-08,
+       "max_abs_log_probability_discrepancy": 3.7091152442769726e-06,
+       "root": 2
+      },
+      {
+       "bound": 0.027280302047729493,
+       "host_refold_abs_discrepancy": 2.671621623928644e-08,
+       "max_abs_log_probability_discrepancy": 1.3301846599755862e-06,
+       "root": 3
+      },
+      {
+       "bound": 0.045190105438232424,
+       "host_refold_abs_discrepancy": 1.6456628421090969e-10,
+       "max_abs_log_probability_discrepancy": 2.846774139975139e-06,
+       "root": 4
+      }
+     ],
+     "within_bound": true,
+     "within_declared_envelope": true
+    },
+    "direction": "reverse-kl",
+    "operator": "line-b-coupled-terminal-search-v1",
+    "packet": {
+     "path": "D:\\e-scratch\\astra-exit-teacher\\receipts\\acceptance-003\\cuda1-reverse-kl-a\\line-b-teacher-packet.json",
+     "sha256": "13d02e924b8ed0619f7cf3456d491c56bd09ef4b0918392598045d5cbaeecdfc"
+    },
+    "permuted_control": {
+     "after_state_sha256": "a5fa7825e59cf2a24632f5fda8d9f8153d92f4ff49cd9728ebcfded27cfeb2fe",
+     "auxiliary_head_l2": 0.4754012876079454,
+     "auxiliary_loss": 0.718376488742959,
+     "backend": "cpu",
+     "divergences_before": [
+      2.1765978936663415,
+      25.535312191417198,
+      2.522354189013352,
+      0.9343386800351217,
+      4.750221483015929
+     ],
+     "kinds": [
+      "within_root",
+      "across_root",
+      "across_root",
+      "across_root",
+      "within_root"
+     ],
+     "rescore_after": [
+      9.884007264882152e-06,
+      0.00015105877169545139,
+      2.858073527769974e-06,
+      2.600835486183257e-06,
+      0.0007337296256043195
+     ]
+    },
+    "rollouts": 16,
+    "schema": "mtg-kernel-line-b-teacher-packet/v1",
+    "target": "line-b-teacher-target-f64-v1",
+    "teacher_seconds": 8.6627149,
+    "telemetry": {
+     "auxiliary_bias_residual": -2.2992026060819626e-09,
+     "auxiliary_head_l2": 0.0005365299763704961,
+     "auxiliary_loss": 1.4709378135489528e-05,
+     "head_l2_ratio": 0.0029569376008933973,
+     "ordinary_head_l2": 0.181447852064376,
+     "roots": [
+      {
+       "decision_index": 44,
+       "divergence_before": 2.7755433011279496e-12,
+       "rescore_after": 1.2695614852548608e-07,
+       "rescore_before": 0.0,
+       "signed_difference": 1.2695614852548608e-07,
+       "trajectory_index": 0
+      },
+      {
+       "decision_index": 58,
+       "divergence_before": 2.0645331044014023e-13,
+       "rescore_after": 1.2925352143501752e-08,
+       "rescore_before": 0.0,
+       "signed_difference": 1.2925352143501752e-08,
+       "trajectory_index": 1
+      },
+      {
+       "decision_index": 5,
+       "divergence_before": 5.4757513298057e-09,
+       "rescore_after": 5.8299466682595954e-09,
+       "rescore_before": 5.47118563281372e-09,
+       "signed_difference": 3.5876103544587544e-10,
+       "trajectory_index": 2
+      },
+      {
+       "decision_index": 615,
+       "divergence_before": 2.778286619662628e-13,
+       "rescore_after": 1.5621523937966748e-08,
+       "rescore_before": 0.0,
+       "signed_difference": 1.5621523937966748e-08,
+       "trajectory_index": 3
+      },
+      {
+       "decision_index": 264,
+       "divergence_before": 0.0007354634277633213,
+       "rescore_after": 0.0007375460816988815,
+       "rescore_before": 0.0007354705166660591,
+       "signed_difference": 2.0755650328224337e-06,
+       "trajectory_index": 6
+      }
+     ]
+    },
+    "temperature": 0.25
+   }
+  },
+  "cuda1-reverse-kl-b": {
+   "seconds": 25.216,
+   "before_state_sha256": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+   "after_state_sha256": "6d5b034202e454bca137d06d5dc0e673127432a281c844f32903486880c5f58a",
+   "adam_step": 32401,
+   "checkpoint": {
+    "path": "D:\\e-scratch\\astra-exit-teacher\\receipts\\acceptance-003\\cuda1-reverse-kl-b\\checkpoint.json",
+    "sha256": "d6ed8ae509e30ddb5dd5c96e1bc36280b70553306b7565b623b05b9e218bf5ab"
+   },
+   "frozen_tensor_sha256": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+   "scorer_bias_gauge": {
+    "anchor_preserved": true,
+    "cross_substep_bound": 9.954354149755864e-05,
+    "derived_absolute_bound": 0.00010252571814015399,
+    "high_precision_residual": 8.029872339970767e-18,
+    "per_substep_bound_sum": 2.982176642595343e-06,
+    "raw_gradient_residual": -8.444658305961639e-10,
+    "substep_count": 1210,
+    "within_bound": true
+   },
+   "teacher": {
+    "census": {
+     "censored_rollouts": 0,
+     "censored_roots": 0,
+     "complete_roots": 5,
+     "no_eligible_root_games": 0,
+     "physical_decisions": 32204,
+     "policy_steps": 37579,
+     "rollouts": 384,
+     "selected_roots": 5,
+     "teacher_games": 5
+    },
+    "census_by_list": {
+     "published-09972f4f8a1ff9d8": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 112,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-21659427193c1e62": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-44ae71e1e126b63d": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-6f07fa1e70875d83": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-8b2659507fe45b64": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 32,
+      "selected_roots": 1,
+      "teacher_games": 1
+     }
+    },
+    "coefficient": 0.1,
+    "cuda_envelope": {
+     "declared_envelope": 0.001,
+     "max_abs_log_probability_discrepancy": 3.7091152442769726e-06,
+     "max_host_refold_abs_discrepancy": 4.819468152339468e-08,
+     "roots": [
+      {
+       "bound": 0.04850670337677002,
+       "host_refold_abs_discrepancy": 4.819468152339468e-08,
+       "max_abs_log_probability_discrepancy": 3.588237267537764e-06,
+       "root": 0
+      },
+      {
+       "bound": 0.020991026878356932,
+       "host_refold_abs_discrepancy": 3.4673004106755556e-08,
+       "max_abs_log_probability_discrepancy": 2.95322504317852e-06,
+       "root": 1
+      },
+      {
+       "bound": 0.058008632659912115,
+       "host_refold_abs_discrepancy": 3.086735511637073e-08,
+       "max_abs_log_probability_discrepancy": 3.7091152442769726e-06,
+       "root": 2
+      },
+      {
+       "bound": 0.027280302047729493,
+       "host_refold_abs_discrepancy": 2.671621623928644e-08,
+       "max_abs_log_probability_discrepancy": 1.3301846599755862e-06,
+       "root": 3
+      },
+      {
+       "bound": 0.045190105438232424,
+       "host_refold_abs_discrepancy": 1.6456628421090969e-10,
+       "max_abs_log_probability_discrepancy": 2.846774139975139e-06,
+       "root": 4
+      }
+     ],
+     "within_bound": true,
+     "within_declared_envelope": true
+    },
+    "direction": "reverse-kl",
+    "operator": "line-b-coupled-terminal-search-v1",
+    "packet": {
+     "path": "D:\\e-scratch\\astra-exit-teacher\\receipts\\acceptance-003\\cuda1-reverse-kl-b\\line-b-teacher-packet.json",
+     "sha256": "13d02e924b8ed0619f7cf3456d491c56bd09ef4b0918392598045d5cbaeecdfc"
+    },
+    "permuted_control": {
+     "after_state_sha256": "a5fa7825e59cf2a24632f5fda8d9f8153d92f4ff49cd9728ebcfded27cfeb2fe",
+     "auxiliary_head_l2": 0.4754012876079454,
+     "auxiliary_loss": 0.718376488742959,
+     "backend": "cpu",
+     "divergences_before": [
+      2.1765978936663415,
+      25.535312191417198,
+      2.522354189013352,
+      0.9343386800351217,
+      4.750221483015929
+     ],
+     "kinds": [
+      "within_root",
+      "across_root",
+      "across_root",
+      "across_root",
+      "within_root"
+     ],
+     "rescore_after": [
+      9.884007264882152e-06,
+      0.00015105877169545139,
+      2.858073527769974e-06,
+      2.600835486183257e-06,
+      0.0007337296256043195
+     ]
+    },
+    "rollouts": 16,
+    "schema": "mtg-kernel-line-b-teacher-packet/v1",
+    "target": "line-b-teacher-target-f64-v1",
+    "teacher_seconds": 8.4006238,
+    "telemetry": {
+     "auxiliary_bias_residual": -2.2992026060819626e-09,
+     "auxiliary_head_l2": 0.0005365299763704961,
+     "auxiliary_loss": 1.4709378135489528e-05,
+     "head_l2_ratio": 0.0029569376008933973,
+     "ordinary_head_l2": 0.181447852064376,
+     "roots": [
+      {
+       "decision_index": 44,
+       "divergence_before": 2.7755433011279496e-12,
+       "rescore_after": 1.2695614852548608e-07,
+       "rescore_before": 0.0,
+       "signed_difference": 1.2695614852548608e-07,
+       "trajectory_index": 0
+      },
+      {
+       "decision_index": 58,
+       "divergence_before": 2.0645331044014023e-13,
+       "rescore_after": 1.2925352143501752e-08,
+       "rescore_before": 0.0,
+       "signed_difference": 1.2925352143501752e-08,
+       "trajectory_index": 1
+      },
+      {
+       "decision_index": 5,
+       "divergence_before": 5.4757513298057e-09,
+       "rescore_after": 5.8299466682595954e-09,
+       "rescore_before": 5.47118563281372e-09,
+       "signed_difference": 3.5876103544587544e-10,
+       "trajectory_index": 2
+      },
+      {
+       "decision_index": 615,
+       "divergence_before": 2.778286619662628e-13,
+       "rescore_after": 1.5621523937966748e-08,
+       "rescore_before": 0.0,
+       "signed_difference": 1.5621523937966748e-08,
+       "trajectory_index": 3
+      },
+      {
+       "decision_index": 264,
+       "divergence_before": 0.0007354634277633213,
+       "rescore_after": 0.0007375460816988815,
+       "rescore_before": 0.0007354705166660591,
+       "signed_difference": 2.0755650328224337e-06,
+       "trajectory_index": 6
+      }
+     ]
+    },
+    "temperature": 0.25
+   }
+  },
+  "cuda1-forward-kl-a": {
+   "seconds": 25.32,
+   "before_state_sha256": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+   "after_state_sha256": "83802b8b8e83e179c1b21a985fa9b0848011dbe3a47f24729d3cdd3a2612391a",
+   "adam_step": 32401,
+   "checkpoint": {
+    "path": "D:\\e-scratch\\astra-exit-teacher\\receipts\\acceptance-003\\cuda1-forward-kl-a\\checkpoint.json",
+    "sha256": "df6397b24b395bab3ef4d186bee3da1a6e7cbed879ac4f9babe314544d49d249"
+   },
+   "frozen_tensor_sha256": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+   "scorer_bias_gauge": {
+    "anchor_preserved": true,
+    "cross_substep_bound": 9.954773080534147e-05,
+    "derived_absolute_bound": 0.00010252999060475675,
+    "high_precision_residual": -2.2632720350634905e-18,
+    "per_substep_bound_sum": 2.982259799415282e-06,
+    "raw_gradient_residual": -4.2246028897352517e-10,
+    "substep_count": 1210,
+    "within_bound": true
+   },
+   "teacher": {
+    "census": {
+     "censored_rollouts": 0,
+     "censored_roots": 0,
+     "complete_roots": 5,
+     "no_eligible_root_games": 0,
+     "physical_decisions": 32204,
+     "policy_steps": 37579,
+     "rollouts": 384,
+     "selected_roots": 5,
+     "teacher_games": 5
+    },
+    "census_by_list": {
+     "published-09972f4f8a1ff9d8": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 112,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-21659427193c1e62": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-44ae71e1e126b63d": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-6f07fa1e70875d83": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-8b2659507fe45b64": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 32,
+      "selected_roots": 1,
+      "teacher_games": 1
+     }
+    },
+    "coefficient": 0.1,
+    "cuda_envelope": {
+     "declared_envelope": 0.001,
+     "max_abs_log_probability_discrepancy": 3.7091152442769726e-06,
+     "max_host_refold_abs_discrepancy": 4.819468152339468e-08,
+     "roots": [
+      {
+       "bound": 0.04850670337677002,
+       "host_refold_abs_discrepancy": 4.819468152339468e-08,
+       "max_abs_log_probability_discrepancy": 3.588237267537764e-06,
+       "root": 0
+      },
+      {
+       "bound": 0.020991026878356932,
+       "host_refold_abs_discrepancy": 3.4673004106755556e-08,
+       "max_abs_log_probability_discrepancy": 2.95322504317852e-06,
+       "root": 1
+      },
+      {
+       "bound": 0.058008632659912115,
+       "host_refold_abs_discrepancy": 3.086735511637073e-08,
+       "max_abs_log_probability_discrepancy": 3.7091152442769726e-06,
+       "root": 2
+      },
+      {
+       "bound": 0.027280302047729493,
+       "host_refold_abs_discrepancy": 2.671621623928644e-08,
+       "max_abs_log_probability_discrepancy": 1.3301846599755862e-06,
+       "root": 3
+      },
+      {
+       "bound": 0.045190105438232424,
+       "host_refold_abs_discrepancy": 1.6456628421090969e-10,
+       "max_abs_log_probability_discrepancy": 2.846774139975139e-06,
+       "root": 4
+      }
+     ],
+     "within_bound": true,
+     "within_declared_envelope": true
+    },
+    "direction": "forward-kl",
+    "operator": "line-b-coupled-terminal-search-v1",
+    "packet": {
+     "path": "D:\\e-scratch\\astra-exit-teacher\\receipts\\acceptance-003\\cuda1-forward-kl-a\\line-b-teacher-packet.json",
+     "sha256": "e0df1c83960f13e0b7fce35eb81d477baa40e458e17a2aa49fd09eaee00d1939"
+    },
+    "permuted_control": {
+     "after_state_sha256": "9c358ec404dab1fabac61e474752e84150cd2b6a8b5d0d27b8893e62ecdb2648",
+     "auxiliary_head_l2": 0.39712247237187687,
+     "auxiliary_loss": 0.6162824227883723,
+     "backend": "cpu",
+     "divergences_before": [
+      3.357278741694459,
+      5.807859129165298,
+      15.707312145157704,
+      0.73024775050183,
+      5.2114233728993264
+     ],
+     "kinds": [
+      "within_root",
+      "across_root",
+      "across_root",
+      "across_root",
+      "within_root"
+     ],
+     "rescore_after": [
+      2.8629772513812535e-05,
+      4.9189151316581924e-06,
+      1.6105060347373996e-07,
+      5.790865222888002e-06,
+      0.0008335457494003697
+     ]
+    },
+    "rollouts": 16,
+    "schema": "mtg-kernel-line-b-teacher-packet/v1",
+    "target": "line-b-teacher-target-f64-v1",
+    "teacher_seconds": 8.5101097,
+    "telemetry": {
+     "auxiliary_bias_residual": -1.877197064459324e-09,
+     "auxiliary_head_l2": 0.0006938886833263128,
+     "auxiliary_loss": 1.7334473063363968e-05,
+     "head_l2_ratio": 0.0038241768939768304,
+     "ordinary_head_l2": 0.181447852064376,
+     "roots": [
+      {
+       "decision_index": 44,
+       "divergence_before": 2.775971127821373e-12,
+       "rescore_after": 1.2608533901637634e-07,
+       "rescore_before": 0.0,
+       "signed_difference": 1.2608533901637634e-07,
+       "trajectory_index": 0
+      },
+      {
+       "decision_index": 58,
+       "divergence_before": 2.065995048592952e-13,
+       "rescore_after": 1.2924057766339333e-08,
+       "rescore_before": 0.0,
+       "signed_difference": 1.2924057766339333e-08,
+       "trajectory_index": 1
+      },
+      {
+       "decision_index": 5,
+       "divergence_before": 7.621591340677385e-09,
+       "rescore_after": 7.945736673951787e-09,
+       "rescore_before": 7.617045941483367e-09,
+       "signed_difference": 3.2869073246842045e-10,
+       "trajectory_index": 2
+      },
+      {
+       "decision_index": 615,
+       "divergence_before": 2.783519249338795e-13,
+       "rescore_after": 1.5733091473612952e-08,
+       "rescore_before": 0.0,
+       "signed_difference": 1.5733091473612952e-08,
+       "trajectory_index": 3
+      },
+      {
+       "decision_index": 264,
+       "divergence_before": 0.0008667160283159351,
+       "rescore_after": 0.0008693366169236021,
+       "rescore_before": 0.0008667251961329871,
+       "signed_difference": 2.6114207906150454e-06,
+       "trajectory_index": 6
+      }
+     ]
+    },
+    "temperature": 0.25
+   }
+  },
+  "cuda1-forward-kl-b": {
+   "seconds": 25.636,
+   "before_state_sha256": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+   "after_state_sha256": "83802b8b8e83e179c1b21a985fa9b0848011dbe3a47f24729d3cdd3a2612391a",
+   "adam_step": 32401,
+   "checkpoint": {
+    "path": "D:\\e-scratch\\astra-exit-teacher\\receipts\\acceptance-003\\cuda1-forward-kl-b\\checkpoint.json",
+    "sha256": "df6397b24b395bab3ef4d186bee3da1a6e7cbed879ac4f9babe314544d49d249"
+   },
+   "frozen_tensor_sha256": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+   "scorer_bias_gauge": {
+    "anchor_preserved": true,
+    "cross_substep_bound": 9.954773080534147e-05,
+    "derived_absolute_bound": 0.00010252999060475675,
+    "high_precision_residual": -2.2632720350634905e-18,
+    "per_substep_bound_sum": 2.982259799415282e-06,
+    "raw_gradient_residual": -4.2246028897352517e-10,
+    "substep_count": 1210,
+    "within_bound": true
+   },
+   "teacher": {
+    "census": {
+     "censored_rollouts": 0,
+     "censored_roots": 0,
+     "complete_roots": 5,
+     "no_eligible_root_games": 0,
+     "physical_decisions": 32204,
+     "policy_steps": 37579,
+     "rollouts": 384,
+     "selected_roots": 5,
+     "teacher_games": 5
+    },
+    "census_by_list": {
+     "published-09972f4f8a1ff9d8": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 112,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-21659427193c1e62": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-44ae71e1e126b63d": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-6f07fa1e70875d83": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-8b2659507fe45b64": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 32,
+      "selected_roots": 1,
+      "teacher_games": 1
+     }
+    },
+    "coefficient": 0.1,
+    "cuda_envelope": {
+     "declared_envelope": 0.001,
+     "max_abs_log_probability_discrepancy": 3.7091152442769726e-06,
+     "max_host_refold_abs_discrepancy": 4.819468152339468e-08,
+     "roots": [
+      {
+       "bound": 0.04850670337677002,
+       "host_refold_abs_discrepancy": 4.819468152339468e-08,
+       "max_abs_log_probability_discrepancy": 3.588237267537764e-06,
+       "root": 0
+      },
+      {
+       "bound": 0.020991026878356932,
+       "host_refold_abs_discrepancy": 3.4673004106755556e-08,
+       "max_abs_log_probability_discrepancy": 2.95322504317852e-06,
+       "root": 1
+      },
+      {
+       "bound": 0.058008632659912115,
+       "host_refold_abs_discrepancy": 3.086735511637073e-08,
+       "max_abs_log_probability_discrepancy": 3.7091152442769726e-06,
+       "root": 2
+      },
+      {
+       "bound": 0.027280302047729493,
+       "host_refold_abs_discrepancy": 2.671621623928644e-08,
+       "max_abs_log_probability_discrepancy": 1.3301846599755862e-06,
+       "root": 3
+      },
+      {
+       "bound": 0.045190105438232424,
+       "host_refold_abs_discrepancy": 1.6456628421090969e-10,
+       "max_abs_log_probability_discrepancy": 2.846774139975139e-06,
+       "root": 4
+      }
+     ],
+     "within_bound": true,
+     "within_declared_envelope": true
+    },
+    "direction": "forward-kl",
+    "operator": "line-b-coupled-terminal-search-v1",
+    "packet": {
+     "path": "D:\\e-scratch\\astra-exit-teacher\\receipts\\acceptance-003\\cuda1-forward-kl-b\\line-b-teacher-packet.json",
+     "sha256": "e0df1c83960f13e0b7fce35eb81d477baa40e458e17a2aa49fd09eaee00d1939"
+    },
+    "permuted_control": {
+     "after_state_sha256": "9c358ec404dab1fabac61e474752e84150cd2b6a8b5d0d27b8893e62ecdb2648",
+     "auxiliary_head_l2": 0.39712247237187687,
+     "auxiliary_loss": 0.6162824227883723,
+     "backend": "cpu",
+     "divergences_before": [
+      3.357278741694459,
+      5.807859129165298,
+      15.707312145157704,
+      0.73024775050183,
+      5.2114233728993264
+     ],
+     "kinds": [
+      "within_root",
+      "across_root",
+      "across_root",
+      "across_root",
+      "within_root"
+     ],
+     "rescore_after": [
+      2.8629772513812535e-05,
+      4.9189151316581924e-06,
+      1.6105060347373996e-07,
+      5.790865222888002e-06,
+      0.0008335457494003697
+     ]
+    },
+    "rollouts": 16,
+    "schema": "mtg-kernel-line-b-teacher-packet/v1",
+    "target": "line-b-teacher-target-f64-v1",
+    "teacher_seconds": 8.6993374,
+    "telemetry": {
+     "auxiliary_bias_residual": -1.877197064459324e-09,
+     "auxiliary_head_l2": 0.0006938886833263128,
+     "auxiliary_loss": 1.7334473063363968e-05,
+     "head_l2_ratio": 0.0038241768939768304,
+     "ordinary_head_l2": 0.181447852064376,
+     "roots": [
+      {
+       "decision_index": 44,
+       "divergence_before": 2.775971127821373e-12,
+       "rescore_after": 1.2608533901637634e-07,
+       "rescore_before": 0.0,
+       "signed_difference": 1.2608533901637634e-07,
+       "trajectory_index": 0
+      },
+      {
+       "decision_index": 58,
+       "divergence_before": 2.065995048592952e-13,
+       "rescore_after": 1.2924057766339333e-08,
+       "rescore_before": 0.0,
+       "signed_difference": 1.2924057766339333e-08,
+       "trajectory_index": 1
+      },
+      {
+       "decision_index": 5,
+       "divergence_before": 7.621591340677385e-09,
+       "rescore_after": 7.945736673951787e-09,
+       "rescore_before": 7.617045941483367e-09,
+       "signed_difference": 3.2869073246842045e-10,
+       "trajectory_index": 2
+      },
+      {
+       "decision_index": 615,
+       "divergence_before": 2.783519249338795e-13,
+       "rescore_after": 1.5733091473612952e-08,
+       "rescore_before": 0.0,
+       "signed_difference": 1.5733091473612952e-08,
+       "trajectory_index": 3
+      },
+      {
+       "decision_index": 264,
+       "divergence_before": 0.0008667160283159351,
+       "rescore_after": 0.0008693366169236021,
+       "rescore_before": 0.0008667251961329871,
+       "signed_difference": 2.6114207906150454e-06,
+       "trajectory_index": 6
+      }
+     ]
+    },
+    "temperature": 0.25
+   }
+  },
+  "cpu-control-a": {
+   "seconds": 3.426,
+   "before_state_sha256": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+   "after_state_sha256": "68c49454e2b9a094654e7f0bd923beb15ba99a679da645c69a2eaf2e9385a72b",
+   "adam_step": 32401,
+   "checkpoint": {
+    "path": "D:\\e-scratch\\astra-exit-teacher\\receipts\\acceptance-003\\cpu-control-a\\checkpoint.json",
+    "sha256": "c044cabc2416a42062506eec6bcfd5f4c7a924c9cfe18e44d43db380d7026b51"
+   },
+   "frozen_tensor_sha256": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+   "scorer_bias_gauge": {
+    "anchor_preserved": true,
+    "cross_substep_bound": 9.911759150962997e-05,
+    "derived_absolute_bound": 0.00010209948403943501,
+    "high_precision_residual": 8.023096076392733e-18,
+    "per_substep_bound_sum": 2.9818925298050422e-06,
+    "raw_gradient_residual": 1.862645149230957e-09,
+    "substep_count": 1205,
+    "within_bound": true
+   },
+   "teacher": null
+  },
+  "cpu-control-b": {
+   "seconds": 3.447,
+   "before_state_sha256": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+   "after_state_sha256": "68c49454e2b9a094654e7f0bd923beb15ba99a679da645c69a2eaf2e9385a72b",
+   "adam_step": 32401,
+   "checkpoint": {
+    "path": "D:\\e-scratch\\astra-exit-teacher\\receipts\\acceptance-003\\cpu-control-b\\checkpoint.json",
+    "sha256": "c044cabc2416a42062506eec6bcfd5f4c7a924c9cfe18e44d43db380d7026b51"
+   },
+   "frozen_tensor_sha256": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+   "scorer_bias_gauge": {
+    "anchor_preserved": true,
+    "cross_substep_bound": 9.911759150962997e-05,
+    "derived_absolute_bound": 0.00010209948403943501,
+    "high_precision_residual": 8.023096076392733e-18,
+    "per_substep_bound_sum": 2.9818925298050422e-06,
+    "raw_gradient_residual": 1.862645149230957e-09,
+    "substep_count": 1205,
+    "within_bound": true
+   },
+   "teacher": null
+  },
+  "cpu-reverse-kl-a": {
+   "seconds": 14.337,
+   "before_state_sha256": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+   "after_state_sha256": "b240f95f235957b55887b89ed3943f79f6995abf466bb06d0ca0413099fb6356",
+   "adam_step": 32401,
+   "checkpoint": {
+    "path": "D:\\e-scratch\\astra-exit-teacher\\receipts\\acceptance-003\\cpu-reverse-kl-a\\checkpoint.json",
+    "sha256": "9e526a299bba78b491d86bbfdbcb9ed39b5365ded0644486c5ec1ff78ca0e664"
+   },
+   "frozen_tensor_sha256": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+   "scorer_bias_gauge": {
+    "anchor_preserved": true,
+    "cross_substep_bound": 9.954352431133052e-05,
+    "derived_absolute_bound": 0.00010252548773064106,
+    "high_precision_residual": 8.029872339970767e-18,
+    "per_substep_bound_sum": 2.981963419310536e-06,
+    "raw_gradient_residual": 1.862645149230957e-09,
+    "substep_count": 1210,
+    "within_bound": true
+   },
+   "teacher": {
+    "census": {
+     "censored_rollouts": 0,
+     "censored_roots": 0,
+     "complete_roots": 5,
+     "no_eligible_root_games": 0,
+     "physical_decisions": 32204,
+     "policy_steps": 37579,
+     "rollouts": 384,
+     "selected_roots": 5,
+     "teacher_games": 5
+    },
+    "census_by_list": {
+     "published-09972f4f8a1ff9d8": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 112,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-21659427193c1e62": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-44ae71e1e126b63d": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-6f07fa1e70875d83": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-8b2659507fe45b64": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 32,
+      "selected_roots": 1,
+      "teacher_games": 1
+     }
+    },
+    "coefficient": 0.1,
+    "direction": "reverse-kl",
+    "operator": "line-b-coupled-terminal-search-v1",
+    "packet": {
+     "path": "D:\\e-scratch\\astra-exit-teacher\\receipts\\acceptance-003\\cpu-reverse-kl-a\\line-b-teacher-packet.json",
+     "sha256": "13d02e924b8ed0619f7cf3456d491c56bd09ef4b0918392598045d5cbaeecdfc"
+    },
+    "permuted_control": {
+     "after_state_sha256": "a5fa7825e59cf2a24632f5fda8d9f8153d92f4ff49cd9728ebcfded27cfeb2fe",
+     "auxiliary_head_l2": 0.4754012876079454,
+     "auxiliary_loss": 0.718376488742959,
+     "backend": "cpu",
+     "divergences_before": [
+      2.1765978936663415,
+      25.535312191417198,
+      2.522354189013352,
+      0.9343386800351217,
+      4.750221483015929
+     ],
+     "kinds": [
+      "within_root",
+      "across_root",
+      "across_root",
+      "across_root",
+      "within_root"
+     ],
+     "rescore_after": [
+      9.884007264882152e-06,
+      0.00015105877169545139,
+      2.858073527769974e-06,
+      2.600835486183257e-06,
+      0.0007337296256043195
+     ]
+    },
+    "rollouts": 16,
+    "schema": "mtg-kernel-line-b-teacher-packet/v1",
+    "target": "line-b-teacher-target-f64-v1",
+    "teacher_seconds": 8.4937089,
+    "telemetry": {
+     "auxiliary_bias_residual": 0.0,
+     "auxiliary_head_l2": 0.0005365362274582028,
+     "auxiliary_loss": 1.4709519757033839e-05,
+     "head_l2_ratio": 0.002956971896039316,
+     "ordinary_head_l2": 0.18144786163739343,
+     "roots": [
+      {
+       "decision_index": 44,
+       "divergence_before": 0.0,
+       "rescore_after": 1.2695614852548608e-07,
+       "rescore_before": 0.0,
+       "signed_difference": 1.2695614852548608e-07,
+       "trajectory_index": 0
+      },
+      {
+       "decision_index": 58,
+       "divergence_before": 0.0,
+       "rescore_after": 1.2925413746581703e-08,
+       "rescore_before": 0.0,
+       "signed_difference": 1.2925413746581703e-08,
+       "trajectory_index": 1
+      },
+      {
+       "decision_index": 5,
+       "divergence_before": 5.47118563281372e-09,
+       "rescore_after": 5.8299466682595954e-09,
+       "rescore_before": 5.47118563281372e-09,
+       "signed_difference": 3.5876103544587544e-10,
+       "trajectory_index": 2
+      },
+      {
+       "decision_index": 615,
+       "divergence_before": 0.0,
+       "rescore_after": 1.5621523937966748e-08,
+       "rescore_before": 0.0,
+       "signed_difference": 1.5621523937966748e-08,
+       "trajectory_index": 3
+      },
+      {
+       "decision_index": 264,
+       "divergence_before": 0.0007354705166660591,
+       "rescore_after": 0.0007375460816988815,
+       "rescore_before": 0.0007354705166660591,
+       "signed_difference": 2.0755650328224337e-06,
+       "trajectory_index": 6
+      }
+     ]
+    },
+    "temperature": 0.25
+   }
+  },
+  "cpu-reverse-kl-b": {
+   "seconds": 14.237,
+   "before_state_sha256": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+   "after_state_sha256": "b240f95f235957b55887b89ed3943f79f6995abf466bb06d0ca0413099fb6356",
+   "adam_step": 32401,
+   "checkpoint": {
+    "path": "D:\\e-scratch\\astra-exit-teacher\\receipts\\acceptance-003\\cpu-reverse-kl-b\\checkpoint.json",
+    "sha256": "9e526a299bba78b491d86bbfdbcb9ed39b5365ded0644486c5ec1ff78ca0e664"
+   },
+   "frozen_tensor_sha256": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+   "scorer_bias_gauge": {
+    "anchor_preserved": true,
+    "cross_substep_bound": 9.954352431133052e-05,
+    "derived_absolute_bound": 0.00010252548773064106,
+    "high_precision_residual": 8.029872339970767e-18,
+    "per_substep_bound_sum": 2.981963419310536e-06,
+    "raw_gradient_residual": 1.862645149230957e-09,
+    "substep_count": 1210,
+    "within_bound": true
+   },
+   "teacher": {
+    "census": {
+     "censored_rollouts": 0,
+     "censored_roots": 0,
+     "complete_roots": 5,
+     "no_eligible_root_games": 0,
+     "physical_decisions": 32204,
+     "policy_steps": 37579,
+     "rollouts": 384,
+     "selected_roots": 5,
+     "teacher_games": 5
+    },
+    "census_by_list": {
+     "published-09972f4f8a1ff9d8": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 112,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-21659427193c1e62": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-44ae71e1e126b63d": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-6f07fa1e70875d83": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-8b2659507fe45b64": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 32,
+      "selected_roots": 1,
+      "teacher_games": 1
+     }
+    },
+    "coefficient": 0.1,
+    "direction": "reverse-kl",
+    "operator": "line-b-coupled-terminal-search-v1",
+    "packet": {
+     "path": "D:\\e-scratch\\astra-exit-teacher\\receipts\\acceptance-003\\cpu-reverse-kl-b\\line-b-teacher-packet.json",
+     "sha256": "13d02e924b8ed0619f7cf3456d491c56bd09ef4b0918392598045d5cbaeecdfc"
+    },
+    "permuted_control": {
+     "after_state_sha256": "a5fa7825e59cf2a24632f5fda8d9f8153d92f4ff49cd9728ebcfded27cfeb2fe",
+     "auxiliary_head_l2": 0.4754012876079454,
+     "auxiliary_loss": 0.718376488742959,
+     "backend": "cpu",
+     "divergences_before": [
+      2.1765978936663415,
+      25.535312191417198,
+      2.522354189013352,
+      0.9343386800351217,
+      4.750221483015929
+     ],
+     "kinds": [
+      "within_root",
+      "across_root",
+      "across_root",
+      "across_root",
+      "within_root"
+     ],
+     "rescore_after": [
+      9.884007264882152e-06,
+      0.00015105877169545139,
+      2.858073527769974e-06,
+      2.600835486183257e-06,
+      0.0007337296256043195
+     ]
+    },
+    "rollouts": 16,
+    "schema": "mtg-kernel-line-b-teacher-packet/v1",
+    "target": "line-b-teacher-target-f64-v1",
+    "teacher_seconds": 8.3873438,
+    "telemetry": {
+     "auxiliary_bias_residual": 0.0,
+     "auxiliary_head_l2": 0.0005365362274582028,
+     "auxiliary_loss": 1.4709519757033839e-05,
+     "head_l2_ratio": 0.002956971896039316,
+     "ordinary_head_l2": 0.18144786163739343,
+     "roots": [
+      {
+       "decision_index": 44,
+       "divergence_before": 0.0,
+       "rescore_after": 1.2695614852548608e-07,
+       "rescore_before": 0.0,
+       "signed_difference": 1.2695614852548608e-07,
+       "trajectory_index": 0
+      },
+      {
+       "decision_index": 58,
+       "divergence_before": 0.0,
+       "rescore_after": 1.2925413746581703e-08,
+       "rescore_before": 0.0,
+       "signed_difference": 1.2925413746581703e-08,
+       "trajectory_index": 1
+      },
+      {
+       "decision_index": 5,
+       "divergence_before": 5.47118563281372e-09,
+       "rescore_after": 5.8299466682595954e-09,
+       "rescore_before": 5.47118563281372e-09,
+       "signed_difference": 3.5876103544587544e-10,
+       "trajectory_index": 2
+      },
+      {
+       "decision_index": 615,
+       "divergence_before": 0.0,
+       "rescore_after": 1.5621523937966748e-08,
+       "rescore_before": 0.0,
+       "signed_difference": 1.5621523937966748e-08,
+       "trajectory_index": 3
+      },
+      {
+       "decision_index": 264,
+       "divergence_before": 0.0007354705166660591,
+       "rescore_after": 0.0007375460816988815,
+       "rescore_before": 0.0007354705166660591,
+       "signed_difference": 2.0755650328224337e-06,
+       "trajectory_index": 6
+      }
+     ]
+    },
+    "temperature": 0.25
+   }
+  },
+  "cpu-forward-kl-a": {
+   "seconds": 14.288,
+   "before_state_sha256": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+   "after_state_sha256": "55e4fec4a513123dec588b6513e440ccbcfc316f9332c8003ff5a6e5fa0e9dd1",
+   "adam_step": 32401,
+   "checkpoint": {
+    "path": "D:\\e-scratch\\astra-exit-teacher\\receipts\\acceptance-003\\cpu-forward-kl-a\\checkpoint.json",
+    "sha256": "d131d6f4e11245a4d5f14be26e4d4b7ffde4d09c36fde5d24c2eab6f149e79b8"
+   },
+   "frozen_tensor_sha256": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+   "scorer_bias_gauge": {
+    "anchor_preserved": true,
+    "cross_substep_bound": 9.954771367769892e-05,
+    "derived_absolute_bound": 0.00010252969788650444,
+    "high_precision_residual": 7.440337408681774e-18,
+    "per_substep_bound_sum": 2.9819842088055286e-06,
+    "raw_gradient_residual": 1.862645149230957e-09,
+    "substep_count": 1210,
+    "within_bound": true
+   },
+   "teacher": {
+    "census": {
+     "censored_rollouts": 0,
+     "censored_roots": 0,
+     "complete_roots": 5,
+     "no_eligible_root_games": 0,
+     "physical_decisions": 32204,
+     "policy_steps": 37579,
+     "rollouts": 384,
+     "selected_roots": 5,
+     "teacher_games": 5
+    },
+    "census_by_list": {
+     "published-09972f4f8a1ff9d8": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 112,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-21659427193c1e62": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-44ae71e1e126b63d": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-6f07fa1e70875d83": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-8b2659507fe45b64": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 32,
+      "selected_roots": 1,
+      "teacher_games": 1
+     }
+    },
+    "coefficient": 0.1,
+    "direction": "forward-kl",
+    "operator": "line-b-coupled-terminal-search-v1",
+    "packet": {
+     "path": "D:\\e-scratch\\astra-exit-teacher\\receipts\\acceptance-003\\cpu-forward-kl-a\\line-b-teacher-packet.json",
+     "sha256": "e0df1c83960f13e0b7fce35eb81d477baa40e458e17a2aa49fd09eaee00d1939"
+    },
+    "permuted_control": {
+     "after_state_sha256": "9c358ec404dab1fabac61e474752e84150cd2b6a8b5d0d27b8893e62ecdb2648",
+     "auxiliary_head_l2": 0.39712247237187687,
+     "auxiliary_loss": 0.6162824227883723,
+     "backend": "cpu",
+     "divergences_before": [
+      3.357278741694459,
+      5.807859129165298,
+      15.707312145157704,
+      0.73024775050183,
+      5.2114233728993264
+     ],
+     "kinds": [
+      "within_root",
+      "across_root",
+      "across_root",
+      "across_root",
+      "within_root"
+     ],
+     "rescore_after": [
+      2.8629772513812535e-05,
+      4.9189151316581924e-06,
+      1.6105060347373996e-07,
+      5.790865222888002e-06,
+      0.0008335457494003697
+     ]
+    },
+    "rollouts": 16,
+    "schema": "mtg-kernel-line-b-teacher-packet/v1",
+    "target": "line-b-teacher-target-f64-v1",
+    "teacher_seconds": 8.429719,
+    "telemetry": {
+     "auxiliary_bias_residual": 0.0,
+     "auxiliary_head_l2": 0.0006938828905479485,
+     "auxiliary_loss": 1.7334656263578572e-05,
+     "head_l2_ratio": 0.003824144766911657,
+     "ordinary_head_l2": 0.18144786163739343,
+     "roots": [
+      {
+       "decision_index": 44,
+       "divergence_before": 0.0,
+       "rescore_after": 1.2608533901637634e-07,
+       "rescore_before": 0.0,
+       "signed_difference": 1.2608533901637634e-07,
+       "trajectory_index": 0
+      },
+      {
+       "decision_index": 58,
+       "divergence_before": 0.0,
+       "rescore_after": 1.2924176632573463e-08,
+       "rescore_before": 0.0,
+       "signed_difference": 1.2924176632573463e-08,
+       "trajectory_index": 1
+      },
+      {
+       "decision_index": 5,
+       "divergence_before": 7.617045941483367e-09,
+       "rescore_after": 7.945736673951787e-09,
+       "rescore_before": 7.617045941483367e-09,
+       "signed_difference": 3.2869073246842045e-10,
+       "trajectory_index": 2
+      },
+      {
+       "decision_index": 615,
+       "divergence_before": 0.0,
+       "rescore_after": 1.573218105995497e-08,
+       "rescore_before": 0.0,
+       "signed_difference": 1.573218105995497e-08,
+       "trajectory_index": 3
+      },
+      {
+       "decision_index": 264,
+       "divergence_before": 0.0008667251961329871,
+       "rescore_after": 0.0008693366169236021,
+       "rescore_before": 0.0008667251961329871,
+       "signed_difference": 2.6114207906150454e-06,
+       "trajectory_index": 6
+      }
+     ]
+    },
+    "temperature": 0.25
+   }
+  },
+  "cpu-forward-kl-b": {
+   "seconds": 14.22,
+   "before_state_sha256": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+   "after_state_sha256": "55e4fec4a513123dec588b6513e440ccbcfc316f9332c8003ff5a6e5fa0e9dd1",
+   "adam_step": 32401,
+   "checkpoint": {
+    "path": "D:\\e-scratch\\astra-exit-teacher\\receipts\\acceptance-003\\cpu-forward-kl-b\\checkpoint.json",
+    "sha256": "d131d6f4e11245a4d5f14be26e4d4b7ffde4d09c36fde5d24c2eab6f149e79b8"
+   },
+   "frozen_tensor_sha256": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+   "scorer_bias_gauge": {
+    "anchor_preserved": true,
+    "cross_substep_bound": 9.954771367769892e-05,
+    "derived_absolute_bound": 0.00010252969788650444,
+    "high_precision_residual": 7.440337408681774e-18,
+    "per_substep_bound_sum": 2.9819842088055286e-06,
+    "raw_gradient_residual": 1.862645149230957e-09,
+    "substep_count": 1210,
+    "within_bound": true
+   },
+   "teacher": {
+    "census": {
+     "censored_rollouts": 0,
+     "censored_roots": 0,
+     "complete_roots": 5,
+     "no_eligible_root_games": 0,
+     "physical_decisions": 32204,
+     "policy_steps": 37579,
+     "rollouts": 384,
+     "selected_roots": 5,
+     "teacher_games": 5
+    },
+    "census_by_list": {
+     "published-09972f4f8a1ff9d8": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 112,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-21659427193c1e62": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-44ae71e1e126b63d": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-6f07fa1e70875d83": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 80,
+      "selected_roots": 1,
+      "teacher_games": 1
+     },
+     "published-8b2659507fe45b64": {
+      "censored_rollouts": 0,
+      "censored_root_fraction": 0.0,
+      "censored_roots": 0,
+      "complete_roots": 1,
+      "no_eligible_root_games": 0,
+      "rollouts": 32,
+      "selected_roots": 1,
+      "teacher_games": 1
+     }
+    },
+    "coefficient": 0.1,
+    "direction": "forward-kl",
+    "operator": "line-b-coupled-terminal-search-v1",
+    "packet": {
+     "path": "D:\\e-scratch\\astra-exit-teacher\\receipts\\acceptance-003\\cpu-forward-kl-b\\line-b-teacher-packet.json",
+     "sha256": "e0df1c83960f13e0b7fce35eb81d477baa40e458e17a2aa49fd09eaee00d1939"
+    },
+    "permuted_control": {
+     "after_state_sha256": "9c358ec404dab1fabac61e474752e84150cd2b6a8b5d0d27b8893e62ecdb2648",
+     "auxiliary_head_l2": 0.39712247237187687,
+     "auxiliary_loss": 0.6162824227883723,
+     "backend": "cpu",
+     "divergences_before": [
+      3.357278741694459,
+      5.807859129165298,
+      15.707312145157704,
+      0.73024775050183,
+      5.2114233728993264
+     ],
+     "kinds": [
+      "within_root",
+      "across_root",
+      "across_root",
+      "across_root",
+      "within_root"
+     ],
+     "rescore_after": [
+      2.8629772513812535e-05,
+      4.9189151316581924e-06,
+      1.6105060347373996e-07,
+      5.790865222888002e-06,
+      0.0008335457494003697
+     ]
+    },
+    "rollouts": 16,
+    "schema": "mtg-kernel-line-b-teacher-packet/v1",
+    "target": "line-b-teacher-target-f64-v1",
+    "teacher_seconds": 8.3623045,
+    "telemetry": {
+     "auxiliary_bias_residual": 0.0,
+     "auxiliary_head_l2": 0.0006938828905479485,
+     "auxiliary_loss": 1.7334656263578572e-05,
+     "head_l2_ratio": 0.003824144766911657,
+     "ordinary_head_l2": 0.18144786163739343,
+     "roots": [
+      {
+       "decision_index": 44,
+       "divergence_before": 0.0,
+       "rescore_after": 1.2608533901637634e-07,
+       "rescore_before": 0.0,
+       "signed_difference": 1.2608533901637634e-07,
+       "trajectory_index": 0
+      },
+      {
+       "decision_index": 58,
+       "divergence_before": 0.0,
+       "rescore_after": 1.2924176632573463e-08,
+       "rescore_before": 0.0,
+       "signed_difference": 1.2924176632573463e-08,
+       "trajectory_index": 1
+      },
+      {
+       "decision_index": 5,
+       "divergence_before": 7.617045941483367e-09,
+       "rescore_after": 7.945736673951787e-09,
+       "rescore_before": 7.617045941483367e-09,
+       "signed_difference": 3.2869073246842045e-10,
+       "trajectory_index": 2
+      },
+      {
+       "decision_index": 615,
+       "divergence_before": 0.0,
+       "rescore_after": 1.573218105995497e-08,
+       "rescore_before": 0.0,
+       "signed_difference": 1.573218105995497e-08,
+       "trajectory_index": 3
+      },
+      {
+       "decision_index": 264,
+       "divergence_before": 0.0008667251961329871,
+       "rescore_after": 0.0008693366169236021,
+       "rescore_before": 0.0008667251961329871,
+       "signed_difference": 2.6114207906150454e-06,
+       "trajectory_index": 6
+      }
+     ]
+    },
+    "temperature": 0.25
+   }
+  }
+ },
+ "head_distance": {
+  "cuda1/reverse-kl": {
+   "l2": 8.051786610063718e-06,
+   "reference": "the control's L2 over the same tensors",
+   "reference_l2": 13.28496510248589,
+   "relative_l2": 6.060826316026275e-07,
+   "schema": "mtg-kernel-line-b-head-distance/v1",
+   "tensors": [
+    "scorer.0.weight",
+    "scorer.0.bias",
+    "scorer.2.weight",
+    "value_head.0.weight",
+    "value_head.0.bias",
+    "value_head.2.weight",
+    "value_head.2.bias"
+   ]
+  },
+  "cuda1/forward-kl": {
+   "l2": 1.0399159877329227e-05,
+   "reference": "the control's L2 over the same tensors",
+   "reference_l2": 13.28496510248589,
+   "relative_l2": 7.827766047637815e-07,
+   "schema": "mtg-kernel-line-b-head-distance/v1",
+   "tensors": [
+    "scorer.0.weight",
+    "scorer.0.bias",
+    "scorer.2.weight",
+    "value_head.0.weight",
+    "value_head.0.bias",
+    "value_head.2.weight",
+    "value_head.2.bias"
+   ]
+  },
+  "cpu/reverse-kl": {
+   "l2": 8.052135763435758e-06,
+   "reference": "the control's L2 over the same tensors",
+   "reference_l2": 13.284965102560202,
+   "relative_l2": 6.061089134426102e-07,
+   "schema": "mtg-kernel-line-b-head-distance/v1",
+   "tensors": [
+    "scorer.0.weight",
+    "scorer.0.bias",
+    "scorer.2.weight",
+    "value_head.0.weight",
+    "value_head.0.bias",
+    "value_head.2.weight",
+    "value_head.2.bias"
+   ]
+  },
+  "cpu/forward-kl": {
+   "l2": 1.0398987010721986e-05,
+   "reference": "the control's L2 over the same tensors",
+   "reference_l2": 13.284965102560202,
+   "relative_l2": 7.827635925605822e-07,
+   "schema": "mtg-kernel-line-b-head-distance/v1",
+   "tensors": [
+    "scorer.0.weight",
+    "scorer.0.bias",
+    "scorer.2.weight",
+    "value_head.0.weight",
+    "value_head.0.bias",
+    "value_head.2.weight",
+    "value_head.2.bias"
+   ]
+  }
+ },
+ "checks": {
+  "one_frozen_tensor_sha256": true,
+  "before_state_is_g115": true,
+  "one_combined_adam_step": true,
+  "gauge_within_bound": true,
+  "gauge_anchor_preserved": true,
+  "replays_identical": {
+   "cuda1/control": true,
+   "cuda1/reverse-kl": true,
+   "cuda1/forward-kl": true,
+   "cpu/control": true,
+   "cpu/reverse-kl": true,
+   "cpu/forward-kl": true
+  },
+  "one_packet_per_arm": {
+   "reverse-kl": true,
+   "forward-kl": true
+  },
+  "cuda_envelope_within_bound": true,
+  "cpu/reverse-kl_differs_from_control": true,
+  "cpu/forward-kl_differs_from_control": true,
+  "cuda1/reverse-kl_differs_from_control": true,
+  "cuda1/forward-kl_differs_from_control": true,
+  "parallel_collection_equals_serial": true
+ },
+ "serial_collect": {
+  "seconds": 4.587,
+  "trajectories_sha256": [
+   "71d7f5cc610530edf6222c9997a893f308665d409c89bad1b6aeab3cd570372b",
+   "a0b68af1ff96af12206a8f53164bc654ba36a63d09133046fa8ff6b69e13d80d",
+   "576ba877fee5fdc4c6c99fccf7abe66423a273f12a7c09c69e7391a35ffaf9cf",
+   "83c85d87fc6e447eb318b84dde726fdd9b1f6f78ca8ec9197fd08ce61ec557d0",
+   "ab2db973e0f00a8c558aeb5373adc67fbbfd5a26757ea1b8fcc01ebe41913414",
+   "b4cfe4f29b0470e2bf5f8694b611b73672b72c992e9801017a478d6aeff8a498",
+   "ce61b824d9cbfc3fe031ad5dd6b2ef3ba117f5dca0a6213b18091930aa343965",
+   "573f2caf2dac186532df4a3d1ec4865a8841b7189816220f96f83e0ba9f44f54",
+   "648c3a9cc20d50ebb8a83e65d1fbfe52b5b5de1243ebaaf53ebd94413101661e",
+   "9d5fddf7cbc59476ecf89f9e10bba5acd7a0c27c738a8b1f997240938de8535f"
+  ]
+ }
+}

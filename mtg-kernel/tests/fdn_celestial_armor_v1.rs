@@ -141,8 +141,8 @@ fn settle_new_entry_target(state: &mut GameState, target: ObjectId) {
 
 #[test]
 fn printed_artifact_flash_equipment_and_admission_are_exact() {
-    assert_eq!(card_id_by_name("Celestial Armor"), Some(204));
-    let card = &CARD_DEFS[204];
+    assert_eq!(card_id_by_name("Celestial Armor"), Some(234));
+    let card = &CARD_DEFS[234];
     assert_eq!(card.mana_value, 3);
     assert_eq!(card.cost.generic, 2);
     assert_eq!(card.cost.pips, &[Pip::Colored(ManaColor::W)]);
@@ -157,7 +157,7 @@ fn printed_artifact_flash_equipment_and_admission_are_exact() {
         card.activated_abilities[0].target_spec,
         TargetSpec::ControlledCreature
     );
-    preflight_fully_supported_deck(&[204]).unwrap();
+    preflight_fully_supported_deck(&[234]).unwrap();
     println!("FDN v48 hash: {KERNEL_CARDDB_HASH:016x}");
 }
 

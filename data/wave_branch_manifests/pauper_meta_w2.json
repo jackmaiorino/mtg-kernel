@@ -1,0 +1,38 @@
+{
+  "schema": "kernel_wave_branch_manifest/v1",
+  "wave": "pauper_meta_w2",
+  "cards": {
+    "Urza's Tower": {
+      "post_board": false,
+      "branches": ["adds_one_colorless_without_the_other_pieces", "adds_three_colorless_with_assembled_tron", "a_second_copy_of_the_same_piece_does_not_assemble_tron", "one_tap_pays_a_three_generic_cost_automatically", "unspent_yield_floats_as_colorless_mana", "yield_returns_to_one_after_a_piece_leaves"]
+    },
+    "Urza's Power Plant": {
+      "post_board": false,
+      "branches": ["adds_one_colorless_without_the_other_pieces", "adds_two_colorless_with_assembled_tron"]
+    },
+    "Urza's Mine": {
+      "post_board": false,
+      "branches": ["adds_one_colorless_without_the_other_pieces", "adds_two_colorless_with_assembled_tron"]
+    },
+    "Bojuka Bog": {
+      "post_board": false,
+      "branches": ["enters_tapped", "etb_exiles_the_targeted_players_graveyard", "target_choice_selects_between_either_player", "taps_for_black"]
+    },
+    "Conduit Pylons": {
+      "post_board": false,
+      "branches": ["etb_surveil_keep_on_top", "etb_surveil_put_into_graveyard", "free_ability_taps_for_colorless", "paid_ability_needs_another_source_and_yields_chosen_color"]
+    },
+    "Expedition Map": {
+      "post_board": false,
+      "branches": ["fetches_a_basic_land", "nonbasic_land_is_an_equally_legal_candidate", "sacrificed_after_activation", "library_is_shuffled"]
+    },
+    "Bonder's Ornament": {
+      "post_board": false,
+      "branches": ["taps_for_any_color", "controller_alone_draws_one", "both_players_controlling_the_name_both_draw", "only_the_opponent_controls_it_and_only_they_draw"]
+    },
+    "Barrels of Blasting Jelly": {
+      "post_board": false,
+      "branches": ["tapless_ability_offered_then_capped_once_per_turn", "cap_resets_next_turn", "damage_ability_deals_five_to_target_creature", "sacrificed_after_the_damage_ability"]
+    }
+  }
+}

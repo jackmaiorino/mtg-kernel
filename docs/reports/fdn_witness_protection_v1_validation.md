@@ -85,3 +85,16 @@ and rejection mutation. Production ranking and the separate fastest-allocation
 test stay unchanged. The repaired focused test passed on Jack's PC in 11.616s.
 Hosted verification of the repair is pending; avoid cancelling the active
 Witness workflow for a report-only update.
+
+## Current-main integration
+
+The Witness prefix incorporates Armor d4f02b41 and main's
+192-definition/v34 catalog. Its generated Limited identity is 236
+definitions/v51 bd1385731e43c4a1; the appended Witness ID is 235. Original and
+prior composed records remain readable; mutations require the live identity.
+Layer timestamp fields coexist with Adventure eligibility. The custom object
+hash retains main's Adventure bit before appending optional layer stamps.
+The typed reference walk retains the removed-ability event's physical object;
+a regression distinguishes the referenced object from an unrelated one.
+Catalog generation, formatting, workflow lint and diff checks pass locally;
+composed-source rules, replay and complete Rust qualification are pending.
