@@ -114,7 +114,7 @@ fn restored(state: &GameState) -> GameState {
 #[test]
 fn definition_cost_and_creature_aura_admission() {
     let id = card_id_by_name("Witness Protection").unwrap();
-    assert_eq!(id, 205);
+    assert_eq!(id, 235);
     let definition = &CARD_DEFS[id as usize];
     assert_eq!(definition.mana_value, 1);
     assert_eq!(definition.colors, &[ManaColor::U]);

@@ -89,3 +89,14 @@ was confirmed live while preparing this batch, and the Haley Q006 owner posted
 continued actual activity at13:25EDT. No heavy local/remote kernel or main Java
 build was started. Hosted CI supplies Rust and bounded reference verification;
 all subsequent local checks preserve those owners and actual release sequencing.
+
+## Current-main integration
+
+London incorporates Witness 226929f5, including main fe479186. It adds no card
+or catalog definitions: the default 192-definition/v34 and Limited
+236-definition/v51 bd1385731e43c4a1 identities remain. The public observation
+preserves London's pregame fields and main's shared combat projection.
+All 21 fixture integration targets, the original fixed seeds, exact replay
+and pending-bottom restore are retained. Local formatting, workflow lint,
+Python deck/session checks and diff checks pass; final composed-source
+Linux/Windows gameplay and regression qualification is pending.

@@ -61,3 +61,28 @@ Windows execution remains required. Formatting/all-feature lint and all four
 Python shards passed. The full Windows Rust job is still running.
 The existing healthy PR136 through139 jobs keep running on their original
 sources. This isolated follow-up does not cancel them or claim either PC.
+
+The complete Ubuntu job111036127712 at36d54594 passed all21 integration
+executables/345cases, all nine grouped library filters, default regressions
+and host-safe CUDA checks. The isolated snapshot case passed at4.81microseconds.
+Windows job111036127744 passed Witness, original London games and pending
+restore, default regressions, and the isolated snapshot case at18.858microseconds.
+It then failed native feature compilation with
+`native_store_rustc_path_not_drive_absolute`: the step's temporary toolchain
+path contains mixed separators. The native validator rejects forward slashes.
+The workflow now normalizes Windows RUSTUP_HOME and the explicitly pinned
+RUSTC path with cygpath before publishing them through GITHUB_ENV. Keep the
+validator and compiler/linker pins unchanged. Local path conversion, exact
+Rust1.94.1 invocation, workflow lint and diff checks passed. Hosted native
+compilation and complete Windows checks for the correction remain pending.
+
+## Current-main composition
+
+The final stack includes main fe479186, London mulligans, all 21 fixture
+integration targets and the actual `current_profile_record_round_trips` filter.
+The workspace runner accepts the workflow's `--no-fail-fast` argument and uses
+`--include-ignored --exact --test-threads=1` for the unchanged snapshot timing
+case. The Windows bootstrap retains normalized `RUSTUP_HOME` without exporting
+`RUSTC`: Kiora job 111079733482 demonstrated that this override is correctly
+rejected by the existing compile-time build guard. Composed-source complete
+Linux/Windows, native capture and CUDA qualification is pending.

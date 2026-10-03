@@ -65,3 +65,13 @@ its small manifest. Binary SHA-256
 bounded steps but lacked a live output-byte guardian; its manifest records
 that limitation and was written after completion. Future launches use the
 existing guarded launcher. No substantial simulation or GPU work occurred.
+
+## Current-main integration
+
+The Scavenging prefix incorporates Voyage 5b3fa367 and main's 192-definition/v34
+catalog. Its generated Limited identity is 234 definitions/v49
+592f678756e75cf5. Original and earlier composed catalog tuples remain readable,
+with mutation restricted to the live identity. Existing card, token, modal and
+restore scenarios remain in the grouped hosted checks. Catalog generation,
+formatting, workflow lint and diff checks pass locally; composed-source Rust
+qualification is pending.

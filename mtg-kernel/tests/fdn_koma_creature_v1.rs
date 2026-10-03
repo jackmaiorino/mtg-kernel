@@ -213,9 +213,9 @@ fn assign(state: &mut GameState, amounts: &[(ObjectId, Target, i32)]) {
 
 #[test]
 fn printed_koma_and_coils_have_exact_costs_characteristics_and_admission() {
-    assert_eq!(card_id_by_name("Koma, World-Eater"), Some(195));
-    assert_eq!(card_id_by_name("Koma's Coil Token"), Some(196));
-    let koma = &CARD_DEFS[195];
+    assert_eq!(card_id_by_name("Koma, World-Eater"), Some(225));
+    assert_eq!(card_id_by_name("Koma's Coil Token"), Some(226));
+    let koma = &CARD_DEFS[225];
     assert_eq!(
         (koma.power, koma.toughness, koma.mana_value),
         (Some(8), Some(12), 7)
@@ -236,7 +236,7 @@ fn printed_koma_and_coils_have_exact_costs_characteristics_and_admission() {
     assert!(koma.keywords.has(Keywords::TRAMPLE));
     assert_eq!(koma.ward_cost, Some(WardCostDef::Generic(4)));
     assert!(koma.spell_cannot_be_countered);
-    let coil = &CARD_DEFS[196];
+    let coil = &CARD_DEFS[226];
     assert_eq!(coil.object_name, "Koma's Coil");
     assert_eq!(
         (coil.power, coil.toughness, coil.mana_value),
@@ -249,8 +249,8 @@ fn printed_koma_and_coils_have_exact_costs_characteristics_and_admission() {
     assert!(!coil.spell_cannot_be_countered);
     assert_eq!(coil.ward_cost, None);
     assert!(coil.is_token);
-    preflight_fully_supported_deck(&[195]).unwrap();
-    assert!(preflight_fully_supported_deck(&[196]).is_err());
+    preflight_fully_supported_deck(&[225]).unwrap();
+    assert!(preflight_fully_supported_deck(&[226]).is_err());
 }
 
 #[test]

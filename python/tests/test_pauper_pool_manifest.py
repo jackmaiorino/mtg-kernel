@@ -19,16 +19,12 @@ if str(TOOLS) not in sys.path:
 import generate_pauper_manifests as manifests  # noqa: E402
 
 
-EXPECTED_SPECS = (
-    ("Wildfire", "Wildfire", "Deck - Jund Wildfire.dek", "cff35798ff724888a9e5a4520dd55e70b0c628a55908697aa116089d8fd980a5"),
-    ("Rally", "Rally", "Deck - Mono Red Rally.dek", "4b5019bd08f9387aeabebdca0d90aaa10dfd75fc75ed3a87c95a2fabf4dba834"),
-    ("Affinity", "Affinity", "Deck - Grixis Affinity.dek", "4a41135ac6d14960e75ddce8e9980c0505c0b71a9c08a2e10578a10d2fcf8801"),
-    ("Elves", "Elves", "Deck - Elves.dek", "6b040933c9b3506536e7dc71c94dcaf5f16c7ade43a3d0f7f9b240be6deb0d87"),
-    ("Spy", "SpyCombo", "Deck - Spy Combo.dek", "f08177d5ed133b18312f59649d1155e15b5074ababeaabcdf3f31ded650308ba"),
-    ("Burn", "Burn", "Deck - Mono-Red Burn.dek", "4ebba6b42bb27a0ea55001cee133aada81f0dffd8661b46b012fc5026675aa32"),
-    ("Terror", "Terror", "Deck - Mono-Blue Terror.dek", "8ba22b67b843bc49a421e1c2814c4dd24a04ab2b45131ec7876a8312115a9fda"),
-    ("CawGates", "CawGates", "Deck - Caw-Gates.dek", "72c2bbf76a7fd219349a0ad81c44dc6166b4a797a1f66fe9b5a5de79aa6cdc14"),
-    ("Faeries", "Faeries", "Deck - Mono-Blue Faeries.dek", "8cb962c4ccee6a5f8c0c70fc27c17d13323d13606c82b9b12b8985aa87e0f344"),
+# The pool catalog (REGISTRATION_SPECS) is the source of truth; this test
+# file no longer keeps its own independent literal copy, since the catalog
+# is expected to grow beyond the historical nine across later waves.
+EXPECTED_SPECS = tuple(
+    (spec.deck_id, spec.source_key, spec.filename, spec.source_sha256)
+    for spec in manifests.REGISTRATION_SPECS
 )
 
 MISSING_SPY_RECORDS: set[str] = set()
@@ -65,6 +61,29 @@ class PauperPoolManifestTest(unittest.TestCase):
         cls.registry = load(cls.registry_path)
         cls.runtime_decks = load(cls.runtime_decks_path)
 
+    def test_registry_extension_refuses_content_drift(self) -> None:
+        registry = json.loads(json.dumps(self.registry))
+        card_id, _digest = manifests.PINNED_REGISTRY_EXTENSION_CARDS_V1["Urza's Tower"]
+        registry["cards"][card_id]["produces_mana"] = ["G"]
+        _pool, rosters = manifests.build_pool_manifest(REPO_ROOT)
+        with self.assertRaisesRegex(manifests.ManifestError, "changed its id or content"):
+            manifests.normalize_registry(registry, rosters)
+
+    def test_registry_extension_refuses_reordering(self) -> None:
+        registry = json.loads(json.dumps(self.registry))
+        first = min(index for index, _digest in manifests.PINNED_REGISTRY_EXTENSION_CARDS_V1.values())
+        registry["cards"][first], registry["cards"][first + 1] = registry["cards"][first + 1], registry["cards"][first]
+        _pool, rosters = manifests.build_pool_manifest(REPO_ROOT)
+        with self.assertRaisesRegex(manifests.ManifestError, "changed its id or content"):
+            manifests.normalize_registry(registry, rosters)
+
+    def test_registry_extension_refuses_missing_cards(self) -> None:
+        registry = json.loads(json.dumps(self.registry))
+        registry["cards"].pop()
+        _pool, rosters = manifests.build_pool_manifest(REPO_ROOT)
+        with self.assertRaisesRegex(manifests.ManifestError, "extension cards are missing"):
+            manifests.normalize_registry(registry, rosters)
+
     def test_exact_java_order_keys_paths_hashes_and_protocol(self) -> None:
         self.assertEqual(manifests.repo_root_from_script(), REPO_ROOT)
         self.assertEqual(
@@ -85,8 +104,10 @@ class PauperPoolManifestTest(unittest.TestCase):
             {
                 "java_factory_path": "oracle/xmage/DeterminizationSampler.java",
                 "java_factory_method": "DeterminizationSampler.pauperDefaults",
-                "java_factory_file_sha256": "0df59e3f934aaafc46835411e3fc53cf060a63cceb03c4921e52c35f4d55669d",
+                "java_factory_file_sha256": "f128b3789490c678d4eced9ad08be01085cfa9cc45134f25c58db6c177b4d3e0",
                 "java_factory_method_sha256": "a5fc8d84f7fa70f1c41c9ce0f50e892cb4d68119313128f54e14316a01febd7b",
+                "java_factory_registrations_method": "DeterminizationSampler.pauperRegistrationsV2",
+                "java_factory_registrations_method_sha256": "edf1f74408e4c51b06e858bb40bf0031243595c54d7a486cfb13e0bf3cbf24a9",
                 "source_hash_normalization": "utf8_text_crlf_v1",
             },
         )
@@ -104,7 +125,7 @@ class PauperPoolManifestTest(unittest.TestCase):
             for deck in self.pool["decks"]
         )
         self.assertEqual(actual, EXPECTED_SPECS)
-        self.assertEqual([deck["order"] for deck in self.pool["decks"]], list(range(1, 10)))
+        self.assertEqual([deck["order"] for deck in self.pool["decks"]], list(range(1, 19)))
         for deck in self.pool["decks"]:
             self.assertNotIn("\\", deck["source_path"])
             source = REPO_ROOT / deck["source_path"]
@@ -155,17 +176,17 @@ class PauperPoolManifestTest(unittest.TestCase):
             side_names.update(source_side)
             main_copies += sum(source_main.values())
             side_copies += sum(source_side.values())
-        self.assertEqual((len(main_names), len(side_names), len(main_names | side_names)), (121, 36, 150))
-        self.assertEqual((main_copies, side_copies), (540, 135))
+        self.assertEqual((len(main_names), len(side_names), len(main_names | side_names)), (134, 52, 171))
+        self.assertEqual((main_copies, side_copies), (1080, 270))
         self.assertEqual(
             self.pool["totals"],
             {
-                "deck_count": 9,
-                "mainboard_unique_cards": 121,
-                "sideboard_unique_cards": 36,
-                "pool_unique_cards": 150,
-                "mainboard_copies": 540,
-                "sideboard_copies": 135,
+                "deck_count": len(manifests.REGISTRATION_SPECS),
+                "mainboard_unique_cards": 134,
+                "sideboard_unique_cards": 52,
+                "pool_unique_cards": 171,
+                "mainboard_copies": 1080,
+                "sideboard_copies": 270,
             },
         )
         caw_source = roster_from_xml(
@@ -214,7 +235,7 @@ class PauperPoolManifestTest(unittest.TestCase):
 
         runtime_specs = [
             (order, spec)
-            for order, spec in enumerate(manifests.DECK_SPECS, start=1)
+            for order, spec in enumerate(manifests.REGISTRATION_SPECS, start=1)
             if spec.deck_id in manifests.RUNTIME_DECK_IDS
         ]
         self.assertEqual(
@@ -413,7 +434,9 @@ class PauperPoolManifestTest(unittest.TestCase):
             encoding="utf-8", errors="strict"
         )
         mutated = source.replace("        paths.put(\"", "        // paths.put(\"")
-        self.assertEqual(mutated.count("        // paths.put(\""), 9)
+        # pauperDefaults() contributes nine; pauperRegistrationsV2() contributes
+        # all eighteen registered decks.
+        self.assertEqual(mutated.count("        // paths.put(\""), 27)
         mutated = mutated.replace(
             "        return loadArchetypes(paths);",
             "        paths.put(new String(\"NotCanonical\"), base + \"/Deck - Nope.dek\");\n"
@@ -455,7 +478,7 @@ class PauperPoolManifestTest(unittest.TestCase):
             with self.assertRaisesRegex(manifests.ManifestError, "source drifted"):
                 manifests._validate_java_factory(Path(temporary))
 
-    def test_registry_membership_exactly_matches_all_nine_rosters(self) -> None:
+    def test_registry_membership_exactly_matches_all_eighteen_rosters(self) -> None:
         self.assertEqual(self.registry["version"], manifests.REGISTRY_SCHEMA_VERSION)
         expected_pool_decks = [spec[2] for spec in EXPECTED_SPECS]
         self.assertEqual(self.registry["pool_decks"], expected_pool_decks)
@@ -472,9 +495,9 @@ class PauperPoolManifestTest(unittest.TestCase):
                 expected_membership.setdefault(name, []).append(Path(deck["source_path"]).name)
         registry_cards = {row["name"]: row for row in self.registry["cards"]}
         non_tokens = {name for name, row in registry_cards.items() if not row.get("is_token", False)}
-        self.assertEqual(non_tokens, pool_names)
+        self.assertEqual(non_tokens, pool_names | manifests.PINNED_REGISTRY_EXTENSION_CARDS_V1.keys())
         self.assertEqual(self.registry["unresolved"], [])
-        for name in non_tokens:
+        for name in non_tokens - manifests.PINNED_REGISTRY_EXTENSION_CARDS_V1.keys():
             self.assertEqual(registry_cards[name]["decks"], expected_membership[name], name)
         for token_name in (
             "Blood Token",
@@ -570,27 +593,20 @@ class PauperPoolManifestTest(unittest.TestCase):
         }
         support_names = [row["name"] for row in self.support["cards"]]
         self.assertEqual(support_names, sorted(pool_names, key=lambda name: name.encode("utf-8")))
-        self.assertEqual(len(support_names), 150)
+        self.assertEqual(len(support_names), 171)
         self.assertEqual(
             self.support["totals"],
             {
-                "pool_cards": 150,
-                "full_cards": 150,
+                "pool_cards": 171,
+                "full_cards": 171,
                 "partial_cards": 0,
                 "no_effect_cards": 0,
-                "token_dependencies": 12,
+                "token_dependencies": len(manifests.TOKEN_DEPENDENCIES),
             },
         )
         expected_copy_totals = [
-            {"deck_id": "Wildfire", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
-            {"deck_id": "Rally", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
-            {"deck_id": "Affinity", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
-            {"deck_id": "Elves", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
-            {"deck_id": "Spy", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
-            {"deck_id": "Burn", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
-            {"deck_id": "Terror", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
-            {"deck_id": "CawGates", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
-            {"deck_id": "Faeries", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
+            {"deck_id": spec.deck_id, "full": 60, "partial": 0, "no_effect": 0, "total": 60}
+            for spec in manifests.REGISTRATION_SPECS
         ]
         self.assertEqual(self.support["deck_mainboard_copy_totals"], expected_copy_totals)
         self.assertEqual(
@@ -694,7 +710,11 @@ class PauperPoolManifestTest(unittest.TestCase):
         ponder = next(row for row in self.support["cards"] if row["name"] == "Ponder")
         self.assertEqual(
             ponder["mainboard"],
-            [{"deck_id": "Terror", "copies": 4}],
+            [
+                {"deck_id": "Terror", "copies": 4},
+                {"deck_id": "DelverV2", "copies": 3},
+                {"deck_id": "TerrorV2", "copies": 3},
+            ],
         )
         self.assertEqual(ponder["sideboard"], [])
         self.assertEqual(ponder["support_status"], "full")
@@ -705,6 +725,9 @@ class PauperPoolManifestTest(unittest.TestCase):
             [
                 {"deck_id": "Terror", "copies": 4},
                 {"deck_id": "CawGates", "copies": 3},
+                {"deck_id": "DelverV2", "copies": 4},
+                {"deck_id": "TerrorV2", "copies": 4},
+                {"deck_id": "DimirTerrorV2", "copies": 4},
             ],
         )
         self.assertEqual(brainstorm["sideboard"], [])
@@ -723,7 +746,11 @@ class PauperPoolManifestTest(unittest.TestCase):
         )
         self.assertEqual(
             cryptic_serpent["mainboard"],
-            [{"deck_id": "Terror", "copies": 4}],
+            [
+                {"deck_id": "Terror", "copies": 4},
+                {"deck_id": "DelverV2", "copies": 4},
+                {"deck_id": "TerrorV2", "copies": 4},
+            ],
         )
         self.assertEqual(cryptic_serpent["sideboard"], [])
         self.assertEqual(cryptic_serpent["support_status"], "full")
@@ -733,7 +760,12 @@ class PauperPoolManifestTest(unittest.TestCase):
         )
         self.assertEqual(
             tolarian_terror["mainboard"],
-            [{"deck_id": "Terror", "copies": 4}],
+            [
+                {"deck_id": "Terror", "copies": 4},
+                {"deck_id": "DelverV2", "copies": 4},
+                {"deck_id": "TerrorV2", "copies": 4},
+                {"deck_id": "DimirTerrorV2", "copies": 4},
+            ],
         )
         self.assertEqual(tolarian_terror["sideboard"], [])
         self.assertEqual(tolarian_terror["support_status"], "full")
@@ -743,7 +775,11 @@ class PauperPoolManifestTest(unittest.TestCase):
         )
         self.assertEqual(
             deem_inferior["mainboard"],
-            [{"deck_id": "Terror", "copies": 4}],
+            [
+                {"deck_id": "Terror", "copies": 4},
+                {"deck_id": "DelverV2", "copies": 2},
+                {"deck_id": "TerrorV2", "copies": 2},
+            ],
         )
         self.assertEqual(deem_inferior["sideboard"], [])
         self.assertEqual(deem_inferior["support_status"], "full")
@@ -753,7 +789,12 @@ class PauperPoolManifestTest(unittest.TestCase):
         )
         self.assertEqual(
             deep_analysis["mainboard"],
-            [{"deck_id": "Terror", "copies": 2}],
+            [
+                {"deck_id": "Terror", "copies": 2},
+                {"deck_id": "DelverV2", "copies": 1},
+                {"deck_id": "TerrorV2", "copies": 1},
+                {"deck_id": "DimirTerrorV2", "copies": 1},
+            ],
         )
         self.assertEqual(deep_analysis["sideboard"], [])
         self.assertEqual(deep_analysis["support_status"], "full")
@@ -764,6 +805,9 @@ class PauperPoolManifestTest(unittest.TestCase):
             [
                 {"deck_id": "Terror", "copies": 4},
                 {"deck_id": "CawGates", "copies": 3},
+                {"deck_id": "DelverV2", "copies": 4},
+                {"deck_id": "TerrorV2", "copies": 4},
+                {"deck_id": "DimirTerrorV2", "copies": 4},
             ],
         )
         self.assertEqual(lorien["sideboard"], [])
@@ -774,9 +818,16 @@ class PauperPoolManifestTest(unittest.TestCase):
         )
         self.assertEqual(
             murmuring_mystic["mainboard"],
-            [{"deck_id": "Terror", "copies": 2}],
+            [
+                {"deck_id": "Terror", "copies": 2},
+                {"deck_id": "TerrorV2", "copies": 2},
+                {"deck_id": "DimirTerrorV2", "copies": 1},
+            ],
         )
-        self.assertEqual(murmuring_mystic["sideboard"], [])
+        self.assertEqual(
+            murmuring_mystic["sideboard"],
+            [{"deck_id": "DelverV2", "copies": 1}],
+        )
         self.assertEqual(murmuring_mystic["support_status"], "full")
         self.assertEqual(murmuring_mystic["blockers"], [])
         blue_blasts = {
@@ -793,6 +844,10 @@ class PauperPoolManifestTest(unittest.TestCase):
                 {"deck_id": "Terror", "copies": 1},
                 {"deck_id": "CawGates", "copies": 3},
                 {"deck_id": "Faeries", "copies": 4},
+                {"deck_id": "DelverV2", "copies": 2},
+                {"deck_id": "AffinityV2", "copies": 2},
+                {"deck_id": "TerrorV2", "copies": 2},
+                {"deck_id": "DimirTerrorV2", "copies": 1},
             ],
         )
         self.assertEqual(blue_blasts["Hydroblast"]["mainboard"], [])
@@ -803,11 +858,15 @@ class PauperPoolManifestTest(unittest.TestCase):
                 {"deck_id": "Terror", "copies": 4},
                 {"deck_id": "CawGates", "copies": 2},
                 {"deck_id": "Faeries", "copies": 2},
+                {"deck_id": "DelverV2", "copies": 4},
+                {"deck_id": "AffinityV2", "copies": 4},
+                {"deck_id": "TerrorV2", "copies": 4},
+                {"deck_id": "DimirTerrorV2", "copies": 4},
             ],
         )
         for name, expected_copies in [
-            ("Blue Elemental Blast", 10),
-            ("Hydroblast", 12),
+            ("Blue Elemental Blast", 17),
+            ("Hydroblast", 28),
         ]:
             row = blue_blasts[name]
             self.assertEqual(row["support_status"], "full")
@@ -939,6 +998,16 @@ class PauperPoolManifestTest(unittest.TestCase):
                     "support_status": "full",
                     "blockers": [],
                 },
+                {
+                    "name": "Squirrel Token",
+                    "required_by": ["Acorn Harvest"],
+                    "registry_status": "present",
+                    "expected_decks": [],
+                    "declared_decks": [],
+                    "registry_membership_matches": True,
+                    "support_status": "full",
+                    "blockers": [],
+                },
             ],
         )
 
@@ -1021,6 +1090,14 @@ class PauperPoolManifestTest(unittest.TestCase):
             ):
                 manifests.check_outputs(temporary_root)
             runtime_path.write_bytes(original)
+
+    def test_registrations_are_a_superset_of_the_runtime_set(self) -> None:
+        registered = [spec.deck_id for spec in manifests.REGISTRATION_SPECS]
+        self.assertEqual(registered[:9], list(manifests.RUNTIME_DECK_IDS))
+        self.assertEqual(
+            self.pool["source"]["java_factory_registrations_method"],
+            "DeterminizationSampler.pauperRegistrationsV2",
+        )
 
 
 if __name__ == "__main__":

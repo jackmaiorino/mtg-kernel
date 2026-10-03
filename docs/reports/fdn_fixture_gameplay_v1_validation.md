@@ -2,52 +2,74 @@
 
 ## Current delivery frontier
 
-Current-main integration has now reached the draw prefix in PR 129.
-PR 124/125/128/129 heads are 7b42b3ec/e71daa84/9b5058d3/a9bbfcb7.
-The default catalog-only generator verifies 192 definitions/v34 identity
-064a7c989255ab3c. Composed Limited prefixes are:
+The complete implementation stack now incorporates main fe479186 and all
+original fixture card/token dependencies, combat, pending choices and London
+mulligans. London source is ced93a23 and the CI composition is ef1b11e6. The
+subsequent Voyage walker correction is present in the final source. Full
+composed-source hosted qualification remains pending. Earlier isolated-stack
+passes below do not qualify this source.
 
-| Prefix | Definitions | Version | Generated CardDB identity |
+Fresh catalog-only generation verifies both final identities:
+
+| Catalog | Definitions | Version | CardDB identity |
 | --- | --- | --- | --- |
-| Counter and lifelink prerequisite | 218 | v40 | b3dc8eb6d0a6407d|
-| Life-gain cards | 220 | v41 | 958bf2fd746ec314|
-| Draw cards | 223 | v42 | a1376b708b689b01|
+| Default main | 192 | v34 | 064a7c989255ab3c |
+| Complete FDN fixtures | 236 | v51 | bd1385731e43c4a1 |
 
-Original and prior composed records remain readable. Catalog generation,
-formatting, workflow lint, diff checks and 20 focused Draw Python deck/session
-checks pass. The optional CUDA compile gate found six old i16 fixture
-assignments into the widened i32 counters; all six now use lossless conversions
-without changing fixture definitions or values. Hosted complete qualification
-is pending. Integration still must reach Homunculus through Witness, London,
-CI and the final validation branch. The original deck files are unchanged.
+The composed prefixes retain these distinct identities and preserve original
+and earlier composed records for reading. Publishing/resuming mutations must
+match the actual live build.
 
-The original isolated fixture stack completed its full London validation:
-CI 37049183922 at d43d59a2 passed all eight checks. Complete Ubuntu and Windows
-logs cover all 21 Limited integration targets/345 cases, default/native/CUDA
-commands and 35 Windows production-filter cases, with no hidden Cargo failure.
-Original games, fixed-seed replay and pending restore passed. PR 139 is ready
-for review. Witness PR 138 also passed all eight checks and is ready.
+| Prefix | Definitions | Version | CardDB identity |
+| --- | --- | --- | --- |
+| Counter / lifelink substrate | 218 | v40 | b3dc8eb6d0a6407d |
+| Life-gain cards | 220 | v41 | 958bf2fd746ec314 |
+| Draw cards | 223 | v42 | a1376b708b689b01 |
+| Homunculus | 225 | v43 | f9e239337d933849 |
+| Koma | 227 | v44 | d196a0b706b69e48 |
+| Kiora | 229 | v45 | 2d5aebb949eca8a6 |
+| Prowler | 230 | v46 | 6630c9c09989878f |
+| Rebuke | 231 | v47 | f48d52aff22f0f04 |
+| Voyage | 232 | v48 | 3cd3ce13b2c52a14 |
+| Scavenging | 234 | v49 | 592f678756e75cf5 |
+| Armor | 235 | v50 | f5076bb105d12b32 |
+| Witness / London | 236 | v51 | bd1385731e43c4a1 |
 
-Current-main integration remains required. PR 124 now contains main 0b6f5ce5,
-preserving its 192-definition default/v34 identity and giving the counter
-prefix 218 definitions / Limited v40 b3dc8eb6d0a6407d. Original frozen FDN records
-remain readable; mutation requires the actual live identity. Initial CI found
-new main code paths missing counter variants and an outdated i16 test bonus.
-Correction 567d3ca8 adds physical/incarnation reference handling and meaningful
-resampling regressions, with lossless counter conversion. It also corrects
-workspace runner arguments, explicitly executes main's ignored timing case,
-and selects the actual live production round-trip test. Composed-source
-hosted checks are pending, and the integration must reach later stacked PRs.
-Old isolated-stack passes do not qualify that composed source.
+Local checks: 22 focused Python deck/session tests, formatting, workflow lint,
+Python CI-helper compilation and diff checks pass. Both original decks resolve
+in copy order with 40/40 admitted cards. Inventory confirms 39 distinct fixture
+names, 80 copies and zero missing or partial fixture cards. Seven dependency
+tokens remain in the FDN registry. Fresh reference inventory is 43 full,
+1 partial and 242 missing out of 286; this milestone does not claim full-set
+support. The original deck byte hashes remain:
 
-PR 140 at 36d54594 passed its full Ubuntu job and the Windows original games,
-restore, default suite and isolated 18.858-microsecond snapshot case. Windows
-then failed native compilation on mixed compiler-path separators. Correction
-bbfe208d normalizes pinned Windows RUSTUP_HOME/RUSTC, preserving the validator.
-Kiora's corresponding repair is 5c29a7bf after the same observed failure.
-Local path/pin, formatting, workflow lint and diff checks passed. Corrected
-hosted native/complete Windows checks remain pending. The fixture goal is
-active; no full-set, drafting or playing-strength claim is made.
+- UG: bb618d6eaddf04b0a9e51e9a88cd512a04635e99ebca91b11ace4c305d634c86
+- WG: be026f1c86e3aabcb294517188d0c5f4f0cdfa3c5e95ee9dedfc51d3cdf814f7
+
+Integration corrections preserve main's wide counters, equipment abilities,
+delve/adventure paths and object hashing while adding the fixture mechanics.
+Prowler and monarch share one end-step trigger-ordering window. The typed
+reference walk retains counter, returning-Aura, Surveil and removed-ability
+bindings. The Windows bootstrap keeps its normalized pinned toolchain directory
+without the compiler override rejected by the existing build guard. The timing
+case remains exact, isolated and explicitly includes the existing ignored test;
+its 40-microsecond limit is unchanged.
+
+| Goal requirement | Current evidence | Remaining check |
+| --- | --- | --- |
+| Original decks and dependencies | Both unchanged decks resolve 40/40; all 39 fixture names admitted; final catalogs generated | Hosted card/rules cases on the composed source |
+| Natural external games | Original schema-4 game test and seeds are retained | Seed 123 twice and swapped seed 701 reach natural terminal outcomes |
+| Deterministic replay | Complete-receipt equality assertion is retained | Inspect final-source receipts and transcript hashes |
+| Pending save/restore | Pregame, private bottom menu, combat and effect restore cases are retained | Hosted restore cases pass on final source |
+| Rules and regressions | 21 integration targets plus affected library, default, native and CUDA checks remain selected | Complete Linux/Windows CI and terminal-log audit |
+| XMage comparisons | PR15 d98525a0: 146 tests/16 classes, zero failures/errors/skips | Reuse for unchanged matching card rules; investigate any actual gameplay discrepancy |
+| Delivery | Own branches and existing PR stack are maintained | Publish final source/report and verify required checks |
+
+## Historical isolated-stack evidence
+
+The following records identify their tested source and outcomes. They preserve
+prior qualification and failed checks; their status text describes those older
+runs. The current delivery frontier above governs completion of the goal.
 
 Scope: the two unchanged DraftZero decks for issue #110, all their card/token
 dependencies, and their custom-game rules. This is an implementation milestone.

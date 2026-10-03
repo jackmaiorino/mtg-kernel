@@ -55,9 +55,15 @@ Spellbench work remained live. No heavy local/remote engine build, training,
 GPU work or paid allocation was started by this batch. Hosted CI will execute
 Rust validation. Preserve other owners and reservations before subsequent jobs.
 
-Catalog probe scratch is registered at `D:/e-scratch/fdn-witness-codegen-001`.
-It is cache/scratch, not a sealed evidence source. Its small logs and manifest
-will be sealed with the completed batch report before pruning.
+Catalog probe and focused launcher logs are sealed in
+`E:/mtg-fdn-fixtures/fdn-witness-preflight-001`, with a hash-verified independent
+mirror at `C:/Users/Jack/fdn-witness-preflight-001-sealed`. The pinned probe
+executable is recorded by SHA-256 in `seal.json`. Two raw executions reproduced
+identical output bytes; the earlier PowerShell log has the same two identities
+with CRLF line endings. All failed hosted attempt logs remain sealed too.
+Only owned scratch copies and uncited debug symbols were pruned after mirror
+verification: 2,973,168 bytes. The exact receipt is
+`fdn_witness_preflight_001_prune.json`.
 
 ## Hosted attempts retained
 
@@ -95,3 +101,16 @@ Hosted Windows shard 111036193230 at Armor source f13fd955 passed the repaired
 case and all 286 tests; all four current Python shards passed. Armor is ready
 for review using its unchanged Rust code's passing Ubuntu/Windows evidence.
 The active Witness workflow is preserved for the remaining full Windows checks.
+
+## Current-main integration
+
+The Witness prefix incorporates Armor d4f02b41 and main's
+192-definition/v34 catalog. Its generated Limited identity is 236
+definitions/v51 bd1385731e43c4a1; the appended Witness ID is 235. Original and
+prior composed records remain readable; mutations require the live identity.
+Layer timestamp fields coexist with Adventure eligibility. The custom object
+hash retains main's Adventure bit before appending optional layer stamps.
+The typed reference walk retains the removed-ability event's physical object;
+a regression distinguishes the referenced object from an unrelated one.
+Catalog generation, formatting, workflow lint and diff checks pass locally;
+composed-source rules, replay and complete Rust qualification are pending.

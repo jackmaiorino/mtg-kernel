@@ -34,5 +34,6 @@ This is routine rules engineering. No training or playing-strength claim.
 Runtime verification: fourteen focused kernel cases, twelve strict XMage
 comparisons, catalog/session/prior-gameplay checks, default compatibility
 and warning-denied Clippy pass. Two custom-deck games finish naturally and
-replay identically. Release production boundaries and hosted CI remain
-pending; see the validation report for exact source and result hashes.
+replay identically. All 25 release production-boundary checks and combined-feature release
+Clippy also pass. Hosted CI remains pending; see the validation report for
+exact source and result hashes.
