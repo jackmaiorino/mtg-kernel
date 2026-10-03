@@ -98,6 +98,13 @@ struct CompletionProposalStepV1 {
     selected_row: usize,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProposalVectorTableV1 {
+    vectors: Vec<Value>,
+    proposals: Vec<Vec<CompletionProposalStepV1>>,
+}
+
 fn decode_proposal_payload(encoded: &str, max_bytes: usize) -> Result<Vec<u8>, &'static str> {
     let compressed = base64::engine::general_purpose::STANDARD.decode(encoded)
         .map_err(|_| "proposal_compression")?;
@@ -135,9 +142,23 @@ fn decode_proposal_payload(encoded: &str, max_bytes: usize) -> Result<Vec<u8>, &
 enum ProposalWordsV1<T> {
     Plain(Vec<T>),
     Runs { length: usize, rle: Vec<(T, usize)> },
+    Reference { vector: usize },
 }
 
-impl<T: Clone> ProposalWordsV1<T> {
+impl<T: Clone + serde::de::DeserializeOwned> ProposalWordsV1<T> {
+    fn expand_with_vectors(self, allow_runs: bool, remaining: &mut usize, vectors: Option<&[Value]>)
+        -> Result<Vec<T>, &'static str> {
+        match self {
+            Self::Reference { vector } => {
+                let value = vectors.and_then(|table| table.get(vector)).ok_or("proposal_tensor_encoding")?;
+                let words: Self = serde_json::from_value(value.clone()).map_err(|_| "proposal_tensor_encoding")?;
+                // A table entry must be a typed plain/RLE array, never another reference.
+                words.expand(allow_runs, remaining)
+            }
+            words => words.expand(allow_runs, remaining),
+        }
+    }
+
     fn expand(self, allow_runs: bool, remaining: &mut usize) -> Result<Vec<T>, &'static str> {
         let length = match &self {
             Self::Plain(words) => words.len(),
@@ -166,6 +187,7 @@ impl<T: Clone> ProposalWordsV1<T> {
                 }
                 Ok(words)
             }
+            Self::Reference { .. } => Err("proposal_tensor_encoding"),
         }
     }
 }
@@ -189,21 +211,21 @@ struct ProposalTensorBitsV1 {
 }
 
 impl ProposalTensorBitsV1 {
-    fn expand(self, allow_runs: bool, remaining: &mut usize) -> Result<ObservedTensorBitsV1, &'static str> {
+    fn expand(self, allow_runs: bool, remaining: &mut usize, vectors: Option<&[Value]>) -> Result<ObservedTensorBitsV1, &'static str> {
         Ok(ObservedTensorBitsV1 {
-            state: self.state.expand(allow_runs, remaining)?,
-            object_features: self.object_features.expand(allow_runs, remaining)?,
-            object_card_ids: self.object_card_ids.expand(allow_runs, remaining)?,
-            object_groups: self.object_groups.expand(allow_runs, remaining)?,
-            object_node_ids: self.object_node_ids.expand(allow_runs, remaining)?,
-            edge_features: self.edge_features.expand(allow_runs, remaining)?,
-            edge_source_indices: self.edge_source_indices.expand(allow_runs, remaining)?,
-            edge_target_indices: self.edge_target_indices.expand(allow_runs, remaining)?,
-            action_features: self.action_features.expand(allow_runs, remaining)?,
-            action_ref_features: self.action_ref_features.expand(allow_runs, remaining)?,
-            action_ref_card_ids: self.action_ref_card_ids.expand(allow_runs, remaining)?,
-            action_ref_action_indices: self.action_ref_action_indices.expand(allow_runs, remaining)?,
-            action_ref_node_indices: self.action_ref_node_indices.expand(allow_runs, remaining)?,
+            state: self.state.expand_with_vectors(allow_runs, remaining, vectors)?,
+            object_features: self.object_features.expand_with_vectors(allow_runs, remaining, vectors)?,
+            object_card_ids: self.object_card_ids.expand_with_vectors(allow_runs, remaining, vectors)?,
+            object_groups: self.object_groups.expand_with_vectors(allow_runs, remaining, vectors)?,
+            object_node_ids: self.object_node_ids.expand_with_vectors(allow_runs, remaining, vectors)?,
+            edge_features: self.edge_features.expand_with_vectors(allow_runs, remaining, vectors)?,
+            edge_source_indices: self.edge_source_indices.expand_with_vectors(allow_runs, remaining, vectors)?,
+            edge_target_indices: self.edge_target_indices.expand_with_vectors(allow_runs, remaining, vectors)?,
+            action_features: self.action_features.expand_with_vectors(allow_runs, remaining, vectors)?,
+            action_ref_features: self.action_ref_features.expand_with_vectors(allow_runs, remaining, vectors)?,
+            action_ref_card_ids: self.action_ref_card_ids.expand_with_vectors(allow_runs, remaining, vectors)?,
+            action_ref_action_indices: self.action_ref_action_indices.expand_with_vectors(allow_runs, remaining, vectors)?,
+            action_ref_node_indices: self.action_ref_node_indices.expand_with_vectors(allow_runs, remaining, vectors)?,
         })
     }
 }
@@ -407,13 +429,19 @@ impl SpellbenchScorerV1 {
     fn score_proposals(&mut self, bytes: &[u8], diagnostics: &mut dyn Write) -> Result<Value, &'static str> {
         let request: CompletionProposalRequestV1 = serde_json::from_slice(bytes)
             .map_err(|error| reject(diagnostics, "request_json", error))?;
-        let proposals = match (request.proposals, request.proposals_zlib) {
-            (Some(proposals), None) => proposals,
+        let (proposals, vectors) = match (request.proposals, request.proposals_zlib) {
+            (Some(proposals), None) => (proposals, None),
             (None, Some(encoded)) => {
             let decoded = decode_proposal_payload(&encoded, 64 * 1024 * 1024)
                 .map_err(|code| reject(diagnostics, code, "invalid bounded zlib payload"))?;
-            serde_json::from_slice(&decoded)
-                .map_err(|error| reject(diagnostics, "request_json", error))?
+            if request.tensor_encoding.as_deref() == Some("integer-rle-table/v1") {
+                let table: ProposalVectorTableV1 = serde_json::from_slice(&decoded)
+                    .map_err(|error| reject(diagnostics, "request_json", error))?;
+                (table.proposals, Some(table.vectors))
+            } else {
+                (serde_json::from_slice(&decoded)
+                    .map_err(|error| reject(diagnostics, "request_json", error))?, None)
+            }
             }
             _ => return Err(reject(diagnostics, "proposal_compression", "requires exactly one proposal representation")),
         };
@@ -439,6 +467,7 @@ impl SpellbenchScorerV1 {
         let allow_runs = match request.tensor_encoding.as_deref() {
             None => false,
             Some("integer-rle/v1") => true,
+            Some("integer-rle-table/v1") if vectors.is_some() => true,
             _ => return Err(reject(diagnostics, "proposal_tensor_encoding", "unknown tensor encoding")),
         };
         let mut remaining_words = 64 * 1024 * 1024;
@@ -446,7 +475,7 @@ impl SpellbenchScorerV1 {
         for steps in proposals {
             let mut score = 0.0_f64;
             for step in steps {
-                let tensor = step.tensor.expand(allow_runs, &mut remaining_words)
+                let tensor = step.tensor.expand(allow_runs, &mut remaining_words, vectors.as_deref())
                     .map_err(|code| reject(diagnostics, code, "invalid bounded proposal tensor"))?;
                 let output = self.policy.score_training_tensor_v4(&into_tensor_v4(tensor))
                     .map_err(|error| reject(diagnostics, "native_inference", error))?;
@@ -779,6 +808,28 @@ mod tests {
         for field in ["logits_bits", "value_bits", "selected_row", "selected_candidate_id", "mapping"] {
             assert_eq!(compressed_result[field], result[field], "zlib encoding changed {field}");
         }
+        let mut indexed = packed["proposals"].clone();
+        let mut vectors: Vec<Value> = Vec::new();
+        for steps in indexed.as_array_mut().unwrap() {
+            for step in steps.as_array_mut().unwrap() {
+                for words in step["tensor"].as_object_mut().unwrap().values_mut() {
+                    let index = match vectors.iter().position(|value| value == words) {
+                        Some(index) => index,
+                        None => { vectors.push(words.clone()); vectors.len() - 1 },
+                    };
+                    *words = json!({"vector": index});
+                }
+            }
+        }
+        let mut table_request = compressed.clone();
+        table_request["tensor_encoding"] = json!("integer-rle-table/v1");
+        let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(&serde_json::to_vec(&json!({"vectors": vectors, "proposals": indexed})).unwrap()).unwrap();
+        table_request["proposals_zlib"] = json!(base64::engine::general_purpose::STANDARD.encode(encoder.finish().unwrap()));
+        let table_result = scorer(SELECTION_SAMPLED_WIDE_V1).score_line(&serde_json::to_vec(&table_request).unwrap()).unwrap();
+        for field in ["logits_bits", "value_bits", "selected_row", "selected_candidate_id", "mapping"] {
+            assert_eq!(table_result[field], result[field], "vector table changed {field}");
+        }
         compressed["proposals"] = json!([]);
         assert_eq!(scorer(SELECTION_SAMPLED_WIDE_V1).score_line(&serde_json::to_vec(&compressed).unwrap()),
             Err("proposal_compression"));
@@ -788,6 +839,30 @@ mod tests {
         packed.as_object_mut().unwrap().remove("tensor_encoding");
         assert_eq!(scorer(SELECTION_SAMPLED_WIDE_V1).score_line(&serde_json::to_vec(&packed).unwrap()),
             Err("proposal_tensor_encoding"));
+    }
+
+    #[test]
+    fn completion_vector_table_resolves_typed_arrays_and_preserves_bounds() {
+        let vectors = vec![json!([0, 0x80000000_u32, u32::MAX]), json!([-1, i64::MIN])];
+        let mut remaining = 8;
+        assert_eq!(ProposalWordsV1::<u32>::Reference { vector: 0 }
+            .expand_with_vectors(true, &mut remaining, Some(&vectors)).unwrap(), vec![0, 0x80000000, u32::MAX]);
+        assert_eq!(ProposalWordsV1::<i64>::Reference { vector: 1 }
+            .expand_with_vectors(true, &mut remaining, Some(&vectors)).unwrap(), vec![-1, i64::MIN]);
+        assert_eq!(remaining, 3);
+        assert!(ProposalWordsV1::<u32>::Reference { vector: 0 }
+            .expand_with_vectors(true, &mut remaining, Some(&vectors)).is_ok());
+        assert_eq!(remaining, 0); // Every repeated use counts toward the scoring bound.
+        assert!(ProposalWordsV1::<u32>::Reference { vector: 0 }
+            .expand_with_vectors(true, &mut remaining, Some(&vectors)).is_err());
+        for (index, table) in [(2, vectors.clone()), (0, vec![json!({"vector": 0})]),
+            (0, vec![json!([-1])]), (0, vec![json!([true])]),
+            (0, vec![json!({"length": 1048577, "rle": [[0, 1048577]]})])] {
+            assert!(ProposalWordsV1::<u32>::Reference { vector: index }
+                .expand_with_vectors(true, &mut (64 * 1024 * 1024), Some(&table)).is_err());
+        }
+        assert!(ProposalWordsV1::<u32>::Reference { vector: 0 }
+            .expand_with_vectors(true, &mut 10, None).is_err());
     }
 
     #[test]
