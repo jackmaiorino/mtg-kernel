@@ -54,25 +54,39 @@ dependency version or lockfile. The entire frozen 80-object workload and timing
 function remain unchanged. Formatting and diff checks pass. Hosted lint job
 `111181187834` passed formatting and all four release Clippy gates: default,
 native Store, Limited and host-safe CUDA compilation, using Rust 1.94.1.
-The complete runtime matrix must still qualify this change. At that exact
-source, job metadata confirms successful London/original-game steps on both
-platforms. The Linux workspace release step also completed successfully,
-selecting the arena regressions, strengthened restore case and frozen timing
-gate. Complete receipt comparison and the numeric measurement await terminal
-logs; Windows workspace and remaining feature checks are still in progress.
+At that exact source, Linux job `111188356118` completed the full
+Witness/London/default/native/Limited/host-safe CUDA matrix successfully.
+All 21 selected integration targets and affected library filters passed;
+the complete terminal log contains no failed test summaries. All five IDs
+unit tests, the strengthened GameState round trip and private bottom-menu
+restore passed. The unchanged isolated snapshot measured 223 nanoseconds
+(0.223 microseconds) over 2,000 iterations with 80 objects, below the frozen
+40-microsecond limit. This measures capture, not complete turns or search.
+All three complete game receipts equal both London `f904c95c` platform
+receipts and both `7cbfa1cd` baseline receipts, with exact repeated seed123
+replay and natural swapped seed701 termination. Windows job `111188356135`
+has passed its London/original-game step; its complete matrix and receipt
+comparison remain pending.
 Mutating arena APIs now require `T: Clone`, already implemented by `GameObject`.
 The changed arena module's five unit tests passed separately on Windows with
 Rust 1.94.1 and the workspace's exact dependency versions/checksums, including
 both mutation-isolation and legacy-serialization cases. This narrow standalone
 check does not qualify full-engine restoration, gameplay or snapshot timing.
 
-At current CI source `92881658`, Windows Python shard1 job `111188356138`
-built the real release JSONL environment and passed 373 selected tests with
-one skip, no failures, in 930.347 seconds. The repaired WMI descendant case
-passed. This qualifies that Python shard and default environment at the new
-source; it does not qualify the Limited original games, pending restoration,
-frozen snapshot timing gate or complete runtime matrix. The other three
-Python shards remain pending.
+At current CI source `92881658`, three Python shards completed successfully.
+Each built the real release JSONL environment. Full terminal logs confirm:
+
+| Python shard at92881658 | Selected tests | Skips | Failures | Seconds |
+| --- | --- | --- | --- | --- |
+| Ubuntu0, job111188356190 | 374 | 14 | 0 | 493.578 |
+| Ubuntu1, job111188356188 | 373 | 13 | 0 | 666.239 |
+| Windows1, job111188356138 | 373 | 1 | 0 | 930.347 |
+
+Both original-deck loading and copy-order resolution pass on Ubuntu, and the
+repaired WMI descendant case passes on Windows. Windows shard0 job
+`111188356176` remains running. These results qualify the completed Python
+shards and default environment at the new source; the full Windows Rust
+matrix and remaining Python shard are still required.
 
 Report source `49ed45c0` completed all four Python shards in run `37109727043`.
 Each shard built the real release JSONL environment. Its Python tests, runner
