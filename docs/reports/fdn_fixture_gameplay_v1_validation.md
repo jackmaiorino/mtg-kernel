@@ -4,7 +4,7 @@
 
 The complete implementation stack now incorporates main fe479186 and all
 original fixture card/token dependencies, combat, pending choices and London
-mulligans. London runtime source is 35594e9d and the CI composition is 8cf8ebe0.
+mulligans. London source is cd7f451b and the CI composition is 92b9d845.
 The Voyage walker correction and London V6 observation/prompt repair are present
 in the final source. Full composed-source hosted qualification remains pending.
 Earlier isolated-stack passes below do not qualify this source.
@@ -18,6 +18,14 @@ mulligan projection across V5/V6 and preserves the human prompt's existing
 custom-game refusal. Its new regression covers public announce/bottom/complete
 facts and exact own-hand identities for both observers, plus legacy omission.
 Hosted verification of that case and the final runtime remains pending.
+
+Counter, lifelink substrate, Kiora and Prowler Linux jobs reported one stale
+expectation in `default_fixture_decodes_clean_and_classifies_as_the_live_profile`:
+the decoder correctly returned each rebased FDN profile, but the assertion
+still expected Targeted Spells. Every owned prefix now pins its concrete
+rebased profile in that existing regression; the default Pauper expectation,
+production classifier and live-identity checks are unchanged. The repair is
+committed through the full stack. Hosted verification remains pending.
 
 Fresh catalog-only generation verifies both final identities:
 
