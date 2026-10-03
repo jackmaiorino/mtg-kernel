@@ -78,3 +78,21 @@ case. The Windows bootstrap retains normalized `RUSTUP_HOME` without exporting
 `RUSTC`: Kiora job 111079733482 demonstrated that this override is correctly
 rejected by the existing compile-time build guard. Composed-source complete
 Linux/Windows, native capture and CUDA qualification is pending.
+
+## Windows reservation-test synchronization
+
+Draw job111114931527 at b296504e failed the existing WMI chain test:
+the final descendant sleeps six seconds, so delayed inspection can observe
+the reservation after it has correctly released. The Python shard ran372
+tests with one failure and one skip. An eight-second delay before the first
+status inspection reproduces the same `free` versus `held` assertion locally.
+
+The test now keeps that descendant alive until an explicit release file is
+written after the held/contained/member assertions. A120-second timeout bounds
+cleanup if the test never releases it. The release outcome and timestamp
+assertions remain unchanged, as does production reservation code. The normal
+chain and abandoned-supervisor tests pass locally (2cases,2.777seconds), and
+the explicit-release case passes with the same eight-second inspection delay
+(1case,9.759seconds). Hosted Python qualification remains pending. Existing
+London runtime jobs remain on cd7f451b; this change affects only the Python
+test and this report.
