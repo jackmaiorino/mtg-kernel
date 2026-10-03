@@ -121,3 +121,10 @@ manifest `C:/Users/haley/fdn-owned-incremental-prune-001.json` records
 17,593,594,204 regenerable bytes and the cache inventory hash
 `60d13497124ca26d6369a4e4bd4179e5242a7c150de66cd1626b0f22f55b7cd4`.
 Compiled binaries, cited evidence, source and failed logs were retained.
+
+The first composed card-pair/draw CI found three returning-Aura variants
+missing from main's suspended-reference walker. Added exact-incarnation
+scanning of both Aura/host bindings, the complete attachment-candidate list,
+and the answered guard's remaining frames. A regression covers both bound
+objects and unrelated library objects. Formatting/diff checks passed; hosted
+Rust and complete feature qualification remain pending.
