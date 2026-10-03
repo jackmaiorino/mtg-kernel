@@ -67,3 +67,14 @@ RUSTC path with cygpath before publishing them through GITHUB_ENV. Keep the
 validator and compiler/linker pins unchanged. Local path conversion, exact
 Rust1.94.1 invocation, workflow lint and diff checks passed. Hosted native
 compilation and complete Windows checks for the correction remain pending.
+
+## Current-main composition
+
+The final stack includes main fe479186, London mulligans, all 21 fixture
+integration targets and the actual `current_profile_record_round_trips` filter.
+The workspace runner accepts the workflow's `--no-fail-fast` argument and uses
+`--include-ignored --exact --test-threads=1` for the unchanged snapshot timing
+case. The Windows bootstrap retains normalized `RUSTUP_HOME` without exporting
+`RUSTC`: Kiora job 111079733482 demonstrated that this override is correctly
+rejected by the existing compile-time build guard. Composed-source complete
+Linux/Windows, native capture and CUDA qualification is pending.
