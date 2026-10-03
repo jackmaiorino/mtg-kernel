@@ -19,6 +19,8 @@ independent mutations and stable IDs. The first mutation of shared storage
 still clones its objects; this does not claim faster complete turns or search.
 Serde's `rc` feature retains the existing `items` array representation without
 changing dependency versions or the lockfile.
+The arena's mutating methods now require `T: Clone`; the production arena stores
+`GameObject`, which already implements that trait.
 
 Two arena regressions cover every mutation entry point, append IDs, legacy JSON
 and value-based hashing. The existing snapshot round trip now checks captured
@@ -27,6 +29,15 @@ draw. The entire frozen 80-object workload and timing function remain unchanged,
 including 200 warmups, 2,000 iterations and the 40-microsecond assertion.
 Pinned formatting and diff checks pass. Hosted compilation, the new regressions,
 all original games and the full Rust matrix still need to qualify this change.
+
+The actual changed `ids.rs` module passed all five unit tests in a small
+standalone Windows release crate, including both new arena regressions.
+Rust 1.94.1, one BelowNormal build worker and the workspace's exact 11 dependency
+versions/checksums were used. Compilation took 14.53 seconds; the locked recheck
+also passed all five cases with no failures or ignores. Evidence is
+`E:/codex-checks/fdn-arena-cow-1cxafdwa/qualification.log`.
+This checks arena cloning, IDs, serialization and hashing, not the full engine,
+GameState restoration, original games or the frozen snapshot timing gate.
 
 ## Earlier CI batching work
 
@@ -103,7 +114,7 @@ path contains mixed separators. The native validator rejects forward slashes.
 The workflow now normalizes Windows RUSTUP_HOME and the explicitly pinned
 RUSTC path with cygpath before publishing them through GITHUB_ENV. Keep the
 validator and compiler/linker pins unchanged. Local path conversion, exact
-Rust1.94.1 invocation, workflow lint and diff checks passed. Hosted native
+Rust 1.94.1 invocation, workflow lint and diff checks passed. Hosted native
 compilation and complete Windows checks for the correction remain pending.
 
 ## Current-main composition

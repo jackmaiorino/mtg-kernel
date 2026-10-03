@@ -32,6 +32,10 @@ bytes and independent mutation after restore. Serde's `rc` feature changes no
 dependency version or lockfile. The entire frozen 80-object workload and timing
 function remain unchanged. Formatting and diff checks pass; hosted compilation,
 the regressions, original games and full matrix must still qualify this change.
+The changed arena module's five unit tests passed separately on Windows with
+Rust 1.94.1 and the workspace's exact dependency versions/checksums, including
+both mutation-isolation and legacy-serialization cases. This narrow standalone
+check does not qualify full-engine restoration, gameplay or snapshot timing.
 
 Report source `5bf586eb` completed all four Python shards in run `37101685323`.
 Each shard built the real release JSONL environment. Its Python tests, runner
