@@ -76,6 +76,8 @@ impl Scan<'_> {
             | Scry { .. }
             | SearchLibraryToHand { .. }
             | PutObjectInOwnersLibrarySecondOrBottom { .. }
+            | PutObjectInOwnersLibraryTopOrBottom { .. }
+            | SurveilOne { .. }
             | DestroyObject { .. }
             | CounterUnlessPaysGeneric { .. }
             | DamageEachCreatureWithoutSubtype { .. }
@@ -437,7 +439,12 @@ impl Scan<'_> {
                     use EffectOptionChoicePurpose::*;
                     match purpose {
                         Generic => false,
-                        OwnerLibrarySecondOrBottom {
+                        OwnerLibraryTopOrBottom {
+                            object,
+                            expected_remaining_frames,
+                            ..
+                        }
+                        | OwnerLibrarySecondOrBottom {
                             object,
                             expected_remaining_frames,
                             ..
