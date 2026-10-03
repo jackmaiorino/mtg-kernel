@@ -9,8 +9,10 @@ The Voyage walker correction and London V6 observation/prompt repair are present
 in the final source. Full composed-source hosted qualification remains pending.
 Earlier isolated-stack passes below do not qualify this source.
 
-The gameplay code, cards and London tests match London PR139 at cd7f451b. Its
-original runtime jobs remain live. CI PR140 at 7cbfa1cd adds a feature-gated
+The gameplay code, cards and London tests match tested source cd7f451b. Its
+original Linux runtime job passes; its original Windows job fails after the
+gameplay cases as recorded below. London f904c95c adds the Windows profile
+import and synchronized reservation regression. CI PR140 at 7cbfa1cd adds a feature-gated
 profile-type import in the Windows publication tests and two Windows
 test-procedure changes: explicit release in the reservation regression and
 high priority for the short isolated snapshot timing process. Its full matrix
@@ -31,7 +33,7 @@ hashes below, runs seed123 twice with complete receipt equality, and runs
 swapped seed701. All three receipts report natural/natural_game_over and a
 P0 win. Each game performs four explicit bottom choices.
 
-| Current Windows original game | Requests | Physical decisions | Policy steps | Transcript SHA-256 |
+| Current Linux/Windows original game | Requests | Physical decisions | Policy steps | Transcript SHA-256 |
 | --- | --- | --- | --- | --- |
 | Seed123, twice with identical complete receipts | 545 | 538 | 544 | 7738afcf0a9afff429a1e2e699e631897d2d8a9faba13f698a12a1b04d95c6e1 |
 | Seed701, seats swapped | 492 | 479 | 491 | 610fda6441c5ccf7d98e3e71fdb8e8c67f9c7dfe658ef0b988ebc6a64eef2f6a |
@@ -40,9 +42,22 @@ The pregame restore and V5/V6 public-state/own-hand integration cases also
 pass. The next library build fails with the same missing profile-type import,
 so the private bottom-menu library case and later default/native/FDN/CUDA
 steps did not execute. The overall Windows job remains a failure. CI7cbfa1cd
-and the prepared London backport repair that test scope. The original Linux
-job111116304494 remains live; its receipts and full regressions still need
-terminal-log inspection.
+and the London backport repair that test scope.
+
+Linux job `111116304494` at `cd7f451b` passes the complete Witness/London,
+default, native, Limited and host-safe CUDA steps. All 21 selected Limited
+integration targets pass 347 cases with zero failures or ignores. Default
+library tests pass 2302 cases with 76 existing ignores, and the unchanged
+snapshot check measures 5.434 microseconds. The pending private bottom-menu,
+combat-damage, priority, discard, kicker, legend, returning-Aura and trigger
+ordering restoration cases pass in the selected library filters.
+
+All three complete Linux game receipts equal the Windows receipts, including
+the pinned original deck hashes, terminal records and transcript hashes.
+The repeated seed123 receipts are identical; swapped seed701 ends naturally.
+This proves composed-source game completion and replay on both platforms.
+The repaired Windows library cases and complete current CI procedure still
+require their hosted results.
 
 Draw Windows job111114931404 atb296504e passed its default release and native
 boundary steps, including the unchanged snapshot case at17.433microseconds.
@@ -66,7 +81,7 @@ Windows qualification with the prepared test-module import repair.
 Life-gain Windows job `111116101288` at `5a6fa1ca` passes default/native and all 10
 Limited integration targets, 170 cases with zero failures or ignores. The
 following library compilation fails on two byte-identical duplicate counter
-test names and the missing Windows profile import. Local `3ce1ec38` retains one
+test names and the missing Windows profile import. Published `2b0963ef` retains one
 copy of each publication/resume regression and adds the import; its assertions
 and filter coverage remain intact. This repair does not change the final
 gameplay source, which already has unique test names. Hosted repair execution
@@ -173,10 +188,10 @@ its 40-microsecond limit is unchanged.
 | Goal requirement | Current evidence | Remaining check |
 | --- | --- | --- |
 | Original decks and dependencies | Both unchanged decks resolve 40/40; all 39 fixture names admitted; final catalogs generated | Hosted card/rules cases on the composed source |
-| Natural external games | Windows cd7f451b receipts prove seed123 twice and swapped seed701 end naturally with unchanged original inputs | Inspect original Linux receipts and complete current qualification |
-| Deterministic replay | Both complete Windows seed123 receipts are identical; fresh transcript hashes recorded above | Inspect Linux receipts and current matrix |
-| Pending save/restore | Current Windows pregame restore and V5/V6 observation cases pass; private bottom menu, combat and effect cases remain selected | Execute the repaired Windows library case and remaining final-source restores |
-| Rules and regressions | Current Windows passes24Witness and12London cases; four Python shards pass at94d6fc44; all21integration targets and affected library/default/native/CUDA checks remain selected | Complete current Linux/Windows runtime CI and audit the timing-priority procedure |
+| Natural external games | Linux and Windows cd7f451b receipts prove seed123 twice and swapped seed701 end naturally with unchanged original inputs | Complete current repaired-source qualification |
+| Deterministic replay | All three complete Linux/Windows receipts match; repeated seed123 receipts are identical; fresh transcript hashes recorded above | Complete current CI procedure qualification |
+| Pending save/restore | Current Windows pregame restore and V5/V6 observation cases pass; Linux private bottom menu, combat and effect restoration cases pass | Execute the repaired Windows library cases |
+| Rules and regressions | Linux cd7f451b passes all21Limited targets/347cases plus library/default/native/CUDA checks; Windows passes24Witness and12London cases; four Python shards pass at94d6fc44 and repaired Windows shard1 passes at5bf586eb | Complete repaired Windows runtime CI and current Python shards; audit the timing-priority procedure |
 | XMage comparisons | PR15 d98525a0: 146 tests/16 classes, zero failures/errors/skips | Reuse for unchanged matching card rules; investigate any actual gameplay discrepancy |
 | Delivery | Own branches and existing PR stack are maintained | Publish final source/report and verify required checks |
 
