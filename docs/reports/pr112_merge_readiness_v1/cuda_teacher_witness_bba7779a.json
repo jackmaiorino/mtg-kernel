@@ -1,0 +1,95 @@
+{
+  "schema": "cuda-teacher-merge-witness/v1",
+  "source_commit": "bba7779a13081dd150e8ea4524d50be3f3b6d519",
+  "witness_root": "E:\\mtg-pr112-merge-readiness-20261001\\native-check-001",
+  "finished_utc": "2026-10-01T07:44:38.599821+00:00",
+  "test_binary": {
+    "path": "E:\\pinned-binaries\\9bfeda6b0a490584f17d2e4a1aade177bbb7b1f2b99630121df11f2271c79762\\mtg_kernel-c2def65f541e2de6.exe",
+    "sha256": "9bfeda6b0a490584f17d2e4a1aade177bbb7b1f2b99630121df11f2271c79762"
+  },
+  "toolchain": {
+    "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-pc-windows-msvc\nrelease: 1.94.1\nLLVM version: 21.1.8\n",
+    "cargo": "cargo 1.94.1 (29ea6fb6a 2026-03-24)\n",
+    "linker_sha256": "ee9b29be652eee20affa6963a7ce54d01271b0f1b2443e315ea86469cbb95694",
+    "linker_banner": "Microsoft (R) Incremental Linker Version 14.50.35725.0"
+  },
+  "gpus": [
+    "0, NVIDIA GeForce RTX 4070 SUPER, GPU-3502709e-6aef-8ed7-4abe-562838793e3d, 596.36",
+    "1, NVIDIA GeForce RTX 3050, GPU-0642d3ca-e3d4-ba16-96ab-c561c6da90e3, 596.36"
+  ],
+  "input_sha256": {
+    "Cargo.lock": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
+    "rust-toolchain.toml": "d52c5633ea77aefd345519d0a6c87e19c2636a1e90178585c30db481b3de9de0",
+    "data/cards_v1.json": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
+    "data/runtime_decks_v1.json": "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851",
+    "data/pauper_pool_v1.json": "f7d6e129a83ee32874a567b47346a66af52c7a7d98fa41cc7ce284ddff8d91c9"
+  },
+  "observed_teacher_state_sha256": [
+    "8c9e77a2bc923c12bd883ef45d9f96eb8efbfe9b3909fdfe8fd8a10d62ad76cd",
+    "0f04932d69bcb05687126f9c01c554039c718aefada39abc0e44b219e3566d88"
+  ],
+  "previous_teacher_state_sha256": [
+    "4ec11a5c9df8bf98cecd3f72a72fa39906377489945aa6d8be77822624f4cd92",
+    "d91b7ceacffea8eeff1ef90970efc568028d34ca47270d0d18f48d1551da2fbd"
+  ],
+  "envelopes": [
+    {
+      "direction": "reverse",
+      "declared_envelope": 0.001,
+      "max_abs_log_probability_discrepancy": 9.238068310324365e-09,
+      "max_host_refold_abs_discrepancy": 3.621705446654744e-08,
+      "roots": [
+        {
+          "bound": 0.0021014491580426693,
+          "host_refold_abs_discrepancy": 3.621705446654744e-08,
+          "max_abs_log_probability_discrepancy": 9.238068310324365e-09,
+          "root": 0
+        }
+      ],
+      "within_bound": true,
+      "within_declared_envelope": true
+    },
+    {
+      "direction": "forward",
+      "declared_envelope": 0.001,
+      "max_abs_log_probability_discrepancy": 9.238068310324365e-09,
+      "max_host_refold_abs_discrepancy": 3.621705446654744e-08,
+      "roots": [
+        {
+          "bound": 0.0021014491580426693,
+          "host_refold_abs_discrepancy": 3.621705446654744e-08,
+          "max_abs_log_probability_discrepancy": 9.238068310324365e-09,
+          "root": 0
+        }
+      ],
+      "within_bound": true,
+      "within_declared_envelope": true
+    }
+  ],
+  "fixtures": [
+    {
+      "name": "line_b_teacher_cuda_update_publishes_packet_telemetry_and_envelope",
+      "exit_code": 101,
+      "seconds": 27.74349570274353,
+      "log_sha256": "16508c72a595037fd33aadeecdbd0881f81c2877670a7541b88534d893ad134c"
+    },
+    {
+      "name": "line_b_head_only_mask_freezes_trunk_bytes_across_real_cuda_updates",
+      "exit_code": 0,
+      "seconds": 38.72131609916687,
+      "log_sha256": "01e1283a26ad259860971c2e5ee5e064d488b1c4216893de2576cfcc112e82aa"
+    },
+    {
+      "name": "search_opponent_games_replay_validate_and_refuse_tampering",
+      "exit_code": 0,
+      "seconds": 227.9705274105072,
+      "log_sha256": "7827eb3e3a86e998ac3e14d8ac3d868e32ed4cc56e8ce3283ddd5bbd7c34f83b"
+    }
+  ],
+  "disposition": "Keep the numerical and mask assertions; replace only the observed CUDA pins and verify the full fixture again. Preserve the failed first witness.",
+  "nonclaims": [
+    "engineering correctness only",
+    "historical acceptance receipts unchanged",
+    "no experiment selection or playing-strength claim"
+  ]
+}

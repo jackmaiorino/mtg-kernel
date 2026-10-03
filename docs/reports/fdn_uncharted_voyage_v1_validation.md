@@ -86,3 +86,17 @@ is UG 38/40 and WG 38/40. Celestial Armor, Sylvan Scavenging and Witness
 Protection remain, along with London mulligans and complete original-deck
 external games. This slice does not complete the active fixture goal or
 establish full-set Foundations support or playing strength.
+
+## Current-main integration
+
+The Voyage prefix incorporates Rebuke 3f8f1c16 and the 192-definition/v34
+main catalog. Its generated Limited identity is 232 definitions/v48
+3cd3ce13b2c52a14; the appended Voyage ID is 231. Original and earlier composed
+catalog records remain readable, with live-identity mutation guards.
+
+The pending Surveil completion coexists with main's Delver reveal completion.
+The typed reference walk retains Surveil's library bindings and remaining
+frames in both its choice and answered completion. A regression distinguishes
+those bindings from unrelated and stale-incarnation objects. Catalog
+validation, formatting, workflow lint and diff checks pass locally;
+composed-source Rust qualification is pending.

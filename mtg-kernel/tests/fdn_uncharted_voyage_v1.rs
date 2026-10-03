@@ -154,15 +154,15 @@ fn restored(state: &GameState) -> GameState {
 
 #[test]
 fn exact_printed_definition_and_full_admission() {
-    assert_eq!(card_id_by_name("Uncharted Voyage"), Some(201));
-    let card = &CARD_DEFS[201];
+    assert_eq!(card_id_by_name("Uncharted Voyage"), Some(231));
+    let card = &CARD_DEFS[231];
     assert_eq!(card.mana_value, 4);
     assert_eq!(card.cost.generic, 3);
     assert_eq!(card.cost.pips, &[Pip::Colored(ManaColor::U)]);
     assert_eq!(card.colors, &[ManaColor::U]);
     assert_eq!(card.types, &[CardType::Instant]);
     assert_eq!(card.target_spec, TargetSpec::Creature);
-    preflight_fully_supported_deck(&[201]).unwrap();
+    preflight_fully_supported_deck(&[231]).unwrap();
 }
 
 #[test]

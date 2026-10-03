@@ -102,8 +102,8 @@ fn die(state: &mut GameState, player: PlayerId, name: &str) {
 
 #[test]
 fn printed_characteristics_and_full_admission_are_exact() {
-    assert_eq!(card_id_by_name("Cackling Prowler"), Some(199));
-    let prowler = &CARD_DEFS[199];
+    assert_eq!(card_id_by_name("Cackling Prowler"), Some(229));
+    let prowler = &CARD_DEFS[229];
     assert_eq!(
         (prowler.power, prowler.toughness, prowler.mana_value),
         (Some(4), Some(3), 4)
@@ -113,7 +113,7 @@ fn printed_characteristics_and_full_admission_are_exact() {
     assert_eq!(prowler.colors, &[ManaColor::G]);
     assert_eq!(prowler.subtypes, &[Subtype::Hyena, Subtype::Rogue]);
     assert_eq!(prowler.ward_cost, Some(WardCostDef::Generic(2)));
-    preflight_fully_supported_deck(&[199]).unwrap();
+    preflight_fully_supported_deck(&[229]).unwrap();
 }
 
 #[test]
@@ -439,4 +439,38 @@ fn payable_ward_costs_two_and_its_pending_choice_restores_identically() {
     assert_eq!(state.state_hash(), restored.state_hash());
     assert_eq!(state.objects.get(prowler).zone, Zone::Hand);
     assert_eq!(state.players[1].mana_pool, [0; 6]);
+}
+
+#[test]
+fn prowler_and_monarch_share_the_end_step_ordering_window() {
+    for order in [vec![0, 1], vec![1, 0]] {
+        let mut state = ready();
+        let admiral = put(&mut state, PlayerId::P0, "Azure Fleet Admiral", Zone::Hand);
+        state.players[0].mana_pool[ManaColor::U.pool_index()] = 1;
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 3;
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        engine::step(&mut state, Action::CastSpell(admiral)).unwrap();
+        drain(&mut state, None);
+        assert_eq!(state.monarch, Some(PlayerId::P0));
+        let prowler = put(
+            &mut state,
+            PlayerId::P0,
+            "Cackling Prowler",
+            Zone::Battlefield,
+        );
+        die(&mut state, PlayerId::P1, "Elvish Mystic");
+        let hand_before = state.players[0].hand.len();
+        enter_end(&mut state);
+        let Decision::OrderTriggers { player, pending } = next(&mut state) else {
+            panic!("simultaneous end-step triggers must offer one ordering decision");
+        };
+        assert_eq!(player, PlayerId::P0);
+        assert_eq!(pending.len(), 2);
+        assert!(pending.iter().any(|trigger| trigger.source == admiral));
+        assert!(pending.iter().any(|trigger| trigger.source == prowler));
+        engine::step(&mut state, Action::OrderTriggers(order)).unwrap();
+        drain(&mut state, None);
+        assert_eq!(state.players[0].hand.len(), hand_before + 1);
+        assert_eq!(state.objects.get(prowler).counters.plus1_plus1, 1);
+    }
 }

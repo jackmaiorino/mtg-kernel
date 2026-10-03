@@ -1,0 +1,18 @@
+# g115 misses a constructed two-Bolt lethal continuation
+
+Diagnostic complete, no promotion gate. Frozen g115 chooses removal with over99.999997% softmax probability in both hand variants, despite a certified winning face continuation when the remaining card is Lightning Bolt. This is a synthetic missed-lethal example, not evidence that hand information is absent or a fix works.
+
+| Remaining hand | Face probability | Removal probability | V | Engine witness after face |
+| --- | ---: | ---: | ---: | --- |
+| Mountain | 0.0000000256600 | 0.9999999743394 | -0.75855297 | Forced natural loss |
+| Lightning Bolt | 0.0000000287665 | 0.9999999712333 | -0.76168513 | Second Bolt gives natural win |
+
+Both seats give identical probabilities by action meaning and identical values; hidden-library-order variants are exactly invariant. Eight records represent two hand states with seat/order checks, not eight independent samples. The removal witness reaches Main2 alive at life3 in both variants. It does not certify a match win or prove removal can never win later. The face witness is an available winning line, not a claim that the frozen policy subsequently executes the second Bolt correctly. Probabilities are float64 softmax of actual f32 logits, not the quantized execution sampler.
+
+The input is not identical across hands: the hand token changes77 to67, and all96 observation-digest state scalars at indices123-218 change. All other common tensor fields match. Native tensorizer appends these digest features from the canonical observation (native_flat_tensorizer_v2.rs:3068). Therefore the small score response cannot be assigned specifically to the learned card embedding. V changes by -0.0031321645, in the opposite direction from the new available win, but V predicts current-policy return, not optimal return, so this does not by itself establish critic miscalibration. Both cards are familiar original-mainboard identities. This does not identify unfamiliar-card semantics as the cause.
+
+Engineering: original hand control passed one test/eight continuations at cdce09df; corrected test build482.326s. Scoring build at5dd59056 completed193.242s. Diagnostic003 and its fresh-process replay completed6.287s, with identical output SHA-256 `7a50fb7a52bd6e65523381a91154cb446c432f69261d5171896acd3400cdcc59`. Collector binary SHA `8d736e47e9aa4fc624c5eed4f07ce6e92bc9a858a2cc21127fe47891ec2504f8`. Source checkpoint remains `88c0b997708c2b5156b44f3940ad9d5d682f78ac24d346978bb3c9f34c59e8d1`. Receipts: E:/mtg-meta-recovery-20260921/hand-policy-diagnostic-003/completion.json and analysis.json; analyzer python/tools/analyze_hand_policy_control_v1.py verified both output hashes.
+
+Diagnostic001/002 failed before output publication because FastActorSession advances removal through forced play to turn2/Main1 and a draw. The explicit engine-priority witness now stops at Main2 under the unchanged no-draw/knowledge boundary; it checks target legality and absence of opponent responses. Failed receipts and builds are retained. No production engine, model, loader, eligibility guard or training behavior changed.
+
+Disposition: no ADVANCE available; g115 reference unchanged, M1 unmet. New independent training n=0; this two-state diagnostic has no strength effect size or power against s=0.76pp. No natural prevalence, whole-match gain, CP7, human or league evidence. Fable review remains unavailable, so interpretation is provisional. Accept E-10: semantic128 stays shelved and future training emits entropy telemetry. Next evidence needed is a naturally occurring hand-dependent missed continuation with a bounded public witness. Do not train another synthetic teacher or select a new hand representation from this example alone.

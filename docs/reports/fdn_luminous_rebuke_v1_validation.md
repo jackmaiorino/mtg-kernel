@@ -1,5 +1,11 @@
 # FDN Luminous Rebuke implementation and verification
 
+Hosted CI at `deaa8b29cf26547e4dc28e01341648dc23e50460` passed all eight checks: Rust on
+Ubuntu and Windows, all four Python shards, formatting/lint and path detection.
+Run: https://github.com/jackmaiorino/mtg-kernel/actions/runs/37008853823. Earlier pending entries below record the original
+verification sequence. The subsequent status/report update changes no tested
+code, workflow, fixture or catalog bytes.
+
 Luminous Rebuke is implemented as a white instant for `{4}{W}`, mana value
 five, that destroys target creature. A tapped creature target reduces only
 the generic casting cost by three. Untapping after the cast does not
@@ -86,3 +92,18 @@ log SHA-256
 This verifies interface completion and replay. Individual discounted
 payment/ward rules are established by the focused kernel/reference cases.
 The custom games do not complete either original fixture deck.
+
+## Current-main integration
+
+The Rebuke prefix incorporates Prowler 52b252d6 and main's 192-definition/v34
+catalog. Its generated Limited identity is 231 definitions/v47
+f48d52aff22f0f04. Original and earlier composed profiles remain readable;
+mutation requires the actual live identity. The Rebuke fixture expects its
+new appended ID 230.
+
+Target-dependent cast offers and payment retain Rebuke's discount and main's
+delve/adventure paths. The generated creature-destruction program retains
+main's battlefield guard and is shared with Terminate. The existing discounted
+Rebuke tests and main regression suite qualify this composed behavior in CI.
+Formatting, workflow lint, catalog generation and diff checks pass locally;
+composed-source Rust qualification is pending.

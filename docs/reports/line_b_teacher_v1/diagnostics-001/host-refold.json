@@ -1,0 +1,2167 @@
+{
+ "schema": "line-b-host-refold-line/v1",
+ "claim": "offline binary32 replica of the update's host refold against the sampler's binary64 value; engineering only",
+ "directory": "D:\\e-scratch\\opus-exit-teacher\\receipts\\diagnostics-001",
+ "packets": [
+  {
+   "packet_sha256": "8ea2c5d8d71df8baf8e60be1a6fdc16847e0b63e08c6562010a50cbe4fc5d867",
+   "updates": [
+    "u000"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 3,
+     "width": 8,
+     "selected": 7,
+     "host_refold_log_probability": -0.0873764231801033,
+     "sampler_log_probability": -0.08737642917294003,
+     "abs_discrepancy": 5.992836726864681e-09
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 73,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -8.105903543764725e-05,
+     "sampler_log_probability": -8.111479962629264e-05,
+     "abs_discrepancy": 5.5764188645386235e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 45,
+     "width": 3,
+     "selected": 0,
+     "host_refold_log_probability": -0.005686890799552202,
+     "sampler_log_probability": -0.005686856322583632,
+     "abs_discrepancy": 3.4476968569993605e-08
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 68,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.0014029431622475386,
+     "sampler_log_probability": -0.0014029685536103007,
+     "abs_discrepancy": 2.5391362762144584e-08
+    },
+    {
+     "trajectory_index": 6,
+     "decision_index": 14,
+     "width": 4,
+     "selected": 2,
+     "host_refold_log_probability": -1.1508996486663818,
+     "sampler_log_probability": -1.150899700114428,
+     "abs_discrepancy": 5.144804626766586e-08
+    }
+   ],
+   "max_abs_discrepancy": 5.5764188645386235e-08
+  },
+  {
+   "packet_sha256": "870f105b83da8a1abfe47d1ce1f1a9590b65f5efa7cb1b6152933a70de224cf7",
+   "updates": [
+    "u001"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 186,
+     "width": 7,
+     "selected": 6,
+     "host_refold_log_probability": -0.052096616476774216,
+     "sampler_log_probability": -0.052096629943977735,
+     "abs_discrepancy": 1.3467203519024196e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 185,
+     "width": 5,
+     "selected": 4,
+     "host_refold_log_probability": -0.001456272671930492,
+     "sampler_log_probability": -0.001456221549775675,
+     "abs_discrepancy": 5.1122154816904755e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 78,
+     "width": 2,
+     "selected": 0,
+     "host_refold_log_probability": -1.1920927533992653e-07,
+     "sampler_log_probability": -1.2476278764529134e-07,
+     "abs_discrepancy": 5.553512305364802e-09
+    },
+    {
+     "trajectory_index": 8,
+     "decision_index": 11,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -1.8954096958623268e-05,
+     "sampler_log_probability": -1.8968837882982152e-05,
+     "abs_discrepancy": 1.4740924358884314e-08
+    },
+    {
+     "trajectory_index": 9,
+     "decision_index": 267,
+     "width": 4,
+     "selected": 3,
+     "host_refold_log_probability": -0.0023981165140867233,
+     "sampler_log_probability": -0.002398065162721629,
+     "abs_discrepancy": 5.1351365094182144e-08
+    }
+   ],
+   "max_abs_discrepancy": 5.1351365094182144e-08
+  },
+  {
+   "packet_sha256": "afca4ee4d735bcb62df5aaae4f84782dd7e149cbfca5998ac0a3c93ba0a53e80",
+   "updates": [
+    "u002"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 90,
+     "width": 4,
+     "selected": 0,
+     "host_refold_log_probability": -0.608600378036499,
+     "sampler_log_probability": -0.6086003519539842,
+     "abs_discrepancy": 2.6082514814618207e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 66,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -4.124556289752945e-05,
+     "sampler_log_probability": -4.126201119169236e-05,
+     "abs_discrepancy": 1.6448294162907753e-08
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 124,
+     "width": 4,
+     "selected": 3,
+     "host_refold_log_probability": -0.0003924791235476732,
+     "sampler_log_probability": -0.0003924646089845118,
+     "abs_discrepancy": 1.4514563161452127e-08
+    },
+    {
+     "trajectory_index": 7,
+     "decision_index": 67,
+     "width": 5,
+     "selected": 1,
+     "host_refold_log_probability": -0.6046865582466125,
+     "sampler_log_probability": -0.6046866097226993,
+     "abs_discrepancy": 5.147608672650961e-08
+    },
+    {
+     "trajectory_index": 8,
+     "decision_index": 148,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -0.0003063209296669811,
+     "sampler_log_probability": -0.0003063063389039989,
+     "abs_discrepancy": 1.459076298221092e-08
+    }
+   ],
+   "max_abs_discrepancy": 5.147608672650961e-08
+  },
+  {
+   "packet_sha256": "e6bd1f1d0d4c97b74645f10a2605e71e2d75ed168c3ab9336b2c6b70fda78a7d",
+   "updates": [
+    "u003"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 68,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -1.847726889536716e-05,
+     "sampler_log_probability": -1.845808828865957e-05,
+     "abs_discrepancy": 1.9180606707589214e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 269,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -3.302042750874534e-05,
+     "sampler_log_probability": -3.301685954231242e-05,
+     "abs_discrepancy": 3.567966432924791e-09
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 61,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.0003535122668836266,
+     "sampler_log_probability": -0.00035345640815373383,
+     "abs_discrepancy": 5.585872989274845e-08
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 35,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -0.017068278044462204,
+     "sampler_log_probability": -0.017068313411836435,
+     "abs_discrepancy": 3.5367374230654836e-08
+    },
+    {
+     "trajectory_index": 7,
+     "decision_index": 171,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -1.5020257706055418e-05,
+     "sampler_log_probability": -1.5050516989825622e-05,
+     "abs_discrepancy": 3.025928377020468e-08
+    }
+   ],
+   "max_abs_discrepancy": 5.585872989274845e-08
+  },
+  {
+   "packet_sha256": "6dc4f908ce903557e5f5128aa285a38fc3b1069d0d015d1a077431b33dbc095c",
+   "updates": [
+    "u004"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 33,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -7.009260298218578e-05,
+     "sampler_log_probability": -7.00684539496126e-05,
+     "abs_discrepancy": 2.4149032573186663e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 33,
+     "width": 5,
+     "selected": 3,
+     "host_refold_log_probability": -0.0003196682082489133,
+     "sampler_log_probability": -0.00031968708903524454,
+     "abs_discrepancy": 1.8880786331252047e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 176,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.00045670566032640636,
+     "sampler_log_probability": -0.0004566829767511197,
+     "abs_discrepancy": 2.2683575286674106e-08
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 17,
+     "width": 6,
+     "selected": 3,
+     "host_refold_log_probability": -1.2697230577468872,
+     "sampler_log_probability": -1.2697231068838983,
+     "abs_discrepancy": 4.9137011126632046e-08
+    },
+    {
+     "trajectory_index": 5,
+     "decision_index": 18,
+     "width": 4,
+     "selected": 1,
+     "host_refold_log_probability": -1.1570967435836792,
+     "sampler_log_probability": -1.1570967176399014,
+     "abs_discrepancy": 2.594377779274737e-08
+    }
+   ],
+   "max_abs_discrepancy": 4.9137011126632046e-08
+  },
+  {
+   "packet_sha256": "3aaa3fc318cbaee2522b43731d8df91e1ca4b9c63292c023fb0f643d42e5cf76",
+   "updates": [
+    "u005"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 100,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.03195074200630188,
+     "sampler_log_probability": -0.03195073442047163,
+     "abs_discrepancy": 7.585830248679759e-09
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 55,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.00011312321294099092,
+     "sampler_log_probability": -0.00011306587556190723,
+     "abs_discrepancy": 5.733737908369832e-08
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 31,
+     "width": 2,
+     "selected": 0,
+     "host_refold_log_probability": -4.362964682513848e-05,
+     "sampler_log_probability": -4.362424438096522e-05,
+     "abs_discrepancy": 5.402444173259696e-09
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 100,
+     "width": 6,
+     "selected": 0,
+     "host_refold_log_probability": -0.000414047361118719,
+     "sampler_log_probability": -0.0004140013018928899,
+     "abs_discrepancy": 4.6059225829067456e-08
+    },
+    {
+     "trajectory_index": 9,
+     "decision_index": 123,
+     "width": 5,
+     "selected": 2,
+     "host_refold_log_probability": -1.1925842761993408,
+     "sampler_log_probability": -1.192584208341772,
+     "abs_discrepancy": 6.785756889726713e-08
+    }
+   ],
+   "max_abs_discrepancy": 6.785756889726713e-08
+  },
+  {
+   "packet_sha256": "b48aba92ab1d09283277f004e314522f5da7f9600c1da134b3bc97835346e1fa",
+   "updates": [
+    "u006"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 55,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -7.891343557275832e-05,
+     "sampler_log_probability": -7.892338251101863e-05,
+     "abs_discrepancy": 9.946938260313887e-09
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 37,
+     "width": 3,
+     "selected": 1,
+     "host_refold_log_probability": 0.0,
+     "sampler_log_probability": -2.089457495694647e-10,
+     "abs_discrepancy": 2.089457495694647e-10
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 52,
+     "width": 4,
+     "selected": 0,
+     "host_refold_log_probability": -5.125986717757769e-06,
+     "sampler_log_probability": -5.116959571039881e-06,
+     "abs_discrepancy": 9.027146717887785e-09
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 118,
+     "width": 3,
+     "selected": 0,
+     "host_refold_log_probability": -1.261742115020752,
+     "sampler_log_probability": -1.2617420808303785,
+     "abs_discrepancy": 3.4190373421338904e-08
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 83,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.0001782019971869886,
+     "sampler_log_probability": -0.0001782574433281383,
+     "abs_discrepancy": 5.544614114971129e-08
+    }
+   ],
+   "max_abs_discrepancy": 5.544614114971129e-08
+  },
+  {
+   "packet_sha256": "c674a148bfb5a72b2448f065f0881b521d5abd1a210f4efa8a42234aeb0c16c4",
+   "updates": [
+    "u007"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 39,
+     "width": 7,
+     "selected": 2,
+     "host_refold_log_probability": -0.006999614182859659,
+     "sampler_log_probability": -0.006999599722211589,
+     "abs_discrepancy": 1.4460648070473148e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 9,
+     "width": 4,
+     "selected": 3,
+     "host_refold_log_probability": -0.001095410087145865,
+     "sampler_log_probability": -0.0010954137287702023,
+     "abs_discrepancy": 3.641624337366936e-09
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 311,
+     "width": 8,
+     "selected": 0,
+     "host_refold_log_probability": 0.0,
+     "sampler_log_probability": -1.0958292879691292e-08,
+     "abs_discrepancy": 1.0958292879691292e-08
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 27,
+     "width": 2,
+     "selected": 0,
+     "host_refold_log_probability": -4.887569048150908e-06,
+     "sampler_log_probability": -4.893151077929857e-06,
+     "abs_discrepancy": 5.582029778948786e-09
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 152,
+     "width": 5,
+     "selected": 4,
+     "host_refold_log_probability": -0.07210034132003784,
+     "sampler_log_probability": -0.07210030458993728,
+     "abs_discrepancy": 3.673010055826875e-08
+    }
+   ],
+   "max_abs_discrepancy": 3.673010055826875e-08
+  },
+  {
+   "packet_sha256": "d28b9481c11291fa1527501d4271d42fa861c5e808c721d54c2542ba881a2c1b",
+   "updates": [
+    "u008"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 13,
+     "width": 4,
+     "selected": 1,
+     "host_refold_log_probability": -0.01025242917239666,
+     "sampler_log_probability": -0.010252497869343673,
+     "abs_discrepancy": 6.869694701289175e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 70,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -0.0007344171172007918,
+     "sampler_log_probability": -0.0007344589965693329,
+     "abs_discrepancy": 4.187936854108728e-08
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 9,
+     "width": 7,
+     "selected": 0,
+     "host_refold_log_probability": -0.00032550760079175234,
+     "sampler_log_probability": -0.00032548483320622907,
+     "abs_discrepancy": 2.276758552326695e-08
+    },
+    {
+     "trajectory_index": 7,
+     "decision_index": 2,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -1.060956947185332e-05,
+     "sampler_log_probability": -1.0635956481422332e-05,
+     "abs_discrepancy": 2.638700956901224e-08
+    },
+    {
+     "trajectory_index": 8,
+     "decision_index": 45,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.0004415729199536145,
+     "sampler_log_probability": -0.0004416224345206162,
+     "abs_discrepancy": 4.9514567001705204e-08
+    }
+   ],
+   "max_abs_discrepancy": 6.869694701289175e-08
+  },
+  {
+   "packet_sha256": "69387877a76284d5ef558faacb0e8467eb3ae5b789debfe9cb1aba0a3df943d4",
+   "updates": [
+    "u009"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 97,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.00033706706017255783,
+     "sampler_log_probability": -0.00033711564549335384,
+     "abs_discrepancy": 4.858532079600594e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 126,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -0.00015472169616259634,
+     "sampler_log_probability": -0.00015476383319723653,
+     "abs_discrepancy": 4.213703464018355e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 57,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -8.821097435429692e-05,
+     "sampler_log_probability": -8.818513099835006e-05,
+     "abs_discrepancy": 2.5843355946859664e-08
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 68,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.0002853463520295918,
+     "sampler_log_probability": -0.0002852976978400705,
+     "abs_discrepancy": 4.8654189521290126e-08
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 209,
+     "width": 4,
+     "selected": 3,
+     "host_refold_log_probability": -0.000985017977654934,
+     "sampler_log_probability": -0.0009850069687089963,
+     "abs_discrepancy": 1.1008945937588527e-08
+    }
+   ],
+   "max_abs_discrepancy": 4.8654189521290126e-08
+  },
+  {
+   "packet_sha256": "63d1764a3b2c9ac24e195866b80161d0e51a66f475cb1275fdb2960f75087dd8",
+   "updates": [
+    "u010"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 33,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.00013970353757031262,
+     "sampler_log_probability": -0.00013966114135688436,
+     "abs_discrepancy": 4.239621342826106e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 133,
+     "width": 3,
+     "selected": 0,
+     "host_refold_log_probability": -0.7191554307937622,
+     "sampler_log_probability": -0.719155389006144,
+     "abs_discrepancy": 4.1787618254574e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 77,
+     "width": 8,
+     "selected": 6,
+     "host_refold_log_probability": -1.110555648803711,
+     "sampler_log_probability": -1.110555758409305,
+     "abs_discrepancy": 1.0960559415629234e-07
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 283,
+     "width": 5,
+     "selected": 4,
+     "host_refold_log_probability": -0.6288489699363708,
+     "sampler_log_probability": -0.6288489605450311,
+     "abs_discrepancy": 9.391339705899782e-09
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 91,
+     "width": 6,
+     "selected": 5,
+     "host_refold_log_probability": -1.072738766670227,
+     "sampler_log_probability": -1.0727387738041974,
+     "abs_discrepancy": 7.133970303385695e-09
+    }
+   ],
+   "max_abs_discrepancy": 1.0960559415629234e-07
+  },
+  {
+   "packet_sha256": "7b582b6c44a33203118770dfaeee82e0bd09242b549357bbf07a92fdc5c50fe2",
+   "updates": [
+    "u011"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 149,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.0012172202114015818,
+     "sampler_log_probability": -0.0012171945092375057,
+     "abs_discrepancy": 2.5702164076083292e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 67,
+     "width": 7,
+     "selected": 6,
+     "host_refold_log_probability": -0.0008772339206188917,
+     "sampler_log_probability": -0.00087727122422787,
+     "abs_discrepancy": 3.7303608978276476e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 74,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -4.911301948595792e-05,
+     "sampler_log_probability": -4.906582667181989e-05,
+     "abs_discrepancy": 4.719281413802966e-08
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 101,
+     "width": 3,
+     "selected": 0,
+     "host_refold_log_probability": 0.0,
+     "sampler_log_probability": -1.8063683880387692e-10,
+     "abs_discrepancy": 1.8063683880387692e-10
+    },
+    {
+     "trajectory_index": 6,
+     "decision_index": 52,
+     "width": 4,
+     "selected": 3,
+     "host_refold_log_probability": -0.0019081496866419911,
+     "sampler_log_probability": -0.001908113707014665,
+     "abs_discrepancy": 3.597962732609927e-08
+    }
+   ],
+   "max_abs_discrepancy": 4.719281413802966e-08
+  },
+  {
+   "packet_sha256": "5b9eb20a9ba75e3ac91575cc54a004fb14a538fb2aaa33e57ce75ce3d7d94221",
+   "updates": [
+    "u012"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 76,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -1.9550132492440753e-05,
+     "sampler_log_probability": -1.957322603345216e-05,
+     "abs_discrepancy": 2.3093541011406156e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 21,
+     "width": 8,
+     "selected": 6,
+     "host_refold_log_probability": -3.242440288886428e-05,
+     "sampler_log_probability": -3.240742323713129e-05,
+     "abs_discrepancy": 1.6979651732986726e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 47,
+     "width": 8,
+     "selected": 6,
+     "host_refold_log_probability": -0.0015326907159760594,
+     "sampler_log_probability": -0.0015326438339711554,
+     "abs_discrepancy": 4.6882004904082175e-08
+    },
+    {
+     "trajectory_index": 6,
+     "decision_index": 96,
+     "width": 7,
+     "selected": 3,
+     "host_refold_log_probability": -0.025654753670096397,
+     "sampler_log_probability": -0.02565473152128465,
+     "abs_discrepancy": 2.2148811746475205e-08
+    },
+    {
+     "trajectory_index": 9,
+     "decision_index": 67,
+     "width": 8,
+     "selected": 4,
+     "host_refold_log_probability": -3.8898887634277344,
+     "sampler_log_probability": -3.8898886682584806,
+     "abs_discrepancy": 9.516925381092278e-08
+    }
+   ],
+   "max_abs_discrepancy": 9.516925381092278e-08
+  },
+  {
+   "packet_sha256": "fae5b2f4aecea8518ac6572954e7fc9ee060b90fd653b8897a8554504da43812",
+   "updates": [
+    "u013"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 18,
+     "width": 5,
+     "selected": 1,
+     "host_refold_log_probability": -0.0005647732759825885,
+     "sampler_log_probability": -0.0005647412635890268,
+     "abs_discrepancy": 3.201239356172454e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 248,
+     "width": 8,
+     "selected": 7,
+     "host_refold_log_probability": -0.005977018270641565,
+     "sampler_log_probability": -0.00597699949606116,
+     "abs_discrepancy": 1.8774580405091224e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 5,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.00030977698042988777,
+     "sampler_log_probability": -0.0003098246097152654,
+     "abs_discrepancy": 4.762928537763991e-08
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 47,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -6.747018051100895e-05,
+     "sampler_log_probability": -6.749359547678718e-05,
+     "abs_discrepancy": 2.3414965778234e-08
+    },
+    {
+     "trajectory_index": 5,
+     "decision_index": 28,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -3.349725011503324e-05,
+     "sampler_log_probability": -3.349846543642318e-05,
+     "abs_discrepancy": 1.215321389938474e-09
+    }
+   ],
+   "max_abs_discrepancy": 4.762928537763991e-08
+  },
+  {
+   "packet_sha256": "50c67efc5e95a388826ff604376a7ac29ebd5b75ef8b1c8730c4ddcbaf5e3eb1",
+   "updates": [
+    "u014"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 39,
+     "width": 5,
+     "selected": 0,
+     "host_refold_log_probability": -0.0009691785671748221,
+     "sampler_log_probability": -0.0009691887492524286,
+     "abs_discrepancy": 1.0182077606513303e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 140,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -0.00401369808241725,
+     "sampler_log_probability": -0.004013656993062159,
+     "abs_discrepancy": 4.1089355090270785e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 17,
+     "width": 8,
+     "selected": 4,
+     "host_refold_log_probability": -0.011209134943783283,
+     "sampler_log_probability": -0.011209242712981089,
+     "abs_discrepancy": 1.0776919780533523e-07
+    },
+    {
+     "trajectory_index": 5,
+     "decision_index": 23,
+     "width": 8,
+     "selected": 5,
+     "host_refold_log_probability": -0.6738495230674744,
+     "sampler_log_probability": -0.6738495893858197,
+     "abs_discrepancy": 6.631834537085268e-08
+    },
+    {
+     "trajectory_index": 9,
+     "decision_index": 146,
+     "width": 7,
+     "selected": 1,
+     "host_refold_log_probability": -0.002662092447280884,
+     "sampler_log_probability": -0.002662088610852308,
+     "abs_discrepancy": 3.836428575862416e-09
+    }
+   ],
+   "max_abs_discrepancy": 1.0776919780533523e-07
+  },
+  {
+   "packet_sha256": "53c6469c706cc10d5923ca33235e76780de27d6a73986b3a2b641a3171dcbb8b",
+   "updates": [
+    "u015"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 79,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -0.008730101399123669,
+     "sampler_log_probability": -0.008730072512648056,
+     "abs_discrepancy": 2.8886475612541207e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 17,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -9.30981186684221e-05,
+     "sampler_log_probability": -9.309014967845861e-05,
+     "abs_discrepancy": 7.968989963492165e-09
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 16,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.003214788855984807,
+     "sampler_log_probability": -0.0032148473215748595,
+     "abs_discrepancy": 5.8465590052451943e-08
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 89,
+     "width": 4,
+     "selected": 3,
+     "host_refold_log_probability": -0.00032944019767455757,
+     "sampler_log_probability": -0.0003294537397298026,
+     "abs_discrepancy": 1.3542055245024335e-08
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 20,
+     "width": 5,
+     "selected": 0,
+     "host_refold_log_probability": -0.014568972401320934,
+     "sampler_log_probability": -0.014569024058222297,
+     "abs_discrepancy": 5.165690136234302e-08
+    }
+   ],
+   "max_abs_discrepancy": 5.8465590052451943e-08
+  },
+  {
+   "packet_sha256": "7b7628991d8123fe1def18bfbed8e8666f0ee42468506b0b734cd08e3f0493e5",
+   "updates": [
+    "u016"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 1,
+     "width": 4,
+     "selected": 2,
+     "host_refold_log_probability": -0.46780431270599365,
+     "sampler_log_probability": -0.46780429460471884,
+     "abs_discrepancy": 1.8101274812387658e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 42,
+     "width": 6,
+     "selected": 0,
+     "host_refold_log_probability": -1.1920927533992653e-07,
+     "sampler_log_probability": -1.2763120745136157e-07,
+     "abs_discrepancy": 8.421932111435032e-09
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 42,
+     "width": 2,
+     "selected": 0,
+     "host_refold_log_probability": -5.1139471906935796e-05,
+     "sampler_log_probability": -5.117655331498865e-05,
+     "abs_discrepancy": 3.708140805285182e-08
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 154,
+     "width": 8,
+     "selected": 7,
+     "host_refold_log_probability": -0.010923704132437706,
+     "sampler_log_probability": -0.010923671593355184,
+     "abs_discrepancy": 3.253908252218163e-08
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 61,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.2471846491098404,
+     "sampler_log_probability": -0.24718469164216222,
+     "abs_discrepancy": 4.253232183115685e-08
+    }
+   ],
+   "max_abs_discrepancy": 4.253232183115685e-08
+  },
+  {
+   "packet_sha256": "a473db0cd711362cb222cc83938d0cd6a31895cbc9b2535090a49dfa2db3374f",
+   "updates": [
+    "u017"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 33,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -0.0004408579843584448,
+     "sampler_log_probability": -0.000440837553622831,
+     "abs_discrepancy": 2.043073561383297e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 40,
+     "width": 5,
+     "selected": 3,
+     "host_refold_log_probability": -7.867782187531702e-06,
+     "sampler_log_probability": -7.862471503604117e-06,
+     "abs_discrepancy": 5.310683927585438e-09
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 162,
+     "width": 7,
+     "selected": 6,
+     "host_refold_log_probability": -0.0007403731578961015,
+     "sampler_log_probability": -0.000740368448554551,
+     "abs_discrepancy": 4.709341550513009e-09
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 142,
+     "width": 8,
+     "selected": 3,
+     "host_refold_log_probability": -0.15845243632793427,
+     "sampler_log_probability": -0.1584525295568936,
+     "abs_discrepancy": 9.322895933028263e-08
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 13,
+     "width": 2,
+     "selected": 0,
+     "host_refold_log_probability": -0.0004003438516519964,
+     "sampler_log_probability": -0.00040034641611389653,
+     "abs_discrepancy": 2.564461900158351e-09
+    }
+   ],
+   "max_abs_discrepancy": 9.322895933028263e-08
+  },
+  {
+   "packet_sha256": "556463587d25e0d74a793d96db631d6847d4e3bb75da91947e00c2ad48ef6e02",
+   "updates": [
+    "u018"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 78,
+     "width": 8,
+     "selected": 0,
+     "host_refold_log_probability": 0.0,
+     "sampler_log_probability": -1.2195476776242351e-08,
+     "abs_discrepancy": 1.2195476776242351e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 177,
+     "width": 7,
+     "selected": 6,
+     "host_refold_log_probability": -0.011138049885630608,
+     "sampler_log_probability": -0.011138040299137819,
+     "abs_discrepancy": 9.586492788829504e-09
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 79,
+     "width": 4,
+     "selected": 0,
+     "host_refold_log_probability": -0.0013673489447683096,
+     "sampler_log_probability": -0.00136736100555975,
+     "abs_discrepancy": 1.2060791440430055e-08
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 75,
+     "width": 8,
+     "selected": 0,
+     "host_refold_log_probability": -0.7267745733261108,
+     "sampler_log_probability": -0.7267745722317738,
+     "abs_discrepancy": 1.0943370654104e-09
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 120,
+     "width": 5,
+     "selected": 4,
+     "host_refold_log_probability": -0.8644702434539795,
+     "sampler_log_probability": -0.8644702646518287,
+     "abs_discrepancy": 2.1197849253695722e-08
+    }
+   ],
+   "max_abs_discrepancy": 2.1197849253695722e-08
+  },
+  {
+   "packet_sha256": "11b670ab76d998bd8a8ab63b723cf58d94b413a10093718ad4ec4c691b3903f0",
+   "updates": [
+    "u019"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 22,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -2.3960781618370675e-05,
+     "sampler_log_probability": -2.3919248041246328e-05,
+     "abs_discrepancy": 4.153357712434664e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 20,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -6.925819616299123e-05,
+     "sampler_log_probability": -6.926995986520395e-05,
+     "abs_discrepancy": 1.176370221272669e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 70,
+     "width": 5,
+     "selected": 3,
+     "host_refold_log_probability": -0.8279663324356079,
+     "sampler_log_probability": -0.8279663152557362,
+     "abs_discrepancy": 1.7179871747430298e-08
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 161,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -0.0020557953976094723,
+     "sampler_log_probability": -0.002055748928040115,
+     "abs_discrepancy": 4.646956935742963e-08
+    },
+    {
+     "trajectory_index": 6,
+     "decision_index": 135,
+     "width": 6,
+     "selected": 5,
+     "host_refold_log_probability": -0.014312820509076118,
+     "sampler_log_probability": -0.014312825144047457,
+     "abs_discrepancy": 4.634971339026461e-09
+    }
+   ],
+   "max_abs_discrepancy": 4.646956935742963e-08
+  },
+  {
+   "packet_sha256": "62c160a58109399c7aaaa5706115fae60813975aeec0cfccdf44c8a13a234e7e",
+   "updates": [
+    "u020"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 26,
+     "width": 8,
+     "selected": 7,
+     "host_refold_log_probability": -0.0003645947144832462,
+     "sampler_log_probability": -0.00036464465636963666,
+     "abs_discrepancy": 4.994188639045492e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 0,
+     "width": 3,
+     "selected": 1,
+     "host_refold_log_probability": -0.5089972615242004,
+     "sampler_log_probability": -0.5089971991928377,
+     "abs_discrepancy": 6.233136273792184e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 220,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -0.0008906926377676427,
+     "sampler_log_probability": -0.0008907221280669725,
+     "abs_discrepancy": 2.9490299329804938e-08
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 68,
+     "width": 4,
+     "selected": 1,
+     "host_refold_log_probability": -2.4009196758270264,
+     "sampler_log_probability": -2.4009196538718123,
+     "abs_discrepancy": 2.1955214091207154e-08
+    },
+    {
+     "trajectory_index": 5,
+     "decision_index": 9,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -0.006372844334691763,
+     "sampler_log_probability": -0.006372824290844026,
+     "abs_discrepancy": 2.004384773695439e-08
+    }
+   ],
+   "max_abs_discrepancy": 6.233136273792184e-08
+  },
+  {
+   "packet_sha256": "3a8496e57cbf2f636832f6283c6f0300342350fbf964b76f8fe3975c0590013b",
+   "updates": [
+    "u021"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 82,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.00103265349753201,
+     "sampler_log_probability": -0.001032623392749811,
+     "abs_discrepancy": 3.0104782199015176e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 82,
+     "width": 4,
+     "selected": 1,
+     "host_refold_log_probability": -0.0037675369530916214,
+     "sampler_log_probability": -0.003767616330929506,
+     "abs_discrepancy": 7.937783788472888e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 98,
+     "width": 4,
+     "selected": 3,
+     "host_refold_log_probability": -0.00012313561455812305,
+     "sampler_log_probability": -0.0001231293930695414,
+     "abs_discrepancy": 6.221488581638953e-09
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 132,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -6.711257447022945e-05,
+     "sampler_log_probability": -6.709515643852616e-05,
+     "abs_discrepancy": 1.7418031703284585e-08
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 122,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.008483915589749813,
+     "sampler_log_probability": -0.0084838616500738,
+     "abs_discrepancy": 5.393967601394212e-08
+    }
+   ],
+   "max_abs_discrepancy": 7.937783788472888e-08
+  },
+  {
+   "packet_sha256": "fad01645c47b4ae345e16ebcba878a052d8c94035bb2b9a1808385417796f6a4",
+   "updates": [
+    "u022"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 56,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -0.00853297021239996,
+     "sampler_log_probability": -0.00853300611028898,
+     "abs_discrepancy": 3.589788902073898e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 23,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.001536499592475593,
+     "sampler_log_probability": -0.0015365305846406561,
+     "abs_discrepancy": 3.0992165063036675e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 20,
+     "width": 8,
+     "selected": 4,
+     "host_refold_log_probability": -0.9555453062057495,
+     "sampler_log_probability": -0.9555452477029467,
+     "abs_discrepancy": 5.8502802824378364e-08
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 182,
+     "width": 4,
+     "selected": 3,
+     "host_refold_log_probability": -0.0014854359906166792,
+     "sampler_log_probability": -0.0014854121524743912,
+     "abs_discrepancy": 2.3838142288032035e-08
+    },
+    {
+     "trajectory_index": 5,
+     "decision_index": 135,
+     "width": 4,
+     "selected": 3,
+     "host_refold_log_probability": -0.007964991964399815,
+     "sampler_log_probability": -0.007964962789259135,
+     "abs_discrepancy": 2.9175140680084977e-08
+    }
+   ],
+   "max_abs_discrepancy": 5.8502802824378364e-08
+  },
+  {
+   "packet_sha256": "10a04c7dabc8576859d2393844b41740e89934512ae6d9e67866b62e54f1d625",
+   "updates": [
+    "u023"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 57,
+     "width": 8,
+     "selected": 4,
+     "host_refold_log_probability": -0.27277904748916626,
+     "sampler_log_probability": -0.27277897709278803,
+     "abs_discrepancy": 7.039637822670031e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 141,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -3.385486706974916e-05,
+     "sampler_log_probability": -3.3910944798794226e-05,
+     "abs_discrepancy": 5.6077729045064036e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 76,
+     "width": 2,
+     "selected": 0,
+     "host_refold_log_probability": -0.0012743695406243205,
+     "sampler_log_probability": -0.0012744079948319076,
+     "abs_discrepancy": 3.845420758707106e-08
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 271,
+     "width": 6,
+     "selected": 5,
+     "host_refold_log_probability": -0.5305971503257751,
+     "sampler_log_probability": -0.530597147384807,
+     "abs_discrepancy": 2.940968135689559e-09
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 77,
+     "width": 6,
+     "selected": 0,
+     "host_refold_log_probability": -0.0014974582009017467,
+     "sampler_log_probability": -0.0014973744157647478,
+     "abs_discrepancy": 8.378513699893245e-08
+    }
+   ],
+   "max_abs_discrepancy": 8.378513699893245e-08
+  },
+  {
+   "packet_sha256": "7e50284618fa6018bf279390e8abf1b7ac15b2811e94be2dda225b994c4827be",
+   "updates": [
+    "u024"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 166,
+     "width": 4,
+     "selected": 2,
+     "host_refold_log_probability": -0.014330332167446613,
+     "sampler_log_probability": -0.014330272842547937,
+     "abs_discrepancy": 5.9324898675841564e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 28,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -1.0371154530730564e-05,
+     "sampler_log_probability": -1.0338501318913175e-05,
+     "abs_discrepancy": 3.2653211817388825e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 20,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.00011228884250158444,
+     "sampler_log_probability": -0.00011222969682421915,
+     "abs_discrepancy": 5.9145677365292685e-08
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 242,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.0008798542548902333,
+     "sampler_log_probability": -0.0008799043725765888,
+     "abs_discrepancy": 5.011768635548083e-08
+    },
+    {
+     "trajectory_index": 6,
+     "decision_index": 116,
+     "width": 2,
+     "selected": 0,
+     "host_refold_log_probability": -0.28668567538261414,
+     "sampler_log_probability": -0.2866856592607934,
+     "abs_discrepancy": 1.6121820711756385e-08
+    }
+   ],
+   "max_abs_discrepancy": 5.9324898675841564e-08
+  },
+  {
+   "packet_sha256": "e76e5c1b58d0865533bee675798c926aa5908b8b6f1478a10d5f300ff47d33bc",
+   "updates": [
+    "u025"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 4,
+     "width": 7,
+     "selected": 3,
+     "host_refold_log_probability": -0.08130080252885818,
+     "sampler_log_probability": -0.08130092328129869,
+     "abs_discrepancy": 1.207524405050231e-07
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 76,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -8.296622399939224e-05,
+     "sampler_log_probability": -8.29386859172454e-05,
+     "abs_discrepancy": 2.753808214683742e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 25,
+     "width": 7,
+     "selected": 0,
+     "host_refold_log_probability": -0.016881108283996582,
+     "sampler_log_probability": -0.01688119535465577,
+     "abs_discrepancy": 8.707065918961421e-08
+    },
+    {
+     "trajectory_index": 5,
+     "decision_index": 101,
+     "width": 3,
+     "selected": 0,
+     "host_refold_log_probability": 0.0,
+     "sampler_log_probability": -4.53862475072712e-08,
+     "abs_discrepancy": 4.53862475072712e-08
+    },
+    {
+     "trajectory_index": 8,
+     "decision_index": 49,
+     "width": 2,
+     "selected": 0,
+     "host_refold_log_probability": -0.0006817638059146702,
+     "sampler_log_probability": -0.000681718993416765,
+     "abs_discrepancy": 4.481249790526127e-08
+    }
+   ],
+   "max_abs_discrepancy": 1.207524405050231e-07
+  },
+  {
+   "packet_sha256": "34928509ea6f35aa18f122fbe4f08ee61a675fca9327a68a513711d3f23e1719",
+   "updates": [
+    "u026"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 48,
+     "width": 3,
+     "selected": 1,
+     "host_refold_log_probability": -0.5958267450332642,
+     "sampler_log_probability": -0.5958267281590715,
+     "abs_discrepancy": 1.6874192709792624e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 218,
+     "width": 5,
+     "selected": 0,
+     "host_refold_log_probability": 0.0,
+     "sampler_log_probability": -4.421130128652525e-12,
+     "abs_discrepancy": 4.421130128652525e-12
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 48,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -6.353652861434966e-05,
+     "sampler_log_probability": -6.358693887243823e-05,
+     "abs_discrepancy": 5.041025808857013e-08
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 90,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -1.2636104656849056e-05,
+     "sampler_log_probability": -1.2685913424608357e-05,
+     "abs_discrepancy": 4.980876775930074e-08
+    },
+    {
+     "trajectory_index": 5,
+     "decision_index": 4,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -8.821448318485636e-06,
+     "sampler_log_probability": -8.821045513150085e-06,
+     "abs_discrepancy": 4.028053355511899e-10
+    }
+   ],
+   "max_abs_discrepancy": 5.041025808857013e-08
+  },
+  {
+   "packet_sha256": "9d4c322d6c9e67fb24f59754745b2c2ffe759dbfeacbafdf8d26c0061dfd61f6",
+   "updates": [
+    "u027"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 17,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -7.629365427419543e-06,
+     "sampler_log_probability": -7.617776203742581e-06,
+     "abs_discrepancy": 1.158922367696186e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 52,
+     "width": 5,
+     "selected": 1,
+     "host_refold_log_probability": -0.9205637574195862,
+     "sampler_log_probability": -0.9205637382965498,
+     "abs_discrepancy": 1.9123036376633706e-08
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 64,
+     "width": 5,
+     "selected": 2,
+     "host_refold_log_probability": -0.6722405552864075,
+     "sampler_log_probability": -0.6722405486264547,
+     "abs_discrepancy": 6.659952811460812e-09
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 2,
+     "width": 8,
+     "selected": 4,
+     "host_refold_log_probability": -0.45111608505249023,
+     "sampler_log_probability": -0.45111611958848763,
+     "abs_discrepancy": 3.453599739522417e-08
+    },
+    {
+     "trajectory_index": 6,
+     "decision_index": 125,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -0.0009964507771655917,
+     "sampler_log_probability": -0.0009964837195814717,
+     "abs_discrepancy": 3.2942415879996453e-08
+    }
+   ],
+   "max_abs_discrepancy": 3.453599739522417e-08
+  },
+  {
+   "packet_sha256": "20f5f6584b45ceddf83d63fe879b6c445ded7c80961da3409782f74e62b5db53",
+   "updates": [
+    "u028"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 118,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.00018177763558924198,
+     "sampler_log_probability": -0.00018178299063602258,
+     "abs_discrepancy": 5.355046780601601e-09
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 28,
+     "width": 4,
+     "selected": 2,
+     "host_refold_log_probability": -0.9244424104690552,
+     "sampler_log_probability": -0.9244425280850305,
+     "abs_discrepancy": 1.1761597529247325e-07
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 200,
+     "width": 5,
+     "selected": 4,
+     "host_refold_log_probability": -0.001575658330693841,
+     "sampler_log_probability": -0.00157560676358516,
+     "abs_discrepancy": 5.156710868102314e-08
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 0,
+     "width": 4,
+     "selected": 2,
+     "host_refold_log_probability": -0.9393953680992126,
+     "sampler_log_probability": -0.9393953210930194,
+     "abs_discrepancy": 4.700619327113742e-08
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 36,
+     "width": 8,
+     "selected": 1,
+     "host_refold_log_probability": -3.0897679328918457,
+     "sampler_log_probability": -3.089767949454532,
+     "abs_discrepancy": 1.6562686333543297e-08
+    }
+   ],
+   "max_abs_discrepancy": 1.1761597529247325e-07
+  },
+  {
+   "packet_sha256": "96c06d6b56aab68e811710cd9584aea359494b952b520d8a35e1930820bbae05",
+   "updates": [
+    "u029"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 103,
+     "width": 4,
+     "selected": 2,
+     "host_refold_log_probability": 0.0,
+     "sampler_log_probability": -3.028609136667232e-09,
+     "abs_discrepancy": 3.028609136667232e-09
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 80,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.0002544794697314501,
+     "sampler_log_probability": -0.0002544833651983921,
+     "abs_discrepancy": 3.895466942017891e-09
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 87,
+     "width": 2,
+     "selected": 0,
+     "host_refold_log_probability": -2.3887600898742676,
+     "sampler_log_probability": -2.3887602552191987,
+     "abs_discrepancy": 1.653449310801136e-07
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 82,
+     "width": 8,
+     "selected": 7,
+     "host_refold_log_probability": -0.007671656087040901,
+     "sampler_log_probability": -0.007671680437573279,
+     "abs_discrepancy": 2.4350532377807876e-08
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 121,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -0.0013993720058351755,
+     "sampler_log_probability": -0.001399426390634383,
+     "abs_discrepancy": 5.438479920745476e-08
+    }
+   ],
+   "max_abs_discrepancy": 1.653449310801136e-07
+  },
+  {
+   "packet_sha256": "b87372453f0fa42eaf62287a7abe5b1511eb251528df5ea4e951ef4f5c7d2510",
+   "updates": [
+    "u030"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 91,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.002136449795216322,
+     "sampler_log_probability": -0.0021363976047693335,
+     "abs_discrepancy": 5.219044698842601e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 103,
+     "width": 4,
+     "selected": 3,
+     "host_refold_log_probability": -0.0005722792120650411,
+     "sampler_log_probability": -0.0005722421706135971,
+     "abs_discrepancy": 3.704145144398877e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 38,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -5.364403477869928e-06,
+     "sampler_log_probability": -5.348337165767776e-06,
+     "abs_discrepancy": 1.606631210215167e-08
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 583,
+     "width": 4,
+     "selected": 3,
+     "host_refold_log_probability": -0.0026214306708425283,
+     "sampler_log_probability": -0.002621422926735763,
+     "abs_discrepancy": 7.744106765138897e-09
+    },
+    {
+     "trajectory_index": 6,
+     "decision_index": 26,
+     "width": 2,
+     "selected": 0,
+     "host_refold_log_probability": -4.768370445162873e-07,
+     "sampler_log_probability": -4.935044270086125e-07,
+     "abs_discrepancy": 1.666738249232523e-08
+    }
+   ],
+   "max_abs_discrepancy": 5.219044698842601e-08
+  },
+  {
+   "packet_sha256": "6599a2f4f2ea2458cce661567674eae04554cd2390db567fd3e9ce731d6fe12b",
+   "updates": [
+    "u031"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 56,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -1.6569954823353328e-05,
+     "sampler_log_probability": -1.6513772548357425e-05,
+     "abs_discrepancy": 5.618227499590265e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 71,
+     "width": 7,
+     "selected": 6,
+     "host_refold_log_probability": -0.001664206851273775,
+     "sampler_log_probability": -0.0016642508541252303,
+     "abs_discrepancy": 4.400285145522535e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 66,
+     "width": 4,
+     "selected": 0,
+     "host_refold_log_probability": -0.000322409177897498,
+     "sampler_log_probability": -0.0003225262476600213,
+     "abs_discrepancy": 1.1706976252328543e-07
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 7,
+     "width": 6,
+     "selected": 2,
+     "host_refold_log_probability": -0.6815661787986755,
+     "sampler_log_probability": -0.6815662435893544,
+     "abs_discrepancy": 6.479067882203537e-08
+    },
+    {
+     "trajectory_index": 6,
+     "decision_index": 107,
+     "width": 7,
+     "selected": 4,
+     "host_refold_log_probability": -0.02367582730948925,
+     "sampler_log_probability": -0.02367587991685473,
+     "abs_discrepancy": 5.260736548121092e-08
+    }
+   ],
+   "max_abs_discrepancy": 1.1706976252328543e-07
+  },
+  {
+   "packet_sha256": "dcc3f3fcad489c33a6ab216acf6a99cbe9276429354b06868fba014888292a80",
+   "updates": [
+    "u032"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 49,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -7.867782187531702e-06,
+     "sampler_log_probability": -7.848646187183093e-06,
+     "abs_discrepancy": 1.9136000348609638e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 3,
+     "width": 5,
+     "selected": 1,
+     "host_refold_log_probability": -1.4821445941925049,
+     "sampler_log_probability": -1.4821446704745618,
+     "abs_discrepancy": 7.628205689336198e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 52,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -0.0012644876260310411,
+     "sampler_log_probability": -0.0012644360123624378,
+     "abs_discrepancy": 5.161366860339037e-08
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 5,
+     "width": 4,
+     "selected": 0,
+     "host_refold_log_probability": -0.02199424058198929,
+     "sampler_log_probability": -0.021994273787475982,
+     "abs_discrepancy": 3.320548669361045e-08
+    },
+    {
+     "trajectory_index": 5,
+     "decision_index": 156,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.0016876515001058578,
+     "sampler_log_probability": -0.0016876545222128173,
+     "abs_discrepancy": 3.0221069594309896e-09
+    }
+   ],
+   "max_abs_discrepancy": 7.628205689336198e-08
+  },
+  {
+   "packet_sha256": "f29d2ad41bd1e4c2d847d16464239d0bf690851962176cb44b77eca309cd8956",
+   "updates": [
+    "u033"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 26,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -6.353652861434966e-05,
+     "sampler_log_probability": -6.353049991177152e-05,
+     "abs_discrepancy": 6.028702578142085e-09
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 55,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.0005017452640458941,
+     "sampler_log_probability": -0.0005017175743633211,
+     "abs_discrepancy": 2.7689682573087473e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 137,
+     "width": 7,
+     "selected": 6,
+     "host_refold_log_probability": -0.0007665794692002237,
+     "sampler_log_probability": -0.0007666005008569672,
+     "abs_discrepancy": 2.10316567435297e-08
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 5,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -0.009364371187984943,
+     "sampler_log_probability": -0.009364369350380871,
+     "abs_discrepancy": 1.8376040723799836e-09
+    },
+    {
+     "trajectory_index": 6,
+     "decision_index": 47,
+     "width": 8,
+     "selected": 7,
+     "host_refold_log_probability": -0.1520015448331833,
+     "sampler_log_probability": -0.15200159457467424,
+     "abs_discrepancy": 4.974149095393621e-08
+    }
+   ],
+   "max_abs_discrepancy": 4.974149095393621e-08
+  },
+  {
+   "packet_sha256": "cfd2a3e50c205eb8d58fdf915f929813bb5f0586ae0bd8fbec4f93a9e65e10e4",
+   "updates": [
+    "u034"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 49,
+     "width": 2,
+     "selected": 0,
+     "host_refold_log_probability": -0.0021678535267710686,
+     "sampler_log_probability": -0.002167842211413391,
+     "abs_discrepancy": 1.1315357677753324e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 10,
+     "width": 8,
+     "selected": 5,
+     "host_refold_log_probability": -0.6285052299499512,
+     "sampler_log_probability": -0.6285052920674763,
+     "abs_discrepancy": 6.211752512363944e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 26,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -1.6212332411669195e-05,
+     "sampler_log_probability": -1.6258277071964722e-05,
+     "abs_discrepancy": 4.594466029552775e-08
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 108,
+     "width": 6,
+     "selected": 3,
+     "host_refold_log_probability": -1.1920927533992653e-07,
+     "sampler_log_probability": -1.0612735193714515e-07,
+     "abs_discrepancy": 1.3081923402781381e-08
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 43,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -8.583032467868179e-06,
+     "sampler_log_probability": -8.635438665028026e-06,
+     "abs_discrepancy": 5.240619715984703e-08
+    }
+   ],
+   "max_abs_discrepancy": 6.211752512363944e-08
+  },
+  {
+   "packet_sha256": "4c9d948145c78751230bc28c08ab28bbf1a4fc5b738299e63112ff9c8ae4da7f",
+   "updates": [
+    "u035"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 32,
+     "width": 6,
+     "selected": 0,
+     "host_refold_log_probability": -0.6931320428848267,
+     "sampler_log_probability": -0.6931320310204032,
+     "abs_discrepancy": 1.1864423443697092e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 94,
+     "width": 2,
+     "selected": 0,
+     "host_refold_log_probability": -0.0018012981163337827,
+     "sampler_log_probability": -0.0018012456559938883,
+     "abs_discrepancy": 5.2460339894410193e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 22,
+     "width": 7,
+     "selected": 5,
+     "host_refold_log_probability": -0.6154277920722961,
+     "sampler_log_probability": -0.6154277449723029,
+     "abs_discrepancy": 4.709999323893044e-08
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 181,
+     "width": 3,
+     "selected": 1,
+     "host_refold_log_probability": -0.002209009835496545,
+     "sampler_log_probability": -0.0022090712778064037,
+     "abs_discrepancy": 6.144230985886262e-08
+    },
+    {
+     "trajectory_index": 8,
+     "decision_index": 20,
+     "width": 6,
+     "selected": 0,
+     "host_refold_log_probability": -0.06948816776275635,
+     "sampler_log_probability": -0.06948815442829424,
+     "abs_discrepancy": 1.333446210394218e-08
+    }
+   ],
+   "max_abs_discrepancy": 6.144230985886262e-08
+  },
+  {
+   "packet_sha256": "c6e6a3c225807b0c829106e48a21c42ebf263cad99bc9e5ac79bae6e7531a686",
+   "updates": [
+    "u036"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 83,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -0.001347229932434857,
+     "sampler_log_probability": -0.0013472018776782314,
+     "abs_discrepancy": 2.8054756625456312e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 187,
+     "width": 4,
+     "selected": 3,
+     "host_refold_log_probability": -0.001395562430843711,
+     "sampler_log_probability": -0.0013956061800963347,
+     "abs_discrepancy": 4.374925262383769e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 151,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.0006357794045470655,
+     "sampler_log_probability": -0.0006358308799262207,
+     "abs_discrepancy": 5.147537915524674e-08
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 31,
+     "width": 6,
+     "selected": 0,
+     "host_refold_log_probability": -0.5933612585067749,
+     "sampler_log_probability": -0.5933612937028169,
+     "abs_discrepancy": 3.5196041969776104e-08
+    },
+    {
+     "trajectory_index": 7,
+     "decision_index": 21,
+     "width": 6,
+     "selected": 1,
+     "host_refold_log_probability": -9.357492672279477e-05,
+     "sampler_log_probability": -9.348955440846174e-05,
+     "abs_discrepancy": 8.537231433303324e-08
+    }
+   ],
+   "max_abs_discrepancy": 8.537231433303324e-08
+  },
+  {
+   "packet_sha256": "da39ef14833de52c062794b508f147766d2e1daf1063a895ab9997b9f2fc75a8",
+   "updates": [
+    "u037"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 91,
+     "width": 4,
+     "selected": 0,
+     "host_refold_log_probability": 0.0,
+     "sampler_log_probability": -1.0741993015131764e-08,
+     "abs_discrepancy": 1.0741993015131764e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 24,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -0.00011848701251437888,
+     "sampler_log_probability": -0.00011846707085253245,
+     "abs_discrepancy": 1.9941661846427155e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 29,
+     "width": 3,
+     "selected": 0,
+     "host_refold_log_probability": -1.390304684638977,
+     "sampler_log_probability": -1.3903047238594246,
+     "abs_discrepancy": 3.9220447556331806e-08
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 29,
+     "width": 7,
+     "selected": 1,
+     "host_refold_log_probability": -0.6938191056251526,
+     "sampler_log_probability": -0.6938190366850802,
+     "abs_discrepancy": 6.894007242852496e-08
+    },
+    {
+     "trajectory_index": 5,
+     "decision_index": 111,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.00015758226800244302,
+     "sampler_log_probability": -0.00015757498056786205,
+     "abs_discrepancy": 7.287434580967051e-09
+    }
+   ],
+   "max_abs_discrepancy": 6.894007242852496e-08
+  },
+  {
+   "packet_sha256": "71d680c05f730f1e648353a4998957ba3d2f72bbc76d6ddf6b4cb47cad586e3e",
+   "updates": [
+    "u038"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 23,
+     "width": 5,
+     "selected": 0,
+     "host_refold_log_probability": -0.05493500083684921,
+     "sampler_log_probability": -0.05493511606339818,
+     "abs_discrepancy": 1.152265489690052e-07
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 95,
+     "width": 8,
+     "selected": 6,
+     "host_refold_log_probability": -0.03522365912795067,
+     "sampler_log_probability": -0.03522361164568934,
+     "abs_discrepancy": 4.7482261331111e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 42,
+     "width": 4,
+     "selected": 2,
+     "host_refold_log_probability": -2.9331111907958984,
+     "sampler_log_probability": -2.9331110069672746,
+     "abs_discrepancy": 1.8382862387866794e-07
+    },
+    {
+     "trajectory_index": 7,
+     "decision_index": 114,
+     "width": 7,
+     "selected": 0,
+     "host_refold_log_probability": -0.00022706791060045362,
+     "sampler_log_probability": -0.0002271515350069503,
+     "abs_discrepancy": 8.362440649667402e-08
+    },
+    {
+     "trajectory_index": 8,
+     "decision_index": 184,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -8.880696987034753e-05,
+     "sampler_log_probability": -8.879101699100437e-05,
+     "abs_discrepancy": 1.5952879343157818e-08
+    }
+   ],
+   "max_abs_discrepancy": 1.8382862387866794e-07
+  },
+  {
+   "packet_sha256": "369052d2c6ca3c97b7b817a377899b325c715f8642d53d7b2cb40b6925feb92f",
+   "updates": [
+    "u039"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 124,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.000337662931997329,
+     "sampler_log_probability": -0.0003377108422574009,
+     "abs_discrepancy": 4.7910260071888904e-08
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 68,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -3.2782016205601394e-05,
+     "sampler_log_probability": -3.272708243510152e-05,
+     "abs_discrepancy": 5.493377049987691e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 111,
+     "width": 7,
+     "selected": 6,
+     "host_refold_log_probability": -0.24833528697490692,
+     "sampler_log_probability": -0.24833533575273903,
+     "abs_discrepancy": 4.877783210677222e-08
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 10,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.024855168536305428,
+     "sampler_log_probability": -0.024855155961913164,
+     "abs_discrepancy": 1.25743922635424e-08
+    },
+    {
+     "trajectory_index": 5,
+     "decision_index": 66,
+     "width": 4,
+     "selected": 1,
+     "host_refold_log_probability": -8.940655789047014e-06,
+     "sampler_log_probability": -9.020634656205677e-06,
+     "abs_discrepancy": 7.997886715866258e-08
+    }
+   ],
+   "max_abs_discrepancy": 7.997886715866258e-08
+  }
+ ]
+}
