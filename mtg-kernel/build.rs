@@ -2502,6 +2502,7 @@ enum Special {
     /// Target nonland permanent; its owner chooses whether the exact bound
     /// incarnation goes second from top or on the bottom of their library.
     DeemInferior,
+    UnchartedVoyage,
     /// Tap target creature and mark that exact battlefield incarnation to
     /// skip its current controller's next untap. Sleep of the Dead is the
     /// first consumer.
@@ -2813,6 +2814,7 @@ impl Special {
                 format!("scry_then_draw:{scry}:{draw}")
             }
             Special::DeemInferior => "deem_inferior".to_string(),
+            Special::UnchartedVoyage => "uncharted_voyage".to_string(),
             Special::TapAndSkipNextUntap => "tap_and_skip_next_untap".to_string(),
             Special::DestroyNonlegendaryCreature => "destroy_nonlegendary_creature".to_string(),
             Special::DestroyCreature => "destroy_creature".to_string(),
@@ -3091,6 +3093,7 @@ fn special_for(name: &str) -> Special {
         "Brainstorm" => Special::DrawThenPutHandOnLibraryTop { draw: 3, put: 2 },
         "Preordain" => Special::ScryThenDraw { scry: 2, draw: 1 },
         "Deem Inferior" => Special::DeemInferior,
+        "Uncharted Voyage" => Special::UnchartedVoyage,
         "Sleep of the Dead" => Special::TapAndSkipNextUntap,
         "Cast Down" => Special::DestroyNonlegendaryCreature,
         "Luminous Rebuke" => Special::DestroyCreature,
@@ -3262,6 +3265,7 @@ fn effect_recipe_for(card: &CardJson) -> String {
             format!("target=None;spell=ScryThenDraw(Controller,{scry},{draw});mana=None")
         }
         Special::DeemInferior => "target=NonlandPermanent;spell=PutObjectInOwnersLibrarySecondOrBottom(Target0);mana=None".to_string(),
+        Special::UnchartedVoyage => "target=Creature;spell=Sequence(PutObjectInOwnersLibraryTopOrBottom(Target0),SurveilOne(Controller));mana=None".to_string(),
         Special::TapAndSkipNextUntap => {
             "target=Creature;spell=Sequence(TapObject(Target0),SkipNextUntap(Target0));mana=None"
                 .to_string()
@@ -6003,6 +6007,20 @@ fn codegen(cards: &[CardJson]) -> String {
 
     if cards
         .iter()
+        .any(|card| matches!(special_for(&card.name), Special::UnchartedVoyage))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_uncharted_voyage() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![EffectOp::PutObjectInOwnersLibraryTopOrBottom {{ object: ObjectRef::Target(0) }}, EffectOp::SurveilOne {{ player: PlayerRef::Controller }}]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
         .any(|card| matches!(special_for(&card.name), Special::DeemInferior))
     {
         writeln!(
@@ -7164,6 +7182,11 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_deem_inferior".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::UnchartedVoyage => (
+                "TargetSpec::Creature",
+                "spell_effect_uncharted_voyage".to_string(),
+                "no_effect".to_string(),
+            ),
             Special::TapAndSkipNextUntap => (
                 "TargetSpec::Creature",
                 "spell_effect_tap_and_skip_next_untap".to_string(),
@@ -7695,7 +7718,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v47\n"
+            "kernel_carddb/v48\n"
         } else {
             "kernel_carddb/v34\n"
         },

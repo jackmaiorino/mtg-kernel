@@ -76,6 +76,8 @@ impl Scan<'_> {
             | Scry { .. }
             | SearchLibraryToHand { .. }
             | PutObjectInOwnersLibrarySecondOrBottom { .. }
+            | PutObjectInOwnersLibraryTopOrBottom { .. }
+            | SurveilOne { .. }
             | DestroyObject { .. }
             | CounterUnlessPaysGeneric { .. }
             | DamageEachCreatureWithoutSubtype { .. }
@@ -250,6 +252,11 @@ impl Scan<'_> {
                     || self.op(then)
                     || self.fs(expected_remaining_frames)
             }
+            SurveilLibraryOne {
+                original_library,
+                expected_remaining_frames,
+                ..
+            } => self.bs(original_library) || self.fs(expected_remaining_frames),
             SacrificeChosenCreature {
                 original_candidates,
                 chosen,
@@ -330,6 +337,11 @@ impl Scan<'_> {
                 original_prefix, ..
             } => self.bs(original_prefix),
             PutHandCardOnLibraryTop { original_hand, .. } => self.bs(original_hand),
+            SurveilLibraryOne {
+                original_library,
+                expected_remaining_frames,
+                ..
+            } => self.bs(original_library) || self.fs(expected_remaining_frames),
             ScryLibrary {
                 original_prefix,
                 stage,
@@ -427,7 +439,12 @@ impl Scan<'_> {
                     use EffectOptionChoicePurpose::*;
                     match purpose {
                         Generic => false,
-                        OwnerLibrarySecondOrBottom {
+                        OwnerLibraryTopOrBottom {
+                            object,
+                            expected_remaining_frames,
+                            ..
+                        }
+                        | OwnerLibrarySecondOrBottom {
                             object,
                             expected_remaining_frames,
                             ..
@@ -533,6 +550,7 @@ pub(super) fn conflicts(
                 | CounterUnlessPaysGeneric { frame }
                 | CounterTargetUnlessPaysGeneric { frame }
                 | ExileOneFromGraveyard { frame }
+                | SurveilLibraryOne { frame }
                 | ExileOneMatchingFromGraveyard { frame }
                 | SacrificeCreature { frame }
                 | PayManaThen { frame }
@@ -661,5 +679,61 @@ mod tests {
             });
         assert!(conflicts(&state, &[object], None));
         assert!(!conflicts(&state, &[other], None));
+    }
+    #[test]
+    fn surveil_selection_and_completion_retain_library_and_remaining_frame_bindings() {
+        let mut state = ready_state();
+        let object = put(&mut state, PlayerId::P1, "Forest", Zone::Library);
+        let other = put(&mut state, PlayerId::P1, "Island", Zone::Library);
+        let unrelated = put(&mut state, PlayerId::P1, "Mountain", Zone::Library);
+        let binding = |id| EffectObjectBinding {
+            object: id,
+            expected_zone: Zone::Library,
+            expected_zone_change_count: state.objects.get(id).zone_change_count,
+        };
+        let original_library = vec![binding(object)];
+        let expected_remaining_frames = vec![EffectFrame::Program {
+            op: EffectOp::DoublePlusOneCountersOnBoundObject {
+                object: binding(other),
+            },
+            path: vec![],
+        }];
+        let frame = EffectFrame::SurveilLibraryOne {
+            player: PlayerId::P1,
+            original_library: original_library.clone(),
+            put_in_graveyard: false,
+            path: vec![],
+            expected_remaining_frames: expected_remaining_frames.clone(),
+        };
+        let purpose = EffectTargetSelectionPurpose::SurveilLibraryOne {
+            player: PlayerId::P1,
+            original_library,
+            canonical_path: vec![],
+            expected_remaining_frames,
+        };
+        for id in [object, other] {
+            let pool = [id];
+            let scan = Scan {
+                state: &state,
+                pool: &pool,
+            };
+            assert!(scan.f(&frame));
+            assert!(scan.purpose(&purpose));
+        }
+        let pool = [unrelated];
+        let scan = Scan {
+            state: &state,
+            pool: &pool,
+        };
+        assert!(!scan.f(&frame));
+        assert!(!scan.purpose(&purpose));
+        state.objects.get_mut(object).zone_change_count += 1;
+        let pool = [object];
+        let scan = Scan {
+            state: &state,
+            pool: &pool,
+        };
+        assert!(!scan.f(&frame));
+        assert!(!scan.purpose(&purpose));
     }
 }

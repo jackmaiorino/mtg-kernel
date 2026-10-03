@@ -278,6 +278,14 @@ const FROZEN_CARD_DB_HASH_U64_HEX_FDN_LUMINOUS_REBUKE_V1: &str = "076524c7f95c31
 const FROZEN_RUNTIME_CATALOG_SHA256_FDN_LUMINOUS_REBUKE_V1: &str =
     "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
+// v46 adds Uncharted Voyage owner placement and private surveil.
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_UNCHARTED_VOYAGE_V2: &str = "3cd3ce13b2c52a14";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_UNCHARTED_VOYAGE_V2: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_UNCHARTED_VOYAGE_V1: &str = "f3989f46ebcb5034";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_UNCHARTED_VOYAGE_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
 const FROZEN_PROTOCOL_V2: &str = "kernel_rl_jsonl";
 const FROZEN_PROTOCOL_VERSION_V2: u32 = 5;
 const FROZEN_SCHEMA_VERSION_V2: u32 = 5;
@@ -1968,6 +1976,7 @@ pub(crate) enum NativeRunCatalogProfileV1 {
     FdnKioraCreature,
     FdnProwlerCreature,
     FdnLuminousRebuke,
+    FdnUnchartedVoyage,
     FdnCounterCreaturesRebased,
     FdnLifegainCreaturesRebased,
     FdnDrawCreaturesRebased,
@@ -1976,6 +1985,7 @@ pub(crate) enum NativeRunCatalogProfileV1 {
     FdnKioraCreatureRebased,
     FdnProwlerCreatureRebased,
     FdnLuminousRebukeRebased,
+    FdnUnchartedVoyageRebased,
 }
 
 impl ValidatedTrainRunV2 {
@@ -2541,6 +2551,16 @@ fn classify_catalog_profile_from_identity_v1(
     // literal, so these tuples are disjoint from one another and from the
     // three Pauper profiles.
     let fdn_profiles = [
+        (
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_UNCHARTED_VOYAGE_V1,
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_UNCHARTED_VOYAGE_V1,
+            NativeRunCatalogProfileV1::FdnUnchartedVoyage,
+        ),
+        (
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_UNCHARTED_VOYAGE_V2,
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_UNCHARTED_VOYAGE_V2,
+            NativeRunCatalogProfileV1::FdnUnchartedVoyageRebased,
+        ),
         (
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_LUMINOUS_REBUKE_V1,
             FROZEN_RUNTIME_CATALOG_SHA256_FDN_LUMINOUS_REBUKE_V1,
@@ -5224,6 +5244,12 @@ pub(crate) fn test_fixture_bytes_fdn_prowler_creature_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_prowler_creature()
 }
 
+#[cfg(all(test, feature = "limited-fdn-fixtures"))]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn test_fixture_bytes_fdn_luminous_rebuke_v1() -> Vec<u8> {
+    tests::fixture_bytes_fdn_luminous_rebuke()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5783,6 +5809,16 @@ mod tests {
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_PROWLER_CREATURE_V1.to_owned();
         record.environment.runtime_catalog_sha256 =
             FROZEN_RUNTIME_CATALOG_SHA256_FDN_PROWLER_CREATURE_V1.to_owned();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    pub(super) fn fixture_bytes_fdn_luminous_rebuke() -> Vec<u8> {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_LUMINOUS_REBUKE_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_LUMINOUS_REBUKE_V1.to_owned();
         refresh_derived(&mut record);
         to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
     }
@@ -7136,20 +7172,20 @@ mod tests {
     /// the frozen literals were typed wrong when this successor landed.
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn fdn_luminous_rebuke_frozen_literal_matches_the_live_build_constant() {
+    fn fdn_uncharted_voyage_frozen_literal_matches_the_live_build_constant() {
         use crate::card_def::KERNEL_CARDDB_HASH;
         use crate::runtime_decks::RUNTIME_DECK_CATALOG_FILE_SHA256;
         assert_eq!(
             format!("{KERNEL_CARDDB_HASH:016x}"),
             if cfg!(feature = "limited-fdn-fixtures") {
-                FROZEN_CARD_DB_HASH_U64_HEX_FDN_LUMINOUS_REBUKE_V2
+                FROZEN_CARD_DB_HASH_U64_HEX_FDN_UNCHARTED_VOYAGE_V2
             } else {
                 FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1
             }
         );
         assert_eq!(
             RUNTIME_DECK_CATALOG_FILE_SHA256,
-            FROZEN_RUNTIME_CATALOG_SHA256_FDN_LUMINOUS_REBUKE_V2
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_UNCHARTED_VOYAGE_V2
         );
     }
 
@@ -7362,6 +7398,16 @@ mod tests {
                 FROZEN_RUNTIME_CATALOG_SHA256_FDN_PROWLER_CREATURE_V2,
                 NativeRunCatalogProfileV1::FdnProwlerCreatureRebased,
             ),
+            (
+                FROZEN_CARD_DB_HASH_U64_HEX_FDN_UNCHARTED_VOYAGE_V1,
+                FROZEN_RUNTIME_CATALOG_SHA256_FDN_UNCHARTED_VOYAGE_V1,
+                NativeRunCatalogProfileV1::FdnUnchartedVoyage,
+            ),
+            (
+                FROZEN_CARD_DB_HASH_U64_HEX_FDN_LUMINOUS_REBUKE_V2,
+                FROZEN_RUNTIME_CATALOG_SHA256_FDN_LUMINOUS_REBUKE_V2,
+                NativeRunCatalogProfileV1::FdnLuminousRebukeRebased,
+            ),
         ] {
             let mut record = fixture_record();
             record.environment.card_db_hash_u64_hex = card_db.to_owned();
@@ -7380,22 +7426,22 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn fdn_luminous_rebuke_fixture_decodes_with_its_own_profile_and_live_identity() {
+    fn fdn_uncharted_voyage_fixture_decodes_with_its_own_profile_and_live_identity() {
         let validated = decode_train_run_v2(&fixture_bytes()).unwrap();
         assert_eq!(
             validated.catalog_profile_v1(),
-            NativeRunCatalogProfileV1::FdnLuminousRebukeRebased
+            NativeRunCatalogProfileV1::FdnUnchartedVoyageRebased
         );
         assert!(current_profile_matches_live_build_identity_v1(
             validated.record().environment()
         ));
         assert_ne!(
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_LUMINOUS_REBUKE_V1,
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_UNCHARTED_VOYAGE_V1,
             FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
         );
         assert_eq!(
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_LUMINOUS_REBUKE_V1,
-            "076524c7f95c3147"
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_UNCHARTED_VOYAGE_V1,
+            "f3989f46ebcb5034"
         );
     }
 
@@ -7551,6 +7597,23 @@ mod tests {
     }
 
     #[test]
+    fn fdn_luminous_rebuke_profile_remains_readable_but_is_not_live() {
+        let bytes = fixture_bytes_fdn_luminous_rebuke();
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnLuminousRebuke
+        );
+        assert_eq!(
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_LUMINOUS_REBUKE_V1,
+            "076524c7f95c3147"
+        );
+        assert!(!current_profile_matches_live_build_identity_v1(
+            validated.record().environment()
+        ));
+    }
+
+    #[test]
     fn fdn_lifegain_creatures_profile_remains_readable_but_is_not_live() {
         let bytes = fixture_bytes_fdn_lifegain_creatures();
         let validated = decode_train_run_v2(&bytes).unwrap();
@@ -7637,7 +7700,7 @@ mod tests {
         assert_eq!(
             validated.catalog_profile_v1(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnLuminousRebukeRebased
+                NativeRunCatalogProfileV1::FdnUnchartedVoyageRebased
             } else {
                 NativeRunCatalogProfileV1::PauperMetaW1
             }
