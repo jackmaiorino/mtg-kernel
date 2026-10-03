@@ -32,6 +32,15 @@ is exact and swapped seed701 ends naturally. The private bottom-menu restore
 also passed. These results qualify the earlier Linux source, while the Windows
 failure and the new arena's hosted qualification remain outstanding.
 
+London source `f904c95c` also completed its full Linux matrix in job
+`111162992479`, including all selected integration targets and affected
+library filters without failures. The frozen snapshot check measured
+7.421 microseconds. All three complete original-game receipts equal the
+`7cbfa1cd` baseline, including exact repeated seed123 replay and the natural
+swapped seed701 terminal. Private bottom-menu restoration passed. Its Windows
+matrix is still running. This qualifies the London source on Linux and does
+not qualify the later arena storage change in CI `92881658`.
+
 CI `92881658`, with code introduced by `48b51912`, shares the arena's storage through
 `Arc<Vec<T>>`, detaching before any mutation. This avoids copying every object
 at snapshot capture; the first mutation of shared storage still clones the
