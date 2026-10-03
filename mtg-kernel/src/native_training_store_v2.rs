@@ -1746,6 +1746,8 @@ mod windows_publisher_tests {
         identity_v2, open_no_follow_v2, FILE_SHARE_DELETE_V2, FILE_SHARE_READ_V2,
         FILE_SHARE_WRITE_V2, GENERIC_READ_V2,
     };
+    #[cfg(feature = "limited-fdn-fixtures")]
+    use crate::native_training_store_run_v2::NativeRunCatalogProfileV1;
     use crate::native_training_store_run_v2::{
         decode_train_run_v2, live_catalog_profile_v1, test_fixture_bytes_historical_v1,
         test_fixture_bytes_v2,
