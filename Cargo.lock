@@ -2936,9 +2936,11 @@ dependencies = [
 name = "mtg-kernel"
 version = "0.0.4"
 dependencies = [
+ "base64 0.22.1",
  "burn",
  "burn-cuda",
  "cudarc",
+ "flate2",
  "semver",
  "serde",
  "serde_json",

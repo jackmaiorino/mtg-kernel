@@ -112,6 +112,7 @@ fn replay_server() -> SpellbenchBridgeServerV1 {
         SpellbenchEngineIdentityV1::with_source_revision(None),
         SpellbenchBridgeOptionsV1 {
             x_kernel_flat_v4: true,
+            ..SpellbenchBridgeOptionsV1::default()
         },
     )
 }

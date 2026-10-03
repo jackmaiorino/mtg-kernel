@@ -119,6 +119,7 @@ pub(crate) fn map_rows_to_candidates_v1(
     Ok(map)
 }
 
+#[derive(Clone)]
 pub(crate) struct FlatV4LockstepV1 {
     episode_id: u64,
     fast: FastActorSessionV1,
@@ -145,6 +146,10 @@ impl FlatV4LockstepV1 {
 
     pub(crate) fn fast_session(&self) -> &FastActorSessionV1 {
         &self.fast
+    }
+
+    pub(crate) fn enable_spellbench_neutral_choices(&mut self) {
+        self.fast.enable_spellbench_neutral_choices();
     }
 
     #[cfg(test)]

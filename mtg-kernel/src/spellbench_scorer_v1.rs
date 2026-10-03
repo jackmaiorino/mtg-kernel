@@ -14,6 +14,7 @@ use crate::sideboard_play_policy_v1::{
 use crate::xmage_observed_inference_v1::ObservedTensorBitsV1;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use base64::Engine as _;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fmt::Display;
@@ -23,6 +24,7 @@ use std::path::Path;
 
 pub const SCORER_CONFIG_SCHEMA_V1: &str = "mtg-kernel-spellbench-scorer-config/v1";
 pub const SCORER_REQUEST_SCHEMA_V1: &str = "mtg-kernel-spellbench-scorer-request/v1";
+pub const SCORER_PROPOSAL_SCHEMA_V1: &str = "mtg-kernel-spellbench-completion-proposals/v1";
 pub const SCORER_CHOICE_SCHEMA_V1: &str = "mtg-kernel-spellbench-scorer-choice/v1";
 pub const SCORER_READY_SCHEMA_V1: &str = "mtg-kernel-spellbench-scorer-ready/v1";
 pub const SCORER_ERROR_SCHEMA_V1: &str = "mtg-kernel-spellbench-scorer-error/v1";
@@ -57,6 +59,162 @@ struct SpellbenchScorerRequestV1 {
     #[serde(default)]
     sample_seed: Option<u64>,
     tensor: ObservedTensorBitsV1,
+}
+
+/// A versioned neutral action mapping, not the legacy policy's action space.
+/// Each candidate has one deterministic legal completion, scored as the sum
+/// of its native categorical log probabilities. No post-declaration view is
+/// allowed in these trajectories; the bridge enforces the preview boundary.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CompletionProposalRequestV1 {
+    schema: String,
+    request_id: String,
+    game_id: String,
+    seat: String,
+    #[allow(dead_code)]
+    step: u64,
+    feature_contract_digest: String,
+    feature_encoding_digest: String,
+    row_candidate_ids: Vec<u32>,
+    sample_seed: Option<u64>,
+    #[serde(default)]
+    tensor_encoding: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_present")]
+    proposals_zlib: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_present")]
+    proposals: Option<Vec<Vec<CompletionProposalStepV1>>>,
+}
+
+fn deserialize_present<'de, T: Deserialize<'de>, D: serde::Deserializer<'de>>(deserializer: D)
+    -> Result<Option<T>, D::Error> {
+    T::deserialize(deserializer).map(Some)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CompletionProposalStepV1 {
+    tensor: ProposalTensorBitsV1,
+    selected_row: usize,
+}
+
+fn decode_proposal_payload(encoded: &str, max_bytes: usize) -> Result<Vec<u8>, &'static str> {
+    let compressed = base64::engine::general_purpose::STANDARD.decode(encoded)
+        .map_err(|_| "proposal_compression")?;
+    let mut decoder = flate2::Decompress::new(true);
+    let mut decoded = Vec::new();
+    let mut offset = 0;
+    loop {
+        let mut chunk = [0_u8; 8192];
+        let before_in = decoder.total_in();
+        let before_out = decoder.total_out();
+        let status = decoder.decompress(&compressed[offset..], &mut chunk, flate2::FlushDecompress::None)
+            .map_err(|_| "proposal_compression")?;
+        let consumed = (decoder.total_in() - before_in) as usize;
+        let written = (decoder.total_out() - before_out) as usize;
+        offset += consumed;
+        if written > max_bytes.saturating_sub(decoded.len()) {
+            return Err("proposal_compression");
+        }
+        decoded.extend_from_slice(&chunk[..written]);
+        if status == flate2::Status::StreamEnd {
+            if offset != compressed.len() {
+                return Err("proposal_compression");
+            }
+            break;
+        }
+        if consumed == 0 && written == 0 {
+            return Err("proposal_compression");
+        }
+    }
+    Ok(decoded)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
+enum ProposalWordsV1<T> {
+    Plain(Vec<T>),
+    Runs { length: usize, rle: Vec<(T, usize)> },
+}
+
+impl<T: Clone> ProposalWordsV1<T> {
+    fn expand(self, allow_runs: bool, remaining: &mut usize) -> Result<Vec<T>, &'static str> {
+        let length = match &self {
+            Self::Plain(words) => words.len(),
+            Self::Runs { length, .. } if allow_runs => *length,
+            _ => return Err("proposal_tensor_encoding"),
+        };
+        // Bound expanded allocation before reserving it. Across a request,
+        // at most 64M words are scored, one tensor at a time.
+        if length > 1024 * 1024 || length > *remaining {
+            return Err("proposal_tensor_size");
+        }
+        *remaining -= length;
+        match self {
+            Self::Plain(words) => Ok(words),
+            Self::Runs { length, rle } => {
+                let mut words = Vec::with_capacity(length);
+                for (word, count) in rle {
+                    let next = words.len().checked_add(count).ok_or("proposal_tensor_size")?;
+                    if count == 0 || next > length {
+                        return Err("proposal_tensor_encoding");
+                    }
+                    words.resize(next, word);
+                }
+                if words.len() != length {
+                    return Err("proposal_tensor_encoding");
+                }
+                Ok(words)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProposalTensorBitsV1 {
+    state: ProposalWordsV1<u32>,
+    object_features: ProposalWordsV1<u32>,
+    object_card_ids: ProposalWordsV1<i64>,
+    object_groups: ProposalWordsV1<i64>,
+    object_node_ids: ProposalWordsV1<i64>,
+    edge_features: ProposalWordsV1<u32>,
+    edge_source_indices: ProposalWordsV1<i64>,
+    edge_target_indices: ProposalWordsV1<i64>,
+    action_features: ProposalWordsV1<u32>,
+    action_ref_features: ProposalWordsV1<u32>,
+    action_ref_card_ids: ProposalWordsV1<i64>,
+    action_ref_action_indices: ProposalWordsV1<i64>,
+    action_ref_node_indices: ProposalWordsV1<i64>,
+}
+
+impl ProposalTensorBitsV1 {
+    fn expand(self, allow_runs: bool, remaining: &mut usize) -> Result<ObservedTensorBitsV1, &'static str> {
+        Ok(ObservedTensorBitsV1 {
+            state: self.state.expand(allow_runs, remaining)?,
+            object_features: self.object_features.expand(allow_runs, remaining)?,
+            object_card_ids: self.object_card_ids.expand(allow_runs, remaining)?,
+            object_groups: self.object_groups.expand(allow_runs, remaining)?,
+            object_node_ids: self.object_node_ids.expand(allow_runs, remaining)?,
+            edge_features: self.edge_features.expand(allow_runs, remaining)?,
+            edge_source_indices: self.edge_source_indices.expand(allow_runs, remaining)?,
+            edge_target_indices: self.edge_target_indices.expand(allow_runs, remaining)?,
+            action_features: self.action_features.expand(allow_runs, remaining)?,
+            action_ref_features: self.action_ref_features.expand(allow_runs, remaining)?,
+            action_ref_card_ids: self.action_ref_card_ids.expand(allow_runs, remaining)?,
+            action_ref_action_indices: self.action_ref_action_indices.expand(allow_runs, remaining)?,
+            action_ref_node_indices: self.action_ref_node_indices.expand(allow_runs, remaining)?,
+        })
+    }
+}
+
+fn categorical_log_probability(logits: &[f32], selected: usize) -> Result<f64, &'static str> {
+    if selected >= logits.len() || logits.iter().any(|value| !value.is_finite()) {
+        return Err("invalid_model_output");
+    }
+    let maximum = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max) as f64;
+    let sum = logits.iter().map(|value| (*value as f64 - maximum).exp()).sum::<f64>();
+    Ok(logits[selected] as f64 - maximum - sum.ln())
 }
 
 fn into_tensor_v4(bits: ObservedTensorBitsV1) -> NativeFlatDecisionTensorV4 {
@@ -165,6 +323,11 @@ impl SpellbenchScorerV1 {
         bytes: &[u8],
         diagnostics: &mut dyn Write,
     ) -> Result<Value, &'static str> {
+        let header: Value = serde_json::from_slice(bytes)
+            .map_err(|error| reject(diagnostics, "request_json", error))?;
+        if header.get("schema").and_then(Value::as_str) == Some(SCORER_PROPOSAL_SCHEMA_V1) {
+            return self.score_proposals(bytes, diagnostics);
+        }
         let request: SpellbenchScorerRequestV1 = serde_json::from_slice(bytes)
             .map_err(|error| reject(diagnostics, "request_json", error))?;
         if request.schema != SCORER_REQUEST_SCHEMA_V1 {
@@ -239,6 +402,74 @@ impl SpellbenchScorerV1 {
             "selected_row": selected,
             "selected_candidate_id": request.row_candidate_ids[selected],
         }))
+    }
+
+    fn score_proposals(&mut self, bytes: &[u8], diagnostics: &mut dyn Write) -> Result<Value, &'static str> {
+        let request: CompletionProposalRequestV1 = serde_json::from_slice(bytes)
+            .map_err(|error| reject(diagnostics, "request_json", error))?;
+        let proposals = match (request.proposals, request.proposals_zlib) {
+            (Some(proposals), None) => proposals,
+            (None, Some(encoded)) => {
+            let decoded = decode_proposal_payload(&encoded, 64 * 1024 * 1024)
+                .map_err(|code| reject(diagnostics, code, "invalid bounded zlib payload"))?;
+            serde_json::from_slice(&decoded)
+                .map_err(|error| reject(diagnostics, "request_json", error))?
+            }
+            _ => return Err(reject(diagnostics, "proposal_compression", "requires exactly one proposal representation")),
+        };
+        if request.schema != SCORER_PROPOSAL_SCHEMA_V1 || request.request_id.is_empty() || request.game_id.is_empty()
+            || !matches!(request.seat.as_str(), "p0" | "p1") {
+            return Err(reject(diagnostics, "request_identity", "invalid proposal identity"));
+        }
+        if request.feature_contract_digest != self.feature_identity.feature_contract_digest
+            || request.feature_encoding_digest != self.feature_identity.feature_encoding_digest {
+            return Err(reject(diagnostics, "request_feature_contract", "different proposal feature contract"));
+        }
+        let rows = request.row_candidate_ids.len();
+        if rows == 0 || rows > 4096 || proposals.len() != rows
+            || request.row_candidate_ids.iter().collect::<BTreeSet<_>>().len() != rows
+            || proposals.iter().any(|steps| steps.is_empty() || steps.len() > 4096) {
+            return Err(reject(diagnostics, "row_candidate_ids", "invalid proposal dimensions"));
+        }
+        let seed = match (self.selection, request.sample_seed) {
+            (SELECTION_SAMPLED_WIDE_V1, Some(seed)) => Some(seed),
+            (SELECTION_ARGMAX_FIRST_V1, None) => None,
+            _ => return Err(reject(diagnostics, "sample_seed", "different proposal selection")),
+        };
+        let allow_runs = match request.tensor_encoding.as_deref() {
+            None => false,
+            Some("integer-rle/v1") => true,
+            _ => return Err(reject(diagnostics, "proposal_tensor_encoding", "unknown tensor encoding")),
+        };
+        let mut remaining_words = 64 * 1024 * 1024;
+        let mut logits = Vec::with_capacity(rows);
+        for steps in proposals {
+            let mut score = 0.0_f64;
+            for step in steps {
+                let tensor = step.tensor.expand(allow_runs, &mut remaining_words)
+                    .map_err(|code| reject(diagnostics, code, "invalid bounded proposal tensor"))?;
+                let output = self.policy.score_training_tensor_v4(&into_tensor_v4(tensor))
+                    .map_err(|error| reject(diagnostics, "native_inference", error))?;
+                score += categorical_log_probability(&output.logits, step.selected_row)
+                    .map_err(|code| reject(diagnostics, code, "invalid proposal categorical row"))?;
+            }
+            let score = score as f32;
+            if !score.is_finite() {
+                return Err(reject(diagnostics, "invalid_model_output", "nonfinite proposal score"));
+            }
+            logits.push(score);
+        }
+        let selected = match seed {
+            Some(seed) => self.sampler.sample(&logits, seed)
+                .map_err(|error| reject(diagnostics, "sampler", error))?,
+            None => first_argmax(&logits).ok_or("invalid_model_output")?,
+        };
+        Ok(json!({"schema": SCORER_CHOICE_SCHEMA_V1, "mapping": "deterministic-completion-logprob/v1",
+            "request_id": request.request_id, "request_sha256": format!("{:x}", Sha256::digest(bytes)),
+            "model_state_sha256": self.model_state_sha256, "selection": self.selection,
+            "logits_bits": logits.iter().map(|value| value.to_bits()).collect::<Vec<_>>(),
+            "value_bits": 0.0_f32.to_bits(), "selected_row": selected,
+            "selected_candidate_id": request.row_candidate_ids[selected]}))
     }
 }
 
@@ -486,6 +717,113 @@ mod tests {
     use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
     use crate::state::SplitMix64;
     use std::io::Cursor;
+
+    #[test]
+    fn completion_logprob_is_shift_invariant_and_validates_rows() {
+        let score = categorical_log_probability(&[0.0, 0.0], 1).unwrap();
+        assert!((score + 2.0_f64.ln()).abs() < 1e-12);
+        assert_eq!(score, categorical_log_probability(&[19.0, 19.0], 1).unwrap());
+        assert!(categorical_log_probability(&[f32::NAN], 0).is_err());
+        assert!(categorical_log_probability(&[0.0], 1).is_err());
+    }
+
+    #[test]
+    fn completion_proposals_use_frozen_logits_and_native_sampler() {
+        let (_, logits, _, bytes) = live_case(Some(123));
+        let request: Value = serde_json::from_slice(&bytes).unwrap();
+        let tensor = request["tensor"].clone();
+        let probabilities: Vec<f32> = (0..logits.len())
+            .map(|row| categorical_log_probability(&logits, row).unwrap() as f32).collect();
+        let proposals: Vec<Value> = (0..logits.len())
+            .map(|row| json!([{"tensor": tensor, "selected_row": row}])).collect();
+        let rows: Vec<u32> = (0..logits.len() as u32).collect();
+        let proposal = json!({"schema": SCORER_PROPOSAL_SCHEMA_V1, "request_id": "proposal-1",
+            "game_id": "game", "seat": "p0", "step": 0,
+            "feature_contract_digest": FEATURE_CONTRACT_DIGEST_V4,
+            "feature_encoding_digest": FEATURE_ENCODING_DIGEST_V4,
+            "sample_seed": 123, "row_candidate_ids": rows, "proposals": proposals});
+        let result = scorer(SELECTION_SAMPLED_WIDE_V1).score_line(&serde_json::to_vec(&proposal).unwrap()).unwrap();
+        let expected = WideCategoricalScratchV1::default().sample(&probabilities, 123).unwrap();
+        assert_eq!(result["selected_row"], expected);
+        assert_eq!(result["logits_bits"], json!(probabilities.iter().map(|value| value.to_bits()).collect::<Vec<_>>()));
+        assert_eq!(result["mapping"], "deterministic-completion-logprob/v1");
+
+        let mut packed = proposal.clone();
+        packed["tensor_encoding"] = json!("integer-rle/v1");
+        for steps in packed["proposals"].as_array_mut().unwrap() {
+            for step in steps.as_array_mut().unwrap() {
+                for words in step["tensor"].as_object_mut().unwrap().values_mut() {
+                    let array = words.as_array().unwrap();
+                    let mut runs: Vec<(Value, usize)> = Vec::new();
+                    for value in array {
+                        if let Some((_, count)) = runs.last_mut().filter(|(previous, _)| previous == value) {
+                            *count += 1;
+                        } else {
+                            runs.push((value.clone(), 1));
+                        }
+                    }
+                    *words = json!({"length": array.len(), "rle": runs});
+                }
+            }
+        }
+        let packed_result = scorer(SELECTION_SAMPLED_WIDE_V1).score_line(&serde_json::to_vec(&packed).unwrap()).unwrap();
+        for field in ["logits_bits", "value_bits", "selected_row", "selected_candidate_id", "mapping"] {
+            assert_eq!(packed_result[field], result[field], "lossless encoding changed {field}");
+        }
+        let mut compressed = packed.clone();
+        let payload = serde_json::to_vec(&compressed.as_object_mut().unwrap().remove("proposals").unwrap()).unwrap();
+        let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(&payload).unwrap();
+        compressed["proposals_zlib"] = json!(base64::engine::general_purpose::STANDARD.encode(encoder.finish().unwrap()));
+        let compressed_result = scorer(SELECTION_SAMPLED_WIDE_V1).score_line(&serde_json::to_vec(&compressed).unwrap()).unwrap();
+        for field in ["logits_bits", "value_bits", "selected_row", "selected_candidate_id", "mapping"] {
+            assert_eq!(compressed_result[field], result[field], "zlib encoding changed {field}");
+        }
+        compressed["proposals"] = json!([]);
+        assert_eq!(scorer(SELECTION_SAMPLED_WIDE_V1).score_line(&serde_json::to_vec(&compressed).unwrap()),
+            Err("proposal_compression"));
+        compressed["proposals"] = Value::Null;
+        assert_eq!(scorer(SELECTION_SAMPLED_WIDE_V1).score_line(&serde_json::to_vec(&compressed).unwrap()),
+            Err("request_json"));
+        packed.as_object_mut().unwrap().remove("tensor_encoding");
+        assert_eq!(scorer(SELECTION_SAMPLED_WIDE_V1).score_line(&serde_json::to_vec(&packed).unwrap()),
+            Err("proposal_tensor_encoding"));
+    }
+
+    #[test]
+    fn proposal_zlib_rejects_invalid_trailing_and_oversized_data() {
+        let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(&[42; 100]).unwrap();
+        let mut bytes = encoder.finish().unwrap();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        assert_eq!(decode_proposal_payload(&encoded, 100).unwrap(), vec![42; 100]);
+        assert_eq!(decode_proposal_payload(&encoded, 99), Err("proposal_compression"));
+        assert_eq!(decode_proposal_payload("bad-base64!", 100), Err("proposal_compression"));
+        for missing in [1, 2, 4, bytes.len() / 2] {
+            assert_eq!(decode_proposal_payload(&base64::engine::general_purpose::STANDARD.encode(&bytes[..bytes.len() - missing]), 100),
+                Err("proposal_compression"));
+        }
+        bytes.push(0);
+        assert_eq!(decode_proposal_payload(&base64::engine::general_purpose::STANDARD.encode(&bytes), 100),
+            Err("proposal_compression"));
+    }
+
+    #[test]
+    fn proposal_rle_preserves_u32_bits_and_rejects_invalid_expansion() {
+        let mut remaining = 12;
+        assert_eq!(ProposalWordsV1::Runs { length: 5,
+            rle: vec![(0, 2), (0x80000000, 1), (0x7fc00001, 1), (u32::MAX, 1)] }
+            .expand(true, &mut remaining).unwrap(), vec![0, 0, 0x80000000, 0x7fc00001, u32::MAX]);
+        assert_eq!(remaining, 7);
+        for (length, rle, error) in [
+            (1, vec![(0, 0)], "proposal_tensor_encoding"),
+            (1, vec![(0, 2)], "proposal_tensor_encoding"),
+            (2, vec![(0, 1)], "proposal_tensor_encoding"),
+            (8, vec![(0, 8)], "proposal_tensor_size"),
+        ] {
+            assert_eq!(ProposalWordsV1::Runs { length, rle }.expand(true, &mut 7), Err(error));
+        }
+    }
 
     fn request_bits(tensor: &NativeFlatDecisionTensorV4) -> ObservedTensorBitsV1 {
         let b = |values: &[f32]| {

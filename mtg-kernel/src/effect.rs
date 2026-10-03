@@ -2122,6 +2122,7 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
         drop(token);
     }
 
+    let neutral_choices = state.engine.spellbench_neutral_choices;
     let continuation = state.engine.pending_effect.as_mut().unwrap();
     let PendingEffectChoice::SelectTargets {
         selected,
@@ -2138,12 +2139,12 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
 
     let required = usize::from(*min_targets).saturating_sub(selected.len());
     if (*ordered && required == 1 && legal.len() == 1)
-        || (!*ordered && required > 0 && required == legal.len())
+        || (!*ordered && required > 0 && required == legal.len() && !neutral_choices)
     {
         selected.append(legal);
     }
     if selected.len() == usize::from(*max_targets) {
-        complete_resumable_target_selection(continuation)?;
+        complete_resumable_target_selection(continuation, neutral_choices)?;
     }
     Ok(())
 }
@@ -2207,7 +2208,8 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
             .map_err(|error| error.to_string())?;
         drop(token);
     }
-    complete_resumable_target_selection(state.engine.pending_effect.as_mut().unwrap())
+    let neutral_choices = state.engine.spellbench_neutral_choices;
+    complete_resumable_target_selection(state.engine.pending_effect.as_mut().unwrap(), neutral_choices)
 }
 
 /// Records one generic Boolean answer without executing its consequence.
@@ -2506,7 +2508,7 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
                                         .to_string(),
                                 )
                             }
-                            1 => {
+                            1 if !state.engine.spellbench_neutral_choices => {
                                 let chosen = candidates[0];
                                 let expected_remaining_frames = continuation.frames.clone();
                                 let frame = EffectFrame::ExileChosenMatchingGraveyardCard {
@@ -2593,6 +2595,7 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
 
 fn complete_resumable_target_selection(
     continuation: &mut EffectContinuation,
+    neutral_choices: bool,
 ) -> Result<(), String> {
     let choice = continuation
         .choice
@@ -2870,11 +2873,12 @@ fn complete_resumable_target_selection(
             }
             let progress = match stage {
                 LibraryPartitionSelectionStage::ChooseMatchingSubset => {
-                    let selected = canonicalize_binding_subset(&original_prefix, &objects)?;
+                    let canonical = canonicalize_binding_subset(&original_prefix, &objects)?;
+                    let selected = if neutral_choices { objects } else { canonical };
                     LibraryPartitionProgress::MatchingSubsetChosen { selected }
                 }
                 LibraryPartitionSelectionStage::OrderRest { selected } => {
-                    validate_canonical_binding_subset(&original_prefix, &selected)?;
+                    validate_library_partition_subset(neutral_choices, &original_prefix, &selected)?;
                     let rest = binding_partition_rest(&original_prefix, &selected)?;
                     validate_exact_binding_permutation(
                         &rest,
@@ -4287,7 +4291,7 @@ fn validate_undercity_throne_frame(
     if !canonical_path.is_empty()
         || path != canonical_path
         || !expected_remaining_frames.is_empty()
-        || candidates.len() < 2
+        || (candidates.is_empty() || (candidates.len() == 1 && !state.engine.spellbench_neutral_choices))
     {
         return Err("Throne answered frame has noncanonical progress".to_string());
     }
@@ -4562,7 +4566,7 @@ fn stage_or_apply_undercity_throne(
             apply_undercity_throne_result(state, binding, None)?;
             Ok(false)
         }
-        [chosen] => {
+        [chosen] if !state.engine.spellbench_neutral_choices => {
             apply_undercity_throne_result(state, binding, Some(*chosen))?;
             Ok(false)
         }
@@ -4958,7 +4962,8 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         continuation_path,
                         canonical_path,
                     )?;
-                    if *remaining == 0 || original_hand.len() < 2 {
+                    if *remaining == 0 || original_hand.is_empty()
+                        || (original_hand.len() == 1 && !state.engine.spellbench_neutral_choices) {
                         return Err(
                             "hand-to-library policy prompt has no genuine choice".to_string()
                         );
@@ -5294,7 +5299,8 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                             let count = u16::try_from(matching.len()).map_err(|_| {
                                 "library-partition matching set exceeds u16".to_string()
                             })?;
-                            if *min_targets != 0 || *max_targets != count || *ordered {
+                            let forced = state.engine.spellbench_revealed_partition.as_deref() == Some(canonical_path.as_slice());
+                            if *min_targets != if forced { count } else { 0 } || *max_targets != count || *ordered {
                                 return Err(
                                     "library-partition subset prompt has a noncanonical shape"
                                         .to_string(),
@@ -5307,7 +5313,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                             )?;
                         }
                         LibraryPartitionSelectionStage::OrderRest { selected: chosen } => {
-                            validate_canonical_binding_subset(original_prefix, chosen)?;
+                            validate_library_partition_subset(state.engine.spellbench_neutral_choices, original_prefix, chosen)?;
                             let matching = library_partition_matching_prefix(
                                 state,
                                 *card_type,
@@ -5422,7 +5428,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         || *max_targets != 1
                         || !*ordered
                         || !selected.is_empty()
-                        || original_graveyard.len() < 2
+                        || (original_graveyard.is_empty() || (original_graveyard.len() == 1 && !state.engine.spellbench_neutral_choices))
                     {
                         return Err("graveyard exile prompt has a noncanonical shape".to_string());
                     }
@@ -5462,7 +5468,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         || *max_targets != 1
                         || !*ordered
                         || !selected.is_empty()
-                        || candidates.len() < 2
+                        || (candidates.is_empty() || (candidates.len() == 1 && !state.engine.spellbench_neutral_choices))
                     {
                         return Err(
                             "filtered graveyard exile prompt has a noncanonical shape".to_string()
@@ -5504,7 +5510,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         || *max_targets != 1
                         || !*ordered
                         || !selected.is_empty()
-                        || original_candidates.len() < 2
+                        || original_candidates.is_empty() || (original_candidates.len() == 1 && !state.engine.spellbench_neutral_choices)
                     {
                         return Err(
                             "creature-sacrifice prompt has a noncanonical shape".to_string()
@@ -5648,7 +5654,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                                 .has_type(CardType::Land)
                         })
                         .collect::<Vec<_>>();
-                    if expected.len() < 2 {
+                    if expected.is_empty() || (expected.len() == 1 && !state.engine.spellbench_neutral_choices) {
                         return Err(
                             "linked-exile prompt has no genuine multi-card choice".to_string()
                         );
@@ -5679,7 +5685,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         || *max_targets != 1
                         || !*ordered
                         || !selected.is_empty()
-                        || candidates.len() < 2
+                        || (candidates.is_empty() || (candidates.len() == 1 && !state.engine.spellbench_neutral_choices))
                         || !pending.frames.is_empty()
                     {
                         return Err("Throne prompt has a noncanonical shape".to_string());
@@ -6629,7 +6635,7 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         continue;
                     }
                     state.clear_nonowner_hand_knowledge(player);
-                    if current_hand.len() == 1 {
+                    if current_hand.len() == 1 && !state.engine.spellbench_neutral_choices {
                         continuation
                             .frames
                             .push(EffectFrame::PutCardsFromHandOnLibraryTop {
@@ -7018,7 +7024,7 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     )?;
                     match progress {
                         LibraryPartitionProgress::MatchingSubsetChosen { selected } => {
-                            validate_canonical_binding_subset(&original_prefix, &selected)?;
+                            validate_library_partition_subset(state.engine.spellbench_neutral_choices, &original_prefix, &selected)?;
                             let matching = library_partition_matching_prefix(
                                 state,
                                 card_type,
@@ -7070,7 +7076,7 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                             selected,
                             ordered_rest,
                         } => {
-                            validate_canonical_binding_subset(&original_prefix, &selected)?;
+                            validate_library_partition_subset(state.engine.spellbench_neutral_choices, &original_prefix, &selected)?;
                             let matching = library_partition_matching_prefix(
                                 state,
                                 card_type,
@@ -7100,7 +7106,10 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                                 .chain(&ordered_rest)
                                 .map(|binding| binding.object)
                                 .collect::<Vec<_>>();
-                            state.apply_scry_result(player, &expected_prefix, &[], &bottom)?;
+                            let revealed = state.engine.spellbench_revealed_partition.as_deref() == Some(canonical_path.as_slice());
+                            if !revealed {
+                                state.apply_scry_result(player, &expected_prefix, &[], &bottom)?;
+                            }
                             let events = selected
                                 .iter()
                                 .map(|binding| {
@@ -7118,6 +7127,10 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                                         );
                                     }
                                 }
+                            }
+                            if revealed {
+                                commit_zone_change_batch(state, &ordered_rest, Zone::Graveyard, true)?;
+                                state.engine.spellbench_revealed_partition = None;
                             }
                         }
                     }
@@ -7651,8 +7664,19 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 rest_to,
             } => {
                 let player = continuation.ctx.resolve_player(player, state);
+                let original_prefix = bind_library_top(state, player, count);
+                let original_library_len = state.players[player.index()].library.len() as u32;
                 let (matching, rest) =
                     reveal_top_and_partition(state, player, count, card_type, matching_to, rest_to);
+                if state.engine.spellbench_neutral_choices && matching_to == Zone::Hand
+                    && rest_to == Zone::Graveyard && !original_prefix.is_empty() {
+                    state.engine.spellbench_revealed_partition = Some(path.clone());
+                    stage_library_partition_choice(&mut continuation, state, player, count,
+                        original_library_len, card_type, original_prefix,
+                        LibraryPartitionSelectionStage::ChooseMatchingSubset, path)?;
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
                 // Frames are LIFO: push the rest group first so the matching
                 // group is committed/ordered first, mirroring XMage's two
                 // separate moveCards calls.
@@ -7906,7 +7930,7 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 let candidates = creature_sacrifice_bindings(state, player, filter)?;
                 match candidates.as_slice() {
                     [] => {}
-                    [chosen] => {
+                    [chosen] if !state.engine.spellbench_neutral_choices => {
                         let chosen = *chosen;
                         let expected_remaining_frames = continuation.frames.clone();
                         let frame = EffectFrame::SacrificeChosenCreature {
@@ -7978,7 +8002,7 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     .collect::<Vec<_>>();
                 match candidates.as_slice() {
                     [] => {}
-                    [chosen] => {
+                    [chosen] if !state.engine.spellbench_neutral_choices => {
                         let expected_remaining_frames = continuation.frames.clone();
                         let frame = EffectFrame::LinkedExileChosenHandCard {
                             player,
@@ -8602,7 +8626,7 @@ fn stage_hand_to_library_choice(
     )
     .is_ok());
     debug_assert!(remaining > 0);
-    debug_assert!(original_hand.len() >= 2);
+    debug_assert!(!original_hand.is_empty());
     let mut choice_path = canonical_path.clone();
     choice_path.push(prompt_index);
     continuation.choice = Some(PendingEffectChoice::SelectTargets {
@@ -8733,10 +8757,11 @@ fn stage_library_partition_choice(
             let matching = library_partition_matching_prefix(state, card_type, &original_prefix)?;
             let count = u16::try_from(matching.len())
                 .map_err(|_| "library-partition matching set exceeds u16".to_string())?;
-            (matching, 0, count, false)
+            let forced = state.engine.spellbench_revealed_partition.as_deref() == Some(canonical_path.as_slice());
+            (matching, if forced { count } else { 0 }, count, false)
         }
         LibraryPartitionSelectionStage::OrderRest { selected } => {
-            validate_canonical_binding_subset(&original_prefix, selected)?;
+            validate_library_partition_subset(state.engine.spellbench_neutral_choices, &original_prefix, selected)?;
             let matching = library_partition_matching_prefix(state, card_type, &original_prefix)?;
             if selected.iter().any(|binding| !matching.contains(binding)) {
                 return Err(
@@ -8918,7 +8943,7 @@ fn stage_graveyard_exile_choice(
     original_graveyard: Vec<EffectObjectBinding>,
     canonical_path: Vec<u16>,
 ) {
-    debug_assert!(original_graveyard.len() >= 2);
+    debug_assert!(!original_graveyard.is_empty());
     continuation.choice = Some(PendingEffectChoice::SelectTargets {
         player,
         path: canonical_path.clone(),
@@ -8953,7 +8978,7 @@ fn stage_matching_graveyard_exile_choice(
     selection_path: Vec<u16>,
     canonical_path: Vec<u16>,
 ) {
-    debug_assert!(candidates.len() >= 2);
+    debug_assert!(!candidates.is_empty());
     continuation.choice = Some(PendingEffectChoice::SelectTargets {
         player,
         path: selection_path,
@@ -8987,7 +9012,7 @@ fn stage_creature_sacrifice_choice(
     original_candidates: Vec<EffectObjectBinding>,
     canonical_path: Vec<u16>,
 ) {
-    debug_assert!(original_candidates.len() >= 2);
+    debug_assert!(!original_candidates.is_empty());
     continuation.choice = Some(PendingEffectChoice::SelectTargets {
         player,
         path: canonical_path.clone(),
@@ -9021,7 +9046,7 @@ fn stage_linked_exile_hand_choice(
     source: AbilitySourceContractV4,
     canonical_path: Vec<u16>,
 ) {
-    debug_assert!(candidates.len() >= 2);
+    debug_assert!(!candidates.is_empty());
     continuation.choice = Some(PendingEffectChoice::SelectTargets {
         player: chooser,
         path: canonical_path.clone(),
@@ -9490,11 +9515,21 @@ fn validate_canonical_binding_subset(
     Ok(())
 }
 
+fn validate_library_partition_subset(neutral_choices: bool, original: &[EffectObjectBinding],
+    selected: &[EffectObjectBinding]) -> Result<(), String> {
+    if neutral_choices {
+        canonicalize_binding_subset(original, selected)?;
+        Ok(())
+    } else {
+        validate_canonical_binding_subset(original, selected)
+    }
+}
+
 fn binding_partition_rest(
     original: &[EffectObjectBinding],
     selected: &[EffectObjectBinding],
 ) -> Result<Vec<EffectObjectBinding>, String> {
-    validate_canonical_binding_subset(original, selected)?;
+    canonicalize_binding_subset(original, selected)?;
     Ok(original
         .iter()
         .copied()

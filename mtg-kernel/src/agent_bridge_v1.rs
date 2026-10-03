@@ -74,12 +74,16 @@ pub const SPELLBENCH_GAME_ID_TO_EPISODE_V1: &str = "fnv1a64-utf8-game-id/v1";
 pub const SPELLBENCH_OBJECT_ID_DERIVATION_V1: &str = "kernel-arena-id-zone-change-count/v1";
 /// Command-line flag enabling `x_kernel_flat_v4`.
 pub const SPELLBENCH_FLAG_X_KERNEL_FLAT_V4: &str = "--x-kernel-flat-v4";
+pub const SPELLBENCH_FLAG_V2_SUPPORT: &str = "--private-v2-support";
 
 /// Opt-in behaviors of one bridge process.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SpellbenchBridgeOptionsV1 {
     /// Run the lockstep training-mode copy and attach `x_kernel_flat_v4`.
     pub x_kernel_flat_v4: bool,
+    /// Private wrapper metadata. Never forwarded to an agent as an extension.
+    /// It observes stack instance IDs without changing the frozen RL schema.
+    pub private_v2_support: bool,
 }
 
 fn fnv1a64_utf8_v1(text: &str) -> u64 {
@@ -181,6 +185,15 @@ enum SpellbenchRequestV1 {
         expected_step: u64,
         selection: SpellbenchSelectionV1,
     },
+    /// Private decomposition view on a clone. Never an agent wire method.
+    PreviewSteps {
+        #[serde(rename = "protocol")]
+        _protocol: String,
+        request_id: String,
+        game_id: String,
+        expected_step: u64,
+        candidate_ids: Vec<u32>,
+    },
 }
 
 impl SpellbenchRequestV1 {
@@ -188,7 +201,8 @@ impl SpellbenchRequestV1 {
         match self {
             SpellbenchRequestV1::Hello { request_id, .. }
             | SpellbenchRequestV1::Reset { request_id, .. }
-            | SpellbenchRequestV1::Step { request_id, .. } => request_id,
+            | SpellbenchRequestV1::Step { request_id, .. }
+            | SpellbenchRequestV1::PreviewSteps { request_id, .. } => request_id,
         }
     }
 }
@@ -248,6 +262,8 @@ struct SpellbenchBridgeGameV1 {
     /// Row map of the pending decision (row r executes candidate rows[r]).
     flat_v4_rows: Vec<u32>,
     flat_v4_scratch: FlatV4EncodeScratchV1,
+    /// Private declaration identity, retained across all attacker-major scans.
+    private_block_root_step: Option<u64>,
     #[cfg(test)]
     force_flat_v4_encode_error: bool,
 }
@@ -467,6 +483,89 @@ impl SpellbenchBridgeServerV1 {
                 selection,
                 ..
             } => self.handle_step(request_id, game_id, *expected_step, selection),
+            SpellbenchRequestV1::PreviewSteps { request_id, game_id, expected_step, candidate_ids, .. } =>
+                self.handle_preview_steps(request_id, game_id, *expected_step, candidate_ids),
+        }
+    }
+
+    fn handle_preview_steps(&self, request_id: &str, game_id: &str, expected_step: u64, ids: &[u32]) -> Value {
+        let reject = |message| error_response_value_v1(Some(request_id), "malformed_request", message);
+        if !self.options.private_v2_support || !self.options.x_kernel_flat_v4 {
+            return reject("private decomposition views require both opt-in bridge flags");
+        }
+        let Some(game) = self.game.as_ref() else { return reject("private view requires an active game"); };
+        let RlSessionResponseV1::Decision(root) = game.session.current_response() else {
+            return reject("private view requires a pending decision");
+        };
+        if game.game_id != game_id || root.step != expected_step || game.terminal_sent || ids.len() > 4096 {
+            return reject("private view game, step or prefix bound mismatch");
+        }
+        let root_support = private_v2_support(game);
+        let is_block = root.observation.projection.surface.surface_context.private_blockers.is_some();
+        let purpose = root_support["choice"]["purpose"].as_str();
+        let arrangement = matches!(purpose, Some("scry" | "look_select" | "look" | "reveal_partition" | "mill" | "put_on_top" | "discard_order"));
+        if !is_block && !arrangement {
+            return reject("private view is only for an unfinished blocker or arrangement declaration");
+        }
+        let mut copy = Self::with_options(self.identity.clone(), self.options);
+        copy.game = Some(SpellbenchBridgeGameV1 {
+            game_id: game.game_id.clone(), episode_id: game.episode_id,
+            session: game.session.clone(), terminal_sent: false, flat_v4: game.flat_v4.clone(),
+            flat_v4_rows: game.flat_v4_rows.clone(), flat_v4_scratch: FlatV4EncodeScratchV1::default(),
+            private_block_root_step: game.private_block_root_step,
+            #[cfg(test)] force_flat_v4_encode_error: game.force_flat_v4_encode_error,
+        });
+        let complete = || json!({"response_type": "private_complete", "protocol": SPELLBENCH_PROTOCOL_V1,
+            "request_id": request_id, "game_id": game_id, "expected_step": expected_step});
+        for (position, &id) in ids.iter().enumerate() {
+            let current = match copy.game.as_ref().unwrap().session.current_response() {
+                RlSessionResponseV1::Decision(value) => value,
+                _ => return reject("private prefix crossed the declaration boundary"),
+            };
+            let Some(chosen) = current.legal_actions.get(id as usize) else {
+                return reject("private prefix candidate is out of range");
+            };
+            let semantic_echo = match NeutralObserverV1::from_observation(&current.observation)
+                .and_then(|observer| neutral_semantic_v1(&chosen.semantic, &observer)) {
+                Ok(value) => value, Err(_) => return reject("private prefix cannot be represented"),
+            };
+            let response = copy.handle_step(request_id, game_id, current.step,
+                &SpellbenchSelectionV1 { candidate_id: id, semantic_echo });
+            if response["response_type"] != "decision" {
+                if response["response_type"] == "terminal" && response["classification"] == "natural" && position + 1 == ids.len() {
+                    return complete();
+                }
+                return reject("private prefix failed native transition or lockstep");
+            }
+            let next = copy.game.as_ref().unwrap();
+            let RlSessionResponseV1::Decision(decision) = next.session.current_response() else { unreachable!() };
+            if is_block && (decision.observation.projection.surface.surface_context.private_blockers.is_none() ||
+                decision.observation.projection.surface.combat.ordered_attackers != root.observation.projection.surface.combat.ordered_attackers ||
+                decision.acting_player != root.acting_player) {
+                return if position + 1 == ids.len() { complete() }
+                    else { reject("private prefix continues past its completed declaration") };
+            }
+            if arrangement {
+                let support = private_v2_support(next);
+                if support["effect_instance"] != root_support["effect_instance"] ||
+                    support["choice"]["purpose"] != root_support["choice"]["purpose"] ||
+                    decision.acting_player != root.acting_player {
+                    return if position + 1 == ids.len() { complete() }
+                        else { reject("private prefix continues past its completed declaration") };
+                }
+            }
+        }
+        let game = copy.game.as_mut().unwrap();
+        let response = game.session.current_response();
+        let counts = (game.session.policy_step_count(), game.session.physical_decision_count());
+        let extension = match flat_v4_extension_v1(game, &response) {
+            Ok(value) => value, Err(_) => return reject("private view failed encoding"),
+        };
+        let support = private_v2_support(game);
+        match copy.session_response_to_wire(request_id, game_id, response, counts, extension, Some(support)) {
+            WireResponseV1::Decision(view) => json!({"response_type": "private_preview", "protocol": SPELLBENCH_PROTOCOL_V1,
+                "request_id": request_id, "view": view}),
+            _ => reject("private prefix crossed the declaration boundary"),
         }
     }
 
@@ -551,7 +650,7 @@ impl SpellbenchBridgeServerV1 {
         } else {
             None
         };
-        let session = match RlEpisodeSessionV1::reset_with_decks_and_limits(
+        let mut session = match RlEpisodeSessionV1::reset_with_decks_and_limits(
             episode_id,
             game_seed,
             max_decisions,
@@ -567,11 +666,17 @@ impl SpellbenchBridgeServerV1 {
                 );
             }
         };
-        let (lockstep, lockstep_failure) = match lockstep {
+        let (mut lockstep, lockstep_failure) = match lockstep {
             Some(Ok(lockstep)) => (Some(lockstep), None),
             Some(Err(error)) => (None, Some(error.halt_reason())),
             None => (None, None),
         };
+        if self.options.private_v2_support {
+            session.enable_spellbench_neutral_choices();
+            if let Some(copy) = lockstep.as_mut() {
+                copy.enable_spellbench_neutral_choices();
+            }
+        }
         let counts = (
             session.policy_step_count(),
             session.physical_decision_count(),
@@ -585,6 +690,7 @@ impl SpellbenchBridgeServerV1 {
             flat_v4: lockstep,
             flat_v4_rows: Vec::new(),
             flat_v4_scratch: FlatV4EncodeScratchV1::default(),
+            private_block_root_step: None,
             #[cfg(test)]
             force_flat_v4_encode_error: false,
         };
@@ -594,7 +700,8 @@ impl SpellbenchBridgeServerV1 {
         };
         let wire = match flat_v4 {
             Ok(flat_v4) => {
-                self.session_response_to_wire(request_id, game_id, response, counts, flat_v4)
+                let support = self.options.private_v2_support.then(|| private_v2_support(&game));
+                self.session_response_to_wire(request_id, game_id, response, counts, flat_v4, support)
             }
             Err(reason) => WireResponseV1::Terminal(
                 self.halted_terminal_value(request_id, game_id, counts, &reason),
@@ -727,8 +834,9 @@ impl SpellbenchBridgeServerV1 {
                     Ok(flat_v4) => flat_v4,
                     Err(reason) => return self.fail_game_halted(request_id, counts, &reason),
                 };
+                let support = self.options.private_v2_support.then(|| private_v2_support(game));
                 let wire =
-                    self.session_response_to_wire(request_id, game_id, response, counts, flat_v4);
+                    self.session_response_to_wire(request_id, game_id, response, counts, flat_v4, support);
                 let game = self.game.as_mut().expect("active game");
                 if matches!(wire, WireResponseV1::Terminal(_)) {
                     game.terminal_sent = true;
@@ -761,6 +869,7 @@ impl SpellbenchBridgeServerV1 {
         response: RlSessionResponseV1,
         counts: (u64, u64),
         flat_v4: Option<Value>,
+        private_support: Option<Value>,
     ) -> WireResponseV1 {
         match response {
             RlSessionResponseV1::Decision(decision) => {
@@ -771,7 +880,12 @@ impl SpellbenchBridgeServerV1 {
                     &decision,
                     flat_v4,
                 ) {
-                    Ok(value) => WireResponseV1::Decision(value),
+                    Ok(mut value) => {
+                        if let Some(support) = private_support {
+                            value["extensions"]["x_kernel_v2_support"] = support;
+                        }
+                        WireResponseV1::Decision(value)
+                    },
                     Err(reason) => WireResponseV1::Terminal(
                         self.halted_terminal_value(request_id, game_id, counts, &reason),
                     ),
@@ -849,6 +963,15 @@ fn flat_v4_extension_v1(
     game: &mut SpellbenchBridgeGameV1,
     response: &RlSessionResponseV1,
 ) -> Result<Option<Value>, String> {
+    if let RlSessionResponseV1::Decision(decision) = response {
+        if decision.observation.projection.surface.surface_context.private_blockers.is_some() {
+            game.private_block_root_step.get_or_insert(decision.step);
+        } else {
+            game.private_block_root_step = None;
+        }
+    } else {
+        game.private_block_root_step = None;
+    }
     let SpellbenchBridgeGameV1 {
         session,
         flat_v4,
@@ -1065,6 +1188,153 @@ fn optional_cost_choice_str_v1(choice: OptionalCostChoice) -> &'static str {
 
 /// Object incarnation key: `(arena_id, zone_change_count)`.
 type ObjectKeyV1 = (u32, u32);
+
+fn private_v2_support(game: &SpellbenchBridgeGameV1) -> Value {
+    use crate::effect::{EffectBooleanChoicePurpose as B, EffectOptionChoicePurpose as O,
+        EffectTargetSelectionPurpose as T, PendingEffectChoice as C, ScrySelectionStage as S,
+        LibraryPartitionSelectionStage as L};
+    let state = game.session.game_state();
+    let mut support = json!({"stack_instances": state.stack.iter()
+        .map(|item| item.v4.stack_item_id.0.to_string()).collect::<Vec<_>>()});
+    let RlSessionResponseV1::Decision(decision) = game.session.current_response() else { return support; };
+    let actor = decision.acting_player;
+    let actor_id = match actor { PlayerSeatV1::P0 => crate::ids::PlayerId::P0, PlayerSeatV1::P1 => crate::ids::PlayerId::P1 };
+    if let Some(item) = state.engine.spellbench_detached_resolution.as_ref() {
+        match crate::rl::spellbench_detached_resolution_public_v2(state, actor_id) {
+            Ok(public) => {
+                support["detached_resolution"] = json!({"instance": item.v4.stack_item_id.0.to_string(), "item": public});
+                support["resolving_stack_instance"] = json!(item.v4.stack_item_id.0.to_string());
+            }
+            Err(_) => support["projection_error"] = json!("invalid detached resolving item"),
+        }
+    }
+    if decision.legal_actions.iter().any(|action| matches!(action.semantic,
+        ActionSemanticV1::ChooseTarget { .. } | ActionSemanticV1::FinishTargetSelection { .. })) {
+        match crate::rl::spellbench_pending_trigger_public_v2(state, actor_id) {
+            Ok(Some((instance, item, minimum, maximum, selected_count))) => {
+                support["announcing_trigger"] = json!({"instance": instance, "item": item});
+                support["target_bounds"] = json!({"minimum": minimum, "maximum": maximum, "selected_count": selected_count, "slot": 0});
+            }
+            Ok(None) => {},
+            Err(_) => support["projection_error"] = json!("invalid pending trigger announcement"),
+        }
+    }
+    if let Some(pending) = state.engine.pending_cast.as_ref().filter(|pending| PlayerSeatV1::from(pending.controller) == actor) {
+        support["announcement_x_value"] = json!(pending.x_value);
+        let def = &crate::card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+        let staged = pending.source_contract.cast_method;
+        support["announcement_cast_method"] = json!(crate::engine::finalized_cast_method(pending, staged, def));
+        if pending.x_value.is_none() {
+            support["choice"] = json!({"purpose": "x_value", "stage": "number"});
+        }
+        if let Some(form) = pending.mode_chosen {
+            let def = &crate::card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+            if let Some(spec) = crate::engine::spell_form_target_spec(def, form) {
+                support["target_bounds"] = json!({"minimum": crate::engine::target_min_count(spec),
+                    "maximum": crate::engine::target_count(spec), "selected_count": pending.targets_chosen.len(), "slot": 0});
+            }
+        }
+        support["cost_selected_count"] = json!(pending.sacrifice_chosen.len());
+    } else if let Some(pending) = state.engine.pending_activation.as_ref().filter(|pending| PlayerSeatV1::from(pending.controller) == actor) {
+        support["target_bounds"] = json!({"minimum": crate::engine::target_min_count(pending.target_spec),
+            "maximum": crate::engine::target_count(pending.target_spec), "selected_count": pending.targets_chosen.len(), "slot": 0});
+        support["cost_selected_count"] = json!(pending.object_cost_chosen.len());
+    } else if let Some(pending) = state.engine.pending_optional_cost_sacrifice.as_ref().filter(|pending| PlayerSeatV1::from(pending.player) == actor) {
+        support["cost_selected_count"] = json!(pending.chosen.len());
+    }
+    // V5 already supplies the other effective keyword flags. These two are
+    // missing from that frozen schema; inspect only its visible battlefield
+    // records, never enumerate hidden objects or serialize whole game state.
+    let extras = decision.observation.projection.surface.battlefield.iter().flatten().map(|card| {
+        let id = crate::ids::ObjectId(card.stable.arena_id);
+        let key = format!("obj-{:06}-z{:04}", card.stable.arena_id, card.stable.zone_change_count);
+        (key, json!({"flash": crate::engine::has_effective_keyword(state, id, crate::card_def::Keywords::FLASH),
+            "islandwalk": crate::engine::has_effective_keyword(state, id, crate::card_def::Keywords::ISLANDWALK),
+            "cant_be_blocked": crate::engine::has_effective_keyword(state, id, crate::card_def::Keywords::CANT_BE_BLOCKED)}))
+    }).collect::<serde_json::Map<String, Value>>();
+    support["public_keyword_extras"] = Value::Object(extras);
+    if let Some(root) = game.private_block_root_step {
+        support["block_declaration_instance"] = json!(format!("{}:{root}", game.episode_id));
+        support["at_block_root"] = json!(root == decision.step);
+    }
+    if let Some(discard) = decision.observation.projection.surface.surface_context.private_discard.as_ref() {
+        let chosen = discard.chosen.len() as u64;
+        support["effect_instance"] = json!(format!("{}:discard:{}", game.episode_id, decision.step - chosen));
+        support["choice"] = json!({"purpose": "discard_order", "stage": "selection"});
+        support["discard_count"] = json!(chosen + u64::from(discard.remaining_needed));
+        support["discard_selected_count"] = json!(chosen);
+        return support;
+    }
+    let Some(effect) = state.engine.pending_effect.as_ref() else { return support; };
+    let Some(choice) = effect.choice.as_ref() else { return support; };
+    if PlayerSeatV1::from(choice.player()) != decision.acting_player { return support; }
+    support["resolving_stack_instance"] = json!(effect.resolving_item.v4.stack_item_id.0.to_string());
+    if let C::SelectTargets { purpose, .. } = choice {
+        let look = match purpose {
+            T::ScryLibrary { player, original_prefix, .. } |
+            T::LookTopSelectByTypeToHandBottomRest { player, original_prefix, .. } |
+            T::OrderLookedLibraryTop { player, original_prefix } => Some((*player, original_prefix.len())),
+            _ => None,
+        };
+        if let Some((owner, count)) = look {
+            support["look_owner"] = json!(seat_str_v1(owner.into()));
+            support["look_card_count"] = json!(count);
+        }
+    }
+    // Export only the chooser's purpose/stage and an internal look identity.
+    // Never serialize whole continuations, hidden libraries, filters or frames.
+    let mut root = choice.structural_path();
+    let (purpose, stage) = match choice {
+        C::SelectTargets { purpose, .. } => match purpose {
+            T::ScryLibrary { canonical_path, stage, .. } => {
+                root = canonical_path;
+                ("scry", match stage { S::ChooseBottomSubset => "partition",
+                    S::OrderBottom { .. } => "bottom_order", S::OrderRetainedTop { .. } => "top_order" })
+            }
+            T::LookTopSelectByTypeToHandBottomRest { canonical_path, stage, .. } => {
+                root = canonical_path;
+                let revealed = state.engine.spellbench_revealed_partition.as_deref() == Some(canonical_path.as_slice());
+                (if revealed { "reveal_partition" } else { "look_select" }, match stage { L::ChooseMatchingSubset => "partition", L::OrderRest { .. } => "bottom_order" })
+            }
+            T::OrderLookedLibraryTop { .. } => ("look", "top_order"),
+            T::OrderIntoGraveyard { .. } | T::OrderMilledIntoGraveyard |
+                T::OrderRevealedIntoGraveyard { .. } => ("mill", "graveyard_order"),
+            T::PutHandCardOnLibraryTop { canonical_path, total, remaining, prompt_index, .. } => {
+                root = canonical_path;
+                support["hand_to_top"] = json!({"total": total, "remaining": remaining, "selected_count": prompt_index});
+                ("put_on_top", "selection")
+            },
+            T::SearchLibraryToHand { .. } | T::SearchLibraryToHandMany { .. } |
+                T::SearchLibraryToBattlefieldTapped { .. } => ("search", "selection"),
+            T::ExileOneFromGraveyard { .. } | T::ExileOneMatchingFromGraveyard { .. } => ("exile", "selection"),
+            T::SacrificeCreature { .. } => ("sacrifice", "selection"),
+            T::UntapLands { .. } => ("untap", "selection"),
+            T::DuressDiscard { .. } => ("discard", "selection"),
+            T::LinkedExileNonlandFromRevealedHand { .. } => ("exile", "selection"),
+            T::UndercityThroneCreature { .. } => ("undercity_throne", "selection"),
+        },
+        C::ChooseBoolean { purpose, .. } => match purpose {
+            B::ShuffleLibrary { .. } => ("shuffle", "boolean"),
+            B::CounterUnlessPaysGeneric { .. } | B::CounterTargetUnlessPaysGeneric { .. } => ("unless_payment", "boolean"),
+            B::PayManaThen { .. } => ("resolution_payment", "boolean"),
+            B::SearchLibraryToBattlefieldTapped { .. } => ("search", "boolean"),
+            B::PayExileFromGraveyardThen { .. } => ("exile_payment", "boolean"),
+            B::LookAtTopMayRevealThen { .. } => ("reveal", "boolean"),
+        },
+        C::ChooseOption { purpose, .. } => match purpose {
+            O::Generic => ("effect_option", "option"),
+            O::OwnerLibrarySecondOrBottom { .. } => ("owner_library_position", "option"),
+            O::ExploreNonlandTop { .. } => ("explore", "option"),
+            O::SurveilTopCard { .. } => ("surveil", "option"),
+            O::ChooseColor { .. } => ("color", "option"),
+            O::UndercityRoute { .. } => ("undercity_route", "option"),
+        },
+    };
+    support["effect_instance"] = json!(format!("{}:{}", effect.resolving_item.v4.stack_item_id.0,
+        root.iter().map(u16::to_string).collect::<Vec<_>>().join(".")));
+    support["choice"] = json!({"purpose": purpose, "stage": stage});
+    support
+}
 
 /// What the acting seat knows about objects, read from its own observation:
 /// the name the observation shows for every card it lists (public zones, own
@@ -1755,6 +2025,46 @@ mod tests {
     }
 
     #[test]
+    fn private_v2_support_preserves_the_legacy_observation_and_tensor() {
+        let mut legacy = flat_v4_server();
+        let mut private = SpellbenchBridgeServerV1::with_options(legacy.identity.clone(),
+            SpellbenchBridgeOptionsV1 { x_kernel_flat_v4: true, private_v2_support: true });
+        let reset = reset_line("reset", "g-private", 7);
+        let expected = parse_line(&legacy.handle_line(&reset));
+        let mut actual = parse_line(&private.handle_line(&reset));
+        let sideband = actual["extensions"].as_object_mut().unwrap().remove("x_kernel_v2_support").unwrap();
+        assert_eq!(sideband["stack_instances"], json!([]));
+        assert_eq!(actual, expected);
+        for i in 0..3 {
+            let request = step_line_for(&format!("step-{i}"), &expected, 0);
+            // A stale step is refused identically, too; the first advances.
+            let expected = parse_line(&legacy.handle_line(&request));
+            let mut actual = parse_line(&private.handle_line(&request));
+            if actual["response_type"] == "decision" {
+                actual["extensions"].as_object_mut().unwrap().remove("x_kernel_v2_support");
+            }
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn private_preview_refuses_priority_and_does_not_advance_the_game() {
+        let mut server = SpellbenchBridgeServerV1::with_options(
+            SpellbenchEngineIdentityV1::with_source_revision(None),
+            SpellbenchBridgeOptionsV1 { x_kernel_flat_v4: true, private_v2_support: true });
+        let first = parse_line(&server.handle_line(&reset_line("reset", "g-private", 7)));
+        let before = server.game.as_ref().unwrap().session.game_state().clone();
+        let preview = json!({"protocol": SPELLBENCH_PROTOCOL_V1, "request_type": "preview_steps",
+            "request_id": "preview", "game_id": "g-private", "expected_step": 0, "candidate_ids": [0]}).to_string();
+        let refused = parse_line(&server.handle_line(&preview));
+        assert_eq!(refused["error"]["code"], "malformed_request");
+        assert_eq!(server.game.as_ref().unwrap().session.game_state(), &before);
+        assert_eq!(server.game.as_ref().unwrap().session.policy_step_count(), 0);
+        let next = parse_line(&server.handle_line(&step_line_for("step", &first, 0)));
+        assert_eq!(next["step"], 1);
+    }
+
+    #[test]
     fn canonical_json_sorts_keys_and_matches_serde_sorted_encoding() {
         let value = json!({"b": [1, true, null], "a": {"z": -2, "y": "x"}});
         let canonical = spellbench_canonical_json_v1(&value).unwrap();
@@ -2358,6 +2668,7 @@ mod tests {
             SpellbenchEngineIdentityV1::with_source_revision(None),
             SpellbenchBridgeOptionsV1 {
                 x_kernel_flat_v4: true,
+                ..SpellbenchBridgeOptionsV1::default()
             },
         )
     }
@@ -2667,6 +2978,7 @@ mod tests {
             flat_v4: Some(lockstep),
             flat_v4_rows: Vec::new(),
             flat_v4_scratch: FlatV4EncodeScratchV1::default(),
+            private_block_root_step: None,
             force_flat_v4_encode_error: false,
         };
         let response = game.session.current_response();
@@ -2677,7 +2989,7 @@ mod tests {
         );
         let mut server = flat_v4_server();
         let WireResponseV1::Decision(decision) =
-            server.session_response_to_wire("r-0", game_id, response, counts, flat_v4)
+            server.session_response_to_wire("r-0", game_id, response, counts, flat_v4, None)
         else {
             panic!("{game_id}: the game starts without a decision")
         };

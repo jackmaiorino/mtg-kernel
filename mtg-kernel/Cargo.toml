@@ -4,6 +4,8 @@ version = "0.0.4"
 edition.workspace = true
 
 [dependencies]
+base64 = "=0.22.1"
+flate2 = "=1.1.9"
 burn = { version = "=0.21.0", default-features = false, features = ["std", "autodiff"], optional = true }
 burn-cuda = { version = "=0.21.0", default-features = false, features = ["std"], optional = true }
 cudarc = { version = "=0.19.8", default-features = false, features = ["std", "driver", "runtime", "nvrtc", "cublas", "cuda-12080", "dynamic-loading"], optional = true }

@@ -62,6 +62,18 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EngineState {
+    /// Opt-in Spellbench neutral-choice mode. Legacy training and replay
+    /// sessions keep their original automatic singleton choices.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub spellbench_neutral_choices: bool,
+    /// The current publicly revealed, forced hand/graveyard partition.
+    /// Reuses the typed library-partition continuation and exact bindings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spellbench_revealed_partition: Option<Vec<u16>>,
+    /// Exact public resolving item retained while legacy discard/optional
+    /// costs run after the item was popped. Private neutral mode only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spellbench_detached_resolution: Option<StackItem>,
     /// Last allocated private stack-incarnation id. Zero remains reserved for
     /// legacy/default-constructed state, so every engine-created item is
     /// distinguishable from an unstamped continuation.
@@ -1360,7 +1372,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
     }
 }
 
-fn target_min_count(spec: TargetSpec) -> u8 {
+pub(crate) fn target_min_count(spec: TargetSpec) -> u8 {
     match spec {
         TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
@@ -4744,7 +4756,7 @@ fn printed_spell_form_count(def: &card_def::CardDef) -> u8 {
     }
 }
 
-fn spell_form_target_spec(def: &card_def::CardDef, form: u8) -> Option<TargetSpec> {
+pub(crate) fn spell_form_target_spec(def: &card_def::CardDef, form: u8) -> Option<TargetSpec> {
     match form {
         0 => Some(def.target_spec),
         1 => def
@@ -6176,7 +6188,7 @@ fn remaining_cast_payment_is_payable(
         })
 }
 
-fn finalized_cast_method(
+pub(crate) fn finalized_cast_method(
     pending: &PendingCast,
     staged_method: CastMethodV4,
     def: &card_def::CardDef,
@@ -6320,13 +6332,14 @@ fn drain_pending_discard_or_decide(state: &mut GameState) -> Option<Decision> {
         .filter(|&id| Some(id) != exclude)
         .collect();
 
-    if choices.len() <= pd.count as usize {
+    if choices.is_empty() || pd.count == 0
+        || (choices.len() <= pd.count as usize && !state.engine.spellbench_neutral_choices) {
         apply_discard(state, choices, pd);
         return None;
     }
     Some(Decision::Discard {
         player: pd.player,
-        count: pd.count,
+        count: pd.count.min(choices.len() as u32),
         choices,
     })
 }
@@ -6506,6 +6519,7 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
             // deferred until the resolution-effect discard it triggered
             // (Faithless Looting) actually landed.
             event::propose_and_commit(state, ProposedEvent::zone_change(source, to_zone));
+            state.engine.spellbench_detached_resolution = None;
             collect_and_queue_triggers(state);
         }
         DiscardResume::FinishOptionalCost {
@@ -6524,6 +6538,7 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
             // resolved -- perform the move `resolve_top_of_stack` deferred.
             if let Some((spell, to_zone)) = spell_resume {
                 event::propose_and_commit(state, ProposedEvent::zone_change(spell, to_zone));
+                state.engine.spellbench_detached_resolution = None;
             }
             collect_and_queue_triggers(state);
         }
@@ -6723,7 +6738,7 @@ fn drain_pending_optional_cost_sacrifice_or_decide(state: &mut GameState) -> Opt
                 source: pending.source,
             });
         }
-        if candidates.len() <= 1 {
+        if candidates.len() <= 1 && !state.engine.spellbench_neutral_choices {
             state
                 .engine
                 .pending_optional_cost_sacrifice
@@ -6753,6 +6768,7 @@ fn drain_pending_optional_cost_sacrifice_or_decide(state: &mut GameState) -> Opt
     // this optional cost belongs to actually fully resolved.
     if let Some((spell, to_zone)) = pending.spell_resume {
         event::propose_and_commit(state, ProposedEvent::zone_change(spell, to_zone));
+        state.engine.spellbench_detached_resolution = None;
     }
     // `DiscardResume::FinishOptionalCost` (the discard-branch sibling of
     // this function, same "run `then`, then finish the spell's move"
@@ -7556,7 +7572,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             abort_cast(state, pending, cast_method);
             return None;
         }
-        if viable_modes.len() == 1 {
+        if viable_modes.len() == 1 && !state.engine.spellbench_neutral_choices {
             state.engine.pending_cast.as_mut().unwrap().mode_chosen = Some(viable_modes[0]);
             return drain_pending_cast_or_decide(state);
         }
@@ -7622,7 +7638,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             abort_cast(state, pending, cast_method);
             return None;
         }
-        if candidates.len() <= 1 {
+        if candidates.len() <= 1 && !state.engine.spellbench_neutral_choices {
             // No real choice for *this single pick* (0 or 1 legal
             // candidate) -- auto-resolve just this one and let the next
             // loop pass re-derive whether the *following* pick (if any)
@@ -7684,7 +7700,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             abort_cast(state, pending, cast_method);
             return None;
         }
-        if candidates.len() <= 1 {
+        if candidates.len() <= 1 && !state.engine.spellbench_neutral_choices {
             state
                 .engine
                 .pending_cast
@@ -7718,7 +7734,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 abort_cast(state, pending, cast_method);
                 return None;
             }
-            if candidates.len() <= 1 {
+            if candidates.len() <= 1 && !state.engine.spellbench_neutral_choices {
                 state
                     .engine
                     .pending_cast
@@ -7752,7 +7768,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 abort_cast(state, pending, cast_method);
                 return None;
             }
-            if candidates.len() == 1 {
+            if candidates.len() == 1 && !state.engine.spellbench_neutral_choices {
                 state
                     .engine
                     .pending_cast
@@ -7955,7 +7971,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 abort_cast(state, pending, cast_method);
                 return None;
             }
-            if candidates.len() == 1 {
+            if candidates.len() == 1 && !state.engine.spellbench_neutral_choices {
                 state
                     .engine
                     .pending_cast
@@ -7988,7 +8004,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             abort_cast(state, pending, cast_method);
             return None;
         };
-        if maximum == 0 {
+        if maximum == 0 && !state.engine.spellbench_neutral_choices {
             state.engine.pending_cast.as_mut().unwrap().x_value = Some(0);
             return drain_pending_cast_or_decide(state);
         }
@@ -8106,7 +8122,7 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
                     source: pending.source,
                 });
             }
-            if candidates.len() == 1 {
+            if candidates.len() == 1 && !state.engine.spellbench_neutral_choices {
                 state
                     .engine
                     .pending_activation
@@ -8136,7 +8152,7 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
                 &pending.object_cost_chosen,
             );
             let remaining = needed - pending.object_cost_chosen.len() as u8;
-            if candidates.len() == usize::from(remaining) {
+            if candidates.len() == usize::from(remaining) && !state.engine.spellbench_neutral_choices {
                 state
                     .engine
                     .pending_activation
@@ -8175,7 +8191,7 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
                 source: pending.source,
             });
         }
-        if candidates.len() == 1 {
+        if candidates.len() == 1 && !state.engine.spellbench_neutral_choices {
             state
                 .engine
                 .pending_activation
@@ -8215,7 +8231,7 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
                 source: pending.source,
             });
         }
-        if candidates.len() == 1 {
+        if candidates.len() == 1 && !state.engine.spellbench_neutral_choices {
             let chosen = candidates[0];
             let object = state.objects.get(chosen);
             let binding = EffectObjectBinding {
@@ -8770,6 +8786,58 @@ fn pending_trigger_spell_source_contract(
         .source_contract
         .map(Some)
         .ok_or_else(|| "pending spell-sourced trigger producer lost its contract".to_string())
+}
+
+/// A pending targeted trigger has a valid, incomplete target prefix and an
+/// exact historical producer. Target selection does not allocate stack IDs.
+pub(crate) fn spellbench_pending_trigger_announcement(
+    state: &GameState,
+    actor: PlayerId,
+) -> Result<Option<StackItem>, String> {
+    if !state.engine.spellbench_neutral_choices {
+        return Ok(None);
+    }
+    let Some(pending) = state.engine.pending_triggers.first() else { return Ok(None); };
+    if pending.controller != actor || pending.is_madness_offer || !pending.placement_ordered {
+        return Ok(None);
+    }
+    validate_pending_trigger(state, pending)?;
+    if pending.targets.len() >= usize::from(target_count(pending.target_spec)) {
+        return Ok(None);
+    }
+    Ok(Some(pending_trigger_stack_candidate(state, pending)?))
+}
+
+fn pending_trigger_stack_candidate(
+    state: &GameState,
+    pending: &PendingTrigger,
+) -> Result<StackItem, String> {
+    let prospective_stack_item_id = StackItemId(state.engine.next_stack_item_id
+        .checked_add(1).ok_or("stack-item identity space exhausted")?);
+    Ok(StackItem {
+        kind: StackItemKind::TriggeredAbility,
+        source: pending.source,
+        controller: pending.controller,
+        targets: pending.targets.clone(),
+        is_copy: false,
+        inline_effect: Some(pending.effect.clone()),
+        discarded: Vec::new(),
+        is_flashback: false,
+        mode_chosen: 0,
+        madness_offer: false,
+        kicked: pending.kicked,
+        v4: StackStateV4 {
+            stack_item_id: prospective_stack_item_id,
+            source_contract: pending_trigger_spell_source_contract(state, pending)?,
+            paid_cost_refs: pending.paid_cost_refs.clone(),
+            optional_additional_cost_paid: pending.optional_additional_cost_paid,
+            target_spec: (pending.target_spec != TargetSpec::None).then_some(pending.target_spec),
+            target_contracts: pending.target_contracts.clone(),
+            ability_source_contract: pending.source_contract,
+            granted_by: pending.granted_by,
+            ..StackStateV4::default()
+        },
+    })
 }
 
 fn validate_pending_trigger_for_stack(
@@ -9907,6 +9975,9 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 source: item.source,
                 to_zone,
             };
+            if state.engine.spellbench_neutral_choices {
+                state.engine.spellbench_detached_resolution = Some(item.clone());
+            }
         } else if let Some(poc) = state.engine.pending_optional_cost.as_mut() {
             // Same 608.2m deferral, one layer further out: the effect
             // resolved into `EffectOp::MayPayCostThen` (Highway Robbery:
@@ -9923,6 +9994,9 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             // `PendingOptionalCost::spell_resume`'s doc for where the
             // deferred move actually happens once that's all done.
             poc.spell_resume = Some((item.source, to_zone));
+            if state.engine.spellbench_neutral_choices {
+                state.engine.spellbench_detached_resolution = Some(item.clone());
+            }
         } else {
             if finish_resolved_stack_item(state, &item).is_err() {
                 state.engine.halted =
@@ -11534,7 +11608,8 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
             }
             let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
             let viable_modes = viable_pending_spell_forms(def, pending, state);
-            if viable_modes.len() < 2 || !viable_modes.contains(&mode) {
+            if viable_modes.is_empty() || (viable_modes.len() == 1 && !state.engine.spellbench_neutral_choices)
+                || !viable_modes.contains(&mode) {
                 return Err(format!("{mode} is not a legal spell mode for {p:?}'s cast"));
             }
             state.engine.pending_cast.as_mut().unwrap().mode_chosen = Some(mode);
@@ -12139,7 +12214,7 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                 .chosen_creature_cost_zone
                 .ok_or("chosen-creature cost object selected before its branch")?;
             let candidates = chosen_creature_cost_candidates(pending.controller, zone, state);
-            if candidates.len() < 2 {
+            if candidates.is_empty() || (candidates.len() == 1 && !state.engine.spellbench_neutral_choices) {
                 return Err(
                     "chosen-creature cost object choice is not currently offered".to_string(),
                 );
@@ -12356,6 +12431,7 @@ fn apply_choose_optional_cost(
             // deferred move happens right here.
             if let Some((spell, to_zone)) = poc.spell_resume {
                 event::propose_and_commit(state, ProposedEvent::zone_change(spell, to_zone));
+                state.engine.spellbench_detached_resolution = None;
             }
             Ok(())
         }
@@ -13274,7 +13350,7 @@ fn apply_pending_cast_effect_option(
                 .ok_or("pending X choice has no payable value")?;
             let x_value = u8::try_from(option_index)
                 .map_err(|_| "chosen X exceeds the supported u8 range".to_string())?;
-            if maximum == 0 || x_value > maximum {
+            if (maximum == 0 && !state.engine.spellbench_neutral_choices) || x_value > maximum {
                 return Err("chosen X is outside the currently payable range".to_string());
             }
             state
@@ -15159,6 +15235,147 @@ mod tests {
         );
         assert_eq!(state.players[0].graveyard.len(), 2);
         assert_eq!(state.stack.len(), 1);
+    }
+
+    #[test]
+    fn spellbench_neutral_fireblast_poses_and_accepts_the_forced_final_cost() {
+        let mut state = empty_game();
+        state.engine.spellbench_neutral_choices = true;
+        let first = put_on_battlefield(&mut state, PlayerId::P0, "Mountain");
+        let last = put_on_battlefield(&mut state, PlayerId::P0, "Mountain");
+        let spell = put_in_hand(&mut state, PlayerId::P0, "Fireblast");
+        state.step = Step::Main1;
+        step(&mut state, Action::CastSpell(spell)).unwrap();
+        step(&mut state, Action::ChooseTarget(Target::Player(PlayerId::P1))).unwrap();
+        assert!(matches!(advance_until_decision(&mut state), Decision::ChooseCostTargets { remaining: 2, .. }));
+        step(&mut state, Action::ChooseCostTarget(first)).unwrap();
+        match advance_until_decision(&mut state) {
+            Decision::ChooseCostTargets { remaining: 1, candidates, .. } => assert_eq!(candidates, vec![last]),
+            other => panic!("expected the explicit final sacrifice, got {other:?}"),
+        }
+        assert!(state.players[0].graveyard.is_empty(), "cost commits only after the complete selection");
+        step(&mut state, Action::ChooseCostTarget(last)).unwrap();
+        let _ = advance_until_decision(&mut state);
+        assert_eq!(state.players[0].graveyard, vec![first, last]);
+        assert_eq!(state.stack.len(), 1);
+    }
+
+    #[test]
+    fn spellbench_neutral_targeted_trigger_keeps_historical_source_and_prospective_id() {
+        let mut state = empty_game();
+        state.engine.spellbench_neutral_choices = true;
+        state.step = Step::Main1;
+        let creature = put_on_battlefield(&mut state, PlayerId::P1, "Guttersnipe");
+        let journey = put_in_hand(&mut state, PlayerId::P0, "Journey to Nowhere");
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(journey, Zone::Battlefield));
+        collect_and_queue_triggers(&mut state);
+        assert!(matches!(advance_until_decision(&mut state), Decision::ChooseTargets { .. }));
+        let generation = state.objects.get(journey).zone_change_count;
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(journey, Zone::Graveyard));
+        let announcement = spellbench_pending_trigger_announcement(&state, PlayerId::P0).unwrap().unwrap();
+        assert!(validated_stack_item_target_spec(&announcement, &state).is_err(), "completed-item validation still rejects the empty target prefix");
+        let (instance, public, minimum, maximum, selected) = crate::rl::spellbench_pending_trigger_public_v2(&state, PlayerId::P0).unwrap().unwrap();
+        assert_eq!((minimum, maximum, selected), (1, 1, 0));
+        assert_eq!(public.source.zone, Zone::Battlefield);
+        assert_eq!(public.source.zone_change_count, generation);
+        assert!(spellbench_pending_trigger_announcement(&state, PlayerId::P1).unwrap().is_none());
+        step(&mut state, Action::ChooseTarget(Target::Object(creature))).unwrap();
+        let _ = advance_until_decision(&mut state);
+        let item = state.stack.iter().find(|item| item.v4.stack_item_id.0.to_string() == instance).unwrap();
+        assert_eq!(crate::rl::stack_item_public_v2(&state, PlayerId::P0, 0, item).unwrap().source, public.source);
+    }
+
+    #[test]
+    fn spellbench_neutral_zero_x_uses_existing_numeric_features() {
+        let mut state = empty_game();
+        state.engine.spellbench_neutral_choices = true;
+        state.step = Step::Main1;
+        state.players[0].mana_pool[ManaColor::G.pool_index()] = 1;
+        let spell = put_in_hand(&mut state, PlayerId::P0, "Nyxborn Hydra");
+        step(&mut state, Action::CastSpell(spell)).unwrap();
+        assert!(matches!(advance_until_decision(&mut state), Decision::ChooseSpellMode { .. }));
+        step(&mut state, Action::ChooseSpellMode(0)).unwrap();
+        let decision = advance_until_decision(&mut state);
+        assert!(matches!(decision, Decision::ChooseEffectOption { option_count: 1, .. }));
+        let choices = crate::rl::legal_action_candidates_v1(&crate::surface::SurfaceDecision::Decision(decision), &state).unwrap();
+        assert_eq!(choices.len(), 1);
+        assert!(matches!(choices[0].record.semantic, crate::rl::ActionSemanticV1::ChooseEffectNumber {
+            number: 0, minimum: 0, maximum: 0, ..
+        }));
+        step(&mut state, Action::ChooseEffectOption(0)).unwrap();
+        let _ = advance_until_decision(&mut state);
+        assert_eq!(state.stack.last().unwrap().v4.x_value, 0);
+    }
+
+    #[test]
+    fn spellbench_neutral_detached_optional_cost_retains_item_until_each_finish() {
+        for choice in [OptionalCostChoice::Decline, OptionalCostChoice::Discard, OptionalCostChoice::SacrificeLand] {
+            let mut state = ready_game_in_main1(2);
+            state.engine.spellbench_neutral_choices = true;
+            let spell = put_in_hand(&mut state, PlayerId::P0, "Highway Robbery");
+            let discard = put_in_hand(&mut state, PlayerId::P0, "Island");
+            step(&mut state, Action::CastSpell(spell)).unwrap();
+            let _ = advance_until_decision(&mut state);
+            let original = state.stack.last().unwrap().clone();
+            assert!(matches!(pass_until_stack_resolves(&mut state), Decision::ChooseOptionalCost { .. }));
+            assert_eq!(state.engine.spellbench_detached_resolution.as_ref(), Some(&original));
+            assert!(state.stack.iter().all(|item| item.v4.stack_item_id != original.v4.stack_item_id));
+            let public = crate::rl::spellbench_detached_resolution_public_v2(&state, PlayerId::P1).unwrap();
+            assert_eq!(public.source.zone, Zone::Stack);
+            step(&mut state, Action::ChooseOptionalCost(choice)).unwrap();
+            match choice {
+                OptionalCostChoice::Discard => {
+                    assert!(matches!(advance_until_decision(&mut state), Decision::Discard { .. }));
+                    assert_eq!(state.engine.spellbench_detached_resolution.as_ref(), Some(&original));
+                    step(&mut state, Action::Discard(vec![discard])).unwrap();
+                }
+                OptionalCostChoice::SacrificeLand => {
+                    let land = match advance_until_decision(&mut state) {
+                        Decision::ChooseCostTargets { candidates, .. } => candidates[0],
+                        other => panic!("expected sacrifice, got {other:?}"),
+                    };
+                    assert_eq!(state.engine.spellbench_detached_resolution.as_ref(), Some(&original));
+                    step(&mut state, Action::ChooseCostTarget(land)).unwrap();
+                    let _ = advance_until_decision(&mut state);
+                }
+                _ => {}
+            }
+            assert!(state.engine.spellbench_detached_resolution.is_none());
+            assert_eq!(state.objects.get(spell).zone, Zone::Graveyard);
+        }
+    }
+
+    #[test]
+    fn spellbench_neutral_winding_way_suspends_before_moves_and_preserves_both_orders() {
+        let definitions = ["Elvish Mystic", "Quirion Ranger", "Island", "Mountain"]
+            .map(|name| card_id_by_name(name).unwrap());
+        let mut state = GameState::new_from_libraries(&definitions, &definitions,
+            |id| card_def::CARD_DEFS[id as usize].name.to_string(), 9);
+        state.engine.spellbench_neutral_choices = true;
+        state.step = Step::Main1;
+        state.players[0].mana_pool[ManaColor::G.pool_index()] = 2;
+        let original = state.players[0].library.clone();
+        let spell = put_in_hand(&mut state, PlayerId::P0, "Winding Way");
+        step(&mut state, Action::CastSpell(spell)).unwrap();
+        let _ = advance_until_decision(&mut state);
+        assert_eq!(state.stack.len(), 1);
+        assert_eq!(resolve_top_of_stack(&mut state), ResolutionProgress::Suspended);
+        effect::choose_resumable_option(&mut state, 0).unwrap();
+        assert_eq!(effect::resume_resumable_resolution(&mut state).unwrap(), effect::ResumableProgress::Suspended);
+        assert_eq!(state.players[0].library, original);
+        assert!(state.players[0].graveyard.is_empty());
+        assert!(state.engine.spellbench_revealed_partition.is_some());
+        // First option is creatures. Their neutral hand order is independent
+        // of the order in which they originally appeared in the library.
+        effect::choose_resumable_target(&mut state, Target::Object(original[1])).unwrap();
+        effect::choose_resumable_target(&mut state, Target::Object(original[0])).unwrap();
+        assert_eq!(effect::resume_resumable_resolution(&mut state).unwrap(), effect::ResumableProgress::Suspended);
+        effect::choose_resumable_target(&mut state, Target::Object(original[3])).unwrap();
+        assert!(matches!(effect::resume_resumable_resolution(&mut state).unwrap(), effect::ResumableProgress::Complete(_)));
+        assert_eq!(state.players[0].hand, vec![original[1], original[0]]);
+        assert_eq!(state.players[0].graveyard, vec![original[3], original[2]]);
+        assert!(state.players[0].library.is_empty());
+        assert!(state.engine.spellbench_revealed_partition.is_none());
     }
 
     /// Lava Dart's flashback cost (`CostComponent::SacrificeLands(1)`) is
