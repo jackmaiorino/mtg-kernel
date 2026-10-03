@@ -1,5 +1,25 @@
 # FDN life-gain creature validation
 
+## Current Windows timing failure and repair
+
+Windows job `111157902306` in run `37106334786`, source `2b0963ef`,
+completed with a failure in the already isolated snapshot check: 62.704
+microseconds against 40. Its ordinary workspace tests completed, but the
+subsequent native, Limited and CUDA steps were skipped. The failed job does
+not qualify those later checks.
+
+Backport the same timing-child procedure used by CI `7cbfa1cd`: only the
+short isolated Windows measurement receives `HIGH_PRIORITY_CLASS`.
+Correctness tests retain normal priority; Linux receives no priority option.
+Snapshot code, 80 objects, 200 warmups, 2,000 iterations and the 40-microsecond
+assertion remain unchanged. Native CI helper paths now count as Rust-relevant
+so changes to that procedure execute the full Rust matrix. All ten Limited
+integration targets and seven library filters are retained. The hosted repair
+result is pending, and scheduling contention remains an unproved explanation.
+The runner is byte-identical to CI `7cbfa1cd`; Python compilation, workflow
+lint and diff checks pass. A small Windows child-process probe verifies actual
+normal/timing priorities `0x20`/`0x80`. No local engine build or game was run.
+
 ## Integration with current main
 
 Integrated the current-main counter/lifelink prefix c3d60549. Preserve the
