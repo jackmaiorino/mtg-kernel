@@ -18,6 +18,13 @@ must qualify that source and procedure. The report branch incorporates those
 changes and differs from PR140 only in Markdown, so its path-filtered Rust-test skips provide no
 additional gameplay evidence.
 
+Report source `5bf586eb` has completed Windows Python shard 1, job `111143228157`.
+It built the real release JSONL environment and selected 373 of 747 tests,
+with 372 passes, 1 skip and zero failures in 954.658 seconds. The repaired WMI
+descendant-reservation case passes. Its Python test and runner sources match
+CI `7cbfa1cd`; this qualifies that affected regression but does not replace the
+remaining Python shards or the current full Rust matrix.
+
 Windows job111116304498 atcd7f451b passed24Witness cases and all12London
 integration cases. The original external game test verifies the pinned input
 hashes below, runs seed123 twice with complete receipt equality, and runs
@@ -48,6 +55,22 @@ committed throughout the owned stack; pinned rustfmt and diff checks pass.
 Draw's Linux job111114931489 passed its full runtime matrix, with the snapshot
 case at5.456microseconds and the corrected live-catalog expectation passing in
 default and Limited builds. Current Windows qualification remains pending.
+
+Homunculus Linux job `111118452568` at `6b5697a7` and Koma Linux job `111117937900`
+at `51267c7b` pass the complete default, native, Limited and host-safe CUDA
+steps. Their selected Limited integration targets number 12 and 13 respectively;
+their snapshot measurements are 5.369 and 6.844 microseconds. Full terminal logs
+contain no failed test summaries or compilation errors. Each still requires
+Windows qualification with the prepared test-module import repair.
+
+Life-gain Windows job `111116101288` at `5a6fa1ca` passes default/native and all 10
+Limited integration targets, 170 cases with zero failures or ignores. The
+following library compilation fails on two byte-identical duplicate counter
+test names and the missing Windows profile import. Local `3ce1ec38` retains one
+copy of each publication/resume regression and adds the import; its assertions
+and filter coverage remain intact. This repair does not change the final
+gameplay source, which already has unique test names. Hosted repair execution
+is still pending.
 CI37088170810 at2397921e failed default Clippy on the omitted V6 London field
 and unmatched human-prompt action variants. The repair shares the public
 mulligan projection across V5/V6 and preserves the human prompt's existing
@@ -72,6 +95,14 @@ timing-priority change preserves the snapshot code,80objects,200warmups,
 2000iterations and40microsecond assertion. A local child-process smoke check
 confirms actual normal0x20 and timing0x80 priority. Scheduling contention
 remains a hypothesis; the current CI result must establish whether it helps.
+
+Rebuke Windows job `111116024377` at `7e972928` also fails the isolated snapshot
+test, at 61.49 microseconds. Its later native/Limited/CUDA steps are skipped.
+Its Linux counterpart passes the full matrix. Published Rebuke `5a794540` adds
+the same timing-priority procedure as CI `7cbfa1cd`, the Windows profile import
+and Rust-relevant classification of native CI helpers. The snapshot workload
+and 40-microsecond assertion are unchanged; the hosted performance effect
+remains unproven.
 
 CI37092263828 at94d6fc44 completed successfully. All four Python shards built
 the real default Rust JSONL environment and passed; its Rust matrix was
