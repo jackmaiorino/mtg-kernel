@@ -100,3 +100,12 @@ redundant inherited timing step is removed. Select main's actual live-profile
 round-trip test name in the production filters. Formatting, workflow lint,
 Python compilation and diff checks passed after these corrections; complete
 hosted Rust/feature qualification remains pending.
+
+## Windows compiler environment correction
+
+The completed Windows Kiora job 111079733482 failed 33 default-library cases
+with `ForbiddenBuildFlagOverride`: the CI bootstrap exported `RUSTC`, which
+the existing compile-time guard correctly rejects. The bootstrap now keeps
+the normalized Windows `RUSTUP_HOME` and pinned Rust install without exporting
+`RUSTC`. Hosted default and native-build capture checks are pending. The guard
+and toolchain pin remain unchanged.
