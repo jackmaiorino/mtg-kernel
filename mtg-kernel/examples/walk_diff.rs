@@ -1962,7 +1962,9 @@ fn decision_texts(
         // This walker consumes frozen reference-AI corpora, which do not
         // activate the custom Foundations assignment protocol.
         SurfaceDecision::Decision(Decision::ChooseCombatDamageRange { .. })
-        | SurfaceDecision::Decision(Decision::ChooseLegendPermanent { .. }) => None,
+        | SurfaceDecision::Decision(Decision::ChooseLegendPermanent { .. })
+        | SurfaceDecision::Decision(Decision::ChooseLondonMulligan { .. })
+        | SurfaceDecision::Decision(Decision::ChooseLondonBottom { .. }) => None,
         SurfaceDecision::Decision(Decision::Halted { .. }) => None,
         SurfaceDecision::Decision(Decision::GameOver { .. }) => None,
         SurfaceDecision::Decision(Decision::DeclareBlockers { .. }) => None,
@@ -2199,6 +2201,10 @@ fn apply_by_indices(
         }
         SurfaceDecision::Decision(Decision::ChooseCombatDamageRange { .. }) => {
             Err("apply_by_indices:unsupported-foundations-combat-protocol".to_string())
+        }
+        SurfaceDecision::Decision(Decision::ChooseLondonMulligan { .. })
+        | SurfaceDecision::Decision(Decision::ChooseLondonBottom { .. }) => {
+            Err("apply_by_indices:unsupported-london-mulligan-protocol".to_string())
         }
         SurfaceDecision::Decision(Decision::GameOver { .. })
         | SurfaceDecision::Decision(Decision::DeclareBlockers { .. })

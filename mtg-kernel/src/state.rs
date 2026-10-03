@@ -1378,6 +1378,9 @@ pub struct GameState {
     /// The round counter alone cannot distinguish the two players' turns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creature_death_turn_v1: Option<CreatureDeathTurnV1>,
+    /// Opt-in pregame state. Absent in every historical reset mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub london_mulligans_v1: Option<crate::london_mulligan_v1::LondonMulligansV1>,
 }
 
 /// Reproduces exactly the field-hash sequence `#[derive(Hash)]` produced
@@ -1425,6 +1428,10 @@ impl Hash for GameState {
         if let Some(death) = &self.creature_death_turn_v1 {
             "creature-death-turn-v1".hash(state);
             death.hash(state);
+        }
+        if let Some(pregame) = &self.london_mulligans_v1 {
+            "london-mulligans-v1".hash(state);
+            pregame.hash(state);
         }
     }
 }
@@ -1569,6 +1576,7 @@ impl GameState {
             planeswalkers_v1: None,
             trigger_uses_v1: None,
             creature_death_turn_v1: None,
+            london_mulligans_v1: None,
         }
     }
 

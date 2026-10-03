@@ -292,6 +292,12 @@ fn random_action_for_decision(
         Decision::ChooseLegendPermanent { candidates, .. } => {
             Action::ChooseLegendPermanent(candidates[rng_below(rng, candidates.len())])
         }
+        Decision::ChooseLondonMulligan { .. } => Action::ChooseLondonMulligan {
+            mulligan: rng_chance(rng, 1, 2),
+        },
+        Decision::ChooseLondonBottom { candidates, .. } => {
+            Action::ChooseLondonBottom(candidates[rng_below(rng, candidates.len())])
+        }
         Decision::ChooseCombatDamageRange { .. } => Action::ChooseCombatDamageRange {
             upper_half: rng_chance(rng, 1, 2),
         },

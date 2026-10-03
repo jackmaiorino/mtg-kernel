@@ -924,6 +924,15 @@ pub struct PublicObservationProjectionV5 {
     pub policy_surface_context: PolicySurfaceContextV5,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foundations_combat: Option<PublicFoundationsCombatV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub london_mulligans: Option<PublicLondonMulligansV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicLondonMulligansV1 {
+    pub phase: String,
+    pub counts: [u8; 2],
+    pub kept: [bool; 2],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1127,6 +1136,16 @@ pub enum ActionSemanticV1 {
         trigger_index: usize,
         ordered_prefix: Vec<usize>,
         pending_count: usize,
+    },
+    ChooseLondonMulligan {
+        actor: PlayerSeatV1,
+        mulligan_count: u8,
+        mulligan: bool,
+    },
+    ChooseLondonBottom {
+        actor: PlayerSeatV1,
+        remaining: u8,
+        card: CardStableRefV1,
     },
 }
 
@@ -1870,6 +1889,7 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
         projection: PublicObservationProjectionV5 {
             surface: base.projection,
             policy_surface_context,
+            london_mulligans: public_london_mulligans_v1(state),
             foundations_combat: public_foundations_combat_v1(state)?,
         },
         own_hand: base.own_hand,
@@ -1901,6 +1921,17 @@ fn public_foundations_combat_v1(state: &GameState) -> Result<Option<PublicFounda
             })
         })
         .transpose()
+}
+
+fn public_london_mulligans_v1(state: &GameState) -> Option<PublicLondonMulligansV1> {
+    state
+        .london_mulligans_v1
+        .as_ref()
+        .map(|pregame| PublicLondonMulligansV1 {
+            phase: pregame.phase().to_string(),
+            counts: pregame.counts(),
+            kept: pregame.kept(),
+        })
 }
 
 // Shared projection components, not an ObservationV5. Each version applies
@@ -2037,6 +2068,7 @@ fn build_policy_observation_v6(request: PolicyObservationBuildV5<'_>) -> Result<
             surface: base.projection,
             policy_surface_context,
             foundations_combat: public_foundations_combat_v1(state)?,
+            london_mulligans: public_london_mulligans_v1(state),
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
@@ -3017,6 +3049,39 @@ fn core_surface_action_candidates_v1(
                     )?;
                 }
             }
+            Decision::ChooseLondonMulligan {
+                player,
+                mulligan_count,
+            } => {
+                for mulligan in [false, true] {
+                    push_action(
+                        &mut out,
+                        ActionSemanticV1::ChooseLondonMulligan {
+                            actor: (*player).into(),
+                            mulligan_count: *mulligan_count,
+                            mulligan,
+                        },
+                        SurfaceAction::Action(Action::ChooseLondonMulligan { mulligan }),
+                    )?;
+                }
+            }
+            Decision::ChooseLondonBottom {
+                player,
+                remaining,
+                candidates,
+            } => {
+                for &card in candidates {
+                    push_action(
+                        &mut out,
+                        ActionSemanticV1::ChooseLondonBottom {
+                            actor: (*player).into(),
+                            remaining: *remaining,
+                            card: card_ref(state, card)?,
+                        },
+                        SurfaceAction::Action(Action::ChooseLondonBottom(card)),
+                    )?;
+                }
+            }
             Decision::ChooseLegendPermanent { player, candidates } => {
                 let actor = (*player).into();
                 let references = candidates
@@ -3307,6 +3372,8 @@ pub fn acting_player_for_surface_decision(
             | Decision::ChooseEffectBoolean { player, .. }
             | Decision::ChooseCombatDamageRange { player, .. }
             | Decision::ChooseLegendPermanent { player, .. }
+            | Decision::ChooseLondonMulligan { player, .. }
+            | Decision::ChooseLondonBottom { player, .. }
             | Decision::ChooseOptionalCost { player, .. }
             | Decision::ChooseSpellCopyPayment { player, .. }
             | Decision::ChooseSpellCopyRetarget { player, .. }

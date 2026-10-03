@@ -219,6 +219,8 @@ fn run_goldfish(state: &mut GameState) -> RunResult {
             | Decision::ChooseEffectBoolean { .. }
             | Decision::ChooseCombatDamageRange { .. }
             | Decision::ChooseLegendPermanent { .. }
+            | Decision::ChooseLondonMulligan { .. }
+            | Decision::ChooseLondonBottom { .. }
             | Decision::ChooseEffectTargets { .. }
             | Decision::ChooseOptionalCost { .. }
             | Decision::ChooseSpellCopyPayment { .. }

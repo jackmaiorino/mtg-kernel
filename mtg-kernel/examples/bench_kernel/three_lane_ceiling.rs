@@ -461,12 +461,14 @@ fn noncombat_action_count(decision: &Decision) -> Result<usize, String> {
         Decision::ChooseCostTargets { candidates, .. } => Ok(candidates.len()),
         Decision::ChooseCastMode { options, .. } => Ok(options.len()),
         Decision::ChooseKicker { .. }
+        | Decision::ChooseLondonMulligan { .. }
         | Decision::ChooseEffectBoolean { .. }
         | Decision::ChooseCombatDamageRange { .. }
         | Decision::ChooseSpellCopyPayment { .. }
         | Decision::ChooseSpellCopyRetarget { .. }
         | Decision::ChooseMadnessCast { .. } => Ok(2),
-        Decision::ChooseLegendPermanent { candidates, .. } => Ok(candidates.len()),
+        Decision::ChooseLegendPermanent { candidates, .. }
+        | Decision::ChooseLondonBottom { candidates, .. } => Ok(candidates.len()),
         Decision::ChooseSpellMode { legal_modes, .. }
         | Decision::ChooseTriggerMode { legal_modes, .. } => Ok(legal_modes.len()),
         Decision::ChooseEffectOption { option_count, .. } => Ok(*option_count as usize),
@@ -610,6 +612,14 @@ fn noncombat_action_by_index(decision: &Decision, index: usize) -> Result<Action
             }
         }
         Decision::ChooseEffectBoolean { .. } => Action::ChooseEffectBoolean(index == 1),
+        Decision::ChooseLondonMulligan { .. } => Action::ChooseLondonMulligan {
+            mulligan: index == 1,
+        },
+        Decision::ChooseLondonBottom { candidates, .. } => Action::ChooseLondonBottom(
+            *candidates
+                .get(index)
+                .ok_or("London bottom choice index out of range")?,
+        ),
         Decision::ChooseLegendPermanent { candidates, .. } => Action::ChooseLegendPermanent(
             *candidates
                 .get(index)
