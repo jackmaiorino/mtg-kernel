@@ -572,7 +572,7 @@ fn run_native_science_loop_with_opponents_v1(
     // the shared implementation so every public entry point above
     // (`run_native_science_loop_v1`, `run_native_science_loop_with_population_v1`,
     // `run_native_response_exploiter_training_v1`) inherits it. Exhaustive
-    // match (fix round, panel finding 3): a future
+    // match (fix round, panel finding 3): an unhandled future
     // `NativeRunCatalogProfileV1` variant fails this match at compile time
     // rather than silently falling through an `if`/`else`, forcing an
     // explicit decision here instead of an accidental pass-through. The live
@@ -581,7 +581,9 @@ fn run_native_science_loop_with_opponents_v1(
     // function calls into both transitively (bootstrap's own genesis publish
     // and every training window's resume), so a forged CURRENT record is
     // still caught before any mutation, just slightly later in the call
-    // chain than a redundant check here would catch it.
+    // chain than a redundant check here would catch it. PauperMetaW1 (schema
+    // migration, card lane, design ruling 6 pending) is admitted alongside
+    // Current, identically: this boundary only rejects Historical.
     match run.catalog_profile_v1() {
         NativeRunCatalogProfileV1::Historical => {
             return Err(loop_error_v1(
@@ -589,6 +591,7 @@ fn run_native_science_loop_with_opponents_v1(
             ));
         }
         NativeRunCatalogProfileV1::Current
+        | NativeRunCatalogProfileV1::PauperMetaW1
         | NativeRunCatalogProfileV1::FdnFixtureBatchA
         | NativeRunCatalogProfileV1::FdnFixtureBatchB
         | NativeRunCatalogProfileV1::FdnCombatCards
@@ -601,7 +604,15 @@ fn run_native_science_loop_with_opponents_v1(
         | NativeRunCatalogProfileV1::FdnKomaCreature
         | NativeRunCatalogProfileV1::FdnKioraCreature
         | NativeRunCatalogProfileV1::FdnProwlerCreature
-        | NativeRunCatalogProfileV1::FdnLuminousRebuke => {}
+        | NativeRunCatalogProfileV1::FdnLuminousRebuke
+        | NativeRunCatalogProfileV1::FdnCounterCreaturesRebased
+        | NativeRunCatalogProfileV1::FdnLifegainCreaturesRebased
+        | NativeRunCatalogProfileV1::FdnDrawCreaturesRebased
+        | NativeRunCatalogProfileV1::FdnHomunculusCreatureRebased
+        | NativeRunCatalogProfileV1::FdnKomaCreatureRebased
+        | NativeRunCatalogProfileV1::FdnKioraCreatureRebased
+        | NativeRunCatalogProfileV1::FdnProwlerCreatureRebased
+        | NativeRunCatalogProfileV1::FdnLuminousRebukeRebased => {}
     }
 
     if ladder_opponent.is_some() && population_opponent.is_some() {

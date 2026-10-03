@@ -3,7 +3,7 @@
 
 use mtg_kernel::card_def::{
     card_id_by_name, mana_colors_mask, CardCapability, CardType, CostComponent, Keywords,
-    ManaAbilityCostDef, Subtype, TargetSpec, CARD_DEFS,
+    ManaAbilityCostDef, Subtype, TargetSpec, CARD_DEFS, KERNEL_CARDDB_HASH,
 };
 use mtg_kernel::effect::{EffectOp, LibraryCardFilter, PlayerRef};
 use mtg_kernel::engine::{self, Action, CostKind, Decision};
@@ -126,6 +126,7 @@ fn reference_shuffle(
 
 #[test]
 fn definitions_ids_and_generic_programs_are_exact() {
+    assert_eq!(KERNEL_CARDDB_HASH, 0x064a_7c98_9255_ab3c);
     let expected_ids = [
         ("Basilisk Gate", 3),
         ("Citadel Gate", 14),
@@ -136,6 +137,7 @@ fn definitions_ids_and_generic_programs_are_exact() {
         ("Sacred Cat Embalmed Token", 148),
         ("Treasure Token", 149),
     ];
+    assert_eq!(CARD_DEFS.len(), 192); // wave 2 Task 3: 187 -> 192
     for (name, expected_id) in expected_ids {
         let id = card_id(name);
         assert_eq!(id, expected_id, "append-only id for {name}");

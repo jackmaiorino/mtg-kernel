@@ -1,5 +1,30 @@
 # FDN life-gain creature validation
 
+## Integration with current main
+
+Integrated the current-main counter/lifelink prefix c3d60549. Preserve the
+expanded default 192-definition/v34 registry; the two life-gain cards yield
+220 definitions and a distinct Limited v41 identity 958bf2fd746ec314. The
+catalog-only generator compiled and emitted this identity; engine gameplay
+is not proved by that probe. Original FDN catalog tuples remain readable,
+including original life-gain 3f6b7e8df71f3195 and the prior composed counter
+b3dc8eb6d0a6407d. Publication/resume continue to require the actual live tuple.
+
+Retain main's NonblackCreature target code and append the graveyard permanent
+filter at 41. Preserve the bound-counter resampling scan, symbolic return
+operation, monarch triggers and once-per-turn usage bookkeeping. CI retains
+all ten integration targets, its four Limited and three production filters,
+and the unchanged exact timing case, including main's ignored-test marker.
+Formatting, workflow lint, diff and catalog-generation checks passed. Hosted
+Rust/gameplay/native/production checks on this composed source are pending.
+Earlier isolated-source qualification below is historical.
+
+Hosted CI at `9d1f5eb1ac6e7013beaab9b953d79c9c17f102fb` passed all eight checks: Rust on
+Ubuntu and Windows, all four Python shards, formatting/lint and path detection.
+Run: https://github.com/jackmaiorino/mtg-kernel/actions/runs/36966637290. Earlier pending entries below record the original
+verification sequence. The subsequent status/report update changes no tested
+code, workflow, fixture or catalog bytes.
+
 Local source `7feec2b8b35445ddc77c1e5e8ddf05fd391cc4ef` implements
 Exemplar of Light and Sun-Blessed Healer. Matching committed HaleysPC
 source is `7fc174bde3c8670ae1afdd919cbac1e68e994e0c`.

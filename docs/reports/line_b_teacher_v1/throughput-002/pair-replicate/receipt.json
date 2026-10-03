@@ -1,0 +1,297 @@
+{
+ "schema": "line-b-engineering-throughput-receipt/v1",
+ "name": "throughput-002-pair-replicate",
+ "provenance": {
+  "binary": "E:\\pinned-binaries\\1823e77a570171d44aeb16d6b10154cc4730775315e89de85bef836d7b3acec9\\expanded_deck_training_v1.exe",
+  "binary_sha256": "1823e77a570171d44aeb16d6b10154cc4730775315e89de85bef836d7b3acec9",
+  "tool_head": "427743825c3f515ea78ebca8e31948fc8b97a242"
+ },
+ "seed_name": "throughput-001",
+ "claim": "engineering timing of the teach step on one fixed batch; no outcome claim",
+ "template": {
+  "path": "E:\\mtg-postboard-campaign-20260920\\broader-exposure-pilot-001\\broader\\config.json",
+  "sha256": "d2e4ace81253e6a393d5b3687250f77f5c4af433afd28dda97fa5ee2ab533529"
+ },
+ "roots_requested": 20,
+ "rollouts": 16,
+ "backend": "cpu",
+ "placement": {
+  "priority": "below_normal",
+  "qos": "execution-speed throttling opt-out at spawn, read back per run (windows-owned-child-policy/v1)",
+  "affinity_mask": "0xffffff",
+  "pair_mask": "0xffff"
+ },
+ "collect_seconds": 0.997,
+ "runs": {
+  "workers-16": {
+   "workers": 16,
+   "affinity_mask": "0xffffff",
+   "placement_readback": {
+    "affinity_mask": "0xffffff",
+    "priority_class": 16384,
+    "power_control_mask": 1,
+    "power_state_mask": 0,
+    "execution_speed_opt_out": true
+   },
+   "host_cpu_percent_before": 1.9,
+   "placement_during_run": {
+    "samples": 8,
+    "logical_processors": 24,
+    "p_core_threads_mean_busy_percent": 58.8546875,
+    "e_cores_mean_busy_percent": 33.1625,
+    "per_cpu_mean_busy_percent": [
+     48.3,
+     47.2,
+     59.9,
+     46.8,
+     59.1,
+     49.4,
+     58.8,
+     48.7,
+     57.8,
+     69.9,
+     86.4,
+     63.8,
+     57.9,
+     58.8,
+     70.3,
+     58.5,
+     24.7,
+     30.4,
+     30.2,
+     46.5,
+     31.9,
+     32.5,
+     33.7,
+     35.4
+    ]
+   },
+   "update_seconds": 16.22,
+   "teacher_seconds": 13.0714632,
+   "roots": 20,
+   "rollouts": 1072,
+   "rollouts_per_second": 82.01071170058452,
+   "physical_decisions_mean": 100.55503731343283,
+   "physical_decisions_max": 1055,
+   "rollout_outcomes": {
+    "complete": 1072
+   },
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 20,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 107795,
+    "policy_steps": 118954,
+    "rollouts": 1072,
+    "selected_roots": 20,
+    "teacher_games": 20
+   },
+   "packet_sha256": "b0a6b848740b681d13a24aac839ddc4c1d5b99592625e31db9032358571428a2"
+  },
+  "workers-16-mask-0xffff": {
+   "workers": 16,
+   "affinity_mask": "0xffff",
+   "placement_readback": {
+    "affinity_mask": "0xffff",
+    "priority_class": 16384,
+    "power_control_mask": 1,
+    "power_state_mask": 0,
+    "execution_speed_opt_out": true
+   },
+   "host_cpu_percent_before": 16.6,
+   "placement_during_run": {
+    "samples": 8,
+    "logical_processors": 24,
+    "p_core_threads_mean_busy_percent": 65.34921875,
+    "e_cores_mean_busy_percent": 17.665625,
+    "per_cpu_mean_busy_percent": [
+     52.9,
+     60.6,
+     69.6,
+     62.7,
+     64.6,
+     65.0,
+     66.8,
+     64.0,
+     57.5,
+     81.4,
+     76.6,
+     69.2,
+     66.0,
+     62.2,
+     65.8,
+     60.8,
+     14.6,
+     20.9,
+     20.4,
+     17.6,
+     19.1,
+     16.4,
+     18.2,
+     14.3
+    ]
+   },
+   "update_seconds": 17.108,
+   "teacher_seconds": 13.9232076,
+   "roots": 20,
+   "rollouts": 1072,
+   "rollouts_per_second": 76.99375250283563,
+   "physical_decisions_mean": 100.55503731343283,
+   "physical_decisions_max": 1055,
+   "rollout_outcomes": {
+    "complete": 1072
+   },
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 20,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 107795,
+    "policy_steps": 118954,
+    "rollouts": 1072,
+    "selected_roots": 20,
+    "teacher_games": 20
+   },
+   "packet_sha256": "b0a6b848740b681d13a24aac839ddc4c1d5b99592625e31db9032358571428a2"
+  },
+  "workers-24": {
+   "workers": 24,
+   "affinity_mask": "0xffffff",
+   "placement_readback": {
+    "affinity_mask": "0xffffff",
+    "priority_class": 16384,
+    "power_control_mask": 1,
+    "power_state_mask": 0,
+    "execution_speed_opt_out": true
+   },
+   "host_cpu_percent_before": 2.2,
+   "placement_during_run": {
+    "samples": 7,
+    "logical_processors": 24,
+    "p_core_threads_mean_busy_percent": 62.395535714285714,
+    "e_cores_mean_busy_percent": 52.72857142857143,
+    "per_cpu_mean_busy_percent": [
+     61.5,
+     55.7,
+     66.4,
+     54.8,
+     67.8,
+     57.7,
+     67.5,
+     56.3,
+     78.6,
+     57.3,
+     69.7,
+     59.6,
+     68.0,
+     56.4,
+     66.6,
+     54.4,
+     44.6,
+     48.1,
+     53.1,
+     55.0,
+     57.9,
+     54.2,
+     53.4,
+     55.5
+    ]
+   },
+   "update_seconds": 15.311,
+   "teacher_seconds": 12.0952907,
+   "roots": 20,
+   "rollouts": 1072,
+   "rollouts_per_second": 88.62953579114887,
+   "physical_decisions_mean": 100.55503731343283,
+   "physical_decisions_max": 1055,
+   "rollout_outcomes": {
+    "complete": 1072
+   },
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 20,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 107795,
+    "policy_steps": 118954,
+    "rollouts": 1072,
+    "selected_roots": 20,
+    "teacher_games": 20
+   },
+   "packet_sha256": "b0a6b848740b681d13a24aac839ddc4c1d5b99592625e31db9032358571428a2"
+  },
+  "workers-24-mask-0xffff": {
+   "workers": 24,
+   "affinity_mask": "0xffff",
+   "placement_readback": {
+    "affinity_mask": "0xffff",
+    "priority_class": 16384,
+    "power_control_mask": 1,
+    "power_state_mask": 0,
+    "execution_speed_opt_out": true
+   },
+   "host_cpu_percent_before": 6.2,
+   "placement_during_run": {
+    "samples": 8,
+    "logical_processors": 24,
+    "p_core_threads_mean_busy_percent": 66.5734375,
+    "e_cores_mean_busy_percent": 27.4875,
+    "per_cpu_mean_busy_percent": [
+     64.8,
+     58.1,
+     67.5,
+     60.7,
+     69.7,
+     63.2,
+     69.3,
+     64.0,
+     74.7,
+     68.8,
+     62.4,
+     81.6,
+     66.1,
+     65.3,
+     64.1,
+     64.8,
+     22.9,
+     22.8,
+     31.3,
+     29.7,
+     29.5,
+     26.2,
+     29.1,
+     28.5
+    ]
+   },
+   "update_seconds": 17.008,
+   "teacher_seconds": 13.8403044,
+   "roots": 20,
+   "rollouts": 1072,
+   "rollouts_per_second": 77.45494383779594,
+   "physical_decisions_mean": 100.55503731343283,
+   "physical_decisions_max": 1055,
+   "rollout_outcomes": {
+    "complete": 1072
+   },
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 20,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 107795,
+    "policy_steps": 118954,
+    "rollouts": 1072,
+    "selected_roots": 20,
+    "teacher_games": 20
+   },
+   "packet_sha256": "b0a6b848740b681d13a24aac839ddc4c1d5b99592625e31db9032358571428a2"
+  }
+ },
+ "checks": {
+  "one_packet_across_worker_counts": true,
+  "execution_speed_opt_out_read_back_on_every_run": true,
+  "affinity_read_back_as_requested_on_every_run": true,
+  "packet_equals_expected": true
+ }
+}

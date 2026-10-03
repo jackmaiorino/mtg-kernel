@@ -127,12 +127,12 @@ fn faeries(state: &GameState, player: PlayerId) -> Vec<ObjectId> {
 fn printed_cards_cast_for_two_mana_and_append_with_exact_stats_and_keywords() {
     for (id, name, stats, keywords) in [
         (
-            190,
+            220,
             "Strix Lookout",
             (1, 2),
             Keywords::FLYING.0 | Keywords::VIGILANCE.0,
         ),
-        (191, "Mischievous Mystic", (2, 1), Keywords::FLYING.0),
+        (221, "Mischievous Mystic", (2, 1), Keywords::FLYING.0),
     ] {
         assert_eq!(card_id_by_name(name), Some(id));
         preflight_fully_supported_deck(&[id]).unwrap();
@@ -155,13 +155,13 @@ fn printed_cards_cast_for_two_mana_and_append_with_exact_stats_and_keywords() {
 
 #[test]
 fn faerie_token_is_blue_flying_one_one_and_cannot_be_a_mainboard_card() {
-    assert_eq!(card_id_by_name("Faerie Token"), Some(192));
-    let token = &CARD_DEFS[192];
+    assert_eq!(card_id_by_name("Faerie Token"), Some(222));
+    let token = &CARD_DEFS[222];
     assert_eq!((token.power, token.toughness), (Some(1), Some(1)));
     assert_eq!(token.colors, &[ManaColor::U]);
     assert!(token.subtypes.contains(&Subtype::Faerie));
     assert!(token.keywords.has(Keywords::FLYING));
-    assert!(preflight_fully_supported_deck(&[192]).is_err());
+    assert!(preflight_fully_supported_deck(&[222]).is_err());
     let mut state = ready();
     put(
         &mut state,

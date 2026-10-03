@@ -92,3 +92,18 @@ log SHA-256
 This verifies interface completion and replay. Individual discounted
 payment/ward rules are established by the focused kernel/reference cases.
 The custom games do not complete either original fixture deck.
+
+## Current-main integration
+
+The Rebuke prefix incorporates Prowler 52b252d6 and main's 192-definition/v34
+catalog. Its generated Limited identity is 231 definitions/v47
+f48d52aff22f0f04. Original and earlier composed profiles remain readable;
+mutation requires the actual live identity. The Rebuke fixture expects its
+new appended ID 230.
+
+Target-dependent cast offers and payment retain Rebuke's discount and main's
+delve/adventure paths. The generated creature-destruction program retains
+main's battlefield guard and is shared with Terminate. The existing discounted
+Rebuke tests and main regression suite qualify this composed behavior in CI.
+Formatting, workflow lint, catalog generation and diff checks pass locally;
+composed-source Rust qualification is pending.

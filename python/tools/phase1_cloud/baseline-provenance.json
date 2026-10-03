@@ -1,0 +1,162 @@
+{
+  "schema": "phase1-cloud-source-migration/v1",
+  "source": "C:/Users/Jack/IdeaProjects/sideboarding-integration-20260912/phase1/cloud",
+  "purpose": "Preserved baseline before fresh-origin compatibility edits. Historical evidence and original tools remain unchanged.",
+  "files": [
+    {
+      "name": "bo3_recovery_incremental.py",
+      "sha256": "30f4defb0360e119941d488816e099e9dae36032fe44761126e9824fd634c069",
+      "bytes": 26544
+    },
+    {
+      "name": "bo3_recovery.py",
+      "sha256": "d7fb74a51f93e6060801cdf54b7bb30ac781f42350938c37162c04155e2340a3",
+      "bytes": 31695
+    },
+    {
+      "name": "bo3_worker.py",
+      "sha256": "39c39f96500205994855b788c25b719d54e6f9feb76e7e6821262894aabf75f9",
+      "bytes": 47564
+    },
+    {
+      "name": "cloud_worker.py",
+      "sha256": "e2edce5ecbe6da4d6109584b09c4e1fbd0bc73b451c14170d6dc18cddd95854b",
+      "bytes": 33240
+    },
+    {
+      "name": "common.py",
+      "sha256": "f39bcb9e81c3d4f0c2a479734dac8c0c5978bab369aa73bd302072e31c2298cf",
+      "bytes": 2044
+    },
+    {
+      "name": "lease_guard.py",
+      "sha256": "2740222b707330d8390821d1789b9fa133c98708de92497ca8a1aa80b6c8673c",
+      "bytes": 17350
+    },
+    {
+      "name": "pack_bo3.py",
+      "sha256": "49a4f1ade386693a670163c1d2164c2b5fe57e4f8f660ab007a91d0acd3db43c",
+      "bytes": 25449
+    },
+    {
+      "name": "pack.py",
+      "sha256": "d350bbf07b77d615e7ec5e5bd5c888da507eea32f9926489ec57f94c2ca57a53",
+      "bytes": 10188
+    },
+    {
+      "name": "parity_evidence.py",
+      "sha256": "f3a7161fea480761e101fb3f2906a6a6a657ce79e99f0109207b361d5180d9e3",
+      "bytes": 28274
+    },
+    {
+      "name": "prepare_lease.py",
+      "sha256": "b8da661e54ad4cc691e4de37e8480b301535655909fdeeaf568be4b4c7a882b7",
+      "bytes": 7402
+    },
+    {
+      "name": "production_check.py",
+      "sha256": "342f1481c4cfaefbf67948101a1209cbf935302d9569767ec470fde0fcfd5c3c",
+      "bytes": 10350
+    },
+    {
+      "name": "reference.py",
+      "sha256": "aeac487bbc96b55c7f1d948e9241ba013c82dbd3156b23994e59991b64cd8aa8",
+      "bytes": 7539
+    },
+    {
+      "name": "runtime_compatibility.py",
+      "sha256": "71d0a5412d7759e4ea2c9e546a9263120127f7815c16ec22830fa79fc5af0c88",
+      "bytes": 10008
+    },
+    {
+      "name": "runtime_observation.py",
+      "sha256": "d56e3bde4134d1d75fbef23fc5a432e6c30a1ea66211c11327898ddf697135ed",
+      "bytes": 7705
+    },
+    {
+      "name": "semantic.py",
+      "sha256": "6d93e03cddc0efb39fda5467e9dfebf7b248da35231de94ea775c41c9e3ea9a1",
+      "bytes": 5307
+    },
+    {
+      "name": "test_bo3_recovery_incremental.py",
+      "sha256": "78790872c84d945d04221da4778dbd378c1b21b37582296abfd45115e46bf56f",
+      "bytes": 11132
+    },
+    {
+      "name": "test_bo3_recovery.py",
+      "sha256": "44e8600cc951b56b14704df3967619e00fd4726ce43fdfe397e23ed065535395",
+      "bytes": 16307
+    },
+    {
+      "name": "test_bo3_worker.py",
+      "sha256": "283f21a9d134245c4bf2915fae8b0aefcf855f89e90f5f158140923b295ff766",
+      "bytes": 6856
+    },
+    {
+      "name": "test_cloud.py",
+      "sha256": "247e1c0696f52c55b8b3757a1c67787aa40966bd5f7f7cfd128975ea554013d5",
+      "bytes": 33646
+    },
+    {
+      "name": "test_evaluation_setup.py",
+      "sha256": "847c37706693dbd739bcb6bec32a683c75ab4d213fd5b1405c689d228b6ecd9e",
+      "bytes": 3704
+    },
+    {
+      "name": "test_execution_scope.py",
+      "sha256": "06fa911c012e551ebbb084fb9085a12438b3093e452590fc7d4961101ed76704",
+      "bytes": 851
+    },
+    {
+      "name": "test_lease_failures.py",
+      "sha256": "89c03f3091fc54794d3eb35dd31fa5d7c1b69d254fb66a8e4d426c4a34d94487",
+      "bytes": 11749
+    },
+    {
+      "name": "test_pack_bo3.py",
+      "sha256": "d8698f2976872969ad459b4c6e473f4b5dd27bc3ee6f4740a13ebbee8a221d8b",
+      "bytes": 13894
+    },
+    {
+      "name": "test_pack_preflight.py",
+      "sha256": "0d69da018701743df33d69c77d627c1d675660f78287f94dc680e08b53dae03e",
+      "bytes": 2809
+    },
+    {
+      "name": "test_prepared_compatibility.py",
+      "sha256": "61d41986800a4f235b4094a005e42f281110ebdcaeb814cf70c9b0a539b55396",
+      "bytes": 14304
+    },
+    {
+      "name": "test_production_checks.py",
+      "sha256": "339909f52643b9617e7dff7194271e1ddda072d37c61d30a0b8c3f8df9849598",
+      "bytes": 28320
+    },
+    {
+      "name": "test_quota_visibility.py",
+      "sha256": "e43aa33b516637cc72bea46a6f1c05d5c5c4c7fd1162f4a4c8801f2a1f16be67",
+      "bytes": 13314
+    },
+    {
+      "name": "test_real_artifacts.py",
+      "sha256": "d97d5b75f49a756d4ab1ca9de23bebf6b418ca65539b413e4f4d6a1be067eb52",
+      "bytes": 7845
+    },
+    {
+      "name": "test_runtime_observation.py",
+      "sha256": "8ef14c8f563bf218ee124b09f102990470850c8aad69891c14a4156d3ccbca6b",
+      "bytes": 13584
+    },
+    {
+      "name": "throughput.py",
+      "sha256": "405c7a54b70dfa7e2f77ff367597033239e5628a37432b37aeb456d9e1e8e19a",
+      "bytes": 25365
+    },
+    {
+      "name": "workload.py",
+      "sha256": "f63111a289d6bdcfddf8218d317bcf2ea4682807188c9d881819a0cb21225c3e",
+      "bytes": 6544
+    }
+  ]
+}

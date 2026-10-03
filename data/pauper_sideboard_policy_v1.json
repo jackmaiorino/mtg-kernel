@@ -10,7 +10,16 @@
     "Burn",
     "Terror",
     "CawGates",
-    "Faeries"
+    "Faeries",
+    "BurnV2",
+    "DelverV2",
+    "AffinityV2",
+    "RallyV2",
+    "WildfireV2",
+    "ElvesV2",
+    "TerrorV2",
+    "SpyV2",
+    "DimirTerrorV2"
   ],
   "coverage": {
     "ordered_matchups": "all_registered_deck_pairs",
