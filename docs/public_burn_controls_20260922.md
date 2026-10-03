@@ -1,0 +1,11 @@
+# Public burn witness controls passed
+
+Source f89b9ce8, guarded release-lib test filter burn_tree_. Two tests passed, zero failed,2341 unrelated tests filtered out. Build+execution472.781s; test body reported0.00s. Evidence E:/mtg-meta-recovery-20260921/burn-tree-controls-001/completion.json, test.log, source snapshots and toolchain.json. No production search semantics, budgets, actions or oracle guards changed.
+
+Controls cover both actors and two reversed hidden-library orders. Four Island cases certify the immediate Bolt face win. Four otherwise equivalent unsupported-Mountain cases retain[-1,1], confirming an opponent's unsupported mana branch cannot be silently passed. All eight cases also retain unknown under zero transition budget and zero depth, detect an initial draw-counter mismatch as an information boundary, and leave the source session at the same decision. Four additional nonempty-opponent-hand positions are rejected before search. A pure interval test checks own existential win versus opponent universal coverage with an unknown alternative.
+
+These are deterministic engine correctness fixtures, never training examples or natural-prevalence samples. They validate the named failure modes, not arbitrary card interactions or the whole engine. The prior natural off/on/on replay remains the evidence for actual archive-prefix agreement and noninterference; it was not rerun here. The full unit suite was not run.
+
+E-20260922-07 read and adopted. Its negative-control prerequisite is now completed for these cases. Independent Fable review remains unavailable from the recorded429 failure, so the natural witness is still provisional and not an approved teaching label. No model update, strength result or M1 completion. No paid compute, GPU use or native campaign. All test processes terminal.
+
+Next is natural hand-dependent coverage under the monitor's order, retaining unknown cases and the distinction between an available immediate win and hand-combination reasoning. Any substantial census requires the supported guarded launcher and current useful-throughput qualification. No repeated attempt to resolve the already consumed root's unknown alternatives by budget tuning.

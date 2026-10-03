@@ -175,6 +175,35 @@ public final class DeterminizationSampler {
         return loadArchetypes(paths);
     }
 
+    /**
+     * Every registered Pauper deck (historical nine plus revisioned
+     * registrations). Sampling for training keeps using pauperDefaults();
+     * this roster exists for the kernel pool manifest and sideboard policy.
+     */
+    public static DeterminizationSampler pauperRegistrationsV2() {
+        String base = "Mage.Server.Plugins/Mage.Player.AIRL/src/mage/player/ai/decks/Pauper";
+        Map<String, String> paths = new LinkedHashMap<>();
+        paths.put("Wildfire", base + "/Deck - Jund Wildfire.dek");
+        paths.put("Rally", base + "/Deck - Mono Red Rally.dek");
+        paths.put("Affinity", base + "/Deck - Grixis Affinity.dek");
+        paths.put("Elves", base + "/Deck - Elves.dek");
+        paths.put("SpyCombo", base + "/Deck - Spy Combo.dek");
+        paths.put("Burn", base + "/Deck - Mono-Red Burn.dek");
+        paths.put("Terror", base + "/Deck - Mono-Blue Terror.dek");
+        paths.put("CawGates", base + "/Deck - Caw-Gates.dek");
+        paths.put("Faeries", base + "/Deck - Mono-Blue Faeries.dek");
+        paths.put("BurnV2", base + "/Deck - Madness Burn V2.dek");
+        paths.put("DelverV2", base + "/Deck - Mono-Blue Delver V2.dek");
+        paths.put("AffinityV2", base + "/Deck - Grixis Affinity V2.dek");
+        paths.put("RallyV2", base + "/Deck - Red Deck Wins V2.dek");
+        paths.put("WildfireV2", base + "/Deck - Jund Wildfire V2.dek");
+        paths.put("ElvesV2", base + "/Deck - Elves V2.dek");
+        paths.put("TerrorV2", base + "/Deck - Mono-Blue Terror V2.dek");
+        paths.put("SpyV2", base + "/Deck - Spy Combo V2.dek");
+        paths.put("DimirTerrorV2", base + "/Deck - Dimir Terror V2.dek");
+        return loadArchetypes(paths);
+    }
+
     private static String archetypeNameFromDeckPath(Path deckPath) {
         String name = deckPath == null || deckPath.getFileName() == null
                 ? "Archetype"

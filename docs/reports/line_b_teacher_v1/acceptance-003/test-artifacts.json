@@ -1,0 +1,20 @@
+[
+  {
+    "target": "mtg_kernel",
+    "path": "E:\\pinned-binaries\\babd20efc72f80434e6a6a671a6c5eb95dc170dc48a68c5b23edb12411675a0f\\mtg_kernel-73164b849c0d4084.exe",
+    "sha256": "babd20efc72f80434e6a6a671a6c5eb95dc170dc48a68c5b23edb12411675a0f",
+    "bytes": 90150912
+  },
+  {
+    "target": "flat_policy_v1",
+    "path": "E:\\pinned-binaries\\0f62f2d0412ad2f3742817199dce61062310e8d1074dc2ff6515442e3a552720\\flat_policy_v1-d011c55f44ea808f.exe",
+    "sha256": "0f62f2d0412ad2f3742817199dce61062310e8d1074dc2ff6515442e3a552720",
+    "bytes": 3803648
+  },
+  {
+    "target": "rl_contract",
+    "path": "E:\\pinned-binaries\\673857e4da03351314c444cf3d6a59a6ec3bbb59b5da099c3e7752f673342c7e\\rl_contract-716f8556edd263a8.exe",
+    "sha256": "673857e4da03351314c444cf3d6a59a6ec3bbb59b5da099c3e7752f673342c7e",
+    "bytes": 8142336
+  }
+]

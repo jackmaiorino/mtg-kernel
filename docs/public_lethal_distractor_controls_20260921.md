@@ -1,0 +1,11 @@
+# Immediate face lethal with a creature distractor
+
+Declare this bounded diagnostic before scoring g115. The existing elementary controls have no opposing creature target; the combat controls can win by removing their blocker, so both can pass without distinguishing immediate face lethal from a preference for creature removal.
+
+Eight constructed public states: both acting seats, opponent life 3 or 4, and an opposing Sacred Cat that is either its ordinary 1/1 or has three +1/+1 counters and one marked damage (4/4 with three remaining toughness). Main1, actor active with priority, own life 3, Lightning Bolt staged at target selection after paying the only red mana. No other cards in either hand, no other battlefield objects, four unknown basic lands in each library. Repeat each state with reversed hidden libraries, for 16 records. These are synthetic board states, not natural-game samples or a held-out strength benchmark.
+
+There must be exactly three legal targets: self, opponent and Cat. Prove natural terminal win for face at life 3 and natural loss for self in every state. At opponent life 4 face is not a certified win. Cat removal must remain unresolved, never labeled a forced loss. The existing witness follows only forced continuations or the root player's explicit pass, stopping at changed step/turn, hidden-information change or an opponent choice. Establish these conditions before model scoring.
+
+Record actual V4 tensors, logits/value, semantic target indices, argmax and float64 softmax diagnostic mass. Require identical actor-visible projection, actions, tensors, logits/value and witnesses across both hidden orders and a byte-identical fresh-process replay. Report eight public states, not sixteen independent samples. A selected unresolved action in a state with a certified immediate win is a missed immediate-win diagnostic, not proof the chosen line loses eventually. Nonlethal controls have no declared optimal target.
+
+No training, candidate selection, reward change or paid compute. Fable's recorded zero-read HTTP429 remains unavailable until September 22 at 07:00 EDT; bounded continuation is under Jack's authority with that review gap, not endorsement. CP7 outcomes are excluded.

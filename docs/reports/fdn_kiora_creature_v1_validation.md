@@ -1,5 +1,21 @@
 # FDN Kiora implementation and verification
 
+## Integration with current main
+
+Integrated the current-main Koma prefix 9536ef56. Default remains 192 definitions
+at v34; Kiora and Scion produce 229 definitions/Limited v45 with generated identity
+2d5aebb949eca8a6. The catalog-only generator compiled and emitted this identity;
+it is not engine/gameplay qualification. Original and prior composed FDN
+profiles remain readable, and publication/resume require the exact live tuple.
+
+All fourteen integration targets and nine library filters remain selected,
+including actual live-profile production round trip. Retain the fresh pinned
+Windows compiler-path correction and main's explicitly ignored snapshot case,
+which runs once through the exact unchanged-workload timing filter. Formatting,
+workflow lint and diff checks pass. Composed-source hosted gameplay/native/
+production qualification is pending; earlier isolated-source evidence below
+remains historical.
+
 Hosted CI at `f8fce216064e6185858383a2bfeac4994432bf9d` passed all eight checks: Rust on
 Ubuntu and Windows, all four Python shards, formatting/lint and path detection.
 Run: https://github.com/jackmaiorino/mtg-kernel/actions/runs/37000169016. Earlier pending entries below record the original
