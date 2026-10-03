@@ -110,8 +110,8 @@ fn cast(state: &mut GameState, target: ObjectId) -> ObjectId {
 
 #[test]
 fn printed_definition_and_target_reducer_are_exact() {
-    assert_eq!(card_id_by_name("Luminous Rebuke"), Some(200));
-    let rebuke = &CARD_DEFS[200];
+    assert_eq!(card_id_by_name("Luminous Rebuke"), Some(230));
+    let rebuke = &CARD_DEFS[230];
     assert_eq!(rebuke.mana_value, 5);
     assert_eq!(rebuke.cost.generic, 4);
     assert_eq!(rebuke.cost.pips, &[Pip::Colored(ManaColor::W)]);
@@ -125,7 +125,7 @@ fn printed_definition_and_target_reducer_are_exact() {
             count: DynamicCountDef::SpellTargetsTappedCreature,
         })
     );
-    preflight_fully_supported_deck(&[200]).unwrap();
+    preflight_fully_supported_deck(&[230]).unwrap();
 }
 
 #[test]

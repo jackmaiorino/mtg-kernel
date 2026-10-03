@@ -1,0 +1,198 @@
+{
+ "schema": "line-b-host-refold-line/v1",
+ "claim": "offline binary32 replica of the update's host refold against the sampler's binary64 value; engineering only",
+ "directory": "D:\\e-scratch\\opus-exit-teacher\\receipts\\throughput-001",
+ "packets": [
+  {
+   "packet_sha256": "b0a6b848740b681d13a24aac839ddc4c1d5b99592625e31db9032358571428a2",
+   "updates": [
+    "workers-01",
+    "workers-08",
+    "workers-24"
+   ],
+   "roots": [
+    {
+     "trajectory_index": 0,
+     "decision_index": 18,
+     "width": 3,
+     "selected": 0,
+     "host_refold_log_probability": -0.7260464429855347,
+     "sampler_log_probability": -0.7260464520126089,
+     "abs_discrepancy": 9.027074199252638e-09
+    },
+    {
+     "trajectory_index": 1,
+     "decision_index": 102,
+     "width": 5,
+     "selected": 0,
+     "host_refold_log_probability": -0.05970732495188713,
+     "sampler_log_probability": -0.059707311332050296,
+     "abs_discrepancy": 1.361983683473289e-08
+    },
+    {
+     "trajectory_index": 2,
+     "decision_index": 29,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -4.100715523236431e-05,
+     "sampler_log_probability": -4.1020053720847815e-05,
+     "abs_discrepancy": 1.2898488483503278e-08
+    },
+    {
+     "trajectory_index": 3,
+     "decision_index": 24,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -9.894321920000948e-06,
+     "sampler_log_probability": -9.952919691879264e-06,
+     "abs_discrepancy": 5.85977718783158e-08
+    },
+    {
+     "trajectory_index": 4,
+     "decision_index": 27,
+     "width": 3,
+     "selected": 1,
+     "host_refold_log_probability": -6.389413465512916e-05,
+     "sampler_log_probability": -6.394923024216512e-05,
+     "abs_discrepancy": 5.50955870359522e-08
+    },
+    {
+     "trajectory_index": 5,
+     "decision_index": 20,
+     "width": 7,
+     "selected": 0,
+     "host_refold_log_probability": -0.6143685579299927,
+     "sampler_log_probability": -0.61436860124769,
+     "abs_discrepancy": 4.331769731802382e-08
+    },
+    {
+     "trajectory_index": 6,
+     "decision_index": 44,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -5.602820237982087e-06,
+     "sampler_log_probability": -5.545981584245585e-06,
+     "abs_discrepancy": 5.6838653736501456e-08
+    },
+    {
+     "trajectory_index": 7,
+     "decision_index": 52,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.001091004116460681,
+     "sampler_log_probability": -0.0010909895282104627,
+     "abs_discrepancy": 1.4588250218288204e-08
+    },
+    {
+     "trajectory_index": 8,
+     "decision_index": 13,
+     "width": 6,
+     "selected": 2,
+     "host_refold_log_probability": -1.4700639247894287,
+     "sampler_log_probability": -1.4700639087989222,
+     "abs_discrepancy": 1.5990506474494737e-08
+    },
+    {
+     "trajectory_index": 9,
+     "decision_index": 143,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.010295850224792957,
+     "sampler_log_probability": -0.010295871783360751,
+     "abs_discrepancy": 2.155856779380294e-08
+    },
+    {
+     "trajectory_index": 10,
+     "decision_index": 130,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -0.00010215714428341016,
+     "sampler_log_probability": -0.00010216664520843343,
+     "abs_discrepancy": 9.500925023269205e-09
+    },
+    {
+     "trajectory_index": 11,
+     "decision_index": 413,
+     "width": 7,
+     "selected": 0,
+     "host_refold_log_probability": -0.0002509040932636708,
+     "sampler_log_probability": -0.0002508898940423707,
+     "abs_discrepancy": 1.4199221300104873e-08
+    },
+    {
+     "trajectory_index": 12,
+     "decision_index": 14,
+     "width": 2,
+     "selected": 0,
+     "host_refold_log_probability": -0.025795336812734604,
+     "sampler_log_probability": -0.025795373233288003,
+     "abs_discrepancy": 3.6420553399529876e-08
+    },
+    {
+     "trajectory_index": 13,
+     "decision_index": 108,
+     "width": 5,
+     "selected": 4,
+     "host_refold_log_probability": -0.0001588933664606884,
+     "sampler_log_probability": -0.00015887676464606767,
+     "abs_discrepancy": 1.660181462074216e-08
+    },
+    {
+     "trajectory_index": 14,
+     "decision_index": 8,
+     "width": 5,
+     "selected": 0,
+     "host_refold_log_probability": -0.0005062728887423873,
+     "sampler_log_probability": -0.0005062900249979784,
+     "abs_discrepancy": 1.7136255591062265e-08
+    },
+    {
+     "trajectory_index": 15,
+     "decision_index": 55,
+     "width": 2,
+     "selected": 0,
+     "host_refold_log_probability": -1.1920922133867862e-06,
+     "sampler_log_probability": -1.179145575210081e-06,
+     "abs_discrepancy": 1.2946638176705155e-08
+    },
+    {
+     "trajectory_index": 16,
+     "decision_index": 42,
+     "width": 2,
+     "selected": 1,
+     "host_refold_log_probability": -1.6689162293914706e-05,
+     "sampler_log_probability": -1.670838773982719e-05,
+     "abs_discrepancy": 1.9225445912485342e-08
+    },
+    {
+     "trajectory_index": 17,
+     "decision_index": 282,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -0.01238053385168314,
+     "sampler_log_probability": -0.012380565601925655,
+     "abs_discrepancy": 3.175024251497738e-08
+    },
+    {
+     "trajectory_index": 18,
+     "decision_index": 13,
+     "width": 3,
+     "selected": 2,
+     "host_refold_log_probability": -9.011816291604191e-05,
+     "sampler_log_probability": -9.012470000138538e-05,
+     "abs_discrepancy": 6.537085343470608e-09
+    },
+    {
+     "trajectory_index": 19,
+     "decision_index": 75,
+     "width": 2,
+     "selected": 0,
+     "host_refold_log_probability": 0.0,
+     "sampler_log_probability": -3.830805133008673e-08,
+     "abs_discrepancy": 3.830805133008673e-08
+    }
+   ],
+   "max_abs_discrepancy": 5.85977718783158e-08
+  }
+ ]
+}

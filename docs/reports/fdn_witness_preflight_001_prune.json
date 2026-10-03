@@ -1,0 +1,46 @@
+{
+  "schema": "fdn_preflight_prune/v1",
+  "sealed_source": "E:\\mtg-fdn-fixtures\\fdn-witness-preflight-001",
+  "mirror": "C:\\Users\\Jack\\fdn-witness-preflight-001-sealed",
+  "regeneration": "Pinned codegen executable plus both sealed JSON catalogs; raw repeated output hash matches. Python check source/command are recorded and committed.",
+  "prunable": "Only these owned scratch copies and the uncited probe debug-symbol cache.",
+  "paths": [
+    {
+      "path": "D:\\e-scratch\\fdn-witness-codegen-001\\compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "D:\\e-scratch\\fdn-witness-codegen-001\\manifest.json",
+      "bytes": 1882,
+      "sha256": "dd30eccf11a510c6d9c0696e514c497169f7165a0eb2318af44aa263fd08c9bf"
+    },
+    {
+      "path": "D:\\e-scratch\\fdn-witness-codegen-001\\probe.exe",
+      "bytes": 1065984,
+      "sha256": "2ff5960ea422e56d3c3a7038f205ebeae56bbcc6aa6f77dad34ebf361d2e3a7c"
+    },
+    {
+      "path": "D:\\e-scratch\\fdn-witness-codegen-001\\probe.pdb",
+      "bytes": 1904640,
+      "sha256": "36ec0f6a9a4d8c215d90883b91dcf22be7dc9382247abfe550ebc83a0eb0c718"
+    },
+    {
+      "path": "D:\\e-scratch\\fdn-witness-codegen-001\\result.log",
+      "bytes": 114,
+      "sha256": "7b866f759faeb7d3521c780e346943e06f455c47f11cd4a77392a831ecfe7180"
+    },
+    {
+      "path": "D:\\e-scratch\\fdn-witness-python-001\\check.log",
+      "bytes": 104,
+      "sha256": "aee9ba2fa518343eb53227168eccc24e6b73b28bc625479fd8e3f0a4323ed5ba"
+    },
+    {
+      "path": "D:\\e-scratch\\fdn-witness-python-001\\manifest.json",
+      "bytes": 444,
+      "sha256": "9b43d451ee6dc8395f7a22a72a2184dec6c11f92d22922fbe78b891aac252424"
+    }
+  ],
+  "deleted_bytes": 2973168,
+  "status": "deleted-after-seal-and-mirror-verification"
+}
