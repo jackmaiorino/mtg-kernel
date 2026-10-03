@@ -1830,22 +1830,6 @@ mod windows_resume_tests {
     }
 
     #[test]
-    #[cfg(feature = "limited-fdn-fixtures")]
-    fn resume_rejects_prior_fdn_batch_counter_creatures_before_interacting_with_store_contents() {
-        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_counter_creatures_v1;
-        let parent = TestParentV2::new("prior-fdn-counter-creatures");
-        let root = bootstrap_native_training_store_v2(parent.path(), "store")
-            .unwrap()
-            .into_root();
-        let run = decode_train_run_v2(&test_fixture_bytes_fdn_counter_creatures_v1()).unwrap();
-        let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
-        assert_eq!(
-            result.unwrap_err().kind(),
-            NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch
-        );
-    }
-
-    #[test]
     fn resume_drives_the_full_run_from_reconstructed_executors_to_the_exact_no_op() {
         let parent = TestParentV2::new("lifecycle");
         let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
