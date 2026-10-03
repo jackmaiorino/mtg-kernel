@@ -1,0 +1,7 @@
+# Natural-root channel diagnostic
+
+Frozen g115, no training or gate. Select first8 learner nonforced rows with distinct own-hand multisets and an unreferenced non-Mountain hand node from r1-a/update0000/episode000, before any update. Choose lowest eligible node. Archived member hash verified; fixed input E:/mtg-meta-recovery-20260921/natural-hand-channel-input-001/input.json. This is one Gates episode, not eight independent samples or the missing double-Bolt natural witness.
+
+For each root cross unchanged/replaced hand token (replace with Mountain token77) and unchanged/zeroed96-coordinate observation digest. Preserve all other fields and legal menu; require node absent from action references. Modified tensors are artificial, not legal counterfactual observations. Require unmodified g115 logits AND value to match archived bits exactly before interpreting any ablation. Fresh-process replay must match output bytes.
+
+Report argmax changes, probability shifts and logit-margin changes relative to each original root, without tactical correctness labels. No loss, feature or sampler change. New independent training n=0; no strength effect or power against s=.76pp. No ADVANCE, CP7 or human evidence. This complements E-12's constructed diagnostic but does not select a repair. Fable review still unavailable. Small32-forward CPU diagnostic under existing owner guards; four BelowNormal build jobs, no GPU/paid allocation. Input selection and all results retained, no filtering on response magnitude.

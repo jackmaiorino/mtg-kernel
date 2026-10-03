@@ -132,6 +132,46 @@ impl RegisteredDeckV1 {
         Ok(deck)
     }
 
+    /// Shared executable-registration admission for expanded training and live
+    /// BO3. The four-copy limit covers the entire registered 75; basic lands
+    /// are the supported exception. This does not assert format or ban legality.
+    pub fn new_executable_v1(
+        deck_id: impl Into<String>,
+        mainboard: Vec<u16>,
+        sideboard: Vec<u16>,
+    ) -> Result<Self, SideboardErrorV1> {
+        let deck = Self::new_exact_v1(deck_id, mainboard, sideboard)?;
+        deck.validate_executable_v1()?;
+        Ok(deck)
+    }
+
+    /// Revalidate even a structurally constructed registration before live
+    /// play. Keeping this on the registration type gives training and BO3 one
+    /// support, token, size and copy-limit contract.
+    pub fn validate_executable_v1(&self) -> Result<(), SideboardErrorV1> {
+        validate_registered_cards_v1(
+            self.configuration.mainboard(),
+            SideboardZoneV1::RegisteredMainboard,
+        )?;
+        validate_registered_cards_v1(
+            self.configuration.sideboard(),
+            SideboardZoneV1::RegisteredSideboard,
+        )?;
+        for row in self.configuration.combined_card_counts_v1() {
+            if row.count > 4
+                && !crate::card_def::CARD_DEFS[usize::from(row.card_id)]
+                    .supertypes
+                    .contains(&crate::card_def::Supertype::Basic)
+            {
+                return Err(SideboardErrorV1::NonbasicCopyLimitExceeded {
+                    card_id: row.card_id,
+                    count: row.count,
+                });
+            }
+        }
+        Ok(())
+    }
+
     pub fn deck_id(&self) -> &str {
         &self.deck_id
     }
@@ -249,10 +289,8 @@ fn checked_in_pauper_pool_document_v1() -> Result<PauperPoolDocumentV1, Sideboar
             actual: document.schema,
         });
     }
-    if document.decks.len() != 9 {
-        return Err(SideboardErrorV1::PoolDeckCount {
-            actual: document.decks.len(),
-        });
+    if document.decks.is_empty() {
+        return Err(SideboardErrorV1::EmptyPool);
     }
 
     let mut deck_ids = document
@@ -732,6 +770,10 @@ pub enum SideboardErrorV1 {
         card_id: u16,
         card_name: String,
     },
+    NonbasicCopyLimitExceeded {
+        card_id: u16,
+        count: u8,
+    },
     PoolJson(String),
     PoolSchemaMismatch {
         actual: String,
@@ -739,6 +781,7 @@ pub enum SideboardErrorV1 {
     PoolDeckCount {
         actual: usize,
     },
+    EmptyPool,
     DuplicatePoolDeckId {
         deck_id: String,
     },
@@ -859,12 +902,19 @@ impl fmt::Display for SideboardErrorV1 {
                 formatter,
                 "card {card_name:?} ({card_id}) in {zone} is not fully supported"
             ),
+            Self::NonbasicCopyLimitExceeded { card_id, count } => write!(
+                formatter,
+                "registered 75 contains {count} copies of nonbasic card {card_id}, exceeding four"
+            ),
             Self::PoolJson(error) => write!(formatter, "invalid Pauper pool JSON: {error}"),
             Self::PoolSchemaMismatch { actual } => {
                 write!(formatter, "unexpected Pauper pool schema {actual:?}")
             }
             Self::PoolDeckCount { actual } => {
                 write!(formatter, "Pauper pool must contain 9 decks, got {actual}")
+            }
+            Self::EmptyPool => {
+                formatter.write_str("Pauper pool must contain at least one deck")
             }
             Self::DuplicatePoolDeckId { deck_id } => {
                 write!(formatter, "duplicate Pauper pool deck id {deck_id:?}")
@@ -1170,6 +1220,21 @@ fn remove_count_v1(
 
 fn add_count_v1(counts: &mut BTreeMap<u16, u8>, row: CardCountV1) {
     *counts.entry(row.card_id).or_insert(0) += row.count;
+}
+
+/// Hashes a bare mainboard `card_id` slice with the exact same domain tag
+/// and convention `DeckConfigurationV1::mainboard_sha256_v1` uses
+/// (`configuration_zone_sha256_v1(b"mainboard", ...)`), for call sites that
+/// have a resolved mainboard but not a full `DeckConfigurationV1` (no
+/// paired sideboard to construct one), such as
+/// `sideboard_search_campaign_v1::resolve_bo3_game_mainboards_v1`'s
+/// opponent-side and carried-forward-checked-in branches (fix round 2,
+/// item 1: the BO3 trace's mainboard hashes must be the same convention as
+/// `AppliedSideboardReceiptV1.after_mainboard_sha256`, not an ad hoc third
+/// hash). Byte-identical to `DeckConfigurationV1::mainboard_sha256_v1()`
+/// for the same card sequence, since both call the same private helper.
+pub(crate) fn mainboard_slice_sha256_v1(mainboard: &[u16]) -> [u8; 32] {
+    configuration_zone_sha256_v1(b"mainboard", mainboard)
 }
 
 fn configuration_zone_sha256_v1(zone: &[u8], cards: &[u16]) -> [u8; 32] {

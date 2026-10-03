@@ -11,7 +11,9 @@
 use crate::card_def::{
     CardType, DynamicValueDef, Keywords, OptionalAdditionalCostDef, Subtype, TargetSpec,
 };
-use crate::effect::{EffectCond, EffectObjectBinding, EffectOp, ObjectRef, PlayerRef, TargetRef};
+use crate::effect::{
+    CardTypePredicate, EffectCond, EffectObjectBinding, EffectOp, ObjectRef, PlayerRef, TargetRef,
+};
 use crate::event::CommittedEvent;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{
@@ -32,6 +34,12 @@ pub enum TriggerCondition {
         subtype: Subtype,
         minimum_count: u8,
     },
+    /// The permanent itself enters while its controller has at least this
+    /// many creature cards in their own graveyard. This is the trigger-time
+    /// half of an intervening-if condition; the matching resolution-time
+    /// recheck is `effect::EffectCond::ControllerGraveyardCreatureCardsAtLeast`.
+    /// Webweaver Changeling is the first consumer.
+    EtbIfGraveyardCreatureCardsAtLeast(u8),
     /// The permanent itself deals damage. Unused by any Burn 16 card this
     /// increment (kept from increment 2's shape -- see `trigger_matches`).
     DealsDamage,
@@ -41,6 +49,12 @@ pub enum TriggerCondition {
     /// instant or sorcery spell"). Matched against
     /// `CommittedEvent::SpellCast`, logged by `engine::finalize_cast`.
     CastInstantOrSorcery,
+    /// The controller casts a noncreature spell -- any such spell, not just
+    /// ones this permanent's controller controls the *source* of (Kessig
+    /// Flamebreather: "whenever you cast a noncreature spell"). The
+    /// noncreature predicate is the same `selected_spell_types` check
+    /// Black Mage's Rod's equipment-granted trigger uses.
+    CastNoncreatureSpell,
     /// This exact source spell is cast. Creature cast triggers function
     /// while their source is on the stack.
     CastSelf,
@@ -69,9 +83,23 @@ pub enum TriggerCondition {
     /// This permanent's controller sacrifices another permanent that had
     /// the named effective subtype immediately before leaving.
     SacrificeAnotherWithSubtype(Subtype),
+    /// This permanent's controller sacrifices another permanent, with no
+    /// subtype restriction (Gixian Infiltrator: "whenever you sacrifice
+    /// another permanent").
+    SacrificeAnotherPermanent,
     /// This creature deals combat damage to a player. The committed marker
     /// carries the source's exact zone-change generation.
     DealsCombatDamageToPlayer,
+    /// 505.2, matched against `event::CommittedEvent::UpkeepBegan`: the
+    /// beginning of an Upkeep step. `controller_only` selects "at the
+    /// beginning of *your* upkeep" (Delver of Secrets, `true`) versus "at
+    /// the beginning of *each* upkeep" (`false`, no pool card yet, kept for
+    /// the shape); either way, exactly one Upkeep step happens per turn
+    /// (the active player's), so a `false` source still fires only on
+    /// turns where that upkeep is the active player's own.
+    BeginningOfUpkeep {
+        controller_only: bool,
+    },
     /// Each successful draw by the source's controller, including every
     /// individual card in a multi-card draw.
     ControllerDraws,
@@ -388,6 +416,52 @@ fn gain_three_life_effect() -> EffectOp {
     }
 }
 
+fn kessig_flamebreather_effect() -> EffectOp {
+    // Whenever you cast a noncreature spell, it deals 1 damage to each
+    // opponent.
+    EffectOp::DealDamage {
+        target: TargetRef::Opponent,
+        amount: 1,
+    }
+}
+
+fn gixian_infiltrator_effect() -> EffectOp {
+    // Whenever you sacrifice another permanent, put a +1/+1 counter on
+    // Gixian Infiltrator -- the same `BindPlusOnePlusOneCounterToTriggerSource`
+    // shape Writhing Chrysalis's own sacrifice trigger uses.
+    EffectOp::BindPlusOnePlusOneCounterToTriggerSource
+}
+
+fn webweaver_changeling_effect() -> EffectOp {
+    // "When Webweaver Changeling enters the battlefield, if there are
+    // three or more creature cards in your graveyard, you gain 5 life" --
+    // the resolution-time half of the intervening-if is rechecked here,
+    // same shape Gingerbread Cabin's own EtbControlsOtherSubtypeCount
+    // pair uses.
+    EffectOp::Conditional {
+        cond: EffectCond::ControllerGraveyardCreatureCardsAtLeast(3),
+        then: Box::new(EffectOp::GainLife {
+            player: PlayerRef::Controller,
+            amount: 5,
+        }),
+        else_: Box::new(EffectOp::Sequence(Vec::new())),
+    }
+}
+
+fn glint_hawk_effect() -> EffectOp {
+    // "When Glint Hawk enters the battlefield, sacrifice it unless you
+    // return an artifact you control to its owner's hand."
+    EffectOp::MayPayCostThen {
+        discard: 0,
+        sacrifice_lands: 0,
+        return_permanent: Some(crate::card_def::PermanentFilterDef::Artifact),
+        then: Box::new(EffectOp::Sequence(Vec::new())),
+        otherwise: Some(Box::new(EffectOp::Sacrifice {
+            object: ObjectRef::ThisSource,
+        })),
+    }
+}
+
 fn gatecreeper_vine_effect() -> EffectOp {
     EffectOp::SearchLibraryToHand {
         player: PlayerRef::Controller,
@@ -499,6 +573,34 @@ const SAGU_WILDLING_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
     effect: gain_three_life_effect,
+}];
+const KESSIG_FLAMEBREATHER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastNoncreatureSpell,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: kessig_flamebreather_effect,
+}];
+const GIXIAN_INFILTRATOR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::SacrificeAnotherPermanent,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: gixian_infiltrator_effect,
+}];
+const WEBWEAVER_CHANGELING_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::EtbIfGraveyardCreatureCardsAtLeast(3),
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: webweaver_changeling_effect,
+}];
+const GLINT_HAWK_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: glint_hawk_effect,
 }];
 const GATECREEPER_VINE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Etb,
@@ -656,6 +758,23 @@ fn harrier_strix_etb_effect() -> EffectOp {
     }
 }
 
+/// Bojuka Bog: "When Bojuka Bog enters the battlefield, exile all cards
+/// from target player's graveyard." Reuses `EffectOp::ExilePlayersGraveyard`
+/// (Nihil Spellbomb's activated-ability effect).
+fn bojuka_bog_etb_effect() -> EffectOp {
+    EffectOp::ExilePlayersGraveyard {
+        player: PlayerRef::Target(0),
+    }
+}
+
+/// Conduit Pylons: "When Conduit Pylons enters the battlefield, surveil 1."
+fn conduit_pylons_etb_effect() -> EffectOp {
+    EffectOp::Surveil {
+        player: PlayerRef::Controller,
+        count: 1,
+    }
+}
+
 fn humbling_elder_etb_effect() -> EffectOp {
     EffectOp::PumpTargetUntilEndOfTurnDynamic {
         target: TargetRef::Target(0),
@@ -795,6 +914,20 @@ fn vitu_ghazi_inspector_etb_effect() -> EffectOp {
 fn avenging_hunter_etb_effect() -> EffectOp {
     EffectOp::TakeInitiative {
         player: PlayerRef::Controller,
+    }
+}
+
+fn azure_fleet_admiral_etb_effect() -> EffectOp {
+    EffectOp::BecomeMonarch
+}
+
+fn delver_of_secrets_effect() -> EffectOp {
+    // At the beginning of your upkeep, look at the top card of your
+    // library. You may reveal that card. If an instant or sorcery card is
+    // revealed this way, transform Delver of Secrets.
+    EffectOp::LookAtTopMayRevealThen {
+        predicate: CardTypePredicate::InstantOrSorcery,
+        then: Box::new(EffectOp::TransformSourceInPlace),
     }
 }
 
@@ -966,6 +1099,22 @@ const HARRIER_STRIX_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     effect: harrier_strix_etb_effect,
 }];
 
+const BOJUKA_BOG_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: bojuka_bog_etb_effect,
+}];
+
+const CONDUIT_PYLONS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: conduit_pylons_etb_effect,
+}];
+
 const HUMBLING_ELDER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Etb,
     home_zone: Zone::Battlefield,
@@ -1081,6 +1230,24 @@ const AVENGING_HUNTER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef 
     effect: avenging_hunter_etb_effect,
 }];
 
+const AZURE_FLEET_ADMIRAL_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: azure_fleet_admiral_etb_effect,
+}];
+
+const DELVER_OF_SECRETS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningOfUpkeep {
+        controller_only: true,
+    },
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: delver_of_secrets_effect,
+}];
+
 /// The pool's implemented triggered abilities, matched by card name (ids are
 /// codegen-assigned from `cards_v1.json`'s array order and not worth
 /// duplicating as constants here -- see `build.rs`'s module doc on id
@@ -1115,6 +1282,10 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Writhing Chrysalis" => &WRITHING_CHRYSALIS_TRIGGERS,
         "Blood Fountain" => &BLOOD_FOUNTAIN_TRIGGERS,
         "Sagu Wildling" => &SAGU_WILDLING_TRIGGERS,
+        "Kessig Flamebreather" => &KESSIG_FLAMEBREATHER_TRIGGERS,
+        "Gixian Infiltrator" => &GIXIAN_INFILTRATOR_TRIGGERS,
+        "Webweaver Changeling" => &WEBWEAVER_CHANGELING_TRIGGERS,
+        "Glint Hawk" => &GLINT_HAWK_TRIGGERS,
         "Gatecreeper Vine" => &GATECREEPER_VINE_TRIGGERS,
         "Balustrade Spy" => &BALUSTRADE_SPY_TRIGGERS,
         "Lotleth Giant" => &LOTLETH_GIANT_TRIGGERS,
@@ -1135,6 +1306,8 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Squadron Hawk" => &SQUADRON_HAWK_TRIGGERS,
         "Bind the Monster" => &BIND_THE_MONSTER_TRIGGERS,
         "Harrier Strix" => &HARRIER_STRIX_TRIGGERS,
+        "Bojuka Bog" => &BOJUKA_BOG_TRIGGERS,
+        "Conduit Pylons" => &CONDUIT_PYLONS_TRIGGERS,
         "Humbling Elder" => &HUMBLING_ELDER_TRIGGERS,
         "Moon-Circuit Hacker" => &MOON_CIRCUIT_HACKER_TRIGGERS,
         "Ninja of the Deep Hours" => &NINJA_OF_THE_DEEP_HOURS_TRIGGERS,
@@ -1147,6 +1320,8 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Troublemaker Ouphe" => &TROUBLEMAKER_OUPHE_TRIGGERS,
         "Vitu-Ghazi Inspector" => &VITU_GHAZI_INSPECTOR_TRIGGERS,
         "Avenging Hunter" => &AVENGING_HUNTER_TRIGGERS,
+        "Azure Fleet Admiral" => &AZURE_FLEET_ADMIRAL_TRIGGERS,
+        "Delver of Secrets" => &DELVER_OF_SECRETS_TRIGGERS,
         _ => &[],
     }
 }
@@ -1160,6 +1335,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         "Balustrade Spy" => TargetSpec::AnyPlayer,
         "Lotleth Giant" => TargetSpec::TargetOpponent,
         "Harrier Strix" => TargetSpec::AnyPermanent,
+        "Bojuka Bog" => TargetSpec::AnyPlayer,
         "Humbling Elder" => TargetSpec::OpponentControlledCreature,
         "Saiba Cryptomancer" => TargetSpec::Creature,
         "Spellstutter Sprite" => TargetSpec::SpellManaValueAtMostControlledSubtypes {
@@ -1251,6 +1427,19 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    // The monarch end-step draw trigger is engine-owned like Initiative's
+    // Undercity trigger, but (unlike Avenging Hunter's fixed Initiative
+    // source) its source is never one fixed card: Azure Fleet Admiral's ETB
+    // grants it, but a later combat-damage transfer (`engine::
+    // deal_combat_damage`) can rebind `EngineState::monarch_source` to
+    // whichever creature's controller took the crown next. So this bypasses
+    // the per-card `trigger_effect_matches`/`trigger_target_spec` dispatch
+    // entirely rather than name-gating on one card the way the "Avenging
+    // Hunter" branch below does -- the trigger never targets, regardless of
+    // `card_def`.
+    if matches!(effect, EffectOp::ResolveMonarchTrigger { .. }) {
+        return Some(TargetSpec::None);
+    }
     if !trigger_effect_matches(card_def, effect) {
         return None;
     }
@@ -1680,6 +1869,19 @@ fn triggers_from_events(
             if !uses_leave_lki && obj.zone != def.home_zone {
                 continue;
             }
+            // A `TriggeredAbilityDef` names one printed face's ability text
+            // (Delver of Secrets: the trigger prints on the front half only,
+            // Insectile Aberration carries none). `face_index` can only be
+            // nonzero for a battlefield permanent with a `transform_face`,
+            // and any zone change resets it to 0 (`reset_for_zone_change`),
+            // so this is a no-op for every `uses_leave_lki`/non-battlefield
+            // home zone case; it mirrors the same "front face only"
+            // exclusion the Saga chapter/completion paths already apply
+            // unconditionally (`obj.v4.face_index != 0` at this file's own
+            // SBA and chapter-matching sites).
+            if obj.v4.face_index != 0 {
+                continue;
+            }
             for (i, ev) in events.iter().enumerate() {
                 let event_controller = match ev {
                     CommittedEvent::ZoneChange {
@@ -1927,6 +2129,28 @@ fn triggers_from_events(
         });
     }
 
+    for event in events {
+        let CommittedEvent::MonarchTrigger { binding } = event else {
+            continue;
+        };
+        let binding = *binding;
+        new_triggers.push(PendingTrigger {
+            controller: binding.player,
+            source: binding.source.source,
+            effect: EffectOp::ResolveMonarchTrigger { binding },
+            is_madness_offer: false,
+            kicked: false,
+            target_spec: TargetSpec::None,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
+            source_contract: Some(binding.source),
+            granted_by: None,
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
+        });
+    }
+
     new_triggers
 }
 
@@ -1939,10 +2163,14 @@ fn selected_spell_types(state: &GameState, spell: ObjectId) -> &'static [CardTyp
         .and_then(|origin| origin.finalized_method)
         == Some(crate::state::CastMethodV4::Omen)
     {
-        definition
-            .omen
-            .as_ref()
-            .map(|omen| omen.types)
+        // `CastMethodV4::Omen` is shared between a real Omen card's
+        // alternative form and an Adventure card's named spell (Fang
+        // Dragon's Forktail Sweep) -- see `engine::supported_adventure`'s
+        // doc. `CardDef::adventure`/`CardDef::omen` are mutually exclusive
+        // per card, so check the Adventure definition first.
+        crate::engine::supported_adventure(definition)
+            .map(|adventure| adventure.types)
+            .or_else(|| crate::engine::supported_omen(definition).map(|omen| omen.types))
             .unwrap_or(&[])
     } else {
         definition.types
@@ -2074,6 +2302,29 @@ fn trigger_matches(
             count >= usize::from(minimum_count)
         }
         (
+            TriggerCondition::EtbIfGraveyardCreatureCardsAtLeast(minimum_count),
+            CommittedEvent::ZoneChange {
+                object,
+                to: Zone::Battlefield,
+                ..
+            },
+        ) => {
+            if *object != source {
+                return false;
+            }
+            let count = state.players[controller.index()]
+                .graveyard
+                .iter()
+                .filter(|&&id| {
+                    let candidate = state.objects.get(id);
+                    !candidate.v4.is_token
+                        && crate::card_def::CARD_DEFS[candidate.card_def as usize]
+                            .has_type(crate::card_def::CardType::Creature)
+                })
+                .count();
+            count >= usize::from(minimum_count)
+        }
+        (
             TriggerCondition::Attacks,
             CommittedEvent::DeclaredAttacker {
                 source: event_source,
@@ -2109,6 +2360,17 @@ fn trigger_matches(
                 types.contains(&crate::card_def::CardType::Instant)
                     || types.contains(&crate::card_def::CardType::Sorcery)
             }
+        }
+        (
+            TriggerCondition::CastNoncreatureSpell,
+            CommittedEvent::SpellCast {
+                spell,
+                controller: caster,
+            },
+        ) => {
+            *caster == controller
+                && !selected_spell_types(state, *spell)
+                    .contains(&crate::card_def::CardType::Creature)
         }
         (
             TriggerCondition::CastSelf,
@@ -2153,6 +2415,18 @@ fn trigger_matches(
                 && *controller_before == controller
                 && subtype.is_in_subtype_ids(effective_subtype_ids_before)
         }
+        (
+            TriggerCondition::SacrificeAnotherPermanent,
+            CommittedEvent::Sacrificed {
+                object,
+                controller_before,
+                ..
+            },
+        ) => *object != source && *controller_before == controller,
+        (
+            TriggerCondition::BeginningOfUpkeep { controller_only },
+            CommittedEvent::UpkeepBegan { player },
+        ) => !controller_only || *player == controller,
         _ => false,
     }
 }
@@ -2167,6 +2441,203 @@ pub fn order_apnap(triggers: Vec<PendingTrigger>, active_player: PlayerId) -> Ve
         .partition(|t| t.controller == active_player);
     active.append(&mut other);
     active
+}
+
+/// An `actor_visible_ordinal`/registry `visible_ordinal` value that is
+/// provably greater than any ordinal a *real* `HistoricalPublicSource` row
+/// can carry for this exact state, on both the action side
+/// (`rl_session/flat_action_v3.rs`'s `extension_object`, which assigns a
+/// `PendingEffect`-context row the position of its entry within
+/// `PolicyObservationExtensionsV6::historical_public_sources`, 0-based) and
+/// the registry side (`flat_policy_v2.rs`'s `register_extensions_v3`,
+/// which assigns `add_validated_historical_source_v3` the row's *raw*
+/// `Stack { stack_index }` -- up to `state.stack.len() - 1`, with possible
+/// gaps wherever an intervening item is a spell -- or, for the single
+/// `PendingEffect` row, `state.stack.len()` itself).
+///
+/// The real ordinals used by either mechanism therefore never exceed
+/// `state.stack.len()`; `1 + state.stack.len()` is strictly greater than
+/// every one of them regardless of stack shape (how many real rows exist,
+/// which raw stack indices they occupy, or whether a `PendingEffect` row
+/// is present), so a pending-trigger-derived row built from it can never
+/// collide -- neither in the registry's own `(group, visible_ordinal)`
+/// uniqueness the tensorizer enforces
+/// (`native_flat_tensorizer_v2.rs`'s `build_object_projection_for_rows_v2`,
+/// `NativeFlatTensorErrorV2::ObjectOrder`) nor in the action-side
+/// `v3_action_objects` authority match. This is a safe upper bound, not an
+/// attempt to reproduce `rl.rs`'s `policy_observation_extensions_v6` row
+/// count: it does not need to match the real ordinal namespace, only to
+/// stay outside it.
+pub(crate) fn historical_public_source_ordinal_ceiling_v1(
+    state: &crate::state::GameState,
+) -> Option<u32> {
+    u32::try_from(state.stack.len()).ok()?.checked_add(1)
+}
+
+/// V4 fresh-lineage helper, additive beside [`pending_trigger_choose_targets_gate_v1`]
+/// (which stays exactly as committed for the V3/frozen path). Factors out
+/// only the *hiddenness* half of that gate's predicate -- the trigger's live
+/// `source` sits in a zone `pending.controller` cannot resolve it from
+/// without prior knowledge, and carries no matching knowledge entry for its
+/// exact live incarnation -- without the ChooseTargets-only decision-shape
+/// constraints (`pending_triggers[0]`, `target_spec`/`targets` length, APNAP
+/// group ordering). The V7 observation-extensions producer
+/// (`policy_observation_v7::policy_observation_extensions_v7`) and the V4
+/// action-slice component resolver (`rl_session::flat_action_v4`) both call
+/// this instead of re-deriving the check, so the two layers cannot
+/// independently drift, mirroring how both V3 layers already share
+/// [`pending_trigger_choose_targets_gate_v1`] itself.
+///
+/// Two hidden shapes are recognized:
+///
+/// - `Zone::Library`: `EffectOp::ShuffleTriggerSourceIntoOwnersLibrary`'s
+///   shape (the original case this helper covered). Checked against
+///   `state.library_knowledge[pending.controller][live.owner]`.
+/// - `Zone::Hand` with `live.owner != pending.controller`: the Initiative
+///   mechanic's shape (real gameplay: campaign yardstick-cumulative3-b-001,
+///   chunk-13-end-seat0, matches[10], Elves vs Terror, match seed
+///   3641832355271763964, game 2, step 414). `event::log_initiative_trigger`
+///   freezes the granting permanent's identity into `PendingTrigger::source`/
+///   `source_contract` but reassigns `controller` to whichever player
+///   currently holds the initiative (its own `source.controller = player`),
+///   which can differ from the granting permanent's owner once the
+///   initiative transfers to an opponent via combat damage
+///   (`engine::deal_combat_damage`'s `InitiativeTriggerKindV1::CombatTransfer`).
+///   The granting permanent itself is free to return to its owner's hand
+///   through any unrelated effect in the meantime, which is exactly the
+///   production shape: Avenging Hunter granted the initiative, Terror later
+///   took it via combat damage, and Avenging Hunter itself was back in
+///   Elves' hand by the time Terror's own frozen-source Undercity trigger
+///   needed a target. Checked against
+///   `state.hand_knowledge[pending.controller][live.owner]`, the same
+///   knowledge table the ordinary `KnownOpponentHand` action-object arm
+///   already consults (`rl_session::known_opponent_hand_canonical_ordinal_v1`),
+///   so a genuinely revealed hand card still resolves through the ordinary
+///   path instead of this fallback.
+///
+/// A same-controller hand (`live.owner == pending.controller`) is never
+/// hidden: that is the ordinary `SelfHand` arm's business, which needs no
+/// knowledge table at all.
+///
+/// Returns `false` (never hidden) when `pending.source` is not a live
+/// object at all -- a defensive default, not a case any real caller should
+/// ever hit for a `PendingTrigger` still present in `state.engine.pending_triggers`.
+pub(crate) fn pending_trigger_hidden_source_v1(
+    state: &crate::state::GameState,
+    pending: &PendingTrigger,
+) -> bool {
+    let Some(live) = state.objects.try_get(pending.source) else {
+        return false;
+    };
+    match live.zone {
+        Zone::Library => !state.library_knowledge[pending.controller.index()][live.owner.index()]
+            .iter()
+            .any(|entry| {
+                entry.object == pending.source && entry.zone_change_count == live.zone_change_count
+            }),
+        Zone::Hand if live.owner != pending.controller => !state.hand_knowledge
+            [pending.controller.index()][live.owner.index()]
+        .iter()
+        .any(|entry| {
+            entry.object == pending.source && entry.zone_change_count == live.zone_change_count
+        }),
+        _ => false,
+    }
+}
+
+/// Whether the currently active decision is `Decision::ChooseTargets` for
+/// `pending_triggers[0]` (`engine.rs`'s `drain_pending_triggers_or_decide`
+/// never surfaces that decision for any other pending trigger), and, if
+/// so, that trigger's live `source`, its frozen `source_contract`
+/// (`PendingTrigger::source_contract` -- the identity
+/// `EffectOp::ShuffleTriggerSourceIntoOwnersLibrary`, `effect.rs`, leaves
+/// behind once the live object has moved into its owner's library), and
+/// the exact ordinal a `HistoricalPublicSource`-tagged reference to it
+/// must carry: [`historical_public_source_ordinal_ceiling_v1`] (an ordinal
+/// no real historical row can ever carry, for any stack shape) plus this
+/// trigger's own position in `pending_triggers` (always `0` today, since
+/// only `pending_triggers[0]` can ever reach this gate, but named
+/// explicitly so a second simultaneous, equally-hidden trigger could not
+/// silently collide with the first if a future change ever let this gate
+/// consider a later position).
+///
+/// This is the single gate predicate shared by the V3 action-slice
+/// encoder (`rl_session.rs`'s `flat_visible_action_object_components_v1`,
+/// layer A, which describes the hidden reference using the returned
+/// contract and ordinal) and the V3 scoring reconciliation
+/// (`flat_policy_v2.rs`'s
+/// `append_pending_trigger_frozen_source_authority_v3`, layer B, which
+/// registers and authorizes that description against the registry). Both
+/// call this helper instead of re-deriving the gate or the ordinal
+/// themselves, so the two layers cannot independently drift.
+///
+/// Returns `None` when there is no pending trigger, when the leading
+/// same-controller group still needs `Decision::OrderTriggers` instead
+/// (2+ pending triggers, not yet placement-ordered), when
+/// `pending_triggers[0]` already has enough targets (so whatever decision
+/// is active, it is not this one), when that trigger lost its
+/// `source_contract`, or -- critically -- when the trigger's live source
+/// is not actually hidden: its live object must be in `Zone::Library`
+/// *and* `state.library_knowledge[controller][owner]` must carry no entry
+/// for its exact live incarnation. Decision shape alone (a `ChooseTargets`
+/// for `pending_triggers[0]` with a `source_contract`) is not enough --
+/// every pending trigger with any targeted effect carries a
+/// `source_contract` (`PendingTrigger::source_contract`'s doc), including
+/// ordinary triggers whose source never left the battlefield and
+/// leaves-the-battlefield triggers whose frozen contract deliberately
+/// freezes the *departure* zone/generation (`trigger.rs`'s
+/// `uses_leave_lki` triggers capture `zone: from` and `zone_change_count:
+/// live - 1`) even though the source is now public in the graveyard. Only
+/// `pending_triggers[0]` is ever considered, so no previously-succeeding
+/// decision -- an `OrderTriggers` decision, a `ChooseTargets` for a
+/// trigger whose source is still visible on the battlefield or in the
+/// graveyard, or a `ChooseTargets` for a trigger whose source is in the
+/// library but already known to its controller through
+/// `library_knowledge` -- can gain a row through this gate.
+pub(crate) fn pending_trigger_choose_targets_gate_v1(
+    state: &crate::state::GameState,
+) -> Option<(crate::ids::ObjectId, AbilitySourceContractV4, u32)> {
+    let pending_triggers = &state.engine.pending_triggers;
+    let first = pending_triggers.first()?;
+    let controller = first.controller;
+    let group_len = pending_triggers
+        .iter()
+        .take_while(|trigger| trigger.controller == controller)
+        .count();
+    let group_is_ordered = pending_triggers[..group_len]
+        .iter()
+        .all(|trigger| trigger.placement_ordered);
+    if group_len >= 2 && !group_is_ordered {
+        // `Decision::OrderTriggers` is active instead, not `ChooseTargets`.
+        return None;
+    }
+    let trigger_position: u32 = 0;
+    let pending = &pending_triggers[0];
+    let need = crate::engine::target_count(pending.target_spec);
+    if pending.targets.len() >= usize::from(need) {
+        return None;
+    }
+    let contract = pending.source_contract?;
+    let live = state.objects.try_get(pending.source)?;
+    if live.zone != Zone::Library {
+        // Resolvable through the ordinary path (battlefield, graveyard,
+        // exile, stack, or a revealed hand) -- not this gate's business.
+        return None;
+    }
+    let known = state.library_knowledge[pending.controller.index()][live.owner.index()]
+        .iter()
+        .any(|entry| {
+            entry.object == pending.source && entry.zone_change_count == live.zone_change_count
+        });
+    if known {
+        // In the library, but the controller already knows exactly where
+        // -- the ordinary `KnownSelfLibrary`/`KnownOpponentLibrary` path
+        // resolves it without help.
+        return None;
+    }
+    let ordinal =
+        historical_public_source_ordinal_ceiling_v1(state)?.checked_add(trigger_position)?;
+    Some((pending.source, contract, ordinal))
 }
 
 #[cfg(test)]
@@ -2203,6 +2674,74 @@ mod tests {
         assert!(creature_dies_to_state_based_actions(0, 0, false, true));
         assert!(creature_dies_to_state_based_actions(3, 1, true, false));
         assert!(!creature_dies_to_state_based_actions(3, 1, true, true));
+    }
+
+    /// Root-cause regression for the V4 action-encoder gap found via
+    /// yardstick-cumulative3-b-001 chunk-13-end-seat0 matches[10] (Elves vs
+    /// Terror, match seed 3641832355271763964, game 2, step 414):
+    /// `pending_trigger_hidden_source_v1` recognized only a source shuffled
+    /// into its owner's library, never a source sitting in its OWNER's hand
+    /// while a DIFFERENT player (the pending trigger's controller) is the
+    /// one resolving it -- the shape the Initiative mechanic produces once
+    /// the initiative transfers to an opponent via combat damage while the
+    /// granting permanent itself returns to its owner's hand through an
+    /// unrelated effect. See [`pending_trigger_hidden_source_v1`]'s own doc
+    /// comment for the full production trace.
+    #[test]
+    fn hidden_source_v1_recognizes_an_opponent_relative_hand_not_just_a_shuffled_library() {
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::state::AbilitySourceContractV4;
+
+        let mut state = ready_state();
+        let source = put(&mut state, PlayerId::P0, "Myr Enforcer", Zone::Battlefield);
+        let contract = AbilitySourceContractV4::capture(&state, source);
+        let pending = PendingTrigger {
+            controller: PlayerId::P1,
+            source,
+            granted_by: None,
+            effect: EffectOp::Sequence(vec![]),
+            is_madness_offer: false,
+            kicked: false,
+            target_spec: TargetSpec::Creature,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
+            source_contract: Some(contract),
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
+        };
+        // Still on the battlefield: visible, never hidden.
+        assert!(!pending_trigger_hidden_source_v1(&state, &pending));
+
+        state.players[PlayerId::P0.index()]
+            .battlefield
+            .retain(|&id| id != source);
+        {
+            let live = state.objects.get_mut(source);
+            assert_eq!(live.zone, Zone::Battlefield);
+            live.zone = Zone::Hand;
+            live.zone_change_count += 1;
+        }
+        state.players[PlayerId::P0.index()].hand.push(source);
+
+        // In its owner's (P0's) hand, unknown to the trigger's controller
+        // (P1): the real-gameplay shape, and the exact defect this fix
+        // closes. Before the fix this returned `false` (only `Zone::Library`
+        // was ever considered hidden), so `frozen_pending_trigger_semantic_v4`
+        // never substituted the frozen source and the ordinary Hand-zone arm
+        // failed closed with `HiddenActionReference`.
+        assert!(pending_trigger_hidden_source_v1(&state, &pending));
+
+        // Once the controller is told about it (a reveal effect, say), it is
+        // resolvable through the ordinary `KnownOpponentHand` path again,
+        // exactly like a known library card already is.
+        state.hand_knowledge[PlayerId::P1.index()][PlayerId::P0.index()].push(
+            crate::state::HandKnowledgeEntry {
+                object: source,
+                zone_change_count: state.objects.get(source).zone_change_count,
+            },
+        );
+        assert!(!pending_trigger_hidden_source_v1(&state, &pending));
     }
 
     #[test]
