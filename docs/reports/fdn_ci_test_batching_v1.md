@@ -53,3 +53,17 @@ Test selection and build metadata collection are preserved. This is CPU
 correctness verification; current hosted end-to-end checks remain pending.
 The existing healthy PR136 through139 jobs keep running on their original
 sources. This isolated follow-up does not cancel them or claim either PC.
+
+The complete Ubuntu job111036127712 at36d54594 passed all21 integration
+executables/345cases, all nine grouped library filters, default regressions
+and host-safe CUDA checks. The isolated snapshot case passed at4.81microseconds.
+Windows job111036127744 passed Witness, original London games and pending
+restore, default regressions, and the isolated snapshot case at18.858microseconds.
+It then failed native feature compilation with
+`native_store_rustc_path_not_drive_absolute`: the step's temporary toolchain
+path contains mixed separators. The native validator rejects forward slashes.
+The workflow now normalizes Windows RUSTUP_HOME and the explicitly pinned
+RUSTC path with cygpath before publishing them through GITHUB_ENV. Keep the
+validator and compiler/linker pins unchanged. Local path conversion, exact
+Rust1.94.1 invocation, workflow lint and diff checks passed. Hosted native
+compilation and complete Windows checks for the correction remain pending.
