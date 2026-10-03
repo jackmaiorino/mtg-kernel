@@ -1,12 +1,10 @@
-//! Snapshot API; v1 full-clone implementation.
+//! Snapshot API with independent value semantics.
 //!
-//! v1 is deliberately a full clone: `GameState` is plain-old-data (Vecs of
-//! small structs, no interior mutability, no pointers), so `Clone` already
-//! gives correct value semantics for snapshot/restore. What matters for
-//! callers (search, PBT rollback, training-loop branching) is the API
-//! boundary below; swapping the clone for a real copy-on-write or
-//! delta-based representation later is an implementation change behind this
-//! same boundary, not an API change.
+//! The object arena shares its backing vector until either state mutates it;
+//! other owned fields are cloned normally. Arena mutation detaches shared
+//! storage before returning a mutable reference or appending an object, so a
+//! snapshot retains its exact captured state. Serialization and hashes remain
+//! based on the same ordered values.
 
 use crate::state::GameState;
 
@@ -39,20 +37,33 @@ mod tests {
         let (lib0, lib1) = two_card_libraries();
         let mut state = GameState::new_from_libraries(&lib0, &lib1, |c| format!("card-{c}"), 5);
         state.draw_card(PlayerId::P0);
+        let captured_bytes = serde_json::to_vec(&state).unwrap();
+        let captured_hash = state.state_hash();
         let snap = state.snapshot();
 
         state.draw_card(PlayerId::P0);
         state.draw_card(PlayerId::P1);
         state.players[0].life -= 3;
         assert_ne!(state, snap.0);
+        assert_eq!(serde_json::to_vec(&snap.0).unwrap(), captured_bytes);
 
         state.restore(&snap);
         assert_eq!(state, snap.0);
+        assert_eq!(serde_json::to_vec(&state).unwrap(), captured_bytes);
+        assert_eq!(state.state_hash(), captured_hash);
         assert_eq!(state.state_hash(), snap.0.state_hash());
         assert_eq!(
             state.diagnostic_state_hash(),
             snap.0.diagnostic_state_hash()
         );
+
+        let mut independent: GameState = serde_json::from_slice(&captured_bytes).unwrap();
+        independent.draw_card(PlayerId::P1);
+        state.draw_card(PlayerId::P1);
+        assert_eq!(state, independent);
+        assert_eq!(serde_json::to_vec(&snap.0).unwrap(), captured_bytes);
+        state.restore(&snap);
+        assert_eq!(serde_json::to_vec(&state).unwrap(), captured_bytes);
     }
 
     /// ~80 objects: two 40-card libraries, mid-game (some drawn, some on
