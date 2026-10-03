@@ -1263,6 +1263,14 @@ pub enum Decision {
         player: PlayerId,
         candidates: Vec<ObjectId>,
     },
+    /// Select a printed triggered-ability mode during placement, after
+    /// ordering and before targets. Legal indices retain printed order.
+    ChooseTriggerMode {
+        player: PlayerId,
+        source: ObjectId,
+        mode_count: u8,
+        legal_modes: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1343,6 +1351,7 @@ pub enum Action {
         upper_half: bool,
     },
     ChooseLegendPermanent(ObjectId),
+    ChooseTriggerMode(u8),
 }
 
 const CHAIN_COPY_COST: Cost = Cost {
@@ -8966,6 +8975,14 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                 source: pending.source,
             });
         }
+        if let Some(modes) = pending_trigger_modes(state, &pending) {
+            return Some(Decision::ChooseTriggerMode {
+                player: pending.controller,
+                source: pending.source,
+                mode_count: modes.len() as u8,
+                legal_modes: legal_pending_trigger_modes(state, &pending, &modes),
+            });
+        }
         if !pending_trigger_targets_can_complete(&pending, state) {
             // 603.3d at the actual placement checkpoint: legality can change
             // between collection and placement (an earlier trigger in this
@@ -9029,6 +9046,31 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
             });
         }
     }
+}
+
+fn pending_trigger_modes(
+    state: &GameState,
+    pending: &PendingTrigger,
+) -> Option<Vec<(TargetSpec, EffectOp)>> {
+    let source = state.objects.try_get(pending.source)?;
+    trigger::unselected_trigger_modes(source.card_def, &pending.effect)
+}
+
+fn legal_pending_trigger_modes(
+    state: &GameState,
+    pending: &PendingTrigger,
+    modes: &[(TargetSpec, EffectOp)],
+) -> Vec<u8> {
+    modes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (spec, effect))| {
+            let mut branch = pending.clone();
+            branch.target_spec = *spec;
+            branch.effect = effect.clone();
+            pending_trigger_targets_can_complete(&branch, state).then_some(index as u8)
+        })
+        .collect()
 }
 
 fn validate_pending_trigger(state: &GameState, pending: &PendingTrigger) -> Result<(), String> {
@@ -9173,6 +9215,9 @@ fn validate_pending_trigger_for_stack(
     pending: &PendingTrigger,
 ) -> Result<(), String> {
     validate_pending_trigger_identity(state, pending)?;
+    if pending_trigger_modes(state, pending).is_some() {
+        return Err("triggered ability has not selected its placement-time mode".into());
+    }
     if !target_cardinality_is_complete(pending.target_spec, pending.targets.len()) {
         return Err("pending trigger target metadata is incomplete".to_string());
     }
@@ -9745,7 +9790,20 @@ pub(crate) fn validated_stack_item_target_spec(
             }
             Some(ability.target_spec)
         }
-        StackItemKind::TriggeredAbility => triggered_stack_item_expected_target_spec(item, state)?,
+        StackItemKind::TriggeredAbility => {
+            let source = state
+                .objects
+                .try_get(item.source)
+                .ok_or("trigger source is missing")?;
+            if item.inline_effect.as_ref().is_some_and(|effect| {
+                trigger::unselected_trigger_modes(source.card_def, effect).is_some()
+            }) {
+                return Err(
+                    "stacked triggered ability still carries its unselected modal root".into(),
+                );
+            }
+            triggered_stack_item_expected_target_spec(item, state)?
+        }
         StackItemKind::MadnessOffer => {
             if item.v4.hidden_ability_source.is_some() {
                 return Err("Madness offer carries activated-ability source provenance".to_string());
@@ -11980,6 +12038,30 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
         }
     }
     if let Some(pending_trigger) = state.engine.pending_triggers.first() {
+        let group = state
+            .engine
+            .pending_triggers
+            .iter()
+            .take_while(|trigger| trigger.controller == pending_trigger.controller)
+            .collect::<Vec<_>>();
+        if group
+            .iter()
+            .any(|trigger| pending_trigger_modes(state, trigger).is_some())
+            && group.iter().any(|trigger| !trigger.placement_ordered)
+            && !matches!(&action, Action::OrderTriggers(_))
+        {
+            return Err(
+                "modal trigger placement must complete ordering before other actions".into(),
+            );
+        }
+        if pending_trigger.placement_ordered
+            && pending_trigger_modes(state, pending_trigger).is_some()
+        {
+            validate_pending_trigger(state, pending_trigger)?;
+            if !matches!(&action, Action::ChooseTriggerMode(_)) {
+                return Err("only ChooseTriggerMode may answer a pending trigger mode".into());
+            }
+        }
         if pending_trigger.placement_ordered
             && pending_trigger.targets.len()
                 < usize::from(target_count(pending_trigger.target_spec))
@@ -11993,6 +12075,21 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
         }
     }
     match action {
+        Action::ChooseTriggerMode(mode) => {
+            let pending = state.engine.pending_triggers.first()
+                .ok_or("no triggered ability mode is pending")?;
+            validate_pending_trigger(state, pending)?;
+            let modes = pending_trigger_modes(state, pending)
+                .ok_or("this triggered ability has already selected its mode")?;
+            if !legal_pending_trigger_modes(state, pending, &modes).contains(&mode) {
+                return Err("illegal triggered ability mode".into());
+            }
+            let (spec, effect) = &modes[usize::from(mode)];
+            let pending = &mut state.engine.pending_triggers[0];
+            pending.target_spec = *spec;
+            pending.effect = effect.clone();
+            Ok(())
+        }
         Action::ChooseLegendPermanent(_) => Err("no legend-rule choice is pending".into()),
         Action::ChooseCombatDamageRange { .. } => Err("no combat damage choice is pending".to_string()),
         Action::Pass => {

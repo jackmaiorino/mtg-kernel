@@ -761,6 +761,9 @@ fn run(
             // All four Blast cards are sideboard-only for this pool's
             // maindeck -- unobserved in this corpus (same
             // reasoning as ChooseCastMode/OrderTriggers above).
+            SurfaceDecision::Decision(Decision::ChooseTriggerMode { .. }) => {
+                return Err("unhandled-decision:ChooseTriggerMode".to_string());
+            }
             SurfaceDecision::Decision(Decision::ChooseSpellMode { .. }) => {
                 return Err("unhandled-decision:ChooseSpellMode".to_string())
             }
@@ -806,6 +809,7 @@ fn decision_player(d: &SurfaceDecision, state: &GameState) -> Option<PlayerId> {
         | SurfaceDecision::Decision(Decision::DeclareBlockers { player, .. })
         | SurfaceDecision::Decision(Decision::Discard { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseSpellMode { player, .. })
+        | SurfaceDecision::Decision(Decision::ChooseTriggerMode { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseEffectOption { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseEffectBoolean { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseCombatDamageRange { player, .. })

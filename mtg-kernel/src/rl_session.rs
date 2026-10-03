@@ -2301,6 +2301,12 @@ fn flat_validate_origin_decision_v1(
             spell,
             mode_count,
             legal_modes,
+        }
+        | Decision::ChooseTriggerMode {
+            player,
+            source: spell,
+            mode_count,
+            legal_modes,
         } => {
             if current.actor != *player
                 || candidates.len() != legal_modes.len()
@@ -2718,7 +2724,9 @@ fn flat_validate_semantic_policy_pair_v1(
         ) => pay == actual,
         (
             ActionSemanticV1::ChooseSpellMode { mode_index, .. },
-            PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseSpellMode(actual))),
+            PolicyActionV5::Surface(SurfaceAction::Action(
+                Action::ChooseSpellMode(actual) | Action::ChooseTriggerMode(actual),
+            )),
         ) => mode_index == actual,
         (
             ActionSemanticV1::ChooseEffectOption { option_index, .. },

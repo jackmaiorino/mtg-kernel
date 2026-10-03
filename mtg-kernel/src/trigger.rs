@@ -119,6 +119,7 @@ pub enum TriggerCondition {
     /// Exact attack declaration with a trigger-time intervening threshold gate.
     AttacksWithControllerGraveyardCardCountAtLeast(u8),
     BeginningControllerEndStepIfCreatureDied,
+    BeginningControllerEndStep,
 }
 
 pub struct TriggeredAbilityDef {
@@ -279,6 +280,57 @@ const CACKLING_PROWLER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef
     condition: TriggerCondition::BeginningControllerEndStepIfCreatureDied,
     ..etb_trigger(prowler_morbid_effect)
 }];
+
+const SYLVAN_SCAVENGING_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningControllerEndStep,
+    ..etb_trigger(sylvan_scavenging_effect)
+}];
+
+fn sylvan_scavenging_modes() -> Vec<(TargetSpec, EffectOp)> {
+    vec![
+        (
+            TargetSpec::ControlledCreature,
+            EffectOp::AddPlusOnePlusOneCounters {
+                object: ObjectRef::Target(0),
+                count: 1,
+            },
+        ),
+        (
+            TargetSpec::None,
+            EffectOp::Conditional {
+                cond: EffectCond::ControlsCreaturePowerAtLeast(4),
+                then: Box::new(EffectOp::CreateToken {
+                    token_def: crate::card_def::card_id_by_name("Raccoon Token")
+                        .expect("Raccoon Token in CARD_DEFS"),
+                    controller: PlayerRef::Controller,
+                }),
+                else_: Box::new(EffectOp::Sequence(vec![])),
+            },
+        ),
+    ]
+}
+
+fn sylvan_scavenging_effect() -> EffectOp {
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: sylvan_scavenging_modes()
+            .into_iter()
+            .map(|(_, effect)| effect)
+            .collect(),
+    }
+}
+
+/// A definition-owned modal program waiting for its placement-time choice.
+/// The root is only a pending-trigger marker. It must never reach the stack
+/// or the resolution interpreter; selection replaces it with one branch.
+pub fn unselected_trigger_modes(
+    card_def: u16,
+    effect: &EffectOp,
+) -> Option<Vec<(TargetSpec, EffectOp)>> {
+    let card = crate::card_def::CARD_DEFS.get(card_def as usize)?;
+    (card.name == "Sylvan Scavenging" && *effect == sylvan_scavenging_effect())
+        .then(sylvan_scavenging_modes)
+}
 
 fn prowler_morbid_effect() -> EffectOp {
     EffectOp::Conditional {
@@ -1419,6 +1471,7 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Koma, World-Eater" => &KOMA_WORLD_EATER_TRIGGERS,
         "Kiora, the Rising Tide" => &KIORA_RISING_TIDE_TRIGGERS,
         "Cackling Prowler" => &CACKLING_PROWLER_TRIGGERS,
+        "Sylvan Scavenging" => &SYLVAN_SCAVENGING_TRIGGERS,
         "Dwynen's Elite" => &DWYNENS_ELITE_TRIGGERS,
         "Good-Fortune Unicorn" => &GOOD_FORTUNE_UNICORN_TRIGGERS,
         "Guarded Heir" => &GUARDED_HEIR_TRIGGERS,
@@ -1565,6 +1618,13 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     let Some(card) = crate::card_def::CARD_DEFS.get(card_def as usize) else {
         return false;
     };
+    if card.name == "Sylvan Scavenging"
+        && sylvan_scavenging_modes()
+            .iter()
+            .any(|(_, branch)| branch == effect)
+    {
+        return true;
+    }
     if card.name == "Moon-Circuit Hacker"
         && [false, true].into_iter().any(|entered| {
             moon_circuit_hacker_combat_effect_for_entered_this_turn(entered) == *effect
@@ -1614,6 +1674,14 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
         return None;
     }
     let card = crate::card_def::CARD_DEFS.get(card_def as usize)?;
+    if card.name == "Sylvan Scavenging" {
+        return Some(
+            sylvan_scavenging_modes()
+                .iter()
+                .find(|(_, branch)| branch == effect)
+                .map_or(TargetSpec::None, |(spec, _)| *spec),
+        );
+    }
     Some(
         if card.name == "Mesmeric Fiend" && *effect == mesmeric_fiend_exile_effect() {
             TargetSpec::TargetOpponent
@@ -2574,6 +2642,10 @@ fn trigger_matches(
                 creature_died_this_turn,
             },
         ) => *active_player == controller && *creature_died_this_turn,
+        (
+            TriggerCondition::BeginningControllerEndStep,
+            CommittedEvent::BeginningEndStep { active_player, .. },
+        ) => *active_player == controller,
         (TriggerCondition::DealsDamage, CommittedEvent::Damage { source: s, .. }) => *s == source,
         (
             TriggerCondition::AttacksWithControllerGraveyardCardCountAtLeast(minimum),

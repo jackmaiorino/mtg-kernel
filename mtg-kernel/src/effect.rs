@@ -273,6 +273,8 @@ pub enum EffectCond {
     /// Kiora's resolution-time intervening threshold condition.
     ControllerGraveyardCardCountAtLeast(u8),
     CreatureDiedThisTurn,
+    /// Resolution-time ferocious condition, using current continuous power.
+    ControlsCreaturePowerAtLeast(i32),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -12726,6 +12728,14 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
             .hand
             .is_empty(),
         EffectCond::CreatureDiedThisTurn => state.creature_died_this_turn_v1(),
+        EffectCond::ControlsCreaturePowerAtLeast(minimum) => state.players[ctx.controller.index()]
+            .battlefield
+            .iter()
+            .copied()
+            .any(|object| {
+                crate::engine::object_has_type(state, object, CardType::Creature)
+                    && crate::engine::effective_power(state, object) >= *minimum
+            }),
         EffectCond::ControllerGraveyardCardCountAtLeast(minimum) => {
             controller_graveyard_card_count(state, ctx.controller) >= usize::from(*minimum)
         }

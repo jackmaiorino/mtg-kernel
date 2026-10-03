@@ -1217,6 +1217,62 @@
         "surveil_one"
       ],
       "java_file": "Mage.Sets/src/mage/cards/u/UnchartedVoyage.java"
+    },
+    {
+      "name": "Sylvan Scavenging",
+      "engine_capability": "full",
+      "mana_cost": "{1}{G}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_top_20626_WG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "modal_end_step_trigger",
+        "counter_on_controlled_creature",
+        "resolution_ferocious_token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SylvanScavenging.java"
+    },
+    {
+      "name": "Raccoon Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Raccoon"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/RaccoonToken.java",
+      "is_token": true,
+      "object_name": "Raccoon Token"
     }
   ]
 }

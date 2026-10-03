@@ -813,6 +813,9 @@ fn apply_silent_window(
                 SurfaceAction::Action(Action::OrderTriggers((0..pending.len()).collect())),
             )
             .map_err(|e| format!("engine-step-error:OrderTriggers:{e}")),
+        SurfaceDecision::Decision(Decision::ChooseTriggerMode { .. }) => {
+            Err("unhandled-decision:ChooseTriggerMode".to_string())
+        }
         SurfaceDecision::Decision(Decision::ChooseSpellMode { .. }) => {
             Err("unhandled-decision:ChooseSpellMode".to_string())
         }
@@ -1913,7 +1916,8 @@ fn decision_texts(
                 })
                 .collect(),
         )),
-        SurfaceDecision::Decision(Decision::ChooseSpellMode { legal_modes, .. }) => Some((
+        SurfaceDecision::Decision(Decision::ChooseSpellMode { legal_modes, .. })
+        | SurfaceDecision::Decision(Decision::ChooseTriggerMode { legal_modes, .. }) => Some((
             "CHOOSE_MODE",
             legal_modes.iter().map(|i| format!("mode#{i}")).collect(),
         )),
@@ -2121,6 +2125,17 @@ fn apply_by_indices(
             surface
                 .apply(state, SurfaceAction::Action(Action::ChooseCastMode(m)))
                 .map_err(|e| format!("engine-step-error:walk:ChooseCastMode:{e}"))
+        }
+        SurfaceDecision::Decision(Decision::ChooseTriggerMode { legal_modes, .. }) => {
+            let mode = *legal_modes
+                .get(i0)
+                .ok_or("apply_by_indices:index-out-of-range:ChooseTriggerMode")?;
+            surface
+                .apply(
+                    state,
+                    SurfaceAction::Action(Action::ChooseTriggerMode(mode)),
+                )
+                .map_err(|e| format!("engine-step-error:walk:ChooseTriggerMode:{e}"))
         }
         SurfaceDecision::Decision(Decision::ChooseSpellMode { legal_modes, .. }) => {
             let mode = *legal_modes

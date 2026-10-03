@@ -248,6 +248,7 @@ pub enum Subtype {
     Merfolk,
     Octopus,
     Hyena,
+    Raccoon,
 }
 
 impl Subtype {
@@ -331,6 +332,8 @@ impl Subtype {
         Subtype::Octopus,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Hyena,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Raccoon,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -1724,7 +1727,7 @@ mod tests {
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                232
+                234
             } else {
                 192
             }
@@ -1812,8 +1815,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v48_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x3cd3_ce13_b2c5_2a14;
+    fn card_db_hash_v49_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x592f_6787_56e7_5cf5;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
