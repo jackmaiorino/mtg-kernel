@@ -63,7 +63,7 @@ class LimitedDeckTest(unittest.TestCase):
 
     def test_real_decks_are_40_cards_and_report_missing_behavior(self) -> None:
         for filename, supported_copies, source_sha256 in [
-            ("FDN_top_04956_UG.dck", 34, "bb618d6eaddf04b0a9e51e9a88cd512a04635e99ebca91b11ace4c305d634c86"),
+            ("FDN_top_04956_UG.dck", 35, "bb618d6eaddf04b0a9e51e9a88cd512a04635e99ebca91b11ace4c305d634c86"),
             ("FDN_top_20626_WG.dck", 34, "be026f1c86e3aabcb294517188d0c5f4f0cdfa3c5e95ee9dedfc51d3cdf814f7"),
         ]:
             with self.subTest(filename=filename):
@@ -148,9 +148,9 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("FDN_top_*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
-        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 34)
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 35)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
-                             for card in report["cards"]), 9)
+                             for card in report["cards"]), 8)
 
     def test_cli_refusal_has_no_materialized_ids_and_inspection_is_deterministic(self) -> None:
         args = ["--deck", str(FIXTURES / "FDN_top_04956_UG.dck")]

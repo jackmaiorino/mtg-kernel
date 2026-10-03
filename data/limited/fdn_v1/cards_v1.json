@@ -943,6 +943,65 @@
       ],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/FaerieToken.java",
       "is_token": true
+    },
+    {
+      "name": "Homunculus Horde",
+      "engine_capability": "full",
+      "mana_cost": "{3}{U}",
+      "mana_value": 4,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Homunculus"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_top_04956_UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "second_draw_trigger",
+        "token_copy"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HomunculusHorde.java"
+    },
+    {
+      "name": "Homunculus Horde Token",
+      "engine_capability": "full",
+      "mana_cost": "{3}{U}",
+      "mana_value": 4,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Homunculus"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "second_draw_trigger",
+        "token_copy"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HomunculusHorde.java",
+      "is_token": true
     }
   ]
 }

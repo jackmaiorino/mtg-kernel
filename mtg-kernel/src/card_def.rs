@@ -243,6 +243,7 @@ pub enum Subtype {
     Ajani,
     Beast,
     Cleric,
+    Homunculus,
 }
 
 impl Subtype {
@@ -318,6 +319,8 @@ impl Subtype {
         Subtype::Beast,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Cleric,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Homunculus,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -1706,7 +1709,7 @@ mod tests {
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                223
+                225
             } else {
                 192
             }
@@ -1794,8 +1797,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v42_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0xa137_6b70_8b68_9b01;
+    fn card_db_hash_v43_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0xf9e2_3933_7d93_3849;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
