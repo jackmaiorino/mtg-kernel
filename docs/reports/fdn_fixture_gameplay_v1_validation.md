@@ -32,14 +32,17 @@ is exact and swapped seed701 ends naturally. The private bottom-menu restore
 also passed. These results qualify the earlier Linux source, while the Windows
 failure and the new arena's hosted qualification remain outstanding.
 
-London source `f904c95c` also completed its full Linux matrix in job
-`111162992479`, including all selected integration targets and affected
-library filters without failures. The frozen snapshot check measured
-7.421 microseconds. All three complete original-game receipts equal the
+London source `f904c95c` completed both full runtime matrices: Linux job
+`111162992479` and Windows job `111162992480`. All selected integration targets
+and affected library filters passed, with no failed test summaries in either
+complete log. The frozen snapshot measured 7.421 microseconds on Linux and
+18.834 on Windows. All four Python shards, formatting/lint and path detection
+also passed, so all eight checks are successful at that exact source.
+All three complete Windows game receipts equal current Linux and the
 `7cbfa1cd` baseline, including exact repeated seed123 replay and the natural
-swapped seed701 terminal. Private bottom-menu restoration passed. Its Windows
-matrix is still running. This qualifies the London source on Linux and does
-not qualify the later arena storage change in CI `92881658`.
+swapped seed701 terminal. Private bottom-menu restoration passed on both
+platforms. This qualifies the London source on both platforms and does not
+qualify the later arena storage change in CI `92881658`.
 
 CI `92881658`, with code introduced by `48b51912`, shares the arena's storage through
 `Arc<Vec<T>>`, detaching before any mutation. This avoids copying every object
@@ -51,8 +54,12 @@ dependency version or lockfile. The entire frozen 80-object workload and timing
 function remain unchanged. Formatting and diff checks pass. Hosted lint job
 `111181187834` passed formatting and all four release Clippy gates: default,
 native Store, Limited and host-safe CUDA compilation, using Rust 1.94.1.
-The regressions, original games, frozen timing check and full runtime matrix
-must still qualify this change.
+The complete runtime matrix must still qualify this change. At that exact
+source, job metadata confirms successful London/original-game steps on both
+platforms. The Linux workspace release step also completed successfully,
+selecting the arena regressions, strengthened restore case and frozen timing
+gate. Complete receipt comparison and the numeric measurement await terminal
+logs; Windows workspace and remaining feature checks are still in progress.
 Mutating arena APIs now require `T: Clone`, already implemented by `GameObject`.
 The changed arena module's five unit tests passed separately on Windows with
 Rust 1.94.1 and the workspace's exact dependency versions/checksums, including
