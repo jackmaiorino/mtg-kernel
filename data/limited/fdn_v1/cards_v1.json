@@ -1128,6 +1128,39 @@
       "mechanics": [],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/ScionOfTheDeepToken.java",
       "is_token": true
+    },
+    {
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "sideboard_only": false,
+      "name": "Cackling Prowler",
+      "mana_cost": "{3}{G}",
+      "mana_value": 4,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Hyena",
+        "Rogue"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 3,
+      "decks": [
+        "FDN_top_20626_WG.dck"
+      ],
+      "complexity": "moderate",
+      "mechanics": [
+        "ward",
+        "morbid",
+        "end_step_trigger",
+        "counters"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CacklingProwler.java"
     }
   ]
 }

@@ -692,12 +692,14 @@ fn publish_generation_v2(
         | NativeRunCatalogProfileV1::FdnHomunculusCreature
         | NativeRunCatalogProfileV1::FdnKomaCreature
         | NativeRunCatalogProfileV1::FdnKioraCreature
+        | NativeRunCatalogProfileV1::FdnProwlerCreature
         | NativeRunCatalogProfileV1::FdnCounterCreaturesRebased
         | NativeRunCatalogProfileV1::FdnLifegainCreaturesRebased
         | NativeRunCatalogProfileV1::FdnDrawCreaturesRebased
         | NativeRunCatalogProfileV1::FdnHomunculusCreatureRebased
         | NativeRunCatalogProfileV1::FdnKomaCreatureRebased
-        | NativeRunCatalogProfileV1::FdnKioraCreatureRebased => {
+        | NativeRunCatalogProfileV1::FdnKioraCreatureRebased
+        | NativeRunCatalogProfileV1::FdnProwlerCreatureRebased => {
             if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
                 return Err(publisher_error_v2(
                     NativeTrainingStorePublisherV2ErrorKind::CurrentCatalogProfileLiveMismatch,
@@ -2321,6 +2323,29 @@ mod windows_publisher_tests {
         assert_eq!(
             run.catalog_profile_v1(),
             NativeRunCatalogProfileV1::FdnKomaCreature
+        );
+        let live = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        let executor = fresh_executor_v2(&live);
+        let genesis = genesis_authorities_v2(&live, &executor);
+        let result = publish_genesis_v2(&root, &run, &genesis);
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStorePublisherV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+        assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Run).exists());
+        assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Latest).exists());
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn publish_rejects_prior_fdn_batch_kiora_creature_before_mutating_any_store_files() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_kiora_creature_v1;
+        let store = TestStoreV2::with_skeleton("prior-fdn-kiora-creature");
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_kiora_creature_v1()).unwrap();
+        assert_eq!(
+            run.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnKioraCreature
         );
         let live = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
         let executor = fresh_executor_v2(&live);

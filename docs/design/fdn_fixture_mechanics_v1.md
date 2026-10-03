@@ -1,17 +1,22 @@
 # FDN fixture implementation batches
 
 This inventories the **36 originally missing names** in the two pinned
-40-card fixtures. Through the Kiora slice, the registry covers 30 of those
-names. **Six remain:** Cackling Prowler, Celestial Armor, Luminous Rebuke,
+40-card fixtures. Through the Prowler slice, the registry covers 31 of those
+names. **Five remain:** Celestial Armor, Luminous Rebuke,
 Sylvan Scavenging, Uncharted Voyage and Witness Protection. Source coverage
-is UG 37/40 and WG 34/40 copies; both original deck files retain their pinned
+is UG 37/40 and WG 36/40 copies; both original deck files retain their pinned
 hashes. The batch table below preserves the original decomposition.
+
+The [Prowler slice](fdn_prowler_creature_v1.md) implements turn-scoped
+creature death history, its morbid end-step trigger and ward two. Fourteen
+focused kernel checks and twelve strict XMage comparisons pass; broader
+catalog, regression, production and external checks are tracked in its
+[validation report](../reports/fdn_prowler_creature_v1_validation.md).
 
 The remaining implementation slices are concrete:
 
 | Slice | Work | Required checks |
 | --- | --- | --- |
-| Cackling Prowler | Reuse ward two; track creature deaths across the whole turn; trigger at its controller's end step with a resolution-time morbid check. | Opponent and token deaths count; noncreature deaths do not; death before entry counts; later death cannot create a missed trigger; reset at the next turn; source incarnation and restore. |
 | Luminous Rebuke | Compute the three-generic discount from the selected creature target's tapped state. | Two-mana casting admits only payable targets; untapped targets require five mana; payment and ward remain separate; mana value stays five; illegal-target handling and restore. |
 | Uncharted Voyage | Let the creature's owner choose top or bottom, then let the caster surveil one. | Owner differs from controller; exact library order; token departure; all-targets-illegal resolution; hidden information; restore at both choices. |
 | Sylvan Scavenging | Add an end-step modal trigger with a controlled-creature counter target or a conditional Raccoon token. | Select mode before its targets; preserve the token mode even below power four; check power at resolution; target loss; exact token; modal and target restore. |

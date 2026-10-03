@@ -577,7 +577,11 @@ pub(super) fn conflicts(
             } => s.raw(*source) || paid_cost_refs.iter().any(|r| s.raw(r.object)),
             InitiativeTrigger { binding } => s.raw(binding.source.source),
             MonarchTrigger { binding } => s.raw(binding.source.source),
-            LifeLoss { .. } | LifeGain { .. } | ManaAdded { .. } | UpkeepBegan { .. } => false,
+            LifeLoss { .. }
+            | LifeGain { .. }
+            | ManaAdded { .. }
+            | UpkeepBegan { .. }
+            | BeginningEndStep { .. } => false,
         }
     })
 }

@@ -1258,6 +1258,14 @@ pub(crate) struct LibraryShuffleToken {
     authorization: LibraryShuffleAuthorization,
 }
 
+/// The active player's turn in which an actual creature death occurred.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreatureDeathTurnV1 {
+    pub turn: u32,
+    pub active_player: PlayerId,
+}
+
 /// `Hash` is manual (see the `impl Hash for GameState` block below this
 /// struct): it must reproduce the exact pre-existing field-hash sequence for
 /// a legacy P0-first state, the same discipline `starting_player`'s serde
@@ -1326,6 +1334,10 @@ pub struct GameState {
     pub planeswalkers_v1: Option<crate::planeswalker_v1::PlaneswalkersV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trigger_uses_v1: Option<Vec<TriggerUseV1>>,
+    /// An actual creature death in the current turn, including token deaths.
+    /// The round counter alone cannot distinguish the two players' turns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creature_death_turn_v1: Option<CreatureDeathTurnV1>,
 }
 
 /// Reproduces exactly the field-hash sequence `#[derive(Hash)]` produced
@@ -1369,6 +1381,10 @@ impl Hash for GameState {
         if let Some(uses) = &self.trigger_uses_v1 {
             "trigger-uses-v1".hash(state);
             uses.hash(state);
+        }
+        if let Some(death) = &self.creature_death_turn_v1 {
+            "creature-death-turn-v1".hash(state);
+            death.hash(state);
         }
     }
 }
@@ -1422,6 +1438,12 @@ impl PaidCostRefV4 {
 }
 
 impl GameState {
+    pub fn creature_died_this_turn_v1(&self) -> bool {
+        self.creature_death_turn_v1.is_some_and(|death| {
+            death.turn == self.turn && death.active_player == self.active_player
+        })
+    }
+
     /// Builds a fresh pre-game state from two post-shuffle library orders
     /// (index 0 = top, matching `GoldenTrace::opening_library`). Arena ids
     /// are assigned contiguously in library order, player 0 first, so the
@@ -1506,6 +1528,7 @@ impl GameState {
             pending_legend_rule_v1: None,
             planeswalkers_v1: None,
             trigger_uses_v1: None,
+            creature_death_turn_v1: None,
         }
     }
 

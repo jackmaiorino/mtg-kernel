@@ -603,12 +603,14 @@ fn run_native_science_loop_with_opponents_v1(
         | NativeRunCatalogProfileV1::FdnHomunculusCreature
         | NativeRunCatalogProfileV1::FdnKomaCreature
         | NativeRunCatalogProfileV1::FdnKioraCreature
+        | NativeRunCatalogProfileV1::FdnProwlerCreature
         | NativeRunCatalogProfileV1::FdnCounterCreaturesRebased
         | NativeRunCatalogProfileV1::FdnLifegainCreaturesRebased
         | NativeRunCatalogProfileV1::FdnDrawCreaturesRebased
         | NativeRunCatalogProfileV1::FdnHomunculusCreatureRebased
         | NativeRunCatalogProfileV1::FdnKomaCreatureRebased
-        | NativeRunCatalogProfileV1::FdnKioraCreatureRebased => {}
+        | NativeRunCatalogProfileV1::FdnKioraCreatureRebased
+        | NativeRunCatalogProfileV1::FdnProwlerCreatureRebased => {}
     }
 
     if ladder_opponent.is_some() && population_opponent.is_some() {

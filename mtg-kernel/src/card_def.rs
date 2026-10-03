@@ -247,6 +247,7 @@ pub enum Subtype {
     /// Appended for Kiora and Scion of the Deep; existing ids remain fixed.
     Merfolk,
     Octopus,
+    Hyena,
 }
 
 impl Subtype {
@@ -328,6 +329,8 @@ impl Subtype {
         Subtype::Merfolk,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Octopus,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Hyena,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -1719,7 +1722,7 @@ mod tests {
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                229
+                230
             } else {
                 192
             }
@@ -1807,8 +1810,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v45_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x2d5a_ebb9_49ec_a8a6;
+    fn card_db_hash_v46_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x6630_c9c0_9989_878f;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

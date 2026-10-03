@@ -272,6 +272,7 @@ pub enum EffectCond {
     TargetSpellCanBeCountered(u8),
     /// Kiora's resolution-time intervening threshold condition.
     ControllerGraveyardCardCountAtLeast(u8),
+    CreatureDiedThisTurn,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -12363,6 +12364,7 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
         EffectCond::OpponentHasCardsInHand => !state.players[ctx.controller.opponent().index()]
             .hand
             .is_empty(),
+        EffectCond::CreatureDiedThisTurn => state.creature_died_this_turn_v1(),
         EffectCond::ControllerGraveyardCardCountAtLeast(minimum) => {
             controller_graveyard_card_count(state, ctx.controller) >= usize::from(*minimum)
         }

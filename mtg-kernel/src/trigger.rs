@@ -118,6 +118,7 @@ pub enum TriggerCondition {
     },
     /// Exact attack declaration with a trigger-time intervening threshold gate.
     AttacksWithControllerGraveyardCardCountAtLeast(u8),
+    BeginningControllerEndStepIfCreatureDied,
 }
 
 pub struct TriggeredAbilityDef {
@@ -143,7 +144,20 @@ pub(crate) fn materialize_trigger_effect(
     source: ObjectId,
     state: &GameState,
 ) -> EffectOp {
-    match (trigger.effect)() {
+    materialize_trigger_source_program((trigger.effect)(), source, state)
+}
+
+fn materialize_trigger_source_program(
+    effect: EffectOp,
+    source: ObjectId,
+    state: &GameState,
+) -> EffectOp {
+    match effect {
+        EffectOp::Conditional { cond, then, else_ } => EffectOp::Conditional {
+            cond,
+            then: Box::new(materialize_trigger_source_program(*then, source, state)),
+            else_: Box::new(materialize_trigger_source_program(*else_, source, state)),
+        },
         EffectOp::BindTemporaryBoostToTriggerSource { power, toughness } => {
             let live = state.objects.get(source);
             EffectOp::BoostBoundObjectUntilEndOfTurn {
@@ -260,6 +274,19 @@ const KIORA_RISING_TIDE_TRIGGERS: [TriggeredAbilityDef; 2] = [
         ..etb_trigger(kiora_threshold_effect)
     },
 ];
+
+const CACKLING_PROWLER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningControllerEndStepIfCreatureDied,
+    ..etb_trigger(prowler_morbid_effect)
+}];
+
+fn prowler_morbid_effect() -> EffectOp {
+    EffectOp::Conditional {
+        cond: EffectCond::CreatureDiedThisTurn,
+        then: Box::new(EffectOp::BindPlusOnePlusOneCounterToTriggerSource),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    }
+}
 
 fn kiora_draw_discard_effect() -> EffectOp {
     EffectOp::Sequence(vec![
@@ -1391,6 +1418,7 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Homunculus Horde" | "Homunculus Horde Token" => &HOMUNCULUS_HORDE_TRIGGERS,
         "Koma, World-Eater" => &KOMA_WORLD_EATER_TRIGGERS,
         "Kiora, the Rising Tide" => &KIORA_RISING_TIDE_TRIGGERS,
+        "Cackling Prowler" => &CACKLING_PROWLER_TRIGGERS,
         "Dwynen's Elite" => &DWYNENS_ELITE_TRIGGERS,
         "Good-Fortune Unicorn" => &GOOD_FORTUNE_UNICORN_TRIGGERS,
         "Guarded Heir" => &GUARDED_HEIR_TRIGGERS,
@@ -1492,6 +1520,47 @@ pub(crate) fn required_optional_additional_cost_for_trigger(
 
 /// Authenticates the finite set of effects a definition-owned trigger can
 /// place on the stack, including Moon-Circuit Hacker's event-frozen branch.
+fn source_bound_trigger_program_matches(template: &EffectOp, effect: &EffectOp) -> bool {
+    if template == effect {
+        return true;
+    }
+    match (template, effect) {
+        (
+            EffectOp::Conditional { cond, then, else_ },
+            EffectOp::Conditional {
+                cond: actual_cond,
+                then: actual_then,
+                else_: actual_else,
+            },
+        ) => {
+            cond == actual_cond
+                && source_bound_trigger_program_matches(then, actual_then)
+                && source_bound_trigger_program_matches(else_, actual_else)
+        }
+        (
+            EffectOp::BindTemporaryBoostToTriggerSource { power, toughness },
+            EffectOp::BoostBoundObjectUntilEndOfTurn {
+                power: actual_power,
+                toughness: actual_toughness,
+                ..
+            },
+        ) => power == actual_power && toughness == actual_toughness,
+        (
+            EffectOp::BindPlusOnePlusOneCounterToTriggerSource,
+            EffectOp::PutPlusOnePlusOneCounterOnBoundObject { .. },
+        )
+        | (
+            EffectOp::BindPlusOnePlusOneCounterToTriggerEventObject,
+            EffectOp::PutPlusOnePlusOneCounterOnTriggerEventObject { .. },
+        )
+        | (
+            EffectOp::BindDoublePlusOneCountersToTriggerSource,
+            EffectOp::DoublePlusOneCountersOnBoundObject { .. },
+        ) => true,
+        _ => false,
+    }
+}
+
 pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     let Some(card) = crate::card_def::CARD_DEFS.get(card_def as usize) else {
         return false;
@@ -1503,34 +1572,13 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     {
         return true;
     }
-    if triggers_for(card_def).iter().any(|trigger| {
-        if let (
-            EffectOp::BindTemporaryBoostToTriggerSource { power, toughness },
-            EffectOp::BoostBoundObjectUntilEndOfTurn {
-                power: actual_power,
-                toughness: actual_toughness,
-                ..
-            },
-        ) = ((trigger.effect)(), effect)
-        {
-            return power == *actual_power && toughness == *actual_toughness;
-        }
-        matches!(
-            ((trigger.effect)(), effect),
-            (
-                EffectOp::BindPlusOnePlusOneCounterToTriggerSource,
-                EffectOp::PutPlusOnePlusOneCounterOnBoundObject { .. }
-            ) | (
-                EffectOp::BindPlusOnePlusOneCounterToTriggerEventObject,
-                EffectOp::PutPlusOnePlusOneCounterOnTriggerEventObject { .. }
-            ) | (
-                EffectOp::BindDoublePlusOneCountersToTriggerSource,
-                EffectOp::DoublePlusOneCountersOnBoundObject { .. }
-            )
-        )
-    }) {
+    if triggers_for(card_def)
+        .iter()
+        .any(|trigger| source_bound_trigger_program_matches(&(trigger.effect)(), effect))
+    {
         return true;
     }
+
     if card.name == "Weather the Storm" && matches!(effect, EffectOp::CreateStormCopies { .. }) {
         return true;
     }
@@ -2519,6 +2567,13 @@ fn trigger_matches(
                 && *event_controller == controller
                 && state.objects.get(source).zone_change_count == *source_zone_change_count
         }
+        (
+            TriggerCondition::BeginningControllerEndStepIfCreatureDied,
+            CommittedEvent::BeginningEndStep {
+                active_player,
+                creature_died_this_turn,
+            },
+        ) => *active_player == controller && *creature_died_this_turn,
         (TriggerCondition::DealsDamage, CommittedEvent::Damage { source: s, .. }) => *s == source,
         (
             TriggerCondition::AttacksWithControllerGraveyardCardCountAtLeast(minimum),

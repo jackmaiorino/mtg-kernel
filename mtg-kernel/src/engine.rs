@@ -10443,6 +10443,10 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 object.v4.ability_uses_this_turn.clear();
             }
             state.trigger_uses_v1 = None;
+            #[cfg(feature = "limited-fdn-fixtures")]
+            {
+                state.creature_death_turn_v1 = None;
+            }
             // See `PlayPermissionExpiry`'s doc: the *holder's* own Untap
             // marks the start of their "next turn" for an "until end of
             // your next turn" impulse-draw permission (Clockwork
@@ -10553,6 +10557,15 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             }
         }
         Step::End => {
+            #[cfg(feature = "limited-fdn-fixtures")]
+            {
+                let marker = event::CommittedEvent::BeginningEndStep {
+                    active_player: state.active_player,
+                    creature_died_this_turn: state.creature_died_this_turn_v1(),
+                };
+                state.engine.event_log.push(marker.clone());
+                state.engine.event_history.push(marker);
+            }
             let p = state.active_player;
             // 306.3: logged only for whichever player's own End step this
             // is, and only if they currently hold the monarchy -- the same
