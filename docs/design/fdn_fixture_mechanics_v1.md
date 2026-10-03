@@ -1,13 +1,28 @@
 # FDN fixture implementation batches
 
 This inventories the **36 originally missing names** in the two pinned
-40-card fixtures. Batch A registers six and batch B registers eight, with
-their exact tokens. The first combat-card slice completes Beast-Kin Ranger
-and Overrun. The legend-rule slice completes Dwynen. C through G contain
-**13 names still requiring full support** after the targeted-spell and
-first counter-creature slices. Batch D still needs Exemplar of Light and
-Sun-Blessed Healer; E through G remain outstanding.
-The priority-window PR added no cards.
+40-card fixtures. Through the Kiora slice, the registry covers 30 of those
+names. **Six remain:** Cackling Prowler, Celestial Armor, Luminous Rebuke,
+Sylvan Scavenging, Uncharted Voyage and Witness Protection. Source coverage
+is UG 37/40 and WG 34/40 copies; both original deck files retain their pinned
+hashes. The batch table below preserves the original decomposition.
+
+The remaining implementation slices are concrete:
+
+| Slice | Work | Required checks |
+| --- | --- | --- |
+| Cackling Prowler | Reuse ward two; track creature deaths across the whole turn; trigger at its controller's end step with a resolution-time morbid check. | Opponent and token deaths count; noncreature deaths do not; death before entry counts; later death cannot create a missed trigger; reset at the next turn; source incarnation and restore. |
+| Luminous Rebuke | Compute the three-generic discount from the selected creature target's tapped state. | Two-mana casting admits only payable targets; untapped targets require five mana; payment and ward remain separate; mana value stays five; illegal-target handling and restore. |
+| Uncharted Voyage | Let the creature's owner choose top or bottom, then let the caster surveil one. | Owner differs from controller; exact library order; token departure; all-targets-illegal resolution; hidden information; restore at both choices. |
+| Sylvan Scavenging | Add an end-step modal trigger with a controlled-creature counter target or a conditional Raccoon token. | Select mode before its targets; preserve the token mode even below power four; check power at resolution; target loss; exact token; modal and target restore. |
+| Celestial Armor | Add flash Equipment, entry attachment and temporary target hexproof/indestructible, continuous equipped bonuses and equip. | Target loss, legal attachment and movement; target keeps its temporary abilities after Equipment moves; equip timing/payment; destruction and damage protection; restore. |
+| Witness Protection | Apply its Aura's name, type, color, ability-removal and base-stat layers. | Suppress triggers, ward and activations; keep counters and later modifiers; use effective names for legend checks; restore original characteristics when the Aura leaves; attachment and pending-decision restore. |
+
+After those slices, add London mulligan and bottoming choices to the custom
+game interface with replay and pending-choice restore. The fixture milestone
+then requires both unchanged decks to load, fixed-seed external games to
+finish naturally, deterministic replay, relevant XMage comparisons and green
+regression/CI evidence. Registry coverage alone does not satisfy that milestone.
 
 Sources: the pinned `.dck` files under `data/limited/fdn_v1/`, the corresponding
 XMage card implementations at `a5c90fe180021e70e2a644ade00eeab07f857a40`, and

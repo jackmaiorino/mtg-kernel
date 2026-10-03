@@ -116,6 +116,8 @@ pub enum TriggerCondition {
     ControllerAddedPlusOneCountersToSelf {
         max_per_turn: Option<u16>,
     },
+    /// Exact attack declaration with a trigger-time intervening threshold gate.
+    AttacksWithControllerGraveyardCardCountAtLeast(u8),
 }
 
 pub struct TriggeredAbilityDef {
@@ -250,6 +252,46 @@ const KOMA_WORLD_EATER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef
     condition: TriggerCondition::DealsCombatDamageToPlayer,
     ..etb_trigger(koma_coils_effect)
 }];
+
+const KIORA_RISING_TIDE_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    etb_trigger(kiora_draw_discard_effect),
+    TriggeredAbilityDef {
+        condition: TriggerCondition::AttacksWithControllerGraveyardCardCountAtLeast(7),
+        ..etb_trigger(kiora_threshold_effect)
+    },
+];
+
+fn kiora_draw_discard_effect() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 2,
+        },
+        EffectOp::DiscardCards {
+            player: PlayerRef::Controller,
+            count: 2,
+        },
+    ])
+}
+
+fn kiora_threshold_effect() -> EffectOp {
+    let token_def = crate::card_def::card_id_by_name("Scion of the Deep Token")
+        .expect("Scion of the Deep Token in CARD_DEFS");
+    EffectOp::Conditional {
+        cond: EffectCond::ControllerGraveyardCardCountAtLeast(7),
+        then: Box::new(EffectOp::Choice {
+            controller: PlayerRef::Controller,
+            options: vec![
+                EffectOp::Sequence(vec![]),
+                EffectOp::CreateToken {
+                    token_def,
+                    controller: PlayerRef::Controller,
+                },
+            ],
+        }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    }
+}
 
 fn koma_coils_effect() -> EffectOp {
     let token_def = crate::card_def::card_id_by_name("Koma's Coil Token")
@@ -1348,6 +1390,7 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Mischievous Mystic" => &MISCHIEVOUS_MYSTIC_TRIGGERS,
         "Homunculus Horde" | "Homunculus Horde Token" => &HOMUNCULUS_HORDE_TRIGGERS,
         "Koma, World-Eater" => &KOMA_WORLD_EATER_TRIGGERS,
+        "Kiora, the Rising Tide" => &KIORA_RISING_TIDE_TRIGGERS,
         "Dwynen's Elite" => &DWYNENS_ELITE_TRIGGERS,
         "Good-Fortune Unicorn" => &GOOD_FORTUNE_UNICORN_TRIGGERS,
         "Guarded Heir" => &GUARDED_HEIR_TRIGGERS,
@@ -2477,6 +2520,20 @@ fn trigger_matches(
                 && state.objects.get(source).zone_change_count == *source_zone_change_count
         }
         (TriggerCondition::DealsDamage, CommittedEvent::Damage { source: s, .. }) => *s == source,
+        (
+            TriggerCondition::AttacksWithControllerGraveyardCardCountAtLeast(minimum),
+            CommittedEvent::DeclaredAttacker {
+                source: event_source,
+                source_zone_change_count,
+                controller: event_controller,
+            },
+        ) => {
+            *event_source == source
+                && *event_controller == controller
+                && state.objects.get(source).zone_change_count == *source_zone_change_count
+                && crate::effect::controller_graveyard_card_count(state, controller)
+                    >= usize::from(minimum)
+        }
         (
             TriggerCondition::DealsCombatDamageToPlayer,
             CommittedEvent::CombatDamageToPlayer {
