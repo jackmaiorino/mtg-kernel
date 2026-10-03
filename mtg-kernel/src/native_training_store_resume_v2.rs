@@ -689,8 +689,10 @@ fn resume_native_training_store_impl_v1(
         | NativeRunCatalogProfileV1::FdnTargetedSpells
         | NativeRunCatalogProfileV1::FdnCounterCreatures
         | NativeRunCatalogProfileV1::FdnLifegainCreatures
+        | NativeRunCatalogProfileV1::FdnDrawCreatures
         | NativeRunCatalogProfileV1::FdnCounterCreaturesRebased
-        | NativeRunCatalogProfileV1::FdnLifegainCreaturesRebased => {
+        | NativeRunCatalogProfileV1::FdnLifegainCreaturesRebased
+        | NativeRunCatalogProfileV1::FdnDrawCreaturesRebased => {
             if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
                 return Err(resume_error_v2(
                     NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch,
@@ -1831,13 +1833,13 @@ mod windows_resume_tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn resume_rejects_prior_fdn_batch_counter_creatures_before_interacting_with_store_contents() {
-        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_counter_creatures_v1;
-        let parent = TestParentV2::new("prior-fdn-counter-creatures");
+    fn resume_rejects_prior_fdn_batch_lifegain_creatures_before_interacting_with_store_contents() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_lifegain_creatures_v1;
+        let parent = TestParentV2::new("prior-fdn-lifegain-creatures");
         let root = bootstrap_native_training_store_v2(parent.path(), "store")
             .unwrap()
             .into_root();
-        let run = decode_train_run_v2(&test_fixture_bytes_fdn_counter_creatures_v1()).unwrap();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_lifegain_creatures_v1()).unwrap();
         let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
         assert_eq!(
             result.unwrap_err().kind(),
