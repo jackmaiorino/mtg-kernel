@@ -173,6 +173,9 @@ jobs:
           restore-keys: |
             cargo-registry-tests-${{ matrix.os }}-
 
+      - name: Validate Witness Protection layered rules
+        run: cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test fdn_witness_protection_v1
+
       - name: Run Rust release tests
         run: python python/tools/run_rust_workspace_tests.py --no-fail-fast
 

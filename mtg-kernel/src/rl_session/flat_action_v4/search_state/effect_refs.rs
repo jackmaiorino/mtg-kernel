@@ -581,7 +581,8 @@ pub(super) fn conflicts(
             | CreateToken { object, .. }
             | Sacrificed { object, .. }
             | Transformed { object, .. } => s.raw(*object),
-            PlusOneCountersAdded { object, .. } => s.raw(*object),
+            PlusOneCountersAdded { object, .. }
+            | PrintedAbilitiesRemovedBeforeZoneChange { object, .. } => s.raw(*object),
             Draw { object, .. } => object.is_some_and(|id| s.raw(id)),
             SpellCast { spell, .. } => s.raw(*spell),
             Targeted { target, .. } => s.raw(*target),
@@ -735,5 +736,19 @@ mod tests {
         };
         assert!(!scan.f(&frame));
         assert!(!scan.purpose(&purpose));
+    }
+    #[test]
+    fn removed_ability_history_keeps_its_physical_object_out_of_resampling() {
+        let mut state = ready_state();
+        let object = put(&mut state, PlayerId::P1, "Forest", Zone::Library);
+        let other = put(&mut state, PlayerId::P1, "Island", Zone::Library);
+        state.engine.event_log.push(
+            crate::event::CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange {
+                object,
+                zone_change_count: state.objects.get(object).zone_change_count,
+            },
+        );
+        assert!(conflicts(&state, &[object], None));
+        assert!(!conflicts(&state, &[other], None));
     }
 }

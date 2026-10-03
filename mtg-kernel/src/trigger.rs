@@ -1909,17 +1909,21 @@ fn sba_fixed_point_with_protected_triggers(
                     return None;
                 }
                 let definition = &crate::card_def::CARD_DEFS[aura.card_def as usize];
-                let Some(crate::card_def::AttachmentDef::AuraCreature { .. }) =
-                    definition.attachment
-                else {
+                if !definition
+                    .attachment
+                    .is_some_and(crate::card_def::AttachmentDef::is_creature_aura)
+                {
                     return None;
-                };
+                }
                 let valid = aura.v4.attached_to.is_some_and(|link| {
                     state.objects.try_get(link.object).is_some_and(|host| {
                         host.zone == Zone::Battlefield
                             && host.zone_change_count == link.zone_change_count
-                            && crate::card_def::CARD_DEFS[host.card_def as usize]
-                                .has_type(crate::card_def::CardType::Creature)
+                            && crate::engine::object_has_type(
+                                state,
+                                link.object,
+                                crate::card_def::CardType::Creature,
+                            )
                             && host.attachments.contains(&id)
                     })
                 });
@@ -2138,7 +2142,10 @@ fn triggers_from_events(
                 def.condition,
                 TriggerCondition::LeftBattlefieldToGraveyard | TriggerCondition::LeftBattlefield
             );
-            if !uses_leave_lki && obj.zone != def.home_zone {
+            if !uses_leave_lki
+                && (obj.zone != def.home_zone
+                    || !crate::continuous_characteristics_v1::printed_abilities_active(state, id))
+            {
                 continue;
             }
             // A `TriggeredAbilityDef` names one printed face's ability text
@@ -2155,6 +2162,9 @@ fn triggers_from_events(
                 continue;
             }
             for (i, ev) in events.iter().enumerate() {
+                if uses_leave_lki && i.checked_sub(1).and_then(|index| events.get(index)).is_some_and(|event| matches!(event, CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange { object, .. } if *object == id)) {
+                    continue;
+                }
                 let event_controller = match ev {
                     CommittedEvent::ZoneChange {
                         object,
@@ -2301,7 +2311,9 @@ fn triggers_from_events(
                 }
             }
         }
-        if obj.zone == Zone::Battlefield {
+        if obj.zone == Zone::Battlefield
+            && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+        {
             if let Some(crate::card_def::WardCostDef::Generic(generic)) = card.ward_cost {
                 for event in events {
                     let CommittedEvent::Targeted {
@@ -2381,7 +2393,14 @@ fn triggers_from_events(
                 else {
                     continue;
                 };
-                if !exact_relation || profile.noncreature_spell_damage_to_each_opponent == 0 {
+                if !exact_relation
+                    || profile.noncreature_spell_damage_to_each_opponent == 0
+                    || !crate::continuous_characteristics_v1::grant_survives(
+                        state,
+                        host,
+                        equipment_live.v4.layer_timestamp.unwrap_or(0),
+                    )
+                {
                     continue;
                 }
                 new_triggers.push(PendingTrigger {

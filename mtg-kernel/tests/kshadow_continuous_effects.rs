@@ -57,6 +57,7 @@ fn an_until_next_turn_hexproof_grant_is_a_projected_continuous_effect() {
             holder: PlayerId::P1,
             expires_at_turn: state.turn + 1,
             keywords: Keywords::HEXPROOF,
+            timestamp: None,
         });
 
     for observer in [PlayerId::P0, PlayerId::P1] {

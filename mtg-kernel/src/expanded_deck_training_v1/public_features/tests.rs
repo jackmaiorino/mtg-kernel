@@ -23,6 +23,7 @@ fn config() -> Config {
         max_chunk_substeps: 128,
         projection_mode: ProjectionMode::All,
         entropy_coefficient: 0.0,
+        ppo: None,
     }
 }
 
@@ -116,4 +117,83 @@ fn public_execution_device_preserves_config_and_legacy_default() {
     }
     wire["execution_gpu_ordinal"] = json!(-1);
     assert!(serde_json::from_value::<Command>(wire).is_err());
+}
+
+#[test]
+fn public_ppo_preserves_absent_config_and_rejects_invalid_values() {
+    let old = config();
+    let bytes = serde_json::to_vec(&old).unwrap();
+    let mut wire: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(wire.get("ppo").is_none());
+    assert_eq!(adam_steps_per_update(&old), 1);
+    wire["ppo"] = Value::Null;
+    let parsed: Config = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(serde_json::to_vec(&parsed).unwrap(), bytes);
+    let ppo = PpoConfigV1 {
+        epochs: 4,
+        minibatches: 8,
+        clip: 0.2,
+        shuffle_seed: 7,
+    };
+    let mut changed = old.clone();
+    changed.ppo = Some(ppo);
+    validate_entropy(&changed).unwrap();
+    assert_ne!(serde_json::to_vec(&changed).unwrap(), bytes);
+    assert_eq!(adam_steps_per_update(&changed), 32);
+    for invalid in [
+        PpoConfigV1 { epochs: 0, ..ppo },
+        PpoConfigV1 { epochs: 17, ..ppo },
+        PpoConfigV1 {
+            minibatches: 0,
+            ..ppo
+        },
+        PpoConfigV1 {
+            minibatches: 65,
+            ..ppo
+        },
+        PpoConfigV1 { clip: 0.0, ..ppo },
+        PpoConfigV1 { clip: 1.5, ..ppo },
+        PpoConfigV1 {
+            clip: f32::NAN,
+            ..ppo
+        },
+    ] {
+        let mut config = old.clone();
+        config.ppo = Some(invalid);
+        assert!(validate_entropy(&config).is_err());
+    }
+    wire["ppo"] = json!({"epochs":4,"minibatches":8,"clip":0.2,"shuffle_seed":7,"extra":1});
+    assert!(serde_json::from_value::<Config>(wire).is_err());
+}
+
+#[test]
+fn ppo_minibatch_partition_is_deterministic_and_disjoint() {
+    for groups in [1_usize, 7, 64, 1000] {
+        for minibatches in [1_u32, 3, 8] {
+            let a = ppo_minibatches(groups, minibatches, 11, 2, 1);
+            assert_eq!(a, ppo_minibatches(groups, minibatches, 11, 2, 1));
+            assert_eq!(a.len(), (minibatches as usize).min(groups));
+            assert!(a.iter().all(|m| !m.is_empty()));
+            let mut seen: Vec<usize> = a.concat();
+            seen.sort_unstable();
+            assert_eq!(seen, (0..groups).collect::<Vec<_>>());
+            assert!(a.iter().all(|m| m.windows(2).all(|w| w[0] < w[1])));
+        }
+    }
+    assert_ne!(
+        ppo_minibatches(1000, 8, 11, 2, 1),
+        ppo_minibatches(1000, 8, 11, 2, 2)
+    );
+}
+
+#[test]
+fn ppo_old_joint_log_probability_matches_f64_softmax() {
+    let logits = [1.0_f32, 2.0, 0.5].map(f32::to_bits);
+    let second = [0.0_f32, -1.0].map(f32::to_bits);
+    let joint = behavior_joint_log_probability(&[(&logits[..], 1), (&second[..], 0)]).unwrap();
+    let lse1 = (1.0_f64.exp() + 2.0_f64.exp() + 0.5_f64.exp()).ln();
+    let lse2 = (0.0_f64.exp() + (-1.0_f64).exp()).ln();
+    let expected = (2.0 - lse1) + (0.0 - lse2);
+    assert!((f64::from(joint) - expected).abs() < 1e-6);
+    assert!(behavior_joint_log_probability(&[(&logits[..], 3)]).is_err());
 }

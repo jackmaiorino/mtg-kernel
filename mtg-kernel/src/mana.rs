@@ -390,7 +390,8 @@ pub fn gather_sources(player: PlayerId, state: &GameState) -> Vec<ManaSource> {
     let mut sources = Vec::new();
     for &id in &state.players[player.index()].battlefield {
         let obj = state.objects.get(id);
-        if obj.tapped {
+        if obj.tapped || !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+        {
             continue;
         }
         let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];

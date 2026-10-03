@@ -5333,7 +5333,11 @@ fn public_card(state: &GameState, id: ObjectId) -> Result<CardPublicV1> {
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
     Ok(CardPublicV1 {
         stable: card_ref(state, id)?,
-        card_name: card_name(object.card_def),
+        card_name: if crate::continuous_characteristics_v1::creature_override(state, id).is_some() {
+            engine::effective_name(state, id).to_string()
+        } else {
+            card_name(object.card_def)
+        },
         tapped: object.tapped,
         summoning_sick: object.summoning_sick,
         damage: u16::try_from(object.damage)
@@ -5362,10 +5366,11 @@ fn public_card_v2(
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
     Ok(CardPublicV2 {
         stable: card_ref(state, id)?,
-        card_name: if object.v4.face_index == 1
-            && matches!(text_mode, ObservationTextModeV2::FullArtifact)
+        card_name: if matches!(text_mode, ObservationTextModeV2::FullArtifact)
+            && (object.v4.face_index == 1
+                || crate::continuous_characteristics_v1::creature_override(state, id).is_some())
         {
-            object.name.clone()
+            engine::effective_name(state, id).to_string()
         } else {
             text_mode.card_name(object.card_def)
         },
@@ -5503,9 +5508,8 @@ fn known_hand_cards_v4(
 
 fn card_characteristics_v2(state: &GameState, id: ObjectId) -> CardCharacteristicsV2 {
     let object = state.objects.get(id);
-    let def = &CARD_DEFS[object.card_def as usize];
-    let base_power = def.power_for_face(object.v4.face_index).map(i32::from);
-    let base_toughness = def.toughness_for_face(object.v4.face_index).map(i32::from);
+    let base_power = engine::effective_base_power(state, id);
+    let base_toughness = engine::effective_base_toughness(state, id);
     let has_pt = base_power.is_some() || base_toughness.is_some();
     CardCharacteristicsV2 {
         type_flags: CardTypeFlagsV2 {
@@ -5520,7 +5524,7 @@ fn card_characteristics_v2(state: &GameState, id: ObjectId) -> CardCharacteristi
         base_toughness,
         effective_power: has_pt.then(|| engine::effective_power(state, id)),
         effective_toughness: has_pt.then(|| engine::effective_toughness(state, id)),
-        effective_color_mask: object.v4.effective_color_mask,
+        effective_color_mask: engine::object_color_mask(state, id),
         effective_subtype_ids: engine::effective_subtype_ids(state, id),
         effective_keywords: KeywordFlagsV2 {
             flying: engine::has_effective_keyword(state, id, Keywords::FLYING),
@@ -5541,7 +5545,13 @@ fn card_characteristics_v2(state: &GameState, id: ObjectId) -> CardCharacteristi
                 id,
                 Keywords::PROTECTION_FROM_MONOCOLORED,
             ),
-            ward_generic: object.v4.ward_generic,
+            ward_generic: if crate::continuous_characteristics_v1::printed_abilities_active(
+                state, id,
+            ) {
+                object.v4.ward_generic
+            } else {
+                0
+            },
             minimum_blockers: if engine::object_has_type(state, id, CardType::Creature) {
                 engine::minimum_blockers_required(state, id) as u8
             } else {

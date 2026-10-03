@@ -89,7 +89,10 @@ fn groups(state: &GameState) -> Vec<LegendGroupV1> {
                 && object.controller == controller
                 && definition.supertypes.contains(&Supertype::Legendary)
             {
-                names.entry(&object.name).or_default().push(link(state, id));
+                names
+                    .entry(engine::effective_name(state, id))
+                    .or_default()
+                    .push(link(state, id));
             }
         }
         for (name, objects) in names {
@@ -126,17 +129,17 @@ fn prepare(state: &GameState, waiting: &[PendingTrigger]) -> PreparedPassV1 {
                 object.v4.deathtouch_damage,
                 engine::has_effective_keyword(state, id, Keywords::INDESTRUCTIBLE),
             );
-        let invalid_aura = matches!(
-            definition.attachment,
-            Some(AttachmentDef::AuraCreature { .. })
-        ) && !object.v4.attached_to.is_some_and(|host_link| {
-            state.objects.try_get(host_link.object).is_some_and(|host| {
-                host.zone == Zone::Battlefield
-                    && host.zone_change_count == host_link.zone_change_count
-                    && card_def::CARD_DEFS[host.card_def as usize].has_type(CardType::Creature)
-                    && host.attachments.contains(&id)
-            })
-        });
+        let invalid_aura = definition
+            .attachment
+            .is_some_and(AttachmentDef::is_creature_aura)
+            && !object.v4.attached_to.is_some_and(|host_link| {
+                state.objects.try_get(host_link.object).is_some_and(|host| {
+                    host.zone == Zone::Battlefield
+                        && host.zone_change_count == host_link.zone_change_count
+                        && engine::object_has_type(state, host_link.object, CardType::Creature)
+                        && host.attachments.contains(&id)
+                })
+            });
         let completed_saga = object.v4.face_index == 0
             && definition.saga.as_ref().is_some_and(|saga| {
                 object.counters.lore >= saga.chapter_effects.len() as i16

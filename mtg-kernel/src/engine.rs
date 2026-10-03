@@ -323,13 +323,29 @@ pub enum EffectDuration {
     EndOfTurn,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UntilNextTurnKeywordEffectV1 {
     pub object_id: ObjectId,
     pub object_zone_change_count: u32,
     pub holder: PlayerId,
     pub expires_at_turn: u32,
     pub keywords: Keywords,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<u64>,
+}
+
+impl std::hash::Hash for UntilNextTurnKeywordEffectV1 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.object_id.hash(state);
+        self.object_zone_change_count.hash(state);
+        self.holder.hash(state);
+        self.expires_at_turn.hash(state);
+        self.keywords.hash(state);
+        if let Some(timestamp) = self.timestamp {
+            "until_next_turn_keyword_timestamp/v1".hash(state);
+            timestamp.hash(state);
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -2483,6 +2499,31 @@ fn targeting_source_is_monocolored(source: TargetingSource) -> bool {
         .is_some_and(|def| (card_def::mana_colors_mask(def.colors) & 0x1f).count_ones() == 1)
 }
 
+/// The source a triggered ability targets from. An Initiative or Undercity
+/// trigger records Avenging Hunter's contract only as the designation's
+/// provenance: the initiative's own triggers have no source, and a room
+/// ability's source is the dungeon card (309.4c), which is colorless and not
+/// a permanent. None of them is subject to a source-dependent restriction
+/// such as protection from monocolored, so they target without a source.
+/// `None` stands for that colorless nonpermanent source because the current
+/// source-dependent filters (protection from monocolored,
+/// `CreatureOtherThanSource`) treat the two alike. A restriction such a
+/// source could fail, like protection from colorless, needs an explicit
+/// dungeon source instead.
+fn triggered_ability_targeting_source(
+    source: ObjectId,
+    source_contract: Option<AbilitySourceContractV4>,
+    effect: &EffectOp,
+) -> Option<TargetingSource> {
+    if matches!(effect, EffectOp::ResolveInitiativeTrigger { .. }) {
+        return None;
+    }
+    source_contract.map(|contract| TargetingSource {
+        object: source,
+        card_def: contract.card_def,
+    })
+}
+
 fn legal_targets_for_controller(
     spec: TargetSpec,
     targets_chosen: &[Target],
@@ -2879,13 +2920,11 @@ fn target_prefix_can_complete_for_controller(
 }
 
 /// The source a pending triggered ability targets from: its frozen source
-/// incarnation's definition, exactly as `Decision::ChooseTargets` and
-/// `Action::ChooseTarget` see it.
+/// incarnation's definition (or no source for an Initiative/Undercity
+/// trigger), exactly as `Decision::ChooseTargets` and `Action::ChooseTarget`
+/// see it.
 fn pending_trigger_targeting_source(pending: &PendingTrigger) -> Option<TargetingSource> {
-    pending.source_contract.map(|contract| TargetingSource {
-        object: pending.source,
-        card_def: contract.card_def,
-    })
+    triggered_ability_targeting_source(pending.source, pending.source_contract, &pending.effect)
 }
 
 /// 603.3d: whether a pending triggered ability's chosen target prefix can
@@ -5601,7 +5640,9 @@ pub(crate) fn available_mana_ability_choices_into(
     let Some(def) = card_def::CARD_DEFS.get(object.card_def as usize) else {
         return;
     };
-    if !def.has_mana_ability() {
+    if !def.has_mana_ability()
+        || !crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+    {
         return;
     }
 
@@ -5930,7 +5971,9 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
     ] {
         for &id in objects {
             let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
-            if !def.is_executable() {
+            if !def.is_executable()
+                || !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+            {
                 continue;
             }
             for (i, ability) in def.activated_abilities.iter().enumerate() {
@@ -8994,10 +9037,7 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
         }
         let need = target_count(pending.target_spec);
         if pending.targets.len() < usize::from(need) {
-            let trigger_source = pending.source_contract.map(|contract| TargetingSource {
-                object: pending.source,
-                card_def: contract.card_def,
-            });
+            let trigger_source = pending_trigger_targeting_source(&pending);
             if !target_prefix_can_complete_for_controller_and_source(
                 pending.target_spec,
                 &pending.targets,
@@ -9938,25 +9978,30 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
                 spec,
                 &chosen,
                 item.controller,
-                Some(match item.kind {
-                    StackItemKind::Spell => TargetingSource {
+                match item.kind {
+                    StackItemKind::Spell => Some(TargetingSource {
                         object: item.source,
                         card_def: state.objects.get(item.source).card_def,
-                    },
+                    }),
                     StackItemKind::TriggeredAbility => {
                         let source_contract = item
                             .v4
                             .ability_source_contract
                             .ok_or("triggered stack item lost its source incarnation")?;
-                        TargetingSource {
-                            object: item.source,
-                            card_def: source_contract.card_def,
-                        }
+                        let effect = item
+                            .inline_effect
+                            .as_ref()
+                            .ok_or("triggered stack item lost its effect program")?;
+                        triggered_ability_targeting_source(
+                            item.source,
+                            Some(source_contract),
+                            effect,
+                        )
                     }
                     StackItemKind::MadnessOffer | StackItemKind::ActivatedAbility => {
                         unreachable!("handled or untargeted")
                     }
-                }),
+                },
                 state,
             )
             .contains(&target),
@@ -10869,7 +10914,9 @@ fn controlled_subtype_boost(state: &GameState, recipient: ObjectId) -> (i32, i32
         .copied()
         .filter_map(|source| {
             let definition = &card_def::CARD_DEFS[state.objects.get(source).card_def as usize];
-            if !definition.is_executable() {
+            if !definition.is_executable()
+                || !crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+            {
                 return None;
             }
             let boost = static_controlled_subtype_boost_for(definition.name)?;
@@ -10943,6 +10990,9 @@ fn bestow_host_counter_bonus(state: &GameState, host: ObjectId) -> i32 {
 /// Effective card-type query for one live object face. Nonbattlefield cards
 /// are always front-face objects because every zone change resets the face.
 pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> bool {
+    if crate::continuous_characteristics_v1::creature_override(state, id).is_some() {
+        return card_type == CardType::Creature;
+    }
     state.objects.try_get(id).is_some_and(|object| {
         card_def::CARD_DEFS
             .get(object.card_def as usize)
@@ -10959,6 +11009,11 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
 /// Effective W/U/B/R/G/C mask already materialized on the object's current
 /// incarnation. Missing objects fail closed as colorless.
 pub fn object_color_mask(state: &GameState, id: ObjectId) -> u8 {
+    if let Some((characteristics, _)) =
+        crate::continuous_characteristics_v1::creature_override(state, id)
+    {
+        return card_def::mana_colors_mask(characteristics.colors);
+    }
     state
         .objects
         .try_get(id)
@@ -10985,15 +11040,45 @@ pub fn damage_is_prevented_by_protection(
     })
 }
 
+pub fn effective_name(state: &GameState, id: ObjectId) -> &str {
+    crate::continuous_characteristics_v1::creature_override(state, id).map_or(
+        state.objects.get(id).name.as_str(),
+        |(characteristics, _)| characteristics.name,
+    )
+}
+
+pub fn effective_base_power(state: &GameState, id: ObjectId) -> Option<i32> {
+    let obj = state.objects.get(id);
+    crate::continuous_characteristics_v1::creature_override(state, id)
+        .map(|(characteristics, _)| i32::from(characteristics.power))
+        .or_else(|| {
+            card_def::CARD_DEFS[obj.card_def as usize]
+                .power_for_face(obj.v4.face_index)
+                .map(i32::from)
+        })
+}
+
+pub fn effective_base_toughness(state: &GameState, id: ObjectId) -> Option<i32> {
+    let obj = state.objects.get(id);
+    crate::continuous_characteristics_v1::creature_override(state, id)
+        .map(|(characteristics, _)| i32::from(characteristics.toughness))
+        .or_else(|| {
+            card_def::CARD_DEFS[obj.card_def as usize]
+                .toughness_for_face(obj.v4.face_index)
+                .map(i32::from)
+        })
+}
+
 pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
     let obj = state.objects.get(id);
     let def = &card_def::CARD_DEFS[obj.card_def as usize];
-    let mut power = def.power_for_face(obj.v4.face_index).unwrap_or(0) as i32
-        + obj.counters.plus1_plus1
+    let mut power = effective_base_power(state, id).unwrap_or(0) + obj.counters.plus1_plus1
         - obj.counters.minus1_minus1 as i32;
     power += bestow_host_counter_bonus(state, id);
     power += controlled_subtype_boost(state, id).0;
-    if def.is_executable() {
+    if def.is_executable()
+        && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+    {
         if let Some(boost) = static_self_boost_for(def.name) {
             if (boost.condition)(obj.controller, state) {
                 power += boost.power;
@@ -11036,13 +11121,14 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
 pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
     let obj = state.objects.get(id);
     let def = &card_def::CARD_DEFS[obj.card_def as usize];
-    let mut toughness = def.toughness_for_face(obj.v4.face_index).unwrap_or(0) as i32
-        + obj.counters.plus1_plus1
+    let mut toughness = effective_base_toughness(state, id).unwrap_or(0) + obj.counters.plus1_plus1
         - obj.counters.minus1_minus1 as i32
         - obj.counters.minus0_minus1 as i32;
     toughness += bestow_host_counter_bonus(state, id);
     toughness += controlled_subtype_boost(state, id).1;
-    if def.is_executable() {
+    if def.is_executable()
+        && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+    {
         if let Some(boost) = static_self_boost_for(def.name) {
             if (boost.condition)(obj.controller, state) {
                 toughness += boost.toughness;
@@ -11092,9 +11178,15 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     if !def.is_executable() {
         return false;
     }
+    let printed_active = crate::continuous_characteristics_v1::printed_abilities_active(state, id);
     if (kw == Keywords::REACH || kw == Keywords::TRAMPLE)
         && obj.attachments.iter().copied().any(|aura| {
             valid_bestow_attachment_host(state, aura) == Some(id)
+                && crate::continuous_characteristics_v1::grant_survives(
+                    state,
+                    id,
+                    state.objects.get(aura).v4.layer_timestamp.unwrap_or(0),
+                )
                 && card_def::CARD_DEFS[state.objects.get(aura).card_def as usize]
                     .keywords
                     .has(kw)
@@ -11102,17 +11194,23 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     {
         return true;
     }
-    if def.keywords_for_face(obj.v4.face_index).has(kw) {
+    if printed_active && def.keywords_for_face(obj.v4.face_index).has(kw) {
         return true;
     }
     if obj.zone == Zone::Battlefield
         && obj.counters.plus1_plus1 > 0
         && object_has_type(state, id, CardType::Creature)
-        && state.objects.iter().any(|(_, source)| {
+        && state.objects.iter().any(|(source_id, source)| {
             let source_def = &card_def::CARD_DEFS[source.card_def as usize];
             source.zone == Zone::Battlefield
                 && source.controller == obj.controller
                 && source_def.is_executable()
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, source_id)
+                && crate::continuous_characteristics_v1::grant_survives(
+                    state,
+                    id,
+                    source.v4.layer_timestamp.unwrap_or(0),
+                )
                 && source_def
                     .controlled_counter_keyword
                     .is_some_and(|keyword| keyword.has(kw))
@@ -11120,7 +11218,14 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     {
         return true;
     }
-    if kw.has(Keywords::LIFELINK) && obj.v4.lifelink_keyword_counters > 0 {
+    if kw.has(Keywords::LIFELINK)
+        && obj.v4.lifelink_keyword_counters > 0
+        && crate::continuous_characteristics_v1::grant_survives(
+            state,
+            id,
+            obj.v4.lifelink_counter_timestamp.unwrap_or(0),
+        )
+    {
         return true;
     }
     if attached_equipment_profiles(state, id)
@@ -11133,6 +11238,16 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
                 equipment.other_turn_keywords
             };
             keywords.has(kw)
+                && crate::continuous_characteristics_v1::grant_survives(
+                    state,
+                    id,
+                    state
+                        .objects
+                        .get(equipment_id)
+                        .v4
+                        .layer_timestamp
+                        .unwrap_or(0),
+                )
         })
     {
         return true;
@@ -11142,6 +11257,11 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
             && obj.zone == Zone::Battlefield
             && obj.zone_change_count == effect.object_zone_change_count
             && effect.keywords.has(kw)
+            && crate::continuous_characteristics_v1::grant_survives(
+                state,
+                id,
+                effect.timestamp.unwrap_or(0),
+            )
     }) {
         return true;
     }
@@ -11152,18 +11272,20 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
                 object_id,
                 object_zone_change_count,
                 keywords,
+                timestamp,
                 ..
             } if *object_id == id
                 && obj.zone == Zone::Battlefield
                 && obj.zone_change_count == *object_zone_change_count
                 && keywords.has(kw)
+                && crate::continuous_characteristics_v1::grant_survives(state, id, *timestamp)
         )
     }) {
         return true;
     }
     if kw.has(Keywords::HASTE) {
         if let Some(boost) = static_self_boost_for(def.name) {
-            if boost.grant_haste && (boost.condition)(obj.controller, state) {
+            if printed_active && boost.grant_haste && (boost.condition)(obj.controller, state) {
                 return true;
             }
         }
@@ -11172,15 +11294,26 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
                 UntilEndOfTurnEffect::ResolvedSetEffect {
                     object_ids,
                     grant_haste,
+                    timestamp,
                     ..
-                } => *grant_haste && object_ids.contains(&id),
+                } => {
+                    *grant_haste
+                        && object_ids.contains(&id)
+                        && crate::continuous_characteristics_v1::grant_survives(
+                            state, id, *timestamp,
+                        )
+                }
                 UntilEndOfTurnEffect::ResolvedObjectEffect {
                     object_id,
                     object_zone_change_count,
                     grant_haste,
+                    timestamp,
                     ..
                 } => {
                     *grant_haste
+                        && crate::continuous_characteristics_v1::grant_survives(
+                            state, id, *timestamp,
+                        )
                         && *object_id == id
                         && obj.zone == Zone::Battlefield
                         && obj.zone_change_count == *object_zone_change_count
@@ -11385,9 +11518,24 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
     let Some(object) = state.objects.try_get(id) else {
         return Vec::new();
     };
-    let mut subtype_ids = object.v4.effective_subtype_ids.clone();
+    let override_effect = crate::continuous_characteristics_v1::creature_override(state, id);
+    let mut subtype_ids = override_effect.map_or_else(
+        || object.v4.effective_subtype_ids.clone(),
+        |(characteristics, _)| vec![characteristics.subtype.stable_id()],
+    );
     subtype_ids.extend(
         attached_equipment_profiles(state, id)
+            .filter(|(equipment_id, _)| {
+                override_effect.is_none_or(|(_, timestamp)| {
+                    state
+                        .objects
+                        .get(*equipment_id)
+                        .v4
+                        .layer_timestamp
+                        .unwrap_or(0)
+                        > timestamp
+                })
+            })
             .filter_map(|(_, equipment)| equipment.add_subtype.map(|subtype| subtype.stable_id())),
     );
     subtype_ids.sort_unstable();
@@ -11399,14 +11547,25 @@ pub fn has_effective_subtype(state: &GameState, id: ObjectId, subtype: card_def:
     let Some(object) = state.objects.try_get(id) else {
         return false;
     };
-    if subtype.is_in_subtype_ids(&object.v4.effective_subtype_ids) {
-        return true;
-    }
-    attached_equipment_profiles(state, id).any(|(_, equipment)| {
-        equipment
-            .add_subtype
-            .is_some_and(|added| added.same_subtype_as(subtype))
-    })
+    let override_effect = crate::continuous_characteristics_v1::creature_override(state, id);
+    let base_has_subtype = override_effect.map_or_else(
+        || subtype.is_in_subtype_ids(&object.v4.effective_subtype_ids),
+        |(characteristics, _)| characteristics.subtype.same_subtype_as(subtype),
+    );
+    base_has_subtype
+        || attached_equipment_profiles(state, id).any(|(equipment_id, equipment)| {
+            override_effect.is_none_or(|(_, timestamp)| {
+                state
+                    .objects
+                    .get(equipment_id)
+                    .v4
+                    .layer_timestamp
+                    .unwrap_or(0)
+                    > timestamp
+            }) && equipment
+                .add_subtype
+                .is_some_and(|added| added.same_subtype_as(subtype))
+        })
 }
 
 fn participates_in_wave(state: &GameState, id: ObjectId, first_strike_wave: bool) -> bool {

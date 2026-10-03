@@ -117,7 +117,7 @@ pub struct GoadStateV4 {
 /// Schema-v4 dynamic object substrate. Base colors, subtypes, and token
 /// identity are materialized from the registry at object creation, rather
 /// than assigning zero a meaning that would change when mechanics arrive.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObjectStateV4 {
     pub is_token: bool,
     pub face_index: u8,
@@ -163,6 +163,12 @@ pub struct ObjectStateV4 {
     /// restored state reject a unilateral rewrite of either value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finalized_cast_binding: Option<FinalizedCastBindingV1>,
+    /// Timestamp of entering the battlefield or becoming attached to a new host.
+    /// Absent in legacy/default-profile states.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer_timestamp: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifelink_counter_timestamp: Option<u64>,
     /// True iff this exact incarnation is a physical Adventure card sitting
     /// in exile after its Adventure spell resolved (Fang Dragon after
     /// Forktail Sweep resolves), granting its owner permission to cast the
@@ -180,6 +186,38 @@ pub struct ObjectStateV4 {
     /// this set.
     #[serde(default, skip_serializing_if = "bool_is_false")]
     pub on_adventure: bool,
+}
+
+impl Hash for ObjectStateV4 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.is_token.hash(state);
+        self.face_index.hash(state);
+        self.effective_color_mask.hash(state);
+        self.effective_subtype_ids.hash(state);
+        self.chosen_color.hash(state);
+        self.entered_battlefield_turn.hash(state);
+        self.ability_uses_this_turn.hash(state);
+        self.skip_next_untap.hash(state);
+        self.deathtouch_damage.hash(state);
+        self.lifelink_keyword_counters.hash(state);
+        self.goaded_by.hash(state);
+        self.attached_to.hash(state);
+        self.exiled_by.hash(state);
+        self.ward_generic.hash(state);
+        self.minimum_blockers_override.hash(state);
+        self.landwalk_mask.hash(state);
+        self.spell_cast_origin.hash(state);
+        self.finalized_cast_binding.hash(state);
+        self.on_adventure.hash(state);
+        if let Some(timestamp) = self.layer_timestamp {
+            "layer_timestamp/v1".hash(state);
+            timestamp.hash(state);
+        }
+        if let Some(timestamp) = self.lifelink_counter_timestamp {
+            "lifelink_counter_timestamp/v1".hash(state);
+            timestamp.hash(state);
+        }
+    }
 }
 
 impl ObjectStateV4 {
@@ -221,6 +259,8 @@ impl ObjectStateV4 {
             landwalk_mask: 0,
             spell_cast_origin: None,
             finalized_cast_binding: None,
+            layer_timestamp: None,
+            lifelink_counter_timestamp: None,
             on_adventure: false,
         }
     }
@@ -1773,6 +1813,15 @@ impl GameState {
             || target_live.zone_change_count != target_zone_change_count
         {
             return Err(source);
+        }
+        let host_link = ObjectLinkV4 {
+            object: target,
+            zone_change_count: target_zone_change_count,
+        };
+        let changed_host = source_live.v4.attached_to != Some(host_link);
+        if cfg!(feature = "limited-fdn-fixtures") && changed_host {
+            let timestamp = crate::engine::next_timestamp(self);
+            self.objects.get_mut(source).v4.layer_timestamp = Some(timestamp);
         }
         for (_, candidate) in self.objects.iter_mut() {
             candidate.attachments.retain(|&attached| attached != source);

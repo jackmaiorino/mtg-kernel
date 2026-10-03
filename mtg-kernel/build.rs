@@ -3124,7 +3124,7 @@ fn special_for(name: &str) -> Special {
         "Dread Return" => Special::ReturnOwnGraveyardCreatureToBattlefield,
         "Land Grant" => Special::SearchForestToHand,
         "Unexpected Fangs" => Special::AddPlusOnePlusOneAndLifelinkCounters,
-        "Bind the Monster" => Special::BindTheMonster,
+        "Bind the Monster" | "Witness Protection" => Special::BindTheMonster,
         "Snap" => Special::Snap,
         "Flaring Pain" => Special::DamageCannotBePreventedThisTurn,
         "Prismatic Strands" => Special::PrismaticStrands,
@@ -5012,6 +5012,7 @@ fn equipment_for(name: &str) -> &'static str {
 fn attachment_for(name: &str) -> &'static str {
     match name {
         "Bind the Monster" => "Some(AttachmentDef::AuraCreature { prevents_untap: true })",
+        "Witness Protection" => "Some(AttachmentDef::AuraCreatureOverride(CreatureCharacteristicsOverrideDef { name: \"Legitimate Businessperson\", subtype: Subtype::Citizen, colors: &[ManaColor::G, ManaColor::W], power: 1, toughness: 1, loses_abilities: true }))",
         _ => "None",
     }
 }
@@ -7736,7 +7737,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v50\n"
+            "kernel_carddb/v51\n"
         } else {
             "kernel_carddb/v34\n"
         },
@@ -8085,6 +8086,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Octopus" => "Subtype::Octopus",
         "Hyena" => "Subtype::Hyena",
         "Raccoon" => "Subtype::Raccoon",
+        "Citizen" => "Subtype::Citizen",
         "Pirate" => "Subtype::Pirate",
         "Plains" => "Subtype::Plains",
         "ROGUE" => "Subtype::RogueAllCaps",

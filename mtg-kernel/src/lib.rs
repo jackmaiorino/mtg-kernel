@@ -45,6 +45,7 @@ pub mod bounded_staleness_async_production_v1;
 pub mod bounded_staleness_async_v1;
 pub mod card_def;
 pub mod combat_damage_v1;
+pub(crate) mod continuous_characteristics_v1;
 pub mod legend_rule_v1;
 pub mod planeswalker_v1;
 // Fail-closed canonical JSON codec shared by the native training store's
