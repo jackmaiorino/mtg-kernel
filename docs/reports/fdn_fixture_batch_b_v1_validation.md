@@ -89,3 +89,10 @@ UG fixture has 23/40 supported copies; WG has 25/40. Their union still needs
 resolver. Remaining cards, mulligans, current combat allocation/trample,
 relevant planeswalker targeting and executable XMage comparisons remain
 outstanding. The full fixture gameplay goal remains active.
+
+## Rebase onto main (2026-10-02)
+
+After merging main (#112, `kernel_carddb/v34`, 192 Pauper definitions), batch
+B's ten definitions take IDs 198 through 207 and the Limited database is
+`kernel_carddb/v36`, hash `07b559b7395f8a23`. Batch A's frozen profile is
+now `86272311c565a969`. The measurements above describe the original build.

@@ -155,9 +155,9 @@ fn scions(state: &GameState) -> Vec<ObjectId> {
 
 #[test]
 fn printed_kiora_and_scion_characteristics_and_admission_are_exact() {
-    assert_eq!(card_id_by_name("Kiora, the Rising Tide"), Some(197));
-    assert_eq!(card_id_by_name("Scion of the Deep Token"), Some(198));
-    let kiora = &CARD_DEFS[197];
+    assert_eq!(card_id_by_name("Kiora, the Rising Tide"), Some(227));
+    assert_eq!(card_id_by_name("Scion of the Deep Token"), Some(228));
+    let kiora = &CARD_DEFS[227];
     assert_eq!(
         (kiora.power, kiora.toughness, kiora.mana_value),
         (Some(3), Some(2), 3)
@@ -167,7 +167,7 @@ fn printed_kiora_and_scion_characteristics_and_admission_are_exact() {
     assert_eq!(kiora.colors, &[ManaColor::U]);
     assert_eq!(kiora.subtypes, &[Subtype::Merfolk, Subtype::Noble]);
     assert_eq!(kiora.supertypes, &[Supertype::Legendary]);
-    let token = &CARD_DEFS[198];
+    let token = &CARD_DEFS[228];
     assert_eq!(token.object_name, "Scion of the Deep");
     assert_eq!(
         (token.power, token.toughness, token.mana_value),
@@ -177,9 +177,9 @@ fn printed_kiora_and_scion_characteristics_and_admission_are_exact() {
     assert_eq!(token.subtypes, &[Subtype::Octopus]);
     assert_eq!(token.supertypes, &[Supertype::Legendary]);
     assert!(token.is_token);
-    assert!(mtg_kernel::trigger::triggers_for(198).is_empty());
-    preflight_fully_supported_deck(&[197]).unwrap();
-    assert!(preflight_fully_supported_deck(&[198]).is_err());
+    assert!(mtg_kernel::trigger::triggers_for(228).is_empty());
+    preflight_fully_supported_deck(&[227]).unwrap();
+    assert!(preflight_fully_supported_deck(&[228]).is_err());
 }
 
 #[test]

@@ -1,0 +1,392 @@
+{
+  "schema": "line-b-historical-reproduction/v1",
+  "reference": {
+    "path": "docs/reports/line_b_teacher_v1/acceptance-002/receipt.json",
+    "sha256": "402b4d5ab939c8c0aedf5117a034c24f334de1cdaccf4a9b17c23b6aae4b401a"
+  },
+  "candidate": {
+    "path": "D:/e-scratch/astra-exit-teacher/receipts/acceptance-003/receipt.json",
+    "sha256": "2e17de502e24e73e251b959fdaaaece5629695e4d97ace1c01afe99443142dbf"
+  },
+  "checks": {
+    "update_labels": true,
+    "template": true,
+    "student": true,
+    "seeds": true,
+    "rollouts": true,
+    "learner_lists": true,
+    "all_ten_trajectories": true,
+    "serial_trajectories": true,
+    "candidate_checks": true,
+    "cuda1-forward-kl-a_envelope": true,
+    "cuda1-forward-kl-b_envelope": true,
+    "cuda1-reverse-kl-a_envelope": true,
+    "cuda1-reverse-kl-b_envelope": true,
+    "all_twelve_state_and_frozen_hashes": true,
+    "all_packets": true
+  },
+  "updates": [
+    {
+      "update": "cpu-control-a",
+      "fields": {
+        "before_state_sha256": {
+          "expected": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "actual": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "equal": true
+        },
+        "after_state_sha256": {
+          "expected": "68c49454e2b9a094654e7f0bd923beb15ba99a679da645c69a2eaf2e9385a72b",
+          "actual": "68c49454e2b9a094654e7f0bd923beb15ba99a679da645c69a2eaf2e9385a72b",
+          "equal": true
+        },
+        "frozen_tensor_sha256": {
+          "expected": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "actual": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "equal": true
+        },
+        "adam_step": {
+          "expected": 32401,
+          "actual": 32401,
+          "equal": true
+        }
+      },
+      "packet": {
+        "expected": null,
+        "actual": null,
+        "equal": true
+      }
+    },
+    {
+      "update": "cpu-control-b",
+      "fields": {
+        "before_state_sha256": {
+          "expected": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "actual": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "equal": true
+        },
+        "after_state_sha256": {
+          "expected": "68c49454e2b9a094654e7f0bd923beb15ba99a679da645c69a2eaf2e9385a72b",
+          "actual": "68c49454e2b9a094654e7f0bd923beb15ba99a679da645c69a2eaf2e9385a72b",
+          "equal": true
+        },
+        "frozen_tensor_sha256": {
+          "expected": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "actual": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "equal": true
+        },
+        "adam_step": {
+          "expected": 32401,
+          "actual": 32401,
+          "equal": true
+        }
+      },
+      "packet": {
+        "expected": null,
+        "actual": null,
+        "equal": true
+      }
+    },
+    {
+      "update": "cpu-forward-kl-a",
+      "fields": {
+        "before_state_sha256": {
+          "expected": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "actual": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "equal": true
+        },
+        "after_state_sha256": {
+          "expected": "55e4fec4a513123dec588b6513e440ccbcfc316f9332c8003ff5a6e5fa0e9dd1",
+          "actual": "55e4fec4a513123dec588b6513e440ccbcfc316f9332c8003ff5a6e5fa0e9dd1",
+          "equal": true
+        },
+        "frozen_tensor_sha256": {
+          "expected": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "actual": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "equal": true
+        },
+        "adam_step": {
+          "expected": 32401,
+          "actual": 32401,
+          "equal": true
+        }
+      },
+      "packet": {
+        "expected": "e0df1c83960f13e0b7fce35eb81d477baa40e458e17a2aa49fd09eaee00d1939",
+        "actual": "e0df1c83960f13e0b7fce35eb81d477baa40e458e17a2aa49fd09eaee00d1939",
+        "equal": true
+      }
+    },
+    {
+      "update": "cpu-forward-kl-b",
+      "fields": {
+        "before_state_sha256": {
+          "expected": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "actual": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "equal": true
+        },
+        "after_state_sha256": {
+          "expected": "55e4fec4a513123dec588b6513e440ccbcfc316f9332c8003ff5a6e5fa0e9dd1",
+          "actual": "55e4fec4a513123dec588b6513e440ccbcfc316f9332c8003ff5a6e5fa0e9dd1",
+          "equal": true
+        },
+        "frozen_tensor_sha256": {
+          "expected": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "actual": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "equal": true
+        },
+        "adam_step": {
+          "expected": 32401,
+          "actual": 32401,
+          "equal": true
+        }
+      },
+      "packet": {
+        "expected": "e0df1c83960f13e0b7fce35eb81d477baa40e458e17a2aa49fd09eaee00d1939",
+        "actual": "e0df1c83960f13e0b7fce35eb81d477baa40e458e17a2aa49fd09eaee00d1939",
+        "equal": true
+      }
+    },
+    {
+      "update": "cpu-reverse-kl-a",
+      "fields": {
+        "before_state_sha256": {
+          "expected": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "actual": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "equal": true
+        },
+        "after_state_sha256": {
+          "expected": "b240f95f235957b55887b89ed3943f79f6995abf466bb06d0ca0413099fb6356",
+          "actual": "b240f95f235957b55887b89ed3943f79f6995abf466bb06d0ca0413099fb6356",
+          "equal": true
+        },
+        "frozen_tensor_sha256": {
+          "expected": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "actual": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "equal": true
+        },
+        "adam_step": {
+          "expected": 32401,
+          "actual": 32401,
+          "equal": true
+        }
+      },
+      "packet": {
+        "expected": "13d02e924b8ed0619f7cf3456d491c56bd09ef4b0918392598045d5cbaeecdfc",
+        "actual": "13d02e924b8ed0619f7cf3456d491c56bd09ef4b0918392598045d5cbaeecdfc",
+        "equal": true
+      }
+    },
+    {
+      "update": "cpu-reverse-kl-b",
+      "fields": {
+        "before_state_sha256": {
+          "expected": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "actual": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "equal": true
+        },
+        "after_state_sha256": {
+          "expected": "b240f95f235957b55887b89ed3943f79f6995abf466bb06d0ca0413099fb6356",
+          "actual": "b240f95f235957b55887b89ed3943f79f6995abf466bb06d0ca0413099fb6356",
+          "equal": true
+        },
+        "frozen_tensor_sha256": {
+          "expected": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "actual": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "equal": true
+        },
+        "adam_step": {
+          "expected": 32401,
+          "actual": 32401,
+          "equal": true
+        }
+      },
+      "packet": {
+        "expected": "13d02e924b8ed0619f7cf3456d491c56bd09ef4b0918392598045d5cbaeecdfc",
+        "actual": "13d02e924b8ed0619f7cf3456d491c56bd09ef4b0918392598045d5cbaeecdfc",
+        "equal": true
+      }
+    },
+    {
+      "update": "cuda1-control-a",
+      "fields": {
+        "before_state_sha256": {
+          "expected": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "actual": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "equal": true
+        },
+        "after_state_sha256": {
+          "expected": "7e14ba8cca8dbd13617dd29b068d9f9ee8442060b0d13cb678327f6a28026625",
+          "actual": "7e14ba8cca8dbd13617dd29b068d9f9ee8442060b0d13cb678327f6a28026625",
+          "equal": true
+        },
+        "frozen_tensor_sha256": {
+          "expected": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "actual": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "equal": true
+        },
+        "adam_step": {
+          "expected": 32401,
+          "actual": 32401,
+          "equal": true
+        }
+      },
+      "packet": {
+        "expected": null,
+        "actual": null,
+        "equal": true
+      }
+    },
+    {
+      "update": "cuda1-control-b",
+      "fields": {
+        "before_state_sha256": {
+          "expected": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "actual": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "equal": true
+        },
+        "after_state_sha256": {
+          "expected": "7e14ba8cca8dbd13617dd29b068d9f9ee8442060b0d13cb678327f6a28026625",
+          "actual": "7e14ba8cca8dbd13617dd29b068d9f9ee8442060b0d13cb678327f6a28026625",
+          "equal": true
+        },
+        "frozen_tensor_sha256": {
+          "expected": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "actual": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "equal": true
+        },
+        "adam_step": {
+          "expected": 32401,
+          "actual": 32401,
+          "equal": true
+        }
+      },
+      "packet": {
+        "expected": null,
+        "actual": null,
+        "equal": true
+      }
+    },
+    {
+      "update": "cuda1-forward-kl-a",
+      "fields": {
+        "before_state_sha256": {
+          "expected": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "actual": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "equal": true
+        },
+        "after_state_sha256": {
+          "expected": "83802b8b8e83e179c1b21a985fa9b0848011dbe3a47f24729d3cdd3a2612391a",
+          "actual": "83802b8b8e83e179c1b21a985fa9b0848011dbe3a47f24729d3cdd3a2612391a",
+          "equal": true
+        },
+        "frozen_tensor_sha256": {
+          "expected": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "actual": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "equal": true
+        },
+        "adam_step": {
+          "expected": 32401,
+          "actual": 32401,
+          "equal": true
+        }
+      },
+      "packet": {
+        "expected": "e0df1c83960f13e0b7fce35eb81d477baa40e458e17a2aa49fd09eaee00d1939",
+        "actual": "e0df1c83960f13e0b7fce35eb81d477baa40e458e17a2aa49fd09eaee00d1939",
+        "equal": true
+      }
+    },
+    {
+      "update": "cuda1-forward-kl-b",
+      "fields": {
+        "before_state_sha256": {
+          "expected": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "actual": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "equal": true
+        },
+        "after_state_sha256": {
+          "expected": "83802b8b8e83e179c1b21a985fa9b0848011dbe3a47f24729d3cdd3a2612391a",
+          "actual": "83802b8b8e83e179c1b21a985fa9b0848011dbe3a47f24729d3cdd3a2612391a",
+          "equal": true
+        },
+        "frozen_tensor_sha256": {
+          "expected": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "actual": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "equal": true
+        },
+        "adam_step": {
+          "expected": 32401,
+          "actual": 32401,
+          "equal": true
+        }
+      },
+      "packet": {
+        "expected": "e0df1c83960f13e0b7fce35eb81d477baa40e458e17a2aa49fd09eaee00d1939",
+        "actual": "e0df1c83960f13e0b7fce35eb81d477baa40e458e17a2aa49fd09eaee00d1939",
+        "equal": true
+      }
+    },
+    {
+      "update": "cuda1-reverse-kl-a",
+      "fields": {
+        "before_state_sha256": {
+          "expected": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "actual": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "equal": true
+        },
+        "after_state_sha256": {
+          "expected": "6d5b034202e454bca137d06d5dc0e673127432a281c844f32903486880c5f58a",
+          "actual": "6d5b034202e454bca137d06d5dc0e673127432a281c844f32903486880c5f58a",
+          "equal": true
+        },
+        "frozen_tensor_sha256": {
+          "expected": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "actual": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "equal": true
+        },
+        "adam_step": {
+          "expected": 32401,
+          "actual": 32401,
+          "equal": true
+        }
+      },
+      "packet": {
+        "expected": "13d02e924b8ed0619f7cf3456d491c56bd09ef4b0918392598045d5cbaeecdfc",
+        "actual": "13d02e924b8ed0619f7cf3456d491c56bd09ef4b0918392598045d5cbaeecdfc",
+        "equal": true
+      }
+    },
+    {
+      "update": "cuda1-reverse-kl-b",
+      "fields": {
+        "before_state_sha256": {
+          "expected": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "actual": "8139016ca561961714f25e22a9d6f7fc888548fc332e45b6bce402dfc43159f2",
+          "equal": true
+        },
+        "after_state_sha256": {
+          "expected": "6d5b034202e454bca137d06d5dc0e673127432a281c844f32903486880c5f58a",
+          "actual": "6d5b034202e454bca137d06d5dc0e673127432a281c844f32903486880c5f58a",
+          "equal": true
+        },
+        "frozen_tensor_sha256": {
+          "expected": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "actual": "d6ccc3d8ff750f073ee0a6e10b34d46b8e78c6f03bfce834153b004e7612d0d2",
+          "equal": true
+        },
+        "adam_step": {
+          "expected": 32401,
+          "actual": 32401,
+          "equal": true
+        }
+      },
+      "packet": {
+        "expected": "13d02e924b8ed0619f7cf3456d491c56bd09ef4b0918392598045d5cbaeecdfc",
+        "actual": "13d02e924b8ed0619f7cf3456d491c56bd09ef4b0918392598045d5cbaeecdfc",
+        "equal": true
+      }
+    }
+  ],
+  "all_equal": true,
+  "nonclaim": "No strength or review verdict"
+}

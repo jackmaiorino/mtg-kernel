@@ -1,0 +1,38 @@
+{
+  "schema": "g115-line-a-throughput-receipt/v1",
+  "launch_manifest": {
+    "path": "D:/e-scratch/g115-line-a-throughput-001/preparation-002/launch-manifest.json",
+    "sha256": "583d3161f58df99d75a5b42ef4767eb5c17d941181a3e0406ffd204f01c57080"
+  },
+  "scratch_manifest": {
+    "path": "D:/e-scratch/g115-line-a-throughput-001/preparation-002/scratch-manifest.json",
+    "sha256": "6f623812956e677aa12eb4ed282472e8987bf1d67f6cb727917c19868ad60db8"
+  },
+  "executable": {
+    "path": "E:/pinned-binaries/868a741115880fa5055a6c5906abe521bc2514a2febc1f0bce058dc79b3c48a5/public_feature_evaluation_v1.exe",
+    "sha256": "868a741115880fa5055a6c5906abe521bc2514a2febc1f0bce058dc79b3c48a5",
+    "git_head": "ff6e01248176b99aee828fd1651b4a669bbb91b8",
+    "build_receipt": {
+      "path": "D:/e-scratch/opus-line-a-launcher/build-001/build-receipt.json",
+      "sha256": "33984f727012429e80de241c4e574808c1abfcc0b2602468c8b5022268ef5991"
+    }
+  },
+  "binding": {
+    "launcher_sha256": "5fd7a05fd2ae0a891e95aaaf6e48be8063f586d89b04cef14c63ebf442b990b6",
+    "executable_sha256": "868a741115880fa5055a6c5906abe521bc2514a2febc1f0bce058dc79b3c48a5",
+    "data_tree_sha256": "b120440dde2eb33c22c52af2478430804c84c042690a6326d81b3ceed1452c6c",
+    "work_class": "bo3-ordinary"
+  },
+  "transport": {
+    "dispatcher": {
+      "path": "D:/mtg-kernel-opus-line-a-launcher-build/python/tools/g115_d3_windows_dispatch.ps1",
+      "sha256": "28826a6670b796633f53e20b6e8fc33618c42601c2069e9474edc57265143ea0"
+    }
+  },
+  "seeds": {
+    "throughput/block/00": 4948925242897644805,
+    "throughput/block/01": 2825844538757811556
+  },
+  "host_throughput_sha256": "8824ba551ef5470b67ac41061f7d663eb1a27ca5f4b9c02ff69deda2bb31aab3",
+  "note": "Engineering timing check through the WMI transport, outcomes unread; native logs and match files stay in scratch for the closure prune."
+}

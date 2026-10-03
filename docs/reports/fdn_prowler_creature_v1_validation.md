@@ -75,3 +75,29 @@ log SHA-256 `419ee8b640f866e5336df0039211f0974e07e9d84c065955cf42687fa7ed5e84`.
 The external check establishes interface/game completion and replay;
 focused rules/reference cases establish the individual morbid/ward behavior.
 These custom games do not complete either original fixture deck.
+
+## Windows compiler environment correction
+
+The completed Windows Kiora job 111079733482 failed 33 default-library cases
+with `ForbiddenBuildFlagOverride`: the CI bootstrap exported `RUSTC`, which
+the existing compile-time guard correctly rejects. The bootstrap now keeps
+the normalized Windows `RUSTUP_HOME` and pinned Rust install without exporting
+`RUSTC`. Hosted default and native-build capture checks are pending. The guard
+and toolchain pin remain unchanged.
+
+## Current-main integration
+
+The Prowler prefix incorporates Kiora a1473019 and main's 192-definition/v34
+catalog. Its generated Limited identity is 230 definitions/v46
+6630c9c09989878f. Original and earlier composed tuples remain readable;
+mutation uses the live identity. Fixture ID expectations now match the
+appended catalog. The main explicit-deck constructor initializes the Limited
+trigger state, and the existing human bridge rejects the unsupported Limited
+incremental trigger prompt explicitly.
+
+Prowler and monarch end-step events are logged before a single trigger
+collection. A regression exercises both orders in their shared ordering window
+and requires both the monarch draw and Prowler counter. The reference scanner
+classifies the new end-step marker as having no physical object binding.
+Catalog generation, formatting, workflow lint and diff checks are local checks;
+complete composed-source hosted qualification is pending.
