@@ -143,6 +143,19 @@ pub struct CreateTokenProposed {
     pub touched_by: Vec<ReplacementId>,
 }
 
+/// Flips a permanent's face in place, with no zone change: the same
+/// `ObjectId` and the same `zone_change_count` before and after (Delver of
+/// Secrets transforming into Insectile Aberration). `face_index` must name
+/// a face the object's `CardDef::transform_face` defines; `commit` panics
+/// rather than guess at an undefined one, matching the zone-change path's
+/// own `battlefield_face_index` handling.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransformProposed {
+    pub object: ObjectId,
+    pub face_index: u8,
+    pub touched_by: Vec<ReplacementId>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProposedEvent {
     Damage(DamageProposed),
@@ -153,6 +166,7 @@ pub enum ProposedEvent {
     Tap(TapProposed),
     ManaAdd(ManaAddProposed),
     CreateToken(CreateTokenProposed),
+    Transform(TransformProposed),
 }
 
 impl ProposedEvent {
@@ -303,6 +317,16 @@ impl ProposedEvent {
             touched_by: Vec::new(),
         })
     }
+    /// Flips `object`'s face in place with no zone change (Delver of
+    /// Secrets transforming into Insectile Aberration). See
+    /// `TransformProposed`'s doc.
+    pub fn transform_in_place(object: ObjectId, face_index: u8) -> ProposedEvent {
+        ProposedEvent::Transform(TransformProposed {
+            object,
+            face_index,
+            touched_by: Vec::new(),
+        })
+    }
 
     fn touched_by(&self) -> &[ReplacementId] {
         match self {
@@ -314,6 +338,7 @@ impl ProposedEvent {
             ProposedEvent::Tap(e) => &e.touched_by,
             ProposedEvent::ManaAdd(e) => &e.touched_by,
             ProposedEvent::CreateToken(e) => &e.touched_by,
+            ProposedEvent::Transform(e) => &e.touched_by,
         }
     }
 
@@ -327,6 +352,7 @@ impl ProposedEvent {
             ProposedEvent::Tap(e) => &mut e.touched_by,
             ProposedEvent::ManaAdd(e) => &mut e.touched_by,
             ProposedEvent::CreateToken(e) => &mut e.touched_by,
+            ProposedEvent::Transform(e) => &mut e.touched_by,
         };
         v.push(id);
     }
@@ -425,6 +451,22 @@ pub enum CommittedEvent {
         controller: PlayerId,
         chapter: u8,
     },
+    /// 505.2: the beginning of `player`'s own Upkeep step (Delver of
+    /// Secrets). Exactly one Upkeep step happens each turn, belonging to
+    /// the active player, so this fires once per turn.
+    UpkeepBegan {
+        player: PlayerId,
+    },
+    /// `object`'s face flipped to `face_index` in place, with no zone
+    /// change (Delver of Secrets transforming into Insectile Aberration).
+    /// Distinct from the Saga path's exile-then-return
+    /// (`ZoneChange`/`ProposedEvent::transformed_battlefield_return`),
+    /// which creates a new incarnation because that card's own rules text
+    /// says so.
+    Transformed {
+        object: ObjectId,
+        face_index: u8,
+    },
     /// Transient cast-provenance marker consumed from `event_log` by the
     /// trigger collection immediately following this resolution. It is not
     /// appended to permanent `event_history`; the spell stack item and its
@@ -439,6 +481,13 @@ pub enum CommittedEvent {
     /// history before the resulting ability may be placed on the stack.
     InitiativeTrigger {
         binding: crate::state::InitiativeTriggerBindingV1,
+    },
+    /// Nonreplaceable marker for one engine-owned monarch end-step draw
+    /// trigger (306.3). `history_index` is self-authenticating against the
+    /// permanent event history before the resulting ability may be placed
+    /// on the stack, the same discipline `InitiativeTrigger` uses.
+    MonarchTrigger {
+        binding: crate::state::MonarchTriggerBindingV1,
     },
     /// Exact declaration-time source for an attack trigger.
     DeclaredAttacker {
@@ -958,6 +1007,30 @@ fn commit_with_ability_lki(
                 controller: t.controller,
             }
         }
+        ProposedEvent::Transform(t) => {
+            let obj = state.objects.get_mut(t.object);
+            let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
+            let Some(face) = (t.face_index == 1)
+                .then_some(def.transform_face.as_ref())
+                .flatten()
+            else {
+                panic!("transform_in_place requested an undefined face");
+            };
+            obj.v4.face_index = t.face_index;
+            obj.v4.effective_color_mask = crate::card_def::mana_colors_mask(face.colors);
+            obj.v4.effective_subtype_ids = face
+                .subtypes
+                .iter()
+                .map(|subtype| subtype.stable_id())
+                .collect();
+            obj.v4.effective_subtype_ids.sort_unstable();
+            obj.v4.effective_subtype_ids.dedup();
+            obj.name = face.name.to_string();
+            CommittedEvent::Transformed {
+                object: t.object,
+                face_index: t.face_index,
+            }
+        }
     };
     let saga_entered = matches!(
         committed,
@@ -1153,6 +1226,17 @@ pub fn log_saga_chapter(state: &mut GameState, source: ObjectId, chapter: u8) {
     state.engine.event_history.push(committed);
 }
 
+/// Logs the nonreplaceable marker for the beginning of `player`'s own
+/// Upkeep step (Delver of Secrets and any future "at the beginning of ...
+/// upkeep" trigger). 505.2: exactly one Upkeep step happens each turn,
+/// belonging to the active player, so callers log this once per turn for
+/// `player == state.active_player`.
+pub fn log_upkeep_began(state: &mut GameState, player: PlayerId) {
+    let committed = CommittedEvent::UpkeepBegan { player };
+    state.engine.event_log.push(committed.clone());
+    state.engine.event_history.push(committed);
+}
+
 pub fn log_initiative_trigger(
     state: &mut GameState,
     player: PlayerId,
@@ -1183,6 +1267,42 @@ pub fn log_initiative_trigger(
         kind,
     };
     let committed = CommittedEvent::InitiativeTrigger { binding };
+    state.engine.event_log.push(committed.clone());
+    state.engine.event_history.push(committed);
+    Ok(binding)
+}
+
+/// Logs one engine-owned monarch end-step draw trigger (306.3). Unlike
+/// `log_initiative_trigger`, `source` is not validated against one fixed
+/// card name: Azure Fleet Admiral's ETB grant and a combat-damage transfer
+/// (see `engine::deal_combat_damage`) both freeze whichever object caused
+/// the transfer into `EngineState::monarch_source`, and either is a valid
+/// source here as long as it is still a real object incarnation.
+pub fn log_monarch_trigger(
+    state: &mut GameState,
+    player: PlayerId,
+    mut source: crate::state::AbilitySourceContractV4,
+) -> Result<crate::state::MonarchTriggerBindingV1, String> {
+    let live = state
+        .objects
+        .try_get(source.source)
+        .ok_or("Monarch designation source no longer exists")?;
+    if live.card_def != source.card_def
+        || live.owner != source.owner
+        || live.zone_change_count < source.zone_change_count
+        || (live.zone_change_count == source.zone_change_count && live.zone != source.zone)
+    {
+        return Err("Monarch designation source contract is malformed".to_string());
+    }
+    source.controller = player;
+    let history_index = u32::try_from(state.engine.event_history.len())
+        .map_err(|_| "Monarch event history exceeds u32".to_string())?;
+    let binding = crate::state::MonarchTriggerBindingV1 {
+        history_index,
+        player,
+        source,
+    };
+    let committed = CommittedEvent::MonarchTrigger { binding };
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
     Ok(binding)

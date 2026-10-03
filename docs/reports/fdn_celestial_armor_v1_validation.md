@@ -1,5 +1,18 @@
 # Celestial Armor implementation and verification
 
+Hosted CI37031403320 at33d84667 passed Ubuntu Rust and both Ubuntu Python
+shards. Windows Python shard0 found a timing-dependent sentinel-coverage test:
+fake process startup legitimately ranked serial first, while the test required
+the two-device allocation. Apply the already qualified narrow test repair from
+319ac081: fix only the ranking input and still execute/compare every prefix and
+full-length subprocess output. The repaired focused test passed locally in
+11.531 seconds. Windows Rust completed successfully. The complete job110918929067
+log confirms all19 selected Limited integration targets executed, with310
+passing tests including20 Armor cases and no failed summaries or native
+compile-error markers. Both hosts' Rust checks and required release boundaries
+pass at33d84667. Publish the test-only repair after this completed audit;
+complete corrected-source CI remains required.
+
 The unchanged WG fixture now resolves all40 copies. Armor costs `{2}{W}`,
 has flash, and its entry trigger attaches to a controlled creature and
 independently grants hexproof and indestructible until end of turn.
@@ -21,7 +34,7 @@ readable and cannot publish/resume against a different live build.
 | XMage |10 strict reference cases pass; Mage PR13. |
 | Broader/default compatibility | Checks006 final0:242 prior rules,125 Limited/124 default engine and62 Limited/27 default session checks pass. Limited/default all-target Clippy and frozen v32 golden pass. |
 | Original WG external gameplay | Two original WG-versus-WG games reach natural P0 wins at346 policy steps, including Armor casting, with identical transcript hashes. |
-| Release boundaries and hosted CI | Pending. Debug production build correctly refuses with `native_store_build_profile_not_release` at build_support/native_store_build_capture_v1.rs:799. Existing CI explicitly runs the three required combined-feature release checks. No build-profile bypass or new heavy Haley compile. |
+| Release boundaries and hosted CI | Both hosted Rust jobs pass at33d84667, including all three combined-feature release filters. The Windows full-log audit verifies all19 Limited integration targets,310 passes and no failures. Hosted CI's only failure is the timing-dependent Python sentinel-coverage expectation; its focused repair passes locally and awaits corrected-source CI. The earlier debug production refusal remains retained. |
 
 Core commit `4f792085`. Rust/Cargo1.94.1, MSVC14.50.35725.0,
 two Cargo jobs, no incremental/debug symbols. Guarded checks project2GiB,
@@ -55,3 +68,15 @@ The reference inventory has42 full,1 partial and243 missing names.
 UG still needs Witness Protection. London mulligans and remaining CI checks
 are required before the overall fixture gameplay goal can complete.
 No full-set, drafting, search integration or playing-strength claim.
+
+## Current-main integration
+
+The Armor prefix incorporates Scavenging 4d25d550 and main's
+192-definition/v34 catalog. Its generated Limited identity is 235
+definitions/v50 f5076bb105d12b32; the appended Armor ID is 234. Original and
+earlier composed tuples remain readable; mutations require the live identity.
+The equipment generator retains main's granted-activated-ability field,
+Viridian Longbow program and existing equipment definitions. Armor has no
+granted activated ability. All original gameplay and restore targets remain
+selected. Catalog generation, formatting, workflow lint and diff checks pass
+locally; composed-source Rust qualification is pending.

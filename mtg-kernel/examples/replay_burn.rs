@@ -671,6 +671,7 @@ fn run(
                 player,
                 discard_payable,
                 sacrifice_payable,
+                ..
             }) => {
                 apply_choose_optional_cost(
                     surface,

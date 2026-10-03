@@ -35,8 +35,10 @@ MATERIALIZATION_ORDER = "utf8_card_name_then_copy_ordinal"
 RUNTIME_MATERIALIZATION_ORDER = "xmage_xml_row_then_copy_ordinal/v1"
 RUNTIME_CARD_ID_ASSIGNMENT = "zero_based_data_cards_v1_json_cards_array_index/v1"
 RUNTIME_DECK_HASH_ALGORITHM = "fnv1a64-serde-json-u16-array/v1"
-JAVA_FACTORY_FILE_SHA256 = "0df59e3f934aaafc46835411e3fc53cf060a63cceb03c4921e52c35f4d55669d"
+JAVA_FACTORY_FILE_SHA256 = "f128b3789490c678d4eced9ad08be01085cfa9cc45134f25c58db6c177b4d3e0"
 JAVA_FACTORY_METHOD_SHA256 = "a5fc8d84f7fa70f1c41c9ce0f50e892cb4d68119313128f54e14316a01febd7b"
+JAVA_FACTORY_REGISTRATIONS_METHOD = "DeterminizationSampler.pauperRegistrationsV2"
+JAVA_FACTORY_REGISTRATIONS_METHOD_SHA256 = "edf1f74408e4c51b06e858bb40bf0031243595c54d7a486cfb13e0bf3cbf24a9"
 
 XMAGE_ORACLE_PATH = Path("oracle/xmage")
 JAVA_FACTORY_PATH = XMAGE_ORACLE_PATH / "DeterminizationSampler.java"
@@ -74,8 +76,10 @@ class DeckRow:
     sideboard: bool
 
 
-# This order is the protocol order and must match pauperDefaults() exactly.
-DECK_SPECS = (
+# This order is the protocol order and must match pauperRegistrationsV2()
+# exactly. It is the pool catalog: every registered deck, not only the active
+# runtime set. RUNTIME_DECK_IDS below picks out the active subset.
+REGISTRATION_SPECS = (
     DeckSpec("Wildfire", "Wildfire", "Deck - Jund Wildfire.dek", "cff35798ff724888a9e5a4520dd55e70b0c628a55908697aa116089d8fd980a5"),
     DeckSpec("Rally", "Rally", "Deck - Mono Red Rally.dek", "4b5019bd08f9387aeabebdca0d90aaa10dfd75fc75ed3a87c95a2fabf4dba834"),
     DeckSpec("Affinity", "Affinity", "Deck - Grixis Affinity.dek", "4a41135ac6d14960e75ddce8e9980c0505c0b71a9c08a2e10578a10d2fcf8801"),
@@ -86,10 +90,23 @@ DECK_SPECS = (
     DeckSpec("Terror", "Terror", "Deck - Mono-Blue Terror.dek", "8ba22b67b843bc49a421e1c2814c4dd24a04ab2b45131ec7876a8312115a9fda"),
     DeckSpec("CawGates", "CawGates", "Deck - Caw-Gates.dek", "72c2bbf76a7fd219349a0ad81c44dc6166b4a797a1f66fe9b5a5de79aa6cdc14"),
     DeckSpec("Faeries", "Faeries", "Deck - Mono-Blue Faeries.dek", "8cb962c4ccee6a5f8c0c70fc27c17d13323d13606c82b9b12b8985aa87e0f344"),
+    DeckSpec("BurnV2", "BurnV2", "Deck - Madness Burn V2.dek", "ef035bdf1df23b73e42a698f1251c38efb46c4349bac5cbca79062ca7ddaaef4"),
+    DeckSpec("DelverV2", "DelverV2", "Deck - Mono-Blue Delver V2.dek", "18c519f4bcd6b8c0b584e8822e7ccefab43f075c51ba709422af2691b4b7106a"),
+    DeckSpec("AffinityV2", "AffinityV2", "Deck - Grixis Affinity V2.dek", "2197c9d4c9c098ae8048741b213577d69bbed88b385fc7cc643442f3d46e0b1f"),
+    DeckSpec("RallyV2", "RallyV2", "Deck - Red Deck Wins V2.dek", "d9b587af75861db5a908759061c6de9e76d004bd11907fc743961e74d8b23e17"),
+    DeckSpec("WildfireV2", "WildfireV2", "Deck - Jund Wildfire V2.dek", "eba3009276de31a8f5fdb3ef30589517eb501562a52021184d08ef3324135848"),
+    DeckSpec("ElvesV2", "ElvesV2", "Deck - Elves V2.dek", "b34c4999fae902130c8600f9c9f43c1d386dbc98cc42f29887cc98ac76ce28b3"),
+    DeckSpec("TerrorV2", "TerrorV2", "Deck - Mono-Blue Terror V2.dek", "0bd38434f6a7ebf26f8849f01c975c6b82815f9a4224ab44c22c22b34827d862"),
+    DeckSpec("SpyV2", "SpyV2", "Deck - Spy Combo V2.dek", "69447513572f5981b89173c4cae8666ff68e96be96c79fb22779f534ec85345f"),
+    DeckSpec("DimirTerrorV2", "DimirTerrorV2", "Deck - Dimir Terror V2.dek", "ab0beb04541f49ce2da71fe37cddc8b6663a43dcae0fe27c2b6e4dc9b37ba813"),
 )
 
+# Compatibility alias for one release: callers importing the pre-split name
+# still see the full registration catalog.
+DECK_SPECS = REGISTRATION_SPECS
+
 # Runnable deck admission is deliberate rather than inferred from the current
-# support totals. Filtering DECK_SPECS preserves the canonical pool order.
+# support totals. Filtering REGISTRATION_SPECS preserves the canonical pool order.
 RUNTIME_DECK_IDS = (
     "Wildfire",
     "Rally",
@@ -127,6 +144,7 @@ TOKEN_DEPENDENCIES = (
     ("Hero Token", ("Black Mage's Rod",)),
     ("Clue Token", ("Toxin Analysis",)),
     ("Skeleton Token", ("Avenging Hunter",)),
+    ("Squirrel Token", ("Acorn Harvest",)),
 )
 
 EXPECTED_MAINBOARD_SUPPORT = {
@@ -139,6 +157,15 @@ EXPECTED_MAINBOARD_SUPPORT = {
     "Terror": {"full": 60, "partial": 0, "no_effect": 0},
     "CawGates": {"full": 60, "partial": 0, "no_effect": 0},
     "Faeries": {"full": 60, "partial": 0, "no_effect": 0},
+    "BurnV2": {"full": 60, "partial": 0, "no_effect": 0},
+    "DelverV2": {"full": 60, "partial": 0, "no_effect": 0},
+    "AffinityV2": {"full": 60, "partial": 0, "no_effect": 0},
+    "RallyV2": {"full": 60, "partial": 0, "no_effect": 0},
+    "WildfireV2": {"full": 60, "partial": 0, "no_effect": 0},
+    "ElvesV2": {"full": 60, "partial": 0, "no_effect": 0},
+    "TerrorV2": {"full": 60, "partial": 0, "no_effect": 0},
+    "SpyV2": {"full": 60, "partial": 0, "no_effect": 0},
+    "DimirTerrorV2": {"full": 60, "partial": 0, "no_effect": 0},
 }
 
 
@@ -245,6 +272,24 @@ def _utf8_sort(values: Iterable[str]) -> list[str]:
     return sorted(values, key=lambda value: value.encode("utf-8"))
 
 
+def _extract_java_method(text: str, *, method_name: str) -> str:
+    """Slice one factory method's exact text: signature through the closing
+    brace after its ``return loadArchetypes(paths);`` line."""
+
+    signature = f"    public static DeterminizationSampler {method_name}() {{"
+    return_line = "        return loadArchetypes(paths);"
+    start = text.find(signature)
+    if start < 0:
+        raise ManifestError(f"{method_name}() declaration not found")
+    return_start = text.find(return_line, start)
+    if return_start < 0:
+        raise ManifestError(f"{method_name}() return not found")
+    closing_start = text.find("\n    }", return_start + len(return_line))
+    if closing_start < 0:
+        raise ManifestError(f"{method_name}() closing brace not found")
+    return text[start : closing_start + len("\n    }")]
+
+
 def _validate_java_factory(repo_root: Path) -> None:
     path = repo_root / JAVA_FACTORY_PATH
     try:
@@ -258,32 +303,45 @@ def _validate_java_factory(repo_root: Path) -> None:
             "Java factory source drifted: "
             f"expected {JAVA_FACTORY_FILE_SHA256}, got {file_sha256}"
         )
-    signature = "    public static DeterminizationSampler pauperDefaults() {"
-    return_line = "        return loadArchetypes(paths);"
-    start = text.find(signature)
-    if start < 0:
-        raise ManifestError("pauperDefaults() declaration not found")
-    return_start = text.find(return_line, start)
-    if return_start < 0:
-        raise ManifestError("pauperDefaults() return not found")
-    closing_start = text.find("\n    }", return_start + len(return_line))
-    if closing_start < 0:
-        raise ManifestError("pauperDefaults() closing brace not found")
-    method = text[start : closing_start + len("\n    }")]
+
+    method = _extract_java_method(text, method_name="pauperDefaults")
     method_sha256 = sha256_hex(method.encode("utf-8"))
     if method_sha256 != JAVA_FACTORY_METHOD_SHA256:
         raise ManifestError(
             "pauperDefaults() method body drifted: "
             f"expected {JAVA_FACTORY_METHOD_SHA256}, got {method_sha256}"
         )
-    body = method
-    base_match = re.search(r'String base = "([^"]+)";', body)
+    base_match = re.search(r'String base = "([^"]+)";', method)
     if base_match is None or base_match.group(1) != JAVA_DECLARED_DECK_BASE_PATH:
         raise ManifestError("pauperDefaults() deck base path drifted")
-    actual = re.findall(r'paths\.put\("([^"]+)", base \+ "/([^"]+)"\);', body)
-    expected = [(spec.source_key, spec.filename) for spec in DECK_SPECS]
+    actual = re.findall(r'paths\.put\("([^"]+)", base \+ "/([^"]+)"\);', method)
+    expected = [
+        (spec.source_key, spec.filename)
+        for spec in REGISTRATION_SPECS
+        if spec.deck_id in RUNTIME_DECK_IDS
+    ]
     if actual != expected:
         raise ManifestError(f"pauperDefaults() order/path drift: expected {expected!r}, got {actual!r}")
+
+    registrations_method = _extract_java_method(text, method_name="pauperRegistrationsV2")
+    registrations_method_sha256 = sha256_hex(registrations_method.encode("utf-8"))
+    if registrations_method_sha256 != JAVA_FACTORY_REGISTRATIONS_METHOD_SHA256:
+        raise ManifestError(
+            "pauperRegistrationsV2() method body drifted: "
+            f"expected {JAVA_FACTORY_REGISTRATIONS_METHOD_SHA256}, got {registrations_method_sha256}"
+        )
+    registrations_base_match = re.search(r'String base = "([^"]+)";', registrations_method)
+    if registrations_base_match is None or registrations_base_match.group(1) != JAVA_DECLARED_DECK_BASE_PATH:
+        raise ManifestError("pauperRegistrationsV2() deck base path drifted")
+    registrations_actual = re.findall(
+        r'paths\.put\("([^"]+)", base \+ "/([^"]+)"\);', registrations_method
+    )
+    registrations_expected = [(spec.source_key, spec.filename) for spec in REGISTRATION_SPECS]
+    if registrations_actual != registrations_expected:
+        raise ManifestError(
+            "pauperRegistrationsV2() order/path drift: "
+            f"expected {registrations_expected!r}, got {registrations_actual!r}"
+        )
 
 
 def _parse_deck(
@@ -376,7 +434,7 @@ def build_pool_manifest(repo_root: Path) -> tuple[dict[str, Any], dict[str, tupl
     all_side: set[str] = set()
     main_copies = 0
     side_copies = 0
-    for order, spec in enumerate(DECK_SPECS, start=1):
+    for order, spec in enumerate(REGISTRATION_SPECS, start=1):
         mainboard, sideboard, _rows = _parse_deck(repo_root, spec)
         rosters[spec.deck_id] = (mainboard, sideboard)
         all_main.update(mainboard)
@@ -395,7 +453,7 @@ def build_pool_manifest(repo_root: Path) -> tuple[dict[str, Any], dict[str, tupl
             }
         )
     all_cards = all_main | all_side
-    expected_totals = (9, 121, 36, 150, 540, 135)
+    expected_totals = (18, 134, 52, 171, 1080, 270)
     actual_totals = (
         len(decks),
         len(all_main),
@@ -414,6 +472,8 @@ def build_pool_manifest(repo_root: Path) -> tuple[dict[str, Any], dict[str, tupl
             "java_factory_method": "DeterminizationSampler.pauperDefaults",
             "java_factory_file_sha256": JAVA_FACTORY_FILE_SHA256,
             "java_factory_method_sha256": JAVA_FACTORY_METHOD_SHA256,
+            "java_factory_registrations_method": JAVA_FACTORY_REGISTRATIONS_METHOD,
+            "java_factory_registrations_method_sha256": JAVA_FACTORY_REGISTRATIONS_METHOD_SHA256,
             "source_hash_normalization": SOURCE_HASH_NORMALIZATION,
         },
         "materialization": {
@@ -437,11 +497,32 @@ def _expected_memberships(
     rosters: dict[str, tuple[Counter[str], Counter[str]]]
 ) -> dict[str, list[str]]:
     result: dict[str, list[str]] = {}
-    for spec in DECK_SPECS:
+    for spec in REGISTRATION_SPECS:
         mainboard, sideboard = rosters[spec.deck_id]
         for name in mainboard.keys() | sideboard.keys():
             result.setdefault(name, []).append(spec.filename)
     return result
+
+
+# Eight implemented wave-2 research cards precede Urzatron's canonical deck
+# registration. They are a closed registry extension, not pool admissions.
+# Pin their complete rows and existing ids so validation cannot admit a new
+# name, change a card, or renumber it through this exception. The 18-deck pool
+# and nine active runtime decks keep their existing manifests and identities.
+PINNED_REGISTRY_EXTENSION_CARDS_V1 = {
+    "Urza's Tower": (184, '7a7900557ecb652d466c64325a0d6337fd629528acfa998b88dc1b4f194123eb'),
+    "Urza's Power Plant": (185, '32a16d7e8492634e656988a1d6c1cbdcc616f786d04d0cd6e90bb01e239cb128'),
+    "Urza's Mine": (186, 'c162a630cc6e6f5e260a6b96c123546a841fbeb28604fde40122b94e6ece4bee'),
+    'Bojuka Bog': (187, '64bdff72470abfe9eca8a6cc6e153ae6581a95272dea8ab0f4f6204eda8e6eb0'),
+    'Conduit Pylons': (188, '26818c94bee49341d7fa10e88982c049cbe77e2cb47d351802c8e7b3be72c98a'),
+    'Expedition Map': (189, '3bd312e9cdeda857a931b729864156d7b8bdf9e3907967c06a48683e9fb67149'),
+    "Bonder's Ornament": (190, 'aa5ac4fe137d9700ce3cddfbcd005a84670d798cb21dc7b604c85df439cdf124'),
+    'Barrels of Blasting Jelly': (191, 'b62a08b965ccf8886b8263b61c81b004a6664d473fe0a9abbae1c5ce2ce420cd'),
+}
+
+
+def registry_extension_row_sha256_v1(card: dict[str, Any]) -> str:
+    return sha256_hex(json.dumps(card, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
 
 
 def normalize_registry(
@@ -457,6 +538,7 @@ def normalize_registry(
     expected_memberships = _expected_memberships(rosters)
     seen: set[str] = set()
     registered_non_tokens: set[str] = set()
+    extension_names: set[str] = set()
     non_token_count = 0
     token_names: set[str] = set()
     for index, card in enumerate(cards):
@@ -480,18 +562,28 @@ def normalize_registry(
                     f"token {name!r} must have full engine_capability"
                 )
             continue
+        if name in PINNED_REGISTRY_EXTENSION_CARDS_V1:
+            expected_id, expected_sha256 = PINNED_REGISTRY_EXTENSION_CARDS_V1[name]
+            if index != expected_id or registry_extension_row_sha256_v1(card) != expected_sha256:
+                raise ManifestError(f"pinned registry extension card {name!r} changed its id or content")
+            if name in expected_memberships:
+                raise ManifestError(f"registry extension card {name!r} requires explicit pool admission")
+            extension_names.add(name)
+            continue
         non_token_count += 1
         registered_non_tokens.add(name)
         if name not in expected_memberships:
             raise ManifestError(f"registry-only non-token card {name!r} is outside the pinned pool")
         card["decks"] = list(expected_memberships[name])
+    if extension_names != PINNED_REGISTRY_EXTENSION_CARDS_V1.keys():
+        raise ManifestError("pinned registry extension cards are missing")
     expected_token_names = {name for name, _producers in TOKEN_DEPENDENCIES}
-    if non_token_count != 150 or token_names != expected_token_names:
+    if non_token_count != 171 or token_names != expected_token_names:
         raise ManifestError(
-            f"registry baseline drift: expected 150 deck cards and tokens "
+            f"registry baseline drift: expected 171 deck cards and tokens "
             f"{sorted(expected_token_names)!r}, got {non_token_count} and {sorted(token_names)!r}"
         )
-    registry["pool_decks"] = [spec.filename for spec in DECK_SPECS]
+    registry["pool_decks"] = [spec.filename for spec in REGISTRATION_SPECS]
     registry["unresolved"] = _utf8_sort(set(expected_memberships) - registered_non_tokens)
     return registry
 
@@ -520,7 +612,7 @@ def build_runtime_decks_manifest(
 
     runtime_specs = [
         (canonical_pool_order, spec)
-        for canonical_pool_order, spec in enumerate(DECK_SPECS, start=1)
+        for canonical_pool_order, spec in enumerate(REGISTRATION_SPECS, start=1)
         if spec.deck_id in RUNTIME_DECK_IDS
     ]
     actual_ids = tuple(spec.deck_id for _order, spec in runtime_specs)
@@ -663,7 +755,7 @@ def build_support_manifest(
         status_unique_counts[status] += 1
         mainboard = []
         sideboard = []
-        for spec in DECK_SPECS:
+        for spec in REGISTRATION_SPECS:
             main_counts, side_counts = rosters[spec.deck_id]
             if name in main_counts:
                 mainboard.append({"deck_id": spec.deck_id, "copies": main_counts[name]})
@@ -686,7 +778,7 @@ def build_support_manifest(
         )
 
     deck_mainboard_copy_totals: list[dict[str, Any]] = []
-    for spec in DECK_SPECS:
+    for spec in REGISTRATION_SPECS:
         counts = Counter({"full": 0, "partial": 0, "no_effect": 0})
         mainboard, _sideboard = rosters[spec.deck_id]
         for name, copies in mainboard.items():

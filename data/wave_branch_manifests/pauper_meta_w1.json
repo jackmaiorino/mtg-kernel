@@ -1,0 +1,98 @@
+{
+  "schema": "kernel_wave_branch_manifest/v1",
+  "wave": "pauper_meta_w1",
+  "cards": {
+    "Terminate": {
+      "post_board": true,
+      "branches": ["destroys_target_creature", "no_legal_target_without_a_creature"]
+    },
+    "Ancient Grudge": {
+      "post_board": true,
+      "branches": ["destroys_target_artifact", "flashback_from_graveyard_for_g"]
+    },
+    "Artful Dodge": {
+      "post_board": false,
+      "branches": ["grants_target_unblockable_this_turn", "unblockable_grant_expires_end_of_turn", "flashback_from_graveyard_for_u"]
+    },
+    "Abandon Attachments": {
+      "post_board": false,
+      "branches": ["discard_accepted_draws_two", "discard_declined_no_draw"]
+    },
+    "Acorn Harvest": {
+      "post_board": true,
+      "branches": ["creates_two_squirrel_tokens", "flashback_from_graveyard_costs_1g_plus_3_life", "flashback_unavailable_below_three_life"]
+    },
+    "Squirrel Token": {
+      "post_board": true,
+      "branches": ["token_is_1_1_green"]
+    },
+    "Suffocating Fumes": {
+      "post_board": false,
+      "branches": ["pump_opponents_creatures_minus_one_minus_one", "effect_expires_end_of_turn", "casters_own_creatures_unaffected", "cycling_for_two"]
+    },
+    "Arms of Hadar": {
+      "post_board": true,
+      "branches": ["targeting_p1_shrinks_p1_creatures_only", "targeting_p0_shrinks_p0_creatures_only"]
+    },
+    "Smash to Smithereens": {
+      "post_board": true,
+      "branches": ["destroys_target_artifact", "deals_three_to_artifacts_controller", "no_legal_target_without_artifact"]
+    },
+    "Raze": {
+      "post_board": true,
+      "branches": ["not_castable_without_any_land", "sacrifices_a_land_as_additional_cost_and_destroys_the_target_land", "sole_land_pays_mana_and_is_still_sacrificed"]
+    },
+    "Snuff Out": {
+      "post_board": false,
+      "branches": ["alt_cost_offered_only_with_a_swamp", "alt_cost_pays_4_life_no_mana", "cannot_target_black_creatures", "still_castable_for_printed_mana_cost_without_swamp"]
+    },
+    "Contaminated Aquifer": {
+      "post_board": false,
+      "branches": ["enters_tapped", "taps_for_u_or_b"]
+    },
+    "Ice Tunnel": {
+      "post_board": false,
+      "branches": ["is_snow_typed_dual_land"]
+    },
+    "Kessig Flamebreather": {
+      "post_board": false,
+      "branches": ["noncreature_spell_cast_damages_each_opponent", "creature_spell_cast_no_trigger"]
+    },
+    "Gixian Infiltrator": {
+      "post_board": false,
+      "branches": ["counter_on_sacrifice_of_another_permanent", "self_sacrifice_does_not_trigger"]
+    },
+    "Webweaver Changeling": {
+      "post_board": true,
+      "branches": ["etb_no_life_gain_below_three_creature_cards", "etb_gains_five_life_with_three_or_more_creature_cards", "intervening_if_rechecked_on_resolution", "changeling_counts_as_every_creature_type"]
+    },
+    "Glint Hawk": {
+      "post_board": false,
+      "branches": ["etb_sacrificed_with_no_artifact_to_return", "etb_accept_returns_artifact_keeps_hawk", "etb_decline_sacrifices_hawk_even_with_artifact_available"]
+    },
+    "Delver of Secrets": {
+      "post_board": false,
+      "branches": ["upkeep_trigger_controller_only", "reveal_instant_or_sorcery_transforms", "reveal_declined_no_transform", "non_instant_top_no_transform", "transformed_face_does_not_retrigger"]
+    },
+    "Insectile Aberration": {
+      "post_board": false,
+      "branches": ["transformed_face_characteristics", "visible_name_resolves_to_face_index_1"]
+    },
+    "Gurmag Angler": {
+      "post_board": false,
+      "branches": ["delve_pays_generic_by_exiling_all_graveyard_cards", "not_castable_when_neither_mana_nor_delve_pays_the_cost", "delve_combines_with_partial_mana_to_pay_remaining_generic", "planner_prefers_paying_mana_over_delving_when_both_plans_legal", "delve_never_exceeds_the_printed_generic_amount", "delve_exiles_oldest_graveyard_cards_first"]
+    },
+    "Viridian Longbow": {
+      "post_board": true,
+      "branches": ["equip_grants_tap_ping_ability", "unequipped_creature_has_no_granted_ability", "summoning_sick_creature_cannot_activate_granted_ability", "granted_ability_resolves_after_equipment_destroyed_in_response", "granted_ability_resolves_after_equipped_creature_destroyed_in_response"]
+    },
+    "Fang Dragon": {
+      "post_board": true,
+      "branches": ["adventure_castable_from_hand_at_sorcery_speed", "adventure_damages_only_creatures_you_dont_control", "adventure_resolution_exiles_card_with_on_adventure_permission", "creature_face_castable_from_exile_via_on_adventure", "on_adventure_permission_clears_when_creature_enters_battlefield", "plain_exile_placement_never_grants_adventure_permission", "creature_castable_directly_from_hand", "visible_name_resolves_adventure_face_to_face_index_2", "adventure_cast_still_triggers_cast_instant_or_sorcery_abilities", "creature_cast_does_not_trigger_cast_instant_or_sorcery_abilities"]
+    },
+    "Azure Fleet Admiral": {
+      "post_board": true,
+      "branches": ["etb_becomes_the_monarch", "monarch_draws_at_own_end_step", "non_monarch_end_step_no_draw", "crown_does_not_move_without_combat_damage", "combat_damage_to_monarch_transfers_crown", "monarchs_creatures_cannot_block_the_admiral", "non_monarchs_creatures_may_block_the_admiral"]
+    }
+  }
+}

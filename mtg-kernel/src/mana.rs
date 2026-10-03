@@ -164,6 +164,16 @@ impl Cost {
 pub struct ManaSource {
     pub id: ObjectId,
     pub choices: Vec<ManaColor>,
+    /// How many mana of the chosen color one activation of this source
+    /// adds. One for every printed mana ability in the pool except the
+    /// three Urza lands, whose yield is 3 (Tower) or 2 (Mine, Power Plant)
+    /// while their controller has Tron assembled. `gather_sources` samples
+    /// it from `CardDef::conditional_tap_yield` at the moment the plan is
+    /// solved; every other construction site (including the test helper
+    /// below) uses one, which makes this field behavior-neutral for every
+    /// pre-existing source. Clamped to `1..=8` at the sampling site so an
+    /// evaluator fault can never make a source free or unboundedly rich.
+    pub yield_per_tap: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -176,6 +186,31 @@ pub struct PaymentPlan {
     pub pool_used: [u8; 6],
     /// Life paid for phyrexian pips.
     pub life_paid: i32,
+    /// Mana this plan's taps added beyond what their own tap paid for, by
+    /// color. Always `[0; 6]` for a plan built only from `yield_per_tap ==
+    /// 1` sources, which is every source in the pool except assembled Tron,
+    /// so existing plans are bit-identical to their pre-yield shape.
+    ///
+    /// Accounting contract, relied on by `engine::pay_plan`. Writing
+    /// `taps(c)` for the number of taps whose color is `c`:
+    ///
+    /// * the taps add `taps(c) + surplus[c]` mana of color `c` in total
+    ///   (one "primary" mana per tap plus whatever the extra yield credited
+    ///   here);
+    /// * the cost consumes `taps(c) + pool_used[c]` of color `c` (each
+    ///   tap's primary mana, plus every unit drawn out of the running
+    ///   pool, whether that unit was already floating or was credited by an
+    ///   earlier tap in this same plan);
+    /// * so the net effect on the controller's floating pool is exactly
+    ///   `surplus[c] - pool_used[c]`, and `pool_used[c]` never exceeds
+    ///   `floating[c] + surplus[c]` because the running pool is seeded with
+    ///   the former and credited only the latter.
+    ///
+    /// A tap whose extra yield is consumed inside the same payment (an
+    /// assembled Tower paying a three-generic spell by itself) therefore
+    /// records no surplus: the mana was added and spent atomically and
+    /// never reaches the pool.
+    pub surplus: [u8; 6],
 }
 
 /// Rule 119.4: a player may pay life only if their life total is at least
@@ -274,6 +309,83 @@ pub fn can_pay_combined(
     life_payment_affordable(plan.life_paid, state.players[player.index()].life).then_some(plan)
 }
 
+/// Delve (702.65a): "For each generic mana in this spell's total cost, you
+/// may exile a card from your graveyard rather than pay that mana." Delve
+/// is not an alternative or additional cost -- it applies to `cost`'s total
+/// generic amount exactly as `can_pay` would see it (after any
+/// `CardDef::generic_cost_reduction` the caller already folded in), and
+/// exiling is simply another way to pay, atomic with the rest of the mana
+/// payment (matching XMage's `DelveAbility`/`AlternateManaPaymentAbility`,
+/// not `CostComponent::ExileOtherCardsFromOwnGraveyard`'s separate-component
+/// shape used by Escape).
+///
+/// Mana payment plans are already an opaque, engine-chosen detail with no
+/// dedicated RL decision (`can_pay`/`solve` pick one deterministic plan, not
+/// a menu the policy selects from) -- delve counts are chosen the same way,
+/// deterministically, rather than opening a new decision/action kind:
+///
+/// Enumerates `k` (cards exiled) from `0` to `min(graveyard size, printed
+/// generic)` in ascending order and returns the first plan whose remaining
+/// cost -- every colored/hybrid/phyrexian pip untouched, generic reduced by
+/// `k` -- is payable from ordinary mana sources. This prefers paying with
+/// mana over the graveyard (a `k=0` plan wins whenever the printed cost is
+/// already affordable outright) and only increases `k` when a smaller one
+/// can't be paid, so a spell is offered as castable via the *smallest*
+/// delve count that makes it affordable -- never a larger, unnecessary one.
+///
+/// The `k` cards actually exiled are always the *oldest* `k` entries of the
+/// caster's graveyard (index `0..k`, i.e. `PlayerState::graveyard`'s
+/// existing push-order/insertion order -- the first card that entered the
+/// graveyard is exiled first). This fixed, card-name-free order keeps the
+/// plan space to exactly one candidate per `k` instead of `C(graveyard, k)`,
+/// and is deterministic and reproducible across an offer-time affordability
+/// check and the later payment-time re-derivation (both call this function
+/// against the live graveyard, same as every other cast cost in this
+/// engine).
+pub fn delve_payment_plan(
+    cost: &Cost,
+    x_value: u8,
+    player: PlayerId,
+    state: &GameState,
+) -> Option<(PaymentPlan, Vec<ObjectId>)> {
+    let graveyard = &state.players[player.index()].graveyard;
+    let max_k = graveyard.len().min(usize::from(cost.generic));
+    for k in 0..=max_k {
+        let reduced = Cost {
+            pips: cost.pips,
+            generic: cost.generic - k as u8,
+            x_count: cost.x_count,
+        };
+        if let Some(plan) = can_pay(&reduced, x_value, player, state) {
+            return Some((plan, graveyard[..k].to_vec()));
+        }
+    }
+    None
+}
+
+/// Lowest and highest per-tap yield the planner will admit. One keeps a
+/// source from ever being free; eight bounds the pool arithmetic (the pool
+/// is `[u8; 6]`) well below overflow for any realistic board, and is far
+/// above the largest printed yield in this pool (3, an assembled Urza's
+/// Tower).
+const MIN_YIELD_PER_TAP: i32 = 1;
+const MAX_YIELD_PER_TAP: i32 = 8;
+
+/// Samples `CardDef::conditional_tap_yield` for a source whose controller is
+/// `controller`. `None` (every card but the three Urza lands) is one, which
+/// is the pre-existing behavior of every mana source in the pool.
+fn conditional_tap_yield(
+    def: &crate::card_def::CardDef,
+    controller: PlayerId,
+    state: &GameState,
+) -> u8 {
+    let Some(value) = def.conditional_tap_yield else {
+        return 1;
+    };
+    let evaluated = crate::engine::evaluate_dynamic_value(state, value, controller);
+    evaluated.clamp(MIN_YIELD_PER_TAP, MAX_YIELD_PER_TAP) as u8
+}
+
 pub fn gather_sources(player: PlayerId, state: &GameState) -> Vec<ManaSource> {
     let mut sources = Vec::new();
     for &id in &state.players[player.index()].battlefield {
@@ -295,6 +407,7 @@ pub fn gather_sources(player: PlayerId, state: &GameState) -> Vec<ManaSource> {
             sources.push(ManaSource {
                 id,
                 choices: def.primary_mana_ability_choices(obj.v4.chosen_color),
+                yield_per_tap: conditional_tap_yield(def, obj.controller, state),
             });
         }
     }
@@ -422,11 +535,24 @@ fn solve_pips(
             if !sources[i].choices.contains(&c) {
                 continue;
             }
+            // One mana of the tap pays this pip; a multi-yield source's
+            // remaining mana joins the running pool (so later pips and the
+            // generic pass can spend it) and is recorded as surplus (so
+            // `engine::pay_plan` can float whatever survives). Both are
+            // undone on backtrack, exactly like the tap itself. `extra` is
+            // zero for every single-yield source, which keeps this branch
+            // bit-identical to its pre-yield form for the whole pool.
+            let extra = sources[i].yield_per_tap.saturating_sub(1);
+            let pi = c.pool_index();
             used[i] = true;
             plan.taps.push((sources[i].id, c));
+            pool_remaining[pi] += extra;
+            plan.surplus[pi] += extra;
             if solve_pips(pips, idx + 1, sources, used, pool_remaining, plan) {
                 return true;
             }
+            plan.surplus[pi] -= extra;
+            pool_remaining[pi] -= extra;
             plan.taps.pop();
             used[i] = false;
         }
@@ -470,7 +596,22 @@ fn pay_generic(
         if let Some(&c) = sources[i].choices.first() {
             used[i] = true;
             plan.taps.push((sources[i].id, c));
-            needed -= 1;
+            // Generic mana is colorless in requirement, not in production:
+            // one tap of a multi-yield source pays up to `yield` of the
+            // outstanding generic at once. Anything it produces past the
+            // remaining requirement joins the running pool and the plan's
+            // surplus. For a single-yield source `spent` is 1 and `extra`
+            // is 0, which is the pre-yield behavior exactly.
+            let produced = u32::from(sources[i].yield_per_tap.max(1));
+            let spent = produced.min(needed);
+            needed -= spent;
+            let extra = produced - spent;
+            if extra > 0 {
+                let pi = c.pool_index();
+                let extra = u8::try_from(extra).expect("yield_per_tap is clamped to 1..=8");
+                pool_remaining[pi] += extra;
+                plan.surplus[pi] += extra;
+            }
         }
     }
     needed == 0
@@ -484,7 +625,36 @@ mod tests {
         ManaSource {
             id: ObjectId(id),
             choices: choices.to_vec(),
+            yield_per_tap: 1,
         }
+    }
+
+    #[test]
+    fn a_multi_yield_source_pays_several_pips_with_one_tap() {
+        let mut tower = src(0, &[ManaColor::C]);
+        tower.yield_per_tap = 3;
+        let cost = Cost {
+            pips: &[],
+            generic: 3,
+            x_count: 0,
+        };
+        let plan = solve(&cost, 0, [0; 6], &[tower]).expect("payable");
+        assert_eq!(plan.taps.len(), 1);
+        assert_eq!(plan.surplus, [0; 6]);
+    }
+
+    #[test]
+    fn unspent_multi_yield_mana_is_recorded_as_surplus() {
+        let mut tower = src(0, &[ManaColor::C]);
+        tower.yield_per_tap = 3;
+        let cost = Cost {
+            pips: &[],
+            generic: 1,
+            x_count: 0,
+        };
+        let plan = solve(&cost, 0, [0; 6], &[tower]).expect("payable");
+        assert_eq!(plan.taps.len(), 1);
+        assert_eq!(plan.surplus[ManaColor::C.pool_index()], 2);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardType, CostComponent, Keywords, Subtype, TargetSpec,
-    CARD_DEFS,
+    CARD_DEFS, KERNEL_CARDDB_HASH,
 };
 use mtg_kernel::effect::{
     EffectObjectBinding, EffectOp, EffectTargetCandidate, EffectTargetSelectionPurpose,
@@ -206,6 +206,7 @@ fn action_candidates(
 
 #[test]
 fn definitions_ids_and_generic_programs_are_exact() {
+    assert_eq!(KERNEL_CARDDB_HASH, 0x064a_7c98_9255_ab3c);
     for (name, expected_id) in [
         ("Cleansing Wildfire", 15),
         ("Duress", 24),
@@ -222,6 +223,7 @@ fn definitions_ids_and_generic_programs_are_exact() {
             "{name} is executable"
         );
     }
+    assert_eq!(CARD_DEFS.len(), 192); // wave 2 Task 3: 187 -> 192
     assert_eq!(Subtype::Clue.stable_id(), 68);
     assert_eq!(TargetSpec::Land.stable_id(), 34);
 

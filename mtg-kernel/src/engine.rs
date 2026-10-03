@@ -261,6 +261,13 @@ pub struct EngineState {
     /// Undercity's Throne room is the first consumer.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub until_next_turn_keywords: Vec<UntilNextTurnKeywordEffectV1>,
+    /// Historical card-backed source used to represent the monarch's
+    /// end-step draw trigger on this object-id based stack -- see
+    /// `MonarchTriggerBindingV1`'s doc. Updated to whichever object most
+    /// recently made someone the monarch, whether Azure Fleet Admiral's own
+    /// ETB grant or a combat-damage transfer's attacking creature.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub monarch_source: Option<AbilitySourceContractV4>,
 }
 
 fn next_stack_item_id(state: &mut GameState) -> StackItemId {
@@ -860,9 +867,34 @@ pub struct PendingOptionalCost {
     pub source: ObjectId,
     pub discard: u8,
     pub sacrifice_lands: u8,
+    /// `Some` iff this optional cost also offers returning one controlled
+    /// permanent matching this filter to its owner's hand (Glint Hawk's
+    /// "unless you return an artifact you control"). `None` for every
+    /// pre-existing consumer (Highway Robbery, Abandon Attachments). Added
+    /// after the pre-existing fields above and defaulted on deserialize so
+    /// an older serialized snapshot without it still loads as "no
+    /// return-permanent option offered".
+    #[serde(default)]
+    pub return_permanent_filter: Option<PermanentFilterDef>,
     pub discard_payable: bool,
     pub sacrifice_payable: bool,
+    /// Added alongside `return_permanent_filter` and defaulted on
+    /// deserialize so an older serialized snapshot without it still loads
+    /// as "not payable".
+    #[serde(default)]
+    pub return_permanent_payable: bool,
     pub then: EffectOp,
+    /// Runs iff the controller declines every payable option (or none is
+    /// payable at all). `None` for every pre-existing consumer: declining
+    /// Highway Robbery/Abandon Attachments simply skips `then`, with no
+    /// separate consequence. Glint Hawk is the first consumer
+    /// (`Some(EffectOp::Sacrifice { object: ObjectRef::ThisSource })`).
+    /// Added alongside `return_permanent_filter`/`return_permanent_payable`
+    /// and defaulted on deserialize so an older serialized snapshot without
+    /// it still loads as "no consequence when every option is declined",
+    /// matching every pre-existing consumer's actual behavior.
+    #[serde(default)]
+    pub otherwise: Option<EffectOp>,
     /// `Some((source, to_zone))` iff this optional cost is itself part of
     /// `source`'s own spell resolution (Highway Robbery's "you may... if
     /// you do, draw two cards" -- `EffectOp::MayPayCostThen` staged this
@@ -935,13 +967,18 @@ pub struct PendingSpellCopy {
 }
 
 /// The answer to a `Decision::ChooseOptionalCost`. Declining is always
-/// legal (matches `DoIfCostPaid`'s optional "may" framing); the other two
-/// are only legal when the matching `PendingOptionalCost` field is true.
+/// legal (matches `DoIfCostPaid`'s optional "may" framing); the other
+/// three are only legal when the matching `PendingOptionalCost` field is
+/// true.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum OptionalCostChoice {
     Decline,
     Discard,
     SacrificeLand,
+    /// Return one controlled permanent matching `PendingOptionalCost::
+    /// return_permanent_filter` to its owner's hand. Glint Hawk is the
+    /// first consumer.
+    ReturnPermanent,
 }
 
 /// This turn's combat. Reset at every `Step::BeginCombat` and again as the
@@ -1120,16 +1157,17 @@ pub enum Decision {
         legal_targets: Vec<Target>,
         can_finish: bool,
     },
-    /// Highway Robbery only, this increment: a resolution-time optional
-    /// cost (`effect::EffectOp::MayPayCostThen`). Always a real choice with
-    /// at least 2 options (`Decline` plus whichever of `Discard`/
-    /// `SacrificeLand` `PendingOptionalCost` marked payable) -- declining
-    /// is always legal, so this is never auto-resolved for "no real
-    /// option" the way `CastSpellOrPass` is.
+    /// A resolution-time optional cost (`effect::EffectOp::MayPayCostThen`,
+    /// Highway Robbery/Abandon Attachments/Glint Hawk). Always a real
+    /// choice with at least 2 options (`Decline` plus whichever of
+    /// `Discard`/`SacrificeLand`/`ReturnPermanent` `PendingOptionalCost`
+    /// marked payable) -- declining is always legal, so this is never
+    /// auto-resolved for "no real option" the way `CastSpellOrPass` is.
     ChooseOptionalCost {
         player: PlayerId,
         discard_payable: bool,
         sacrifice_payable: bool,
+        return_permanent_payable: bool,
     },
     /// Chain Lightning's affected player may pay {R}{R} to create the next
     /// link. The offer only exists when a concrete payment plan is available.
@@ -1389,7 +1427,7 @@ fn step_grants_priority(step: Step) -> bool {
     !matches!(step, Step::Untap | Step::Cleanup)
 }
 
-fn target_count(spec: TargetSpec) -> u8 {
+pub(crate) fn target_count(spec: TargetSpec) -> u8 {
     match spec {
         TargetSpec::None => 0,
         TargetSpec::AnyTarget
@@ -1421,9 +1459,10 @@ fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::NoncreatureArtifactPermanent
         | TargetSpec::Land
         | TargetSpec::OpponentArtifactOrEnchantmentPermanent
+        | TargetSpec::CreatureOtherThanSource
+        | TargetSpec::NonblackCreature
         | TargetSpec::ArtifactOrEnchantmentPermanent
-        | TargetSpec::AttackingOrBlockingCreature
-        | TargetSpec::CreatureOtherThanSource => 1,
+        | TargetSpec::AttackingOrBlockingCreature => 1,
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
@@ -1661,6 +1700,12 @@ fn validate_physical_spell_cast_origin(
                         | CastMethodV4::Omen
                 )
         }
+        SpellCastRouteV4::AdventureExile => {
+            origin.origin_zone == Zone::Exile
+                && source.owner == item.controller
+                && cast_method == CastMethodV4::Normal
+                && def.adventure.is_some()
+        }
         SpellCastRouteV4::GraveyardFlashback => {
             origin.origin_zone == Zone::Graveyard
                 && source.owner == item.controller
@@ -1833,7 +1878,8 @@ fn validate_spell_source_contract_fields(
         CastMethodV4::Flashback if def.flashback.is_some() => {}
         CastMethodV4::Madness if def.madness_cost.is_some() => {}
         CastMethodV4::Escape if def.escape.is_some() => {}
-        CastMethodV4::Omen if supported_omen(def).is_some() => {}
+        CastMethodV4::Omen
+            if supported_omen(def).is_some() || supported_adventure(def).is_some() => {}
         CastMethodV4::Bestow if supported_bestow(def).is_some() => {}
         CastMethodV4::Plotted
             if def.plot_cost.is_some()
@@ -1975,7 +2021,8 @@ fn storm_source_contract_is_structurally_valid(
         SpellCastRouteV4::GraveyardFlashback
         | SpellCastRouteV4::Plotted { .. }
         | SpellCastRouteV4::Madness
-        | SpellCastRouteV4::GraveyardEscape => false,
+        | SpellCastRouteV4::GraveyardEscape
+        | SpellCastRouteV4::AdventureExile => false,
     };
     definition.name == "Weather the Storm"
         && definition.is_executable()
@@ -2185,14 +2232,44 @@ fn validate_spell_sourced_trigger(
         .objects
         .try_get(item.source)
         .ok_or("spell-sourced trigger source object is missing")?;
+    // CR 603.3e/608.2b: a "when you cast this spell" triggered ability
+    // exists independently of the spell once it triggers, and keeps
+    // resolving from this frozen, last-known incarnation even if that spell
+    // later leaves the stack on its own -- resolves normally, is countered,
+    // or ceases as a virtual copy -- before the ability does (a target
+    // naming the spell itself is what CR 608.2b's illegal-target fizzle
+    // already governs via `stack_targets_still_legal`, not this producer
+    // check). `zone_change_count` only ever advances alongside a real zone
+    // change (every `+= 1` site sits with a `zone = <different zone>`
+    // assignment), so a strictly later generation than `contract` recorded
+    // is proof the spell genuinely departed, not state corruption.
     if contract.source != item.source
         || contract.card_def != source.card_def
         || contract.owner != source.owner
-        || contract.controller != source.controller
         || contract.controller != item.controller
         || contract.zone != Zone::Stack
-        || source.zone != Zone::Stack
-        || contract.zone_change_count != source.zone_change_count
+        || source.zone_change_count < contract.zone_change_count
+    {
+        return Err("spell-sourced trigger contract no longer matches its producer".to_string());
+    }
+    let definition_matches = crate::trigger::triggers_for(source.card_def)
+        .iter()
+        .filter(|trigger| trigger.home_zone == Zone::Stack)
+        .any(|trigger| {
+            crate::trigger::materialize_trigger_effect(trigger, item.source, state)
+                == *item.inline_effect.as_ref().expect("checked Some above")
+        });
+    if !definition_matches {
+        return Err("spell-sourced trigger no longer matches its card definition".to_string());
+    }
+    if source.zone_change_count > contract.zone_change_count {
+        // The producing spell already left the stack at a later generation;
+        // nothing further to check against a live producer that no longer
+        // exists at this generation.
+        return Ok(());
+    }
+    if source.zone != Zone::Stack
+        || contract.controller != source.controller
         || contract.spell_copy_origin != source.spell_copy_origin
         || contract.spell_cast_origin != source.v4.spell_cast_origin
     {
@@ -2208,16 +2285,6 @@ fn validate_spell_sourced_trigger(
         return Err("spell-sourced trigger lacks one exact producing spell".to_string());
     }
     validate_spell_source_contract_fields(state, producer)?;
-    let definition_matches = crate::trigger::triggers_for(source.card_def)
-        .iter()
-        .filter(|trigger| trigger.home_zone == Zone::Stack)
-        .any(|trigger| {
-            crate::trigger::materialize_trigger_effect(trigger, item.source, state)
-                == *item.inline_effect.as_ref().expect("checked Some above")
-        });
-    if !definition_matches {
-        return Err("spell-sourced trigger no longer matches its card definition".to_string());
-    }
     Ok(())
 }
 
@@ -2237,11 +2304,13 @@ fn validate_ability_source_contract(
         || contract.zone == Zone::Stack
         || source.zone_change_count < contract.zone_change_count
         || (source.zone_change_count == contract.zone_change_count && source.zone != contract.zone)
-        || (source.zone_change_count == contract.zone_change_count
-            && source.v4.attached_to != contract.attached_to)
     {
         return Err("ability source contract is structurally malformed".to_string());
     }
+    // attached_to is frozen last-known information, not a live-incarnation
+    // invariant. Detaching or reattaching Equipment does not change its zone
+    // generation. Keep that historical host for effect-specific provenance
+    // checks even when the live attachment changes while the ability waits.
     Ok(())
 }
 
@@ -2352,7 +2421,11 @@ fn stack_spell_has_type(state: &GameState, item: &StackItem, card_type: CardType
     match item.v4.cast_method {
         Some(CastMethodV4::Bestow) => card_type == CardType::Enchantment,
         Some(CastMethodV4::Omen) => {
-            supported_omen(def).is_some_and(|omen| omen.types.contains(&card_type))
+            if let Some(adventure) = supported_adventure(def) {
+                adventure.types.contains(&card_type)
+            } else {
+                supported_omen(def).is_some_and(|omen| omen.types.contains(&card_type))
+            }
         }
         _ => def.has_type(card_type),
     }
@@ -2437,6 +2510,31 @@ fn targeting_source_is_monocolored(source: TargetingSource) -> bool {
     card_def::CARD_DEFS
         .get(source.card_def as usize)
         .is_some_and(|def| (card_def::mana_colors_mask(def.colors) & 0x1f).count_ones() == 1)
+}
+
+/// The source a triggered ability targets from. An Initiative or Undercity
+/// trigger records Avenging Hunter's contract only as the designation's
+/// provenance: the initiative's own triggers have no source, and a room
+/// ability's source is the dungeon card (309.4c), which is colorless and not
+/// a permanent. None of them is subject to a source-dependent restriction
+/// such as protection from monocolored, so they target without a source.
+/// `None` stands for that colorless nonpermanent source because the current
+/// source-dependent filters (protection from monocolored,
+/// `CreatureOtherThanSource`) treat the two alike. A restriction such a
+/// source could fail, like protection from colorless, needs an explicit
+/// dungeon source instead.
+fn triggered_ability_targeting_source(
+    source: ObjectId,
+    source_contract: Option<AbilitySourceContractV4>,
+    effect: &EffectOp,
+) -> Option<TargetingSource> {
+    if matches!(effect, EffectOp::ResolveInitiativeTrigger { .. }) {
+        return None;
+    }
+    source_contract.map(|contract| TargetingSource {
+        object: source,
+        card_def: contract.card_def,
+    })
 }
 
 fn legal_targets_for_controller(
@@ -2550,6 +2648,13 @@ fn legal_targets_for_controller_from_source(
                 let def = &card_def::CARD_DEFS[def_idx as usize];
                 object_has_type(state, id, CardType::Creature)
                     && !def.supertypes.contains(&card_def::Supertype::Legendary)
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::NonblackCreature => battlefield_objects(state)
+            .filter(|&id| {
+                object_has_type(state, id, CardType::Creature)
+                    && !is_color(state, id, mana::ManaColor::B)
             })
             .map(Target::Object)
             .collect(),
@@ -2828,13 +2933,11 @@ fn target_prefix_can_complete_for_controller(
 }
 
 /// The source a pending triggered ability targets from: its frozen source
-/// incarnation's definition, exactly as `Decision::ChooseTargets` and
-/// `Action::ChooseTarget` see it.
+/// incarnation's definition (or no source for an Initiative/Undercity
+/// trigger), exactly as `Decision::ChooseTargets` and `Action::ChooseTarget`
+/// see it.
 fn pending_trigger_targeting_source(pending: &PendingTrigger) -> Option<TargetingSource> {
-    pending.source_contract.map(|contract| TargetingSource {
-        object: pending.source,
-        card_def: contract.card_def,
-    })
+    triggered_ability_targeting_source(pending.source, pending.source_contract, &pending.effect)
 }
 
 /// 603.3d: whether a pending triggered ability's chosen target prefix can
@@ -3198,6 +3301,35 @@ pub(crate) fn evaluate_dynamic_value(
                 && card_def::CARD_DEFS[live.card_def as usize].has_type(card_type)
         })
         .count(),
+        // UrzaTerrainValue's shape: every required conjunction must be
+        // matched by at least one battlefield permanent `controller`
+        // controls, and one permanent must carry both subtypes of the pair
+        // it matches. An Urza's Tower therefore never satisfies its own
+        // Mine or Power-Plant requirement, which is why a second copy of the
+        // same piece does not assemble Tron.
+        DynamicValueDef::AmountIfControllerControlsEach {
+            required,
+            amount_when_met,
+            amount_otherwise,
+        } => {
+            let met = required.iter().all(|pair| {
+                state.players[controller.index()]
+                    .battlefield
+                    .iter()
+                    .any(|&candidate| {
+                        let object = state.objects.get(candidate);
+                        object.controller == controller
+                            && object.zone == Zone::Battlefield
+                            && has_effective_subtype(state, candidate, pair.first)
+                            && has_effective_subtype(state, candidate, pair.second)
+                    })
+            });
+            return i32::from(if met {
+                amount_when_met
+            } else {
+                amount_otherwise
+            });
+        }
     };
     i32::try_from(count).expect("the object arena count fits the engine's signed value range")
 }
@@ -3240,9 +3372,62 @@ fn has_unblocked_attacker_return_cost(components: &[CostComponent]) -> bool {
     })
 }
 
+/// Activation-time gate (702.50a: "Activate only during combat after
+/// blockers are declared and only if you control an unblocked attacking
+/// creature"). `player` must currently hold priority here: this is checked
+/// while staging/paying the activation itself (`unblocked_attacker_return_
+/// candidates`, consulted by the offer gate, the interactive cost-target
+/// decision, and the pre-payment re-validation), always synchronously
+/// within the activating player's own priority window, so requiring
+/// `player == state.priority_player` is correct. See `ninjutsu_resolution_
+/// window_ok` for the sibling *resolution*-time gate, which must not
+/// include this same comparison.
 fn ninjutsu_timing_ok(player: PlayerId, state: &GameState) -> bool {
     player == state.active_player
         && player == state.priority_player
+        && state.engine.combat.blockers_declared
+        && matches!(
+            state.step,
+            Step::DeclareBlockers | Step::CombatDamage | Step::EndCombat
+        )
+}
+
+/// Resolution-time sibling of `ninjutsu_timing_ok`, deliberately omitting
+/// its `player == state.priority_player` comparison.
+///
+/// Ninjutsu is modeled here as an ordinary stack-using activated ability
+/// (`push_paid_activation` pushes every activation, this one included), so
+/// between activation and resolution priority passes around normally --
+/// 117.4/608.1: a stack item resolves once all players pass in succession,
+/// which is a fact about the *pass sequence*, never about who currently
+/// holds priority. `resolve_top_of_stack` (engine.rs) runs before
+/// `reset_priority`, so `state.priority_player` at the exact instant this
+/// runs still holds whatever `Action::Pass` last flipped it to (each pass
+/// sets `priority_player = passer.opponent()`, so it lands on the
+/// controller's own side only when the controller happens to be the final
+/// passer) -- it is not reset to the active player until immediately after
+/// resolution completes. A resolving ability's controller is never
+/// required to currently hold priority for it to resolve (117.3b: only the
+/// *next* recipient of priority after a resolution is defined, as the
+/// active player); checking it here fails closed on completely ordinary
+/// sequences, such as the opponent responding to something else first, or
+/// even a single extra mana ability activated while this ninjutsu sat on
+/// the stack.
+///
+/// Root-caused end to end against campaign-001 block1-cuda-2 iteration 95
+/// slot 2 (seed 14378628175672525038, turn 8): Ninja of the Deep Hours
+/// (learner-controlled) had its ninjutsu activation staged, cost paid
+/// (returning a different unblocked attacker to hand), and pushed onto the
+/// stack; by the time it resolved, `state.priority_player` was the
+/// opponent (an ordinary consequence of the pass sequence, not of anything
+/// illegal), so the old shared `ninjutsu_timing_ok` check wrongly reported
+/// "resolved outside its post-blockers combat window" and the engine
+/// halted a legal game. The other three conditions -- still that
+/// player's own combat, blockers declared, still `DeclareBlockers`/
+/// `CombatDamage`/`EndCombat` -- remain exactly the right resolution-time
+/// gate and are unchanged here.
+fn ninjutsu_resolution_window_ok(player: PlayerId, state: &GameState) -> bool {
+    player == state.active_player
         && state.engine.combat.blockers_declared
         && matches!(
             state.step,
@@ -3573,6 +3758,7 @@ fn permanent_matches_return_filter(
             definition.has_type(CardType::Creature)
                 && object_color_mask(state, object_id) & card_def::mana_color_mask(color) != 0
         }
+        PermanentFilterDef::Artifact => definition.has_type(CardType::Artifact),
     }
 }
 
@@ -3604,7 +3790,7 @@ fn tap_permanent_cost_candidates(
         .collect()
 }
 
-fn return_permanent_cost_candidates(
+pub(crate) fn return_permanent_cost_candidates(
     player: PlayerId,
     state: &GameState,
     filter: PermanentFilterDef,
@@ -3973,12 +4159,48 @@ fn pay_cost_components_with_x(
                     state,
                     ProposedEvent::zone_change(object_cost_chosen[0], Zone::Hand),
                 );
+                // 506.4, same reasoning and same defect class as the sibling
+                // arm just below: this cost's own candidate list
+                // (`return_permanent_cost_candidates`/`permanent_matches_return_filter`)
+                // filters only by controller, zone and card type/subtype/color,
+                // never by tapped or attacking status, so a currently-attacking
+                // creature is a legal choice here too. Found alongside
+                // CAMPAIGN-001-BLOCK1-CUDA-001.md gate item 4 while fixing the
+                // identical gap in the unblocked-attacker arm below; not itself
+                // reproduced by a real game (no in-repo card currently offers
+                // this exact shape of ability), but the underlying staleness is
+                // the same and the fix is free to make now rather than leaving
+                // a second, textually adjacent copy of the same bug.
+                state
+                    .engine
+                    .combat
+                    .attackers
+                    .retain(|&attacker| attacker != object_cost_chosen[0]);
             }
             CostComponent::ReturnControlledUnblockedAttackerToOwnersHand => {
                 event::propose_and_commit(
                     state,
                     ProposedEvent::zone_change(object_cost_chosen[0], Zone::Hand),
                 );
+                // 506.4: a permanent removed from the battlefield leaves combat.
+                // Without this, the returned attacker's id survives as a stale
+                // entry in `combat.attackers`. That is usually harmless, but if
+                // this same object has ninjutsu and is later put back onto the
+                // battlefield "tapped and attacking" in this same combat (a
+                // legal ninjutsu chain: it was tapped to attack, then returned
+                // to hand as a *different* ninjutsu ability's cost, then
+                // ninjutsu'd back in itself), `put_ninjutsu_source_onto_
+                // battlefield_attacking`'s own-duplicate guard finds the stale
+                // id and fails closed on a legal game. See
+                // CAMPAIGN-001-BLOCK1-CUDA-001.md gate item 4 (Wildfire vs
+                // Faeries, seed 15634452618269313559, turn 15: Ninja of the
+                // Deep Hours ninjutsu'd back in after paying for another
+                // ninjutsu creature's cost).
+                state
+                    .engine
+                    .combat
+                    .attackers
+                    .retain(|&attacker| attacker != object_cost_chosen[0]);
             }
             CostComponent::Mana(_) => pay_plan(
                 state,
@@ -4022,6 +4244,13 @@ fn commit_sacrifice(state: &mut GameState, chosen: &[ObjectId]) {
         event::log_sacrifice(state, id);
         event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
     }
+}
+
+/// Zone-changes `id` to its owner's hand -- the actual payment half of a
+/// `MayPayCostThen` return-permanent sub-cost (Glint Hawk's "return an
+/// artifact you control to its owner's hand").
+fn commit_return_to_hand(state: &mut GameState, id: ObjectId) {
+    event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Hand));
 }
 
 /// Exiles the exact graveyard cards already selected for an escape cost.
@@ -4258,6 +4487,32 @@ fn validate_optional_additional_paid_refs(
     Ok(())
 }
 
+/// Whether an `AltCostDef::condition` currently holds against `player`'s
+/// own battlefield. Evaluated independently at offer time
+/// (`payable_cast_modes`/`is_castable_now`) and again at payment time
+/// (`remaining_cast_payment_is_payable`) -- a Swamp present when the cast
+/// began could leave play (destroyed, sacrificed to another cost) before
+/// payment completes, and Snuff Out's alternative cost must stop being
+/// offered/payable the instant that happens, same as any other cost
+/// legality recheck.
+fn alt_cost_condition_met(
+    condition: card_def::AltCostCondition,
+    player: PlayerId,
+    state: &GameState,
+) -> bool {
+    match condition {
+        card_def::AltCostCondition::Always => true,
+        card_def::AltCostCondition::ControlsPermanentWithSubtype(subtype) => {
+            let subtype_id = subtype.stable_id();
+            state.players[player.index()].battlefield.iter().any(|&id| {
+                effective_subtype_ids(state, id)
+                    .binary_search(&subtype_id)
+                    .is_ok()
+            })
+        }
+    }
+}
+
 /// How many lands (0 if none) the cast currently staged in `pending`
 /// still needs sacrificed to pay its cost: Fireblast's alt cost, once
 /// `cast_mode` has resolved to `Alternative`; Lava Dart's flashback cost,
@@ -4281,7 +4536,7 @@ fn sacrifice_lands_needed(pending: &PendingCast, def: &card_def::CardDef) -> u8 
     }
     if pending.cast_mode == Some(CastMode::Alternative) {
         if let Some(alt) = def.alt_cost {
-            for c in alt {
+            for c in alt.components {
                 if let CostComponent::SacrificeLands(n) = c {
                     return *n;
                 }
@@ -4305,7 +4560,10 @@ fn cast_tap_permanent_filter_needed(
         }
     }
     if pending.cast_mode == Some(CastMode::Alternative) {
-        if let Some(filter) = def.alt_cost.and_then(tap_permanent_filter_in) {
+        if let Some(filter) = def
+            .alt_cost
+            .and_then(|alt| tap_permanent_filter_in(alt.components))
+        {
             return Some(filter);
         }
     }
@@ -4332,13 +4590,17 @@ fn sacrificeable_lands(
         .collect()
 }
 
-fn permanent_matches_filter(def: &card_def::CardDef, filter: PermanentFilter) -> bool {
+/// `pub(crate)` so `effect::execute` (`EffectOp::PumpAllUntilEndOfTurn`) can
+/// reuse the identical type-matching predicate a `SacrificeControlled` cost
+/// uses to find candidates, rather than duplicating it.
+pub(crate) fn permanent_matches_filter(def: &card_def::CardDef, filter: PermanentFilter) -> bool {
     match filter {
         PermanentFilter::ArtifactOrCreature => {
             def.has_type(CardType::Artifact) || def.has_type(CardType::Creature)
         }
         PermanentFilter::Artifact => def.has_type(CardType::Artifact),
         PermanentFilter::Creature => def.has_type(CardType::Creature),
+        PermanentFilter::Land => def.is_land,
     }
 }
 
@@ -4432,6 +4694,7 @@ fn cost_kind_for_permanent_filter(filter: PermanentFilter) -> CostKind {
         PermanentFilter::ArtifactOrCreature | PermanentFilter::Creature => {
             CostKind::SacrificePermanents
         }
+        PermanentFilter::Land => CostKind::SacrificeLands,
     }
 }
 
@@ -4668,7 +4931,7 @@ fn normal_cast_target_prefix_is_payable(
 ) -> bool {
     if !normal_cast_cost_depends_on_targets(def) {
         let cost = effective_normal_cast_cost(def, controller, state);
-        return mana::can_pay(&cost, 0, controller, state).is_some();
+        return normal_cost_is_payable(def, &cost, 0, controller, state);
     }
     let source = targeting_source_for_object(state, spell);
     if !target_prefix_can_complete_for_controller_and_source(
@@ -4677,7 +4940,7 @@ fn normal_cast_target_prefix_is_payable(
         return false;
     }
     let cost = effective_normal_cast_cost_with_targets(def, controller, targets, state);
-    if mana::can_pay(&cost, 0, controller, state).is_some() {
+    if normal_cost_is_payable(def, &cost, 0, controller, state) {
         return true;
     }
     completable_next_targets_for_controller_and_source(spec, targets, controller, source, state)
@@ -4722,11 +4985,34 @@ fn completable_next_cast_targets(
         .collect()
 }
 
+/// Whether a spell's normal-mode total cost (`effective_normal_cast_cost`'s
+/// output: colored/hybrid/phyrexian pips plus generic, already net of any
+/// `generic_cost_reduction`) is currently payable, accounting for Delve
+/// (`CardDef::delve`) when present. Centralizes the "ordinary `mana::
+/// can_pay`, or `mana::delve_payment_plan` for a delve spell" branch so
+/// every payability check (`is_castable_now`'s offer,
+/// `remaining_cast_payment_is_payable`'s mid-cast re-check) agrees with
+/// `finalize_cast`'s actual payment about what "payable" means for a delve
+/// spell -- see `mana::delve_payment_plan`'s doc for the plan itself.
+fn normal_cost_is_payable(
+    def: &card_def::CardDef,
+    normal_cost: &Cost,
+    x_value: u8,
+    player: PlayerId,
+    state: &GameState,
+) -> bool {
+    if def.delve {
+        mana::delve_payment_plan(normal_cost, x_value, player, state).is_some()
+    } else {
+        mana::can_pay(normal_cost, x_value, player, state).is_some()
+    }
+}
+
 /// Returns the supported Omen definition for the current cast pipeline.
 /// Cast-form selection reuses the ordinary two-form decision while retaining
 /// each form's own target shape. Other cast-cost modifiers remain excluded
 /// until their ordering with Omen is needed by a pool card.
-fn supported_omen(def: &card_def::CardDef) -> Option<&card_def::OmenDef> {
+pub(crate) fn supported_omen(def: &card_def::CardDef) -> Option<&card_def::OmenDef> {
     let omen = def.omen.as_ref()?;
     let has_spell_type =
         omen.types.contains(&CardType::Instant) || omen.types.contains(&CardType::Sorcery);
@@ -4761,8 +5047,42 @@ fn supported_bestow(def: &card_def::CardDef) -> Option<&card_def::BestowDef> {
         && def.mode3.is_none()
         && def.escape.is_none()
         && def.omen.is_none()
+        && def.adventure.is_none()
         && def.generic_cost_reduction.is_none())
     .then_some(bestow)
+}
+
+/// Returns the supported Adventure definition for the current cast pipeline.
+/// Cast-form selection reuses the ordinary two-form decision Omen/Bestow
+/// already share (form 1 == the Adventure), and a finalized Adventure cast
+/// is tagged the same `CastMethodV4::Omen` a real Omen card's alternative
+/// form gets -- see `CastMethodV4::Omen`'s doc for why this pool shares
+/// that discriminant instead of adding a new one. Every consumer gated on
+/// `CastMethodV4::Omen` further dispatches on `supported_adventure`/
+/// `supported_omen` (mutually exclusive per card) to pick the right
+/// departure zone, cost, and effect. `viable_pending_spell_forms`
+/// additionally restricts form 1 to a Hand-origin cast, since the Adventure
+/// side can never be cast back out of exile (only the creature can, via
+/// `ObjectStateV4::on_adventure`, which never runs through this modal path
+/// at all -- see `castable_spells`' exile loop).
+pub(crate) fn supported_adventure(def: &card_def::CardDef) -> Option<&card_def::AdventureDef> {
+    let adventure = def.adventure.as_ref()?;
+    let has_spell_type = adventure.types.contains(&CardType::Instant)
+        || adventure.types.contains(&CardType::Sorcery);
+    (has_spell_type
+        && def.alt_cost.is_none()
+        && def.kicker_cost.is_none()
+        && def.additional_cost.is_none()
+        && def.flashback.is_none()
+        && def.plot_cost.is_none()
+        && def.madness_cost.is_none()
+        && def.mode2.is_none()
+        && def.mode3.is_none()
+        && def.escape.is_none()
+        && def.omen.is_none()
+        && def.bestow.is_none()
+        && def.generic_cost_reduction.is_none())
+    .then_some(adventure)
 }
 
 fn has_spell_form_choice(def: &card_def::CardDef) -> bool {
@@ -4770,6 +5090,7 @@ fn has_spell_form_choice(def: &card_def::CardDef) -> bool {
         || def.mode3.is_some()
         || supported_omen(def).is_some()
         || supported_bestow(def).is_some()
+        || supported_adventure(def).is_some()
 }
 
 fn printed_spell_form_count(def: &card_def::CardDef) -> u8 {
@@ -4778,6 +5099,7 @@ fn printed_spell_form_count(def: &card_def::CardDef) -> u8 {
     } else if def.mode2.is_some()
         || supported_omen(def).is_some()
         || supported_bestow(def).is_some()
+        || supported_adventure(def).is_some()
     {
         2
     } else {
@@ -4793,7 +5115,8 @@ fn spell_form_target_spec(def: &card_def::CardDef, form: u8) -> Option<TargetSpe
             .as_ref()
             .map(|mode| mode.target_spec)
             .or_else(|| supported_omen(def).map(|omen| omen.target_spec))
-            .or_else(|| supported_bestow(def).map(|bestow| bestow.target_spec)),
+            .or_else(|| supported_bestow(def).map(|bestow| bestow.target_spec))
+            .or_else(|| supported_adventure(def).map(|adventure| adventure.target_spec)),
         2 => def.mode3.as_ref().map(|mode| mode.target_spec),
         _ => None,
     }
@@ -4870,6 +5193,45 @@ fn viable_pending_spell_forms(
         }
         return forms;
     }
+    if let Some(adventure) = supported_adventure(def) {
+        let mut forms = Vec::with_capacity(2);
+        let normal_cost = effective_normal_cast_cost(def, pending.controller, state);
+        if target_prefix_can_complete_for_controller_and_source(
+            def.target_spec,
+            &pending.targets_chosen,
+            pending.controller,
+            targeting_source_for_object(state, pending.spell),
+            state,
+        ) && pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
+            && mana::can_pay(&normal_cost, 0, pending.controller, state).is_some()
+        {
+            forms.push(0);
+        }
+        // The Adventure side is only ever a Hand-zone cast: a card sitting
+        // in Exile can only be castable via `ObjectStateV4::on_adventure`
+        // (the creature face only), never modally re-offered as the
+        // Adventure again.
+        let cast_from_hand = state
+            .objects
+            .get(pending.spell)
+            .v4
+            .spell_cast_origin
+            .is_some_and(|origin| origin.origin_zone == Zone::Hand);
+        if cast_from_hand
+            && target_prefix_can_complete_for_controller_and_source(
+                adventure.target_spec,
+                &pending.targets_chosen,
+                pending.controller,
+                targeting_source_for_object(state, pending.spell),
+                state,
+            )
+            && pending_cast_form_timing_ok(adventure.types, Keywords::NONE, pending, state)
+            && mana::can_pay(&adventure.cost, 0, pending.controller, state).is_some()
+        {
+            forms.push(1);
+        }
+        return forms;
+    }
     let Some(omen) = supported_omen(def) else {
         return viable_printed_spell_modes(def, pending.spell, pending.controller, state);
     };
@@ -4918,8 +5280,9 @@ fn payable_cast_modes(
         modes.push(CastMode::Normal);
     }
     if pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
-        && def.alt_cost.is_some_and(|components| {
-            can_pay_components(components, pending.controller, pending.spell, state)
+        && def.alt_cost.is_some_and(|alt| {
+            alt_cost_condition_met(alt.condition, pending.controller, state)
+                && can_pay_components(alt.components, pending.controller, pending.spell, state)
         })
     {
         modes.push(CastMode::Alternative);
@@ -4935,6 +5298,7 @@ fn pending_cast_selected_mana_cost(
     match pending.mode_chosen {
         Some(1) if supported_bestow(def).is_some() => supported_bestow(def).map(|b| b.cost),
         Some(1) if supported_omen(def).is_some() => supported_omen(def).map(|o| o.cost),
+        Some(1) if supported_adventure(def).is_some() => supported_adventure(def).map(|a| a.cost),
         Some(_) => Some(effective_normal_cast_cost_with_targets(
             def,
             pending.controller,
@@ -4979,6 +5343,9 @@ fn is_castable_now(
         return false;
     }
     if def.bestow.is_some() && supported_bestow(def).is_none() {
+        return false;
+    }
+    if def.adventure.is_some() && supported_adventure(def).is_none() {
         return false;
     }
     if cast_method != CastMethodV4::Normal
@@ -5030,7 +5397,11 @@ fn is_castable_now(
                 );
             let alt_ok = def
                 .alt_cost
-                .map(|c| main_timing_ok && can_pay_components(c, player, id, state))
+                .map(|alt| {
+                    main_timing_ok
+                        && alt_cost_condition_met(alt.condition, player, state)
+                        && can_pay_components(alt.components, player, id, state)
+                })
                 .unwrap_or(false);
             let main_ok = !viable_printed_spell_modes(def, id, player, state).is_empty()
                 && (normal_ok || alt_ok)
@@ -5061,7 +5432,24 @@ fn is_castable_now(
                     )
                     && mana::can_pay(&bestow.cost, 0, player, state).is_some()
             });
-            main_ok || omen_ok || bestow_ok
+            // The Adventure side is only ever offered from Hand -- unlike
+            // Omen/Bestow above, exile never legalizes it: a card sitting in
+            // exile with `on_adventure` set offers only its creature face
+            // (already covered by `main_ok`, zone-agnostic), never the
+            // Adventure spell again.
+            let adventure_ok = supported_adventure(def).is_some_and(|adventure| {
+                state.objects.get(id).zone == Zone::Hand
+                    && cast_form_timing_ok(adventure.types, Keywords::NONE, player, state)
+                    && target_prefix_can_complete_for_controller_and_source(
+                        adventure.target_spec,
+                        &[],
+                        player,
+                        targeting_source_for_object(state, id),
+                        state,
+                    )
+                    && mana::can_pay(&adventure.cost, 0, player, state).is_some()
+            });
+            main_ok || omen_ok || bestow_ok || adventure_ok
         }
         CastMethodV4::Alternative
         | CastMethodV4::Madness
@@ -5088,6 +5476,16 @@ fn castable_spells(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
     }
     for &id in &state.exile {
         if state.objects.get(id).owner == player && is_plotted_castable_now(player, id, state) {
+            out.push(id);
+            continue;
+        }
+        // Adventure exile permission: the creature face of an Adventure
+        // card sitting in exile with `on_adventure` set is castable by its
+        // owner, no separate `PlayPermission` entry -- see that flag's doc.
+        if state.objects.get(id).owner == player
+            && state.objects.get(id).v4.on_adventure
+            && is_castable_now(player, id, CastMethodV4::Normal, state)
+        {
             out.push(id);
             continue;
         }
@@ -5218,9 +5616,9 @@ fn rich_mana_ability_is_payable(
         ManaAbilityCostDef::TapSelf | ManaAbilityCostDef::TapAndSacrificeSelf => {
             !(object.tapped || def.has_type(CardType::Creature) && object.summoning_sick)
         }
-        ManaAbilityCostDef::SacrificeSelf | ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf => {
-            true
-        }
+        ManaAbilityCostDef::SacrificeSelf
+        | ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf
+        | ManaAbilityCostDef::None => true,
         ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature => {
             // The allocating candidate enumeration must stay behind the two
             // cheap checks: the flat-encode zero-allocation contract counts
@@ -5499,6 +5897,7 @@ fn activate_mana_ability_for(
                 event::propose_and_commit(state, ProposedEvent::tap(source));
                 commit_sacrifice(state, &[source]);
             }
+            ManaAbilityCostDef::None => {}
         }
         if amount > 0 {
             event::propose_and_commit(
@@ -5605,6 +6004,22 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
                     out.push((id, i as u8));
                 }
             }
+            // An equipment-granted ability (Viridian Longbow) lives one
+            // index past this object's own printed abilities and is only
+            // ever usable on the battlefield -- see
+            // `resolved_activated_ability`'s doc for why this reuses the
+            // same `(source, ability_index)` action identity instead of a
+            // new candidate/decision kind.
+            if zone == Zone::Battlefield {
+                if let Some(granted) = equipped_granted_activated_ability(state, id) {
+                    let granted_index = def.activated_abilities.len() as u8;
+                    if can_pay_activation_components(granted.cost, player, id, state)
+                        && activation_target_prefix_can_complete(id, &granted, &[], state)
+                    {
+                        out.push((id, granted_index));
+                    }
+                }
+            }
         }
     }
     out
@@ -5666,7 +6081,7 @@ fn goad_is_active(state: &GameState, goad: &crate::state::GoadStateV4) -> bool {
         || (goad.expires_at_turn == state.turn && state.active_player != goad.player)
 }
 
-fn required_goaded_attackers(state: &GameState, eligible: &[ObjectId]) -> Vec<ObjectId> {
+pub(crate) fn required_goaded_attackers(state: &GameState, eligible: &[ObjectId]) -> Vec<ObjectId> {
     eligible
         .iter()
         .copied()
@@ -5716,6 +6131,18 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
                 && has_effective_subtype(state, id, card_def::Subtype::Island)
         });
     if defender_controls_island && has_effective_keyword(state, attacker, Keywords::ISLANDWALK) {
+        return Vec::new();
+    }
+    if has_effective_keyword(state, attacker, Keywords::CANT_BE_BLOCKED) {
+        return Vec::new();
+    }
+    // Azure Fleet Admiral: "can't be blocked by creatures the monarch
+    // controls." Every creature the defending player controls is such a
+    // creature exactly when the defender is currently the monarch, so this
+    // excludes the whole defending battlefield up front rather than
+    // filtering blocker-by-blocker.
+    let attacker_def = &card_def::CARD_DEFS[attacker_obj.card_def as usize];
+    if attacker_def.cant_be_blocked_by_monarchs_creatures && state.monarch == Some(defender) {
         return Vec::new();
     }
     let attacker_flying = has_effective_keyword(state, attacker, Keywords::FLYING);
@@ -6137,11 +6564,12 @@ fn remaining_cast_payment_is_payable(
                         .is_some()
                 })
             } else {
-                mana::can_pay(&normal, x_value, pending.controller, state).is_some()
+                normal_cost_is_payable(def, &normal, x_value, pending.controller, state)
             }
         }
-        CastMethodV4::Alternative => def.alt_cost.is_some_and(|components| {
-            can_pay_components(components, pending.controller, pending.spell, state)
+        CastMethodV4::Alternative => def.alt_cost.is_some_and(|alt| {
+            alt_cost_condition_met(alt.condition, pending.controller, state)
+                && can_pay_components(alt.components, pending.controller, pending.spell, state)
         }),
         CastMethodV4::Flashback => def.flashback.as_ref().is_some_and(|flashback| {
             can_pay_components(flashback.cost, pending.controller, pending.spell, state)
@@ -6153,9 +6581,15 @@ fn remaining_cast_payment_is_payable(
             .madness_cost
             .is_some_and(|cost| mana::can_pay(&cost, 0, pending.controller, state).is_some()),
         CastMethodV4::Plotted => true,
-        CastMethodV4::Omen => supported_omen(def).is_some_and(|omen| {
-            mana::can_pay(&omen.cost, x_value, pending.controller, state).is_some()
-        }),
+        CastMethodV4::Omen => {
+            if let Some(adventure) = supported_adventure(def) {
+                mana::can_pay(&adventure.cost, x_value, pending.controller, state).is_some()
+            } else {
+                supported_omen(def).is_some_and(|omen| {
+                    mana::can_pay(&omen.cost, x_value, pending.controller, state).is_some()
+                })
+            }
+        }
         CastMethodV4::Bestow => supported_bestow(def).is_some_and(|bestow| {
             mana::can_pay(&bestow.cost, x_value, pending.controller, state).is_some()
         }),
@@ -6172,7 +6606,9 @@ fn finalized_cast_method(
     def: &card_def::CardDef,
 ) -> CastMethodV4 {
     if staged_method == CastMethodV4::Normal {
-        if supported_omen(def).is_some() && pending.mode_chosen == Some(1) {
+        if (supported_omen(def).is_some() || supported_adventure(def).is_some())
+            && pending.mode_chosen == Some(1)
+        {
             CastMethodV4::Omen
         } else if supported_bestow(def).is_some() && pending.mode_chosen == Some(1) {
             CastMethodV4::Bestow
@@ -6256,8 +6692,11 @@ pub(crate) fn validate_pending_discard_binding(
             }
             validate_pending_activation(state, pending).map_err(|message| (source, message))?;
             let object = state.objects.get(source);
-            let def = &card_def::CARD_DEFS[object.card_def as usize];
-            let ability = &def.activated_abilities[ability_index as usize];
+            let Some(ability) =
+                resolved_activated_ability(object.card_def, ability_index, state, source)
+            else {
+                return fail("activation discard resumed against an unknown ability index");
+            };
             let Some(expected) = discard_count_in(ability.cost) else {
                 return fail(
                     "activation discard resumed an ability without an interactive discard cost",
@@ -6461,8 +6900,17 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
                 .pending_activation
                 .clone()
                 .expect("validated activation discard retains its activation");
-            let def = &card_def::CARD_DEFS[state.objects.get(p.source).card_def as usize];
-            let ability = &def.activated_abilities[p.ability_index as usize];
+            let Some(ability) = resolved_activated_ability(
+                state.objects.get(p.source).card_def,
+                p.ability_index,
+                state,
+                p.source,
+            ) else {
+                state.engine.pending_activation = None;
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, p.source));
+                return;
+            };
             // Keep the state-changing payment outside `debug_assert!`: the
             // macro (including its argument) is compiled out in release
             // builds, but costs must be paid in every profile. The complete
@@ -6538,6 +6986,7 @@ fn drain_pending_optional_cost_or_decide(state: &mut GameState) -> Option<Decisi
         player: poc.player,
         discard_payable: poc.discard_payable,
         sacrifice_payable: poc.sacrifice_payable,
+        return_permanent_payable: poc.return_permanent_payable,
     })
 }
 
@@ -6589,6 +7038,35 @@ fn drain_pending_spell_copy_or_decide(state: &mut GameState) -> Option<Decision>
     }
 }
 
+/// Pure live-choice projection shared by the engine and disposable search clones.
+pub(crate) fn pending_effect_targets_decision_v2(
+    pending: &effect::EffectContinuation,
+) -> Option<Decision> {
+    let effect::PendingEffectChoice::SelectTargets {
+        player,
+        selected,
+        legal,
+        min_targets,
+        max_targets,
+        ..
+    } = pending.choice.as_ref()?
+    else {
+        return None;
+    };
+    Some(Decision::ChooseEffectTargets {
+        player: *player,
+        source: pending.resolving_item.source,
+        selected_count: selected
+            .len()
+            .try_into()
+            .expect("effect selected-target count fits the u16 public contract"),
+        min_targets: *min_targets,
+        max_targets: *max_targets,
+        legal_targets: legal.iter().map(|candidate| candidate.target).collect(),
+        can_finish: selected.len() >= usize::from(*min_targets),
+    })
+}
+
 /// Drives the generic v4 effect continuation. A suspended resolving item is
 /// represented on the public stack while the player chooses, but is removed
 /// again before interpreter execution resumes, matching the ordinary
@@ -6625,25 +7103,9 @@ fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
                     .try_into()
                     .expect("effect option count fits the u16 public contract"),
             },
-            effect::PendingEffectChoice::SelectTargets {
-                player,
-                selected,
-                legal,
-                min_targets,
-                max_targets,
-                ..
-            } => Decision::ChooseEffectTargets {
-                player: *player,
-                source: pending.resolving_item.source,
-                selected_count: selected
-                    .len()
-                    .try_into()
-                    .expect("effect selected-target count fits the u16 public contract"),
-                min_targets: *min_targets,
-                max_targets: *max_targets,
-                legal_targets: legal.iter().map(|candidate| candidate.target).collect(),
-                can_finish: selected.len() >= usize::from(*min_targets),
-            },
+            effect::PendingEffectChoice::SelectTargets { .. } => {
+                pending_effect_targets_decision_v2(pending).expect("matched SelectTargets")
+            }
             effect::PendingEffectChoice::ChooseBoolean {
                 player,
                 default,
@@ -6799,6 +7261,9 @@ pub(crate) fn validate_pending_cast(
     if def.bestow.is_some() && supported_bestow(def).is_none() {
         return Err("pending cast source has an unsupported Bestow definition".to_string());
     }
+    if def.adventure.is_some() && supported_adventure(def).is_none() {
+        return Err("pending cast source has an unsupported Adventure definition".to_string());
+    }
     if source.spell_copy_origin.is_some() {
         return Err("a virtual spell copy cannot be staged as a cast".to_string());
     }
@@ -6897,8 +7362,15 @@ pub(crate) fn validate_pending_cast(
     };
     match method {
         CastMethodV4::Normal => {
+            // `move_to_stack` clears `ObjectStateV4::on_adventure`;
+            // `begin_cast_ex`/`abort_cast` restamp it `true` across the
+            // active Exile -> Stack attempt (see those restamps' docs), so
+            // it is still readable here on the live post-move source.
+            let has_adventure_exile_permission =
+                pending.origin_zone == Zone::Exile && source.v4.on_adventure;
             if pending.origin_zone != Zone::Hand
-                && !(pending.origin_zone == Zone::Exile && has_prior_exile_permission())
+                && !(pending.origin_zone == Zone::Exile
+                    && (has_prior_exile_permission() || has_adventure_exile_permission))
             {
                 return Err(
                     "normal cast has an invalid origin zone or exile permission".to_string()
@@ -7731,6 +8203,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                     PermanentFilter::Creature => CostKind::SacrificeCreatures,
                     PermanentFilter::Artifact => CostKind::SacrificeArtifacts,
                     PermanentFilter::ArtifactOrCreature => CostKind::SacrificePermanents,
+                    PermanentFilter::Land => CostKind::SacrificeLands,
                 },
                 remaining,
                 candidates,
@@ -8043,8 +8516,14 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
             source: pending.source,
         });
     }
-    let def = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
-    let ability = &def.activated_abilities[pending.ability_index as usize];
+    let ability = resolved_activated_ability(
+        state.objects.get(pending.source).card_def,
+        pending.ability_index,
+        state,
+        pending.source,
+    )
+    .expect("validate_pending_activation already confirmed this ability index resolves");
+    let ability = &ability;
 
     let max_targets = target_count(pending.target_spec);
     if (pending.targets_chosen.len() as u8) < max_targets {
@@ -8273,10 +8752,14 @@ pub(crate) fn validate_pending_activation(
     if !def.is_executable() {
         return Err("pending activation source is not executable".to_string());
     }
-    let ability = def
-        .activated_abilities
-        .get(pending.ability_index as usize)
-        .ok_or_else(|| "pending activation ability index changed".to_string())?;
+    let ability = resolved_activated_ability(
+        object.card_def,
+        pending.ability_index,
+        state,
+        pending.source,
+    )
+    .ok_or_else(|| "pending activation ability index changed".to_string())?;
+    let ability = &ability;
     if ability.target_spec != pending.target_spec {
         return Err("pending activation target specification changed".to_string());
     }
@@ -8579,6 +9062,27 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
         }
         let need = target_count(pending.target_spec);
         if pending.targets.len() < usize::from(need) {
+            let trigger_source = pending_trigger_targeting_source(&pending);
+            if !target_prefix_can_complete_for_controller_and_source(
+                pending.target_spec,
+                &pending.targets,
+                pending.controller,
+                trigger_source,
+                state,
+            ) {
+                // 603.3c: if all of a triggered ability's targets are
+                // illegal (here: none were ever legal, e.g. every creature
+                // on the battlefield has protection from this monocolored
+                // source), the ability is removed instead of being put on
+                // the stack -- it does nothing. Drop it and keep draining
+                // rather than exposing an impossible `Decision::
+                // ChooseTargets` (empty `legal_targets`, `can_finish:
+                // false`), which `drain_pending_cast_or_decide`'s matching
+                // `targeting_can_complete`/`abort_cast` guard already
+                // avoids for spell casts.
+                state.engine.pending_triggers.remove(0);
+                continue;
+            }
             return Some(Decision::ChooseTargets {
                 player: pending.controller,
                 spell: pending.source,
@@ -9132,6 +9636,18 @@ fn triggered_stack_item_expected_target_spec(
         }
         effect::validate_initiative_trigger_binding(state, *binding)?;
     }
+    if let EffectOp::ResolveMonarchTrigger { binding } = inline_effect {
+        let Some(source_contract) = ability_source_contract else {
+            return Err("Monarch trigger lost its historical designation source".to_string());
+        };
+        if source_contract != binding.source
+            || item.controller != binding.player
+            || item.source != binding.source.source
+        {
+            return Err("Monarch trigger changed its source or controller".to_string());
+        }
+        effect::validate_monarch_trigger_binding(state, *binding)?;
+    }
     let source_def = card_def::CARD_DEFS
         .get(source_card_def as usize)
         .ok_or("triggered stack item source definition is missing")?;
@@ -9252,11 +9768,15 @@ pub(crate) fn validated_stack_item_target_spec(
                 if item.mode_chosen != 0 {
                     return Err("Omen spell stack item carries a modal index".to_string());
                 }
-                Some(
-                    supported_omen(def)
-                        .ok_or("Omen spell stack item lost its definition")?
-                        .target_spec,
-                )
+                if let Some(adventure) = supported_adventure(def) {
+                    Some(adventure.target_spec)
+                } else {
+                    Some(
+                        supported_omen(def)
+                            .ok_or("Omen spell stack item lost its definition")?
+                            .target_spec,
+                    )
+                }
             } else if item.v4.cast_method == Some(CastMethodV4::Bestow) {
                 if item.mode_chosen != 0 {
                     return Err("Bestow spell stack item carries a modal index".to_string());
@@ -9288,7 +9808,6 @@ pub(crate) fn validated_stack_item_target_spec(
         StackItemKind::ActivatedAbility => {
             if item.inline_effect.is_none()
                 || item.v4.madness_source_contract.is_some()
-                || item.v4.granted_by.is_some()
                 || item.v4.optional_additional_cost_paid.is_some()
             {
                 return Err(
@@ -9300,13 +9819,13 @@ pub(crate) fn validated_stack_item_target_spec(
                 .activated_ability_index
                 .ok_or("activated stack item lost its definition-owned ability index")?;
             let source_contract = validated_ability_source_contract(state, item)?;
-            let def = card_def::CARD_DEFS
-                .get(source_contract.card_def as usize)
-                .ok_or("activated stack item source definition is missing")?;
-            let ability = def
-                .activated_abilities
-                .get(ability_index as usize)
-                .ok_or("activated stack item carries an out-of-range ability index")?;
+            let ability = resolved_stack_activated_ability(
+                state,
+                source_contract,
+                ability_index,
+                item.v4.granted_by,
+            )?;
+            let ability = &ability;
             if item.inline_effect.as_ref() != Some(&(ability.effect)()) {
                 return Err(
                     "activated stack item effect no longer matches its ability index".to_string(),
@@ -9461,20 +9980,19 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
                     .activated_ability_index
                     .ok_or("activated stack item lost its definition-owned ability index")?;
                 let source_contract = validated_ability_source_contract(state, item)?;
-                let def = card_def::CARD_DEFS
-                    .get(source_contract.card_def as usize)
-                    .ok_or("activated stack item source definition is missing")?;
-                let ability = def
-                    .activated_abilities
-                    .get(ability_index as usize)
-                    .ok_or("activated stack item carries an out-of-range ability index")?;
+                let ability = resolved_stack_activated_ability(
+                    state,
+                    source_contract,
+                    ability_index,
+                    item.v4.granted_by,
+                )?;
                 let source_departed = state.objects.try_get(item.source).is_none_or(|live| {
                     live.zone_change_count != source_contract.zone_change_count
                         || live.zone != source_contract.zone
                 });
                 activation_legal_targets_with_source_lki(
                     item.source,
-                    ability,
+                    &ability,
                     &chosen,
                     source_departed,
                     state,
@@ -9485,25 +10003,30 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
                 spec,
                 &chosen,
                 item.controller,
-                Some(match item.kind {
-                    StackItemKind::Spell => TargetingSource {
+                match item.kind {
+                    StackItemKind::Spell => Some(TargetingSource {
                         object: item.source,
                         card_def: state.objects.get(item.source).card_def,
-                    },
+                    }),
                     StackItemKind::TriggeredAbility => {
                         let source_contract = item
                             .v4
                             .ability_source_contract
                             .ok_or("triggered stack item lost its source incarnation")?;
-                        TargetingSource {
-                            object: item.source,
-                            card_def: source_contract.card_def,
-                        }
+                        let effect = item
+                            .inline_effect
+                            .as_ref()
+                            .ok_or("triggered stack item lost its effect program")?;
+                        triggered_ability_targeting_source(
+                            item.source,
+                            Some(source_contract),
+                            effect,
+                        )
                     }
                     StackItemKind::MadnessOffer | StackItemKind::ActivatedAbility => {
                         unreachable!("handled or untargeted")
                     }
-                }),
+                },
                 state,
             )
             .contains(&target),
@@ -9636,6 +10159,24 @@ fn finish_resolved_stack_item(state: &mut GameState, item: &StackItem) -> Result
     }
     let def = &card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize];
     if item.v4.cast_method == Some(CastMethodV4::Omen) {
+        if supported_adventure(def).is_some() {
+            let departure = plan_spell_departure(state, item, Zone::Exile)?;
+            if item.is_copy {
+                return apply_spell_departure(state, departure);
+            }
+            apply_spell_departure(state, departure)?;
+            if state.objects.get(item.source).zone != Zone::Exile
+                || !state.exile.contains(&item.source)
+            {
+                return Err("resolved Adventure source did not enter exile".to_string());
+            }
+            // 715-style Adventure exile: grant the owner permission to cast
+            // the creature face later from this exact exile incarnation.
+            // Stamped only after the move, the same way `plot_spell`
+            // re-stamps `plotted_turn` after its own zone change.
+            state.objects.get_mut(item.source).v4.on_adventure = true;
+            return Ok(());
+        }
         supported_omen(def).ok_or("resolved Omen spell lost its definition")?;
         let departure = plan_spell_departure(state, item, Zone::Library)?;
         if item.is_copy {
@@ -9663,8 +10204,9 @@ fn finish_resolved_stack_item(state: &mut GameState, item: &StackItem) -> Result
 }
 
 /// A spell countered by the rules for having no legal targets performs none
-/// of its resolution effects. In particular, an Omen card goes to the
-/// graveyard here rather than applying its successful source shuffle.
+/// of its resolution effects. In particular, an Omen or Adventure card goes
+/// to the graveyard here rather than applying its successful post-resolution
+/// departure (library shuffle, or exile-with-permission).
 fn finish_failed_stack_item(state: &mut GameState, item: &StackItem) -> Result<(), String> {
     if item.kind == StackItemKind::Spell && item.v4.cast_method == Some(CastMethodV4::Omen) {
         let departure = plan_spell_departure(state, item, Zone::Graveyard)?;
@@ -9869,7 +10411,11 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     // `finalize_cast`). Each printed mode retains its own definition-owned
     // program, while Omen continues to use its separate cast form.
     let program = if item.v4.cast_method == Some(CastMethodV4::Omen) {
-        supported_omen(def).map(|omen| (omen.effect)())
+        if let Some(adventure) = supported_adventure(def) {
+            Some((adventure.effect)())
+        } else {
+            supported_omen(def).map(|omen| (omen.effect)())
+        }
     } else if item.v4.cast_method == Some(CastMethodV4::Bestow) {
         supported_bestow(def).map(|_| {
             EffectOp::PutSourceOntoBattlefieldAttachedToTargetWithXPlusOneCounters {
@@ -10171,6 +10717,10 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
         }
         Step::Upkeep => {
             let p = state.active_player;
+            // 505.2: logged unconditionally, once per turn, for whichever
+            // player's own Upkeep step this is -- see
+            // `TriggerCondition::BeginningOfUpkeep` (Delver of Secrets).
+            event::log_upkeep_began(state, p);
             if state.initiative == Some(p) {
                 let Some(source) = state.engine.initiative_source else {
                     state.engine.halted =
@@ -10191,8 +10741,8 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     ));
                     return;
                 }
-                collect_and_queue_triggers(state);
             }
+            collect_and_queue_triggers(state);
         }
         Step::Draw => {
             let p = state.active_player;
@@ -10266,8 +10816,27 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 };
                 state.engine.event_log.push(marker.clone());
                 state.engine.event_history.push(marker);
-                collect_and_queue_triggers(state);
             }
+            let p = state.active_player;
+            // 306.3: logged only for whichever player's own End step this
+            // is, and only if they currently hold the monarchy -- the same
+            // "active player's own step, gated on a global designation"
+            // shape as Initiative's Venture-at-upkeep above.
+            if state.monarch == Some(p) {
+                let Some(source) = state.engine.monarch_source else {
+                    state.engine.halted =
+                        Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                    return;
+                };
+                if event::log_monarch_trigger(state, p, source).is_err() {
+                    state.engine.halted = Some((
+                        UnsupportedMechanic::InvalidEffectContinuation,
+                        source.source,
+                    ));
+                    return;
+                }
+            }
+            collect_and_queue_triggers(state);
         }
         Step::Cleanup => {
             // 514.1/514.2: reset damage, "until end of turn" effects end,
@@ -10818,6 +11387,158 @@ pub(crate) fn attached_equipment_profiles(
         })
 }
 
+/// Synthesizes the full `ActivatedAbilityDef` a `GrantedActivatedAbilityDef`
+/// expands to, with the fixed defaults a granted ability takes in this pool
+/// -- usable any time its host has priority-eligible timing on the
+/// battlefield (`activation_zone: Battlefield`, `sorcery_speed_only:
+/// false`), no source-relative target restriction beyond `target_spec`
+/// (`ActivationTargetFilter::TargetSpecOnly`), and no per-turn activation
+/// cap (`max_activations_per_turn: None`).
+fn synthesized_granted_activated_ability(
+    granted: card_def::GrantedActivatedAbilityDef,
+) -> card_def::ActivatedAbilityDef {
+    card_def::ActivatedAbilityDef {
+        cost: granted.cost,
+        target_spec: granted.target_spec,
+        effect: granted.effect,
+        activation_zone: Zone::Battlefield,
+        sorcery_speed_only: false,
+        activation_target_filter: card_def::ActivationTargetFilter::TargetSpecOnly,
+        max_activations_per_turn: None,
+    }
+}
+
+/// `host`'s attached Equipment that grants it an activated ability
+/// (Viridian Longbow's tap-ping), if any, together with that Equipment's
+/// own `ObjectId` -- needed to freeze `StackStateV4::granted_by` at
+/// activation-push time (`push_paid_activation`). `None` for an unequipped
+/// creature or an attached Equipment without a granted ability. At most one
+/// attached Equipment in this pool ever grants an ability, so the first
+/// match wins. Live-state only: correct for every *pre-stack* use (offering
+/// and paying for the activation still requires the ability to currently
+/// exist) but never consulted once the ability is on the stack -- see
+/// `resolved_stack_activated_ability`'s doc for why resolution instead uses
+/// frozen, last-known-information provenance.
+fn equipped_granted_activated_ability_with_equipment(
+    state: &GameState,
+    host: ObjectId,
+) -> Option<(ObjectId, card_def::ActivatedAbilityDef)> {
+    attached_equipment_profiles(state, host).find_map(|(equipment_id, equipment)| {
+        equipment
+            .granted_activated_ability
+            .map(|granted| (equipment_id, synthesized_granted_activated_ability(granted)))
+    })
+}
+
+fn equipped_granted_activated_ability(
+    state: &GameState,
+    host: ObjectId,
+) -> Option<card_def::ActivatedAbilityDef> {
+    equipped_granted_activated_ability_with_equipment(state, host).map(|(_, ability)| ability)
+}
+
+/// Resolves `ability_index` for the object whose printed card definition is
+/// `card_def_idx` against that card's own `CardDef::activated_abilities`
+/// first; if `ability_index` names exactly one slot past the printed end,
+/// resolves it as `source`'s current equipment-granted ability instead.
+/// Centralizing this lookup is what lets a granted ability reuse the
+/// ordinary `Action::ActivateAbility(ObjectId, u8)` action identity end to
+/// end for every *pre-stack* stage -- offer
+/// (`available_activatable_abilities`), begin/target/pay
+/// (`begin_activation` through `finalize_activation`) -- without a new
+/// decision/action kind or any `flat_policy_v2` change: from the RL
+/// surface's perspective this is just another `(source, ability_index)`
+/// candidate on the equipped creature.
+///
+/// Live-state only, deliberately: an ability offer/activation announcement
+/// legitimately requires the granting Equipment to currently be attached
+/// (602.2/601.2a-style "is this actually legal right now"), and nothing can
+/// interrupt an activation between `begin_activation` and
+/// `push_paid_activation` (602's announcement is atomic; no player receives
+/// priority mid-announcement). Once the ability is safely on the stack,
+/// `push_paid_activation` freezes its identity into the `StackItem` instead
+/// and every later read goes through `resolved_stack_activated_ability`,
+/// never this function -- see that function's doc for why (CR 113.7a: an
+/// activated ability on the stack resolves independently of its source).
+fn resolved_activated_ability(
+    card_def_idx: u16,
+    ability_index: u8,
+    state: &GameState,
+    source: ObjectId,
+) -> Option<card_def::ActivatedAbilityDef> {
+    let def = card_def::CARD_DEFS.get(card_def_idx as usize)?;
+    if let Some(ability) = def.activated_abilities.get(ability_index as usize) {
+        return Some(*ability);
+    }
+    if ability_index as usize != def.activated_abilities.len() {
+        return None;
+    }
+    equipped_granted_activated_ability(state, source)
+}
+
+/// Resolves the `ActivatedAbilityDef` for an *on-stack* activated-ability
+/// item from the FROZEN identity `push_paid_activation` captured when it
+/// was pushed, never by re-deriving from live equipment state. CR 113.7a:
+/// "an ability that has left the stack ... continues to exist ... An
+/// activated or triggered ability that's on the stack is unaffected by its
+/// source leaving the zone it was in when it was activated or triggered" --
+/// XMage's `StackAbility` is decoupled from its source the same way. A
+/// printed ability is looked up by index exactly as before (and must not
+/// carry `granted_by`). A granted ability (`item.v4.granted_by` set, mirror
+/// of how `trigger.rs` freezes `PendingTrigger::granted_by` for Black Mage's
+/// Rod's granted trigger) is looked up from the frozen Equipment's own
+/// *static* `CardDef` -- its printed granted-ability text can never change
+/// at runtime, so no live lookup is needed once the identity itself passes
+/// the same historical-consistency check
+/// `validate_equipment_granted_trigger_contract` already applies to a
+/// granted trigger: both the host and the Equipment contracts must still be
+/// internally coherent (`validate_historical_ability_source_contract`), and
+/// the Equipment must have actually been attached to this exact host
+/// incarnation at the moment of capture. Neither the host creature nor the
+/// Equipment needs to still exist or still be attached now -- a response
+/// that destroys the Equipment (Ancient Grudge, Smash to Smithereens) or
+/// the host creature (Snuff Out) must not stop the ability from resolving.
+fn resolved_stack_activated_ability(
+    state: &GameState,
+    host_contract: AbilitySourceContractV4,
+    ability_index: u8,
+    granted_by: Option<AbilitySourceContractV4>,
+) -> Result<card_def::ActivatedAbilityDef, String> {
+    let def = card_def::CARD_DEFS
+        .get(host_contract.card_def as usize)
+        .ok_or("activated stack item source definition is missing")?;
+    if let Some(ability) = def.activated_abilities.get(ability_index as usize) {
+        if granted_by.is_some() {
+            return Err(
+                "printed activated ability carries unexpected granted-by provenance".to_string(),
+            );
+        }
+        return Ok(*ability);
+    }
+    if ability_index as usize != def.activated_abilities.len() {
+        return Err("activated stack item carries an out-of-range ability index".to_string());
+    }
+    let equipment = granted_by.ok_or("granted activated ability lost its equipment provenance")?;
+    validate_historical_ability_source_contract(state, equipment)?;
+    if host_contract.source == equipment.source
+        || host_contract.zone != Zone::Battlefield
+        || equipment.zone != Zone::Battlefield
+        || equipment.attached_to
+            != Some(ObjectLinkV4 {
+                object: host_contract.source,
+                zone_change_count: host_contract.zone_change_count,
+            })
+    {
+        return Err("granted activated ability source contract is inconsistent".to_string());
+    }
+    let granted = card_def::CARD_DEFS
+        .get(equipment.card_def as usize)
+        .and_then(|definition| definition.equipment)
+        .and_then(|equipment_def| equipment_def.granted_activated_ability)
+        .ok_or("granted activated ability's Equipment no longer grants one")?;
+    Ok(synthesized_granted_activated_ability(granted))
+}
+
 pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
     let Some(object) = state.objects.try_get(id) else {
         return Vec::new();
@@ -11057,6 +11778,41 @@ pub(crate) fn commit_combat_damage_events(state: &mut GameState, events: Vec<Pro
             }
         }
     }
+    // 306.4: whenever a creature deals combat damage to the monarch, its
+    // controller becomes the monarch. This does not use the stack (unlike
+    // the Initiative combat-transfer case immediately above, which this
+    // kernel deliberately does route through a trigger for consistency with
+    // Undercity's own stack-based transfer) -- a direct designation change,
+    // mirrored the same way the Initiative transfer above locates its
+    // triggering damage event. `EngineState::monarch_source` is rebound to
+    // the attacking creature here too, so a later end-step draw trigger
+    // freezes the correct (post-transfer) provenance rather than staying
+    // pinned to whichever object last granted the monarchy.
+    if let Some(holder) = state.monarch {
+        let transfer = state.engine.event_log[event_start..]
+            .iter()
+            .find_map(|event| match event {
+                CommittedEvent::CombatDamageToPlayer {
+                    source,
+                    player,
+                    amount,
+                    ..
+                } if *player == holder
+                    && *amount > 0
+                    && state.objects.try_get(*source).is_some_and(|object| {
+                        object.zone == Zone::Battlefield
+                            && object_has_type(state, *source, CardType::Creature)
+                    }) =>
+                {
+                    Some((*source, state.objects.get(*source).controller))
+                }
+                _ => None,
+            });
+        if let Some((source, player)) = transfer {
+            state.monarch = Some(player);
+            state.engine.monarch_source = Some(AbilitySourceContractV4::capture(state, source));
+        }
+    }
     collect_and_queue_triggers(state);
 }
 
@@ -11070,7 +11826,7 @@ pub(crate) fn put_ninjutsu_source_onto_battlefield_attacking(
     controller: PlayerId,
     expected_source: Option<ObjectLinkV4>,
 ) -> Result<(), String> {
-    if !ninjutsu_timing_ok(controller, state) {
+    if !ninjutsu_resolution_window_ok(controller, state) {
         return Err("ninjutsu resolved outside its post-blockers combat window".to_string());
     }
     let expected_source = expected_source.ok_or("ninjutsu effect lost its hand source binding")?;
@@ -11119,22 +11875,10 @@ pub(crate) fn put_ninjutsu_source_onto_battlefield_attacking(
     Ok(())
 }
 
-/// 510.1c assignment among blockers: lethal damage (toughness minus
-/// damage already marked) goes to each blocker in `blockers`' order
-/// except the last, which absorbs whatever power remains. A single
-/// blocker just gets it all directly.
-///
-/// Legacy behavior (pool-reachable): CR 702.19 trample is not implemented,
-/// though this pool grants TRAMPLE to Spinewoods Paladin and Avenging
-/// Hunter. Excess power is never assigned to the defending player once
-/// the attacker is blocked, and under CR 702.19d a trampler whose
-/// blockers have all left the battlefield by damage assignment should
-/// assign all its damage to the defending player; here an empty
-/// `blockers` list produces no events at all.
-///
-/// The order itself is `CombatState::blocked_by`'s fixed deterministic
-/// sort -- see that field's doc for why this is a stubbed decision
-/// point, not a real one, this increment.
+/// Deterministic combat-assignment policy. Trample assigns lethal to each
+/// remaining blocker, then excess to the defending player (702.19b,d).
+/// Other attackers retain the existing blocker-order assignment policy.
+/// This is one legal allocation, not an exposed choice among all allocations.
 fn assign_attacker_damage_to_blockers(
     state: &GameState,
     attacker: ObjectId,
@@ -11142,6 +11886,35 @@ fn assign_attacker_damage_to_blockers(
     blockers: &[ObjectId],
     events: &mut Vec<ProposedEvent>,
 ) {
+    if has_effective_keyword(state, attacker, Keywords::TRAMPLE) {
+        let mut remaining = power;
+        let deathtouch = has_effective_keyword(state, attacker, Keywords::DEATHTOUCH);
+        for &blocker in blockers.iter().filter(|&&id| is_still_in_combat(state, id)) {
+            let lethal = (effective_toughness(state, blocker)
+                - state.objects.get(blocker).damage as i32)
+                .max(0);
+            let assign = remaining.min(if deathtouch { lethal.min(1) } else { lethal });
+            if assign > 0 {
+                events.push(ProposedEvent::damage(
+                    attacker,
+                    Target::Object(blocker),
+                    assign,
+                ));
+                remaining -= assign;
+            }
+            if remaining == 0 {
+                break;
+            }
+        }
+        if remaining > 0 {
+            events.push(ProposedEvent::damage(
+                attacker,
+                Target::Player(state.objects.get(attacker).controller.opponent()),
+                remaining,
+            ));
+        }
+        return;
+    }
     if blockers.len() == 1 {
         events.push(ProposedEvent::damage(
             attacker,
@@ -11179,6 +11952,9 @@ fn assign_attacker_damage_to_blockers(
         remaining -= assign;
     }
 }
+
+#[cfg(test)]
+mod combat_trample_tests;
 
 // ---------------------------------------------------------------- actions
 
@@ -11353,8 +12129,14 @@ fn pending_activation_action_stage(
         }
         return Ok(PendingActivationActionStage::ChooseTarget);
     }
-    let def = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
-    let ability = &def.activated_abilities[pending.ability_index as usize];
+    let ability = resolved_activated_ability(
+        state.objects.get(pending.source).card_def,
+        pending.ability_index,
+        state,
+        pending.source,
+    )
+    .expect("validate_pending_activation already confirmed this ability index resolves");
+    let ability = &ability;
     let return_cost_incomplete =
         return_permanent_filter_in(ability.cost).is_some() && pending.object_cost_chosen.is_empty();
     let sacrifice_cost_incomplete = activation_permanent_sacrifice_needed(ability.cost)
@@ -11787,12 +12569,16 @@ fn apply_choose_target(state: &mut GameState, target: Target) -> Result<(), Stri
             Ok(())
         }
         TargetingProducer::Activation(pending) => {
-            let definition =
-                &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
-            let ability = &definition.activated_abilities[pending.ability_index as usize];
+            let ability = resolved_activated_ability(
+                state.objects.get(pending.source).card_def,
+                pending.ability_index,
+                state,
+                pending.source,
+            )
+            .expect("validate_pending_activation already confirmed this ability index resolves");
             if !completable_next_activation_targets_for(
                 pending.source,
-                ability,
+                &ability,
                 &pending.targets_chosen,
                 state,
             )
@@ -12273,8 +13059,14 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
     }
     if let Some(pending) = state.engine.pending_activation.clone() {
         validate_pending_activation(state, &pending)?;
-        let def = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
-        let ability = &def.activated_abilities[pending.ability_index as usize];
+        let ability = resolved_activated_ability(
+            state.objects.get(pending.source).card_def,
+            pending.ability_index,
+            state,
+            pending.source,
+        )
+        .expect("validate_pending_activation already confirmed this ability index resolves");
+        let ability = &ability;
         if !target_cardinality_is_complete(pending.target_spec, pending.targets_chosen.len()) {
             return Err(
                 "activation cost target chosen before activation targeting completed".to_string(),
@@ -12451,6 +13243,13 @@ fn apply_choose_optional_cost(
         .ok_or("no optional cost is pending")?;
     match choice {
         OptionalCostChoice::Decline => {
+            // Glint Hawk's "sacrifice it unless..." consequence: `otherwise`
+            // runs iff the controller declines. `None` for every
+            // pre-existing consumer, so their decline stays a plain no-op.
+            if let Some(otherwise) = &poc.otherwise {
+                let ctx = ExecCtx::no_targets(poc.source, poc.player);
+                effect::execute(otherwise, &ctx, state);
+            }
             // See `PendingOptionalCost::spell_resume`'s doc: declining
             // still means the spell this cost belongs to is now fully
             // resolved (there's no `then` to run either way), so its
@@ -12493,6 +13292,36 @@ fn apply_choose_optional_cost(
                 then: poc.then,
                 spell_resume: poc.spell_resume,
             });
+            Ok(())
+        }
+        OptionalCostChoice::ReturnPermanent => {
+            if !poc.return_permanent_payable {
+                return Err(
+                    "returning a permanent is not currently a payable option for this optional cost"
+                        .to_string(),
+                );
+            }
+            let filter = poc
+                .return_permanent_filter
+                .expect("return_permanent_payable implies a filter is set");
+            let candidates = return_permanent_cost_candidates(poc.player, state, filter, &[]);
+            // A single-step commit rather than staging its own follow-up
+            // `Decision::ChooseCostTargets` (unlike `SacrificeLand` above):
+            // this pool's sole consumer (Glint Hawk) never has more than
+            // one legal candidate, so an arbitrary (but deterministic)
+            // candidate is taken instead of adding an interactive
+            // multi-candidate sub-decision no card here exercises yet.
+            let Some(chosen) = candidates.first().map(|binding| binding.object) else {
+                return Err(
+                    "no legal permanent remains to return for this optional cost".to_string(),
+                );
+            };
+            commit_return_to_hand(state, chosen);
+            let ctx = ExecCtx::no_targets(poc.source, poc.player);
+            effect::execute(&poc.then, &ctx, state);
+            if let Some((spell, to_zone)) = poc.spell_resume {
+                event::propose_and_commit(state, ProposedEvent::zone_change(spell, to_zone));
+            }
             Ok(())
         }
     }
@@ -13467,6 +14296,15 @@ fn begin_cast_ex(
         && state.objects.get(spell_id).owner == player
         && def.plot_cost.is_some()
         && plotted_turn.is_some_and(|turn| turn < state.turn);
+    // Fang Dragon's creature face, cast straight from exile while
+    // `on_adventure` is set -- see that flag's doc. Read before
+    // `move_to_stack` clears it, then re-stamped across this exact
+    // Exile -> Stack attempt the same way `is_plotted` restamps
+    // `plotted_turn` below.
+    let is_adventure_exile = forced_cast_method.is_none()
+        && origin_zone == Zone::Exile
+        && state.objects.get(spell_id).owner == player
+        && state.objects.get(spell_id).v4.on_adventure;
     let target_spec = def.target_spec;
     let cast_method = forced_cast_method.unwrap_or_else(|| {
         if origin_zone == Zone::Graveyard {
@@ -13489,6 +14327,9 @@ fn begin_cast_ex(
         },
         CastMethodV4::Madness => SpellCastRouteV4::Madness,
         CastMethodV4::Normal if origin_zone == Zone::Hand => SpellCastRouteV4::Hand,
+        CastMethodV4::Normal if origin_zone == Zone::Exile && is_adventure_exile => {
+            SpellCastRouteV4::AdventureExile
+        }
         CastMethodV4::Normal if origin_zone == Zone::Exile => {
             let permission = active_permission_for(player, spell_id, state)
                 .expect("an ordinary Exile cast was offered through an exact play permission");
@@ -13538,6 +14379,15 @@ fn begin_cast_ex(
         // default. Keep it only across the active Exile -> Stack attempt so
         // source validation and an abort-to-Exile retry retain the marker.
         state.objects.get_mut(spell_id).plotted_turn = plotted_turn;
+    }
+    if is_adventure_exile {
+        // `move_to_stack` also resets `ObjectStateV4::on_adventure` to
+        // `false` by default. Restamp it across the active Exile -> Stack
+        // attempt the same way `is_plotted` restamps `plotted_turn` above,
+        // so source validation and an abort-to-Exile retry retain the
+        // permission; it clears for good only once the creature genuinely
+        // leaves exile onward (battlefield or graveyard).
+        state.objects.get_mut(spell_id).v4.on_adventure = true;
     }
     // `move_to_stack` resets incarnation-local object state. Install the
     // independently frozen pre-move evidence only after that reset, before
@@ -13605,8 +14455,13 @@ fn begin_cast_ex(
 /// case) and `finalize_activation` (the no-discard case) for exactly when
 /// each component pays, and why that split exists.
 fn begin_activation(state: &mut GameState, player: PlayerId, source: ObjectId, ability_index: u8) {
-    let def = &card_def::CARD_DEFS[state.objects.get(source).card_def as usize];
-    let ability = &def.activated_abilities[ability_index as usize];
+    let ability = resolved_activated_ability(
+        state.objects.get(source).card_def,
+        ability_index,
+        state,
+        source,
+    )
+    .expect("caller validated ability_index against available_activatable_abilities");
     state.engine.pending_activation = Some(PendingActivation {
         source,
         source_zone_change_count: state.objects.get(source).zone_change_count,
@@ -13748,24 +14603,40 @@ fn finalize_owned_cast(
                 &pending.targets_chosen,
                 state,
             );
-            let plan = if kicked {
-                let kicker_cost = def
-                    .kicker_cost
-                    .expect("validated kicked cast has a definition-owned kicker cost");
-                mana::can_pay_combined(
-                    &[&normal_cost, &kicker_cost],
-                    x_value,
-                    pending.controller,
-                    state,
-                )
+            if def.delve {
+                // Delve is never combined with Kicker in this pool (Gurmag
+                // Angler has no `kicker_cost`); `kicked` stays false and
+                // `delve_payment_plan` re-derives, at payment time, the same
+                // "smallest k that's affordable, oldest cards first" plan
+                // `normal_cost_is_payable` already checked at offer time.
+                let Some((plan, exiled)) =
+                    mana::delve_payment_plan(&normal_cost, x_value, pending.controller, state)
+                else {
+                    abort_cast(state, pending, cast_method);
+                    return Ok(());
+                };
+                pay_plan(state, pending.controller, &plan);
+                commit_graveyard_exile(state, &exiled);
             } else {
-                mana::can_pay(&normal_cost, x_value, pending.controller, state)
-            };
-            let Some(plan) = plan else {
-                abort_cast(state, pending, cast_method);
-                return Ok(());
-            };
-            pay_plan(state, pending.controller, &plan);
+                let plan = if kicked {
+                    let kicker_cost = def
+                        .kicker_cost
+                        .expect("validated kicked cast has a definition-owned kicker cost");
+                    mana::can_pay_combined(
+                        &[&normal_cost, &kicker_cost],
+                        x_value,
+                        pending.controller,
+                        state,
+                    )
+                } else {
+                    mana::can_pay(&normal_cost, x_value, pending.controller, state)
+                };
+                let Some(plan) = plan else {
+                    abort_cast(state, pending, cast_method);
+                    return Ok(());
+                };
+                pay_plan(state, pending.controller, &plan);
+            }
             was_kicked = kicked;
         }
         CastMethodV4::Alternative => {
@@ -13776,7 +14647,7 @@ fn finalize_owned_cast(
                 state,
                 pending.controller,
                 pending.spell,
-                alt,
+                alt.components,
                 base_object_cost_chosen,
             ) {
                 abort_cast(state, pending, cast_method);
@@ -13784,9 +14655,14 @@ fn finalize_owned_cast(
             }
         }
         CastMethodV4::Omen => {
-            let omen = supported_omen(def)
-                .expect("validated Omen cast has definition-owned spell characteristics");
-            let Some(plan) = mana::can_pay(&omen.cost, x_value, pending.controller, state) else {
+            let cost = if let Some(adventure) = supported_adventure(def) {
+                adventure.cost
+            } else {
+                supported_omen(def)
+                    .expect("validated Omen cast has definition-owned spell characteristics")
+                    .cost
+            };
+            let Some(plan) = mana::can_pay(&cost, x_value, pending.controller, state) else {
                 abort_cast(state, pending, cast_method);
                 return Ok(());
             };
@@ -13895,9 +14771,13 @@ fn finalize_owned_cast(
         reference.power_lki = Some(power);
     }
     let selected_target_spec = if cast_method == CastMethodV4::Omen {
-        supported_omen(def)
-            .expect("validated Omen cast retains its definition")
-            .target_spec
+        if let Some(adventure) = supported_adventure(def) {
+            adventure.target_spec
+        } else {
+            supported_omen(def)
+                .expect("validated Omen cast retains its definition")
+                .target_spec
+        }
     } else if cast_method == CastMethodV4::Bestow {
         supported_bestow(def)
             .expect("validated Bestow cast retains its definition")
@@ -13938,9 +14818,9 @@ fn finalize_owned_cast(
     item.v4.target_spec = Some(selected_target_spec);
     item.v4.target_contracts = pending.target_contracts;
     item.discarded = discarded;
-    // The Omen selection is canonicalized into `cast_method`; the spell's
-    // own modal index remains zero because the front-face mode2 program is
-    // unrelated to the alternative Omen characteristics.
+    // The Omen/Adventure selection is canonicalized into `cast_method`; the
+    // spell's own modal index remains zero because the front-face mode2
+    // program is unrelated to the alternative characteristics.
     item.mode_chosen = if matches!(cast_method, CastMethodV4::Omen | CastMethodV4::Bestow) {
         0
     } else {
@@ -14032,6 +14912,10 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
     );
     let owner = state.objects.get(pending.spell).owner;
     let plotted_turn = state.objects.get(pending.spell).plotted_turn;
+    let is_adventure_exile = pending
+        .source_contract
+        .spell_cast_origin
+        .is_some_and(|origin| matches!(origin.route, SpellCastRouteV4::AdventureExile));
     let to_zone = if cast_method == CastMethodV4::Madness {
         Zone::Graveyard
     } else {
@@ -14059,6 +14943,12 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
         object
             .v4
             .reset_for_zone_change(object.card_def, to_zone, turn);
+        if is_adventure_exile && to_zone == Zone::Exile {
+            // Same restamp `begin_cast_ex` applies across a live attempt:
+            // an aborted Adventure-exile cast returns to the exact exile
+            // incarnation it started from and must retain its permission.
+            object.v4.on_adventure = true;
+        }
     }
     if to_zone == Zone::Hand {
         for observer in [PlayerId::P0, PlayerId::P1] {
@@ -14093,8 +14983,14 @@ fn finalize_activation(state: &mut GameState) {
         .pending_activation
         .take()
         .expect("finalize_activation requires a pending activation");
-    let def = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
-    let ability = &def.activated_abilities[pending.ability_index as usize];
+    let ability = resolved_activated_ability(
+        state.objects.get(pending.source).card_def,
+        pending.ability_index,
+        state,
+        pending.source,
+    )
+    .expect("validate_pending_activation already confirmed this ability index resolves");
+    let ability = &ability;
     let mut discarded = Vec::new();
     if ability
         .cost
@@ -14149,8 +15045,35 @@ fn push_paid_activation(
     pending: PendingActivation,
     discarded: Vec<ObjectId>,
 ) {
-    let def = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
-    let ability = &def.activated_abilities[pending.ability_index as usize];
+    // Resolve and, for a granted ability, freeze its granting Equipment's
+    // exact incarnation right here -- the only place this needs a live
+    // lookup. From this point on the stack item is self-contained: every
+    // later read (`validated_stack_item_target_spec`,
+    // `stack_targets_still_legal`) goes through
+    // `resolved_stack_activated_ability`'s frozen/LKI path instead of
+    // re-deriving from live equipment state, so a response that destroys
+    // the Equipment or this creature can't halt the ability's resolution.
+    let host_card_def = state.objects.get(pending.source).card_def;
+    let printed_len = card_def::CARD_DEFS[host_card_def as usize]
+        .activated_abilities
+        .len();
+    let (ability, granted_by) = if (pending.ability_index as usize) < printed_len {
+        (
+            card_def::CARD_DEFS[host_card_def as usize].activated_abilities
+                [pending.ability_index as usize],
+            None,
+        )
+    } else {
+        let (equipment_id, ability) =
+            equipped_granted_activated_ability_with_equipment(state, pending.source).expect(
+                "callers validate this ability index resolves before pushing the activation",
+            );
+        (
+            ability,
+            Some(AbilitySourceContractV4::capture(state, equipment_id)),
+        )
+    };
+    let ability = &ability;
     let source = state.objects.get(pending.source);
     let ability_source_contract = AbilitySourceContractV4 {
         source: pending.source,
@@ -14231,6 +15154,7 @@ fn push_paid_activation(
                     zone_change_count: pending.source_zone_change_count,
                 },
             ),
+            granted_by,
             ..StackStateV4::default()
         },
     });
@@ -14289,9 +15213,32 @@ pub(crate) fn pay_plan(state: &mut GameState, player: PlayerId, plan: &mana::Pay
         event::propose_and_commit(state, ProposedEvent::tap(id));
         event::propose_and_commit(state, ProposedEvent::mana_add(player, vec![color]));
     }
-    // Spend: every newly-tapped mana is fully consumed by this cost by
+    // A multi-yield source (an assembled Urza land) added more than the one
+    // mana its own tap paid for. `PaymentPlan::surplus` is exactly the part
+    // of that extra yield the cost did not consume, so adding it here
+    // completes the pool arithmetic: the taps above contributed
+    // `taps(color)`, this contributes `surplus[color]`, and together they
+    // are the full yield that survives the payment. Every addition runs
+    // before any subtraction, so the pool never dips below zero even when
+    // the cost spends surplus credited by an earlier tap in the same plan.
+    // `surplus` is `[0; 6]` for every single-yield plan, so this loop is a
+    // no-op for the whole pre-wave-2 pool.
+    for (index, &amount) in plan.surplus.iter().enumerate() {
+        if amount > 0 {
+            let color = mana::ManaColor::ALL[index];
+            debug_assert_eq!(color.pool_index(), index);
+            event::propose_and_commit(
+                state,
+                ProposedEvent::mana_add(player, vec![color; usize::from(amount)]),
+            );
+        }
+    }
+    // Spend: every newly-tapped mana's own unit is consumed by this cost by
     // construction (the solver only taps what it needs), plus whatever
-    // floating pool the plan says to use.
+    // running pool the plan says to use. `pool_used` can exceed the mana
+    // that was floating before this payment, because the solver may have
+    // spent surplus credited above; it can never exceed
+    // `floating + surplus`, which is why this stays non-negative.
     for &(_, color) in &plan.taps {
         state.players[player.index()].mana_pool[color.pool_index()] -= 1;
     }
@@ -14300,6 +15247,10 @@ pub(crate) fn pay_plan(state: &mut GameState, player: PlayerId, plan: &mana::Pay
     }
     state.players[player.index()].life -= plan.life_paid;
 }
+
+#[cfg(test)]
+#[path = "engine_attachment_lki_tests.rs"]
+mod attachment_lki_tests;
 
 #[cfg(test)]
 mod tests {
@@ -14737,6 +15688,232 @@ mod tests {
         assert_eq!(state, before);
     }
 
+    /// CAMPAIGN-001-BLOCK1-CUDA-001.md gate item 4 root cause: paying the
+    /// `ReturnControlledUnblockedAttackerToOwnersHand` cost (ninjutsu's own
+    /// activation cost, and the only other cost family that returns an
+    /// *attacking* permanent to hand) used to commit the zone change without
+    /// removing the returned object from `state.engine.combat.attackers`. If
+    /// that same object legitimately re-enters combat later in the same
+    /// Declare Blockers step (it has ninjutsu itself, and gets returned to
+    /// hand to pay for a *different* ninjutsu creature's cost before its own
+    /// ninjutsu ability resolves), `put_ninjutsu_source_onto_battlefield_
+    /// attacking`'s own-duplicate guard (`combat.attackers.contains`) found
+    /// the stale leftover id and rejected a legal ninjutsu chain as "ninjutsu
+    /// source already appears in combat", which the collector turns into an
+    /// engine halt and a rejected trajectory. Reproduced end to end (real
+    /// seed, real decks, the real trained checkpoint) by
+    /// `expanded_deck_training_v1::tests::
+    /// campaign_001_block1_cuda_iteration_30_slot_3_ninjutsu_chain_completes_naturally`;
+    /// this is the same defect isolated to the one cost-payment call site,
+    /// with no game loop, policy, or checkpoint needed.
+    #[test]
+    fn returning_an_unblocked_attacker_for_a_cost_prunes_it_from_combat_attackers() {
+        let mut state = empty_game();
+        let attacker = put_on_battlefield(&mut state, PlayerId::P0, "Ninja of the Deep Hours");
+        state.objects.get_mut(attacker).tapped = true;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        state.step = Step::DeclareBlockers;
+        state.engine.combat.attackers_declared = true;
+        state.engine.combat.blockers_declared = true;
+        state.engine.combat.attackers = vec![attacker];
+
+        assert!(pay_cost_components(
+            &mut state,
+            PlayerId::P0,
+            attacker,
+            &[CostComponent::ReturnControlledUnblockedAttackerToOwnersHand],
+            &[attacker],
+        ));
+
+        assert_eq!(state.objects.get(attacker).zone, Zone::Hand);
+        assert!(
+            !state.engine.combat.attackers.contains(&attacker),
+            "a permanent returned to hand as this cost must leave combat.attackers (506.4), \
+             or a later legal ninjutsu re-entry by the same object is rejected as a \
+             false-positive duplicate: {:?}",
+            state.engine.combat.attackers
+        );
+    }
+
+    /// Sibling of the test above, for `ReturnControlledPermanentToOwnersHand`
+    /// (any "return a permanent you control to hand" cost, not only
+    /// ninjutsu's own): `return_permanent_cost_candidates`/
+    /// `permanent_matches_return_filter` filter only by controller, zone and
+    /// card type/subtype/color, never by tapped or attacking status (nothing
+    /// in the comprehensive rules requires an untapped or non-attacking
+    /// permanent for a plain return-to-hand cost), so a currently-attacking
+    /// creature is a legal choice here too, and the same stale
+    /// `combat.attackers` entry could cause the same false-positive ninjutsu
+    /// rejection through this cost family instead.
+    #[test]
+    fn returning_a_permanent_for_a_generic_cost_also_prunes_it_from_combat_attackers() {
+        let mut state = empty_game();
+        let attacker = put_on_battlefield(&mut state, PlayerId::P0, "Ninja of the Deep Hours");
+        state.objects.get_mut(attacker).tapped = true;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        state.step = Step::DeclareBlockers;
+        state.engine.combat.attackers_declared = true;
+        state.engine.combat.blockers_declared = true;
+        state.engine.combat.attackers = vec![attacker];
+
+        assert!(pay_cost_components(
+            &mut state,
+            PlayerId::P0,
+            attacker,
+            &[CostComponent::ReturnControlledPermanentToOwnersHand(
+                PermanentFilterDef::CreatureWithColor(mana::ManaColor::U)
+            )],
+            &[attacker],
+        ));
+
+        assert_eq!(state.objects.get(attacker).zone, Zone::Hand);
+        assert!(
+            !state.engine.combat.attackers.contains(&attacker),
+            "a permanent returned to hand as this cost must leave combat.attackers (506.4): {:?}",
+            state.engine.combat.attackers
+        );
+    }
+
+    /// Third sibling of the two tests above, in the same `combat.attackers`
+    /// staleness family (506.4) but via a departure that is not a cost
+    /// payment at all: an ordinary resolution effect that returns a
+    /// permanent to its owner's hand, the shape of Snap's own "Return
+    /// target creature to its owner's hand" (`effect::EffectOp::MoveObject`,
+    /// executed via the same `event::propose_and_commit(..., zone_change(_,
+    /// Zone::Hand))` every other departure path uses). Only the two cost
+    /// components covered above ever pruned `combat.attackers`; this
+    /// resolution-effect path left the stale id behind exactly as the
+    /// unpruned cost payment used to, and `put_ninjutsu_source_onto_
+    /// battlefield_attacking`'s own-duplicate guard
+    /// (`combat.attackers.contains`) fails closed on a later, entirely
+    /// legal ninjutsu re-entry by that same object later in the same
+    /// Declare Blockers step. Root cause for the Faeries-deck halt family
+    /// reported after both ninjutsu fixes above: campaign-002 lineage a
+    /// block-1 iteration 99 slot 9 (seed 7192816189450623184,
+    /// `engine_halted:InvalidEffectContinuation:source:19`) and iteration
+    /// 111 slot 9 (seed 10638601314057086381, `...:source:83`); both games
+    /// ran a Faeries ninjutsu creature (Ninja of the Deep Hours or
+    /// Moon-Circuit Hacker) that attacked, was bounced by Snap (or Snap
+    /// bounced a different attacker while this one stayed stale from an
+    /// earlier departure) without leaving `combat.attackers`, then
+    /// legally ninjutsu'd back into the same combat.
+    ///
+    /// Fixed centrally in `event::commit_zone_change` (every zone change
+    /// away from the battlefield prunes `combat.attackers` there, not just
+    /// the two cost-payment call sites), so no future departure path can
+    /// reintroduce this defect by forgetting a local prune.
+    #[test]
+    fn bouncing_an_attacker_via_an_ordinary_resolution_effect_also_prunes_combat_attackers() {
+        let mut state = empty_game();
+        let ninja = put_on_battlefield(&mut state, PlayerId::P0, "Ninja of the Deep Hours");
+        state.objects.get_mut(ninja).tapped = true;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        state.step = Step::DeclareBlockers;
+        state.engine.combat.attackers_declared = true;
+        state.engine.combat.blockers_declared = true;
+        state.engine.combat.attackers = vec![ninja];
+
+        // Snap's own resolution effect ("return target creature to its
+        // owner's hand") is exactly this zone-change proposal; no cost is
+        // being paid, and no `CostComponent` is involved at all.
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(ninja, Zone::Hand));
+        assert_eq!(state.objects.get(ninja).zone, Zone::Hand);
+        assert!(
+            !state.engine.combat.attackers.contains(&ninja),
+            "a permanent bounced by an ordinary resolution effect must also leave \
+             combat.attackers (506.4), not only a permanent returned as an activation \
+             cost: {:?}",
+            state.engine.combat.attackers
+        );
+
+        // The same physical card now legally re-enters combat later this
+        // turn via its own ninjutsu ability (its cost -- returning a
+        // *different* unblocked attacker -- is not modeled here since it
+        // is not this guard's concern).
+        let expected_source = Some(ObjectLinkV4 {
+            object: ninja,
+            zone_change_count: state.objects.get(ninja).zone_change_count,
+        });
+        put_ninjutsu_source_onto_battlefield_attacking(
+            &mut state,
+            ninja,
+            PlayerId::P0,
+            expected_source,
+        )
+        .unwrap_or_else(|error| {
+            panic!(
+                "a legal ninjutsu re-entry must not be rejected by a stale \
+                     pre-bounce combat.attackers entry: {error}"
+            )
+        });
+        assert_eq!(state.objects.get(ninja).zone, Zone::Battlefield);
+        assert!(state.engine.combat.attackers.contains(&ninja));
+    }
+
+    /// Root cause for campaign-001 block1-cuda-2 iteration 95 slot 2 (seed
+    /// 14378628175672525038, turn 8): once a ninjutsu activation is staged,
+    /// its cost paid, and its ability pushed onto the stack (this kernel
+    /// models ninjutsu as an ordinary stack-using activated ability), it
+    /// resolves through the normal pass-priority-twice cycle like anything
+    /// else on the stack. `resolve_top_of_stack` runs *before*
+    /// `reset_priority`, so `state.priority_player` at the exact instant a
+    /// stack item resolves is whichever player `Action::Pass` last flipped
+    /// it to -- it lands back on the item's own controller only when that
+    /// controller happens to be the second of the two consecutive passers.
+    /// The old shared `ninjutsu_timing_ok` (still correctly used at
+    /// activation time, see the two tests above) required the resolving
+    /// ability's own controller to currently hold priority, which is not a
+    /// real rule (117.3b/608.1: resolution is a fact about the pass
+    /// sequence, not about who currently holds priority) and fails closed
+    /// on the entirely ordinary case of the opponent holding priority when
+    /// a legal, already-paid ninjutsu ability resolves. Reproduced end to
+    /// end (real seed, real decks, the real trained checkpoint) by
+    /// `expanded_deck_training_v1::tests::
+    /// campaign_001_block1_cuda2_iteration_95_slot_2_ninjutsu_resolution_completes_naturally`;
+    /// this is the same defect isolated to the one resolution call site,
+    /// with no game loop, policy, or checkpoint needed.
+    #[test]
+    fn ninjutsu_resolves_even_when_the_opponent_currently_holds_priority() {
+        let mut state = empty_game();
+        let unblocked_attacker = put_on_battlefield(&mut state, PlayerId::P0, "Faerie Miscreant");
+        state.objects.get_mut(unblocked_attacker).tapped = true;
+        let ninja = put_in_hand(&mut state, PlayerId::P0, "Ninja of the Deep Hours");
+        state.active_player = PlayerId::P0;
+        // The bug: priority sits with the *opponent*, not the ninjutsu
+        // ability's own controller, at the moment it resolves -- exactly
+        // what an ordinary pass sequence (or an opposing response) leaves
+        // behind, since `reset_priority` has not run yet.
+        state.priority_player = PlayerId::P1;
+        state.step = Step::DeclareBlockers;
+        state.engine.combat.attackers_declared = true;
+        state.engine.combat.blockers_declared = true;
+        state.engine.combat.attackers = vec![unblocked_attacker];
+
+        let expected_source = Some(ObjectLinkV4 {
+            object: ninja,
+            zone_change_count: state.objects.get(ninja).zone_change_count,
+        });
+        put_ninjutsu_source_onto_battlefield_attacking(
+            &mut state,
+            ninja,
+            PlayerId::P0,
+            expected_source,
+        )
+        .unwrap_or_else(|error| {
+            panic!(
+                "a legal ninjutsu resolution must not depend on who currently holds \
+                 priority: {error}"
+            )
+        });
+
+        assert_eq!(state.objects.get(ninja).zone, Zone::Battlefield);
+        assert!(state.objects.get(ninja).tapped);
+        assert!(state.engine.combat.attackers.contains(&ninja));
+    }
+
     /// Fireblast's alternative cost (Sol #85: alt costs are payment
     /// *choices*) surfaces a real `Decision::ChooseCastMode` when both the
     /// printed mana cost and sacrificing 2 Mountains are legal, and (Sol
@@ -15030,6 +16207,62 @@ mod tests {
         assert_eq!(state.stack.len(), 2);
         assert_eq!(state.stack[0].source, second);
         assert_eq!(state.stack[1].source, first);
+    }
+
+    /// Root-cause regression for the campaign-002 lineage-c block-1
+    /// iteration-66 slot-8 halt (Burn vs CawGates, seed
+    /// 9088280813418980347, step 74): `fail_closed:nonterminal decision
+    /// produced zero legal actions`. CawGates' own Guardian of the
+    /// Guildpact (protection from monocolored) was the only creature on
+    /// either battlefield when CawGates' Journey to Nowhere entered;
+    /// Journey to Nowhere is itself monocolored white, so Guardian of the
+    /// Guildpact is not a legal target of its "exile target creature" ETB
+    /// trigger -- `legal_targets_for_controller_from_source` correctly
+    /// returns empty. Before this fix, `drain_pending_triggers_or_decide`
+    /// still exposed that mandatory-target trigger as a real
+    /// `Decision::ChooseTargets` (empty `legal_targets`, `can_finish:
+    /// false`): a decision with no legal action, tripping the tolerant
+    /// collector's fail-closed guard. Per 603.3c a triggered ability with
+    /// no legal targets is removed instead of going on the stack --
+    /// `drain_pending_cast_or_decide` already reverts an impossible spell
+    /// cast the same way (see its `targeting_can_complete`/`abort_cast`
+    /// guard above); this fix adds the equivalent
+    /// `target_prefix_can_complete_for_controller_and_source` check here
+    /// and drops the pending trigger instead of returning the impossible
+    /// decision. Real-game proof: `expanded_deck_training_v1::tests::
+    /// campaign_002_c_block1_iteration_66_slot_8_burn_vs_cawgates_zero_legal_actions_completes_naturally`.
+    #[test]
+    fn journey_to_nowhere_etb_trigger_is_dropped_when_its_only_possible_target_has_protection_from_monocolored(
+    ) {
+        let mut state = ready_game_in_main1(0);
+        let guardian = put_in_hand(&mut state, PlayerId::P0, "Guardian of the Guildpact");
+        let journey = put_in_hand(&mut state, PlayerId::P0, "Journey to Nowhere");
+        event::propose_and_commit_batch(
+            &mut state,
+            vec![
+                ProposedEvent::zone_change(guardian, Zone::Battlefield),
+                ProposedEvent::zone_change(journey, Zone::Battlefield),
+            ],
+        );
+        collect_and_queue_triggers(&mut state);
+
+        match advance_until_decision(&mut state) {
+            Decision::CastSpellOrPass { player, .. } => assert_eq!(player, PlayerId::P0),
+            other => panic!(
+                "expected the untargetable ETB trigger to be dropped and priority to return \
+                 normally, got: {other:?}"
+            ),
+        }
+        assert!(
+            state.engine.pending_triggers.is_empty(),
+            "the trigger with no legal target must be dropped, not left pending"
+        );
+        assert!(
+            state.exile.is_empty(),
+            "nothing was exiled: there was no legal target"
+        );
+        assert_eq!(state.objects.get(journey).zone, Zone::Battlefield);
+        assert_eq!(state.objects.get(guardian).zone, Zone::Battlefield);
     }
 
     #[test]
@@ -15744,6 +16977,7 @@ mod tests {
                 player,
                 discard_payable,
                 sacrifice_payable,
+                ..
             } => {
                 assert_eq!(player, PlayerId::P0);
                 assert!(
@@ -19893,6 +21127,138 @@ mod tests {
             *legacy.legacy_rng().expect("legacy state"),
             expected_rng,
             "the frame commit must advance the RNG exactly as the historical shuffle"
+        );
+    }
+
+    // Final-review fix round item 3: `return_permanent_filter`/
+    // `return_permanent_payable`/`otherwise` are new fields on
+    // `PendingOptionalCost` (Glint Hawk, commit bd171ce4). This is a
+    // pre-wave `PendingOptionalCost` payload, hand-written exactly as
+    // Highway Robbery/Abandon Attachments would have serialized it before
+    // the wave (only the fields that predate it, no `return_permanent_
+    // filter`/`return_permanent_payable`/`otherwise` keys at all): it must
+    // still deserialize, with the three new fields defaulting to "no
+    // return-permanent option, not payable, no decline consequence", or a
+    // pre-wave GameState snapshot captured with either card's optional cost
+    // pending on the stack fails to load on this branch.
+    #[test]
+    fn pending_optional_cost_deserializes_a_pre_wave_payload_missing_the_new_fields() {
+        let pre_wave_json = r#"{"player":0,"source":7,"discard":1,"sacrifice_lands":0,"discard_payable":true,"sacrifice_payable":false,"then":{"Sequence":[]},"spell_resume":null}"#;
+        let poc: PendingOptionalCost = serde_json::from_str(pre_wave_json)
+            .expect("pre-wave PendingOptionalCost must deserialize");
+        assert_eq!(poc.player, PlayerId::P0);
+        assert_eq!(poc.source, ObjectId(7));
+        assert_eq!(poc.discard, 1);
+        assert_eq!(poc.sacrifice_lands, 0);
+        assert!(poc.discard_payable);
+        assert!(!poc.sacrifice_payable);
+        assert_eq!(poc.then, EffectOp::Sequence(Vec::new()));
+        assert_eq!(poc.spell_resume, None);
+        assert_eq!(
+            poc.return_permanent_filter, None,
+            "missing field must default to no return-permanent option"
+        );
+        assert!(
+            !poc.return_permanent_payable,
+            "missing field must default to not payable"
+        );
+        assert_eq!(
+            poc.otherwise, None,
+            "missing field must default to no decline consequence"
+        );
+    }
+
+    /// Defect-1 regression (`UnsupportedMechanic::InvalidEffectContinuation`):
+    /// Writhing Chrysalis's own `TriggerCondition::CastSelf`/
+    /// `home_zone: Zone::Stack` cast trigger (`trigger.rs`'s
+    /// `WRITHING_CHRYSALIS_TRIGGERS`) must still resolve, creating both
+    /// Eldrazi Spawn tokens, after Counterspell counters the Chrysalis spell
+    /// that produced it while the trigger is still pending above it on the
+    /// stack. CR 603.3e: a triggered ability exists independently of its
+    /// source once it triggers; CR 608.2b only fizzles an ability whose
+    /// targets are all illegal, and this cast trigger has none. Before the
+    /// fix, `validate_spell_sourced_trigger` required a live producing spell
+    /// stack item for every spell-sourced trigger resolution, so countering
+    /// the producing spell first (moving it to the graveyard, off the stack)
+    /// made the ability's own resolution -- reached immediately afterward,
+    /// the trigger being the new top of stack -- halt with
+    /// `engine_halted:InvalidEffectContinuation`, mirroring the real
+    /// campaign-001 block-1 seed (3157112932801185221) once the V4 encoding
+    /// defect fixed in 567f850c stopped masking it earlier.
+    #[test]
+    fn writhing_chrysalis_cast_trigger_resolves_after_its_own_spell_is_countered() {
+        let mut state = ready_game_in_main1(0);
+        state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+        state.players[0].mana_pool[ManaColor::G.pool_index()] = 1;
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 2;
+        state.players[1].mana_pool[ManaColor::U.pool_index()] = 2;
+        let chrysalis = put_in_hand(&mut state, PlayerId::P0, "Writhing Chrysalis");
+        let counterspell = put_in_hand(&mut state, PlayerId::P1, "Counterspell");
+
+        step(&mut state, Action::CastSpell(chrysalis)).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(
+            state.stack.len(),
+            2,
+            "casting Chrysalis must place both the spell and its cast trigger on the stack"
+        );
+        assert_eq!(state.stack[0].kind, StackItemKind::Spell);
+        assert_eq!(state.stack[0].source, chrysalis);
+        assert_eq!(state.stack[1].kind, StackItemKind::TriggeredAbility);
+        assert_eq!(state.stack[1].source, chrysalis);
+
+        step(&mut state, Action::Pass).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        step(&mut state, Action::CastSpell(counterspell)).unwrap();
+        match advance_until_decision(&mut state) {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert_eq!(
+                    legal_targets,
+                    vec![Target::Object(chrysalis)],
+                    "the Chrysalis spell must be Counterspell's only legal target"
+                );
+            }
+            other => panic!("expected Counterspell's target decision, got {other:?}"),
+        }
+        step(&mut state, Action::ChooseTarget(Target::Object(chrysalis))).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(
+            state.stack.len(),
+            3,
+            "the spell, its pending cast trigger, and Counterspell must all be on the stack"
+        );
+
+        let decision = pass_until_stack_resolves(&mut state);
+        assert!(
+            state.engine.halted.is_none(),
+            "the cast trigger must resolve, not halt, once its spell is countered: {decision:?}"
+        );
+        assert!(
+            state.stack.is_empty(),
+            "the whole stack must resolve naturally: {decision:?}"
+        );
+        assert!(
+            state.players[0].graveyard.contains(&chrysalis),
+            "Counterspell must still counter the Chrysalis spell into the graveyard"
+        );
+        let spawn_count = state.players[0]
+            .battlefield
+            .iter()
+            .filter(|&&id| state.objects.get(id).name == "Eldrazi Spawn Token")
+            .count();
+        assert_eq!(
+            spawn_count, 2,
+            "the cast trigger must still create both Eldrazi Spawn tokens despite its spell \
+             being countered"
         );
     }
 }

@@ -30,7 +30,7 @@ admission. This is not yet a completed gameplay or full-set support claim.
 
 ## Pending checks
 
-- 24 focused Witness Rust gameplay cases and required prior regressions/CI.
+- Required prior regressions and complete Rust CI after the focused cases.
 - Strict XMage reference comparisons, including Armor ordering and death LKI.
 - Original UG/WG natural external games in both seats and deterministic replay.
 - London mulligans are a subsequent implementation batch within the goal.
@@ -41,9 +41,15 @@ Spellbench work remained live. No heavy local/remote engine build, training,
 GPU work or paid allocation was started by this batch. Hosted CI will execute
 Rust validation. Preserve other owners and reservations before subsequent jobs.
 
-Catalog probe scratch is registered at `D:/e-scratch/fdn-witness-codegen-001`.
-It is cache/scratch, not a sealed evidence source. Its small logs and manifest
-will be sealed with the completed batch report before pruning.
+Catalog probe and focused launcher logs are sealed in
+`E:/mtg-fdn-fixtures/fdn-witness-preflight-001`, with a hash-verified independent
+mirror at `C:/Users/Jack/fdn-witness-preflight-001-sealed`. The pinned probe
+executable is recorded by SHA-256 in `seal.json`. Two raw executions reproduced
+identical output bytes; the earlier PowerShell log has the same two identities
+with CRLF line endings. All failed hosted attempt logs remain sealed too.
+Only owned scratch copies and uncited debug symbols were pruned after mirror
+verification: 2,973,168 bytes. The exact receipt is
+`fdn_witness_preflight_001_prune.json`.
 
 ## Hosted attempts retained
 
@@ -79,3 +85,16 @@ and rejection mutation. Production ranking and the separate fastest-allocation
 test stay unchanged. The repaired focused test passed on Jack's PC in 11.616s.
 Hosted verification of the repair is pending; avoid cancelling the active
 Witness workflow for a report-only update.
+
+## Current-main integration
+
+The Witness prefix incorporates Armor d4f02b41 and main's
+192-definition/v34 catalog. Its generated Limited identity is 236
+definitions/v51 bd1385731e43c4a1; the appended Witness ID is 235. Original and
+prior composed records remain readable; mutations require the live identity.
+Layer timestamp fields coexist with Adventure eligibility. The custom object
+hash retains main's Adventure bit before appending optional layer stamps.
+The typed reference walk retains the removed-ability event's physical object;
+a regression distinguishes the referenced object from an unrelated one.
+Catalog generation, formatting, workflow lint and diff checks pass locally;
+composed-source rules, replay and complete Rust qualification are pending.

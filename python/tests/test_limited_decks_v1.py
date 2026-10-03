@@ -51,11 +51,11 @@ class LimitedDeckTest(unittest.TestCase):
         base = (REPO_ROOT / "data/cards_v1.json").read_bytes()
         extension = (FIXTURES / "cards_v1.json").read_bytes()
         base_registry = limited.registry_from_json(limited.load_json(base))
-        self.assertEqual(len(base_registry), 162)
+        self.assertEqual(len(base_registry), 192)
         self.assertNotIn("Plains", base_registry)
         for name, card in base_registry.items():
             self.assertEqual(self.registry[name], card)
-        self.assertEqual(self.registry["Plains"].card_id, 162)
+        self.assertEqual(self.registry["Plains"].card_id, 192)
         with self.assertRaisesRegex(ValueError, "duplicate name"):
             limited.combined_registry(base, [extension, extension])
         with self.assertRaisesRegex(ValueError, "registry version 2"):
@@ -187,7 +187,7 @@ class LimitedDeckTest(unittest.TestCase):
                 self.assertEqual(report["card_ids"], expected)
                 self.assertEqual(len(report["card_ids"]), 40)
                 if "UG" in filename:
-                    self.assertEqual(report["card_ids"].count(205), 2)
+                    self.assertEqual(report["card_ids"].count(235), 2)
 
     def test_cli_resolves_supported_deck_and_reports_its_registry_identity(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

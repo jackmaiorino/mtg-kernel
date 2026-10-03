@@ -321,9 +321,12 @@ fn rl_contract_keeps_both_optional_cost_refs_for_a_detached_resolving_spell() {
         source,
         discard: 1,
         sacrifice_lands: 1,
+        return_permanent_filter: None,
         discard_payable: true,
         sacrifice_payable: false,
+        return_permanent_payable: false,
         then: EffectOp::Sequence(Vec::new()),
+        otherwise: None,
         spell_resume: Some((source, Zone::Graveyard)),
     });
 
@@ -353,9 +356,12 @@ fn rl_contract_nonresolving_optional_cost_sources_keep_normal_visibility() {
         source: hidden,
         discard: 1,
         sacrifice_lands: 0,
+        return_permanent_filter: None,
         discard_payable: true,
         sacrifice_payable: false,
+        return_permanent_payable: false,
         then: EffectOp::Sequence(Vec::new()),
+        otherwise: None,
         spell_resume: None,
     });
     let optional = observe_for_test(&state, PlayerId::P0, 0)
@@ -413,9 +419,12 @@ fn rl_contract_detached_source_declassification_requires_exact_stack_binding() {
         source: hidden,
         discard: 1,
         sacrifice_lands: 0,
+        return_permanent_filter: None,
         discard_payable: true,
         sacrifice_payable: false,
+        return_permanent_payable: false,
         then: EffectOp::Sequence(Vec::new()),
+        otherwise: None,
         spell_resume: Some((other, Zone::Graveyard)),
     });
     let mismatch = observe_v2(&state, &HarnessSurfaceV2::new(), PlayerId::P0, 0)
@@ -3479,13 +3488,23 @@ fn v2_deck_pair_builder_burn_rally_root_940001_contract_and_pins() {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
+    // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task 13,
+    // identity finalisation): GameState gained the `monarch` field (Task 11),
+    // which the serialized Burn/Rally GameState and the v9 diagnostic hash
+    // both embed even though Burn/Rally themselves gained no new cards.
+    // Neither digest embeds KERNEL_CARDDB_HASH (state.rs and engine.rs never
+    // hash it), so the card DB identity change is not a cause here. Old values:
+    //   serialized SHA-256: "7037b030d73ee7d4e7765a0e9f90fc79a9bd77989250ba7592425251f4f8fa7a"
+    //   v9 diagnostic hash: "05c6af543cba5573"
+    // New values are this test's own live-computed digests, read directly
+    // from a failing run (never hand-typed).
     assert_eq!(
-        serialized_sha256, "7037b030d73ee7d4e7765a0e9f90fc79a9bd77989250ba7592425251f4f8fa7a",
+        serialized_sha256, "4a35ce834cce76e2fb104bba1ad9ba0f3c8e467e36a639789f755fb9aad6ad36",
         "pinned SHA-256 of the serialized Burn/Rally root-940001 state"
     );
     assert_eq!(
         format!("{:016x}", state.diagnostic_state_hash()),
-        "05c6af543cba5573",
+        "114a052a68589a04",
         "pinned v9 diagnostic hash of the Burn/Rally root-940001 state"
     );
 }

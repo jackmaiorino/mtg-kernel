@@ -154,7 +154,7 @@ fn batch_b_definitions_append_and_tokens_have_exact_characteristics() {
     .enumerate()
     {
         let id = card_id_by_name(name).unwrap();
-        assert_eq!(usize::from(id), 168 + offset);
+        assert_eq!(usize::from(id), 198 + offset);
         assert_eq!(CARD_DEFS[usize::from(id)].capability, CardCapability::Full);
         assert_eq!(CARD_DEFS[usize::from(id)].is_token, offset >= 8);
     }

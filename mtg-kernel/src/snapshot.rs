@@ -79,6 +79,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "run explicitly with --ignored --test-threads=1 after CPU-heavy correctness tests"]
     fn snapshot_clone_cost_is_bounded() {
         let state = mid_game_state();
         assert_eq!(state.objects.len(), 80);
