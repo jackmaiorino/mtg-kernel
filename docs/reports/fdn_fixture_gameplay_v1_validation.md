@@ -4,10 +4,20 @@
 
 The complete implementation stack now incorporates main fe479186 and all
 original fixture card/token dependencies, combat, pending choices and London
-mulligans. London source is ced93a23 and the CI composition is ef1b11e6. The
-subsequent Voyage walker correction is present in the final source. Full
-composed-source hosted qualification remains pending. Earlier isolated-stack
-passes below do not qualify this source.
+mulligans. London runtime source is 35594e9d and the CI composition is 8cf8ebe0.
+The Voyage walker correction and London V6 observation/prompt repair are present
+in the final source. Full composed-source hosted qualification remains pending.
+Earlier isolated-stack passes below do not qualify this source.
+
+Gameplay qualification comes from London PR139's matching runtime source.
+The later CI/report branches differ from it only in Markdown files, so their
+path-filtered Rust-test skips are expected and provide no gameplay evidence.
+CI37088170810 at2397921e failed default Clippy on the omitted V6 London field
+and unmatched human-prompt action variants. The repair shares the public
+mulligan projection across V5/V6 and preserves the human prompt's existing
+custom-game refusal. Its new regression covers public announce/bottom/complete
+facts and exact own-hand identities for both observers, plus legacy omission.
+Hosted verification of that case and the final runtime remains pending.
 
 Fresh catalog-only generation verifies both final identities:
 
