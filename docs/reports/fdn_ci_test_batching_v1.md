@@ -86,3 +86,42 @@ case. The Windows bootstrap retains normalized `RUSTUP_HOME` without exporting
 `RUSTC`: Kiora job 111079733482 demonstrated that this override is correctly
 rejected by the existing compile-time build guard. Composed-source complete
 Linux/Windows, native capture and CUDA qualification is pending.
+
+## Windows reservation-test synchronization
+
+Draw job111114931527 at b296504e failed the existing WMI chain test:
+the final descendant sleeps six seconds, so delayed inspection can observe
+the reservation after it has correctly released. The Python shard ran372
+tests with one failure and one skip. An eight-second delay before the first
+status inspection reproduces the same `free` versus `held` assertion locally.
+
+The test now keeps that descendant alive until an explicit release file is
+written after the held/contained/member assertions. A120-second timeout bounds
+cleanup if the test never releases it. The release outcome and timestamp
+assertions remain unchanged, as does production reservation code. The normal
+chain and abandoned-supervisor tests pass locally (2cases,2.777seconds), and
+the explicit-release case passes with the same eight-second inspection delay
+(1case,9.759seconds). Hosted Python qualification remains pending. Existing
+London runtime jobs remain on cd7f451b; this change affects only the Python
+test and this report.
+
+## Isolated Windows timing failure
+
+Lifegain-mechanics Windows job111116909367 at50ea8189 failed the isolated
+snapshot case at68.294microseconds per clone against the40microsecond budget.
+The preceding library run passed2335cases with82existing ignores, but the
+default release step failed overall; native, FDN and CUDA steps were skipped.
+Isolation alone did not establish the timing requirement on that runner.
+
+The next bounded environment check gives only the short Windows timing
+process HIGH_PRIORITY_CLASS. Correctness tests keep normal priority, and the
+snapshot implementation,80objects,200warmups,2000iterations,40microsecond
+assertion, compiler and linker settings are unchanged. A local child-process
+smoke check observes normal0x20 and timing0x80. Python compilation and diff
+checks pass. Scheduling contention remains a hypothesis until hosted timing
+and the complete matrix pass; this does not reclassify the failed job.
+
+The path classifier now treats both native CI runner scripts as Rust-relevant.
+A runner-only change must execute the Rust matrix to qualify its actual test
+procedure. Existing library, integration, production and CUDA commands remain
+selected. The original London runtime jobs continue on cd7f451b.

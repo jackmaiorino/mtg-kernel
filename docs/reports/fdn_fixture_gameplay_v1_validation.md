@@ -4,20 +4,25 @@
 
 The complete implementation stack now incorporates main fe479186 and all
 original fixture card/token dependencies, combat, pending choices and London
-mulligans. London source is cd7f451b and the CI composition is 92b9d845.
+mulligans. London source is cd7f451b and the CI composition is ae4b2087.
 The Voyage walker correction and London V6 observation/prompt repair are present
 in the final source. Full composed-source hosted qualification remains pending.
 Earlier isolated-stack passes below do not qualify this source.
 
-Gameplay qualification comes from London PR139's matching runtime source.
-The later CI/report branches differ from it only in Markdown files, so their
-path-filtered Rust-test skips are expected and provide no gameplay evidence.
+The engine, cards and Rust tests match London PR139 at cd7f451b. Its original
+runtime jobs remain live. CI PR140 at ae4b2087 adds two Windows test-procedure
+changes: explicit release in the reservation regression and high priority for
+the short isolated snapshot timing process. Its full matrix must qualify that
+procedure. The report branch incorporates those changes and differs from
+PR140 only in Markdown, so its path-filtered Rust-test skips provide no
+additional gameplay evidence.
 CI37088170810 at2397921e failed default Clippy on the omitted V6 London field
 and unmatched human-prompt action variants. The repair shares the public
 mulligan projection across V5/V6 and preserves the human prompt's existing
 custom-game refusal. Its new regression covers public announce/bottom/complete
 facts and exact own-hand identities for both observers, plus legacy omission.
-Hosted verification of that case and the final runtime remains pending.
+Hosted execution of that case and the final runtime remains pending. The
+configured all-feature lint already passes on cd7f451b.
 
 Counter, lifelink substrate, Kiora and Prowler Linux jobs reported one stale
 expectation in `default_fixture_decodes_clean_and_classifies_as_the_live_profile`:
@@ -26,6 +31,34 @@ still expected Targeted Spells. Every owned prefix now pins its concrete
 rebased profile in that existing regression; the default Pauper expectation,
 production classifier and live-identity checks are unchanged. The repair is
 committed through the full stack. Hosted verification remains pending.
+
+Lifegain-mechanics Windows job111116909367 and Voyage Windows job111114906816
+failed the already isolated snapshot test at68.294 and66.643microseconds,
+respectively, against40. Their native, FDN and CUDA steps were skipped. The
+timing-priority change preserves the snapshot code,80objects,200warmups,
+2000iterations and40microsecond assertion. A local child-process smoke check
+confirms actual normal0x20 and timing0x80 priority. Scheduling contention
+remains a hypothesis; the current CI result must establish whether it helps.
+
+CI37092263828 at94d6fc44 completed successfully. All four Python shards built
+the real default Rust JSONL environment and passed; its Rust matrix was
+skipped because the report-only diff was not Rust-relevant. Those Python
+results qualify the unchanged deck/session client and regression source at
+that commit. The subsequently synchronized reservation test and changed
+native runner still require the current CI140 matrix.
+
+| Python shard at94d6fc44 | Selected tests | Skips | Failures | Seconds |
+| --- | --- | --- | --- | --- |
+| Ubuntu0, job111115367477 | 374 | 14 | 0 | 372.840 |
+| Ubuntu1, job111115367474 | 373 | 13 | 0 | 579.632 |
+| Windows0, job111115367429 | 374 | 0 | 0 | 613.027 |
+| Windows1, job111115367518 | 373 | 1 | 0 | 1032.520 |
+
+Each platform selects747cases: Ubuntu executes720 with27skips and Windows
+executes746 with1skip. Ubuntu includes the unchanged original-deck copy-order
+resolution and schema-four London client admission cases. This is Python
+regression evidence; original Limited games, exact replay and pending restore
+require the runtime job logs.
 
 Fresh catalog-only generation verifies both final identities:
 
@@ -79,7 +112,7 @@ its 40-microsecond limit is unchanged.
 | Natural external games | Original schema-4 game test and seeds are retained | Seed 123 twice and swapped seed 701 reach natural terminal outcomes |
 | Deterministic replay | Complete-receipt equality assertion is retained | Inspect final-source receipts and transcript hashes |
 | Pending save/restore | Pregame, private bottom menu, combat and effect restore cases are retained | Hosted restore cases pass on final source |
-| Rules and regressions | 21 integration targets plus affected library, default, native and CUDA checks remain selected | Complete Linux/Windows CI and terminal-log audit |
+| Rules and regressions | Four Python shards pass at94d6fc44; 21 integration targets plus affected library, default, native and CUDA checks remain selected | Complete current Linux/Windows runtime CI and audit the timing-priority procedure |
 | XMage comparisons | PR15 d98525a0: 146 tests/16 classes, zero failures/errors/skips | Reuse for unchanged matching card rules; investigate any actual gameplay discrepancy |
 | Delivery | Own branches and existing PR stack are maintained | Publish final source/report and verify required checks |
 
