@@ -14,9 +14,28 @@ original runtime jobs remain live. CI PR140 at 7cbfa1cd adds a feature-gated
 profile-type import in the Windows publication tests and two Windows
 test-procedure changes: explicit release in the reservation regression and
 high priority for the short isolated snapshot timing process. Its full matrix
-must qualify that source and procedure. The report branch incorporates those changes and differs from
-PR140 only in Markdown, so its path-filtered Rust-test skips provide no
+must qualify that source and procedure. The report branch incorporates those
+changes and differs from PR140 only in Markdown, so its path-filtered Rust-test skips provide no
 additional gameplay evidence.
+
+Windows job111116304498 atcd7f451b passed24Witness cases and all12London
+integration cases. The original external game test verifies the pinned input
+hashes below, runs seed123 twice with complete receipt equality, and runs
+swapped seed701. All three receipts report natural/natural_game_over and a
+P0 win. Each game performs four explicit bottom choices.
+
+| Current Windows original game | Requests | Physical decisions | Policy steps | Transcript SHA-256 |
+| --- | --- | --- | --- | --- |
+| Seed123, twice with identical complete receipts | 545 | 538 | 544 | 7738afcf0a9afff429a1e2e699e631897d2d8a9faba13f698a12a1b04d95c6e1 |
+| Seed701, seats swapped | 492 | 479 | 491 | 610fda6441c5ccf7d98e3e71fdb8e8c67f9c7dfe658ef0b988ebc6a64eef2f6a |
+
+The pregame restore and V5/V6 public-state/own-hand integration cases also
+pass. The next library build fails with the same missing profile-type import,
+so the private bottom-menu library case and later default/native/FDN/CUDA
+steps did not execute. The overall Windows job remains a failure. CI7cbfa1cd
+and the prepared London backport repair that test scope. The original Linux
+job111116304494 remains live; its receipts and full regressions still need
+terminal-log inspection.
 
 Draw Windows job111114931404 atb296504e passed its default release and native
 boundary steps, including the unchanged snapshot case at17.433microseconds.
@@ -34,8 +53,9 @@ and unmatched human-prompt action variants. The repair shares the public
 mulligan projection across V5/V6 and preserves the human prompt's existing
 custom-game refusal. Its new regression covers public announce/bottom/complete
 facts and exact own-hand identities for both observers, plus legacy omission.
-Hosted execution of that case and the final runtime remains pending. The
-configured all-feature lint already passes on cd7f451b.
+That new integration case passes in Windows job111116304498. The private
+bottom-menu library case and complete current runtime qualification remain
+pending. Configured all-feature lint already passes on cd7f451b.
 
 Counter, lifelink substrate, Kiora and Prowler Linux jobs reported one stale
 expectation in `default_fixture_decodes_clean_and_classifies_as_the_live_profile`:
@@ -122,10 +142,10 @@ its 40-microsecond limit is unchanged.
 | Goal requirement | Current evidence | Remaining check |
 | --- | --- | --- |
 | Original decks and dependencies | Both unchanged decks resolve 40/40; all 39 fixture names admitted; final catalogs generated | Hosted card/rules cases on the composed source |
-| Natural external games | Original schema-4 game test and seeds are retained | Seed 123 twice and swapped seed 701 reach natural terminal outcomes |
-| Deterministic replay | Complete-receipt equality assertion is retained | Inspect final-source receipts and transcript hashes |
-| Pending save/restore | Pregame, private bottom menu, combat and effect restore cases are retained | Hosted restore cases pass on final source |
-| Rules and regressions | Four Python shards pass at94d6fc44; 21 integration targets plus affected library, default, native and CUDA checks remain selected | Complete current Linux/Windows runtime CI and audit the timing-priority procedure |
+| Natural external games | Windows cd7f451b receipts prove seed123 twice and swapped seed701 end naturally with unchanged original inputs | Inspect original Linux receipts and complete current qualification |
+| Deterministic replay | Both complete Windows seed123 receipts are identical; fresh transcript hashes recorded above | Inspect Linux receipts and current matrix |
+| Pending save/restore | Current Windows pregame restore and V5/V6 observation cases pass; private bottom menu, combat and effect cases remain selected | Execute the repaired Windows library case and remaining final-source restores |
+| Rules and regressions | Current Windows passes24Witness and12London cases; four Python shards pass at94d6fc44; all21integration targets and affected library/default/native/CUDA checks remain selected | Complete current Linux/Windows runtime CI and audit the timing-priority procedure |
 | XMage comparisons | PR15 d98525a0: 146 tests/16 classes, zero failures/errors/skips | Reuse for unchanged matching card rules; investigate any actual gameplay discrepancy |
 | Delivery | Own branches and existing PR stack are maintained | Publish final source/report and verify required checks |
 
