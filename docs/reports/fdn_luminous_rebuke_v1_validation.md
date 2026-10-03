@@ -23,10 +23,13 @@ timing function, dependency versions, lockfile and toolchain pins are unchanged.
 All three source files match the current CI composition. Its actual arena
 module has five passing standalone Windows unit cases with the workspace's
 exact dependency pins, and all four hosted release Clippy gates pass. The
-current Linux London/original-game step also passed. These results do not
-qualify Rebuke's complete runtime matrix or the Windows timing gate.
-Publication waits for the new arena's runtime qualification; the committed
-backport then requires its own complete hosted checks before delivery.
+current London/original-game steps also passed on both platforms. The Linux
+workspace release step passed, selecting the arena regressions, strengthened
+restore case and frozen timing gate. Terminal logs and the complete feature
+matrix remain pending. These results do not qualify Rebuke's complete runtime
+matrix or Windows timing. The prior Rebuke run is terminal, so its independent
+hosted qualification can run while the full stack completes its remaining
+checks. The backport requires its own complete hosted results before delivery.
 
 Hosted CI at `deaa8b29cf26547e4dc28e01341648dc23e50460` passed all eight checks: Rust on
 Ubuntu and Windows, all four Python shards, formatting/lint and path detection.
