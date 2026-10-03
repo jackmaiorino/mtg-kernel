@@ -1,4 +1,34 @@
-# Complete the existing FDN CI filters with fewer builds
+# FDN fixture CI and snapshot qualification
+
+## Current Windows result and arena change
+
+Windows job `111147114674` at `7cbfa1cd` completed with a failure in the
+unchanged snapshot timing test: 62.836 microseconds against 40, even with the
+timing-child priority change. Later native, Limited and CUDA steps were skipped.
+Before that failure, all 24 Witness and 12 London integration cases passed,
+including all three natural original-deck games. Their complete receipts match
+the prior Linux receipts, and repeated seed123 remains identical. The repaired
+private bottom-menu library restore case passed. All four current Python shards
+also passed; the overall Rust matrix remains incomplete.
+
+The arena now stores its ordered objects in `Arc<Vec<T>>`. Clones share that
+storage, and `push`, `get_mut` (including indexing) and `iter_mut` detach it before
+mutation. Other game-state fields still clone normally. This avoids cloning
+every object and owned buffer when a snapshot is captured, while retaining
+independent mutations and stable IDs. The first mutation of shared storage
+still clones its objects; this does not claim faster complete turns or search.
+Serde's `rc` feature retains the existing `items` array representation without
+changing dependency versions or the lockfile.
+
+Two arena regressions cover every mutation entry point, append IDs, legacy JSON
+and value-based hashing. The existing snapshot round trip now checks captured
+bytes and hash before mutation, after restore, and after a subsequent independent
+draw. The entire frozen 80-object workload and timing function remain unchanged,
+including 200 warmups, 2,000 iterations and the 40-microsecond assertion.
+Pinned formatting and diff checks pass. Hosted compilation, the new regressions,
+all original games and the full Rust matrix still need to qualify this change.
+
+## Earlier CI batching work
 
 The Ubuntu log from CI37038033614 repeatedly compiled the same Limited test
 library for separate filters, with roughly eight minutes per compilation.
