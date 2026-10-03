@@ -14,8 +14,14 @@ correctness tests and the frozen 80 objects, 200 warmups, 2000 iterations and
 40-microsecond assertion. Native CI runner changes now select Rust checks.
 Python compilation, workflow lint and diff checks qualify the backport's
 syntax and selection. Its actual hosted timing effect remains unqualified.
-The published-source Linux job `111167180017` is still executing; publication
-of this repair waits for the current run to become idle.
+The same published source's Linux job `111167180017` completed its entire
+default/native/Limited/host-safe CUDA matrix successfully. All 19 selected
+integration targets and affected library filters passed, with no failed test
+summaries. The frozen snapshot measured 6.978 microseconds. All four Python
+shards and formatting/lint checks also passed at that source. The prior run
+is now terminal; its Linux and failed Windows logs are retained before
+publication. Complete hosted qualification of the timing repair remains
+required.
 
 Hosted CI37031403320 at33d84667 passed Ubuntu Rust and both Ubuntu Python
 shards. Windows Python shard0 found a timing-dependent sentinel-coverage test:
