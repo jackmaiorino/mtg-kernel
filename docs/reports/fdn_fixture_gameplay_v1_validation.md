@@ -2,6 +2,25 @@
 
 ## Current delivery frontier
 
+Current-main integration has now reached the draw prefix in PR 129.
+PR 124/125/128/129 heads are 7b42b3ec/e71daa84/9b5058d3/a9bbfcb7.
+The default catalog-only generator verifies 192 definitions/v34 identity
+064a7c989255ab3c. Composed Limited prefixes are:
+
+| Prefix | Definitions | Version | Generated CardDB identity |
+| --- | --- | --- | --- |
+| Counter and lifelink prerequisite | 218 | v40 | b3dc8eb6d0a6407d|
+| Life-gain cards | 220 | v41 | 958bf2fd746ec314|
+| Draw cards | 223 | v42 | a1376b708b689b01|
+
+Original and prior composed records remain readable. Catalog generation,
+formatting, workflow lint, diff checks and 20 focused Draw Python deck/session
+checks pass. The optional CUDA compile gate found six old i16 fixture
+assignments into the widened i32 counters; all six now use lossless conversions
+without changing fixture definitions or values. Hosted complete qualification
+is pending. Integration still must reach Homunculus through Witness, London,
+CI and the final validation branch. The original deck files are unchanged.
+
 The original isolated fixture stack completed its full London validation:
 CI 37049183922 at d43d59a2 passed all eight checks. Complete Ubuntu and Windows
 logs cover all 21 Limited integration targets/345 cases, default/native/CUDA
