@@ -113,3 +113,19 @@ the host choice and the attachment assertion's host-controller argument;
 run 003 then passed all six cases. The first Python run used a Python
 environment without Torch; the existing Torch environment passed all
 34 checks.
+
+The first composed card-pair/draw CI found three returning-Aura variants
+missing from main's suspended-reference walker. Added exact-incarnation
+scanning of both Aura/host bindings, the complete attachment-candidate list,
+and the answered guard's remaining frames. A regression covers both bound
+objects and unrelated library objects. Formatting/diff checks passed; hosted
+Rust and complete feature qualification remain pending.
+
+## Windows compiler environment correction
+
+The completed Windows Kiora job 111079733482 failed 33 default-library cases
+with `ForbiddenBuildFlagOverride`: the CI bootstrap exported `RUSTC`, which
+the existing compile-time guard correctly rejects. The bootstrap now keeps
+the normalized Windows `RUSTUP_HOME` and pinned Rust install without exporting
+`RUSTC`. Hosted default and native-build capture checks are pending. The guard
+and toolchain pin remain unchanged.
