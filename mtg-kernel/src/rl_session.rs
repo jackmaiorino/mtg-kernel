@@ -14751,7 +14751,6 @@ mod tests {
         .expect("the combined fast environment-v2 reset succeeds")
     }
 
-    #[cfg(not(feature = "limited-fdn-fixtures"))]
     fn definition_order(state: &crate::state::GameState, player: PlayerId) -> Vec<u16> {
         state.players[player.index()]
             .hand
