@@ -16,8 +16,7 @@ to require the actual live identity. No original deck file changed.
 
 Pinned formatting, workflow lint and 20 focused Python deck/session checks
 passed. CI reuses the already qualified grouped-filter and isolated-timing
-helpers, preserving all nine integration targets and all seven existing
-library filters. Windows bootstrap normalizes RUSTUP_HOME and the pinned
+helpers, preserving all nine integration targets and all seven library filters. Windows bootstrap normalizes RUSTUP_HOME and the pinned
 RUSTC path, preserving the native path validator. Rust gameplay, native/production
 and complete hosted checks
 for this main integration remain pending. Earlier isolated-source qualification
@@ -83,3 +82,21 @@ while Hydra remained on the stack. Adding the explicit stack-resolution
 wait fixed the schedule, after which 002 passed all five. Source and XML
 SHA-256s are `92539ba6453e76eef7d454e10afe862b78cfc23adab01de2a463f6840834fed3`
 and `fe164ed54f56dd55c6359634f5633964f572b1e0ca083d995312698211c588e9`.
+
+
+First main-integration CI 37080458100 at c6beea63 failed compilation: main's
+new suspended-reference walker did not cover counter doubling or placement
+history, and a native tensorizer test assigned an i16 bonus to the widened
+i32 counter. Added exact-incarnation scanning for bound doubling, physical
+object scanning for counter events, and a lossless test-fixture conversion.
+Two regressions cover matching/unrelated/stale bindings and counter history.
+No hidden referenced object may move during resampling.
+
+The same CI found an inherited --no-fail-fast argument unsupported by the
+workspace runner. Preserve it in the Cargo invocation. Main explicitly
+ignores the snapshot timing case in ordinary suites, so the runner now uses
+--include-ignored with its exact filter to run that one unchanged case. The
+redundant inherited timing step is removed. Select main's actual live-profile
+round-trip test name in the production filters. Formatting, workflow lint,
+Python compilation and diff checks passed after these corrections; complete
+hosted Rust/feature qualification remains pending.

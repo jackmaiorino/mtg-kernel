@@ -22,17 +22,17 @@ def main() -> int:
                 return result.returncode
             print(f"Running isolated timing gate: {TIMING_TEST}", flush=True)
             return subprocess.run([
-                executable, TIMING_TEST, "--exact", "--test-threads=1", "--nocapture",
+                executable, TIMING_TEST, "--exact", "--include-ignored", "--test-threads=1", "--nocapture",
             ], check=False).returncode
         return subprocess.run([executable, *arguments], check=False).returncode
 
-    if len(sys.argv) != 1:
-        raise ValueError("Workspace suite runner accepts no arguments")
+    if sys.argv[1:] not in ([], ["--no-fail-fast"]):
+        raise ValueError("Workspace suite runner accepts only --no-fail-fast")
     runner = [sys.executable, str(Path(__file__).resolve()), "--run"]
     configuration = "target.'cfg(all())'.runner=" + json.dumps(runner)
     return subprocess.run([
         "cargo", "test", "--release", "--locked", "--config", configuration,
-        "--workspace", "--all-targets",
+        "--workspace", "--all-targets", *sys.argv[1:],
     ], check=False).returncode
 
 
