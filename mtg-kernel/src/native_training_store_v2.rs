@@ -659,13 +659,17 @@ fn publish_generation_v2(
     // lock, or filesystem mutation. Both `publish_genesis_generation_v2` and
     // `publish_prepared_segment_v2` funnel through this shared function, so
     // this one check covers both. Exhaustive match (fix round, panel finding
-    // 3): a future profile variant fails this match at compile time
-    // rather than silently publishing under it. The CURRENT arm (fix round,
-    // panel finding 1, blocker: bypass) additionally requires the record's
-    // own catalog fields to equal the crate's live build constants at this
-    // moment, not merely the pinned CURRENT literal -- closing the gap where
-    // a record merely claiming that literal, authored by a build whose real
-    // identity has since moved past it, could still publish.
+    // 3): an unhandled future profile variant fails this match at compile
+    // time rather than silently publishing under it. The CURRENT arm (fix
+    // round, panel finding 1, blocker: bypass) additionally requires the
+    // record's own catalog fields to equal the crate's live build constants
+    // at this moment, not merely the pinned CURRENT literal -- closing the
+    // gap where a record merely claiming that literal, authored by a build
+    // whose real identity has since moved past it, could still publish.
+    // PauperMetaW1 (schema migration, card lane, design ruling 6 pending)
+    // shares the CURRENT arm identically: same live-build-identity check,
+    // same error kind on mismatch.
+    // The FDN batch profiles (limited-fdn-fixtures builds) share the same arm too.
     use crate::native_training_store_run_v2::{
         current_profile_matches_live_build_identity_v1, NativeRunCatalogProfileV1,
     };
@@ -676,6 +680,7 @@ fn publish_generation_v2(
             ));
         }
         NativeRunCatalogProfileV1::Current
+        | NativeRunCatalogProfileV1::PauperMetaW1
         | NativeRunCatalogProfileV1::FdnFixtureBatchA
         | NativeRunCatalogProfileV1::FdnFixtureBatchB
         | NativeRunCatalogProfileV1::FdnCombatCards
@@ -690,7 +695,17 @@ fn publish_generation_v2(
         | NativeRunCatalogProfileV1::FdnProwlerCreature
         | NativeRunCatalogProfileV1::FdnLuminousRebuke
         | NativeRunCatalogProfileV1::FdnUnchartedVoyage
-        | NativeRunCatalogProfileV1::FdnSylvanScavenging => {
+        | NativeRunCatalogProfileV1::FdnSylvanScavenging
+        | NativeRunCatalogProfileV1::FdnCounterCreaturesRebased
+        | NativeRunCatalogProfileV1::FdnLifegainCreaturesRebased
+        | NativeRunCatalogProfileV1::FdnDrawCreaturesRebased
+        | NativeRunCatalogProfileV1::FdnHomunculusCreatureRebased
+        | NativeRunCatalogProfileV1::FdnKomaCreatureRebased
+        | NativeRunCatalogProfileV1::FdnKioraCreatureRebased
+        | NativeRunCatalogProfileV1::FdnProwlerCreatureRebased
+        | NativeRunCatalogProfileV1::FdnLuminousRebukeRebased
+        | NativeRunCatalogProfileV1::FdnUnchartedVoyageRebased
+        | NativeRunCatalogProfileV1::FdnSylvanScavengingRebased => {
             if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
                 return Err(publisher_error_v2(
                     NativeTrainingStorePublisherV2ErrorKind::CurrentCatalogProfileLiveMismatch,
@@ -1744,8 +1759,8 @@ mod windows_publisher_tests {
         FILE_SHARE_WRITE_V2, GENERIC_READ_V2,
     };
     use crate::native_training_store_run_v2::{
-        decode_train_run_v2, test_fixture_bytes_historical_v1, test_fixture_bytes_v2,
-        NativeRunCatalogProfileV1,
+        decode_train_run_v2, live_catalog_profile_v1, test_fixture_bytes_historical_v1,
+        test_fixture_bytes_v2,
     };
     use crate::native_training_store_segment_manifest_v2::build_genesis_segment_manifest_v2;
     use std::collections::BTreeMap;
@@ -2026,30 +2041,25 @@ mod windows_publisher_tests {
     }
 
     /// Dual-Profile Catalog Successor fix round (panel finding 1, blocker:
-    /// bypass), publisher boundary: an FDN-profile run whose embedded
-    /// catalog fields do not equal the crate's live build constants at this
-    /// moment is rejected with the specific `CurrentCatalogProfileLiveMismatch`
-    /// kind before any lock or filesystem mutation. Simulates a future
-    /// catalog move via the run_v2 module's own per-thread test shim (the
-    /// crate's real live constants cannot be changed from a test): the
-    /// record still claims the pinned FDN literal (and so still
-    /// classifies the selected live profile), but the shimmed "live" identity has moved
-    /// past it.
+    /// bypass), publisher boundary: a CURRENT-or-PauperMetaW1-profile run
+    /// whose embedded catalog fields do not equal the crate's live build
+    /// constants at this moment is rejected with the specific
+    /// `CurrentCatalogProfileLiveMismatch` kind before any lock or
+    /// filesystem mutation. Simulates a future catalog move via the run_v2
+    /// module's own per-thread test shim (the crate's real live constants
+    /// cannot be changed from a test): the record still claims whichever
+    /// frozen tuple the crate's live build identity resolves to right now
+    /// (`live_catalog_profile_v1()`; `Current` on the main tree,
+    /// `PauperMetaW1` on the pauper-meta-cards-v1 card lane), but the
+    /// shimmed "live" identity has moved past it.
     #[test]
-    fn publish_genesis_rejects_an_fdn_catalog_profile_run_whose_live_identity_has_moved() {
+    fn publish_genesis_rejects_a_current_catalog_profile_run_whose_live_identity_has_moved() {
         use crate::native_training_store_run_v2::LiveCatalogBuildIdentityOverrideGuardV1;
 
         let store = TestStoreV2::with_skeleton("current-catalog-profile-live-mismatch");
         let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
         let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
-        assert_eq!(
-            run.catalog_profile_v1(),
-            if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnSylvanScavenging
-            } else {
-                NativeRunCatalogProfileV1::Current
-            }
-        );
+        assert_eq!(run.catalog_profile_v1(), live_catalog_profile_v1());
         let executor = fresh_executor_v2(&run);
         let genesis = genesis_authorities_v2(&run, &executor);
 
@@ -2071,11 +2081,16 @@ mod windows_publisher_tests {
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
     fn publish_rejects_the_pre_fdn_profile_before_mutating_any_store_files() {
-        use crate::native_training_store_run_v2::test_fixture_bytes_pre_fdn_v1;
+        use crate::native_training_store_run_v2::{
+            test_fixture_bytes_pre_fdn_v1, NativeRunCatalogProfileV1,
+        };
         let store = TestStoreV2::with_skeleton("pre-fdn-profile");
         let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
         let run = decode_train_run_v2(&test_fixture_bytes_pre_fdn_v1()).unwrap();
-        assert_eq!(run.catalog_profile_v1(), NativeRunCatalogProfileV1::Current);
+        assert_eq!(
+            run.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::PauperMetaW1
+        );
         let live = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
         let executor = fresh_executor_v2(&live);
         let genesis = genesis_authorities_v2(&live, &executor);
@@ -2091,7 +2106,9 @@ mod windows_publisher_tests {
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
     fn publish_rejects_prior_fdn_batch_before_mutating_any_store_files() {
-        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_batch_a_v1;
+        use crate::native_training_store_run_v2::{
+            test_fixture_bytes_fdn_batch_a_v1, NativeRunCatalogProfileV1,
+        };
         let store = TestStoreV2::with_skeleton("prior-fdn-batch");
         let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
         let run = decode_train_run_v2(&test_fixture_bytes_fdn_batch_a_v1()).unwrap();
@@ -2111,17 +2128,12 @@ mod windows_publisher_tests {
         assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Latest).exists());
     }
 
-    /// Dual-Profile Catalog Successor (collab CLAUDE #220) acceptance
-    /// evidence: construct an FDN-profile record (the default
-    /// `test_fixture_bytes_v2()` fixture, which embeds the live nine-deck
-    /// catalog identity), seal it to a temp store through the real genesis
-    /// publisher, decode `run.json` back off disk independent of the
-    /// in-memory record, and fully validate the resulting store -- the whole
-    /// construct/seal/decode/validate cycle, not just a bare decode.
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
     fn publish_rejects_prior_fdn_batch_before_mutating_any_store_files_b() {
-        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_batch_b_v1;
+        use crate::native_training_store_run_v2::{
+            test_fixture_bytes_fdn_batch_b_v1, NativeRunCatalogProfileV1,
+        };
         let store = TestStoreV2::with_skeleton("prior-fdn-batch-b");
         let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
         let run = decode_train_run_v2(&test_fixture_bytes_fdn_batch_b_v1()).unwrap();
@@ -2144,7 +2156,9 @@ mod windows_publisher_tests {
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
     fn publish_rejects_prior_fdn_batch_combat_before_mutating_any_store_files() {
-        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_combat_cards_v1;
+        use crate::native_training_store_run_v2::{
+            test_fixture_bytes_fdn_combat_cards_v1, NativeRunCatalogProfileV1,
+        };
         let store = TestStoreV2::with_skeleton("prior-fdn-combat-cards");
         let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
         let run = decode_train_run_v2(&test_fixture_bytes_fdn_combat_cards_v1()).unwrap();
@@ -2167,7 +2181,9 @@ mod windows_publisher_tests {
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
     fn publish_rejects_prior_fdn_batch_legend_rule_before_mutating_any_store_files() {
-        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_legend_rule_v1;
+        use crate::native_training_store_run_v2::{
+            test_fixture_bytes_fdn_legend_rule_v1, NativeRunCatalogProfileV1,
+        };
         let store = TestStoreV2::with_skeleton("prior-fdn-legend-rule");
         let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
         let run = decode_train_run_v2(&test_fixture_bytes_fdn_legend_rule_v1()).unwrap();
@@ -2418,20 +2434,13 @@ mod windows_publisher_tests {
 
     /// Construct, publish, reread and validate the selected live catalog profile.
     #[test]
-    fn fdn_profile_record_round_trips_through_construct_seal_decode_validate() {
+    fn current_profile_record_round_trips_through_construct_seal_decode_validate() {
         use crate::native_training_store_resume_v2::validate_native_training_store_v2;
 
         let store = TestStoreV2::with_skeleton("current-catalog-profile-round-trip");
         let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
         let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
-        assert_eq!(
-            run.catalog_profile_v1(),
-            if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnSylvanScavenging
-            } else {
-                NativeRunCatalogProfileV1::Current
-            }
-        );
+        assert_eq!(run.catalog_profile_v1(), live_catalog_profile_v1());
 
         let executor = fresh_executor_v2(&run);
         let genesis = genesis_authorities_v2(&run, &executor);
@@ -2442,14 +2451,7 @@ mod windows_publisher_tests {
             fs::read(final_path_v2(&root, NativeTrainingStoreFinalNameV2::Run)).unwrap();
         let redecoded = decode_train_run_v2(&reread_run_bytes).unwrap();
         assert_eq!(redecoded.canonical_bytes(), run.canonical_bytes());
-        assert_eq!(
-            redecoded.catalog_profile_v1(),
-            if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnSylvanScavenging
-            } else {
-                NativeRunCatalogProfileV1::Current
-            }
-        );
+        assert_eq!(redecoded.catalog_profile_v1(), live_catalog_profile_v1());
 
         // Full read-only store validation, the same mechanism used to verify
         // the real sealed historical stores, now against a freshly-sealed

@@ -75,3 +75,9 @@ tokens, executable XMage comparisons and passing CI remain required. The
 286-name reference has 24 full and 262 missing entries. The pinned original
 deck files remain unchanged. See [legend contract](../design/fdn_legend_rule_v1.md)
 for the official rules reference and the implementation boundary.
+
+## Rebase onto main (2026-10-02)
+
+After merging main (#112, `kernel_carddb/v34`, 192 Pauper definitions), the
+Limited database is `kernel_carddb/v38`, hash `d85648876370d1e2`, under the
+`FdnLegendRule` profile. The measurements above describe the original build.

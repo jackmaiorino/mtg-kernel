@@ -1,5 +1,45 @@
 # FDN draw creature validation
 
+## Integration with current main
+
+Integrated the current-main life-gain prefix 0ce8eb6d and retained six lossless
+fixture conversions needed by main's optional CUDA compile gate. The default
+registry stays 192 definitions/v34; the draw prefix has 223 definitions/Limited v42,
+with generated identity a1376b708b689b01. A catalog-only build-script probe
+compiled and emitted the identity; it is not engine/gameplay qualification.
+
+Original FDN profiles and prior composed counter/life-gain profiles remain
+readable; publication/resume still require the exact live tuple. Preserve
+the grouped filters, all eleven integration targets, fresh pinned Windows
+compiler paths, no-fail-fast and the unchanged isolated timing workload.
+Formatting, workflow lint, diff and focused Python checks passed. Complete
+hosted Rust/gameplay/native/production checks for the composed source remain
+pending. Earlier isolated-source evidence below remains historical.
+
+Hosted CI at `2861046736faf13fd0cca1c1f76e9771f9ecd17f` passed all eight checks: Rust on
+Ubuntu and Windows, all four Python shards, formatting/lint and path detection.
+Run: https://github.com/jackmaiorino/mtg-kernel/actions/runs/36973189527. Earlier pending entries below record the original
+verification sequence. The subsequent status/report update changes no tested
+code, workflow, fixture or catalog bytes.
+
+The later Windows recheck at01c7334b failed
+`snapshot::tests::snapshot_clone_cost_is_bounded`:67.822microseconds per call
+against40microseconds, with1743 other library tests passing and49 existing
+ignores. Job110986481520's failed log remains the evidence for that attempt.
+The CI repair preserves the test source,80objects,200warmups,2000iterations
+and40microsecond limit. Its runner executes all other library tests normally,
+then the exact timing test in a fresh process with one thread and the same
+compiled executable. Rust steps use Bash to propagate each native failure.
+The existing Ubuntu job remains live; publish after it finishes. Corrected
+end-to-end CI remains required.
+
+The full failed job log and exact snapshot source are sealed at
+`E:/mtg-fdn-fixtures/fdn-draw-ci-timing-failure-001`, with a verified independent
+mirror at `C:/Users/Jack/fdn-draw-ci-timing-failure-001-sealed`.
+Each copy is276505bytes, under its16MiB cap with60GiB reserves checked.
+Log SHA-256 is `f4e36ca083540062079d92ac1cd74ccfd634994d9230296e66d83b4d6a2baad6`.
+The original failed result is retained; the isolated timing result is pending.
+
 Strix Lookout, Mischievous Mystic and Faerie Token are implemented at
 `99171529`, with focused test corrections at `95b4a94a` and `84675f3b`.
 Matching committed HaleysPC source is
@@ -81,3 +121,10 @@ manifest `C:/Users/haley/fdn-owned-incremental-prune-001.json` records
 17,593,594,204 regenerable bytes and the cache inventory hash
 `60d13497124ca26d6369a4e4bd4179e5242a7c150de66cd1626b0f22f55b7cd4`.
 Compiled binaries, cited evidence, source and failed logs were retained.
+
+The first composed card-pair/draw CI found three returning-Aura variants
+missing from main's suspended-reference walker. Added exact-incarnation
+scanning of both Aura/host bindings, the complete attachment-candidate list,
+and the answered guard's remaining frames. A regression covers both bound
+objects and unrelated library objects. Formatting/diff checks passed; hosted
+Rust and complete feature qualification remain pending.

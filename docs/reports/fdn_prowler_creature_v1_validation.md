@@ -1,5 +1,11 @@
 # FDN Prowler implementation and verification
 
+Hosted CI at `b68eb5b42d58976122ae479c9969fc4f39f5d07f` passed all eight checks: Rust on
+Ubuntu and Windows, all four Python shards, formatting/lint and path detection.
+Run: https://github.com/jackmaiorino/mtg-kernel/actions/runs/37004227577. Earlier pending entries below record the original
+verification sequence. The subsequent status/report update changes no tested
+code, workflow, fixture or catalog bytes.
+
 Cackling Prowler is implemented in the opt-in FDN catalog: green 4/3 Hyena
 Rogue for `{3}{G}`, ward `{2}`, and an intervening morbid trigger at the
 beginning of its controller's end step. A qualifying death adds one +1/+1
@@ -25,9 +31,9 @@ cannot inherit an old counter.
 | Python | All 20 deck/client cases passed on Python 3.11. |
 | XMage | All 12 strict-choice cases passed in `fdn-mage-prowler-001`; [Mage PR #9](https://github.com/jackmaiorino/mage/pull/9) records reference boundaries and hashes. |
 | Catalog | Checks-004 phases 2 and 3 passed: 46 definition checks, 138 native-record checks and 3 existing ignores. Earlier compile failures exposed a missing consumer match arm and overly narrow historical-fixture test configuration; both are corrected. |
-| Sessions and regressions | Checks-004 passed: 66 public Limited session checks, 7 private custom-session checks and 229 prior gameplay cases across fourteen integration suites. |
+| Sessions and regressions | Checks-004 passed: 66 public Limited session checks, 7 private custom-session checks and 220 prior gameplay cases across fourteen integration suites. |
 | Default compatibility and lint | All 68 default session checks and the exact v32 golden passed. Limited all-targets and default workspace all-targets Clippy passed with warnings denied. |
-| Production mutation boundaries | `fdn-prowler-production-001` is running, including prior-v43 publication/resume refusal and current-profile round trip. |
+| Production mutation boundaries | `fdn-prowler-production-001` exited zero: 25 release checks passed, including prior-v43 publication/resume refusal and current-profile round trip. Combined-feature release Clippy passed with warnings denied. |
 | External natural-terminal replay | `fdn-prowler-external-001` exited zero: two seed-123 games finished naturally with identical results and transcripts. |
 | Hosted CI | Draft [kernel PR #133](https://github.com/jackmaiorino/mtg-kernel/pull/133) is running at `b68eb5b4`; no green claim. |
 
@@ -37,12 +43,14 @@ MSVC linker 14.50.35725.0, two Cargo jobs, no incremental compilation,
 no debug symbols, seed 123 and no GPU. Small manifests bind source/input
 and output hashes. Checks-004 exited zero above the 60 GiB reserve. During release verification,
 the Cargo launcher was observed as `rustup.exe`, exposing a process-name
-mismatch in the original stop guard. The active release build now has a
+mismatch in the original stop guard. The release build received a
 companion guard that checks the exact launcher path, Cargo/rustup image name
 and the verified parent PowerShell script before stopping only its own tree.
 It monitors the 384 MiB allowance and 60 GiB reserve every three seconds;
 `fdn-prowler-production-001.guard-companion.json` records its actual activity.
-The healthy release build was not restarted.
+The healthy release build was not restarted. It finished successfully; the
+companion receipt records `job_completed` and exit zero. No storage stop was
+triggered, so this records observed monitoring rather than a tested kill path.
 Compiler-failure logs remain preserved outside Git; no measurement run was
 started, and no frozen experiment or other agent's tree was changed.
 
@@ -67,3 +75,29 @@ log SHA-256 `419ee8b640f866e5336df0039211f0974e07e9d84c065955cf42687fa7ed5e84`.
 The external check establishes interface/game completion and replay;
 focused rules/reference cases establish the individual morbid/ward behavior.
 These custom games do not complete either original fixture deck.
+
+## Windows compiler environment correction
+
+The completed Windows Kiora job 111079733482 failed 33 default-library cases
+with `ForbiddenBuildFlagOverride`: the CI bootstrap exported `RUSTC`, which
+the existing compile-time guard correctly rejects. The bootstrap now keeps
+the normalized Windows `RUSTUP_HOME` and pinned Rust install without exporting
+`RUSTC`. Hosted default and native-build capture checks are pending. The guard
+and toolchain pin remain unchanged.
+
+## Current-main integration
+
+The Prowler prefix incorporates Kiora a1473019 and main's 192-definition/v34
+catalog. Its generated Limited identity is 230 definitions/v46
+6630c9c09989878f. Original and earlier composed tuples remain readable;
+mutation uses the live identity. Fixture ID expectations now match the
+appended catalog. The main explicit-deck constructor initializes the Limited
+trigger state, and the existing human bridge rejects the unsupported Limited
+incremental trigger prompt explicitly.
+
+Prowler and monarch end-step events are logged before a single trigger
+collection. A regression exercises both orders in their shared ordering window
+and requires both the monarch draw and Prowler counter. The reference scanner
+classifies the new end-step marker as having no physical object binding.
+Catalog generation, formatting, workflow lint and diff checks are local checks;
+complete composed-source hosted qualification is pending.

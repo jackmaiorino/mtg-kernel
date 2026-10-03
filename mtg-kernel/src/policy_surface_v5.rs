@@ -480,6 +480,22 @@ impl PolicySurfaceV5 {
         }
     }
 
+    pub(crate) fn scan_context_for_owned_revision_v1(
+        &self,
+        state: &GameState,
+        observer: PlayerId,
+        revision: u64,
+    ) -> Result<PolicySurfaceContextIdsV5, String> {
+        if let Some(scan) = &self.scan {
+            scan.validate_binding(
+                state,
+                &self.inner,
+                EnvironmentBindingModeV5::OwnedRevision(revision),
+            )?;
+        }
+        self.scan_context_for(observer)
+    }
+
     pub fn next_decision(&mut self, state: &mut GameState) -> Result<PolicyDecisionV5, String> {
         self.next_decision_with_binding(state, EnvironmentBindingModeV5::Exact)
     }
@@ -661,6 +677,89 @@ impl PolicySurfaceV5 {
         scan.answer_keeps_a_legal_completion(state, &self.inner, include)
     }
 
+    // Backend-only diagnostic. Do not attach this private scan to human views
+    // or policy inputs. This deliberately omits hands, libraries, and RNG.
+    fn fast_actor_rejection_value_v1(
+        &self,
+        state: &GameState,
+        action: &PolicyActionV5,
+        current_revision: u64,
+        next_revision: u64,
+        reason: &str,
+    ) -> serde_json::Value {
+        let battlefield: Vec<_> = state
+            .objects
+            .iter()
+            .filter(|(_, object)| object.zone == crate::state::Zone::Battlefield)
+            .map(|(id, object)| {
+                serde_json::json!({
+                    "id": id,
+                    "card_def": object.card_def,
+                    "name": object.name,
+                    "controller": object.controller,
+                    "tapped": object.tapped,
+                    "damage": object.damage,
+                    "minimum_blockers_override": object.v4.minimum_blockers_override,
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "schema": "mtg-kernel-fast-actor-prevalidation-rejection/v1",
+            "visibility": "backend-private diagnostic, never a human view",
+            "reason": reason,
+            "action_debug": format!("{action:?}"),
+            "current_revision": current_revision,
+            "next_revision": next_revision,
+            "turn": state.turn,
+            "step": state.step,
+            "active_player": state.active_player,
+            "priority_player": state.priority_player,
+            "scan": &self.scan,
+            "combat": &state.engine.combat,
+            "battlefield": battlefield,
+        })
+    }
+
+    fn capture_fast_actor_rejection_v1(
+        &self,
+        state: &GameState,
+        action: &PolicyActionV5,
+        current_revision: u64,
+        next_revision: u64,
+        reason: &str,
+    ) {
+        let Some(path) = std::env::var_os("MTG_KERNEL_FAST_ACTOR_REJECTION_CAPTURE") else {
+            return;
+        };
+        let path = std::path::PathBuf::from(path);
+        let captured = (|| -> Result<(), String> {
+            if !path.is_absolute() {
+                return Err("absolute rejection capture path required".to_string());
+            }
+            let value = self.fast_actor_rejection_value_v1(
+                state,
+                action,
+                current_revision,
+                next_revision,
+                reason,
+            );
+            let bytes = serde_json::to_vec(&value).map_err(|error| error.to_string())?;
+            if bytes.len() > 16 * 1024 * 1024 {
+                return Err("rejection capture exceeds 16 MiB".to_string());
+            }
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .map_err(|error| error.to_string())?;
+            std::io::Write::write_all(&mut file, &bytes).map_err(|error| error.to_string())?;
+            file.sync_all().map_err(|error| error.to_string())
+        })();
+        if let Err(error) = captured {
+            eprintln!("fast actor rejection capture failed: {error}");
+        }
+    }
+
     /// Consumes an action proof created only from the fast session's exact
     /// current candidate. Ownership, revision, scan/action binding, and final
     /// combat aggregate legality are all checked before mutation; binding and
@@ -672,10 +771,26 @@ impl PolicySurfaceV5 {
     ) -> Result<(), FastActorInPlaceApplyErrorV1> {
         let (owner_surface, action, current_revision, next_revision) = proof.into_parts();
         if !std::ptr::eq(owner_surface, std::ptr::from_ref(&*self)) {
+            self.capture_fast_actor_rejection_v1(
+                state,
+                &action,
+                current_revision,
+                next_revision,
+                "proof surface owner differs",
+            );
             return Err(FastActorInPlaceApplyErrorV1::RejectedBeforeMutation);
         }
         self.validate_fast_actor_current_action(state, &action, current_revision, next_revision)
-            .map_err(|_| FastActorInPlaceApplyErrorV1::RejectedBeforeMutation)?;
+            .map_err(|reason| {
+                self.capture_fast_actor_rejection_v1(
+                    state,
+                    &action,
+                    current_revision,
+                    next_revision,
+                    &reason,
+                );
+                FastActorInPlaceApplyErrorV1::RejectedBeforeMutation
+            })?;
         self.apply_in_place(
             state,
             action,
@@ -1098,6 +1213,68 @@ mod tests {
             blockers.push(id);
         }
         (state, attacker, blockers)
+    }
+
+    #[test]
+    fn rejection_capture_preserves_exact_combat_reason_without_hidden_zones_or_mutation() {
+        let (mut state, attacker, blockers) = blocker_state(2);
+        state.objects.get_mut(attacker).v4.minimum_blockers_override = Some(2);
+        let mut hidden = state.objects.get(attacker).clone();
+        hidden.name = "private-library-sentinel".to_string();
+        hidden.zone = Zone::Library;
+        let hidden_id = state.objects.push(hidden);
+        state.players[0].library.push(hidden_id);
+        let mut surface = PolicySurfaceV5::new();
+        surface.next_decision_owned(&mut state, 7).unwrap();
+        surface
+            .apply_owned(
+                &mut state,
+                PolicyActionV5::ChooseBlockerInclusion {
+                    actor: PlayerId::P1,
+                    attacker,
+                    blocker: blockers[0],
+                    include: true,
+                },
+                7,
+                8,
+            )
+            .unwrap();
+        surface.next_decision_owned(&mut state, 8).unwrap();
+        let action = PolicyActionV5::ChooseBlockerInclusion {
+            actor: PlayerId::P1,
+            attacker,
+            blocker: blockers[1],
+            include: false,
+        };
+        let before_state = state.clone();
+        let before_surface = surface.clone();
+        let reason = surface
+            .validate_fast_actor_current_action(&state, &action, 8, 9)
+            .unwrap_err();
+        assert_eq!(
+            reason,
+            format!("{attacker} requires at least 2 creatures to block it")
+        );
+        let value = surface.fast_actor_rejection_value_v1(&state, &action, 8, 9, &reason);
+        assert_eq!(value["reason"], reason);
+        assert_eq!(value["scan"]["cursor"], 1);
+        assert_eq!(value["scan"]["selected"], serde_json::json!([blockers[0]]));
+        assert_eq!(value["current_revision"], 8);
+        assert_eq!(value["next_revision"], 9);
+        assert_eq!(value["battlefield"].as_array().unwrap().len(), 3);
+        assert!(value["action_debug"]
+            .as_str()
+            .unwrap()
+            .contains("include: false"));
+        assert!(!value.to_string().contains("private-library-sentinel"));
+        assert!(value.get("state").is_none());
+        assert!(value.get("players").is_none());
+        assert_eq!(state, before_state);
+        assert_eq!(surface.scan, before_surface.scan);
+        assert_eq!(
+            surface_binding_hash(&state, &surface.inner).unwrap(),
+            surface_binding_hash(&before_state, &before_surface.inner).unwrap()
+        );
     }
 
     fn apply_attacker_bits(surface: &mut PolicySurfaceV5, state: &mut GameState, bits: &[bool]) {
@@ -1668,16 +1845,42 @@ mod tests {
     fn surface_binding_envelopes_are_diagnostic_dispatched_with_exact_goldens() {
         let (legacy, v2) = standalone_binding_states();
         let surface = crate::surface_v2::HarnessSurfaceV2::new();
-        assert_eq!(legacy.diagnostic_state_hash(), 0xa921_902d_e1a8_d8ce);
+        // Stale duplicate of state.rs's own
+        // `diagnostic_state_hash_contract_and_golden_value_are_frozen`
+        // golden (same fixture shape: two_card_libraries/debug_names, seed
+        // 99, draw P0 then P1): that test was re-baselined to
+        // 0x3313_5945_dcb9_4ed1 when Task 11 added `GameState::monarch`
+        // (serialized unconditionally, shifting the v8 envelope for every
+        // state), but this file's own copy of the same literal was missed.
+        // Old value: 0xa921_902d_e1a8_d8ce.
+        assert_eq!(legacy.diagnostic_state_hash(), 0x3313_5945_dcb9_4ed1);
+        // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
+        // 13, identity finalisation): the SurfaceBinding envelope only
+        // serializes `diagnostic_state_hash` plus surface context, never
+        // any CardDef-shaped state, so this has the same root cause as the
+        // state-hash re-pin directly above (`GameState::monarch`, added in
+        // Task 11, serialized unconditionally and shifting the envelope
+        // for every state), not the wave's new cards moving
+        // KERNEL_CARDDB_HASH. Old value: 0xd281_e56f_4389_60a9. New value
+        // is this test's own live-computed hash, read directly from a
+        // failing run (never hand-typed).
         assert_eq!(
             surface_binding_hash(&legacy, &surface).expect("legacy binding hashes"),
-            0xd281_e56f_4389_60a9,
+            0x6940_0c4c_9fdc_2b49,
             "final-pool-v8 legacy SurfaceBinding V1 golden"
         );
-        assert_eq!(v2.diagnostic_state_hash(), 0x8ecd_b59c_374e_2345);
+        // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
+        // 13, identity finalisation): same root cause as the legacy state
+        // hash above (`GameState::monarch`, added in Task 11, is serialized
+        // unconditionally and shifts the v8/v9 envelope for every state).
+        // Old value: 0x8ecd_b59c_374e_2345.
+        assert_eq!(v2.diagnostic_state_hash(), 0x9689_f972_2063_c266);
+        // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
+        // 13, identity finalisation): same root cause as the two goldens
+        // above. Old value: 0x5c8f_cd1c_7941_a53e.
         assert_eq!(
             surface_binding_hash(&v2, &surface).expect("v2 binding hashes"),
-            0x5c8f_cd1c_7941_a53e,
+            0xc8e2_f885_b7e8_8615,
             "final-pool-v9 SurfaceBinding V2 golden"
         );
 

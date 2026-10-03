@@ -10,7 +10,7 @@ requires-python = ">=3.11"
 dependencies = ["numpy>=1.26,<3", "torch>=2.2,<3"]
 
 [project.optional-dependencies]
-test = ["numpy>=1.26,<3"]
+test = ["numpy>=1.26,<3", "psutil>=7,<8"]
 
 [project.scripts]
 mtg-kernel-rl = "mtg_kernel_rl.cli:main"
