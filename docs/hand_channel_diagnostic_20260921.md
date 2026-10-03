@@ -1,0 +1,7 @@
+# Frozen hand-token / observation-digest separation
+
+Read-only diagnostic after E-11 rebuttal -03, not a gate or repair. Fixed g115 and the same two constructed hand states. Reproduce engine-root scoring, then score the 2x2 cross of hand-token source (Mountain/Bolt) and96-scalar observation-digest source (Mountain/Bolt), for both seats. Assert all other tensor fields and state prefix0:123 match. Both diagonal scores must match engine-scored logits/value bit-for-bit. Mixed inputs are explicitly artificial and never applied as engine actions or used for learning.
+
+Report face-minus-removal logits, probabilities, value, token-only and digest-only differences and their interaction. No thresholds, selection, training, model change or ADVANCE. New independent training n=0; two input states do not support strength inference against s=.76pp. This diagnoses where the local response originates but cannot by itself prove a representation defect, generalize to natural positions, or choose a repair. Preserve natural-slice negative and all failed preparation records.
+
+Eight engine roots and eight tensor combinations, repeated in a fresh process with exact output hash agreement. Supported bounded build/run helpers retain source/checkpoint pins, owner checks, BelowNormal priority, four build jobs, no GPU/paid allocation. Source initialized through unchanged g115 loader. Fable outage remains unresolved; no critical intervention is finalized. No result at plan commit.

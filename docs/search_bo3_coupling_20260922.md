@@ -1,0 +1,7 @@
+# BO3 coupling relevant to search non-regression
+
+Source audit, not an experiment or a strength claim. phase1_bo3_collection_v1/mod.rs:648 draws one environment seed per game; :683 resets policies from that game's paired policy seeds. sideboard_play_policy_v1.rs:1172 resets both seat RNGs and encoding state. A shorter continuation therefore does not by itself consume the next game's policy RNG stream. A search strategy's state must also be cleared at the game boundary.
+
+There is still a match-level coupling. bo3_match.rs:192 selects winner.opponent() as next chooser; :132 derives starting_player from that chooser's fixed Play/Draw decision. The collector uses the chosen package's fixed play/draw rule at mod.rs:623. Turning one game from loss to win can therefore change the next game's starting player and subsequent path even with the same environment seed. The game-level forced-win guarantee is not a theorem of BO3 pathwise dominance. No monotonic relationship between on-play and on-draw outcomes is established for these policies and seed conditions.
+
+Consequence: retain whole-match measurement and its power contract for M1. Do not replace it with a claim that a proof-backed in-game override makes match regression logically impossible. Keep matched environment seeds and seed-pair clustering; count changed match outcomes, not certified action frequency. This applies independently of whether the eventual candidate uses narrow certificates or broader information-set search.

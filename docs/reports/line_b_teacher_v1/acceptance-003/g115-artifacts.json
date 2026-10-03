@@ -1,0 +1,78 @@
+{
+  "source_commit": "c3e949af5321c2679e79b7210db072a1114bbd46",
+  "build_log_sha256": "6a949a32358b9bbcae50408a730d0bd85b348e037ed3f804ebec06730df24802",
+  "build_step": "test-build",
+  "execution": "Not executed by this pin operation; g115 owns replay and independent failure witness after reservation release.",
+  "artifacts": [
+    {
+      "target": "public_feature_evaluation_v1",
+      "built_path": "D:\\cargo-target\\astra-exit-teacher\\release\\public_feature_evaluation_v1.exe",
+      "path": "E:\\pinned-binaries\\58b6626ed064a47012045ff578eb55a78841eee35f63c04bde9d9ead1bb2e674\\public_feature_evaluation_v1.exe",
+      "sha256": "58b6626ed064a47012045ff578eb55a78841eee35f63c04bde9d9ead1bb2e674",
+      "bytes": 7374336,
+      "profile": {
+        "opt_level": "3",
+        "debuginfo": 0,
+        "debug_assertions": false,
+        "overflow_checks": false,
+        "test": false
+      }
+    },
+    {
+      "target": "native_expanded_training_run_v1",
+      "built_path": "D:\\cargo-target\\astra-exit-teacher\\release\\native_expanded_training_run_v1.exe",
+      "path": "E:\\pinned-binaries\\20d22a4897f10e3aae309bc9715a07ebde2c6c8d9e1257d16fa07a7673630b4a\\native_expanded_training_run_v1.exe",
+      "sha256": "20d22a4897f10e3aae309bc9715a07ebde2c6c8d9e1257d16fa07a7673630b4a",
+      "bytes": 31278592,
+      "profile": {
+        "opt_level": "3",
+        "debuginfo": 0,
+        "debug_assertions": false,
+        "overflow_checks": false,
+        "test": false
+      }
+    },
+    {
+      "target": "learned_sideboard_v1",
+      "built_path": "D:\\cargo-target\\astra-exit-teacher\\release\\learned_sideboard_v1.exe",
+      "path": "E:\\pinned-binaries\\2c1d6a2f42bcc3bcd9cfa5133d54a36f79fb22ec3dcfd9b62f76c7fba9420e5b\\learned_sideboard_v1.exe",
+      "sha256": "2c1d6a2f42bcc3bcd9cfa5133d54a36f79fb22ec3dcfd9b62f76c7fba9420e5b",
+      "bytes": 8860160,
+      "profile": {
+        "opt_level": "3",
+        "debuginfo": 0,
+        "debug_assertions": false,
+        "overflow_checks": false,
+        "test": false
+      }
+    },
+    {
+      "target": "public_policy_replay_audit_v1",
+      "built_path": "D:\\cargo-target\\astra-exit-teacher\\release\\public_policy_replay_audit_v1.exe",
+      "path": "E:\\pinned-binaries\\ed7d73f0dc85627f8aff8d957aece582c6fba527c6cae05454a310893314e6e0\\public_policy_replay_audit_v1.exe",
+      "sha256": "ed7d73f0dc85627f8aff8d957aece582c6fba527c6cae05454a310893314e6e0",
+      "bytes": 3668480,
+      "profile": {
+        "opt_level": "3",
+        "debuginfo": 0,
+        "debug_assertions": false,
+        "overflow_checks": false,
+        "test": false
+      }
+    },
+    {
+      "target": "public_feature_training_v1",
+      "built_path": "D:\\cargo-target\\astra-exit-teacher\\release\\public_feature_training_v1.exe",
+      "path": "E:\\pinned-binaries\\a9d93f4c516155e161aace585bf125467536ebcf61af656efefccfb7a4f2bcba\\public_feature_training_v1.exe",
+      "sha256": "a9d93f4c516155e161aace585bf125467536ebcf61af656efefccfb7a4f2bcba",
+      "bytes": 30327808,
+      "profile": {
+        "opt_level": "3",
+        "debuginfo": 0,
+        "debug_assertions": false,
+        "overflow_checks": false,
+        "test": false
+      }
+    }
+  ]
+}
