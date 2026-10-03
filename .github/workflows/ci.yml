@@ -93,10 +93,6 @@ jobs:
           fdn_rust_channel=$(sed -n 's/^channel = "\([^"]*\)".*$/\1/p' rust-toolchain.toml)
           test -n "$fdn_rust_channel"
           rustup toolchain install "$fdn_rust_channel" --profile minimal --component clippy --component rustfmt --no-self-update
-          if [ "$RUNNER_OS" = Windows ]; then
-            fdn_rustc_path=$(cygpath -w "$(rustup which --toolchain "$fdn_rust_channel" rustc)")
-            printf 'RUSTC=%s\n' "$fdn_rustc_path" >> "$GITHUB_ENV"
-          fi
 
       - name: Cache cargo registry
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -160,10 +156,6 @@ jobs:
           fdn_rust_channel=$(sed -n 's/^channel = "\([^"]*\)".*$/\1/p' rust-toolchain.toml)
           test -n "$fdn_rust_channel"
           rustup toolchain install "$fdn_rust_channel" --profile minimal --component clippy --component rustfmt --no-self-update
-          if [ "$RUNNER_OS" = Windows ]; then
-            fdn_rustc_path=$(cygpath -w "$(rustup which --toolchain "$fdn_rust_channel" rustc)")
-            printf 'RUSTC=%s\n' "$fdn_rustc_path" >> "$GITHUB_ENV"
-          fi
 
       - name: Set up pinned Python for grouped Rust filters
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -239,10 +231,6 @@ jobs:
           fdn_rust_channel=$(sed -n 's/^channel = "\([^"]*\)".*$/\1/p' rust-toolchain.toml)
           test -n "$fdn_rust_channel"
           rustup toolchain install "$fdn_rust_channel" --profile minimal --component clippy --component rustfmt --no-self-update
-          if [ "$RUNNER_OS" = Windows ]; then
-            fdn_rustc_path=$(cygpath -w "$(rustup which --toolchain "$fdn_rust_channel" rustc)")
-            printf 'RUSTC=%s\n' "$fdn_rustc_path" >> "$GITHUB_ENV"
-          fi
 
       - name: Cache cargo registry
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

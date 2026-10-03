@@ -192,8 +192,8 @@ fn announce(
 #[test]
 fn definitions_append_full_cards_with_printed_stats_keywords_and_costs() {
     for (id, name, stats, keyword) in [
-        (188, "Exemplar of Light", (3, 3), Keywords::FLYING),
-        (189, "Sun-Blessed Healer", (3, 1), Keywords::LIFELINK),
+        (218, "Exemplar of Light", (3, 3), Keywords::FLYING),
+        (219, "Sun-Blessed Healer", (3, 1), Keywords::LIFELINK),
     ] {
         assert_eq!(card_id_by_name(name), Some(id));
         preflight_fully_supported_deck(&[id]).unwrap();
@@ -206,14 +206,14 @@ fn definitions_append_full_cards_with_printed_stats_keywords_and_costs() {
             &mut state,
             &mut surface,
             name,
-            if id == 188 { 4 } else { 2 },
+            if id == 218 { 4 } else { 2 },
             None,
         );
         drain(&mut surface, &mut state, &[]);
         assert_eq!(state.players[0].mana_pool[ManaColor::W.pool_index()], 0);
         assert_eq!(state.objects.get(object).zone, Zone::Battlefield);
     }
-    assert!(CARD_DEFS[189].subtypes.contains(&Subtype::Cleric));
+    assert!(CARD_DEFS[219].subtypes.contains(&Subtype::Cleric));
 }
 
 #[test]
