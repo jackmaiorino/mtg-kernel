@@ -126,10 +126,10 @@ fn hordes(state: &GameState, player: PlayerId) -> Vec<ObjectId> {
 
 #[test]
 fn printed_and_copy_definitions_preserve_all_copiable_characteristics() {
-    assert_eq!(card_id_by_name("Homunculus Horde"), Some(193));
-    assert_eq!(card_id_by_name("Homunculus Horde Token"), Some(194));
-    let original = &CARD_DEFS[193];
-    let token = &CARD_DEFS[194];
+    assert_eq!(card_id_by_name("Homunculus Horde"), Some(223));
+    assert_eq!(card_id_by_name("Homunculus Horde Token"), Some(224));
+    let original = &CARD_DEFS[223];
+    let token = &CARD_DEFS[224];
     for def in [original, token] {
         assert_eq!(def.object_name, "Homunculus Horde");
         assert_eq!((def.power, def.toughness), (Some(2), Some(2)));
@@ -143,8 +143,8 @@ fn printed_and_copy_definitions_preserve_all_copiable_characteristics() {
     assert_eq!(original.supertypes, token.supertypes);
     assert!(!original.is_token);
     assert!(token.is_token);
-    preflight_fully_supported_deck(&[193]).unwrap();
-    assert!(preflight_fully_supported_deck(&[194]).is_err());
+    preflight_fully_supported_deck(&[223]).unwrap();
+    assert!(preflight_fully_supported_deck(&[224]).is_err());
 }
 
 #[test]
@@ -349,5 +349,5 @@ fn restoring_ordered_horde_and_mystic_triggers_preserves_the_next_state() {
     assert!(state.players[0]
         .battlefield
         .iter()
-        .any(|&id| state.objects.get(id).card_def == 192));
+        .any(|&id| state.objects.get(id).card_def == 222));
 }
