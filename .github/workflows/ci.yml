@@ -63,9 +63,12 @@ jobs:
             # Rust jobs run unless a file is provably outside the crate's
             # input surface. python/mtg_kernel_rl/** stays rust-relevant
             # (embedded authorities: features.py and twins); data/** stays
-            # rust-relevant (include_str goldens). Only non-embedded python
-            # (tests/tools), docs, and markdown are rust-irrelevant.
+            # rust-relevant (include_str goldens). Native CI runners are
+            # also relevant because they determine which tests execute.
+            # Other non-embedded python, docs, and markdown are irrelevant.
             case "$f" in
+              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py)
+                rust_relevant=true ;;
               python/tests/*|python/tools/*|docs/*|*.md) : ;;
               *) rust_relevant=true ;;
             esac

@@ -101,3 +101,26 @@ and requires both the monarch draw and Prowler counter. The reference scanner
 classifies the new end-step marker as having no physical object binding.
 Catalog generation, formatting, workflow lint and diff checks are local checks;
 complete composed-source hosted qualification is pending.
+
+## Isolated Windows timing check
+
+Windows job `111173440630` at `fa963e4e` failed the isolated snapshot check at
+64.659 microseconds against the unchanged 40-microsecond limit. Its other
+workspace summaries passed, but native, FDN and CUDA steps were skipped; the
+overall job remains a failure. The complete terminal log was retained before
+publication of this repair.
+
+Only the short timing child now receives Windows `HIGH_PRIORITY_CLASS`, matching
+the procedure that passed the complete lifegain-mechanics, Voyage and Witness
+Windows matrices. Correctness tests retain their existing priority. The arena,
+80-object workload, 200 warmups, 2,000 iterations, 40-microsecond assertion and
+compiler/linker pins are unchanged. Both native CI runner scripts are classified
+as Rust-relevant so runner changes execute the complete matrix. This prefix's
+new timing result and complete runtime qualification remain pending. The new
+arena storage implementation and its qualification are tracked separately in
+PR #140.
+
+Python compilation, workflow lint and diff checks pass. The timing runner
+matches the final CI runner exactly, and a native Windows child-process check
+observes normal priority `0x20` and timing priority `0x80`. These checks verify
+the runner configuration; hosted timing and full qualification remain pending.
