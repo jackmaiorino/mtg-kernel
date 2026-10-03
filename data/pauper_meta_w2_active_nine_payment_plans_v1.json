@@ -1,0 +1,8834 @@
+{
+  "note": "Automatic mana payment plans for every castable opening-hand card of the nine active runtime decks, recorded from the build immediately before pauper meta wave 2 Task 2 taught mana::ManaSource a per-tap yield. Regenerating this file from a later build would destroy the before-and-after comparison it exists for.",
+  "rows": [
+    {
+      "card": "Fanatical Offering",
+      "deck": "Wildfire",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "B"
+          ],
+          [
+            9,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Lembas",
+      "deck": "Wildfire",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            9,
+            "R"
+          ],
+          [
+            12,
+            "B"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Lembas",
+      "deck": "Wildfire",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            9,
+            "R"
+          ],
+          [
+            12,
+            "B"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Fanatical Offering",
+      "deck": "Wildfire",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "B"
+          ],
+          [
+            9,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Fanatical Offering",
+      "deck": "Wildfire",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Lembas",
+      "deck": "Wildfire",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Lembas",
+      "deck": "Wildfire",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Fanatical Offering",
+      "deck": "Wildfire",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Eviscerator's Insight",
+      "deck": "Wildfire",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "B"
+          ],
+          [
+            18,
+            "C"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Writhing Chrysalis",
+      "deck": "Wildfire",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            19,
+            "R"
+          ],
+          [
+            23,
+            "G"
+          ],
+          [
+            7,
+            "B"
+          ],
+          [
+            18,
+            "C"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Makeshift Munitions",
+      "deck": "Wildfire",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            19,
+            "R"
+          ],
+          [
+            7,
+            "B"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Refurbished Familiar",
+      "deck": "Wildfire",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "B"
+          ],
+          [
+            18,
+            "C"
+          ],
+          [
+            19,
+            "B"
+          ],
+          [
+            21,
+            "C"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Cleansing Wildfire",
+      "deck": "Wildfire",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            19,
+            "R"
+          ],
+          [
+            7,
+            "B"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Nihil Spellbomb",
+      "deck": "Wildfire",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "B"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Eviscerator's Insight",
+      "deck": "Wildfire",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Writhing Chrysalis",
+      "deck": "Wildfire",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          1,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Makeshift Munitions",
+      "deck": "Wildfire",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Refurbished Familiar",
+      "deck": "Wildfire",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Cleansing Wildfire",
+      "deck": "Wildfire",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Nihil Spellbomb",
+      "deck": "Wildfire",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Cast Down",
+      "deck": "Wildfire",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            26,
+            "B"
+          ],
+          [
+            11,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Krark-Clan Shaman",
+      "deck": "Wildfire",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            11,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Nihil Spellbomb",
+      "deck": "Wildfire",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            11,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Writhing Chrysalis",
+      "deck": "Wildfire",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            11,
+            "R"
+          ],
+          [
+            12,
+            "G"
+          ],
+          [
+            19,
+            "C"
+          ],
+          [
+            22,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Fanatical Offering",
+      "deck": "Wildfire",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            26,
+            "B"
+          ],
+          [
+            11,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Cast Down",
+      "deck": "Wildfire",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Krark-Clan Shaman",
+      "deck": "Wildfire",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Nihil Spellbomb",
+      "deck": "Wildfire",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Writhing Chrysalis",
+      "deck": "Wildfire",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          1,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Fanatical Offering",
+      "deck": "Wildfire",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Toxin Analysis",
+      "deck": "Wildfire",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "B"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Cast Down",
+      "deck": "Wildfire",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "B"
+          ],
+          [
+            8,
+            "C"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Toxin Analysis",
+      "deck": "Wildfire",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Cast Down",
+      "deck": "Wildfire",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Clockwork Percussionist",
+      "deck": "Rally",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Experimental Synthesizer",
+      "deck": "Rally",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Voldaren Epicure",
+      "deck": "Rally",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Reckless Impulse",
+      "deck": "Rally",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "R"
+          ],
+          [
+            11,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Lightning Bolt",
+      "deck": "Rally",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Voldaren Epicure",
+      "deck": "Rally",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Clockwork Percussionist",
+      "deck": "Rally",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Experimental Synthesizer",
+      "deck": "Rally",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Voldaren Epicure",
+      "deck": "Rally",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Reckless Impulse",
+      "deck": "Rally",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Lightning Bolt",
+      "deck": "Rally",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Voldaren Epicure",
+      "deck": "Rally",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Galvanic Blast",
+      "deck": "Rally",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Reckless Impulse",
+      "deck": "Rally",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "R"
+          ],
+          [
+            9,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Lightning Bolt",
+      "deck": "Rally",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Clockwork Percussionist",
+      "deck": "Rally",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Galvanic Blast",
+      "deck": "Rally",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Reckless Impulse",
+      "deck": "Rally",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Lightning Bolt",
+      "deck": "Rally",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Clockwork Percussionist",
+      "deck": "Rally",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Burning-Tree Emissary",
+      "deck": "Rally",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "R"
+          ],
+          [
+            8,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Reckless Impulse",
+      "deck": "Rally",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "R"
+          ],
+          [
+            8,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Rally at the Hornburg",
+      "deck": "Rally",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "R"
+          ],
+          [
+            8,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Galvanic Blast",
+      "deck": "Rally",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Goblin Tomb Raider",
+      "deck": "Rally",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Voldaren Epicure",
+      "deck": "Rally",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Burning-Tree Emissary",
+      "deck": "Rally",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          1,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Reckless Impulse",
+      "deck": "Rally",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Rally at the Hornburg",
+      "deck": "Rally",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Galvanic Blast",
+      "deck": "Rally",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Goblin Tomb Raider",
+      "deck": "Rally",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Voldaren Epicure",
+      "deck": "Rally",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Chain Lightning",
+      "deck": "Rally",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Rally at the Hornburg",
+      "deck": "Rally",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "R"
+          ],
+          [
+            16,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Clockwork Percussionist",
+      "deck": "Rally",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Clockwork Percussionist",
+      "deck": "Rally",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Chain Lightning",
+      "deck": "Rally",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Rally at the Hornburg",
+      "deck": "Rally",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Clockwork Percussionist",
+      "deck": "Rally",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Clockwork Percussionist",
+      "deck": "Rally",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Refurbished Familiar",
+      "deck": "Affinity",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "B"
+          ],
+          [
+            9,
+            "U"
+          ],
+          [
+            10,
+            "R"
+          ],
+          [
+            15,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Galvanic Blast",
+      "deck": "Affinity",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Ichor Wellspring",
+      "deck": "Affinity",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "B"
+          ],
+          [
+            9,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Blood Fountain",
+      "deck": "Affinity",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "B"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Ichor Wellspring",
+      "deck": "Affinity",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "B"
+          ],
+          [
+            9,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Thoughtcast",
+      "deck": "Affinity",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            9,
+            "U"
+          ],
+          [
+            8,
+            "B"
+          ],
+          [
+            10,
+            "R"
+          ],
+          [
+            15,
+            "R"
+          ],
+          [
+            16,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Refurbished Familiar",
+      "deck": "Affinity",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Galvanic Blast",
+      "deck": "Affinity",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Ichor Wellspring",
+      "deck": "Affinity",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Blood Fountain",
+      "deck": "Affinity",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Ichor Wellspring",
+      "deck": "Affinity",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Thoughtcast",
+      "deck": "Affinity",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Black Mage's Rod",
+      "deck": "Affinity",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "B"
+          ],
+          [
+            19,
+            "B"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Myr Enforcer",
+      "deck": "Affinity",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "B"
+          ],
+          [
+            19,
+            "B"
+          ],
+          [
+            23,
+            "U"
+          ],
+          [
+            24,
+            "U"
+          ],
+          [
+            25,
+            "B"
+          ],
+          [
+            26,
+            "U"
+          ],
+          [
+            27,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Hunter's Blowgun",
+      "deck": "Affinity",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "B"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Reckoner's Bargain",
+      "deck": "Affinity",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "B"
+          ],
+          [
+            19,
+            "B"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Refurbished Familiar",
+      "deck": "Affinity",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "B"
+          ],
+          [
+            19,
+            "B"
+          ],
+          [
+            23,
+            "U"
+          ],
+          [
+            24,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Black Mage's Rod",
+      "deck": "Affinity",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Myr Enforcer",
+      "deck": "Affinity",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "taps": [
+          [
+            10,
+            "B"
+          ]
+        ]
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Hunter's Blowgun",
+      "deck": "Affinity",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Reckoner's Bargain",
+      "deck": "Affinity",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Refurbished Familiar",
+      "deck": "Affinity",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Myr Enforcer",
+      "deck": "Affinity",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            11,
+            "U"
+          ],
+          [
+            12,
+            "B"
+          ],
+          [
+            17,
+            "U"
+          ],
+          [
+            20,
+            "U"
+          ],
+          [
+            25,
+            "B"
+          ],
+          [
+            26,
+            "B"
+          ],
+          [
+            29,
+            "B"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Galvanic Blast",
+      "deck": "Affinity",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            11,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Fanatical Offering",
+      "deck": "Affinity",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "B"
+          ],
+          [
+            11,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Ichor Wellspring",
+      "deck": "Affinity",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            11,
+            "U"
+          ],
+          [
+            12,
+            "B"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Myr Enforcer",
+      "deck": "Affinity",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "taps": [
+          [
+            11,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Galvanic Blast",
+      "deck": "Affinity",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Fanatical Offering",
+      "deck": "Affinity",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Ichor Wellspring",
+      "deck": "Affinity",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Black Mage's Rod",
+      "deck": "Affinity",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            9,
+            "B"
+          ],
+          [
+            11,
+            "B"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Reckoner's Bargain",
+      "deck": "Affinity",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            9,
+            "B"
+          ],
+          [
+            11,
+            "B"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Thoughtcast",
+      "deck": "Affinity",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            31,
+            "U"
+          ],
+          [
+            9,
+            "B"
+          ],
+          [
+            11,
+            "B"
+          ],
+          [
+            14,
+            "B"
+          ],
+          [
+            29,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Myr Enforcer",
+      "deck": "Affinity",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            9,
+            "B"
+          ],
+          [
+            11,
+            "B"
+          ],
+          [
+            14,
+            "B"
+          ],
+          [
+            29,
+            "R"
+          ],
+          [
+            31,
+            "U"
+          ],
+          [
+            35,
+            "B"
+          ],
+          [
+            36,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Thoughtcast",
+      "deck": "Affinity",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            31,
+            "U"
+          ],
+          [
+            9,
+            "B"
+          ],
+          [
+            11,
+            "B"
+          ],
+          [
+            14,
+            "B"
+          ],
+          [
+            29,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Refurbished Familiar",
+      "deck": "Affinity",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            9,
+            "B"
+          ],
+          [
+            11,
+            "B"
+          ],
+          [
+            14,
+            "B"
+          ],
+          [
+            29,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Refurbished Familiar",
+      "deck": "Affinity",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            9,
+            "B"
+          ],
+          [
+            11,
+            "B"
+          ],
+          [
+            14,
+            "B"
+          ],
+          [
+            29,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Black Mage's Rod",
+      "deck": "Affinity",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Reckoner's Bargain",
+      "deck": "Affinity",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Thoughtcast",
+      "deck": "Affinity",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Myr Enforcer",
+      "deck": "Affinity",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "taps": [
+          [
+            9,
+            "B"
+          ]
+        ]
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Thoughtcast",
+      "deck": "Affinity",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Refurbished Familiar",
+      "deck": "Affinity",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Refurbished Familiar",
+      "deck": "Affinity",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Lead the Stampede",
+      "deck": "Elves",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "G"
+          ],
+          [
+            10,
+            "G"
+          ],
+          [
+            12,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Winding Way",
+      "deck": "Elves",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "G"
+          ],
+          [
+            10,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Lead the Stampede",
+      "deck": "Elves",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "G"
+          ],
+          [
+            10,
+            "G"
+          ],
+          [
+            12,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Nyxborn Hydra",
+      "deck": "Elves",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Nyxborn Hydra",
+      "deck": "Elves",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Elvish Mystic",
+      "deck": "Elves",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Lead the Stampede",
+      "deck": "Elves",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Winding Way",
+      "deck": "Elves",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Lead the Stampede",
+      "deck": "Elves",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Nyxborn Hydra",
+      "deck": "Elves",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Nyxborn Hydra",
+      "deck": "Elves",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Elvish Mystic",
+      "deck": "Elves",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Masked Vandal",
+      "deck": "Elves",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "G"
+          ],
+          [
+            10,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Quirion Ranger",
+      "deck": "Elves",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Avenging Hunter",
+      "deck": "Elves",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "G"
+          ],
+          [
+            10,
+            "G"
+          ],
+          [
+            11,
+            "G"
+          ],
+          [
+            15,
+            "G"
+          ],
+          [
+            16,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Llanowar Elves",
+      "deck": "Elves",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Fyndhorn Elves",
+      "deck": "Elves",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Masked Vandal",
+      "deck": "Elves",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Quirion Ranger",
+      "deck": "Elves",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Avenging Hunter",
+      "deck": "Elves",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Llanowar Elves",
+      "deck": "Elves",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Fyndhorn Elves",
+      "deck": "Elves",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Priest of Titania",
+      "deck": "Elves",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "G"
+          ],
+          [
+            15,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Avenging Hunter",
+      "deck": "Elves",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "G"
+          ],
+          [
+            15,
+            "G"
+          ],
+          [
+            24,
+            "G"
+          ],
+          [
+            30,
+            "G"
+          ],
+          [
+            32,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Winding Way",
+      "deck": "Elves",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "G"
+          ],
+          [
+            15,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Timberwatch Elf",
+      "deck": "Elves",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "G"
+          ],
+          [
+            15,
+            "G"
+          ],
+          [
+            24,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Lead the Stampede",
+      "deck": "Elves",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "G"
+          ],
+          [
+            15,
+            "G"
+          ],
+          [
+            24,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Priest of Titania",
+      "deck": "Elves",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Avenging Hunter",
+      "deck": "Elves",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Winding Way",
+      "deck": "Elves",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Timberwatch Elf",
+      "deck": "Elves",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Lead the Stampede",
+      "deck": "Elves",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Masked Vandal",
+      "deck": "Elves",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "G"
+          ],
+          [
+            8,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Generous Ent",
+      "deck": "Elves",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "G"
+          ],
+          [
+            8,
+            "G"
+          ],
+          [
+            14,
+            "G"
+          ],
+          [
+            17,
+            "G"
+          ],
+          [
+            21,
+            "G"
+          ],
+          [
+            25,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Generous Ent",
+      "deck": "Elves",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "G"
+          ],
+          [
+            8,
+            "G"
+          ],
+          [
+            14,
+            "G"
+          ],
+          [
+            17,
+            "G"
+          ],
+          [
+            21,
+            "G"
+          ],
+          [
+            25,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Fyndhorn Elves",
+      "deck": "Elves",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Fyndhorn Elves",
+      "deck": "Elves",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Masked Vandal",
+      "deck": "Elves",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Generous Ent",
+      "deck": "Elves",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Generous Ent",
+      "deck": "Elves",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Fyndhorn Elves",
+      "deck": "Elves",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Fyndhorn Elves",
+      "deck": "Elves",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Overgrown Battlement",
+      "deck": "Spy",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "G"
+          ],
+          [
+            28,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Winding Way",
+      "deck": "Spy",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "G"
+          ],
+          [
+            28,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Saruli Caretaker",
+      "deck": "Spy",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Land Grant",
+      "deck": "Spy",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "G"
+          ],
+          [
+            28,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Land Grant",
+      "deck": "Spy",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "G"
+          ],
+          [
+            28,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Saruli Caretaker",
+      "deck": "Spy",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Wall of Roots",
+      "deck": "Spy",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "G"
+          ],
+          [
+            28,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Overgrown Battlement",
+      "deck": "Spy",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Winding Way",
+      "deck": "Spy",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Saruli Caretaker",
+      "deck": "Spy",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Land Grant",
+      "deck": "Spy",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Land Grant",
+      "deck": "Spy",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Saruli Caretaker",
+      "deck": "Spy",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Wall of Roots",
+      "deck": "Spy",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Tinder Wall",
+      "deck": "Spy",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            33,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Generous Ent",
+      "deck": "Spy",
+      "hand_index": 1,
+      "plan": null,
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Balustrade Spy",
+      "deck": "Spy",
+      "hand_index": 2,
+      "plan": null,
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Quirion Ranger",
+      "deck": "Spy",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            33,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Winding Way",
+      "deck": "Spy",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            33,
+            "G"
+          ],
+          [
+            49,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Overgrown Battlement",
+      "deck": "Spy",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            33,
+            "G"
+          ],
+          [
+            49,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Tinder Wall",
+      "deck": "Spy",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Generous Ent",
+      "deck": "Spy",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Balustrade Spy",
+      "deck": "Spy",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Quirion Ranger",
+      "deck": "Spy",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Winding Way",
+      "deck": "Spy",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Overgrown Battlement",
+      "deck": "Spy",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Generous Ent",
+      "deck": "Spy",
+      "hand_index": 0,
+      "plan": null,
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Balustrade Spy",
+      "deck": "Spy",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            38,
+            "B"
+          ],
+          [
+            30,
+            "G"
+          ],
+          [
+            49,
+            "G"
+          ],
+          [
+            51,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Troll of Khazad-dum",
+      "deck": "Spy",
+      "hand_index": 2,
+      "plan": null,
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Lotleth Giant",
+      "deck": "Spy",
+      "hand_index": 3,
+      "plan": null,
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Lead the Stampede",
+      "deck": "Spy",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            30,
+            "G"
+          ],
+          [
+            38,
+            "B"
+          ],
+          [
+            49,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Gatecreeper Vine",
+      "deck": "Spy",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            30,
+            "G"
+          ],
+          [
+            38,
+            "B"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Overgrown Battlement",
+      "deck": "Spy",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            30,
+            "G"
+          ],
+          [
+            38,
+            "B"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Generous Ent",
+      "deck": "Spy",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Balustrade Spy",
+      "deck": "Spy",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Troll of Khazad-dum",
+      "deck": "Spy",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Lotleth Giant",
+      "deck": "Spy",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "taps": [
+          [
+            30,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Lead the Stampede",
+      "deck": "Spy",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Gatecreeper Vine",
+      "deck": "Spy",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Overgrown Battlement",
+      "deck": "Spy",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Tinder Wall",
+      "deck": "Spy",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Wall of Roots",
+      "deck": "Spy",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "G"
+          ],
+          [
+            27,
+            "B"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Balustrade Spy",
+      "deck": "Spy",
+      "hand_index": 3,
+      "plan": null,
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Wall of Roots",
+      "deck": "Spy",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "G"
+          ],
+          [
+            27,
+            "B"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Mesmeric Fiend",
+      "deck": "Spy",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            27,
+            "B"
+          ],
+          [
+            7,
+            "G"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Overgrown Battlement",
+      "deck": "Spy",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "G"
+          ],
+          [
+            27,
+            "B"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Tinder Wall",
+      "deck": "Spy",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Wall of Roots",
+      "deck": "Spy",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Balustrade Spy",
+      "deck": "Spy",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Wall of Roots",
+      "deck": "Spy",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Mesmeric Fiend",
+      "deck": "Spy",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Overgrown Battlement",
+      "deck": "Spy",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Sneaky Snacker",
+      "deck": "Burn",
+      "hand_index": 0,
+      "plan": null,
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Highway Robbery",
+      "deck": "Burn",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "R"
+          ],
+          [
+            9,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Highway Robbery",
+      "deck": "Burn",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "R"
+          ],
+          [
+            9,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Guttersnipe",
+      "deck": "Burn",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "R"
+          ],
+          [
+            9,
+            "R"
+          ],
+          [
+            13,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Sneaky Snacker",
+      "deck": "Burn",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Highway Robbery",
+      "deck": "Burn",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Highway Robbery",
+      "deck": "Burn",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Guttersnipe",
+      "deck": "Burn",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          1,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Lava Dart",
+      "deck": "Burn",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Fiery Temper",
+      "deck": "Burn",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "R"
+          ],
+          [
+            10,
+            "R"
+          ],
+          [
+            15,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Fireblast",
+      "deck": "Burn",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "R"
+          ],
+          [
+            10,
+            "R"
+          ],
+          [
+            15,
+            "R"
+          ],
+          [
+            17,
+            "R"
+          ],
+          [
+            22,
+            "R"
+          ],
+          [
+            23,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Sneaky Snacker",
+      "deck": "Burn",
+      "hand_index": 6,
+      "plan": null,
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Lava Dart",
+      "deck": "Burn",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Fiery Temper",
+      "deck": "Burn",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          1
+        ],
+        "taps": [
+          [
+            7,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Fireblast",
+      "deck": "Burn",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          1,
+          0,
+          1
+        ],
+        "taps": [
+          [
+            7,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Sneaky Snacker",
+      "deck": "Burn",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Voldaren Epicure",
+      "deck": "Burn",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            9,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Grab the Prize",
+      "deck": "Burn",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            9,
+            "R"
+          ],
+          [
+            15,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Masked Meower",
+      "deck": "Burn",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            9,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Faithless Looting",
+      "deck": "Burn",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            9,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Voldaren Epicure",
+      "deck": "Burn",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Grab the Prize",
+      "deck": "Burn",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Masked Meower",
+      "deck": "Burn",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Faithless Looting",
+      "deck": "Burn",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Lava Dart",
+      "deck": "Burn",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Fireblast",
+      "deck": "Burn",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "R"
+          ],
+          [
+            14,
+            "R"
+          ],
+          [
+            18,
+            "R"
+          ],
+          [
+            22,
+            "R"
+          ],
+          [
+            23,
+            "R"
+          ],
+          [
+            31,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Guttersnipe",
+      "deck": "Burn",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "R"
+          ],
+          [
+            14,
+            "R"
+          ],
+          [
+            18,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Grab the Prize",
+      "deck": "Burn",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "R"
+          ],
+          [
+            14,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Guttersnipe",
+      "deck": "Burn",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "R"
+          ],
+          [
+            14,
+            "R"
+          ],
+          [
+            18,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Sneaky Snacker",
+      "deck": "Burn",
+      "hand_index": 5,
+      "plan": null,
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Sneaky Snacker",
+      "deck": "Burn",
+      "hand_index": 6,
+      "plan": null,
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Lava Dart",
+      "deck": "Burn",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Fireblast",
+      "deck": "Burn",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          1,
+          0,
+          1
+        ],
+        "taps": [
+          [
+            12,
+            "R"
+          ]
+        ]
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Guttersnipe",
+      "deck": "Burn",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          1,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Grab the Prize",
+      "deck": "Burn",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Guttersnipe",
+      "deck": "Burn",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          1,
+          1,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Sneaky Snacker",
+      "deck": "Burn",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Sneaky Snacker",
+      "deck": "Burn",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Tolarian Terror",
+      "deck": "Terror",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "U"
+          ],
+          [
+            9,
+            "U"
+          ],
+          [
+            14,
+            "U"
+          ],
+          [
+            17,
+            "U"
+          ],
+          [
+            21,
+            "U"
+          ],
+          [
+            26,
+            "U"
+          ],
+          [
+            27,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Brainstorm",
+      "deck": "Terror",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Brainstorm",
+      "deck": "Terror",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Mental Note",
+      "deck": "Terror",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Tolarian Terror",
+      "deck": "Terror",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "taps": [
+          [
+            8,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Brainstorm",
+      "deck": "Terror",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Brainstorm",
+      "deck": "Terror",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Mental Note",
+      "deck": "Terror",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Murmuring Mystic",
+      "deck": "Terror",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "U"
+          ],
+          [
+            10,
+            "U"
+          ],
+          [
+            23,
+            "U"
+          ],
+          [
+            24,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Cryptic Serpent",
+      "deck": "Terror",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "U"
+          ],
+          [
+            10,
+            "U"
+          ],
+          [
+            23,
+            "U"
+          ],
+          [
+            24,
+            "U"
+          ],
+          [
+            25,
+            "U"
+          ],
+          [
+            26,
+            "U"
+          ],
+          [
+            27,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Deep Analysis",
+      "deck": "Terror",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "U"
+          ],
+          [
+            10,
+            "U"
+          ],
+          [
+            23,
+            "U"
+          ],
+          [
+            24,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Sleep of the Dead",
+      "deck": "Terror",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Tolarian Terror",
+      "deck": "Terror",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "U"
+          ],
+          [
+            10,
+            "U"
+          ],
+          [
+            23,
+            "U"
+          ],
+          [
+            24,
+            "U"
+          ],
+          [
+            25,
+            "U"
+          ],
+          [
+            26,
+            "U"
+          ],
+          [
+            27,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Murmuring Mystic",
+      "deck": "Terror",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Cryptic Serpent",
+      "deck": "Terror",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "taps": [
+          [
+            7,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Deep Analysis",
+      "deck": "Terror",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Sleep of the Dead",
+      "deck": "Terror",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Tolarian Terror",
+      "deck": "Terror",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "taps": [
+          [
+            7,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Cryptic Serpent",
+      "deck": "Terror",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            11,
+            "U"
+          ],
+          [
+            12,
+            "U"
+          ],
+          [
+            16,
+            "U"
+          ],
+          [
+            20,
+            "U"
+          ],
+          [
+            21,
+            "U"
+          ],
+          [
+            25,
+            "U"
+          ],
+          [
+            31,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Ponder",
+      "deck": "Terror",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            11,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Thought Scour",
+      "deck": "Terror",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            11,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Lorien Revealed",
+      "deck": "Terror",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            11,
+            "U"
+          ],
+          [
+            12,
+            "U"
+          ],
+          [
+            16,
+            "U"
+          ],
+          [
+            20,
+            "U"
+          ],
+          [
+            21,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Brainstorm",
+      "deck": "Terror",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            11,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Cryptic Serpent",
+      "deck": "Terror",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "taps": [
+          [
+            11,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Ponder",
+      "deck": "Terror",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Thought Scour",
+      "deck": "Terror",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Lorien Revealed",
+      "deck": "Terror",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": [
+          [
+            11,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Brainstorm",
+      "deck": "Terror",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Murmuring Mystic",
+      "deck": "Terror",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "U"
+          ],
+          [
+            14,
+            "U"
+          ],
+          [
+            18,
+            "U"
+          ],
+          [
+            22,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Mental Note",
+      "deck": "Terror",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Deem Inferior",
+      "deck": "Terror",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "U"
+          ],
+          [
+            14,
+            "U"
+          ],
+          [
+            18,
+            "U"
+          ],
+          [
+            22,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Thought Scour",
+      "deck": "Terror",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Deem Inferior",
+      "deck": "Terror",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "U"
+          ],
+          [
+            14,
+            "U"
+          ],
+          [
+            18,
+            "U"
+          ],
+          [
+            22,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Tolarian Terror",
+      "deck": "Terror",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "U"
+          ],
+          [
+            14,
+            "U"
+          ],
+          [
+            18,
+            "U"
+          ],
+          [
+            22,
+            "U"
+          ],
+          [
+            23,
+            "U"
+          ],
+          [
+            31,
+            "U"
+          ],
+          [
+            33,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Tolarian Terror",
+      "deck": "Terror",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "U"
+          ],
+          [
+            14,
+            "U"
+          ],
+          [
+            18,
+            "U"
+          ],
+          [
+            22,
+            "U"
+          ],
+          [
+            23,
+            "U"
+          ],
+          [
+            31,
+            "U"
+          ],
+          [
+            33,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Murmuring Mystic",
+      "deck": "Terror",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Mental Note",
+      "deck": "Terror",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Deem Inferior",
+      "deck": "Terror",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Thought Scour",
+      "deck": "Terror",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Deem Inferior",
+      "deck": "Terror",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Tolarian Terror",
+      "deck": "Terror",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "taps": [
+          [
+            12,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Tolarian Terror",
+      "deck": "Terror",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "taps": [
+          [
+            12,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Outlaw Medic",
+      "deck": "CawGates",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "W"
+          ],
+          [
+            7,
+            "C"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Sacred Cat",
+      "deck": "CawGates",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "W"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Sacred Cat",
+      "deck": "CawGates",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "W"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Counterspell",
+      "deck": "CawGates",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "U"
+          ],
+          [
+            13,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Thraben Charm",
+      "deck": "CawGates",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "W"
+          ],
+          [
+            7,
+            "C"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Outlaw Medic",
+      "deck": "CawGates",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Sacred Cat",
+      "deck": "CawGates",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Sacred Cat",
+      "deck": "CawGates",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Counterspell",
+      "deck": "CawGates",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Thraben Charm",
+      "deck": "CawGates",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Spell Pierce",
+      "deck": "CawGates",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            15,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Journey to Nowhere",
+      "deck": "CawGates",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "W"
+          ],
+          [
+            10,
+            "C"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Sacred Cat",
+      "deck": "CawGates",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "W"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Squadron Hawk",
+      "deck": "CawGates",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            12,
+            "W"
+          ],
+          [
+            10,
+            "C"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "The Modern Age",
+      "deck": "CawGates",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            15,
+            "U"
+          ],
+          [
+            10,
+            "C"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Spell Pierce",
+      "deck": "CawGates",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Journey to Nowhere",
+      "deck": "CawGates",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Sacred Cat",
+      "deck": "CawGates",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Squadron Hawk",
+      "deck": "CawGates",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "The Modern Age",
+      "deck": "CawGates",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Journey to Nowhere",
+      "deck": "CawGates",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            19,
+            "W"
+          ],
+          [
+            13,
+            "C"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Squadron Hawk",
+      "deck": "CawGates",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            19,
+            "W"
+          ],
+          [
+            13,
+            "C"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Lorien Revealed",
+      "deck": "CawGates",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            24,
+            "U"
+          ],
+          [
+            33,
+            "U"
+          ],
+          [
+            13,
+            "C"
+          ],
+          [
+            16,
+            "C"
+          ],
+          [
+            19,
+            "W"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Journey to Nowhere",
+      "deck": "CawGates",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Squadron Hawk",
+      "deck": "CawGates",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Lorien Revealed",
+      "deck": "CawGates",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": [
+          [
+            24,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Preordain",
+      "deck": "CawGates",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "The Modern Age",
+      "deck": "CawGates",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            8,
+            "U"
+          ],
+          [
+            10,
+            "W"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Prismatic Strands",
+      "deck": "CawGates",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "W"
+          ],
+          [
+            8,
+            "U"
+          ],
+          [
+            13,
+            "W"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Preordain",
+      "deck": "CawGates",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "The Modern Age",
+      "deck": "CawGates",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Prismatic Strands",
+      "deck": "CawGates",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          0,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Faerie Seer",
+      "deck": "Faeries",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Moon-Circuit Hacker",
+      "deck": "Faeries",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "U"
+          ],
+          [
+            9,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Faerie Seer",
+      "deck": "Faeries",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Ninja of the Deep Hours",
+      "deck": "Faeries",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "U"
+          ],
+          [
+            9,
+            "U"
+          ],
+          [
+            17,
+            "U"
+          ],
+          [
+            21,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Ninja of the Deep Hours",
+      "deck": "Faeries",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "U"
+          ],
+          [
+            9,
+            "U"
+          ],
+          [
+            17,
+            "U"
+          ],
+          [
+            21,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Spellstutter Sprite",
+      "deck": "Faeries",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            7,
+            "U"
+          ],
+          [
+            9,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 0
+    },
+    {
+      "card": "Faerie Seer",
+      "deck": "Faeries",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Moon-Circuit Hacker",
+      "deck": "Faeries",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Faerie Seer",
+      "deck": "Faeries",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Ninja of the Deep Hours",
+      "deck": "Faeries",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Ninja of the Deep Hours",
+      "deck": "Faeries",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          1,
+          1,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Spellstutter Sprite",
+      "deck": "Faeries",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 0
+    },
+    {
+      "card": "Faerie Miscreant",
+      "deck": "Faeries",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            11,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Of One Mind",
+      "deck": "Faeries",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            11,
+            "U"
+          ],
+          [
+            16,
+            "U"
+          ],
+          [
+            19,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Humbling Elder",
+      "deck": "Faeries",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            11,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Moon-Circuit Hacker",
+      "deck": "Faeries",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            11,
+            "U"
+          ],
+          [
+            16,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Dispel",
+      "deck": "Faeries",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            11,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Snap",
+      "deck": "Faeries",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            11,
+            "U"
+          ],
+          [
+            16,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 1
+    },
+    {
+      "card": "Faerie Miscreant",
+      "deck": "Faeries",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Of One Mind",
+      "deck": "Faeries",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Humbling Elder",
+      "deck": "Faeries",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Moon-Circuit Hacker",
+      "deck": "Faeries",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Dispel",
+      "deck": "Faeries",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Snap",
+      "deck": "Faeries",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 1
+    },
+    {
+      "card": "Of One Mind",
+      "deck": "Faeries",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "U"
+          ],
+          [
+            11,
+            "U"
+          ],
+          [
+            12,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Saiba Cryptomancer",
+      "deck": "Faeries",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "U"
+          ],
+          [
+            11,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Counterspell",
+      "deck": "Faeries",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "U"
+          ],
+          [
+            11,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Faerie Seer",
+      "deck": "Faeries",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 2
+    },
+    {
+      "card": "Of One Mind",
+      "deck": "Faeries",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Saiba Cryptomancer",
+      "deck": "Faeries",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Counterspell",
+      "deck": "Faeries",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            10,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Faerie Seer",
+      "deck": "Faeries",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 2
+    },
+    {
+      "card": "Faerie Miscreant",
+      "deck": "Faeries",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            9,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Dispel",
+      "deck": "Faeries",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            9,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Spellstutter Sprite",
+      "deck": "Faeries",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            9,
+            "U"
+          ],
+          [
+            11,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Of One Mind",
+      "deck": "Faeries",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            9,
+            "U"
+          ],
+          [
+            11,
+            "U"
+          ],
+          [
+            17,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Harrier Strix",
+      "deck": "Faeries",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            9,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Snap",
+      "deck": "Faeries",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            9,
+            "U"
+          ],
+          [
+            11,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Snap",
+      "deck": "Faeries",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": [
+          [
+            9,
+            "U"
+          ],
+          [
+            11,
+            "U"
+          ]
+        ]
+      },
+      "pool_index": 0,
+      "seed_index": 3
+    },
+    {
+      "card": "Faerie Miscreant",
+      "deck": "Faeries",
+      "hand_index": 0,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Dispel",
+      "deck": "Faeries",
+      "hand_index": 1,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Spellstutter Sprite",
+      "deck": "Faeries",
+      "hand_index": 2,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Of One Mind",
+      "deck": "Faeries",
+      "hand_index": 3,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Harrier Strix",
+      "deck": "Faeries",
+      "hand_index": 4,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Snap",
+      "deck": "Faeries",
+      "hand_index": 5,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    },
+    {
+      "card": "Snap",
+      "deck": "Faeries",
+      "hand_index": 6,
+      "plan": {
+        "life_paid": 0,
+        "pool_used": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          1
+        ],
+        "taps": []
+      },
+      "pool_index": 1,
+      "seed_index": 3
+    }
+  ],
+  "schema": "kernel_payment_plan_invariance/v1"
+}

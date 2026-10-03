@@ -5925,7 +5925,7 @@ mod tests {
         // stale combat attacker (see the counts above).
         assert_eq!(
             digest,
-            "570bae728d89dea4b92d714ec5f410d8841e70ef60d37b3f5b02e066ef80d2cc"
+            "978388b9e579cd834c93e5cb67f647a6fe621ec1e46891cf06b2011856f42c37"
         );
     }
 

@@ -1,0 +1,27 @@
+# V4 sampler source review disposition
+
+2026-09-22. Fresh read-only v4-sampler-source-review-001, session7bf28eb4-73bd-45ff-9c0d-0c79337f9236, completed exit0/is_error=false with actual sampler, state, engine, effect and trigger reads. Verdict: whole-object direction accepted as an engineering component, four changes required before any dependent caller.20/20 fixed checks do not close these gaps.
+
+Accepted F1: scan pending-effect frame/choice/context bindings and transient event-log references. Scry can expose bound cards without positional knowledge locks, unlike mill, so root equality alone cannot establish resumability. Add root-deterministic exclusion for affected pooled references; do not pin or redraw. Typed reference audit remains implementation work, including nested/answered frames and interpreter-owned bound effect ops.
+
+Accepted F2: require baseline physical hidden-card state; reject residue instead of silently normalizing the sampled world. Correct the existing hidden-source test helpers to perform production-like zone reset. The original synthetic witness remains useful for exposing relabeling, but its battlefield residue was unrealistic. No ordinary-play prevalence or strength claim survives merely by fixing that fixture.
+
+Accepted F3: remove dead hand-knowledge rebinding. Self-hand reveal is a no-op, and root-own hand is never pooled; the old assertion loop was vacuous. Assert that invariant explicitly and positively test the other observer's knowledge of the actor's library.
+
+Accepted F4: add opponent-pool historical-source zone crossing and subsequent stepping for both seats. Current32seed probe changes only positions within the root's own library. Missing hand/library crossing coverage is material. No broad engine-valid sampling acceptance until addressed.
+
+Reviewer verified target contracts exclude hidden-zone live incarnations, ordinary public-to-hand cards are locked, event-history checks use identity/generation, Fisher-Yates/canonical ordering are consistent, and partial rejection mutation is harmless only on disposable clones. It did not audit all PolicySurfaceV5 hidden caches. Preserve that uncertainty; no playing route, gate, M1 or posterior claim.
+
+## Repair follow-up and source correction
+
+v4-sampler-repair-review-001 completed exit0/is_error=false, same session, actual changed-source reads. Accepted small omissions: walk pending-trigger effects and stack inline effects too; membership-check raw SelectTargets candidate targets. Both implemented after controls004. Reviewer accepted the typed walk and baseline changes, but tests had not completed when it judged coverage.
+
+Controls004:23pass,2fail,.75stest/277.612sinvocation,8sourcehashesverified. Cross-zone fixture failed its root-actor assertion before sampling, so the review's F4 coverage statement was premature. The opponent had no playable response and the policy surface could silently pass it; added an affordable Lightning Bolt and cleared priority-pass flags. No F4 acceptance until the corrected test passes.
+
+Reasoned disagreement/correction to both reviews' scry premise: effect.rs:7736-7755 stages Scry by calling state.reveal_library_top(player,player,original_prefix.len()) BEFORE the prompt. The prior claim that scry lacks knowledge until commit is false for this source. Ordinary scry must be admitted with its locks. Replaced the invalid expected-rejection test with positive natural scry/mill controls and a deliberately unlocked scry fault injection that calls sampler::redeterminize directly, requiring reference rejection before boundary equality. The latter is a synthetic admission test, not evidence of an ordinary production scry defect. The additional frame scan is conservative protection, not a proven natural-error incidence result.
+
+Controls005 running with these changes. No repair/playing acceptance yet; no core caller. Current test logs and failure receipts retained.
+
+Surface-cache inventory (not final acceptance): PolicySurfaceV5 contains inner HarnessSurfaceV2 and an optional combat scan (policy_surface_v5.rs:313). HarnessSurfaceV2 fields (surface_v2.rs:441-624) are suppression bookkeeping, blockers, combat/stack/mana counters, Madness exemption, discard reshape and optional-cost reshape. CombatScanV5 and BlockersReshape hold battlefield IDs; discard holds the acting player's hand choices, which root sampling leaves fixed; optional-cost reshape has flags/stage. Public context mirrors the stateful fields. The Madness source lifetime and per-op live-source branches still need the focused follow-up review. No general hidden-hand candidate cache was found in this field inventory, but that does not substitute for stepping coverage.
+
+Correction-review001 completed exit0/is_error=false, same session, actual source reads. Fable retracted its earlier no-knowledge scry claim (caused by incomplete source reading), accepted revised direct fault test, and distinguished source-argued crossing coverage from runtime evidence. Controls005 now passes25/25 including both zones/both seats. Accepted bounded sampler engineering with production-session carried-surface replay still pending. The cache inventory was independently checked: discard reshape belongs to the acting root hand, combat IDs remain battlefield, Madness exemption names the pending cast/stack source; no current production field was found to name a pooled object at a decision. This source argument is not yet a production-session runtime test.

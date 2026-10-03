@@ -68,3 +68,15 @@ The reference inventory has42 full,1 partial and243 missing names.
 UG still needs Witness Protection. London mulligans and remaining CI checks
 are required before the overall fixture gameplay goal can complete.
 No full-set, drafting, search integration or playing-strength claim.
+
+## Current-main integration
+
+The Armor prefix incorporates Scavenging 4d25d550 and main's
+192-definition/v34 catalog. Its generated Limited identity is 235
+definitions/v50 f5076bb105d12b32; the appended Armor ID is 234. Original and
+earlier composed tuples remain readable; mutations require the live identity.
+The equipment generator retains main's granted-activated-ability field,
+Viridian Longbow program and existing equipment definitions. Armor has no
+granted activated ability. All original gameplay and restore targets remain
+selected. Catalog generation, formatting, workflow lint and diff checks pass
+locally; composed-source Rust qualification is pending.

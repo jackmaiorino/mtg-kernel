@@ -1,0 +1,158 @@
+{
+  "schema": "pr112-current-build-golden-witness/v1",
+  "head_commit": "5aff1fa9a56fb00864a11995457b4a9edc849254",
+  "ci_run": 36807239038,
+  "card_db_hash": "064a7c989255ab3c",
+  "scope": "Engineering fixture refresh after combining main rules fixes and the unchanged g115 registry. No formal measurement or playing-strength result.",
+  "targets": {
+    "linux": {
+      "job": 110194281378,
+      "normalized_log_sha256": "df36e557a485324f6aaf8c0cc89957236a1c9d6db08e9d11497cc5e99f5ca455",
+      "failed_assertions": [
+        {
+          "test": "async_flat_scored_rollout_v1::tests::first_five_scorer_packets_have_exact_safe_golden",
+          "observed": "\"978388b9e579cd834c93e5cb67f647a6fe621ec1e46891cf06b2011856f42c37\"\r",
+          "previous_expected": "\"570bae728d89dea4b92d714ec5f410d8841e70ef60d37b3f5b02e066ef80d2cc\"\r"
+        },
+        {
+          "test": "expanded_deck_training_v1::tests::line_b_teacher_update_publishes_packet_and_telemetry",
+          "observed": "[\"4fe193c8baaabf0fe5b4db8e09c14f165d02df67d665a336fa826b5feaf3afe3\", \"579e90b83826148aefa7c17cfae19471b6c92e151962c410792c141a8a80873e\"]\r",
+          "previous_expected": "[\"e60b46a397f917cfadfbb87cd36fdac9d0a11187cc81fe04edbabf50db8d9926\", \"73e13d2db04664ce76d984966763f27318c6bd3dd17ffe2b5e0981b833b4fe64\"]\r"
+        },
+        {
+          "test": "expanded_deck_training_v1::tests::ordinary_trainer_two_iteration_gae_fixture_cpu_state_hash_is_pinned",
+          "observed": "\"037ef43b1b0bd4eb247790378957fa37591cc5e9b19b1bb99ac2c394cd59f1a5\"\r",
+          "previous_expected": "\"5aabee1d46b0882ebbf63d93d1906571f30e1191e9606234903799e061a4d671\"\r"
+        },
+        {
+          "test": "expanded_deck_training_v1::tests::ordinary_trainer_two_iteration_v3_fixture_state_hash_is_unchanged",
+          "observed": "\"351b3b0d9a50cf291534a2def8de6dc8ab8242c36c298432ffa59bed123cb4c9\"\r",
+          "previous_expected": "\"28faac998142e07ddc5368238f45ff05e6a0578140d0e490a24daefe95fff878\"\r"
+        },
+        {
+          "test": "expanded_deck_training_v1::tests::ordinary_trainer_two_iteration_v4_fixture_stamps_v4_and_restores_cleanly",
+          "observed": "\"351b3b0d9a50cf291534a2def8de6dc8ab8242c36c298432ffa59bed123cb4c9\"\r",
+          "previous_expected": "\"28faac998142e07ddc5368238f45ff05e6a0578140d0e490a24daefe95fff878\"\r"
+        },
+        {
+          "test": "expanded_deck_training_v1::tests::ordinary_trainer_two_iteration_v4_fixture_fixed_partition_is_topology_invariant_and_pinned",
+          "observed": "\"df15d8b098ba7983ffbab9ae8129650b9920499ece78dee07c7c4936847f149e\"\r",
+          "previous_expected": "\"2fd271a3aab18a9bcd2501bf92ce8f24664ffcb1269ba885b79159fe743e1bf0\"\r"
+        },
+        {
+          "test": "native_checkpoint_inference_v1::checkpoint_reliance_probe_v1::action_block_gradient_diagnostic_v1::joined_frame_is_preflight_sealed_neutral_and_lineage_complete_v1",
+          "observed": "\"15e268e71ec63ff4c9355b5f9ee8158c8f420c0f2c9f126c58fc06f0c21a540f\"\r",
+          "previous_expected": "\"ba4b3568f7d93f9485b2a6cb4a00f71372f99f912ae3bb1c41aee31a65ab7c59\"\r"
+        },
+        {
+          "test": "native_checkpoint_runner_v1::tests::starting_player_unset_reproduces_parent_commit_checkpoint_eval_bytes_v1",
+          "observed": "\"21dca504b34c30768434a74f82b618c5b5ddbc4c5760ed00edbab53a630ec455\"\r",
+          "previous_expected": "\"ed146f9d608a5d9accd420bc42bc91f7e17b4419078c3788d7d670679f601809\"\r"
+        },
+        {
+          "test": "native_training_store_run_v2::tests::current_frozen_literal_matches_the_live_build_constant",
+          "observed": "\"064a7c989255ab3c\"\r",
+          "previous_expected": "\"64c82a261e078f1a\"\r"
+        },
+        {
+          "test": "native_training_store_update_group_v1::tests::legacy_update_group_matches_pre_c2_projection_with_linux_gnu_full_byte_pin",
+          "observed": "(\"78651fc37457a78923e294b6e99de95d4bd3351364ceb88d4e53f3311fe8425e\", \"07475dd527d7adc0c7c023394c7def4b3977cb7cd51b74411daeafca001e0a06\", 71544)\r",
+          "previous_expected": "(\"413b6408e0413032e198fc42257b6e30749c0742986e49d52539a20997078ba0\", \"8e2f5100c40a1f1f95f2f9729587145daea17ea52f9e6b4993e0abc2e1747e78\", 71544)\r"
+        },
+        {
+          "test": "native_training_store_update_group_v1::tests::sync_path_reproduces_mains_golden_store_hash",
+          "observed": "\"78651fc37457a78923e294b6e99de95d4bd3351364ceb88d4e53f3311fe8425e\"\r",
+          "previous_expected": "\"413b6408e0413032e198fc42257b6e30749c0742986e49d52539a20997078ba0\"\r"
+        },
+        {
+          "test": "rl_session::tests::environment_hashes_are_diagnostic_dispatched_with_exact_goldens",
+          "observed": "6638827463175436842\r",
+          "previous_expected": "4170058564354929135\r"
+        },
+        {
+          "test": "rl_session::tests::v2_reset_reuses_pre_constructor_pins_and_is_root_sensitive",
+          "observed": "6638827463175436842\r",
+          "previous_expected": "4170058564354929135\r"
+        }
+      ]
+    },
+    "windows": {
+      "job": 110194281416,
+      "normalized_log_sha256": "b5a67f9b9d07b346610419e373e634b669dea7926cfe7147bca3c0a4c0224cc3",
+      "failed_assertions": [
+        {
+          "test": "async_flat_scored_rollout_v1::tests::first_five_scorer_packets_have_exact_safe_golden",
+          "observed": "\"978388b9e579cd834c93e5cb67f647a6fe621ec1e46891cf06b2011856f42c37\"\r\r",
+          "previous_expected": "\"570bae728d89dea4b92d714ec5f410d8841e70ef60d37b3f5b02e066ef80d2cc\"\r\r"
+        },
+        {
+          "test": "expanded_deck_training_v1::tests::line_b_teacher_update_publishes_packet_and_telemetry",
+          "observed": "[\"210f9027d1423e2c84615be12fc66a2623a750ebff681553089e326fd96bdb0b\", \"cf5b62f634e083c8f81d2ea3f9409481eef95d626147fddd8be0b9bdc4408317\"]\r\r",
+          "previous_expected": "[\"e60b46a397f917cfadfbb87cd36fdac9d0a11187cc81fe04edbabf50db8d9926\", \"73e13d2db04664ce76d984966763f27318c6bd3dd17ffe2b5e0981b833b4fe64\"]\r\r"
+        },
+        {
+          "test": "expanded_deck_training_v1::tests::ordinary_trainer_two_iteration_gae_fixture_cpu_state_hash_is_pinned",
+          "observed": "\"e33f47b78f60f1a5e39363f2d9803063f39f544feff29d9ab94f03dcad3ad531\"\r\r",
+          "previous_expected": "\"5aabee1d46b0882ebbf63d93d1906571f30e1191e9606234903799e061a4d671\"\r\r"
+        },
+        {
+          "test": "expanded_deck_training_v1::tests::ordinary_trainer_two_iteration_v3_fixture_state_hash_is_unchanged",
+          "observed": "\"4d816715da28f1d82f4e9f433fb3d486800cf7aeb999ba5dd00cb77d1174bee9\"\r\r",
+          "previous_expected": "\"28faac998142e07ddc5368238f45ff05e6a0578140d0e490a24daefe95fff878\"\r\r"
+        },
+        {
+          "test": "expanded_deck_training_v1::tests::ordinary_trainer_two_iteration_v4_fixture_stamps_v4_and_restores_cleanly",
+          "observed": "\"4d816715da28f1d82f4e9f433fb3d486800cf7aeb999ba5dd00cb77d1174bee9\"\r\r",
+          "previous_expected": "\"28faac998142e07ddc5368238f45ff05e6a0578140d0e490a24daefe95fff878\"\r\r"
+        },
+        {
+          "test": "expanded_deck_training_v1::tests::ordinary_trainer_two_iteration_v4_fixture_fixed_partition_is_topology_invariant_and_pinned",
+          "observed": "\"d5f00127988d2bb59f2e0bad69b845e4599e1e6642001b1be2d598360b48c604\"\r\r",
+          "previous_expected": "\"2fd271a3aab18a9bcd2501bf92ce8f24664ffcb1269ba885b79159fe743e1bf0\"\r\r"
+        },
+        {
+          "test": "native_checkpoint_inference_v1::checkpoint_reliance_probe_v1::action_block_gradient_diagnostic_v1::joined_frame_is_preflight_sealed_neutral_and_lineage_complete_v1",
+          "observed": "\"15e268e71ec63ff4c9355b5f9ee8158c8f420c0f2c9f126c58fc06f0c21a540f\"\r\r",
+          "previous_expected": "\"ba4b3568f7d93f9485b2a6cb4a00f71372f99f912ae3bb1c41aee31a65ab7c59\"\r\r"
+        },
+        {
+          "test": "native_checkpoint_runner_v1::tests::starting_player_unset_reproduces_parent_commit_checkpoint_eval_bytes_v1",
+          "observed": "\"21dca504b34c30768434a74f82b618c5b5ddbc4c5760ed00edbab53a630ec455\"\r\r",
+          "previous_expected": "\"ed146f9d608a5d9accd420bc42bc91f7e17b4419078c3788d7d670679f601809\"\r\r"
+        },
+        {
+          "test": "native_training_store_run_v2::tests::current_frozen_literal_matches_the_live_build_constant",
+          "observed": "\"064a7c989255ab3c\"\r\r",
+          "previous_expected": "\"64c82a261e078f1a\"\r\r"
+        },
+        {
+          "test": "native_training_store_update_group_v1::tests::legacy_update_group_matches_pre_c2_projection_with_linux_gnu_full_byte_pin",
+          "observed": "\"48ace9c3c2232847215101849fbcd751f758cb4527690fe39d9fee20aa6ac45f\"\r\r",
+          "previous_expected": "\"21aeea0b30cad362f7c0ff6e3e23bfe62bc04a361f2acc1220252f0f4a749a13\"\r\r"
+        },
+        {
+          "test": "native_training_store_update_group_v1::tests::sync_path_reproduces_mains_golden_store_hash",
+          "observed": "\"27c70a9ac9740cf1c107aa29d574865f48f8c44df9721f2010a940d322ef4334\"\r\r",
+          "previous_expected": "\"ada351f494793226c55f80e585956895cb966e81e7e1241b5d9793463e93f5fe\"\r\r"
+        },
+        {
+          "test": "rl_session::tests::environment_hashes_are_diagnostic_dispatched_with_exact_goldens",
+          "observed": "6638827463175436842\r\r",
+          "previous_expected": "4170058564354929135\r\r"
+        },
+        {
+          "test": "rl_session::tests::v2_reset_reuses_pre_constructor_pins_and_is_root_sensitive",
+          "observed": "6638827463175436842\r\r",
+          "previous_expected": "4170058564354929135\r\r"
+        }
+      ]
+    }
+  },
+  "disposition": {
+    "exact_equality": "retained",
+    "topology_invariance": "retained",
+    "canonical_lengths_and_counts": "retained unless separately observed and reviewed",
+    "snapshot_budget": "40 microseconds retained; run explicitly in a single test process after correctness tests",
+    "joined_frame_source_hash": "wait for final source-linked witness; the older 5aff value is recorded but not adopted"
+  }
+}

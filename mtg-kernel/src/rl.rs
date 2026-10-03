@@ -17,6 +17,12 @@ use crate::engine::{
 use crate::event::{self, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaColor;
+use crate::policy_observation_v6::{
+    DecisionLocalLibraryV6, FinalizedChosenCreatureCostV6, HistoricalPublicSourceV6,
+    HistoricalSourceContextV6, ObservationV6, PendingCastObjectCostV6, PendingChosenCreatureCostV6,
+    PolicyObservationExtensionsV6, QueuedWardPaymentV6, WardPaymentV6,
+    OBSERVATION_SCHEMA_VERSION_V6,
+};
 use crate::policy_surface_v5::{
     PolicyActionV5, PolicyDecisionV5, PolicySurfaceContextIdsV5, PolicySurfaceStageV5,
     PolicySurfaceV5, POLICY_SURFACE_VERSION,
@@ -1604,6 +1610,7 @@ pub fn observe_v1(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    crate::effect::validate_legacy_ward_observation(state).map_err(RlContractError)?;
     let projection = PublicObservationProjectionV1 {
         turn: state.turn,
         phase: state.step.into(),
@@ -1657,6 +1664,7 @@ pub fn observe_v2(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV2> {
+    crate::effect::validate_legacy_ward_observation(state).map_err(RlContractError)?;
     let mut observation = build_observation_v2(
         state,
         surface,
@@ -1724,7 +1732,7 @@ fn build_observation_v2(
         ],
         exile: public_cards_v2(state, &state.exile, text_mode)?,
         stack: stack_public_v2(state, acting_player)?,
-        combat: combat_public_v2(state)?,
+        combat: combat_public_v2(state, acting_player)?,
         continuous_effects: continuous_effects_public_v2(state, acting_player)?,
         object_relations: object_relations_public_v4(state, acting_player)?,
         exile_play_permissions: exile_play_permissions_public_v2(state)?,
@@ -1822,6 +1830,7 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
         substep_count,
         text_mode,
     } = request;
+    crate::effect::validate_legacy_ward_observation(state).map_err(RlContractError)?;
     #[cfg(test)]
     TEST_POLICY_V5_OBSERVATIONS.with(|calls| calls.set(calls.get().saturating_add(1)));
 
@@ -1845,19 +1854,8 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
     // projection hash. Building V2 without hashing avoids serializing the same
     // large projection twice. The public artifact constructor hashes the
     // completed V5 observation once; the flat typed path explicitly skips it.
-    let base = build_observation_v2(
-        state,
-        surface.harness_surface(),
-        acting_player,
-        step_index,
-        text_mode,
-    )?;
-    let policy_surface_context = policy_surface_context_v5(
-        state,
-        surface
-            .scan_context_for(acting_player)
-            .map_err(RlContractError)?,
-    )?;
+    let (base, policy_surface_context) =
+        build_policy_observation_parts(state, surface, acting_player, step_index, text_mode)?;
     Ok(ObservationV5 {
         schema_version: OBSERVATION_SCHEMA_VERSION_V5,
         kernel_version: base.kernel_version,
@@ -1872,30 +1870,463 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
         projection: PublicObservationProjectionV5 {
             surface: base.projection,
             policy_surface_context,
-            foundations_combat: crate::combat_damage_v1::public_assignment_ids_v1(state)
-                .map(|view| {
-                    Ok::<_, RlContractError>(PublicFoundationsCombatV1 {
-                        phase: view.phase.to_string(),
-                        assignments: view
-                            .assignments
-                            .into_iter()
-                            .map(|assignment| {
-                                Ok(PublicCombatDamageAssignmentV1 {
-                                    source: card_ref(state, assignment.source)?,
-                                    recipient: target_ref(state, assignment.recipient)?,
-                                    amount: assignment.amount,
-                                })
-                            })
-                            .collect::<Result<Vec<_>>>()?,
-                    })
-                })
-                .transpose()?,
+            foundations_combat: public_foundations_combat_v1(state)?,
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
         known_hand_cards: base.known_hand_cards,
         visible_projection_hash: 0,
     })
+}
+
+/// Public Foundations combat-damage assignments, present only while a
+/// custom-game combat damage step is pending. Frozen Pauper sessions have
+/// none.
+fn public_foundations_combat_v1(state: &GameState) -> Result<Option<PublicFoundationsCombatV1>> {
+    crate::combat_damage_v1::public_assignment_ids_v1(state)
+        .map(|view| {
+            Ok::<_, RlContractError>(PublicFoundationsCombatV1 {
+                phase: view.phase.to_string(),
+                assignments: view
+                    .assignments
+                    .into_iter()
+                    .map(|assignment| {
+                        Ok(PublicCombatDamageAssignmentV1 {
+                            source: card_ref(state, assignment.source)?,
+                            recipient: target_ref(state, assignment.recipient)?,
+                            amount: assignment.amount,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            })
+        })
+        .transpose()
+}
+
+// Shared projection components, not an ObservationV5. Each version applies
+// its own admission rules before assembling its concrete observation type.
+fn build_policy_observation_parts(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    acting_player: PlayerId,
+    step_index: u64,
+    text_mode: ObservationTextModeV2,
+) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
+    let base = build_observation_v2(
+        state,
+        surface.harness_surface(),
+        acting_player,
+        step_index,
+        text_mode,
+    )?;
+    let context = policy_surface_context_v5(
+        state,
+        surface
+            .scan_context_for(acting_player)
+            .map_err(RlContractError)?,
+    )?;
+    Ok((base, context))
+}
+
+pub fn observe_policy_v6(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    acting_player: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep_index: u32,
+    substep_count: u32,
+) -> Result<ObservationV6> {
+    let mut observation = build_policy_observation_v6(PolicyObservationBuildV5 {
+        state,
+        surface,
+        acting_player,
+        step_index,
+        physical_decision_id,
+        substep_index,
+        substep_count,
+        text_mode: ObservationTextModeV2::FullArtifact,
+    })?;
+    observation.visible_projection_hash = visible_projection_hash_v6(&observation)?;
+    Ok(observation)
+}
+
+pub(crate) fn observe_policy_v6_unhashed_for_flat_policy(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    acting_player: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep_index: u32,
+    substep_count: u32,
+) -> Result<ObservationV6> {
+    build_policy_observation_v6(PolicyObservationBuildV5 {
+        state,
+        surface,
+        acting_player,
+        step_index,
+        physical_decision_id,
+        substep_index,
+        substep_count,
+        text_mode: ObservationTextModeV2::FlatForbiddenElided,
+    })
+}
+
+fn build_policy_observation_v6(request: PolicyObservationBuildV5<'_>) -> Result<ObservationV6> {
+    let PolicyObservationBuildV5 {
+        state,
+        surface,
+        acting_player,
+        step_index,
+        physical_decision_id,
+        substep_index,
+        substep_count,
+        text_mode,
+    } = request;
+    if substep_count == 0 || substep_index >= substep_count {
+        return Err(RlContractError(format!(
+            "invalid physical decision substep {substep_index}/{substep_count}"
+        )));
+    }
+    let extensions = policy_observation_extensions_with_text_v6(state, acting_player, text_mode)?;
+    let (mut base, policy_surface_context) =
+        build_policy_observation_parts(state, surface, acting_player, step_index, text_mode)?;
+    if let Some(search) = &extensions.decision_local_library {
+        let Some(PendingEffectChoiceSemanticV4::Targets { legal_targets, .. }) = base
+            .projection
+            .engine_context
+            .pending_effect
+            .as_mut()
+            .and_then(|pending| pending.choice.as_mut())
+        else {
+            return Err(RlContractError(
+                "decision-local library lost its search context".into(),
+            ));
+        };
+        let ordinal = |target: &TargetRefV1| -> Result<usize> {
+            let TargetRefV1::Object { object } = target else {
+                return Err(RlContractError(
+                    "library search has a non-card target".into(),
+                ));
+            };
+            search
+                .cards
+                .iter()
+                .position(|card| card.stable == *object)
+                .ok_or_else(|| RlContractError("library target has no decision-local card".into()))
+        };
+        let mut ordered = legal_targets
+            .iter()
+            .map(|target| Ok((ordinal(target)?, target.clone())))
+            .collect::<Result<Vec<_>>>()?;
+        ordered.sort_by_key(|(index, _)| *index);
+        *legal_targets = ordered.into_iter().map(|(_, target)| target).collect();
+    }
+    Ok(ObservationV6 {
+        schema_version: OBSERVATION_SCHEMA_VERSION_V6,
+        kernel_version: base.kernel_version,
+        surface_version: base.surface_version,
+        policy_surface_version: POLICY_SURFACE_VERSION,
+        card_db_hash: base.card_db_hash,
+        acting_player: base.acting_player,
+        step_index,
+        physical_decision_id,
+        substep_index,
+        substep_count,
+        projection: PublicObservationProjectionV5 {
+            surface: base.projection,
+            policy_surface_context,
+            foundations_combat: public_foundations_combat_v1(state)?,
+        },
+        own_hand: base.own_hand,
+        known_library_cards: base.known_library_cards,
+        known_hand_cards: base.known_hand_cards,
+        extensions,
+        visible_projection_hash: 0,
+    })
+}
+
+/// The action cache needs the same versioned authority once per decision,
+/// without constructing an observation or exposing private engine state.
+pub(crate) fn policy_observation_extensions_v6(
+    state: &GameState,
+    acting_player: PlayerId,
+) -> Result<PolicyObservationExtensionsV6> {
+    policy_observation_extensions_with_text_v6(
+        state,
+        acting_player,
+        ObservationTextModeV2::FlatForbiddenElided,
+    )
+}
+
+fn policy_observation_extensions_with_text_v6(
+    state: &GameState,
+    acting_player: PlayerId,
+    text_mode: ObservationTextModeV2,
+) -> Result<PolicyObservationExtensionsV6> {
+    let pending_cast_object_cost = if let Some(pending) = &state.engine.pending_cast {
+        engine::validate_pending_cast(state, pending).map_err(RlContractError)?;
+        if pending.source_contract.cast_method == CastMethodV4::Escape {
+            let definition = CARD_DEFS
+                .get(pending.source_contract.card_def as usize)
+                .ok_or_else(|| RlContractError("Escape source definition is absent".into()))?;
+            let escape = definition
+                .escape
+                .as_ref()
+                .ok_or_else(|| RlContractError("Escape cost definition is absent".into()))?;
+            let required_count = escape
+                .cost
+                .iter()
+                .find_map(|component| match component {
+                    crate::card_def::CostComponent::ExileOtherCardsFromOwnGraveyard(count) => {
+                        Some(u32::from(*count))
+                    }
+                    _ => None,
+                })
+                .ok_or_else(|| RlContractError("Escape exile cost is absent".into()))?;
+            let mut seen = HashSet::new();
+            let selected = pending
+                .sacrifice_chosen
+                .iter()
+                .map(|&id| {
+                    let reference = card_ref(state, id)?;
+                    if id == pending.spell
+                        || !seen.insert(id)
+                        || reference.owner != pending.controller.into()
+                        || reference.zone != Zone::Graveyard
+                        || !state.players[pending.controller.index()]
+                            .graveyard
+                            .contains(&id)
+                    {
+                        return Err(RlContractError("invalid Escape selection prefix".into()));
+                    }
+                    Ok(reference)
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let selected_count = u32::try_from(selected.len())
+                .map_err(|_| RlContractError("Escape prefix exceeds u32".into()))?;
+            let remaining_count = required_count
+                .checked_sub(selected_count)
+                .ok_or_else(|| RlContractError("Escape prefix exceeds its cost".into()))?;
+            Some(PendingCastObjectCostV6 {
+                source: card_ref(state, pending.spell)?,
+                controller: pending.controller.into(),
+                cast_method: CastMethodV4::Escape,
+                cost_kind: CostKind::ExileFromGraveyard,
+                required_count,
+                selected,
+                remaining_count,
+            })
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let pending_chosen_creature_cost = state
+        .engine
+        .pending_cast
+        .as_ref()
+        .filter(|pending| pending.controller == acting_player)
+        .and_then(|pending| {
+            pending
+                .chosen_creature_cost_zone
+                .map(|zone| (pending, zone))
+        })
+        .map(|(pending, selected_zone)| {
+            Ok::<_, RlContractError>(PendingChosenCreatureCostV6 {
+                source: card_ref(state, pending.spell)?,
+                controller: pending.controller.into(),
+                selected_zone,
+            })
+        })
+        .transpose()?;
+    let mut finalized_chosen_creature_costs = Vec::new();
+    let mut historical_public_sources = Vec::new();
+    let mut queued_ward_payments = Vec::new();
+    let ward_payment = |item: &StackItem| -> Result<Option<WardPaymentV6>> {
+        crate::effect::validated_ward_observation_targeter(state, item)
+            .map_err(RlContractError)?
+            .map(|(targeter, generic)| {
+                let index = state
+                    .stack
+                    .iter()
+                    .position(|live| live.v4.stack_item_id == targeter.v4.stack_item_id)
+                    .ok_or_else(|| {
+                        RlContractError("Ward targeter lost public stack membership".into())
+                    })?;
+                Ok(WardPaymentV6 {
+                    targeting_stack_index: u32::try_from(index)
+                        .map_err(|_| RlContractError("Ward targeter index exceeds u32".into()))?,
+                    payer: targeter.controller.into(),
+                    generic,
+                })
+            })
+            .transpose()
+    };
+    for (index, item) in state.stack.iter().enumerate() {
+        let resolving = state.engine.pending_effect.as_ref().is_some_and(|pending| {
+            pending.resolving_item.v4.stack_item_id == item.v4.stack_item_id
+        });
+        if let Some(payment) = if resolving { None } else { ward_payment(item)? } {
+            queued_ward_payments.push(QueuedWardPaymentV6 {
+                stack_index: u32::try_from(index)
+                    .map_err(|_| RlContractError("Ward trigger index exceeds u32".into()))?,
+                payment,
+            });
+        }
+        // stack_source_ref validates the independent finalized cast binding,
+        // including equality with the complete paid-cost record and its LKI.
+        if item.kind == StackItemKind::Spell {
+            let source = stack_source_ref(state, item)?;
+            let chosen_creature_cost = CARD_DEFS[source.card_db_id as usize].additional_cost
+                .is_some_and(|cost| cost.iter().any(|component| matches!(component,
+                    crate::card_def::CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand)));
+            for paid in item
+                .v4
+                .paid_cost_refs
+                .iter()
+                .filter(|paid| chosen_creature_cost && paid.visible_to(acting_player))
+            {
+                let power_lki = paid.power_lki.ok_or_else(|| {
+                    RlContractError("chosen-creature cost lost its recorded power".into())
+                })?;
+                finalized_chosen_creature_costs.push(FinalizedChosenCreatureCostV6 {
+                    stack_index: u32::try_from(index)
+                        .map_err(|_| RlContractError("stack index exceeds u32".into()))?,
+                    source: source.clone(),
+                    chosen: paid_cost_card_refs(&[*paid], acting_player)[0].clone(),
+                    power_lki,
+                });
+            }
+        }
+        if item.kind != StackItemKind::Spell {
+            historical_public_sources.push(HistoricalPublicSourceV6 {
+                context: HistoricalSourceContextV6::Stack {
+                    stack_index: u32::try_from(index)
+                        .map_err(|_| RlContractError("stack index exceeds u32".into()))?,
+                },
+                source: stack_source_ref(state, item)?,
+                stack_item_kind: item.kind.into(),
+            });
+        }
+    }
+    let mut decision_local_library = None;
+    let mut pending_ward_payment = None;
+    if let Some(pending) = &state.engine.pending_effect {
+        crate::effect::validate_pending_effect_choice(state).map_err(RlContractError)?;
+        if matches!(
+            pending.choice.as_ref(),
+            Some(crate::effect::PendingEffectChoice::ChooseBoolean {
+                purpose: crate::effect::EffectBooleanChoicePurpose::CounterUnlessPaysGeneric { .. },
+                ..
+            })
+        ) {
+            pending_ward_payment =
+                Some(ward_payment(&pending.resolving_item)?.ok_or_else(|| {
+                    RlContractError("pending Ward payment has no live bound targeter".into())
+                })?);
+        }
+        historical_public_sources.push(HistoricalPublicSourceV6 {
+            context: HistoricalSourceContextV6::PendingEffect,
+            source: stack_source_ref(state, &pending.resolving_item)?,
+            stack_item_kind: pending.resolving_item.kind.into(),
+        });
+        if let Some(crate::effect::PendingEffectChoice::SelectTargets {
+            player,
+            selected,
+            legal,
+            purpose,
+            ..
+        }) = &pending.choice
+        {
+            use crate::effect::EffectTargetSelectionPurpose;
+            let library_owner = match purpose {
+                EffectTargetSelectionPurpose::SearchLibraryToHand { player, .. }
+                | EffectTargetSelectionPurpose::SearchLibraryToHandMany { player, .. }
+                | EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
+                    player, ..
+                } => Some(*player),
+                _ => None,
+            };
+            if *player == acting_player {
+                if let Some(library_owner) = library_owner {
+                    let mut seen = HashSet::new();
+                    let mut cards = Vec::new();
+                    for candidate in selected.iter().chain(legal.iter()) {
+                        let Target::Object(id) = candidate.target else {
+                            return Err(RlContractError("library search names a non-card".into()));
+                        };
+                        let object = state.objects.try_get(id).ok_or_else(|| {
+                            RlContractError("library search card is absent".into())
+                        })?;
+                        if object.owner != library_owner
+                            || object.zone != Zone::Library
+                            || !state.players[library_owner.index()].library.contains(&id)
+                            || candidate.expected_object.is_none_or(|binding| {
+                                binding.object != id
+                                    || binding.expected_zone != Zone::Library
+                                    || binding.expected_zone_change_count
+                                        != object.zone_change_count
+                            })
+                        {
+                            return Err(RlContractError(
+                                "invalid decision-local library card".into(),
+                            ));
+                        }
+                        if seen.insert(id) {
+                            cards.push(private_card(state, id, text_mode)?);
+                        }
+                    }
+                    // Only observable card identity determines class order.
+                    // The selected prefix is visible and distinguishes copies.
+                    // Arena ids break ties inside indistinguishable classes
+                    // for private authority; scorers must erase that tie-break.
+                    cards.sort_by_key(|card| {
+                        (
+                            card.stable.card_db_id,
+                            card.stable.owner as u8,
+                            card.stable.controller as u8,
+                            selected
+                                .iter()
+                                .position(|target| {
+                                    matches!(target.target,
+                                Target::Object(id) if id.0 == card.stable.arena_id)
+                                })
+                                .unwrap_or(usize::MAX),
+                            card.stable.arena_id,
+                        )
+                    });
+                    decision_local_library = Some(DecisionLocalLibraryV6 {
+                        chooser: (*player).into(),
+                        library_owner: library_owner.into(),
+                        cards,
+                    });
+                }
+            }
+        }
+    }
+    Ok(PolicyObservationExtensionsV6 {
+        pending_cast_object_cost,
+        decision_local_library,
+        historical_public_sources,
+        pending_chosen_creature_cost,
+        finalized_chosen_creature_costs,
+        pending_ward_payment,
+        queued_ward_payments,
+    })
+}
+
+/// V6 commits every field except the commitment field itself, using canonical
+/// JSON object-key order. V5's original field-order hash is left untouched.
+fn visible_projection_hash_v6(observation: &ObservationV6) -> Result<u64> {
+    let mut value = serde_json::to_value(observation)?;
+    value
+        .as_object_mut()
+        .expect("observation is an object")
+        .remove("visible_projection_hash");
+    stable_hash_json(&value)
 }
 
 fn policy_surface_context_v5(
@@ -2654,34 +3085,64 @@ fn core_surface_action_candidates_v1(
                 player,
                 discard_payable,
                 sacrifice_payable,
+                return_permanent_payable,
             } => {
                 let actor = (*player).into();
-                match (*discard_payable, *sacrifice_payable) {
-                    (false, false) => {
-                        for use_cost in [false, true] {
-                            push_action(
-                                &mut out,
-                                ActionSemanticV1::ChooseOptionalCostUse { actor, use_cost },
-                                SurfaceAction::Action(Action::ChooseOptionalCostStage(use_cost)),
-                            )?;
-                        }
+                if *return_permanent_payable {
+                    // Glint Hawk: `HarnessSurfaceV2::next_decision` never
+                    // captures a decision like this into its Discard/
+                    // SacrificeLand-only `OptionalCostReshape` (a reshaped
+                    // decision always reports `return_permanent_payable:
+                    // false` -- see `next_optional_cost_subdecision`'s
+                    // doc), so this is always the real, raw decision, with
+                    // exactly two real choices and no further staging
+                    // needed. Offer both directly through the engine's
+                    // one-shot `Action::ChooseOptionalCost` bypass rather
+                    // than through the Discard/SacrificeLand-only Use/
+                    // Which stage scheme below (whose `(false, false)`/
+                    // `(true, true)` sentinels this decision's own
+                    // `discard_payable`/`sacrifice_payable` would
+                    // otherwise collide with).
+                    for choice in [
+                        OptionalCostChoice::Decline,
+                        OptionalCostChoice::ReturnPermanent,
+                    ] {
+                        push_action(
+                            &mut out,
+                            ActionSemanticV1::ChooseOptionalCostWhich { actor, choice },
+                            SurfaceAction::Action(Action::ChooseOptionalCost(choice)),
+                        )?;
                     }
-                    (true, true) => {
-                        for (choice, use_it) in [
-                            (OptionalCostChoice::Discard, true),
-                            (OptionalCostChoice::SacrificeLand, false),
-                        ] {
-                            push_action(
-                                &mut out,
-                                ActionSemanticV1::ChooseOptionalCostWhich { actor, choice },
-                                SurfaceAction::Action(Action::ChooseOptionalCostStage(use_it)),
-                            )?;
+                } else {
+                    match (*discard_payable, *sacrifice_payable) {
+                        (false, false) => {
+                            for use_cost in [false, true] {
+                                push_action(
+                                    &mut out,
+                                    ActionSemanticV1::ChooseOptionalCostUse { actor, use_cost },
+                                    SurfaceAction::Action(Action::ChooseOptionalCostStage(
+                                        use_cost,
+                                    )),
+                                )?;
+                            }
                         }
-                    }
-                    other => {
-                        return Err(RlContractError(format!(
-                            "unsupported surfaced ChooseOptionalCost flags {other:?}; expected H2 use-gate or which-gate sentinel"
-                        )));
+                        (true, true) => {
+                            for (choice, use_it) in [
+                                (OptionalCostChoice::Discard, true),
+                                (OptionalCostChoice::SacrificeLand, false),
+                            ] {
+                                push_action(
+                                    &mut out,
+                                    ActionSemanticV1::ChooseOptionalCostWhich { actor, choice },
+                                    SurfaceAction::Action(Action::ChooseOptionalCostStage(use_it)),
+                                )?;
+                            }
+                        }
+                        other => {
+                            return Err(RlContractError(format!(
+                                "unsupported surfaced ChooseOptionalCost flags {other:?}; expected H2 use-gate or which-gate sentinel"
+                            )));
+                        }
                     }
                 }
             }
@@ -4713,6 +5174,44 @@ fn visible_card_ref(
     }
 }
 
+/// Mirrors `register_objects`' (`flat_policy_v2.rs`) actual model-row
+/// membership rule, which `visible_card_ref` above does not: that registry
+/// also admits an opponent's hand card through `known_hand_cards_v4`
+/// (`state.known_hand_cards`, populated by `state.reveal_hand_card`) when
+/// this exact incarnation was previously revealed to `acting_player` and is
+/// still sitting in that same hand. `visible_card_ref` treats every
+/// opponent-hand object as unresolvable -- correct for
+/// `object_relations_public_v4` (an attachment or an exile link never
+/// originates from a revealed-hand card), but not a faithful membership
+/// check for combat residue, where a bounced-and-revealed blocker is a real
+/// case the registry already resolves. Used by `combat_public_v2` only.
+fn combat_participant_visible_v2(
+    state: &GameState,
+    id: ObjectId,
+    acting_player: PlayerId,
+) -> Result<bool> {
+    let object = state
+        .objects
+        .try_get(id)
+        .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
+    if !object_is_live_in_zone_index(state, id)? {
+        return Ok(false);
+    }
+    Ok(match object.zone {
+        Zone::Battlefield | Zone::Graveyard | Zone::Exile | Zone::Stack | Zone::Command => true,
+        Zone::Hand => {
+            object.owner == acting_player
+                || state
+                    .known_hand_cards(acting_player, object.owner)
+                    .iter()
+                    .any(|entry| {
+                        entry.object == id && entry.zone_change_count == object.zone_change_count
+                    })
+        }
+        Zone::Library => false,
+    })
+}
+
 fn visible_card_refs(
     state: &GameState,
     ids: &[ObjectId],
@@ -5053,18 +5552,33 @@ fn card_characteristics_v2(state: &GameState, id: ObjectId) -> CardCharacteristi
     }
 }
 
-fn combat_public_v2(state: &GameState) -> Result<CombatStatePublicV2> {
+/// Combat is retained verbatim from the turn's declare-attackers/-blockers
+/// steps until the next `Step::BeginCombat` (`CombatState` doc comment,
+/// `engine.rs`), so this residue is still being reported well after the
+/// combat phase ends -- including after a participant has left every
+/// zone `register_objects` (`flat_policy_v2.rs`) can register an object
+/// from. `object_is_live_in_zone_index` only asks whether the id still
+/// resolves to *some* zone slot, not whether that zone is one the registry
+/// can ever contain, so a stale reference into an unregistered zone reached
+/// the V3 encoder as `InvalidReference`. `combat_participant_visible_v2` is
+/// the exact registry-membership check (including a revealed opponent-hand
+/// incarnation); reuse it here so combat residue drops a participant the
+/// instant it becomes unresolvable, the same way an already-filtered
+/// dead/replaced id is dropped below.
+fn combat_public_v2(state: &GameState, acting_player: PlayerId) -> Result<CombatStatePublicV2> {
     let live_attackers = state
         .engine
         .combat
         .attackers
         .iter()
         .copied()
-        .filter_map(|id| match object_is_live_in_zone_index(state, id) {
-            Ok(true) => Some(Ok(id)),
-            Ok(false) => None,
-            Err(err) => Some(Err(err)),
-        })
+        .filter_map(
+            |id| match combat_participant_visible_v2(state, id, acting_player) {
+                Ok(true) => Some(Ok(id)),
+                Ok(false) => None,
+                Err(err) => Some(Err(err)),
+            },
+        )
         .collect::<Result<Vec<_>>>()?;
     Ok(CombatStatePublicV2 {
         attackers_declared: state.engine.combat.attackers_declared,
@@ -5085,10 +5599,12 @@ fn combat_public_v2(state: &GameState) -> Result<CombatStatePublicV2> {
                     blockers
                         .iter()
                         .copied()
-                        .filter_map(|id| match object_is_live_in_zone_index(state, id) {
-                            Ok(true) => Some(card_ref(state, id)),
-                            Ok(false) => None,
-                            Err(err) => Some(Err(err)),
+                        .filter_map(|id| {
+                            match combat_participant_visible_v2(state, id, acting_player) {
+                                Ok(true) => Some(card_ref(state, id)),
+                                Ok(false) => None,
+                                Err(err) => Some(Err(err)),
+                            }
                         })
                         .collect::<Result<Vec<_>>>()?,
                 ))
@@ -5569,13 +6085,65 @@ fn continuous_effects_public_v2(
             damage_cannot_be_prevented: false,
         });
     }
+    // Strands prevention lives in active_replacements, not until_end_of_turn.
+    // Its chosen colors are public and affect every matching damage source.
+    // Aggregate equal-duration shields: duplicate installations have no extra
+    // effect, and neither source allocation nor replacement IDs belong in the
+    // actor's observation. In particular the originating card can have moved
+    // to a hidden zone without making its already-resolved effect secret.
+    let prevention_mask = state
+        .engine
+        .active_replacements
+        .iter()
+        .fold(0, |mask, replacement| match replacement.kind {
+            crate::event::ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn {
+                color,
+                turn,
+                active_player,
+            } if turn == state.turn && active_player == state.active_player => {
+                mask | crate::card_def::mana_color_mask(color)
+            }
+            _ => mask,
+        });
+    if prevention_mask != 0 {
+        out.push(ContinuousEffectPublicV2 {
+            source: None,
+            controller: None,
+            affected_objects: Vec::new(),
+            affected_players: Vec::new(),
+            global: true,
+            layers: 0,
+            timestamp: 0,
+            duration: EffectDurationV2::EndOfTurn,
+            power_delta: 0,
+            toughness_delta: 0,
+            grants_haste: false,
+            set_power: None,
+            set_toughness: None,
+            add_color_mask: 0,
+            remove_color_mask: 0,
+            add_subtype_ids: Vec::new(),
+            remove_subtype_ids: Vec::new(),
+            add_keyword_mask: 0,
+            remove_keyword_mask: 0,
+            ward_generic_delta: 0,
+            minimum_blockers: None,
+            add_landwalk_mask: 0,
+            remove_landwalk_mask: 0,
+            prevent_damage_from_color_mask: prevention_mask,
+            damage_cannot_be_prevented: false,
+        });
+    }
     Ok(out)
 }
 
 fn exile_play_permissions_public_v2(state: &GameState) -> Result<Vec<ExilePlayPermissionPublicV2>> {
     let mut out = Vec::new();
     for perm in &state.engine.exile_play_permissions {
-        if engine::active_permission_for(perm.holder, perm.object, state).is_none() {
+        // Validate this grant's incarnation. Looking up any active grant for
+        // the same holder/object can incorrectly revive an older grant when
+        // the card leaves exile and later returns with a fresh permission.
+        if perm.zone_change_generation != state.objects.get(perm.object).zone_change_count {
             continue;
         }
         out.push(ExilePlayPermissionPublicV2 {
@@ -6058,6 +6626,9 @@ fn pending_effect_semantic_v4(
                             ..
                         } => BooleanChoicePurposeV4::PayCost,
                         crate::effect::EffectBooleanChoicePurpose::SearchLibraryToBattlefieldTapped {
+                            ..
+                        }
+                        | crate::effect::EffectBooleanChoicePurpose::LookAtTopMayRevealThen {
                             ..
                         } => BooleanChoicePurposeV4::OptionalEffect,
                     },
@@ -7349,5 +7920,320 @@ mod policy_v5_artifact_tests {
         .unwrap_err()
         .to_string()
         .contains("legacy aggregate combat semantic"));
+    }
+}
+
+/// Glint Hawk's ETB `Decision::ChooseOptionalCost` (`return_permanent_
+/// payable: true`, `discard_payable`/`sacrifice_payable` both false) is
+/// never captured by `HarnessSurfaceV2`'s Discard/SacrificeLand-only
+/// `OptionalCostReshape` (see `surface_v2.rs`'s reshape guard), so it
+/// always reaches `core_surface_action_candidates_v1` as the raw engine
+/// decision. Fix-round coverage for the bug where that function's match
+/// only inspected `(discard_payable, sacrifice_payable)`, collided this
+/// real decision with the reshape's own `(false, false)` "Use gate"
+/// sentinel, and offered `Action::ChooseOptionalCostStage` candidates that
+/// fail on application (that action is presentation-only, requiring a live
+/// `OptionalCostReshape` this decision never has).
+#[cfg(test)]
+mod glint_hawk_optional_cost_tests {
+    use super::*;
+    use crate::card_def::card_id_by_name;
+    use crate::state::{Counters, ObjectStateV4, Step};
+
+    fn put_object(state: &mut GameState, name: &str, zone: Zone) -> ObjectId {
+        let card_def = card_id_by_name(name).unwrap_or_else(|| panic!("{name} in CARD_DEFS"));
+        let id = state.objects.push(GameObject {
+            card_def,
+            name: name.to_string(),
+            owner: PlayerId::P0,
+            controller: PlayerId::P0,
+            zone,
+            tapped: false,
+            summoning_sick: false,
+            damage: 0,
+            counters: Counters::default(),
+            attachments: Vec::new(),
+            v4: ObjectStateV4::from_card_def(card_def),
+            spell_copy_origin: None,
+            plotted_turn: None,
+            zone_change_count: 0,
+        });
+        match zone {
+            Zone::Hand => state.players[0].hand.push(id),
+            Zone::Battlefield => state.players[0].battlefield.push(id),
+            other => panic!("test helper does not construct objects in {other:?}"),
+        }
+        id
+    }
+
+    #[test]
+    fn glint_hawk_etb_offers_decline_and_return_permanent_as_direct_actions() {
+        let mut state = GameState::new_from_libraries(&[], &[], card_name, 0x476c_696e_7448_6177);
+        state.step = Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+
+        let hawk = put_object(&mut state, "Glint Hawk", Zone::Hand);
+        put_object(&mut state, "Ichor Wellspring", Zone::Battlefield);
+        state.players[0].mana_pool[ManaColor::W.pool_index()] = 1;
+
+        engine::step(&mut state, Action::CastSpell(hawk)).unwrap();
+        let decision = loop {
+            match engine::advance_until_decision(&mut state) {
+                Decision::CastSpellOrPass { .. } => {
+                    engine::step(&mut state, Action::Pass).unwrap();
+                }
+                other => break other,
+            }
+        };
+        match &decision {
+            Decision::ChooseOptionalCost {
+                player,
+                discard_payable,
+                sacrifice_payable,
+                return_permanent_payable,
+            } => {
+                assert_eq!(*player, PlayerId::P0);
+                assert!(!discard_payable);
+                assert!(!sacrifice_payable);
+                assert!(return_permanent_payable);
+            }
+            other => panic!("expected ChooseOptionalCost, got {other:?}"),
+        }
+
+        let candidates =
+            legal_action_candidates_v1(&SurfaceDecision::Decision(decision.clone()), &state)
+                .unwrap();
+        let choices: Vec<OptionalCostChoice> = candidates
+            .iter()
+            .map(|candidate| match &candidate.surface_action {
+                SurfaceAction::Action(Action::ChooseOptionalCost(choice)) => *choice,
+                other => panic!("expected a direct Action::ChooseOptionalCost, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            choices,
+            vec![
+                OptionalCostChoice::Decline,
+                OptionalCostChoice::ReturnPermanent
+            ],
+            "exactly the decline and the return actions, in that order"
+        );
+
+        for candidate in &candidates {
+            let SurfaceAction::Action(action) = candidate.surface_action.clone() else {
+                panic!("expected a direct Action candidate");
+            };
+            let mut applied = state.clone();
+            engine::step(&mut applied, action)
+                .unwrap_or_else(|error| panic!("candidate action failed to apply: {error}"));
+        }
+    }
+}
+
+/// Delver of Secrets' upkeep "may reveal" decision reuses the fully generic
+/// `Decision::ChooseEffectBoolean` surface (`effect::
+/// EffectBooleanChoicePurpose::LookAtTopMayRevealThen`):
+/// `core_surface_action_candidates_v1`'s `Decision::ChooseEffectBoolean` arm
+/// already emits exactly `[false, true]` for every purpose, unconditionally
+/// (see that arm's own doc on schema-v4's Boolean ordering convention), so
+/// this new decision shape needed no new `ActionSemanticV1` variant and no
+/// `flat_policy_v2.rs` change.
+#[cfg(test)]
+mod delver_of_secrets_reveal_tests {
+    use super::*;
+    use crate::card_def::card_id_by_name;
+    use crate::state::{Counters, ObjectStateV4};
+
+    fn put_battlefield(state: &mut GameState, name: &str) -> ObjectId {
+        let card_def = card_id_by_name(name).unwrap_or_else(|| panic!("{name} in CARD_DEFS"));
+        let id = state.objects.push(GameObject {
+            card_def,
+            name: name.to_string(),
+            owner: PlayerId::P0,
+            controller: PlayerId::P0,
+            zone: Zone::Battlefield,
+            tapped: false,
+            summoning_sick: false,
+            damage: 0,
+            counters: Counters::default(),
+            attachments: Vec::new(),
+            v4: ObjectStateV4::from_card_def(card_def),
+            spell_copy_origin: None,
+            plotted_turn: None,
+            zone_change_count: 0,
+        });
+        state.players[0].battlefield.push(id);
+        id
+    }
+
+    #[test]
+    fn delver_reveal_offers_exactly_decline_and_reveal_and_each_applies() {
+        // `GameState::new_from_libraries` starts every state at `Step::Untap`
+        // on turn 1 (see its own doc); the test drives it forward through
+        // Upkeep the same way the engine's own turn loop would, rather than
+        // hand-setting `state.step`.
+        let top = card_id_by_name("Glint Hawk").expect("Glint Hawk in CARD_DEFS");
+        let mut state = GameState::new_from_libraries(&[top], &[], card_name, 1);
+        put_battlefield(&mut state, "Delver of Secrets");
+
+        let decision = loop {
+            match engine::advance_until_decision(&mut state) {
+                Decision::CastSpellOrPass { .. } => {
+                    engine::step(&mut state, Action::Pass).unwrap();
+                }
+                other => break other,
+            }
+        };
+        match &decision {
+            Decision::ChooseEffectBoolean {
+                player, default, ..
+            } => {
+                assert_eq!(*player, PlayerId::P0);
+                assert_eq!(*default, Some(false));
+            }
+            other => panic!("expected ChooseEffectBoolean, got {other:?}"),
+        }
+
+        let candidates =
+            legal_action_candidates_v1(&SurfaceDecision::Decision(decision.clone()), &state)
+                .unwrap();
+        let choices: Vec<bool> = candidates
+            .iter()
+            .map(|candidate| match &candidate.surface_action {
+                SurfaceAction::Action(Action::ChooseEffectBoolean(value)) => *value,
+                other => panic!("expected a direct Action::ChooseEffectBoolean, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            choices,
+            vec![false, true],
+            "exactly decline then reveal, in that order"
+        );
+
+        for candidate in &candidates {
+            let SurfaceAction::Action(action) = candidate.surface_action.clone() else {
+                panic!("expected a direct Action candidate");
+            };
+            let mut applied = state.clone();
+            engine::step(&mut applied, action)
+                .unwrap_or_else(|error| panic!("candidate action failed to apply: {error}"));
+        }
+    }
+}
+
+/// Fang Dragon's Adventure (Forktail Sweep, cast from hand) and its creature
+/// face (cast from exile via `ObjectStateV4::on_adventure`) both reach the
+/// RL surface through the existing `Decision::CastSpellOrPass` ->
+/// `castable_spells` -> `ActionSemanticV1::CastSpell` -> `Action::
+/// CastSpell(ObjectId)` path (`core_surface_action_candidates_v1`'s
+/// `CastSpellOrPass` arm, unmodified): `engine::castable_spells` already
+/// offers Fang Dragon's one stable `ObjectId` from either zone once it is
+/// legal there, so neither new cast option needed a distinct action kind or
+/// any `flat_policy_v2.rs` change.
+#[cfg(test)]
+mod adventure_and_monarch_rl_tests {
+    use super::*;
+    use crate::card_def::card_id_by_name;
+    use crate::state::{Counters, ObjectStateV4, Step};
+
+    fn put_object(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -> ObjectId {
+        let card_def = card_id_by_name(name).unwrap_or_else(|| panic!("{name} in CARD_DEFS"));
+        let id = state.objects.push(GameObject {
+            card_def,
+            name: name.to_string(),
+            owner: player,
+            controller: player,
+            zone,
+            tapped: false,
+            summoning_sick: false,
+            damage: 0,
+            counters: Counters::default(),
+            attachments: Vec::new(),
+            v4: ObjectStateV4::from_card_def(card_def),
+            spell_copy_origin: None,
+            plotted_turn: None,
+            zone_change_count: 0,
+        });
+        match zone {
+            Zone::Hand => state.players[player.index()].hand.push(id),
+            Zone::Exile => state.exile.push(id),
+            other => panic!("test helper does not construct objects in {other:?}"),
+        }
+        id
+    }
+
+    fn cast_spell_candidate_for(
+        candidates: &[LegalActionCandidateV1],
+        id: ObjectId,
+    ) -> &LegalActionCandidateV1 {
+        candidates
+            .iter()
+            .find(|candidate| {
+                matches!(
+                    candidate.surface_action,
+                    SurfaceAction::Action(Action::CastSpell(candidate_id)) if candidate_id == id
+                )
+            })
+            .unwrap_or_else(|| {
+                panic!("expected a CastSpell({id:?}) candidate among {candidates:?}")
+            })
+    }
+
+    #[test]
+    fn forktail_sweep_adventure_cast_is_a_legal_action_candidate_from_hand() {
+        let mut state = GameState::new_from_libraries(&[], &[], card_name, 0x4144_5645_4e54_5552);
+        state.step = Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        let fang_dragon = put_object(&mut state, PlayerId::P0, "Fang Dragon", Zone::Hand);
+        // Exactly {1}{R}: only Forktail Sweep is payable.
+        state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 1;
+
+        let decision = engine::advance_until_decision(&mut state);
+        let candidates =
+            legal_action_candidates_v1(&SurfaceDecision::Decision(decision), &state).unwrap();
+        let cast_candidate = cast_spell_candidate_for(&candidates, fang_dragon);
+
+        let SurfaceAction::Action(action) = cast_candidate.surface_action.clone() else {
+            panic!("expected a direct Action candidate");
+        };
+        let mut applied = state.clone();
+        engine::step(&mut applied, action)
+            .unwrap_or_else(|error| panic!("candidate action failed to apply: {error}"));
+        assert!(
+            applied.stack.iter().any(|item| item.source == fang_dragon),
+            "the adventure cast reached the stack"
+        );
+    }
+
+    #[test]
+    fn fang_dragon_exile_cast_is_a_legal_action_candidate_via_on_adventure() {
+        let mut state = GameState::new_from_libraries(&[], &[], card_name, 0x4144_5645_4e54_5552);
+        state.step = Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        let fang_dragon = put_object(&mut state, PlayerId::P0, "Fang Dragon", Zone::Exile);
+        state.objects.get_mut(fang_dragon).v4.on_adventure = true;
+        // {5}{R}{R}: the printed creature cost.
+        state.players[0].mana_pool[ManaColor::R.pool_index()] = 2;
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 5;
+
+        let decision = engine::advance_until_decision(&mut state);
+        let candidates =
+            legal_action_candidates_v1(&SurfaceDecision::Decision(decision), &state).unwrap();
+        let cast_candidate = cast_spell_candidate_for(&candidates, fang_dragon);
+
+        let SurfaceAction::Action(action) = cast_candidate.surface_action.clone() else {
+            panic!("expected a direct Action candidate");
+        };
+        let mut applied = state.clone();
+        engine::step(&mut applied, action)
+            .unwrap_or_else(|error| panic!("candidate action failed to apply: {error}"));
+        assert!(
+            applied.stack.iter().any(|item| item.source == fang_dragon),
+            "the exile cast reached the stack"
+        );
     }
 }
