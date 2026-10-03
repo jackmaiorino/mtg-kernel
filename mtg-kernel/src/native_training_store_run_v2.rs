@@ -7499,27 +7499,19 @@ mod tests {
         );
     }
 
-    /// The default fixture (`fixture_bytes()`), unmodified, decodes clean and
-    /// classifies as whatever profile the crate's OWN live build identity
-    /// currently resolves to (`Current` on the main tree; `PauperMetaW1` on
-    /// the pauper-meta-cards-v1 card lane once its card additions have moved
-    /// `KERNEL_CARDDB_HASH` off the CURRENT/PauperMetaW1 tie) -- this is the
-    /// direct evidence that `fixture_record`'s live-tracking default (see its
-    /// doc comment) actually round-trips through decode, on both trees.
+    /// The unchanged default fixture decodes as this build's live catalog.
+    /// Both default and feature builds pin concrete profiles independently
+    /// of the classifier used to construct the fixture.
     #[test]
     fn default_fixture_decodes_clean_and_classifies_as_the_live_profile() {
         let validated = decode_train_run_v2(&fixture_bytes()).unwrap();
-        // Asserted against the concrete literal, not `live_catalog_profile_v1()`
-        // again: comparing the same classifier call to itself on both sides
-        // can never fail and so is not a real regression check. On this
-        // branch (pauper-meta-cards-v1, wave 1) the live build has moved off
-        // the CURRENT/PauperMetaW1 tie, so the live profile is concretely
-        // PauperMetaW1; on the main tree this same test body would instead
-        // pin Current.
+        // Pin the concrete profile independently of the classifier.
+        // The feature build uses this prefix's rebased FDN catalog;
+        // the default build retains the Pauper profile.
         assert_eq!(
             validated.catalog_profile_v1(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnTargetedSpells
+                NativeRunCatalogProfileV1::FdnKioraCreatureRebased
             } else {
                 NativeRunCatalogProfileV1::PauperMetaW1
             }
