@@ -113,3 +113,10 @@ the host choice and the attachment assertion's host-controller argument;
 run 003 then passed all six cases. The first Python run used a Python
 environment without Torch; the existing Torch environment passed all
 34 checks.
+
+The first composed card-pair/draw CI found three returning-Aura variants
+missing from main's suspended-reference walker. Added exact-incarnation
+scanning of both Aura/host bindings, the complete attachment-candidate list,
+and the answered guard's remaining frames. A regression covers both bound
+objects and unrelated library objects. Formatting/diff checks passed; hosted
+Rust and complete feature qualification remain pending.

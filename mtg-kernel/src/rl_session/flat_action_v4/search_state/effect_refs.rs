@@ -42,6 +42,7 @@ impl Scan<'_> {
             | DoublePlusOneCountersOnBoundObject { object }
             | PutPlusOnePlusOneCounterOnTriggerEventObject { object }
             | BoostBoundObjectUntilEndOfTurn { object, .. } => self.b(object),
+            PutBoundAuraOntoBattlefieldAttached { aura, host } => self.b(aura) || self.b(host),
             ResolveInitiativeTrigger { binding }
             | EnterUndercityRoom { binding, .. }
             | ResolveUndercityThrone { binding } => self.a(&binding.source),
@@ -317,6 +318,11 @@ impl Scan<'_> {
         use EffectTargetSelectionPurpose::*;
         match p {
             OrderIntoGraveyard { .. } | OrderMilledIntoGraveyard => false,
+            AttachReturningAura {
+                aura,
+                original_candidates,
+                ..
+            } => self.b(aura) || self.bs(original_candidates),
             OrderLookedLibraryTop {
                 original_prefix, ..
             }
@@ -522,7 +528,7 @@ pub(super) fn conflicts(
         }
         if let Some(g) = &p.answered_choice_guard {
             use EffectAnsweredChoiceGuard::*;
-            let frame = match g {
+            let guard_conflicts = match g {
                 OwnerLibrarySecondOrBottom { frame }
                 | CounterUnlessPaysGeneric { frame }
                 | CounterTargetUnlessPaysGeneric { frame }
@@ -533,9 +539,15 @@ pub(super) fn conflicts(
                 | LinkedExileFromRevealedHand { frame }
                 | SearchLibraryToBattlefieldTapped { frame }
                 | UndercityRoute { frame }
-                | UndercityThrone { frame } => frame,
+                | UndercityThrone { frame } => s.f(frame),
+                AttachReturningAura {
+                    aura,
+                    host,
+                    remaining_frames,
+                    ..
+                } => s.b(aura) || s.b(host) || s.fs(remaining_frames),
             };
-            if s.f(frame) {
+            if guard_conflicts {
                 return true;
             }
         }
@@ -592,6 +604,41 @@ mod tests {
         assert!(!op_conflicts(&state, &[other], &op));
         state.objects.get_mut(object).zone_change_count += 1;
         assert!(!op_conflicts(&state, &[object], &op));
+    }
+
+    #[test]
+    fn returning_aura_retains_both_incarnations_and_all_attachment_candidates() {
+        let mut state = ready_state();
+        let aura_id = put(&mut state, PlayerId::P1, "Forest", Zone::Library);
+        let host_id = put(&mut state, PlayerId::P1, "Island", Zone::Library);
+        let other = put(&mut state, PlayerId::P1, "Swamp", Zone::Library);
+        let bind = |object| EffectObjectBinding {
+            object,
+            expected_zone: Zone::Library,
+            expected_zone_change_count: state.objects.get(object).zone_change_count,
+        };
+        let aura = bind(aura_id);
+        let host = bind(host_id);
+        let op = EffectOp::PutBoundAuraOntoBattlefieldAttached { aura, host };
+        let purpose = EffectTargetSelectionPurpose::AttachReturningAura {
+            aura,
+            original_candidates: vec![host],
+            canonical_path: vec![],
+        };
+        for object in [aura_id, host_id] {
+            let scan = Scan {
+                state: &state,
+                pool: &[object],
+            };
+            assert!(scan.op(&op));
+            assert!(scan.purpose(&purpose));
+        }
+        let scan = Scan {
+            state: &state,
+            pool: &[other],
+        };
+        assert!(!scan.op(&op));
+        assert!(!scan.purpose(&purpose));
     }
 
     #[test]
