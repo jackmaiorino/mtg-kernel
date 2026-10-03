@@ -2336,6 +2336,7 @@ def _goldens(inventory: dict[str, Any]) -> dict[str, Any]:
         "action_ref_role_crosswalk": action_ref_role_crosswalk,
         "enum_maps": enum_maps,
     }
+    # Exact retained-registry witnesses from Linux and Windows CI run 36807239038.
     fixture_cases = [
         {
             "name": "burn_seed_11_initial",
@@ -2344,7 +2345,7 @@ def _goldens(inventory: dict[str, Any]) -> dict[str, Any]:
             "episode_id": 90001,
             "decision_index": 0,
             "counts": [7, 0, 0, 0, 0, 0, 0, 0, 3, 2, 2],
-            "model_typed_debug_sha256": "385c56399cfd52e593613b7826b363c31bdd50916fca7f0db2f5f39fef3a6b0c",
+            "model_typed_debug_sha256": "da9a1a47089cb74e60a9c1dd62db01bcd72adf05f0e5c1ab91b766909648160f",
             "action_objects_operational_debug_sha256": "caea06d6b76d7d8238d5fc4a426b81b10cef34afe2177821fcc4c7486725c9c7",
         },
         {
@@ -2354,7 +2355,7 @@ def _goldens(inventory: dict[str, Any]) -> dict[str, Any]:
             "episode_id": 90002,
             "decision_index": 0,
             "counts": [7, 0, 0, 0, 0, 0, 0, 0, 5, 4, 4],
-            "model_typed_debug_sha256": "b97e9417ac54c2bc92895be5228bc31284969f26848392755c0fc25d38e34aaf",
+            "model_typed_debug_sha256": "ab9000046edb3650a8b1845381825cef4a8be91a1e43d06ca42897002700bfda",
             "action_objects_operational_debug_sha256": "56e018d1a0e72785d71fc253b172c141005cb2c2e1aae017976d7079b231c42c",
         },
         {
@@ -2364,7 +2365,7 @@ def _goldens(inventory: dict[str, Any]) -> dict[str, Any]:
             "episode_id": 90003,
             "decision_index": 0,
             "counts": [7, 0, 0, 0, 0, 0, 0, 0, 4, 3, 3],
-            "model_typed_debug_sha256": "7bcadc3cd61e34231cd4868826fade9df6fa7d5f61148f1809d550cf655f88eb",
+            "model_typed_debug_sha256": "2cfe24f3b1b68f4a428c1bb96c3cfc3081ecaf4514b35a55c856b842362b35a2",
             "action_objects_operational_debug_sha256": "5ead8f61d3257c0d290675d820fe494e60d9745a63225907b37dd4a11d3c2963",
         },
         {
@@ -2375,7 +2376,7 @@ def _goldens(inventory: dict[str, Any]) -> dict[str, Any]:
             "decision_index": 6,
             "selection_policy": "splitmix64_mod_width_include_true_for_combat_v1",
             "counts": [12, 7, 5, 0, 0, 0, 0, 0, 6, 6, 6],
-            "model_typed_debug_sha256": "6ec7ffaf5ff59de7a198dff514a1640a8a585c41af86637ab6e833450807ce42",
+            "model_typed_debug_sha256": "53f9fdddd409cbde0c0a35169bc595f793e297ffc5506362fe98b62950379ac9",
         },
         {
             "name": "rally_seed_81702_first_relation",
@@ -2385,7 +2386,7 @@ def _goldens(inventory: dict[str, Any]) -> dict[str, Any]:
             "decision_index": 4,
             "selection_policy": "splitmix64_mod_width_include_true_for_combat_v1",
             "counts": [9, 2, 1, 0, 0, 0, 0, 0, 2, 2, 1],
-            "model_typed_debug_sha256": "92f55f54ea4b893e9a8cc4d15b2193e2a5d26832313955a92d825019234489d1",
+            "model_typed_debug_sha256": "b7fad2dc6e4d664e5d5cc120a466f45c1b32582be9ed409ee71af17ba16c09e4",
         },
     ]
     payload: dict[str, Any] = {

@@ -1,5 +1,21 @@
 # FDN Koma implementation and verification
 
+## Integration with current main
+
+Integrated the current-main Homunculus prefix e554b397 and retained the
+explicit-mainboard helper in both feature selections. Default stays at
+192 definitions/v34; Koma and its Coil yield 227 definitions/Limited v44,
+with generated identity d196a0b706b69e48. The catalog-only generator compiled
+and emitted this identity; it does not qualify engine gameplay. Original
+and prior composed FDN profiles remain readable. Mutation still requires
+the exact live tuple.
+
+CI retains all thirteen integration targets, its existing Limited and
+production filters, fresh pinned Windows compiler paths and the unchanged
+isolated snapshot workload. Formatting, workflow lint, diff and catalog
+checks passed. Composed-source hosted Rust/gameplay/native/production checks
+remain pending. Earlier isolated-source qualification below is historical.
+
 Hosted CI at `c19bd3544f6bcb2f306ce70577881bcd64725b3d` passed all eight checks: Rust on
 Ubuntu and Windows, all four Python shards, formatting/lint and path detection.
 Run: https://github.com/jackmaiorino/mtg-kernel/actions/runs/36991952282. Earlier pending entries below record the original

@@ -32,7 +32,7 @@
 
 use crate::effect::{
     CreatureFilter, CreatureSacrificeFilter, EffectCond, EffectOp, ImpulseDuration,
-    LibraryCardFilter, ObjectRef, PlayerRef, TargetRef,
+    LibraryCardFilter, ObjectRef, PlayerRef, PumpControllerScope, TargetRef,
 };
 use crate::mana::{Cost, ManaColor, ManaColorSetV1, Pip};
 use crate::state::Zone;
@@ -209,6 +209,33 @@ pub enum Subtype {
     /// Appended for the 4/1 black Skeleton token created by Undercity's
     /// Catacombs room. Existing stable ids remain fixed.
     Skeleton,
+    /// Appended for the 1/1 green Squirrel token created by Acorn Harvest.
+    /// Existing stable ids remain fixed.
+    Squirrel,
+    /// Appended for Abandon Attachments' Strixhaven Lesson subtype (not a
+    /// creature type; excluded from `CREATURE_TYPES`/`is_creature_type`
+    /// same as Equipment/Aura/Gate/Saga/Map/Treasure/Clue/Food/Blood).
+    /// Existing stable ids remain fixed.
+    Lesson,
+    /// Appended for Insectile Aberration, Delver of Secrets' transformed
+    /// back face. Existing stable ids remain fixed.
+    Insect,
+    /// Appended for Gurmag Angler. Existing stable ids remain fixed.
+    Fish,
+    /// Appended for the three Urza lands' shared `"Urza's"` subtype (pauper
+    /// meta wave 2). Not a creature type. Existing stable ids remain fixed;
+    /// see this module's doc on append-only discriminants.
+    Urzas,
+    /// Appended for Urza's Tower. Not a creature type.
+    Tower,
+    /// Appended for Urza's Power Plant (registry spelling `"Power-Plant"`).
+    /// Not a creature type.
+    PowerPlant,
+    /// Appended for Urza's Mine. Not a creature type.
+    Mine,
+    /// Appended for Conduit Pylons' printed Desert subtype (pauper meta wave
+    /// 2 Task 3). Not a creature type.
+    Desert,
     /// FDN types append without changing any existing observation id.
     Angel,
     Noble,
@@ -279,6 +306,9 @@ impl Subtype {
         Subtype::Phyrexian,
         Subtype::Horror,
         Subtype::Nightmare,
+        Subtype::Squirrel,
+        Subtype::Insect,
+        Subtype::Fish,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Angel,
         #[cfg(feature = "limited-fdn-fixtures")]
@@ -400,6 +430,9 @@ impl Subtype {
                 | Subtype::Phyrexian
                 | Subtype::Horror
                 | Subtype::Nightmare
+                | Subtype::Squirrel
+                | Subtype::Insect
+                | Subtype::Fish
                 | Subtype::Beast
                 | Subtype::Cleric
         )
@@ -541,6 +574,10 @@ pub enum TargetSpec {
     /// announcing player. Appended for Masked Vandal and Troublemaker Ouphe
     /// without changing any existing target identity.
     OpponentArtifactOrEnchantmentPermanent,
+    /// Exactly one creature on either battlefield whose printed colors do
+    /// not include black. Appended for Snuff Out without changing any
+    /// earlier target identity.
+    NonblackCreature,
     /// Either player's artifact or enchantment. Cathar Commando may target
     /// its controller's own permanent. Existing target identities stay fixed.
     ArtifactOrEnchantmentPermanent,
@@ -592,11 +629,12 @@ impl TargetSpec {
             TargetSpec::NoncreatureArtifactPermanent => 33,
             TargetSpec::Land => 34,
             TargetSpec::OpponentArtifactOrEnchantmentPermanent => 35,
-            TargetSpec::ArtifactOrEnchantmentPermanent => 36,
-            TargetSpec::ControlledCreatureThenOpponentCreature => 37,
-            TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker => 38,
-            TargetSpec::AttackingOrBlockingCreature => 39,
-            TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_) => 40,
+            TargetSpec::NonblackCreature => 36,
+            TargetSpec::ArtifactOrEnchantmentPermanent => 37,
+            TargetSpec::ControlledCreatureThenOpponentCreature => 38,
+            TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker => 39,
+            TargetSpec::AttackingOrBlockingCreature => 40,
+            TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_) => 41,
         }
     }
 }
@@ -631,6 +669,11 @@ impl Keywords {
     /// The permanent spell may be cast whenever its controller has
     /// priority, using the same timing permission as an instant.
     pub const FLASH: Keywords = Keywords(1 << 15);
+    /// The object can't be blocked, unconditionally (509.1b analog for a
+    /// granted rather than printed evasion ability). Artful Dodge is the
+    /// first consumer -- see `engine::legal_blockers_for`'s `ISLANDWALK`
+    /// check, which this sits beside.
+    pub const CANT_BE_BLOCKED: Keywords = Keywords(1 << 16);
 
     pub const fn has(self, other: Keywords) -> bool {
         self.0 & other.0 != 0
@@ -664,7 +707,7 @@ impl std::ops::BitOr for Keywords {
 }
 
 /// Typed filter for a chosen permanent paid as an activation cost.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PermanentFilterDef {
     /// A permanent with both the Land card type and the named effective
     /// subtype. Control is checked independently from the ownership-oriented
@@ -674,9 +717,13 @@ pub enum PermanentFilterDef {
     /// color. Control and untapped status are checked independently by the
     /// cost component that consumes this filter.
     CreatureWithColor(ManaColor),
+    /// A permanent with the Artifact card type. Appended for Glint Hawk's
+    /// "return an artifact you control" ETB cost without changing any
+    /// existing filter identity.
+    Artifact,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PermanentFilter {
     /// A controlled permanent whose definition has either the Artifact or
     /// Creature card type. Artifact creatures and artifact lands match once.
@@ -687,6 +734,12 @@ pub enum PermanentFilter {
     /// A controlled permanent with the Creature card type. Appended for
     /// Dread Return's flashback cost.
     Creature,
+    /// A controlled permanent with the Land card type. Appended for Raze's
+    /// "sacrifice a land" additional cost. `Hash`/`Serialize`/`Deserialize`
+    /// were added to this enum's derive list alongside this variant so it
+    /// can be embedded in `effect::EffectOp::PumpAllUntilEndOfTurn`, which
+    /// (like every other `EffectOp` variant) must derive those traits.
+    Land,
 }
 
 /// One component of a composite cost. Composable (a real cost is `&'static
@@ -780,6 +833,33 @@ pub enum AttachmentDef {
     AuraCreature { prevents_untap: bool },
 }
 
+/// The ordered alternative cost you may pay instead of a spell's printed
+/// mana cost (601.2b), plus the condition (if any) required to offer it.
+/// Fireblast and Land Grant's alternative costs are always offerable
+/// (`AltCostCondition::Always`); Snuff Out is the first consumer whose
+/// alternative cost is conditioned on the caster's own battlefield.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AltCostDef {
+    pub components: &'static [CostComponent],
+    pub condition: AltCostCondition,
+}
+
+/// Whether an `AltCostDef` may currently be offered and paid. Evaluated
+/// against the caster's battlefield both at offer time
+/// (`engine::payable_cast_modes`/`engine::is_castable_now`) and again at
+/// payment time (`engine::remaining_cast_payment_is_payable`), since a
+/// Swamp present when the cast began could leave play before payment
+/// completes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AltCostCondition {
+    /// No condition: the alternative cost is always offerable if payable
+    /// (Fireblast, Land Grant).
+    Always,
+    /// The caster must control a permanent with the named subtype (Snuff
+    /// Out: "If you control a Swamp...").
+    ControlsPermanentWithSubtype(Subtype),
+}
+
 /// The ordered cost of casting a card from the graveyard via flashback
 /// (702.10), exiling it instead of returning it to the graveyard whenever it
 /// would leave the stack. An ordered component slice supports composite costs
@@ -801,6 +881,13 @@ pub struct EscapeDef {
 /// ability). Permanent abilities, hand-zone Cycling/typecycling, and
 /// graveyard abilities such as Embalm share the same no-target,
 /// inline-`EffectOp` stack representation (see `state::StackItem::inline_effect`).
+///
+/// `Clone`/`Copy` let `engine::resolved_activated_ability` return this
+/// by value: a printed ability borrowed straight out of `CardDef::
+/// activated_abilities`, or one synthesized on the fly from an attached
+/// Equipment's `GrantedActivatedAbilityDef` (Viridian Longbow), behind the
+/// same owned type so every activation call site treats both uniformly.
+#[derive(Debug, Clone, Copy)]
 pub struct ActivatedAbilityDef {
     pub cost: &'static [CostComponent],
     pub target_spec: TargetSpec,
@@ -851,6 +938,11 @@ pub enum ManaAbilityCostDef {
     /// Treasure's printed `{T}, Sacrifice this artifact` cost. Keeping the
     /// combined cost atomic prevents either half from being approximated.
     TapAndSacrificeSelf,
+    /// No object cost at all beyond the ability's own mana cost: Barrels of
+    /// Blasting Jelly's `{1}: Add one mana of any color` has no tap symbol.
+    /// Appended for pauper meta wave 2 Task 3; existing discriminants remain
+    /// fixed.
+    None,
 }
 
 /// Amount of the chosen color added by a mana ability.
@@ -877,6 +969,30 @@ pub enum DynamicValueDef {
     /// graveyard. The controller is supplied by the effect or mana-ability
     /// context at the moment the value is sampled.
     ControllerGraveyardCardsWithType(CardType),
+    /// `amount_when_met` when the evaluating controller controls at least
+    /// one battlefield permanent matching *each* entry of `required`, and
+    /// `amount_otherwise` when any entry has no match. The two-entry array
+    /// keeps the enum `Copy`, `Serialize`, and `Deserialize` (a slice or
+    /// `Vec` payload would not), which every `DynamicValueDef` consumer
+    /// relies on. Appended for the Urza lands' `UrzaTerrainValue` without
+    /// renumbering existing variants.
+    AmountIfControllerControlsEach {
+        required: [SubtypeConjunctionDef; 2],
+        amount_when_met: u8,
+        amount_otherwise: u8,
+    },
+}
+
+/// Two subtypes a *single* permanent must carry at once, e.g. the Urza's
+/// Mine piece is a permanent whose effective subtypes contain both
+/// `Subtype::Urzas` and `Subtype::Mine`. A pair of independent single-type
+/// queries would wrongly assemble Tron from an unrelated Mine and an
+/// unrelated Urza's land, which is exactly what XMage's per-piece
+/// `FilterControlledPermanent` conjunction prevents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SubtypeConjunctionDef {
+    pub first: Subtype,
+    pub second: Subtype,
 }
 
 /// Reusable definition for a single printed mana ability whose cost, amount,
@@ -936,6 +1052,22 @@ pub struct BestowDef {
     pub target_spec: TargetSpec,
 }
 
+/// Adventure's alternative spell characteristics (Fang Dragon's Forktail
+/// Sweep). Form zero remains the ordinary creature spell, castable from hand
+/// at its own printed timing; this form is the named instant/sorcery,
+/// castable from hand at sorcery/instant speed per its own `types`. Unlike
+/// Bestow/Omen, resolving this form does not send the physical card to its
+/// normal post-resolution zone: `engine::finish_resolved_stack_item` exiles
+/// it and stamps `ObjectStateV4::on_adventure = true` instead, so the
+/// creature face may later be cast from exile -- see that flag's doc.
+pub struct AdventureDef {
+    pub name: &'static str,
+    pub cost: Cost,
+    pub types: &'static [CardType],
+    pub target_spec: TargetSpec,
+    pub effect: fn() -> EffectOp,
+}
+
 /// A deterministic value sampled while deriving a spell's total generic
 /// mana cost. Kept data-driven and card-name-neutral so the same cast-cost
 /// path can serve battlefield reducers (Affinity), graveyard reducers
@@ -992,10 +1124,48 @@ pub struct SagaDef {
     pub chapter_effects: &'static [fn() -> EffectOp],
 }
 
+/// A non-mana activated ability an Equipment grants to whichever creature it
+/// is attached to (Viridian Longbow's "{T}: deal 1 damage to any target").
+/// Deliberately narrower than `ActivatedAbilityDef`: a granted ability is
+/// always usable at instant speed on the battlefield, has no source-relative
+/// target filter beyond `target_spec`, and no per-turn activation cap in this
+/// pool, so those fields aren't carried here -- `engine::
+/// equipped_granted_activated_ability` fills them in with those fixed
+/// defaults when it synthesizes the full `ActivatedAbilityDef` the rest of
+/// the activation machinery consumes.
+///
+/// No `PartialEq`/`Eq`: like `ActivatedAbilityDef`/`ModeDef`/`OmenDef`, this
+/// carries a raw `fn() -> EffectOp` pointer, whose equality is not
+/// meaningful across codegen units (`unpredictable_function_pointer_
+/// comparisons`); nothing in this pool compares two ability definitions for
+/// equality, only their individual fields.
+#[derive(Debug, Clone, Copy)]
+pub struct GrantedActivatedAbilityDef {
+    pub cost: &'static [CostComponent],
+    pub target_spec: TargetSpec,
+    pub effect: fn() -> EffectOp,
+}
+
+/// Viridian Longbow's granted ability: "This creature deals 1 damage to any
+/// target." Hand-written (not build.rs's `AbilityEffectRecipe` codegen,
+/// which only walks `CardDef::activated_abilities`/omen recipes) because
+/// this effect belongs to `EquipmentDef::granted_activated_ability`, a
+/// separate table keyed by the Equipment's own name rather than the
+/// creature that ends up with the ability.
+fn longbow_ping() -> EffectOp {
+    EffectOp::DealDamage {
+        target: TargetRef::Target(0),
+        amount: 1,
+    }
+}
+
 /// Reusable static and triggered grants produced by an attached Equipment.
 /// The attachment relation itself is incarnation-bound in `state.rs`; this
 /// definition contains only printed characteristics and granted abilities.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// No `PartialEq`/`Eq` since `GrantedActivatedAbilityDef` (nested via
+/// `granted_activated_ability`) has none -- see that type's doc.
+#[derive(Debug, Clone, Copy)]
 pub struct EquipmentDef {
     pub power_delta: i16,
     pub toughness_delta: i16,
@@ -1004,6 +1174,10 @@ pub struct EquipmentDef {
     pub other_turn_keywords: Keywords,
     pub noncreature_spell_damage_to_each_opponent: u8,
     pub job_select: bool,
+    /// A non-mana activated ability the equipped creature gains while this
+    /// Equipment is attached to it (Viridian Longbow). `None` for every
+    /// other Equipment in the pool.
+    pub granted_activated_ability: Option<GrantedActivatedAbilityDef>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1065,9 +1239,10 @@ pub struct CardDef {
     /// authoritative for multi-color permanents.
     pub mana_ability: fn() -> Option<EffectOp>,
     /// `Some` iff this card has an alternative cost you may pay instead of
-    /// its mana cost (Fireblast). Choosing between them is a real decision
-    /// (`engine::Decision::ChooseCastMode`) when both are legal.
-    pub alt_cost: Option<&'static [CostComponent]>,
+    /// its mana cost (Fireblast, Snuff Out). Choosing between them is a real
+    /// decision (`engine::Decision::ChooseCastMode`) when both are legal;
+    /// `AltCostDef::condition` gates whether the alternative is legal at all.
+    pub alt_cost: Option<AltCostDef>,
     /// `Some` iff this card has Kicker (`KickerAbility`): an optional
     /// additional cost you may pay as you cast it, stamped onto the spell's
     /// own `state::StackItem::kicked` once paid (`engine::finalize_cast`)
@@ -1173,6 +1348,36 @@ pub struct CardDef {
     /// Alternative Bestow spell characteristics. Appended so every earlier
     /// generated field identity remains stable.
     pub bestow: Option<BestowDef>,
+    /// True iff this spell has Delve (702.65): each card its controller
+    /// exiles from their own graveyard while casting it pays for {1} of its
+    /// generic cost, up to the printed generic amount. Only Gurmag Angler
+    /// this increment. Appended so every earlier generated field identity
+    /// remains stable; see `mana::delve_payment_plan` for the payment-time
+    /// mechanics and `build.rs`'s `delve_for` for the source table.
+    pub delve: bool,
+    /// Alternative Adventure spell characteristics, if any. Appended so
+    /// every earlier generated field identity remains stable; see
+    /// `AdventureDef`'s doc and `build.rs`'s `adventure_for` for the source
+    /// table.
+    pub adventure: Option<AdventureDef>,
+    /// True iff this permanent can't be blocked by creatures controlled by
+    /// whoever currently holds the monarchy (Azure Fleet Admiral). Read by
+    /// `engine::legal_blockers_for`. Appended so every earlier generated
+    /// field identity remains stable.
+    pub cant_be_blocked_by_monarchs_creatures: bool,
+    /// How many mana one activation of this card's *primary* printed mana
+    /// ability adds, when that amount is board dependent. `None` (every card
+    /// but the three Urza lands) means the legacy one-per-tap contract.
+    ///
+    /// Deliberately distinct from `mana_ability_def`: a card with a rich
+    /// `ManaAbilityDef` is excluded from `is_automatic_payment_mana_source`
+    /// and can only be used through an explicit activation action, which for
+    /// twelve of Urzatron's lands would change the whole deck's action
+    /// surface. A conditional yield instead stays on the automatic payment
+    /// path, where `mana::gather_sources` samples it into
+    /// `mana::ManaSource::yield_per_tap`. Appended so every earlier
+    /// generated field identity remains stable.
+    pub conditional_tap_yield: Option<DynamicValueDef>,
 }
 
 impl CardDef {
@@ -1363,14 +1568,27 @@ impl CardDef {
                 .primary_mana_ability_choices(chosen_color)
                 .contains(&choice))
         .then(|| {
+            // A conditional yield adds the same 1-or-more the automatic
+            // payment planner would have taken from this source, sampled at
+            // activation resolution by the same `DynamicValueDef` the
+            // planner samples at solve time, so a hand-activated Urza's
+            // Tower and an automatically tapped one can never disagree.
+            let add = match self.conditional_tap_yield {
+                Some(amount) => EffectOp::AddManaDynamic {
+                    player: PlayerRef::Controller,
+                    color: choice,
+                    amount,
+                },
+                None => EffectOp::AddMana {
+                    player: PlayerRef::Controller,
+                    colors: vec![choice],
+                },
+            };
             EffectOp::Sequence(vec![
                 EffectOp::TapObject {
                     object: ObjectRef::ThisSource,
                 },
-                EffectOp::AddMana {
-                    player: PlayerRef::Controller,
-                    colors: vec![choice],
-                },
+                add,
             ])
         })
     }
@@ -1471,12 +1689,32 @@ mod tests {
     fn card_defs_len_matches_pool() {
         // Hero Token remains id 159 and Clue Token remains id 160. Skeleton
         // Token is appended as id 161 without renumbering earlier ids.
+        // Terminate, Ancient Grudge, Artful Dodge, Abandon Attachments, and
+        // Acorn Harvest are appended as ids 162-166 and Squirrel Token as
+        // id 167, again without renumbering earlier ids. Suffocating Fumes,
+        // Arms of Hadar, Smash to Smithereens, and Raze are appended as ids
+        // 168-171, again without renumbering earlier ids. Snuff Out,
+        // Contaminated Aquifer, Ice Tunnel, Kessig Flamebreather, Gixian
+        // Infiltrator, Webweaver Changeling, and Glint Hawk are appended as
+        // ids 172-178, again without renumbering earlier ids. Delver of
+        // Secrets is appended as id 179, again without renumbering earlier
+        // ids. Gurmag Angler and Viridian Longbow are appended as ids
+        // 180-181. Fang Dragon and Azure Fleet Admiral are appended as ids
+        // 182-183, again without renumbering earlier ids. Urza's Tower,
+        // Urza's Power Plant, and Urza's Mine are appended as ids 184-186
+        // (pauper meta wave 2 Task 2), again without renumbering earlier
+        // ids. Bojuka Bog, Conduit Pylons, Expedition Map, Bonder's
+        // Ornament, and Barrels of Blasting Jelly are appended as ids
+        // 187-191 (pauper meta wave 2 Task 3), again without renumbering
+        // earlier ids.
+        // The `limited-fdn-fixtures` feature appends six FDN fixture
+        // definitions as ids 192-197 after every Pauper definition.
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                197
+                227
             } else {
-                162
+                192
             }
         );
     }
@@ -1526,7 +1764,14 @@ mod tests {
             (TargetSpec::NoncreatureArtifactPermanent, 33),
             (TargetSpec::Land, 34),
             (TargetSpec::OpponentArtifactOrEnchantmentPermanent, 35),
-            (TargetSpec::ArtifactOrEnchantmentPermanent, 36),
+            (TargetSpec::NonblackCreature, 36),
+            (TargetSpec::ArtifactOrEnchantmentPermanent, 37),
+            (TargetSpec::ControlledCreatureThenOpponentCreature, 38),
+            (
+                TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker,
+                39,
+            ),
+            (TargetSpec::AttackingOrBlockingCreature, 40),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);
@@ -1543,14 +1788,20 @@ mod tests {
 
     #[test]
     #[cfg(not(feature = "limited-fdn-fixtures"))]
-    fn card_db_hash_v32_is_frozen() {
-        assert_eq!(KERNEL_CARDDB_HASH, 0x64c8_2a26_1e07_8f1a);
+    fn card_db_hash_v34_is_frozen() {
+        // Version 34 folds in `conditional_tap_yield`, the board-dependent
+        // per-tap mana amount carried by the three Urza lands, appended
+        // after `cant_be_blocked_by_monarchs_creatures` without renumbering
+        // prior definitions. Version 33 folded in Fang Dragon's Adventure
+        // characteristics/effect (Forktail Sweep) and Azure Fleet Admiral's
+        // `cant_be_blocked_by_monarchs_creatures` static flag.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x064a_7c98_9255_ab3c);
     }
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v42_is_frozen() {
-        const EXPECTED_FDN: u64 = 0xf4fb_a615_44ae_7963;
+    fn card_db_hash_v44_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0xd196_a0b7_06b6_9e48;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
@@ -1574,6 +1825,42 @@ mod tests {
             );
         }
         assert_eq!(card_id_by_name("Not A Real Card"), None);
+    }
+
+    // covers: Insectile Aberration: visible_name_resolves_to_face_index_1
+    #[test]
+    fn visible_name_resolves_faces() {
+        let delver = card_id_by_name("Delver of Secrets").expect("Delver of Secrets in CARD_DEFS");
+        assert_eq!(
+            card_id_by_visible_name("Delver of Secrets"),
+            Some((delver, 0))
+        );
+        assert_eq!(
+            card_id_by_visible_name("Insectile Aberration"),
+            Some((delver, 1))
+        );
+        // A second transforming card confirms the back-face table isn't
+        // just a single-entry special case.
+        let modern_age = card_id_by_name("The Modern Age").expect("The Modern Age in CARD_DEFS");
+        assert_eq!(
+            card_id_by_visible_name("The Modern Age"),
+            Some((modern_age, 0))
+        );
+        assert_eq!(
+            card_id_by_visible_name("Vector Glider"),
+            Some((modern_age, 1))
+        );
+        assert_eq!(card_id_by_visible_name("Nonexistent"), None);
+
+        // Every front face resolves to face 0, matching `card_id_by_name`.
+        for (i, def) in CARD_DEFS.iter().enumerate() {
+            assert_eq!(
+                card_id_by_visible_name(def.name),
+                Some((i as u16, 0)),
+                "front face name={}",
+                def.name
+            );
+        }
     }
 
     #[test]
@@ -2106,7 +2393,23 @@ mod tests {
         let def = &CARD_DEFS[id as usize];
         assert_eq!(
             def.alt_cost,
-            Some([CostComponent::SacrificeLands(2)].as_slice())
+            Some(AltCostDef {
+                components: [CostComponent::SacrificeLands(2)].as_slice(),
+                condition: AltCostCondition::Always,
+            })
+        );
+    }
+
+    #[test]
+    fn snuff_out_has_a_pay_four_life_alt_cost_conditioned_on_a_swamp() {
+        let id = card_id_by_name("Snuff Out").expect("Snuff Out in pool");
+        let def = &CARD_DEFS[id as usize];
+        assert_eq!(
+            def.alt_cost,
+            Some(AltCostDef {
+                components: [CostComponent::PayLife(4)].as_slice(),
+                condition: AltCostCondition::ControlsPermanentWithSubtype(Subtype::Swamp),
+            })
         );
     }
 

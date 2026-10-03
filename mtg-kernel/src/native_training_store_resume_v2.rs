@@ -661,13 +661,16 @@ fn resume_native_training_store_impl_v1(
     // mutation. `validate_native_training_store_v2` (the read-only walk used
     // to verify sealed evidence stores) deliberately performs no such
     // rejection; only this mutator path does. Exhaustive match (fix round,
-    // panel finding 3): a future profile variant fails this match at
-    // compile time rather than silently resuming under it. The CURRENT arm
+    // panel finding 3): an unhandled future profile variant fails this match
+    // at compile time rather than silently resuming under it. The CURRENT arm
     // (fix round, panel finding 1, blocker: bypass) additionally requires the
     // record's own catalog fields to equal the crate's live build constants
     // at this moment, not merely the pinned CURRENT literal -- closing the
     // gap where a record merely claiming that literal, authored by a build
     // whose real identity has since moved past it, could still resume.
+    // PauperMetaW1 (schema migration, card lane, design ruling 6, approved
+    // 2026-09-10) shares the CURRENT arm identically: same live-build-identity check,
+    // same error kind on mismatch.
     use crate::native_training_store_run_v2::{
         current_profile_matches_live_build_identity_v1, NativeRunCatalogProfileV1,
     };
@@ -678,6 +681,7 @@ fn resume_native_training_store_impl_v1(
             ));
         }
         NativeRunCatalogProfileV1::Current
+        | NativeRunCatalogProfileV1::PauperMetaW1
         | NativeRunCatalogProfileV1::FdnFixtureBatchA
         | NativeRunCatalogProfileV1::FdnFixtureBatchB
         | NativeRunCatalogProfileV1::FdnCombatCards
@@ -687,7 +691,12 @@ fn resume_native_training_store_impl_v1(
         | NativeRunCatalogProfileV1::FdnLifegainCreatures
         | NativeRunCatalogProfileV1::FdnDrawCreatures
         | NativeRunCatalogProfileV1::FdnHomunculusCreature
-        | NativeRunCatalogProfileV1::FdnKomaCreature => {
+        | NativeRunCatalogProfileV1::FdnKomaCreature
+        | NativeRunCatalogProfileV1::FdnCounterCreaturesRebased
+        | NativeRunCatalogProfileV1::FdnLifegainCreaturesRebased
+        | NativeRunCatalogProfileV1::FdnDrawCreaturesRebased
+        | NativeRunCatalogProfileV1::FdnHomunculusCreatureRebased
+        | NativeRunCatalogProfileV1::FdnKomaCreatureRebased => {
             if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
                 return Err(resume_error_v2(
                     NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch,
@@ -1680,17 +1689,18 @@ mod windows_resume_tests {
     }
 
     /// Dual-Profile Catalog Successor fix round (panel finding 1, blocker:
-    /// bypass), resume boundary: an FDN-profile run whose embedded
+    /// bypass), resume boundary: a live-profile run whose embedded
     /// catalog fields do not equal the crate's live build constants at this
     /// moment is rejected with the specific `CurrentCatalogProfileLiveMismatch`
     /// kind before the root is even recaptured. The crate's real live
     /// constants cannot be changed from a test, so this simulates a future
     /// catalog move via the module's own per-thread test shim
     /// (`LiveCatalogBuildIdentityOverrideGuardV1`): the record still claims
-    /// the pinned FDN literal (and so still classifies the selected live profile), but
+    /// the live build's pinned profile literal (and so still classifies as
+    /// that profile), but
     /// the shimmed "live" identity has moved past it.
     #[test]
-    fn resume_rejects_an_fdn_catalog_profile_run_whose_live_identity_has_moved() {
+    fn resume_rejects_a_current_catalog_profile_run_whose_live_identity_has_moved() {
         use crate::native_training_store_run_v2::LiveCatalogBuildIdentityOverrideGuardV1;
 
         let parent = TestParentV2::new("current-catalog-profile-live-mismatch");

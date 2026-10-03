@@ -1,0 +1,55 @@
+{
+  "schema": "cuda-ordinary-merge-witness/v1",
+  "source_commit": "bba7779a13081dd150e8ea4524d50be3f3b6d519",
+  "witness_root": "E:\\mtg-pr112-merge-readiness-20261001\\native-check-001",
+  "finished_utc": "2026-10-01T07:44:38.599821+00:00",
+  "test_binary": {
+    "path": "E:\\pinned-binaries\\9bfeda6b0a490584f17d2e4a1aade177bbb7b1f2b99630121df11f2271c79762\\mtg_kernel-c2def65f541e2de6.exe",
+    "sha256": "9bfeda6b0a490584f17d2e4a1aade177bbb7b1f2b99630121df11f2271c79762"
+  },
+  "toolchain": {
+    "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-pc-windows-msvc\nrelease: 1.94.1\nLLVM version: 21.1.8\n",
+    "cargo": "cargo 1.94.1 (29ea6fb6a 2026-03-24)\n",
+    "linker_sha256": "ee9b29be652eee20affa6963a7ce54d01271b0f1b2443e315ea86469cbb95694",
+    "linker_banner": "Microsoft (R) Incremental Linker Version 14.50.35725.0"
+  },
+  "gpus": [
+    "0, NVIDIA GeForce RTX 4070 SUPER, GPU-3502709e-6aef-8ed7-4abe-562838793e3d, 596.36",
+    "1, NVIDIA GeForce RTX 3050, GPU-0642d3ca-e3d4-ba16-96ab-c561c6da90e3, 596.36"
+  ],
+  "input_sha256": {
+    "Cargo.lock": "1a3ae3519ffec29e011faeb17c77a92966d6164622107a7217d0e2bad0f3a5e9",
+    "rust-toolchain.toml": "d52c5633ea77aefd345519d0a6c87e19c2636a1e90178585c30db481b3de9de0",
+    "data/cards_v1.json": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
+    "data/runtime_decks_v1.json": "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851",
+    "data/pauper_pool_v1.json": "f7d6e129a83ee32874a567b47346a66af52c7a7d98fa41cc7ce284ddff8d91c9"
+  },
+  "observed_state_sha256": "b3ec22aa8823e6e51d30acdac6b69883eb4a737eb57b55f0b7e2405d26242892",
+  "previous_state_sha256": "059a4b805466577ebb5385b5e5fd122a18ff2bb75c7e587a775702b5370d476a",
+  "fixtures": [
+    {
+      "name": "ordinary_trainer_two_iteration_v4_fixture_cuda_stamps_v4_and_restores_cleanly",
+      "exit_code": 101,
+      "log_sha256": "9887bf986e531caa689b884b453082a82b07c5dbf59d843367b7fe364430db40"
+    },
+    {
+      "name": "ordinary_trainer_two_iteration_v4_fixture_cuda_is_bit_identical_across_two_runs_in_one_process",
+      "exit_code": 101,
+      "log_sha256": "51a94102d8ce0e1d13b93ad31e2dfb48076964de5cb0a91cf2f4d6eabbd8b27a"
+    },
+    {
+      "name": "ordinary_trainer_two_iteration_v4_fixture_cuda_is_bit_identical_across_two_processes",
+      "exit_code": 101,
+      "log_sha256": "95f2ed2152bdbab63528b830f11c86046c627b01508eca5908060f3d79375f0d"
+    }
+  ],
+  "disposition": {
+    "golden_and_same_process": "restore and same-process equality assertions reached; failure was the old exact pin",
+    "separate_process": "first worker produced the same observed state, but the reader failed because serial libtest prefixed the marker; comparison of two workers was not reached",
+    "source_fix": "keep exact equality assertions, refresh the observed state pin, and prefix the worker marker with a newline"
+  },
+  "nonclaims": [
+    "failed first witness is preserved",
+    "not a formal experiment or playing-strength result"
+  ]
+}
