@@ -96,3 +96,24 @@ the explicit-release case passes with the same eight-second inspection delay
 (1case,9.759seconds). Hosted Python qualification remains pending. Existing
 London runtime jobs remain on cd7f451b; this change affects only the Python
 test and this report.
+
+## Isolated Windows timing failure
+
+Lifegain-mechanics Windows job111116909367 at50ea8189 failed the isolated
+snapshot case at68.294microseconds per clone against the40microsecond budget.
+The preceding library run passed2335cases with82existing ignores, but the
+default release step failed overall; native, FDN and CUDA steps were skipped.
+Isolation alone did not establish the timing requirement on that runner.
+
+The next bounded environment check gives only the short Windows timing
+process HIGH_PRIORITY_CLASS. Correctness tests keep normal priority, and the
+snapshot implementation,80objects,200warmups,2000iterations,40microsecond
+assertion, compiler and linker settings are unchanged. A local child-process
+smoke check observes normal0x20 and timing0x80. Python compilation and diff
+checks pass. Scheduling contention remains a hypothesis until hosted timing
+and the complete matrix pass; this does not reclassify the failed job.
+
+The path classifier now treats both native CI runner scripts as Rust-relevant.
+A runner-only change must execute the Rust matrix to qualify its actual test
+procedure. Existing library, integration, production and CUDA commands remain
+selected. The original London runtime jobs continue on cd7f451b.
