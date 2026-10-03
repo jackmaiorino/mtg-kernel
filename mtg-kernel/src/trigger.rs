@@ -112,6 +112,10 @@ pub enum TriggerCondition {
     /// does not satisfy this event.
     Attacks,
     ControlledLandEnters,
+    ControllerGainsLife,
+    ControllerAddedPlusOneCountersToSelf {
+        max_per_turn: Option<u16>,
+    },
 }
 
 pub struct TriggeredAbilityDef {
@@ -260,6 +264,32 @@ const MOSSBORN_HYDRA_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::ControlledLandEnters,
     ..etb_trigger(double_counter_marker_effect)
 }];
+
+const EXEMPLAR_OF_LIGHT_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::ControllerGainsLife,
+        ..etb_trigger(writhing_chrysalis_counter_marker_effect)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::ControllerAddedPlusOneCountersToSelf {
+            max_per_turn: Some(1),
+        },
+        ..etb_trigger(ichor_wellspring_draw_effect)
+    },
+];
+
+const SUN_BLESSED_HEALER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    intervening_if_kicked: true,
+    ..etb_trigger(sun_blessed_healer_effect)
+}];
+
+fn sun_blessed_healer_effect() -> EffectOp {
+    EffectOp::Conditional {
+        cond: EffectCond::WasKicked,
+        then: Box::new(EffectOp::ReturnTargetPermanentToBattlefield { target_index: 0 }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    }
+}
 
 fn double_counter_marker_effect() -> EffectOp {
     EffectOp::BindDoublePlusOneCountersToTriggerSource
@@ -1264,6 +1294,8 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         return &JOB_SELECT_TRIGGERS;
     }
     match card.name {
+        "Exemplar of Light" => &EXEMPLAR_OF_LIGHT_TRIGGERS,
+        "Sun-Blessed Healer" => &SUN_BLESSED_HEALER_TRIGGERS,
         "Mossborn Hydra" => &MOSSBORN_HYDRA_TRIGGERS,
         "Beast-Kin Ranger" => &BEAST_KIN_RANGER_TRIGGERS,
         "Dwynen, Gilt-Leaf Daen" => &DWYNEN_TRIGGERS,
@@ -1332,6 +1364,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         return TargetSpec::None;
     };
     match card.name {
+        "Sun-Blessed Healer" => TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(2),
         "Balustrade Spy" => TargetSpec::AnyPlayer,
         "Lotleth Giant" => TargetSpec::TargetOpponent,
         "Harrier Strix" => TargetSpec::AnyPermanent,
@@ -1803,10 +1836,22 @@ pub(crate) fn collect_and_process_with_waiting(
 }
 
 fn triggers_from_events(
-    state: &GameState,
+    state: &mut GameState,
     events: &[CommittedEvent],
     kicked_source: Option<ObjectId>,
 ) -> Vec<PendingTrigger> {
+    let mut uses = state.trigger_uses_v1.clone().unwrap_or_default();
+    uses.retain(|entry| {
+        entry.turn == state.turn
+            && entry.active_player == state.active_player
+            && state
+                .objects
+                .try_get(entry.source.object)
+                .is_some_and(|object| {
+                    object.zone == Zone::Battlefield
+                        && object.zone_change_count == entry.source.zone_change_count
+                })
+    });
     let draws_this_turn_at = draws_this_turn_snapshot(events, state);
     let mut new_triggers = Vec::new();
     for (id, obj) in state.objects.iter() {
@@ -1861,7 +1906,7 @@ fn triggers_from_events(
                 });
             }
         }
-        for def in triggers_for(obj.card_def) {
+        for (ability_index, def) in triggers_for(obj.card_def).iter().enumerate() {
             let uses_leave_lki = matches!(
                 def.condition,
                 TriggerCondition::LeftBattlefieldToGraveyard | TriggerCondition::LeftBattlefield
@@ -1953,6 +1998,36 @@ fn triggers_from_events(
                         };
                     let target_spec =
                         target_spec_for_trigger(obj.card_def, &effect).unwrap_or(TargetSpec::None);
+                    if let TriggerCondition::ControllerAddedPlusOneCountersToSelf {
+                        max_per_turn: Some(maximum),
+                    } = def.condition
+                    {
+                        let ability_index =
+                            u16::try_from(ability_index).expect("bounded definition abilities");
+                        let source = crate::state::ObjectLinkV4 {
+                            object: id,
+                            zone_change_count: obj.zone_change_count,
+                        };
+                        if let Some(entry) = uses.iter_mut().find(|entry| {
+                            entry.source == source && entry.ability_index == ability_index
+                        }) {
+                            if entry.uses >= maximum {
+                                continue;
+                            }
+                            entry.uses += 1;
+                        } else {
+                            if maximum == 0 {
+                                continue;
+                            }
+                            uses.push(crate::state::TriggerUseV1 {
+                                source,
+                                ability_index,
+                                turn: state.turn,
+                                active_player: state.active_player,
+                                uses: 1,
+                            });
+                        }
+                    }
                     let source_contract = match ev {
                         CommittedEvent::ZoneChange {
                             object,
@@ -2151,6 +2226,8 @@ fn triggers_from_events(
         });
     }
 
+    uses.sort_by_key(|entry| (entry.source.object, entry.ability_index));
+    state.trigger_uses_v1 = (!uses.is_empty()).then_some(uses);
     new_triggers
 }
 
@@ -2243,6 +2320,23 @@ fn trigger_matches(
     draws_this_turn_at_event: u32,
 ) -> bool {
     match (cond, ev) {
+        (TriggerCondition::ControllerGainsLife, CommittedEvent::LifeGain { player, amount }) => {
+            *player == controller && *amount > 0
+        }
+        (
+            TriggerCondition::ControllerAddedPlusOneCountersToSelf { .. },
+            CommittedEvent::PlusOneCountersAdded {
+                object,
+                zone_change_count,
+                player,
+                count,
+            },
+        ) => {
+            *object == source
+                && *zone_change_count == state.objects.get(source).zone_change_count
+                && *player == controller
+                && *count > 0
+        }
         (TriggerCondition::ControlledLandEnters, event) => battlefield_entry_object(event)
             .is_some_and(|object| {
                 state.objects.get(object).controller == controller

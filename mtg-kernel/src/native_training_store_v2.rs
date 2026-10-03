@@ -687,7 +687,9 @@ fn publish_generation_v2(
         | NativeRunCatalogProfileV1::FdnLegendRule
         | NativeRunCatalogProfileV1::FdnTargetedSpells
         | NativeRunCatalogProfileV1::FdnCounterCreatures
-        | NativeRunCatalogProfileV1::FdnCounterCreaturesRebased => {
+        | NativeRunCatalogProfileV1::FdnLifegainCreatures
+        | NativeRunCatalogProfileV1::FdnCounterCreaturesRebased
+        | NativeRunCatalogProfileV1::FdnLifegainCreaturesRebased => {
             if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
                 return Err(publisher_error_v2(
                     NativeTrainingStorePublisherV2ErrorKind::CurrentCatalogProfileLiveMismatch,
@@ -2208,7 +2210,6 @@ mod windows_publisher_tests {
         assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Run).exists());
         assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Latest).exists());
     }
-
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
     fn publish_rejects_prior_fdn_batch_counter_creatures_before_mutating_any_store_files() {

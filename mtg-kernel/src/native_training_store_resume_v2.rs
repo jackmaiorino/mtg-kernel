@@ -688,7 +688,9 @@ fn resume_native_training_store_impl_v1(
         | NativeRunCatalogProfileV1::FdnLegendRule
         | NativeRunCatalogProfileV1::FdnTargetedSpells
         | NativeRunCatalogProfileV1::FdnCounterCreatures
-        | NativeRunCatalogProfileV1::FdnCounterCreaturesRebased => {
+        | NativeRunCatalogProfileV1::FdnLifegainCreatures
+        | NativeRunCatalogProfileV1::FdnCounterCreaturesRebased
+        | NativeRunCatalogProfileV1::FdnLifegainCreaturesRebased => {
             if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
                 return Err(resume_error_v2(
                     NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch,
@@ -1811,7 +1813,6 @@ mod windows_resume_tests {
             NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch
         );
     }
-
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
     fn resume_rejects_prior_fdn_batch_counter_creatures_before_interacting_with_store_contents() {

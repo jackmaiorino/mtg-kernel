@@ -1040,6 +1040,15 @@ pub enum EffectOp {
     DoublePlusOneCountersOnBoundObject {
         object: EffectObjectBinding,
     },
+    /// Return a targeted permanent, choosing an enchantment's host at
+    /// resolution when it is an Aura. The attachment choice is not a target.
+    ReturnTargetPermanentToBattlefield {
+        target_index: u8,
+    },
+    PutBoundAuraOntoBattlefieldAttached {
+        aura: EffectObjectBinding,
+        host: EffectObjectBinding,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -1539,6 +1548,11 @@ pub enum EffectTargetSelectionPurpose {
         candidates: Vec<EffectObjectBinding>,
         canonical_path: Vec<u16>,
     },
+    AttachReturningAura {
+        aura: EffectObjectBinding,
+        original_candidates: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1743,17 +1757,45 @@ pub struct EffectContinuation {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EffectAnsweredChoiceGuard {
-    OwnerLibrarySecondOrBottom { frame: Box<EffectFrame> },
-    CounterUnlessPaysGeneric { frame: Box<EffectFrame> },
-    CounterTargetUnlessPaysGeneric { frame: Box<EffectFrame> },
-    ExileOneFromGraveyard { frame: Box<EffectFrame> },
-    ExileOneMatchingFromGraveyard { frame: Box<EffectFrame> },
-    SacrificeCreature { frame: Box<EffectFrame> },
-    PayManaThen { frame: Box<EffectFrame> },
-    LinkedExileFromRevealedHand { frame: Box<EffectFrame> },
-    SearchLibraryToBattlefieldTapped { frame: Box<EffectFrame> },
-    UndercityRoute { frame: Box<EffectFrame> },
-    UndercityThrone { frame: Box<EffectFrame> },
+    OwnerLibrarySecondOrBottom {
+        frame: Box<EffectFrame>,
+    },
+    CounterUnlessPaysGeneric {
+        frame: Box<EffectFrame>,
+    },
+    CounterTargetUnlessPaysGeneric {
+        frame: Box<EffectFrame>,
+    },
+    ExileOneFromGraveyard {
+        frame: Box<EffectFrame>,
+    },
+    ExileOneMatchingFromGraveyard {
+        frame: Box<EffectFrame>,
+    },
+    SacrificeCreature {
+        frame: Box<EffectFrame>,
+    },
+    PayManaThen {
+        frame: Box<EffectFrame>,
+    },
+    LinkedExileFromRevealedHand {
+        frame: Box<EffectFrame>,
+    },
+    SearchLibraryToBattlefieldTapped {
+        frame: Box<EffectFrame>,
+    },
+    UndercityRoute {
+        frame: Box<EffectFrame>,
+    },
+    UndercityThrone {
+        frame: Box<EffectFrame>,
+    },
+    AttachReturningAura {
+        aura: EffectObjectBinding,
+        host: EffectObjectBinding,
+        canonical_path: Vec<u16>,
+        remaining_frames: Vec<EffectFrame>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1943,6 +1985,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::ReturnLinkedExiledCardToOwnersHand
         | EffectOp::PreventDamageFromChosenColorUntilEndOfTurn { .. }
         | EffectOp::ResolveInitiativeTrigger { .. }
+        | EffectOp::ReturnTargetPermanentToBattlefield { .. }
         | EffectOp::ResolveUndercityThrone { .. }
         | EffectOp::LookAtTopMayRevealThen { .. }
         | EffectOp::Surveil { .. } => true,
@@ -2715,6 +2758,30 @@ fn complete_resumable_target_selection(
         })
         .collect::<Result<Vec<_>, String>>()?;
     match purpose {
+        EffectTargetSelectionPurpose::AttachReturningAura {
+            aura,
+            original_candidates,
+            canonical_path,
+        } => {
+            if path != canonical_path
+                || objects.len() != 1
+                || !original_candidates.contains(&objects[0])
+            {
+                return Err("Aura attachment choice changed path or candidate".to_string());
+            }
+            let host = objects[0];
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::AttachReturningAura {
+                    aura,
+                    host,
+                    canonical_path: canonical_path.clone(),
+                    remaining_frames: continuation.frames.clone(),
+                });
+            continuation.frames.push(EffectFrame::Program {
+                op: EffectOp::PutBoundAuraOntoBattlefieldAttached { aura, host },
+                path: canonical_path,
+            });
+        }
         EffectTargetSelectionPurpose::OrderIntoGraveyard {
             preserve_known_identity,
         } => continuation.frames.push(EffectFrame::MoveObjectsBatch {
@@ -4056,6 +4123,88 @@ fn effect_op_at_path<'a>(mut op: &'a EffectOp, path: &[u16]) -> Option<&'a Effec
     Some(op)
 }
 
+fn returning_aura_hosts(
+    state: &GameState,
+    aura: EffectObjectBinding,
+) -> Result<Vec<EffectObjectBinding>, String> {
+    validate_effect_object_binding(state, aura)?;
+    if aura.expected_zone != Zone::Graveyard
+        || !matches!(
+            crate::card_def::CARD_DEFS[state.objects.get(aura.object).card_def as usize].attachment,
+            Some(crate::card_def::AttachmentDef::AuraCreature { .. })
+        )
+    {
+        return Err("returning Aura is not a creature Aura in its graveyard".to_string());
+    }
+    Ok(state
+        .objects
+        .iter()
+        .filter_map(|(object, live)| {
+            (live.zone == Zone::Battlefield
+                && crate::engine::object_has_type(state, object, CardType::Creature)
+                && !(crate::engine::object_is_monocolored(state, aura.object)
+                    && crate::engine::has_effective_keyword(
+                        state,
+                        object,
+                        Keywords::PROTECTION_FROM_MONOCOLORED,
+                    )))
+            .then_some(EffectObjectBinding {
+                object,
+                expected_zone: Zone::Battlefield,
+                expected_zone_change_count: live.zone_change_count,
+            })
+        })
+        .collect())
+}
+
+fn validate_returning_aura_origin(
+    state: &GameState,
+    pending: &EffectContinuation,
+    aura: EffectObjectBinding,
+    path: &[u16],
+) -> Result<(), String> {
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    let Some(EffectOp::ReturnTargetPermanentToBattlefield { target_index }) =
+        effect_op_at_path(root.as_ref(), path)
+    else {
+        return Err("Aura attachment choice lost its return operation".to_string());
+    };
+    let index = usize::from(*target_index);
+    if pending.ctx.targets.get(index) != Some(&Target::Object(aura.object))
+        || !pending.ctx.target_incarnation_matches(index, state)
+        || aura.expected_zone != Zone::Graveyard
+    {
+        return Err("Aura attachment choice changed its graveyard target".to_string());
+    }
+    validate_effect_object_binding(state, aura)
+}
+
+fn put_returning_aura_attached(
+    state: &mut GameState,
+    aura: EffectObjectBinding,
+    host: EffectObjectBinding,
+) -> Result<(), String> {
+    if !returning_aura_hosts(state, aura)?.contains(&host) {
+        return Err("returning Aura host is no longer legal".to_string());
+    }
+    event::propose_and_commit(
+        state,
+        event::ProposedEvent::zone_change(aura.object, Zone::Battlefield),
+    );
+    if state.objects.get(aura.object).zone == Zone::Battlefield {
+        let incarnation = state.objects.get(aura.object).zone_change_count;
+        state
+            .attach_object_exact(
+                aura.object,
+                incarnation,
+                host.object,
+                host.expected_zone_change_count,
+            )
+            .map_err(|_| "returning Aura could not attach to its chosen host".to_string())?;
+    }
+    Ok(())
+}
+
 fn validate_search_library_to_battlefield_origin(
     state: &GameState,
     pending: &EffectContinuation,
@@ -4702,7 +4851,16 @@ fn validate_answered_choice_guard(
 ) -> Result<(), String> {
     for frame in &pending.frames {
         if let EffectFrame::Program { op, .. } = frame {
-            validate_resumable_program(op)?;
+            if matches!(op, EffectOp::PutBoundAuraOntoBattlefieldAttached { .. }) {
+                if !matches!(
+                    pending.answered_choice_guard,
+                    Some(EffectAnsweredChoiceGuard::AttachReturningAura { .. })
+                ) {
+                    return Err("bound Aura attachment has no answered choice guard".to_string());
+                }
+            } else {
+                validate_resumable_program(op)?;
+            }
         }
     }
     match &pending.answered_choice_guard {
@@ -4926,6 +5084,28 @@ fn validate_answered_choice_guard(
             }
             validate_undercity_throne_frame(state, pending, frame)?;
         }
+        Some(EffectAnsweredChoiceGuard::AttachReturningAura {
+            aura,
+            host,
+            canonical_path,
+            remaining_frames,
+        }) => {
+            let mut expected = remaining_frames.clone();
+            expected.push(EffectFrame::Program {
+                op: EffectOp::PutBoundAuraOntoBattlefieldAttached {
+                    aura: *aura,
+                    host: *host,
+                },
+                path: canonical_path.clone(),
+            });
+            if pending.choice.is_some() || pending.frames != expected {
+                return Err("answered Aura attachment continuation changed".to_string());
+            }
+            validate_returning_aura_origin(state, pending, *aura, canonical_path)?;
+            if !returning_aura_hosts(state, *aura)?.contains(host) {
+                return Err("answered Aura attachment host changed".to_string());
+            }
+        }
     }
     Ok(())
 }
@@ -4978,6 +5158,36 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 validate_effect_target_candidate(state, candidate)?;
             }
             match purpose {
+                EffectTargetSelectionPurpose::AttachReturningAura {
+                    aura,
+                    original_candidates,
+                    canonical_path,
+                } => {
+                    if *chooser != pending.ctx.controller
+                        || path != canonical_path
+                        || *min_targets != 1
+                        || *max_targets != 1
+                        || !*ordered
+                        || !selected.is_empty()
+                        || original_candidates.len() < 2
+                    {
+                        return Err("Aura attachment choice has a noncanonical shape".to_string());
+                    }
+                    validate_returning_aura_origin(state, pending, *aura, canonical_path)?;
+                    if returning_aura_hosts(state, *aura)? != *original_candidates
+                        || legal
+                            != &original_candidates
+                                .iter()
+                                .copied()
+                                .map(|binding| EffectTargetCandidate {
+                                    target: Target::Object(binding.object),
+                                    expected_object: Some(binding),
+                                })
+                                .collect::<Vec<_>>()
+                    {
+                        return Err("Aura attachment candidates changed".to_string());
+                    }
+                }
                 EffectTargetSelectionPurpose::OrderMilledIntoGraveyard => {
                     let bindings = selected
                         .iter()
@@ -6216,6 +6426,9 @@ fn validate_resumable_program(op: &EffectOp) -> Result<(), String> {
             return Err(
                 "generated programs cannot contain an already-bound owner-library move".to_string(),
             );
+        }
+        EffectOp::PutBoundAuraOntoBattlefieldAttached { .. } => {
+            return Err("generated programs cannot contain a bound Aura attachment".to_string());
         }
         EffectOp::EnterUndercityRoom { .. } | EffectOp::ResolveUndercityThrone { .. } => {
             return Err("generated programs cannot contain bound Undercity operations".to_string());
@@ -7500,6 +7713,86 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
             continue;
         };
         match op {
+            EffectOp::ReturnTargetPermanentToBattlefield { target_index } => {
+                let index = usize::from(target_index);
+                let Some(Target::Object(object)) = continuation.ctx.targets.get(index).copied()
+                else {
+                    return Err("permanent return lacks an object target".to_string());
+                };
+                if !continuation.ctx.target_incarnation_matches(index, state) {
+                    continue;
+                }
+                let live = state.objects.get(object);
+                if live.zone != Zone::Graveyard {
+                    continue;
+                }
+                let aura = EffectObjectBinding {
+                    object,
+                    expected_zone: Zone::Graveyard,
+                    expected_zone_change_count: live.zone_change_count,
+                };
+                if crate::card_def::CARD_DEFS[live.card_def as usize]
+                    .attachment
+                    .is_none()
+                {
+                    event::propose_and_commit(
+                        state,
+                        event::ProposedEvent::zone_change(object, Zone::Battlefield),
+                    );
+                    continue;
+                }
+                let candidates = returning_aura_hosts(state, aura)?;
+                match candidates.as_slice() {
+                    [] => {}
+                    [host] => put_returning_aura_attached(state, aura, *host)?,
+                    _ => {
+                        continuation.choice = Some(PendingEffectChoice::SelectTargets {
+                            player: continuation.ctx.controller,
+                            path: path.clone(),
+                            selected: vec![],
+                            legal: candidates
+                                .iter()
+                                .copied()
+                                .map(|binding| EffectTargetCandidate {
+                                    target: Target::Object(binding.object),
+                                    expected_object: Some(binding),
+                                })
+                                .collect(),
+                            min_targets: 1,
+                            max_targets: 1,
+                            ordered: true,
+                            purpose: EffectTargetSelectionPurpose::AttachReturningAura {
+                                aura,
+                                original_candidates: candidates,
+                                canonical_path: path,
+                            },
+                        });
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
+                }
+            }
+            EffectOp::PutBoundAuraOntoBattlefieldAttached { aura, host } => {
+                let Some(EffectAnsweredChoiceGuard::AttachReturningAura {
+                    aura: expected_aura,
+                    host: expected_host,
+                    canonical_path,
+                    remaining_frames,
+                }) = continuation.answered_choice_guard.as_ref()
+                else {
+                    return Err("Aura attachment lost its answered choice".to_string());
+                };
+                if aura != *expected_aura
+                    || host != *expected_host
+                    || path != *canonical_path
+                    || continuation.frames != *remaining_frames
+                {
+                    return Err("Aura attachment answer changed".to_string());
+                }
+                validate_returning_aura_origin(state, &continuation, aura, &path)?;
+                continuation.answered_choice_guard = None;
+                put_returning_aura_attached(state, aura, host)?;
+            }
             EffectOp::Sequence(ops) => {
                 for (index, inner) in ops.into_iter().enumerate().rev() {
                     let mut inner_path = path.clone();
@@ -10278,20 +10571,12 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             {
                 return;
             }
-            let Some(next) = state
-                .objects
-                .get(object_id)
-                .counters
-                .plus1_plus1
-                .checked_add(1)
-            else {
+            if event::add_plus_one_counters(state, object_id, ctx.controller, 1).is_err() {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
                 ));
-                return;
-            };
-            state.objects.get_mut(object_id).counters.plus1_plus1 = next;
+            }
         }
         EffectOp::BindPlusOnePlusOneCounterToTriggerSource
         | EffectOp::BindPlusOnePlusOneCounterToTriggerEventObject
@@ -10340,15 +10625,12 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             {
                 return;
             }
-            let counters = &mut state.objects.get_mut(object.object).counters.plus1_plus1;
-            let Some(next) = counters.checked_add(1) else {
+            if event::add_plus_one_counters(state, object.object, ctx.controller, 1).is_err() {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
                 ));
-                return;
-            };
-            *counters = next;
+            }
         }
         EffectOp::GainLife { player, amount } => {
             let player = ctx.resolve_player(*player, state);
@@ -10773,6 +11055,12 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             object.counters.plus1_plus1 = next_plus;
             object.v4.lifelink_keyword_counters = next_lifelink;
             object.counters.stun = next_stun;
+            event::log_plus_one_counters_added(
+                state,
+                ctx.resolve_object(ObjectRef::Target(*target_index)),
+                ctx.controller,
+                i32::from(*plus1_plus1),
+            );
         }
         EffectOp::CreateTokenAndAttachSource { token_def } => {
             let Some(token) = crate::card_def::CARD_DEFS.get(*token_def as usize) else {
@@ -11667,6 +11955,12 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             };
             state.objects.get_mut(ctx.source).counters.plus1_plus1 = i32::from(amount);
+            event::log_plus_one_counters_added(
+                state,
+                ctx.source,
+                ctx.controller,
+                i32::from(amount),
+            );
         }
         EffectOp::PutSourceOntoBattlefieldAttachedToTargetWithXPlusOneCounters { target } => {
             let ObjectRef::Target(target_index) = target else {
@@ -11700,6 +11994,12 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             };
             state.objects.get_mut(ctx.source).counters.plus1_plus1 = i32::from(amount);
+            event::log_plus_one_counters_added(
+                state,
+                ctx.source,
+                ctx.controller,
+                i32::from(amount),
+            );
             let link = ObjectLinkV4 {
                 object: target,
                 zone_change_count: state.objects.get(target).zone_change_count,
@@ -11830,15 +12130,12 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             }
             let count = i32::from(*count);
-            let counters = &mut state.objects.get_mut(object).counters.plus1_plus1;
-            let Some(total) = counters.checked_add(count) else {
+            if event::add_plus_one_counters(state, object, ctx.controller, count).is_err() {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
                 ));
-                return;
-            };
-            *counters = total;
+            }
         }
         EffectOp::GoadTargetUntilSourcesNextTurn { object } => {
             let object = ctx.resolve_object(*object);
@@ -11895,6 +12192,8 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::RevealHandChooseNonlandToLinkedExile { .. }
         | EffectOp::ReturnLinkedExiledCardToOwnersHand
         | EffectOp::ResolveInitiativeTrigger { .. }
+        | EffectOp::ReturnTargetPermanentToBattlefield { .. }
+        | EffectOp::PutBoundAuraOntoBattlefieldAttached { .. }
         | EffectOp::EnterUndercityRoom { .. }
         | EffectOp::ResolveUndercityThrone { .. } => {
             panic!("choice-bearing effects must use the resumable interpreter")

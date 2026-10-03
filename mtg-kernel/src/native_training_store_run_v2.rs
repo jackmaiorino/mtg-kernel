@@ -222,6 +222,14 @@ const FROZEN_CARD_DB_HASH_U64_HEX_FDN_COUNTER_CREATURES_V1: &str = "39c83779971e
 const FROZEN_RUNTIME_CATALOG_SHA256_FDN_COUNTER_CREATURES_V1: &str =
     "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
+// v39 adds controller life-gain/counter triggers and kicked small-permanent return.
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_LIFEGAIN_CREATURES_V2: &str = "958bf2fd746ec314";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_LIFEGAIN_CREATURES_V2: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_LIFEGAIN_CREATURES_V1: &str = "3f6b7e8df71f3195";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_LIFEGAIN_CREATURES_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
 const FROZEN_PROTOCOL_V2: &str = "kernel_rl_jsonl";
 const FROZEN_PROTOCOL_VERSION_V2: u32 = 5;
 const FROZEN_SCHEMA_VERSION_V2: u32 = 5;
@@ -1905,7 +1913,9 @@ pub(crate) enum NativeRunCatalogProfileV1 {
     FdnLegendRule,
     FdnTargetedSpells,
     FdnCounterCreatures,
+    FdnLifegainCreatures,
     FdnCounterCreaturesRebased,
+    FdnLifegainCreaturesRebased,
 }
 
 impl ValidatedTrainRunV2 {
@@ -2471,6 +2481,16 @@ fn classify_catalog_profile_from_identity_v1(
     // literal, so these tuples are disjoint from one another and from the
     // three Pauper profiles.
     let fdn_profiles = [
+        (
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_LIFEGAIN_CREATURES_V1,
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_LIFEGAIN_CREATURES_V1,
+            NativeRunCatalogProfileV1::FdnLifegainCreatures,
+        ),
+        (
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_LIFEGAIN_CREATURES_V2,
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_LIFEGAIN_CREATURES_V2,
+            NativeRunCatalogProfileV1::FdnLifegainCreaturesRebased,
+        ),
         (
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_BATCH_A_V1,
             FROZEN_RUNTIME_CATALOG_SHA256_FDN_BATCH_A_V1,
@@ -5541,8 +5561,6 @@ mod tests {
         refresh_derived(&mut record);
         to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
     }
-
-    #[cfg(feature = "limited-fdn-fixtures")]
     pub(super) fn fixture_bytes_fdn_counter_creatures() -> Vec<u8> {
         let mut record = fixture_record();
         record.environment.card_db_hash_u64_hex =
@@ -6902,20 +6920,20 @@ mod tests {
     /// the frozen literals were typed wrong when this successor landed.
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn fdn_counter_creatures_frozen_literal_matches_the_live_build_constant() {
+    fn fdn_lifegain_creatures_frozen_literal_matches_the_live_build_constant() {
         use crate::card_def::KERNEL_CARDDB_HASH;
         use crate::runtime_decks::RUNTIME_DECK_CATALOG_FILE_SHA256;
         assert_eq!(
             format!("{KERNEL_CARDDB_HASH:016x}"),
             if cfg!(feature = "limited-fdn-fixtures") {
-                FROZEN_CARD_DB_HASH_U64_HEX_FDN_COUNTER_CREATURES_V2
+                FROZEN_CARD_DB_HASH_U64_HEX_FDN_LIFEGAIN_CREATURES_V2
             } else {
                 FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1
             }
         );
         assert_eq!(
             RUNTIME_DECK_CATALOG_FILE_SHA256,
-            FROZEN_RUNTIME_CATALOG_SHA256_FDN_COUNTER_CREATURES_V2
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_LIFEGAIN_CREATURES_V2
         );
     }
 
@@ -7058,6 +7076,16 @@ mod tests {
                 "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851",
                 NativeRunCatalogProfileV1::FdnCounterCreatures,
             ),
+            (
+                FROZEN_CARD_DB_HASH_U64_HEX_FDN_LIFEGAIN_CREATURES_V1,
+                FROZEN_RUNTIME_CATALOG_SHA256_FDN_LIFEGAIN_CREATURES_V1,
+                NativeRunCatalogProfileV1::FdnLifegainCreatures,
+            ),
+            (
+                FROZEN_CARD_DB_HASH_U64_HEX_FDN_COUNTER_CREATURES_V2,
+                FROZEN_RUNTIME_CATALOG_SHA256_FDN_COUNTER_CREATURES_V2,
+                NativeRunCatalogProfileV1::FdnCounterCreaturesRebased,
+            ),
         ] {
             let mut record = fixture_record();
             record.environment.card_db_hash_u64_hex = card_db.to_owned();
@@ -7076,22 +7104,22 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn fdn_counter_creatures_fixture_decodes_with_its_own_profile_and_live_identity() {
+    fn fdn_lifegain_creatures_fixture_decodes_with_its_own_profile_and_live_identity() {
         let validated = decode_train_run_v2(&fixture_bytes()).unwrap();
         assert_eq!(
             validated.catalog_profile_v1(),
-            NativeRunCatalogProfileV1::FdnCounterCreaturesRebased
+            NativeRunCatalogProfileV1::FdnLifegainCreaturesRebased
         );
         assert!(current_profile_matches_live_build_identity_v1(
             validated.record().environment()
         ));
         assert_ne!(
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_COUNTER_CREATURES_V1,
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_LIFEGAIN_CREATURES_V1,
             FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
         );
         assert_eq!(
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_COUNTER_CREATURES_V1,
-            "39c83779971ee2c4"
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_LIFEGAIN_CREATURES_V1,
+            "3f6b7e8df71f3195"
         );
     }
 
@@ -7139,6 +7167,22 @@ mod tests {
         assert_eq!(
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_TARGETED_SPELLS_V1,
             "88e02f70cd94af95"
+        );
+        assert!(!current_profile_matches_live_build_identity_v1(
+            validated.record().environment()
+        ));
+    }
+    #[test]
+    fn fdn_counter_creatures_profile_remains_readable_but_is_not_live() {
+        let bytes = fixture_bytes_fdn_counter_creatures();
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnCounterCreatures
+        );
+        assert_eq!(
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_COUNTER_CREATURES_V1,
+            "39c83779971ee2c4"
         );
         assert!(!current_profile_matches_live_build_identity_v1(
             validated.record().environment()
@@ -7215,7 +7259,7 @@ mod tests {
         assert_eq!(
             validated.catalog_profile_v1(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnCounterCreaturesRebased
+                NativeRunCatalogProfileV1::FdnLifegainCreaturesRebased
             } else {
                 NativeRunCatalogProfileV1::PauperMetaW1
             }
