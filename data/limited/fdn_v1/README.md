@@ -47,7 +47,9 @@ boundary. `kernel_limited_env --london-mulligans-v1` selects schema 4, adding
 London announcements and private bottom-card choices to those combat rules.
 The Python client/tool accepts the matching option. Original fixed-seed UG/WG
 games with actual mulligans, both seats, exact replay and pending-choice
-restore passed on Ubuntu; Windows and complete CI remain pending.
+restore passed on Ubuntu. Windows's London step ended successfully, including
+its final pending-bottom library command; the integration summaries require
+the complete job log before acceptance. Complete CI remains pending.
 See `docs/reports/fdn_fixture_gameplay_v1_validation.md` for the milestone
 checks and their observed status.
 
