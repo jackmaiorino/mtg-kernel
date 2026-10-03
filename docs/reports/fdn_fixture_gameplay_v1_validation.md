@@ -73,20 +73,21 @@ Rust 1.94.1 and the workspace's exact dependency versions/checksums, including
 both mutation-isolation and legacy-serialization cases. This narrow standalone
 check does not qualify full-engine restoration, gameplay or snapshot timing.
 
-At current CI source `92881658`, three Python shards completed successfully.
+At current CI source `92881658`, all four Python shards completed successfully.
 Each built the real release JSONL environment. Full terminal logs confirm:
 
 | Python shard at92881658 | Selected tests | Skips | Failures | Seconds |
 | --- | --- | --- | --- | --- |
 | Ubuntu0, job111188356190 | 374 | 14 | 0 | 493.578 |
 | Ubuntu1, job111188356188 | 373 | 13 | 0 | 666.239 |
+| Windows0, job111188356176 | 374 | 0 | 0 | 923.615 |
 | Windows1, job111188356138 | 373 | 1 | 0 | 930.347 |
 
-Both original-deck loading and copy-order resolution pass on Ubuntu, and the
-repaired WMI descendant case passes on Windows. Windows shard0 job
-`111188356176` remains running. These results qualify the completed Python
-shards and default environment at the new source; the full Windows Rust
-matrix and remaining Python shard are still required.
+Both original-deck loading and copy-order resolution pass on Ubuntu, copy-order
+resolution also passes on Windows, and the repaired WMI descendant case passes
+on Windows. Ubuntu executes 720 tests with 27 skips; Windows executes 746 with
+one skip. These results qualify all Python shards and the default environment
+at the new source; the full Windows Rust matrix is still required.
 
 Report source `49ed45c0` completed all four Python shards in run `37109727043`.
 Each shard built the real release JSONL environment. Its Python tests, runner
