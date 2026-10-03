@@ -17,11 +17,11 @@ statistics omitted. The two deck files are unchanged copies.
 The 286 reference names are an observed gameplay dataset, not a complete
 booster manifest. The inventory tool adds all five basic lands and any
 additional fixture cards. After fixture batches A and B and the combat and
-legend-rule, targeted-spell, counter-creature, life-gain, draw, Horde, Koma, Kiora and Prowler slices,
-38 reference names have full registry support, one reference planeswalker
-is partial and 247 remain missing. UG resolves 37/40 mainboard copies and
-WG resolves 36/40. The original fixtures still
-need 5 fully supported card names. Dwynen now includes its Elf bonuses, attack
+legend-rule, targeted-spell, counter-creature, life-gain, draw, Horde, Koma, Kiora, Prowler and Rebuke slices,
+39 reference names have full registry support, one reference planeswalker
+is partial and 246 remain missing. UG resolves 37/40 mainboard copies and
+WG resolves 38/40. The original fixtures still
+need 4 fully supported card names. Dwynen now includes its Elf bonuses, attack
 trigger and a real resumable legend-rule choice.
 Printed collector numbers are not a safe
 filter for draft availability: these real decks also use alternate printings.
@@ -32,7 +32,7 @@ unchanged 192-definition Pauper registry. The importer combines both files in
 that order and reports their separate SHA-256s. Build the gameplay binary with
 `cargo build --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_env`.
 Default builds retain the Pauper catalog and its v34 identity; the
-Limited feature selects the appended definitions and their v46 identity.
+Limited feature selects the appended definitions and their v47 identity.
 Earlier FDN catalog tuples remain readable and are rejected for mutation
 when they do not match the actual build.
 when they do not match the actual build.

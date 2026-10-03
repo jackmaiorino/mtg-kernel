@@ -4764,6 +4764,15 @@ fn effective_normal_cast_cost(
     player: PlayerId,
     state: &GameState,
 ) -> Cost {
+    effective_normal_cast_cost_with_targets(def, player, &[], state)
+}
+
+fn effective_normal_cast_cost_with_targets(
+    def: &card_def::CardDef,
+    player: PlayerId,
+    targets: &[Target],
+    state: &GameState,
+) -> Cost {
     let Some(reducer) = def.generic_cost_reduction else {
         return def.cost;
     };
@@ -4817,6 +4826,20 @@ fn effective_normal_cast_cost(
             }
             u32::from(has_subtype && lacks_subtype)
         }
+        card_def::DynamicCountDef::SpellTargetsTappedCreature => {
+            u32::from(targets.iter().any(|target| {
+                let Target::Object(id) = target else {
+                    return false;
+                };
+                state.objects.try_get(*id).is_some_and(|object| {
+                    object.zone == Zone::Battlefield
+                        && object.tapped
+                        && card_def::CARD_DEFS[object.card_def as usize]
+                            .types_for_face(object.v4.face_index)
+                            .contains(&CardType::Creature)
+                })
+            }))
+        }
     };
     let reduction = count.saturating_mul(u32::from(reducer.generic_per_count));
     let mut cost = def.cost;
@@ -4824,6 +4847,81 @@ fn effective_normal_cast_cost(
         .generic
         .saturating_sub(reduction.min(u32::from(u8::MAX)) as u8);
     cost
+}
+
+fn normal_cast_cost_depends_on_targets(def: &card_def::CardDef) -> bool {
+    def.generic_cost_reduction.is_some_and(|reducer| {
+        matches!(
+            reducer.count,
+            card_def::DynamicCountDef::SpellTargetsTappedCreature
+        )
+    })
+}
+
+/// A target-dependent reducer must have an actual legal, payable completion.
+/// The ordinary full-cost fast path keeps every older offer unchanged.
+fn normal_cast_target_prefix_is_payable(
+    def: &card_def::CardDef,
+    spell: ObjectId,
+    spec: TargetSpec,
+    controller: PlayerId,
+    targets: &[Target],
+    state: &GameState,
+) -> bool {
+    if !normal_cast_cost_depends_on_targets(def) {
+        let cost = effective_normal_cast_cost(def, controller, state);
+        return normal_cost_is_payable(def, &cost, 0, controller, state);
+    }
+    let source = targeting_source_for_object(state, spell);
+    if !target_prefix_can_complete_for_controller_and_source(
+        spec, targets, controller, source, state,
+    ) {
+        return false;
+    }
+    let cost = effective_normal_cast_cost_with_targets(def, controller, targets, state);
+    if normal_cost_is_payable(def, &cost, 0, controller, state) {
+        return true;
+    }
+    completable_next_targets_for_controller_and_source(spec, targets, controller, source, state)
+        .into_iter()
+        .any(|target| {
+            let mut extended = targets.to_vec();
+            extended.push(target);
+            normal_cast_target_prefix_is_payable(def, spell, spec, controller, &extended, state)
+        })
+}
+
+fn completable_next_cast_targets(
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    spec: TargetSpec,
+    state: &GameState,
+) -> Vec<Target> {
+    let candidates = completable_next_targets_for_controller_and_source(
+        spec,
+        &pending.targets_chosen,
+        pending.controller,
+        targeting_source_for_object(state, pending.spell),
+        state,
+    );
+    if !normal_cast_cost_depends_on_targets(def) {
+        return candidates;
+    }
+    candidates
+        .into_iter()
+        .filter(|target| {
+            let mut extended = pending.targets_chosen.clone();
+            extended.push(*target);
+            normal_cast_target_prefix_is_payable(
+                def,
+                pending.spell,
+                spec,
+                pending.controller,
+                &extended,
+                state,
+            )
+        })
+        .collect()
 }
 
 /// Whether a spell's normal-mode total cost (`effective_normal_cast_cost`'s
@@ -5109,7 +5207,12 @@ fn payable_cast_modes(
     state: &GameState,
 ) -> Vec<CastMode> {
     let mut modes = Vec::new();
-    let normal = effective_normal_cast_cost(def, pending.controller, state);
+    let normal = effective_normal_cast_cost_with_targets(
+        def,
+        pending.controller,
+        &pending.targets_chosen,
+        state,
+    );
     if pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
         && mana::can_pay(&normal, 0, pending.controller, state).is_some()
     {
@@ -5135,7 +5238,12 @@ fn pending_cast_selected_mana_cost(
         Some(1) if supported_bestow(def).is_some() => supported_bestow(def).map(|b| b.cost),
         Some(1) if supported_omen(def).is_some() => supported_omen(def).map(|o| o.cost),
         Some(1) if supported_adventure(def).is_some() => supported_adventure(def).map(|a| a.cost),
-        Some(_) => Some(effective_normal_cast_cost(def, pending.controller, state)),
+        Some(_) => Some(effective_normal_cast_cost_with_targets(
+            def,
+            pending.controller,
+            &pending.targets_chosen,
+            state,
+        )),
         None => None,
     }
 }
@@ -5217,9 +5325,15 @@ fn is_castable_now(
                 && can_pay_components(escape.cost, player, id, state)
         }),
         CastMethodV4::Normal => {
-            let normal_cost = effective_normal_cast_cost(def, player, state);
-            let normal_ok =
-                main_timing_ok && normal_cost_is_payable(def, &normal_cost, 0, player, state);
+            let normal_ok = main_timing_ok
+                && normal_cast_target_prefix_is_payable(
+                    def,
+                    id,
+                    def.target_spec,
+                    player,
+                    &[],
+                    state,
+                );
             let alt_ok = def
                 .alt_cost
                 .map(|alt| {
@@ -6361,7 +6475,12 @@ fn remaining_cast_payment_is_payable(
     let x_value = pending.x_value.unwrap_or(0);
     let base_payable = match cast_method {
         CastMethodV4::Normal => {
-            let normal = effective_normal_cast_cost(def, pending.controller, state);
+            let normal = effective_normal_cast_cost_with_targets(
+                def,
+                pending.controller,
+                &pending.targets_chosen,
+                state,
+            );
             if pending.kicked == Some(true) {
                 def.kicker_cost.is_some_and(|kicker| {
                     mana::can_pay_combined(&[&normal, &kicker], 0, pending.controller, state)
@@ -7739,13 +7858,23 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     // instead of exposing an empty targeting decision.
     let targeting_can_complete = match pending.mode_chosen {
         Some(mode) => spell_form_target_spec(def, mode).is_some_and(|spec| {
-            target_prefix_can_complete_for_controller_and_source(
+            let legal_completion = target_prefix_can_complete_for_controller_and_source(
                 spec,
                 &pending.targets_chosen,
                 pending.controller,
                 targeting_source_for_object(state, pending.spell),
                 state,
-            )
+            );
+            legal_completion
+                && (!normal_cast_cost_depends_on_targets(def)
+                    || normal_cast_target_prefix_is_payable(
+                        def,
+                        pending.spell,
+                        spec,
+                        pending.controller,
+                        &pending.targets_chosen,
+                        state,
+                    ))
         }),
         None => !viable_pending_spell_forms(def, &pending, state).is_empty(),
     };
@@ -7849,13 +7978,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             player: pending.controller,
             spell: pending.spell,
             remaining: need - pending.targets_chosen.len() as u8,
-            legal_targets: completable_next_targets_for_controller_and_source(
-                active_target_spec,
-                &pending.targets_chosen,
-                pending.controller,
-                targeting_source_for_object(state, pending.spell),
-                state,
-            ),
+            legal_targets: completable_next_cast_targets(def, &pending, active_target_spec, state),
             can_finish: pending.targets_chosen.len()
                 >= usize::from(target_min_count(active_target_spec)),
         });
@@ -12141,15 +12264,8 @@ fn exact_targeting_producer(state: &GameState) -> Result<TargetingProducer, Stri
 fn apply_choose_target(state: &mut GameState, target: Target) -> Result<(), String> {
     match exact_targeting_producer(state)? {
         TargetingProducer::Cast { pending, spec } => {
-            if !completable_next_targets_for_controller_and_source(
-                spec,
-                &pending.targets_chosen,
-                pending.controller,
-                targeting_source_for_object(state, pending.spell),
-                state,
-            )
-            .contains(&target)
-            {
+            let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+            if !completable_next_cast_targets(def, &pending, spec, state).contains(&target) {
                 return Err(format!("{target:?} is not a legal cast target"));
             }
             let contract = StackTargetContractV4::capture(state, target);
@@ -14194,7 +14310,12 @@ fn finalize_owned_cast(
         }
         CastMethodV4::Normal => {
             let kicked = pending.kicked == Some(true);
-            let normal_cost = effective_normal_cast_cost(def, pending.controller, state);
+            let normal_cost = effective_normal_cast_cost_with_targets(
+                def,
+                pending.controller,
+                &pending.targets_chosen,
+                state,
+            );
             if def.delve {
                 // Delve is never combined with Kicker in this pool (Gurmag
                 // Angler has no `kicker_cost`); `kicked` stays false and

@@ -3093,6 +3093,7 @@ fn special_for(name: &str) -> Special {
         "Deem Inferior" => Special::DeemInferior,
         "Sleep of the Dead" => Special::TapAndSkipNextUntap,
         "Cast Down" => Special::DestroyNonlegendaryCreature,
+        "Luminous Rebuke" => Special::DestroyCreature,
         "Terminate" => Special::DestroyCreature,
         "Snuff Out" => Special::DestroyNonblackCreature,
         "Ancient Grudge" => Special::DestroyArtifact,
@@ -4946,6 +4947,9 @@ fn cost_src(mana_cost: &str) -> String {
 
 fn generic_cost_reduction_for(name: &str) -> &'static str {
     match name {
+        "Luminous Rebuke" => {
+            "Some(GenericCostReductionDef { generic_per_count: 3, count: DynamicCountDef::SpellTargetsTappedCreature })"
+        }
         "Myr Enforcer" | "Thoughtcast" | "Refurbished Familiar" => {
             "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerBattlefieldAnyType(&[CardType::Artifact]) })"
         }
@@ -7691,7 +7695,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v46\n"
+            "kernel_carddb/v47\n"
         } else {
             "kernel_carddb/v34\n"
         },

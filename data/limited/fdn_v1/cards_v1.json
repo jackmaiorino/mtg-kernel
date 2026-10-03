@@ -1161,6 +1161,34 @@
         "counters"
       ],
       "java_file": "Mage.Sets/src/mage/cards/c/CacklingProwler.java"
+    },
+    {
+      "name": "Luminous Rebuke",
+      "engine_capability": "full",
+      "mana_cost": "{4}{W}",
+      "mana_value": 5,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_top_20626_WG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "target_dependent_cost_reduction",
+        "destroy_creature"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LuminousRebuke.java"
     }
   ]
 }

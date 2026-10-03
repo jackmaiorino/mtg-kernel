@@ -1094,6 +1094,8 @@ pub enum DynamicCountDef {
     /// One iff the controller has both a creature with the named subtype
     /// and a creature without it. Of One Mind uses Human.
     ControllerHasCreatureWithAndWithoutSubtype(Subtype),
+    /// One iff a chosen spell target is a tapped battlefield creature.
+    SpellTargetsTappedCreature,
 }
 
 /// Reduces only the generic portion of a spell's mana cost, flooring at
@@ -1722,7 +1724,7 @@ mod tests {
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                230
+                231
             } else {
                 192
             }
@@ -1810,8 +1812,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v46_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x6630_c9c0_9989_878f;
+    fn card_db_hash_v47_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0xf48d_52af_f22f_0f04;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

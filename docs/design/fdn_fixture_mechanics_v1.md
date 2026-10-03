@@ -1,10 +1,10 @@
 # FDN fixture implementation batches
 
 This inventories the **36 originally missing names** in the two pinned
-40-card fixtures. Through the Prowler slice, the registry covers 31 of those
-names. **Five remain:** Celestial Armor, Luminous Rebuke,
+40-card fixtures. Through the Rebuke slice, the registry covers 32 of those
+names. **Four remain:** Celestial Armor,
 Sylvan Scavenging, Uncharted Voyage and Witness Protection. Source coverage
-is UG 37/40 and WG 36/40 copies; both original deck files retain their pinned
+is UG 37/40 and WG 38/40 copies; both original deck files retain their pinned
 hashes. The batch table below preserves the original decomposition.
 
 The [Prowler slice](fdn_prowler_creature_v1.md) implements turn-scoped
@@ -13,11 +13,15 @@ focused kernel checks and twelve strict XMage comparisons pass; broader
 catalog, regression, production and external checks are tracked in its
 [validation report](../reports/fdn_prowler_creature_v1_validation.md).
 
+The [Rebuke slice](fdn_luminous_rebuke_v1.md) adds target-dependent generic
+cost and ordinary creature destruction. Fifteen focused kernel checks pass;
+catalog history, regressions, reference checks, external replay and CI are
+still being verified.
+
 The remaining implementation slices are concrete:
 
 | Slice | Work | Required checks |
 | --- | --- | --- |
-| Luminous Rebuke | Compute the three-generic discount from the selected creature target's tapped state. | Two-mana casting admits only payable targets; untapped targets require five mana; payment and ward remain separate; mana value stays five; illegal-target handling and restore. |
 | Uncharted Voyage | Let the creature's owner choose top or bottom, then let the caster surveil one. | Owner differs from controller; exact library order; token departure; all-targets-illegal resolution; hidden information; restore at both choices. |
 | Sylvan Scavenging | Add an end-step modal trigger with a controlled-creature counter target or a conditional Raccoon token. | Select mode before its targets; preserve the token mode even below power four; check power at resolution; target loss; exact token; modal and target restore. |
 | Celestial Armor | Add flash Equipment, entry attachment and temporary target hexproof/indestructible, continuous equipped bonuses and equip. | Target loss, legal attachment and movement; target keeps its temporary abilities after Equipment moves; equip timing/payment; destruction and damage protection; restore. |

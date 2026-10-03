@@ -21,9 +21,13 @@ def main() -> int:
             if result.returncode:
                 return result.returncode
             print(f"Running isolated timing gate: {TIMING_TEST}", flush=True)
+            # Keep the short wall-clock measurement ahead of background
+            # Windows services. Correctness tests retain normal priority.
+            timing_options = ({"creationflags": subprocess.HIGH_PRIORITY_CLASS}
+                              if sys.platform == "win32" else {})
             return subprocess.run([
                 executable, TIMING_TEST, "--exact", "--include-ignored", "--test-threads=1", "--nocapture",
-            ], check=False).returncode
+            ], check=False, **timing_options).returncode
         return subprocess.run([executable, *arguments], check=False).returncode
 
     if sys.argv[1:] not in ([], ["--no-fail-fast"]):
