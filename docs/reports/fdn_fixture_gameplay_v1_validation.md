@@ -5,7 +5,7 @@
 The complete implementation stack incorporates main fe479186 and all original
 fixture card/token dependencies, combat, pending choices and London mulligans.
 The current published CI composition is `92881658`, including the arena storage
-change described below. Its hosted qualification is queued in run `37115415284`.
+change described below. Its hosted qualification is in progress in run `37115415284`.
 Full qualification of that source remains pending. Earlier isolated-stack
 passes below do not qualify this change.
 
@@ -39,25 +39,36 @@ objects. Two arena regressions cover every mutation entry point, stable append
 IDs, legacy JSON and value hashing. The snapshot round trip now checks captured
 bytes and independent mutation after restore. Serde's `rc` feature changes no
 dependency version or lockfile. The entire frozen 80-object workload and timing
-function remain unchanged. Formatting and diff checks pass; hosted compilation,
-the regressions, original games and full matrix must still qualify this change.
+function remain unchanged. Formatting and diff checks pass. Hosted lint job
+`111181187834` passed formatting and all four release Clippy gates: default,
+native Store, Limited and host-safe CUDA compilation, using Rust 1.94.1.
+The regressions, original games, frozen timing check and full runtime matrix
+must still qualify this change.
 Mutating arena APIs now require `T: Clone`, already implemented by `GameObject`.
 The changed arena module's five unit tests passed separately on Windows with
 Rust 1.94.1 and the workspace's exact dependency versions/checksums, including
 both mutation-isolation and legacy-serialization cases. This narrow standalone
 check does not qualify full-engine restoration, gameplay or snapshot timing.
 
-Report source `5bf586eb` completed all four Python shards in run `37101685323`.
+At current CI source `92881658`, Windows Python shard1 job `111188356138`
+built the real release JSONL environment and passed 373 selected tests with
+one skip, no failures, in 930.347 seconds. The repaired WMI descendant case
+passed. This qualifies that Python shard and default environment at the new
+source; it does not qualify the Limited original games, pending restoration,
+frozen snapshot timing gate or complete runtime matrix. The other three
+Python shards remain pending.
+
+Report source `49ed45c0` completed all four Python shards in run `37109727043`.
 Each shard built the real release JSONL environment. Its Python tests, runner
 and workflow match CI `7cbfa1cd`; that tested source differs only in Markdown.
 Full terminal logs confirm the following results:
 
-| Python shard at5bf586eb | Selected tests | Skips | Failures | Seconds |
+| Python shard at49ed45c0 | Selected tests | Skips | Failures | Seconds |
 | --- | --- | --- | --- | --- |
-| Ubuntu0, job111143228126 | 374 | 14 | 0 | 487.893 |
-| Ubuntu1, job111143228106 | 373 | 13 | 0 | 664.369 |
-| Windows0, job111143228191 | 374 | 0 | 0 | 726.366 |
-| Windows1, job111143228157 | 373 | 1 | 0 | 954.658 |
+| Ubuntu0, job111181847843 | 374 | 14 | 0 | 502.931 |
+| Ubuntu1, job111181847813 | 373 | 13 | 0 | 671.629 |
+| Windows0, job111181847797 | 374 | 0 | 0 | 853.563 |
+| Windows1, job111181847792 | 373 | 1 | 0 | 1130.100 |
 
 Ubuntu executes 720 tests with 27 skips; Windows executes 746 with 1 skip.
 The unchanged original-deck copy-order resolution cases pass on both platforms,
