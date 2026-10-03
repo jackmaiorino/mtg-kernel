@@ -20,12 +20,23 @@ must qualify that source and procedure. The report branch incorporates those
 changes and differs from PR140 only in Markdown, so its path-filtered Rust-test skips provide no
 additional gameplay evidence.
 
-Report source `5bf586eb` has completed Windows Python shard 1, job `111143228157`.
-It built the real release JSONL environment and selected 373 of 747 tests,
-with 372 passes, 1 skip and zero failures in 954.658 seconds. The repaired WMI
-descendant-reservation case passes. Its Python test and runner sources match
-CI `7cbfa1cd`; this qualifies that affected regression but does not replace the
-remaining Python shards or the current full Rust matrix.
+Report source `5bf586eb` completed all four Python shards in run `37101685323`.
+Each shard built the real release JSONL environment. Its Python tests, runner
+and workflow match CI `7cbfa1cd`; the report branch differs only in Markdown.
+Full terminal logs confirm the following results:
+
+| Python shard at5bf586eb | Selected tests | Skips | Failures | Seconds |
+| --- | --- | --- | --- | --- |
+| Ubuntu0, job111143228126 | 374 | 14 | 0 | 487.893 |
+| Ubuntu1, job111143228106 | 373 | 13 | 0 | 664.369 |
+| Windows0, job111143228191 | 374 | 0 | 0 | 726.366 |
+| Windows1, job111143228157 | 373 | 1 | 0 | 954.658 |
+
+Ubuntu executes 720 tests with 27 skips; Windows executes 746 with 1 skip.
+The unchanged original-deck copy-order resolution cases pass on both platforms,
+and the repaired WMI descendant-reservation case passes on Windows. These
+results qualify the current Python regression source and procedure. They do
+not replace the current full Rust matrix or prove Limited gameplay by themselves.
 
 Windows job111116304498 atcd7f451b passed24Witness cases and all12London
 integration cases. The original external game test verifies the pinned input
@@ -123,8 +134,9 @@ CI37092263828 at94d6fc44 completed successfully. All four Python shards built
 the real default Rust JSONL environment and passed; its Rust matrix was
 skipped because the report-only diff was not Rust-relevant. Those Python
 results qualify the unchanged deck/session client and regression source at
-that commit. The subsequently synchronized reservation test and changed
-native runner still require the current CI140 matrix.
+that commit. The current four-shard results at5bf586eb above also qualify the
+subsequently synchronized reservation test and current Python procedure.
+The changed native runner still requires the current CI140 Rust matrix.
 
 | Python shard at94d6fc44 | Selected tests | Skips | Failures | Seconds |
 | --- | --- | --- | --- | --- |
@@ -191,7 +203,7 @@ its 40-microsecond limit is unchanged.
 | Natural external games | Linux and Windows cd7f451b receipts prove seed123 twice and swapped seed701 end naturally with unchanged original inputs | Complete current repaired-source qualification |
 | Deterministic replay | All three complete Linux/Windows receipts match; repeated seed123 receipts are identical; fresh transcript hashes recorded above | Complete current CI procedure qualification |
 | Pending save/restore | Current Windows pregame restore and V5/V6 observation cases pass; Linux private bottom menu, combat and effect restoration cases pass | Execute the repaired Windows library cases |
-| Rules and regressions | Linux cd7f451b passes all21Limited targets/347cases plus library/default/native/CUDA checks; Windows passes24Witness and12London cases; four Python shards pass at94d6fc44 and repaired Windows shard1 passes at5bf586eb | Complete repaired Windows runtime CI and current Python shards; audit the timing-priority procedure |
+| Rules and regressions | Linux cd7f451b passes all21Limited targets/347cases plus library/default/native/CUDA checks; Windows passes24Witness and12London cases; all four current Python shards pass at5bf586eb, including the repaired Windows reservation case | Complete current Rust matrix on both platforms; audit the timing-priority procedure |
 | XMage comparisons | PR15 d98525a0: 146 tests/16 classes, zero failures/errors/skips | Reuse for unchanged matching card rules; investigate any actual gameplay discrepancy |
 | Delivery | Own branches and existing PR stack are maintained | Publish final source/report and verify required checks |
 
