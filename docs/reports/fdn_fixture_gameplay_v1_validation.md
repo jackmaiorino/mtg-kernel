@@ -1,5 +1,35 @@
 # FDN fixture gameplay milestone checks
 
+## Current delivery frontier
+
+The original isolated fixture stack completed its full London validation:
+CI 37049183922 at d43d59a2 passed all eight checks. Complete Ubuntu and Windows
+logs cover all 21 Limited integration targets/345 cases, default/native/CUDA
+commands and 35 Windows production-filter cases, with no hidden Cargo failure.
+Original games, fixed-seed replay and pending restore passed. PR 139 is ready
+for review. Witness PR 138 also passed all eight checks and is ready.
+
+Current-main integration remains required. PR 124 now contains main 0b6f5ce5,
+preserving its 192-definition default/v34 identity and giving the counter
+prefix 218 definitions / Limited v40 b3dc8eb6d0a6407d. Original frozen FDN records
+remain readable; mutation requires the actual live identity. Initial CI found
+new main code paths missing counter variants and an outdated i16 test bonus.
+Correction 567d3ca8 adds physical/incarnation reference handling and meaningful
+resampling regressions, with lossless counter conversion. It also corrects
+workspace runner arguments, explicitly executes main's ignored timing case,
+and selects the actual live production round-trip test. Composed-source
+hosted checks are pending, and the integration must reach later stacked PRs.
+Old isolated-stack passes do not qualify that composed source.
+
+PR 140 at 36d54594 passed its full Ubuntu job and the Windows original games,
+restore, default suite and isolated 18.858-microsecond snapshot case. Windows
+then failed native compilation on mixed compiler-path separators. Correction
+bbfe208d normalizes pinned Windows RUSTUP_HOME/RUSTC, preserving the validator.
+Kiora's corresponding repair is 5c29a7bf after the same observed failure.
+Local path/pin, formatting, workflow lint and diff checks passed. Corrected
+hosted native/complete Windows checks remain pending. The fixture goal is
+active; no full-set, drafting or playing-strength claim is made.
+
 Scope: the two unchanged DraftZero decks for issue #110, all their card/token
 dependencies, and their custom-game rules. This is an implementation milestone.
 The 286-name reference, drafting, fair Limited search and training integration
