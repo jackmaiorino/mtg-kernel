@@ -119,6 +119,8 @@ const COST_KINDS_V1: [&str; 11] = [
     "RemoveCounters",
     "PutCounters",
 ];
+const CHOSEN_CREATURE_COST_KIND_V3: u8 = 12;
+const CHOSEN_CREATURE_COST_NAME_V3: &str = "ChooseCreatureOrRevealCreature";
 const OPTIONAL_COST_CHOICES_V1: [&str; 3] = ["Decline", "Discard", "SacrificeLand"];
 const PHASE_NAMES_V2: [&str; 12] = [
     "untap",
@@ -845,6 +847,469 @@ fn finish_full_decision_v2(
     Ok(output)
 }
 
+/// V3 owns a separate entry point and canonical observation identity. The
+/// primitive row layouts and arithmetic remain shared with V2.
+pub(crate) fn fill_native_flat_decision_tensors_v3(
+    view: crate::flat_policy_v3::FlatScoringDecisionViewV3<'_>,
+) -> Result<NativeFlatDecisionTensorV2, NativeFlatTensorErrorV2> {
+    let decision = view.common();
+    if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
+        return Err(NativeFlatTensorErrorV2::ActingPlayerNotRelativeSelf);
+    }
+    validate_auxiliary_tables_v2(decision)?;
+    let projection = build_object_projection_v3(view)?;
+    let objects = encode_objects_with_projection_v2(decision, projection)?;
+    let mut edges = encode_edges_v2(decision, &objects.projection)?;
+    append_extension_edges_v3(view, &objects.projection, &mut edges)?;
+    let mut canonical = canonical_observation_v2(decision, &objects.projection)?;
+    canonical
+        .as_object_mut()
+        .ok_or(NativeFlatTensorErrorV2::CanonicalJson)?
+        .insert("extensions".into(), canonical_extensions_v3(view)?);
+    let mut scratch =
+        serde_json::to_vec(&canonical).map_err(|_| NativeFlatTensorErrorV2::CanonicalJson)?;
+    let state = encode_state_v2(decision, &scratch)?;
+    let actions = encode_action_half_with_projection_and_scratch_contract_v3(
+        decision,
+        Some(&objects.projection),
+        &mut scratch,
+        true,
+        None,
+    )?;
+    let output = NativeFlatDecisionTensorV2 {
+        state,
+        object_features: objects.features,
+        object_card_ids: objects.card_ids,
+        object_groups: objects.groups,
+        object_node_ids: objects.node_ids,
+        edge_features: edges.features,
+        edge_source_indices: edges.sources,
+        edge_target_indices: edges.targets,
+        action_features: actions.action_features,
+        action_ref_features: actions.action_ref_features,
+        action_ref_card_ids: actions.action_ref_card_ids,
+        action_ref_action_indices: actions.action_ref_action_indices,
+        action_ref_node_indices: actions.action_ref_node_indices,
+    };
+    validate_full_output_v2(
+        &output,
+        objects.projection.node_to_raw.len(),
+        decision.actions().len(),
+        decision.action_refs().len(),
+    )?;
+    Ok(output)
+}
+
+fn append_extension_edges_v3(
+    view: crate::flat_policy_v3::FlatScoringDecisionViewV3<'_>,
+    projection: &ObjectProjectionV2,
+    edges: &mut EdgeHalfV2,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    let mut append = |raw, role, primary, secondary| {
+        let node = projected_required_node_v2(Some(raw), projection)?;
+        push_edge_v2(edges, node, node, role, primary, secondary, 0, &[])
+    };
+    if let Some(cost) = &view.extensions().pending_cast_object_cost {
+        append(
+            cost.source_object,
+            FlatRelationRoleV2::PendingContext,
+            0,
+            32,
+        )?;
+        for (index, &raw) in cost.selected_objects.iter().enumerate() {
+            append(
+                raw,
+                FlatRelationRoleV2::PendingContext,
+                u32::try_from(index).map_err(|_| NativeFlatTensorErrorV2::CheckedIntegerRange)?,
+                33,
+            )?;
+        }
+    }
+    if let Some(search) = &view.extensions().decision_local_library {
+        if search.object_indices.len() != search.public_class_ordinals.len() {
+            return Err(NativeFlatTensorErrorV2::ContextShape);
+        }
+        for (&raw, &ordinal) in search
+            .object_indices
+            .iter()
+            .zip(&search.public_class_ordinals)
+        {
+            append(raw, FlatRelationRoleV2::PrivateContext, ordinal, 34)?;
+        }
+    }
+    for (index, historical) in view
+        .extensions()
+        .historical_public_sources
+        .iter()
+        .enumerate()
+    {
+        append(
+            historical.model_object_index,
+            FlatRelationRoleV2::PendingContext,
+            u32::try_from(index).map_err(|_| NativeFlatTensorErrorV2::CheckedIntegerRange)?,
+            35,
+        )?;
+    }
+    let mut append_ward = |payment: &crate::flat_policy_v3::FlatWardPaymentV3,
+                           subrole: u32,
+                           trigger_index: u32| {
+        let source = projected_required_node_v2(Some(payment.ward_source_object), projection)?;
+        let target = projected_required_node_v2(Some(payment.targeting_source_object), projection)?;
+        let mut extra = relative_features_v2(payment.payer)?.to_vec();
+        extra.push(scaled_i64_v2(i64::from(payment.generic), 32.0));
+        push_edge_v2(
+            edges,
+            source,
+            target,
+            FlatRelationRoleV2::PendingContext,
+            payment.targeting_stack_index,
+            subrole,
+            trigger_index,
+            &extra,
+        )
+    };
+    if let Some(payment) = &view.extensions().pending_ward_payment {
+        append_ward(payment, 36, 0)?;
+    }
+    for queued in &view.extensions().queued_ward_payments {
+        append_ward(&queued.payment, 37, queued.stack_index)?;
+    }
+    Ok(())
+}
+
+fn canonical_extensions_v3(
+    view: crate::flat_policy_v3::FlatScoringDecisionViewV3<'_>,
+) -> Result<Value, NativeFlatTensorErrorV2> {
+    let decision = view.common();
+    let ext = view.extensions();
+    let stable = |raw: u32| canonical_stable_ref_v2(decision, raw as usize, None);
+    let cost = match &ext.pending_cast_object_cost {
+        None => Value::Null,
+        Some(cost) => serde_json::json!({
+            "source": stable(cost.source_object)?,
+            "controller": relative_player_value_v2(cost.controller, false)?,
+            "cast_method": cost.cast_method, "cost_kind": cost.cost_kind,
+            "required_count": cost.required_count,
+            "selected": cost.selected_objects.iter().map(|&i| stable(i))
+                .collect::<Result<Vec<_>, _>>()?,
+            "remaining_count": cost.remaining_count,
+        }),
+    };
+    let library = match &ext.decision_local_library {
+        None => Value::Null,
+        Some(library) => serde_json::json!({
+            "chooser": relative_player_value_v2(library.chooser, false)?,
+            "library_owner": relative_player_value_v2(library.library_owner, false)?,
+            "cards": library.object_indices.iter().map(|&i| {
+                Ok(object_value_v2([("stable", stable(i)?)]))
+            }).collect::<Result<Vec<_>, NativeFlatTensorErrorV2>>()?,
+        }),
+    };
+    let historical = ext
+        .historical_public_sources
+        .iter()
+        .map(|source| {
+            Ok(serde_json::json!({"context": source.context,
+                "stack_item_kind": source.stack_item_kind,
+                "source": stable(source.model_object_index)?,
+            }))
+        })
+        .collect::<Result<Vec<_>, NativeFlatTensorErrorV2>>()?;
+    let pending_chosen = match &ext.pending_chosen_creature_cost {
+        None => Value::Null,
+        Some(cost) => serde_json::json!({
+            "source": stable(cost.source_object)?,
+            "controller": relative_player_value_v2(cost.controller, false)?,
+            "selected_zone": cost.selected_zone,
+        }),
+    };
+    let finalized_chosen = ext
+        .finalized_chosen_creature_costs
+        .iter()
+        .map(|cost| {
+            Ok(serde_json::json!({
+                "stack_index": cost.stack_index, "source": stable(cost.source_object)?,
+                "chosen": stable(cost.chosen_object)?, "power_lki": cost.power_lki,
+            }))
+        })
+        .collect::<Result<Vec<_>, NativeFlatTensorErrorV2>>()?;
+    let mut value = serde_json::json!({"pending_cast_object_cost": cost,
+        "decision_local_library": library, "historical_public_sources": historical,
+        "pending_chosen_creature_cost": pending_chosen,
+        "finalized_chosen_creature_costs": finalized_chosen});
+    let payment = |ward: &crate::flat_policy_v3::FlatWardPaymentV3|
+     -> Result<Value, NativeFlatTensorErrorV2> {
+        Ok(serde_json::json!({
+            "targeting_stack_index": ward.targeting_stack_index,
+            "payer": relative_player_value_v2(ward.payer, false)?,
+            "generic": ward.generic,
+        }))
+    };
+    // Missing Ward relations retain revision-2 canonical bytes and hashes.
+    // An added null or empty member would perturb every observation's hash.
+    let members = value
+        .as_object_mut()
+        .ok_or(NativeFlatTensorErrorV2::CanonicalJson)?;
+    if let Some(ward) = &ext.pending_ward_payment {
+        members.insert("pending_ward_payment".into(), payment(ward)?);
+    }
+    if !ext.queued_ward_payments.is_empty() {
+        members.insert(
+            "queued_ward_payments".into(),
+            Value::Array(
+                ext.queued_ward_payments
+                    .iter()
+                    .map(|queued| {
+                        Ok(serde_json::json!({"stack_index": queued.stack_index,
+                    "payment": payment(&queued.payment)?}))
+                    })
+                    .collect::<Result<Vec<_>, NativeFlatTensorErrorV2>>()?,
+            ),
+        );
+    }
+    Ok(value)
+}
+
+/// Reuse the exact V4 node projection for ordered public stack messages.
+pub(crate) fn stack_node_map_v4(
+    view: crate::flat_policy_v4::FlatScoringDecisionViewV4<'_>,
+) -> Result<Vec<Option<usize>>, NativeFlatTensorErrorV2> {
+    Ok(build_object_projection_v4(view)?.raw_to_node)
+}
+
+/// Fresh-lineage (V4 contract) sibling of [`fill_native_flat_decision_tensors_v3`].
+/// Additive only: nothing above this point in the file is touched, and this
+/// function is never called from the V3 path. Reuses every shared V2
+/// primitive (`validate_auxiliary_tables_v2`, `build_object_projection_v3`,
+/// `encode_objects_with_projection_v2`, `encode_edges_v2`,
+/// `canonical_observation_v2`, `encode_state_v2`,
+/// `encode_action_half_with_projection_and_scratch_contract_v3`,
+/// `validate_full_output_v2`) unmodified -- none of them depend on which
+/// historical-source context enum produced a `PendingContext` row, only on
+/// `FlatObjectCoreV2`'s already-registered `(group, visible_ordinal)`, so
+/// this generation needs no new tensor-building machinery, only new typed
+/// glue for the widened `historical_public_sources` context.
+pub(crate) fn fill_native_flat_decision_tensors_v4(
+    view: crate::flat_policy_v4::FlatScoringDecisionViewV4<'_>,
+) -> Result<NativeFlatDecisionTensorV2, NativeFlatTensorErrorV2> {
+    let decision = view.common();
+    if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
+        return Err(NativeFlatTensorErrorV2::ActingPlayerNotRelativeSelf);
+    }
+    validate_auxiliary_tables_v2(decision)?;
+    let projection = build_object_projection_v4(view)?;
+    let objects = encode_objects_with_projection_v2(decision, projection)?;
+    let mut edges = encode_edges_v2(decision, &objects.projection)?;
+    append_extension_edges_v4(view, &objects.projection, &mut edges)?;
+    let mut canonical = canonical_observation_v2(decision, &objects.projection)?;
+    canonical
+        .as_object_mut()
+        .ok_or(NativeFlatTensorErrorV2::CanonicalJson)?
+        .insert("extensions".into(), canonical_extensions_v4(view)?);
+    let mut scratch =
+        serde_json::to_vec(&canonical).map_err(|_| NativeFlatTensorErrorV2::CanonicalJson)?;
+    let state = encode_state_v2(decision, &scratch)?;
+    let actions = encode_action_half_with_projection_and_scratch_contract_v3(
+        decision,
+        Some(&objects.projection),
+        &mut scratch,
+        true,
+        None,
+    )?;
+    let output = NativeFlatDecisionTensorV2 {
+        state,
+        object_features: objects.features,
+        object_card_ids: objects.card_ids,
+        object_groups: objects.groups,
+        object_node_ids: objects.node_ids,
+        edge_features: edges.features,
+        edge_source_indices: edges.sources,
+        edge_target_indices: edges.targets,
+        action_features: actions.action_features,
+        action_ref_features: actions.action_ref_features,
+        action_ref_card_ids: actions.action_ref_card_ids,
+        action_ref_action_indices: actions.action_ref_action_indices,
+        action_ref_node_indices: actions.action_ref_node_indices,
+    };
+    validate_full_output_v2(
+        &output,
+        objects.projection.node_to_raw.len(),
+        decision.actions().len(),
+        decision.action_refs().len(),
+    )?;
+    Ok(output)
+}
+
+fn append_extension_edges_v4(
+    view: crate::flat_policy_v4::FlatScoringDecisionViewV4<'_>,
+    projection: &ObjectProjectionV2,
+    edges: &mut EdgeHalfV2,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    let mut append = |raw, role, primary, secondary| {
+        let node = projected_required_node_v2(Some(raw), projection)?;
+        push_edge_v2(edges, node, node, role, primary, secondary, 0, &[])
+    };
+    if let Some(cost) = &view.extensions().pending_cast_object_cost {
+        append(
+            cost.source_object,
+            FlatRelationRoleV2::PendingContext,
+            0,
+            32,
+        )?;
+        for (index, &raw) in cost.selected_objects.iter().enumerate() {
+            append(
+                raw,
+                FlatRelationRoleV2::PendingContext,
+                u32::try_from(index).map_err(|_| NativeFlatTensorErrorV2::CheckedIntegerRange)?,
+                33,
+            )?;
+        }
+    }
+    if let Some(search) = &view.extensions().decision_local_library {
+        if search.object_indices.len() != search.public_class_ordinals.len() {
+            return Err(NativeFlatTensorErrorV2::ContextShape);
+        }
+        for (&raw, &ordinal) in search
+            .object_indices
+            .iter()
+            .zip(&search.public_class_ordinals)
+        {
+            append(raw, FlatRelationRoleV2::PrivateContext, ordinal, 34)?;
+        }
+    }
+    for (index, historical) in view
+        .extensions()
+        .historical_public_sources
+        .iter()
+        .enumerate()
+    {
+        append(
+            historical.model_object_index,
+            FlatRelationRoleV2::PendingContext,
+            u32::try_from(index).map_err(|_| NativeFlatTensorErrorV2::CheckedIntegerRange)?,
+            35,
+        )?;
+    }
+    let mut append_ward = |payment: &crate::flat_policy_v3::FlatWardPaymentV3,
+                           subrole: u32,
+                           trigger_index: u32| {
+        let source = projected_required_node_v2(Some(payment.ward_source_object), projection)?;
+        let target = projected_required_node_v2(Some(payment.targeting_source_object), projection)?;
+        let mut extra = relative_features_v2(payment.payer)?.to_vec();
+        extra.push(scaled_i64_v2(i64::from(payment.generic), 32.0));
+        push_edge_v2(
+            edges,
+            source,
+            target,
+            FlatRelationRoleV2::PendingContext,
+            payment.targeting_stack_index,
+            subrole,
+            trigger_index,
+            &extra,
+        )
+    };
+    if let Some(payment) = &view.extensions().pending_ward_payment {
+        append_ward(payment, 36, 0)?;
+    }
+    for queued in &view.extensions().queued_ward_payments {
+        append_ward(&queued.payment, 37, queued.stack_index)?;
+    }
+    Ok(())
+}
+
+fn canonical_extensions_v4(
+    view: crate::flat_policy_v4::FlatScoringDecisionViewV4<'_>,
+) -> Result<Value, NativeFlatTensorErrorV2> {
+    let decision = view.common();
+    let ext = view.extensions();
+    let stable = |raw: u32| canonical_stable_ref_v2(decision, raw as usize, None);
+    let cost = match &ext.pending_cast_object_cost {
+        None => Value::Null,
+        Some(cost) => serde_json::json!({
+            "source": stable(cost.source_object)?,
+            "controller": relative_player_value_v2(cost.controller, false)?,
+            "cast_method": cost.cast_method, "cost_kind": cost.cost_kind,
+            "required_count": cost.required_count,
+            "selected": cost.selected_objects.iter().map(|&i| stable(i))
+                .collect::<Result<Vec<_>, _>>()?,
+            "remaining_count": cost.remaining_count,
+        }),
+    };
+    let library = match &ext.decision_local_library {
+        None => Value::Null,
+        Some(library) => serde_json::json!({
+            "chooser": relative_player_value_v2(library.chooser, false)?,
+            "library_owner": relative_player_value_v2(library.library_owner, false)?,
+            "cards": library.object_indices.iter().map(|&i| {
+                Ok(object_value_v2([("stable", stable(i)?)]))
+            }).collect::<Result<Vec<_>, NativeFlatTensorErrorV2>>()?,
+        }),
+    };
+    let historical = ext
+        .historical_public_sources
+        .iter()
+        .map(|source| {
+            Ok(serde_json::json!({"context": source.context,
+                "stack_item_kind": source.stack_item_kind,
+                "source": stable(source.model_object_index)?,
+            }))
+        })
+        .collect::<Result<Vec<_>, NativeFlatTensorErrorV2>>()?;
+    let pending_chosen = match &ext.pending_chosen_creature_cost {
+        None => Value::Null,
+        Some(cost) => serde_json::json!({
+            "source": stable(cost.source_object)?,
+            "controller": relative_player_value_v2(cost.controller, false)?,
+            "selected_zone": cost.selected_zone,
+        }),
+    };
+    let finalized_chosen = ext
+        .finalized_chosen_creature_costs
+        .iter()
+        .map(|cost| {
+            Ok(serde_json::json!({
+                "stack_index": cost.stack_index, "source": stable(cost.source_object)?,
+                "chosen": stable(cost.chosen_object)?, "power_lki": cost.power_lki,
+            }))
+        })
+        .collect::<Result<Vec<_>, NativeFlatTensorErrorV2>>()?;
+    let mut value = serde_json::json!({"pending_cast_object_cost": cost,
+        "decision_local_library": library, "historical_public_sources": historical,
+        "pending_chosen_creature_cost": pending_chosen,
+        "finalized_chosen_creature_costs": finalized_chosen});
+    let payment = |ward: &crate::flat_policy_v3::FlatWardPaymentV3|
+     -> Result<Value, NativeFlatTensorErrorV2> {
+        Ok(serde_json::json!({
+            "targeting_stack_index": ward.targeting_stack_index,
+            "payer": relative_player_value_v2(ward.payer, false)?,
+            "generic": ward.generic,
+        }))
+    };
+    // Missing Ward relations retain revision-2 canonical bytes and hashes.
+    // An added null or empty member would perturb every observation's hash.
+    let members = value
+        .as_object_mut()
+        .ok_or(NativeFlatTensorErrorV2::CanonicalJson)?;
+    if let Some(ward) = &ext.pending_ward_payment {
+        members.insert("pending_ward_payment".into(), payment(ward)?);
+    }
+    if !ext.queued_ward_payments.is_empty() {
+        members.insert(
+            "queued_ward_payments".into(),
+            Value::Array(
+                ext.queued_ward_payments
+                    .iter()
+                    .map(|queued| {
+                        Ok(serde_json::json!({"stack_index": queued.stack_index,
+                    "payment": payment(&queued.payment)?}))
+                    })
+                    .collect::<Result<Vec<_>, NativeFlatTensorErrorV2>>()?,
+            ),
+        );
+    }
+    Ok(value)
+}
+
 #[cfg(test)]
 fn encode_full_decision_reference_v2(
     decision: FlatScoringDecisionViewV1<'_>,
@@ -1100,13 +1565,30 @@ fn encode_action_with_scratch_skip_hash_v1<'a>(
                 return Err(NativeFlatTensorErrorV1::InvalidActionRange);
             }
             expected.mana_choice = action.mana_choice;
-            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            let source = require_singular_ref(&resolved, 0, ROLE_SOURCE_V1)?;
             semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
             semantic.insert(
                 "mana_choice".to_owned(),
                 optional_one_based_name(action.mana_choice, &MANA_COLORS_V1),
             );
             projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
+            // Rich mana abilities with an additional object cost (currently
+            // only Saruli Caretaker: tap another untapped controlled
+            // creature) carry a second, optional `Candidate`-role reference
+            // for that cost target -- see `ActionSemanticV1::
+            // ActivateManaAbility.cost_target` and its wire encoder in
+            // `rl_session.rs` (`push_ref(FlatActionRefRoleV1::Candidate, ...)`
+            // when `cost_target` is `Some`). An ordinary single-ref mana
+            // ability still resolves with exactly one ref, matched above.
+            if resolved.len() > 1 {
+                let cost_target = require_singular_ref(&resolved, 1, ROLE_CANDIDATE_V1)?;
+                require_ref_count(&resolved, 2)?;
+                semantic.insert(
+                    "cost_target".to_owned(),
+                    canonical_card_ref_v1(cost_target)?,
+                );
+                projected_refs.push(projected_singular(cost_target, ROLE_CANDIDATE_V1));
+            }
         }
         FlatScorerActionKindV1::ActivateAbility => {
             expected.ability_index = action.ability_index;
@@ -1530,11 +2012,18 @@ fn is_synthetic_object_v2(object: &FlatObjectCoreV1) -> bool {
 fn build_object_projection_v2(
     objects: &[FlatObjectCoreV1],
 ) -> Result<ObjectProjectionV2, NativeFlatTensorErrorV2> {
-    let mut node_to_raw = objects
+    let node_to_raw = objects
         .iter()
         .enumerate()
         .filter_map(|(raw, object)| (!is_synthetic_object_v2(object)).then_some(raw))
         .collect::<Vec<_>>();
+    build_object_projection_for_rows_v2(objects, node_to_raw)
+}
+
+fn build_object_projection_for_rows_v2(
+    objects: &[FlatObjectCoreV1],
+    mut node_to_raw: Vec<usize>,
+) -> Result<ObjectProjectionV2, NativeFlatTensorErrorV2> {
     for &raw in &node_to_raw {
         let object = &objects[raw];
         if !(1..=NATIVE_FLAT_MAX_CARD_TOKEN_V2).contains(&object.card_token)
@@ -1571,10 +2060,114 @@ fn build_object_projection_v2(
     })
 }
 
+fn build_object_projection_v3(
+    view: crate::flat_policy_v3::FlatScoringDecisionViewV3<'_>,
+) -> Result<ObjectProjectionV2, NativeFlatTensorErrorV2> {
+    let objects = view.common().objects();
+    let ext = view.extensions();
+    let appended = &ext.appended_object_indices;
+    for (index, &raw) in appended.iter().enumerate() {
+        let row = objects
+            .get(raw as usize)
+            .ok_or(NativeFlatTensorErrorV2::ObjectShape)?;
+        let search = row.group == FlatObjectGroupV2::PrivateContext
+            && ext
+                .decision_local_library
+                .as_ref()
+                .is_some_and(|s| s.object_indices.contains(&raw));
+        let historical = row.group == FlatObjectGroupV2::PendingContext
+            && ext
+                .historical_public_sources
+                .iter()
+                .any(|s| s.model_object_index == raw);
+        if !(search || historical)
+            || appended[..index].contains(&raw)
+            || !(1..=NATIVE_FLAT_MAX_CARD_TOKEN_V2).contains(&row.card_token)
+            || row.zone.is_none()
+            || row.owner == FlatRelativePlayerV1::None
+            || row.controller == FlatRelativePlayerV1::None
+        {
+            return Err(NativeFlatTensorErrorV2::ObjectShape);
+        }
+    }
+    let common = objects
+        .iter()
+        .enumerate()
+        .filter_map(|(raw, row)| {
+            (!is_synthetic_object_v2(row) && !appended.contains(&(raw as u32))).then_some(raw)
+        })
+        .collect();
+    let mut projection = build_object_projection_for_rows_v2(objects, common)?;
+    // Explicit new-node order follows the Python authority: missing search
+    // nodes, then missing historical nodes. Reused nodes keep their old order.
+    for &raw in appended {
+        projection.raw_to_node[raw as usize] = Some(projection.node_to_raw.len());
+        projection.node_to_raw.push(raw as usize);
+    }
+    Ok(projection)
+}
+
+/// V4 sibling of [`build_object_projection_v3`]: identical logic, reading
+/// `ext.historical_public_sources`/`ext.decision_local_library` from
+/// `FlatScoringExtensionsV4` in place of `FlatScoringExtensionsV3`. Neither
+/// field's *shape* changed (only `historical_public_sources`'s `context`
+/// element type widened), so this row-shape validation is unaffected.
+fn build_object_projection_v4(
+    view: crate::flat_policy_v4::FlatScoringDecisionViewV4<'_>,
+) -> Result<ObjectProjectionV2, NativeFlatTensorErrorV2> {
+    let objects = view.common().objects();
+    let ext = view.extensions();
+    let appended = &ext.appended_object_indices;
+    for (index, &raw) in appended.iter().enumerate() {
+        let row = objects
+            .get(raw as usize)
+            .ok_or(NativeFlatTensorErrorV2::ObjectShape)?;
+        let search = row.group == FlatObjectGroupV2::PrivateContext
+            && ext
+                .decision_local_library
+                .as_ref()
+                .is_some_and(|s| s.object_indices.contains(&raw));
+        let historical = row.group == FlatObjectGroupV2::PendingContext
+            && ext
+                .historical_public_sources
+                .iter()
+                .any(|s| s.model_object_index == raw);
+        if !(search || historical)
+            || appended[..index].contains(&raw)
+            || !(1..=NATIVE_FLAT_MAX_CARD_TOKEN_V2).contains(&row.card_token)
+            || row.zone.is_none()
+            || row.owner == FlatRelativePlayerV1::None
+            || row.controller == FlatRelativePlayerV1::None
+        {
+            return Err(NativeFlatTensorErrorV2::ObjectShape);
+        }
+    }
+    let common = objects
+        .iter()
+        .enumerate()
+        .filter_map(|(raw, row)| {
+            (!is_synthetic_object_v2(row) && !appended.contains(&(raw as u32))).then_some(raw)
+        })
+        .collect();
+    let mut projection = build_object_projection_for_rows_v2(objects, common)?;
+    for &raw in appended {
+        projection.raw_to_node[raw as usize] = Some(projection.node_to_raw.len());
+        projection.node_to_raw.push(raw as usize);
+    }
+    Ok(projection)
+}
+
 fn encode_objects_v2(
     decision: FlatScoringDecisionViewV1<'_>,
 ) -> Result<ObjectHalfV2, NativeFlatTensorErrorV2> {
     let projection = build_object_projection_v2(decision.objects())?;
+    encode_objects_with_projection_v2(decision, projection)
+}
+
+fn encode_objects_with_projection_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: ObjectProjectionV2,
+) -> Result<ObjectHalfV2, NativeFlatTensorErrorV2> {
     let output_count = projection.node_to_raw.len().max(1);
     let mut features = try_vec_capacity(
         output_count
@@ -5575,6 +6168,22 @@ fn encode_action_half_with_projection_and_scratch_v2(
     decision: FlatScoringDecisionViewV1<'_>,
     projection: Option<&ObjectProjectionV2>,
     canonical_json: &mut Vec<u8>,
+    deferred: Option<DeferredActionJsonV1<'_>>,
+) -> Result<ActionHalfV1, NativeFlatTensorErrorV1> {
+    encode_action_half_with_projection_and_scratch_contract_v3(
+        decision,
+        projection,
+        canonical_json,
+        false,
+        deferred,
+    )
+}
+
+fn encode_action_half_with_projection_and_scratch_contract_v3(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: Option<&ObjectProjectionV2>,
+    canonical_json: &mut Vec<u8>,
+    allow_chosen_creature_cost_v3: bool,
     mut deferred: Option<DeferredActionJsonV1<'_>>,
 ) -> Result<ActionHalfV1, NativeFlatTensorErrorV1> {
     if decision.globals().acting_player != FlatRelativePlayerV1::SelfPlayer {
@@ -5610,7 +6219,7 @@ fn encode_action_half_with_projection_and_scratch_v2(
         if start != ref_cursor || end > refs.len() {
             return Err(NativeFlatTensorErrorV1::ActionReferenceRange);
         }
-        let encoded = encode_action_with_scratch_v1(
+        let encoded = encode_action_with_scratch_contract_v3(
             decision,
             action_index,
             action,
@@ -5618,6 +6227,7 @@ fn encode_action_half_with_projection_and_scratch_v2(
             projection,
             canonical_json,
             false,
+            allow_chosen_creature_cost_v3,
             deferred.as_mut(),
         )?;
         out.action_features.extend_from_slice(&encoded.features);
@@ -5690,6 +6300,31 @@ fn encode_action_with_scratch_v1<'a>(
     retain_canonical_json: bool,
     deferred: Option<&mut DeferredActionJsonV1<'_>>,
 ) -> Result<EncodedActionV1, NativeFlatTensorErrorV1> {
+    encode_action_with_scratch_contract_v3(
+        decision,
+        action_index,
+        action,
+        raw_refs,
+        projection,
+        canonical_json_scratch,
+        retain_canonical_json,
+        false,
+        deferred,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_action_with_scratch_contract_v3<'a>(
+    decision: FlatScoringDecisionViewV1<'a>,
+    action_index: usize,
+    action: &FlatScorerActionCoreV1,
+    raw_refs: &'a [FlatScorerActionRefV1],
+    projection: Option<&ObjectProjectionV2>,
+    canonical_json_scratch: &mut Vec<u8>,
+    retain_canonical_json: bool,
+    allow_chosen_creature_cost_v3: bool,
+    deferred: Option<&mut DeferredActionJsonV1<'_>>,
+) -> Result<EncodedActionV1, NativeFlatTensorErrorV1> {
     let resolved = resolve_action_refs_v1(decision, action_index, raw_refs)?;
     let mut expected = FlatScorerActionCoreV1 {
         kind: action.kind,
@@ -5719,13 +6354,30 @@ fn encode_action_with_scratch_v1<'a>(
                 return Err(NativeFlatTensorErrorV1::InvalidActionRange);
             }
             expected.mana_choice = action.mana_choice;
-            let source = require_only_ref(&resolved, ROLE_SOURCE_V1)?;
+            let source = require_singular_ref(&resolved, 0, ROLE_SOURCE_V1)?;
             semantic.insert("source".to_owned(), canonical_card_ref_v1(source)?);
             semantic.insert(
                 "mana_choice".to_owned(),
                 optional_one_based_name(action.mana_choice, &MANA_COLORS_V1),
             );
             projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
+            // Rich mana abilities with an additional object cost (currently
+            // only Saruli Caretaker: tap another untapped controlled
+            // creature) carry a second, optional `Candidate`-role reference
+            // for that cost target -- see `ActionSemanticV1::
+            // ActivateManaAbility.cost_target` and its wire encoder in
+            // `rl_session.rs` (`push_ref(FlatActionRefRoleV1::Candidate, ...)`
+            // when `cost_target` is `Some`). An ordinary single-ref mana
+            // ability still resolves with exactly one ref, matched above.
+            if resolved.len() > 1 {
+                let cost_target = require_singular_ref(&resolved, 1, ROLE_CANDIDATE_V1)?;
+                require_ref_count(&resolved, 2)?;
+                semantic.insert(
+                    "cost_target".to_owned(),
+                    canonical_card_ref_v1(cost_target)?,
+                );
+                projected_refs.push(projected_singular(cost_target, ROLE_CANDIDATE_V1));
+            }
         }
         FlatScorerActionKindV1::ActivateAbility => {
             expected.ability_index = action.ability_index;
@@ -5755,7 +6407,11 @@ fn encode_action_with_scratch_v1<'a>(
             }
         }
         FlatScorerActionKindV1::ChooseCostTarget => {
-            if action.remaining == 0 || !(1..=11).contains(&action.cost_kind) {
+            if action.remaining == 0
+                || !((1..=11).contains(&action.cost_kind)
+                    || allow_chosen_creature_cost_v3
+                        && action.cost_kind == CHOSEN_CREATURE_COST_KIND_V3)
+            {
                 return Err(NativeFlatTensorErrorV1::InvalidActionRange);
             }
             expected.remaining = action.remaining;
@@ -5768,7 +6424,15 @@ fn encode_action_with_scratch_v1<'a>(
             semantic.insert("remaining".to_owned(), Value::from(action.remaining));
             semantic.insert(
                 "cost_kind".to_owned(),
-                Value::String(one_based_name(action.cost_kind, &COST_KINDS_V1)?.to_owned()),
+                Value::String(
+                    if allow_chosen_creature_cost_v3
+                        && action.cost_kind == CHOSEN_CREATURE_COST_KIND_V3
+                    {
+                        CHOSEN_CREATURE_COST_NAME_V3.to_owned()
+                    } else {
+                        one_based_name(action.cost_kind, &COST_KINDS_V1)?.to_owned()
+                    },
+                ),
             );
             projected_refs.push(projected_singular(source, ROLE_SOURCE_V1));
             projected_refs.push(projected_singular(candidate, ROLE_CANDIDATE_V1));
@@ -6043,7 +6707,8 @@ fn encode_action_with_scratch_v1<'a>(
         return Err(NativeFlatTensorErrorV1::ActionReferenceShape);
     }
     write_canonical_action_json_v1(semantic, canonical_json_scratch)?;
-    let mut features = explicit_action_features_v1(action, &resolved)?;
+    let mut features =
+        explicit_action_features_contract_v3(action, &resolved, allow_chosen_creature_cost_v3)?;
     let sha512_blocks = if let Some(deferred) = deferred {
         let start = deferred.json.len();
         deferred.json.extend_from_slice(canonical_json_scratch);
@@ -6334,6 +6999,14 @@ fn explicit_action_features_v1(
     action: &FlatScorerActionCoreV1,
     refs: &[ResolvedActionRefV1<'_>],
 ) -> Result<[f32; NATIVE_FLAT_ACTION_FEATURE_DIM_V1], NativeFlatTensorErrorV1> {
+    explicit_action_features_contract_v3(action, refs, false)
+}
+
+fn explicit_action_features_contract_v3(
+    action: &FlatScorerActionCoreV1,
+    refs: &[ResolvedActionRefV1<'_>],
+    allow_chosen_creature_cost_v3: bool,
+) -> Result<[f32; NATIVE_FLAT_ACTION_FEATURE_DIM_V1], NativeFlatTensorErrorV1> {
     let mut out = [0.0f32; NATIVE_FLAT_ACTION_FEATURE_DIM_V1];
     let kind = action.kind as usize;
     if kind >= 27 {
@@ -6437,10 +7110,16 @@ fn explicit_action_features_v1(
     } else {
         usize::from(action.cost_kind - 1)
     };
-    if cost_kind >= COST_KINDS_V1.len() {
-        return Err(NativeFlatTensorErrorV1::InvalidActionRange);
+    if allow_chosen_creature_cost_v3 && action.cost_kind == CHOSEN_CREATURE_COST_KIND_V3 {
+        // Preserve the eleven frozen categorical slots. This exact V3-only
+        // category has an all-zero vector and its distinct full type string
+        // in the semantic hash; it is never aliased to a historical cost.
+    } else {
+        if cost_kind >= COST_KINDS_V1.len() {
+            return Err(NativeFlatTensorErrorV1::InvalidActionRange);
+        }
+        out[85 + cost_kind] = 1.0;
     }
-    out[85 + cost_kind] = 1.0;
     let choice = if action.optional_cost_choice == 0 {
         0
     } else {
@@ -7176,6 +7855,79 @@ mod tests {
             );
             assert_eq!(output.action_ref_node_indices, case.action_ref_node_indices);
             validate_native_flat_action_half_v1(&output, 1, refs.len(), objects.len()).unwrap();
+        }
+    }
+
+    #[test]
+    fn v3_chosen_creature_cost_has_explicit_zero_slots_distinct_hash_and_frozen_v2_rejection() {
+        let document = golden();
+        let case = document
+            .cases
+            .iter()
+            .find(|case| case.name == "primary-choose_cost_target")
+            .unwrap();
+        let (globals, objects, mut actions, refs) = parts(&case.flat_input);
+        for cost_kind in 1..=11 {
+            actions[0].cost_kind = cost_kind;
+            let decision = view(&globals, &objects, &actions, &refs);
+            let old = encode_action_v1(decision, 0, &actions[0], &refs, None).unwrap();
+            let new = encode_action_with_scratch_contract_v3(
+                decision,
+                0,
+                &actions[0],
+                &refs,
+                None,
+                &mut Vec::new(),
+                true,
+                true,
+                None,
+            )
+            .unwrap();
+            assert_eq!(new.features, old.features);
+            assert_eq!(new.canonical_json, old.canonical_json);
+        }
+        actions[0].cost_kind = CHOSEN_CREATURE_COST_KIND_V3;
+        let decision = view(&globals, &objects, &actions, &refs);
+        assert!(matches!(
+            encode_action_v1(decision, 0, &actions[0], &refs, None),
+            Err(NativeFlatTensorErrorV1::InvalidActionRange)
+        ));
+        let encoded = encode_action_with_scratch_contract_v3(
+            decision,
+            0,
+            &actions[0],
+            &refs,
+            None,
+            &mut Vec::new(),
+            true,
+            true,
+            None,
+        )
+        .unwrap();
+        assert_eq!(encoded.features.len(), 195);
+        assert!(encoded.features[85..96].iter().all(|&value| value == 0.0));
+        let canonical: Value = serde_json::from_slice(&encoded.canonical_json).unwrap();
+        assert_eq!(
+            canonical["semantic"]["cost_kind"],
+            CHOSEN_CREATURE_COST_NAME_V3
+        );
+        for unknown in [13, u8::MAX] {
+            actions[0].cost_kind = unknown;
+            let decision = view(&globals, &objects, &actions, &refs);
+            assert!(matches!(
+                encode_action_with_scratch_contract_v3(
+                    decision,
+                    0,
+                    &actions[0],
+                    &refs,
+                    None,
+                    &mut Vec::new(),
+                    true,
+                    true,
+                    None
+                ),
+                Err(NativeFlatTensorErrorV1::InvalidActionRange)
+            ));
         }
     }
 

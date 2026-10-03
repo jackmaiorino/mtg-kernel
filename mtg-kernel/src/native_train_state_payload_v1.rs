@@ -309,7 +309,7 @@ fn decode_native_train_state_payload_inner_v1(
     Ok(NativeDecodedTrainStatePayloadV1 { snapshot, digests })
 }
 
-fn encode_section_v1(output: &mut Vec<u8>, tensors: &[NativeNamedParameterV1]) {
+pub(crate) fn encode_section_v1(output: &mut Vec<u8>, tensors: &[NativeNamedParameterV1]) {
     for tensor in tensors {
         for value in &tensor.values {
             output.extend_from_slice(&value.to_bits().to_le_bytes());
@@ -317,7 +317,7 @@ fn encode_section_v1(output: &mut Vec<u8>, tensors: &[NativeNamedParameterV1]) {
     }
 }
 
-fn decode_section_v1(
+pub(crate) fn decode_section_v1(
     section: &[u8],
 ) -> Result<Vec<NativeNamedParameterV1>, NativeTrainStatePayloadErrorV1> {
     if section.len() != NATIVE_TRAIN_STATE_SECTION_BYTE_COUNT_V1 {

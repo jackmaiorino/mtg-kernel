@@ -81,6 +81,23 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
+      - name: Install pinned Rust in a fresh toolchain directory
+        shell: bash
+        env:
+          RUSTUP_HOME: ${{ runner.temp }}/fdn-rustup
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            export RUSTUP_HOME="$(cygpath -w "$RUSTUP_HOME")"
+          fi
+          printf 'RUSTUP_HOME=%s\n' "$RUSTUP_HOME" >> "$GITHUB_ENV"
+          fdn_rust_channel=$(sed -n 's/^channel = "\([^"]*\)".*$/\1/p' rust-toolchain.toml)
+          test -n "$fdn_rust_channel"
+          rustup toolchain install "$fdn_rust_channel" --profile minimal --component clippy --component rustfmt --no-self-update
+          if [ "$RUNNER_OS" = Windows ]; then
+            fdn_rustc_path=$(cygpath -w "$(rustup which --toolchain "$fdn_rust_channel" rustc)")
+            printf 'RUSTC=%s\n' "$fdn_rustc_path" >> "$GITHUB_ENV"
+          fi
+
       - name: Cache cargo registry
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -117,6 +134,9 @@ jobs:
     name: Rust tests (${{ matrix.os }})
     needs: detect-changes
     if: needs.detect-changes.outputs.rust_relevant == 'true'
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
@@ -127,6 +147,28 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Install pinned Rust in a fresh toolchain directory
+        shell: bash
+        env:
+          RUSTUP_HOME: ${{ runner.temp }}/fdn-rustup
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            export RUSTUP_HOME="$(cygpath -w "$RUSTUP_HOME")"
+          fi
+          printf 'RUSTUP_HOME=%s\n' "$RUSTUP_HOME" >> "$GITHUB_ENV"
+          fdn_rust_channel=$(sed -n 's/^channel = "\([^"]*\)".*$/\1/p' rust-toolchain.toml)
+          test -n "$fdn_rust_channel"
+          rustup toolchain install "$fdn_rust_channel" --profile minimal --component clippy --component rustfmt --no-self-update
+          if [ "$RUNNER_OS" = Windows ]; then
+            fdn_rustc_path=$(cygpath -w "$(rustup which --toolchain "$fdn_rust_channel" rustc)")
+            printf 'RUSTC=%s\n' "$fdn_rustc_path" >> "$GITHUB_ENV"
+          fi
+
+      - name: Set up pinned Python for grouped Rust filters
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
 
       - name: Cache cargo registry
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -140,23 +182,21 @@ jobs:
             cargo-registry-tests-${{ matrix.os }}-
 
       - name: Run Rust release tests
-        run: cargo test --release --locked --workspace --all-targets
+        run: python python/tools/run_rust_workspace_tests.py --no-fail-fast
 
       - name: Validate native Store production feature boundary
+        shell: pwsh
         run: |
           cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --lib native_store_production_capture_v2::
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --test native_cli_platform_stub_v2
+          exit $LASTEXITCODE
 
       - name: Validate FDN Limited gameplay and catalog separation
         run: |
           cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test fdn_fixture_batch_a_v1 --test fdn_fixture_batch_b_v1 --test limited_session_v1 --test limited_priority_v1 --test limited_combat_v1 --test fdn_combat_cards_v1 --test fdn_legend_rule_v1 --test fdn_targeted_spells_v1 --test fdn_counter_creatures_v1 --test fdn_lifegain_creatures_v1 --test fdn_draw_creatures_v1 --test fdn_homunculus_creature_v1
-          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib limited_session_v1::tests
-          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib rl_session::tests
-          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib card_def::
-          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib native_training_store_run_v2::
-          cargo test --release --locked -p mtg-kernel --features "limited-fdn-fixtures native-training-store-v2-production" --lib pre_fdn_profile
-          cargo test --release --locked -p mtg-kernel --features "limited-fdn-fixtures native-training-store-v2-production" --lib prior_fdn_batch
-          cargo test --release --locked -p mtg-kernel --features "limited-fdn-fixtures native-training-store-v2-production" --lib fdn_profile_record_round_trips
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures limited_session_v1::tests rl_session::tests card_def:: native_training_store_run_v2::
+          python python/tools/run_rust_lib_filters.py --features "limited-fdn-fixtures native-training-store-v2-production" pre_fdn_profile prior_fdn_batch current_profile_record_round_trips
 
       - name: Test host-safe experimental CUDA feature surface
         run: |
@@ -186,6 +226,23 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Install pinned Rust in a fresh toolchain directory
+        shell: bash
+        env:
+          RUSTUP_HOME: ${{ runner.temp }}/fdn-rustup
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            export RUSTUP_HOME="$(cygpath -w "$RUSTUP_HOME")"
+          fi
+          printf 'RUSTUP_HOME=%s\n' "$RUSTUP_HOME" >> "$GITHUB_ENV"
+          fdn_rust_channel=$(sed -n 's/^channel = "\([^"]*\)".*$/\1/p' rust-toolchain.toml)
+          test -n "$fdn_rust_channel"
+          rustup toolchain install "$fdn_rust_channel" --profile minimal --component clippy --component rustfmt --no-self-update
+          if [ "$RUNNER_OS" = Windows ]; then
+            fdn_rustc_path=$(cygpath -w "$(rustup which --toolchain "$fdn_rust_channel" rustc)")
+            printf 'RUSTC=%s\n' "$fdn_rustc_path" >> "$GITHUB_ENV"
+          fi
 
       - name: Cache cargo registry
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

@@ -115,7 +115,7 @@ fn appended_definitions_keep_old_card_ids_and_target_vocabulary() {
     .enumerate()
     {
         let id = card_id_by_name(name).unwrap();
-        assert_eq!(id as usize, 162 + index);
+        assert_eq!(id as usize, 192 + index);
         assert_eq!(CARD_DEFS[id as usize].capability, CardCapability::Full);
         assert!(!CARD_DEFS[id as usize].is_token);
     }
@@ -123,14 +123,14 @@ fn appended_definitions_keep_old_card_ids_and_target_vocabulary() {
         TargetSpec::OpponentArtifactOrEnchantmentPermanent.stable_id(),
         35
     );
-    assert_eq!(TargetSpec::ArtifactOrEnchantmentPermanent.stable_id(), 36);
+    assert_eq!(TargetSpec::ArtifactOrEnchantmentPermanent.stable_id(), 37);
 }
 
 #[test]
 fn plains_plays_untapped_produces_white_and_allows_limited_copy_counts() {
     let deck: CustomDeckV1 =
         serde_json::from_str(r#"{"cards":[{"name":"Plains","count":40}]}"#).unwrap();
-    assert_eq!(deck.resolve().unwrap(), vec![162; 40]);
+    assert_eq!(deck.resolve().unwrap(), vec![192; 40]);
     let mut state = ready(Step::Main1);
     let plains = put(&mut state, PlayerId::P0, "Plains", Zone::Hand);
     let mut surface = surface();
