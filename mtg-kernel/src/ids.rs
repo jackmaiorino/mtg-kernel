@@ -4,6 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::sync::Arc;
 
 /// Index into `GameState::objects`. Stable for the lifetime of the game.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -52,26 +53,33 @@ impl PlayerId {
 /// removed (a card moving zones is a mutation of the object at its existing
 /// id, not a relocation). This keeps ids stable across the whole game and
 /// across snapshot/restore without a generation counter.
+/// Clones share the backing vector until a mutation detaches it. Serialization
+/// and hashing retain the original vector's values and order.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Arena<T> {
-    items: Vec<T>,
+    items: Arc<Vec<T>>,
 }
 
 impl<T> Arena<T> {
     pub fn new() -> Self {
-        Arena { items: Vec::new() }
+        Arena {
+            items: Arc::new(Vec::new()),
+        }
     }
 
     pub fn with_capacity(cap: usize) -> Self {
         Arena {
-            items: Vec::with_capacity(cap),
+            items: Arc::new(Vec::with_capacity(cap)),
         }
     }
 
     /// Appends `value` and returns its newly assigned stable id.
-    pub fn push(&mut self, value: T) -> ObjectId {
+    pub fn push(&mut self, value: T) -> ObjectId
+    where
+        T: Clone,
+    {
         let id = ObjectId(self.items.len() as u32);
-        self.items.push(value);
+        Arc::make_mut(&mut self.items).push(value);
         id
     }
 
@@ -79,8 +87,11 @@ impl<T> Arena<T> {
         &self.items[id.0 as usize]
     }
 
-    pub fn get_mut(&mut self, id: ObjectId) -> &mut T {
-        &mut self.items[id.0 as usize]
+    pub fn get_mut(&mut self, id: ObjectId) -> &mut T
+    where
+        T: Clone,
+    {
+        &mut Arc::make_mut(&mut self.items)[id.0 as usize]
     }
 
     pub fn try_get(&self, id: ObjectId) -> Option<&T> {
@@ -103,8 +114,11 @@ impl<T> Arena<T> {
             .map(|(i, v)| (ObjectId(i as u32), v))
     }
 
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (ObjectId, &mut T)> {
-        self.items
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (ObjectId, &mut T)>
+    where
+        T: Clone,
+    {
+        Arc::make_mut(&mut self.items)
             .iter_mut()
             .enumerate()
             .map(|(i, v)| (ObjectId(i as u32), v))
@@ -118,7 +132,7 @@ impl<T> std::ops::Index<ObjectId> for Arena<T> {
     }
 }
 
-impl<T> std::ops::IndexMut<ObjectId> for Arena<T> {
+impl<T: Clone> std::ops::IndexMut<ObjectId> for Arena<T> {
     fn index_mut(&mut self, id: ObjectId) -> &mut T {
         self.get_mut(id)
     }
@@ -153,5 +167,54 @@ mod tests {
         arena.push(30);
         let ids: Vec<ObjectId> = arena.iter().map(|(id, _)| id).collect();
         assert_eq!(ids, vec![ObjectId(0), ObjectId(1), ObjectId(2)]);
+    }
+
+    #[test]
+    fn arena_clones_detach_for_every_mutation_entry_point() {
+        let mut original = Arena::new();
+        let first = original.push(vec![10u16, 11]);
+        let second = original.push(vec![20]);
+        let original_bytes = serde_json::to_vec(&original).unwrap();
+
+        let mut by_get = original.clone();
+        by_get.get_mut(first).push(12);
+        let mut by_index = original.clone();
+        by_index[second].push(21);
+        let mut by_iter = original.clone();
+        for (id, value) in by_iter.iter_mut() {
+            value.push(id.0 as u16);
+        }
+        let mut by_push = original.clone();
+        assert_eq!(by_push.push(vec![30]), ObjectId(2));
+
+        assert_eq!(by_get[first], vec![10, 11, 12]);
+        assert_eq!(by_index[second], vec![20, 21]);
+        assert_eq!(by_iter[first], vec![10, 11, 0]);
+        assert_eq!(by_iter[second], vec![20, 1]);
+        assert_eq!(by_push[ObjectId(2)], vec![30]);
+        assert_eq!(serde_json::to_vec(&original).unwrap(), original_bytes);
+        assert_eq!(original.len(), 2);
+        assert_eq!(by_get[second], original[second]);
+        assert_eq!(by_index[first], original[first]);
+    }
+
+    #[test]
+    fn arena_legacy_serialization_and_hash_are_value_based() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let bytes = br#"{"items":[[10,11],[20]]}"#;
+        let restored: Arena<Vec<u16>> = serde_json::from_slice(bytes).unwrap();
+        let mut independently_built = Arena::new();
+        independently_built.push(vec![10u16, 11]);
+        independently_built.push(vec![20]);
+
+        assert_eq!(serde_json::to_vec(&restored).unwrap().as_slice(), bytes);
+        assert_eq!(restored, independently_built);
+        let mut restored_hash = DefaultHasher::new();
+        let mut independent_hash = DefaultHasher::new();
+        restored.hash(&mut restored_hash);
+        independently_built.hash(&mut independent_hash);
+        assert_eq!(restored_hash.finish(), independent_hash.finish());
     }
 }

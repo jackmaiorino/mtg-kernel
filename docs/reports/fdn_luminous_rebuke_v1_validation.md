@@ -1,5 +1,33 @@
 # FDN Luminous Rebuke implementation and verification
 
+## Current snapshot-storage repair
+
+Windows job `111160313009` at published source `2b47e17f` failed only the
+isolated snapshot check: 59.576 microseconds against the frozen 40 limit,
+despite already using the high-priority timing child. Every other workspace
+test summary passed. Later native, Limited and CUDA steps were skipped; the
+overall job remains a failure. Its complete terminal log is retained as
+`fdn-rust-current-111160313009.log`. The same source's Linux matrix passed in
+job `111160312959`, including all 16 selected integration targets and snapshot
+timing at 5.034 microseconds.
+
+The prepared backport copies the arena-storage change from CI `92881658`:
+`Arena<T>` shares `Arc<Vec<T>>` storage and detaches before every mutation.
+Stable IDs, value hashes and legacy JSON remain value based. Mutating APIs
+require `T: Clone`, which `GameObject` implements. Two arena regressions cover
+all mutation paths and legacy serialization; the GameState round trip checks
+captured bytes and independent mutation after restore. The first mutation
+of shared storage still clones the objects. The entire frozen workload and
+timing function, dependency versions, lockfile and toolchain pins are unchanged.
+
+All three source files match the current CI composition. Its actual arena
+module has five passing standalone Windows unit cases with the workspace's
+exact dependency pins, and all four hosted release Clippy gates pass. The
+current Linux London/original-game step also passed. These results do not
+qualify Rebuke's complete runtime matrix or the Windows timing gate.
+Publication waits for the new arena's runtime qualification; the committed
+backport then requires its own complete hosted checks before delivery.
+
 Hosted CI at `deaa8b29cf26547e4dc28e01341648dc23e50460` passed all eight checks: Rust on
 Ubuntu and Windows, all four Python shards, formatting/lint and path detection.
 Run: https://github.com/jackmaiorino/mtg-kernel/actions/runs/37008853823. Earlier pending entries below record the original
