@@ -187,7 +187,7 @@ class LimitedDeckTest(unittest.TestCase):
                 self.assertEqual(report["card_ids"], expected)
                 self.assertEqual(len(report["card_ids"]), 40)
                 if "UG" in filename:
-                    self.assertEqual(report["card_ids"].count(205), 2)
+                    self.assertEqual(report["card_ids"].count(235), 2)
 
     def test_cli_resolves_supported_deck_and_reports_its_registry_identity(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
