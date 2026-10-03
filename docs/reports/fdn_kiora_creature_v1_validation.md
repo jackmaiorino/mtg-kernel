@@ -94,3 +94,10 @@ Result SHA-256 `04945be7c2bd3397493bb2923fb7f36df28f59387a6450af998bfbdb0ff531a8
 log SHA-256 `e307559aba8a6febcd5f900560357cd71c0d64ab7e938cc86c1f4815bc188582`.
 These custom games exercise the card and existing interactions. They do not
 complete the original-fixture milestone or estimate playing strength.
+
+Repaired Windows job111063203013 passed the default suite and isolated timing
+case, then failed native compilation because the fresh toolchain supplied
+mixed path separators. Applied the same Windows RUSTUP_HOME/RUSTC normalization
+as PR140. Preserve the native path validator and pinned toolchain. Workflow
+lint and the local pinned compiler/path check passed; the corrected hosted
+native and complete Windows checks remain pending. Gameplay source is unchanged.
