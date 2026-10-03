@@ -32,7 +32,7 @@ unchanged 192-definition Pauper registry. The importer combines both files in
 that order and reports their separate SHA-256s. Build the gameplay binary with
 `cargo build --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_env`.
 Default builds retain the Pauper catalog and its v34 identity; the
-Limited feature selects the appended definitions and their v43 identity.
+Limited feature selects the appended definitions and their v44 identity.
 Earlier FDN catalog tuples remain readable and are rejected for mutation
 when they do not match the actual build.
 when they do not match the actual build.

@@ -1196,6 +1196,9 @@ pub struct CardDef {
     /// Static Ward cost materialized when an opposing spell or ability
     /// finishes targeting this permanent. `None` means no implemented Ward.
     pub ward_cost: Option<WardCostDef>,
+    /// Printed protection applying to this card as a spell, including copies.
+    /// It does not protect the permanent's activated or triggered abilities.
+    pub spell_cannot_be_countered: bool,
     /// Printed Equipment behavior shared by attachments, effective
     /// characteristics, cast triggers, and RL continuous-effect projection.
     pub equipment: Option<EquipmentDef>,
@@ -1709,7 +1712,7 @@ mod tests {
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                225
+                227
             } else {
                 192
             }
@@ -1797,8 +1800,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v43_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0xf9e2_3933_7d93_3849;
+    fn card_db_hash_v44_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0xd196_a0b7_06b6_9e48;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
@@ -2303,12 +2306,13 @@ mod tests {
         assert_eq!(counterspell.target_spec, TargetSpec::AnySpellOnStack);
         assert_eq!(dispel.target_spec, TargetSpec::InstantSpellOnStack);
         assert_eq!((counterspell.spell_effect)(), (dispel.spell_effect)());
+        #[cfg(not(feature = "limited-fdn-fixtures"))]
+        let expected_condition = EffectCond::TargetInZone(0, Zone::Stack);
+        #[cfg(feature = "limited-fdn-fixtures")]
+        let expected_condition = EffectCond::TargetSpellCanBeCountered(0);
         assert!(matches!(
             (counterspell.spell_effect)(),
-            Some(EffectOp::Conditional {
-                cond: EffectCond::TargetInZone(0, Zone::Stack),
-                ..
-            })
+            Some(EffectOp::Conditional { cond, .. }) if cond == expected_condition
         ));
     }
 

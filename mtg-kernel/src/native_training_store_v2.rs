@@ -690,10 +690,12 @@ fn publish_generation_v2(
         | NativeRunCatalogProfileV1::FdnLifegainCreatures
         | NativeRunCatalogProfileV1::FdnDrawCreatures
         | NativeRunCatalogProfileV1::FdnHomunculusCreature
+        | NativeRunCatalogProfileV1::FdnKomaCreature
         | NativeRunCatalogProfileV1::FdnCounterCreaturesRebased
         | NativeRunCatalogProfileV1::FdnLifegainCreaturesRebased
         | NativeRunCatalogProfileV1::FdnDrawCreaturesRebased
-        | NativeRunCatalogProfileV1::FdnHomunculusCreatureRebased => {
+        | NativeRunCatalogProfileV1::FdnHomunculusCreatureRebased
+        | NativeRunCatalogProfileV1::FdnKomaCreatureRebased => {
             if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
                 return Err(publisher_error_v2(
                     NativeTrainingStorePublisherV2ErrorKind::CurrentCatalogProfileLiveMismatch,
@@ -1746,6 +1748,8 @@ mod windows_publisher_tests {
         identity_v2, open_no_follow_v2, FILE_SHARE_DELETE_V2, FILE_SHARE_READ_V2,
         FILE_SHARE_WRITE_V2, GENERIC_READ_V2,
     };
+    #[cfg(feature = "limited-fdn-fixtures")]
+    use crate::native_training_store_run_v2::NativeRunCatalogProfileV1;
     use crate::native_training_store_run_v2::{
         decode_train_run_v2, live_catalog_profile_v1, test_fixture_bytes_historical_v1,
         test_fixture_bytes_v2,
@@ -2269,6 +2273,29 @@ mod windows_publisher_tests {
         assert_eq!(
             run.catalog_profile_v1(),
             NativeRunCatalogProfileV1::FdnDrawCreatures
+        );
+        let live = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        let executor = fresh_executor_v2(&live);
+        let genesis = genesis_authorities_v2(&live, &executor);
+        let result = publish_genesis_v2(&root, &run, &genesis);
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStorePublisherV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+        assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Run).exists());
+        assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Latest).exists());
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn publish_rejects_prior_fdn_batch_homunculus_creature_before_mutating_any_store_files() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_homunculus_creature_v1;
+        let store = TestStoreV2::with_skeleton("prior-fdn-homunculus-creature");
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_homunculus_creature_v1()).unwrap();
+        assert_eq!(
+            run.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnHomunculusCreature
         );
         let live = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
         let executor = fresh_executor_v2(&live);

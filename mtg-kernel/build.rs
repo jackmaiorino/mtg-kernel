@@ -3392,9 +3392,8 @@ fn keywords_for(card: &CardJson) -> String {
         | "Vitu-Ghazi Inspector"
         | "Webweaver Changeling"
         | "Dwynen, Gilt-Leaf Daen" => keywords.push("Keywords::REACH"),
-        "Spinewoods Paladin" | "Avenging Hunter" | "Beast-Kin Ranger" | "Mossborn Hydra" => {
-            keywords.push("Keywords::TRAMPLE")
-        }
+        "Spinewoods Paladin" | "Avenging Hunter" | "Beast-Kin Ranger" | "Mossborn Hydra"
+        | "Koma, World-Eater" => keywords.push("Keywords::TRAMPLE"),
         "Outlaw Medic"
         | "Sacred Cat"
         | "Sacred Cat Embalmed Token"
@@ -3518,6 +3517,7 @@ fn object_name_for(name: &str) -> &str {
     match name {
         "Sacred Cat Embalmed Token" => "Sacred Cat",
         "Homunculus Horde Token" => "Homunculus Horde",
+        "Koma's Coil Token" => "Koma's Coil",
         _ => name,
     }
 }
@@ -4961,9 +4961,16 @@ fn generic_cost_reduction_for(name: &str) -> &'static str {
     }
 }
 
+fn spell_cannot_be_countered_for(card: &CardJson) -> bool {
+    card.mechanics
+        .iter()
+        .any(|mechanic| mechanic == "cant_be_countered")
+}
+
 fn ward_cost_for(name: &str) -> &'static str {
     match name {
         "Tolarian Terror" => "Some(WardCostDef::Generic(2))",
+        "Koma, World-Eater" => "Some(WardCostDef::Generic(4))",
         _ => "None",
     }
 }
@@ -5012,6 +5019,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Exemplar of Light" => "controller_gains_positive_life:counter_on_bound_source:1;controller_places_plus_one_counters_on_source:draw:1:limit_per_turn:1",
         "Mischievous Mystic" => "controller_draws_nth_card_this_turn:2:create_faerie_token:1",
         "Homunculus Horde" | "Homunculus Horde Token" => "controller_draws_nth_card_this_turn:2:create_homunculus_horde_copy_token:1",
+        "Koma, World-Eater" => "source_combat_damage_to_player:create_blue_3_3_serpent_coil_tokens:4",
         "Sun-Blessed Healer" => "etb_if_kicked:recheck_kicked:return_own_graveyard_nonland_permanent_mana_value_at_most:2",
         "Blossoming Sands" | "Thornwood Falls" => "etb:gain_life:1",
         "Dazzling Angel" => "other_controlled_creature_enters:gain_life:1",
@@ -6455,11 +6463,19 @@ fn codegen(cards: &[CardJson]) -> String {
     // physical-card, flashback, and virtual-copy departure semantics.
     writeln!(out, "fn counter_target_spell_effect() -> EffectOp {{").unwrap();
     writeln!(out, "    EffectOp::Conditional {{").unwrap();
-    writeln!(
-        out,
-        "        cond: EffectCond::TargetInZone(0, Zone::Stack),"
-    )
-    .unwrap();
+    if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
+        writeln!(
+            out,
+            "        cond: EffectCond::TargetSpellCanBeCountered(0),"
+        )
+        .unwrap();
+    } else {
+        writeln!(
+            out,
+            "        cond: EffectCond::TargetInZone(0, Zone::Stack),"
+        )
+        .unwrap();
+    }
     writeln!(out, "        then: Box::new(EffectOp::MoveObject {{ object: ObjectRef::Target(0), to_zone: Zone::Graveyard }}),").unwrap();
     writeln!(out, "        else_: Box::new(EffectOp::Sequence(vec![])),").unwrap();
     writeln!(out, "    }}").unwrap();
@@ -7401,6 +7417,12 @@ fn codegen(cards: &[CardJson]) -> String {
         )
         .unwrap();
         writeln!(out, "        ward_cost: {},", ward_cost_for(&c.name)).unwrap();
+        writeln!(
+            out,
+            "        spell_cannot_be_countered: {},",
+            spell_cannot_be_countered_for(c)
+        )
+        .unwrap();
         writeln!(out, "        equipment: {},", equipment_for(&c.name)).unwrap();
         writeln!(out, "        types: &[{types_src}],").unwrap();
         writeln!(out, "        subtypes: &[{subtypes_src}],").unwrap();
@@ -7666,11 +7688,14 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v43\n"
+            "kernel_carddb/v44\n"
         } else {
             "kernel_carddb/v34\n"
         },
     );
+    if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
+        canon.push_str("counter_target_spell_guard=bound_stack_spell_can_be_countered\n");
+    }
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -7722,6 +7747,15 @@ fn codegen(cards: &[CardJson]) -> String {
         canon.push('|');
         canon.push_str(ward_cost_for(&c.name));
         canon.push('|');
+        if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
+            canon.push_str("spell_cannot_be_countered=");
+            canon.push_str(if spell_cannot_be_countered_for(c) {
+                "true"
+            } else {
+                "false"
+            });
+            canon.push('|');
+        }
         canon.push_str("equipment=");
         canon.push_str(equipment_for(&c.name));
         canon.push('|');
@@ -8005,7 +8039,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Ranger" => "Subtype::Ranger",
         "Rat" => "Subtype::Rat",
         "Rogue" => "Subtype::Rogue",
-        "SERPENT" => "Subtype::Serpent",
+        "SERPENT" | "Serpent" => "Subtype::Serpent",
         "Saga" => "Subtype::Saga",
         "Samurai" => "Subtype::Samurai",
         "Shaman" => "Subtype::Shaman",

@@ -1002,6 +1002,68 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/h/HomunculusHorde.java",
       "is_token": true
+    },
+    {
+      "name": "Koma, World-Eater",
+      "engine_capability": "full",
+      "mana_cost": "{3}{G}{G}{U}{U}",
+      "mana_value": 7,
+      "colors": [
+        "G",
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Serpent"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 8,
+      "toughness": 12,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_top_04956_UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "cant_be_countered",
+        "trample",
+        "ward",
+        "combat_damage_trigger",
+        "create_token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/k/KomaWorldEater.java"
+    },
+    {
+      "name": "Koma's Coil Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Serpent"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/KomasCoilToken.java",
+      "is_token": true
     }
   ]
 }

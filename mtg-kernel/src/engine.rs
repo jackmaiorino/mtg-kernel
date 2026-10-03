@@ -9858,6 +9858,8 @@ fn apply_spell_departure(state: &mut GameState, departure: SpellDeparture) -> Re
 /// flashback/copy-aware departure contract; abilities leave the stack without
 /// moving their source or any already-paid cost object. An absent id is a
 /// valid no-op for a later Ward trigger whose targeter was already countered.
+/// A protected spell also remains untouched; Some returns the found item in
+/// that case, so counter-unless-payment effects do not treat it as stale.
 pub(crate) fn counter_stack_item_by_id(
     state: &mut GameState,
     stack_item_id: StackItemId,
@@ -9878,6 +9880,14 @@ pub(crate) fn counter_stack_item_by_id(
     };
     let item = state.stack[position].clone();
     validated_stack_item_target_spec(&item, state)?;
+    if item.kind == StackItemKind::Spell
+        && card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize]
+            .spell_cannot_be_countered
+    {
+        // Some means the bound target still exists. A protected spell remains
+        // on the stack after the attempt, so callers finish the effect normally.
+        return Ok(Some(item));
+    }
     let departure = if item.kind == StackItemKind::Spell {
         Some(plan_spell_departure(state, &item, Zone::Graveyard)?)
     } else {
@@ -17732,6 +17742,63 @@ mod tests {
             assert!(!targets.contains(&Target::Object(triggered)));
             assert!(!targets.contains(&Target::Object(madness)));
         }
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn koma_spell_protection_preserves_copies_but_not_abilities_or_ordinary_departure() {
+        let mut state = empty_game();
+        let physical = put_on_stack(&mut state, PlayerId::P0, "Koma, World-Eater");
+        let copy = put_spell_copy_on_stack(&mut state, PlayerId::P0, "Koma, World-Eater");
+        for source in [physical, copy] {
+            let stack_item_id = state
+                .stack
+                .iter()
+                .find(|item| item.source == source)
+                .unwrap()
+                .v4
+                .stack_item_id;
+            let before = state.state_hash();
+            assert!(counter_stack_item_by_id(&mut state, stack_item_id)
+                .unwrap()
+                .is_some());
+            assert_eq!(
+                state.state_hash(),
+                before,
+                "a protected counter attempt is a no-op"
+            );
+        }
+        let source = put_on_battlefield(&mut state, PlayerId::P0, "Koma, World-Eater");
+        let source_contract = AbilitySourceContractV4::capture(&state, source);
+        let effect = (trigger::triggers_for(state.objects.get(source).card_def)[0].effect)();
+        state.stack.push(StackItem {
+            kind: StackItemKind::TriggeredAbility,
+            source,
+            controller: PlayerId::P0,
+            targets: vec![],
+            is_copy: false,
+            inline_effect: Some(effect),
+            discarded: vec![],
+            is_flashback: false,
+            mode_chosen: 0,
+            madness_offer: false,
+            kicked: false,
+            v4: StackStateV4 {
+                stack_item_id: StackItemId(90),
+                ability_source_contract: Some(source_contract),
+                ..StackStateV4::default()
+            },
+        });
+        assert!(counter_stack_item_by_id(&mut state, StackItemId(90))
+            .unwrap()
+            .is_some());
+        assert_eq!(state.stack.len(), 2);
+        assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+        assert!(apply_live_stack_spell_departure(&mut state, physical, Zone::Graveyard).unwrap());
+        assert_eq!(state.objects.get(physical).zone, Zone::Graveyard);
+        assert!(apply_live_stack_spell_departure(&mut state, copy, Zone::Graveyard).unwrap());
+        assert!(state.stack.is_empty());
+        assert!(!state.players[0].graveyard.contains(&copy));
     }
 
     #[test]
