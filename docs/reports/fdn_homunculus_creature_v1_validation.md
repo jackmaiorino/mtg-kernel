@@ -157,3 +157,19 @@ remote build-script source hashes both remained
 Refreshing only the owned source file's modification timestamp forced a
 fresh build script; release Clippy then passed. No source bytes changed,
 and the failed attempt's log remains preserved.
+
+## Windows compiler environment correction
+
+The completed Windows Kiora job 111079733482 failed 33 default-library cases
+with `ForbiddenBuildFlagOverride`: the CI bootstrap exported `RUSTC`, which
+the existing compile-time guard correctly rejects. The bootstrap now keeps
+the normalized Windows `RUSTUP_HOME` and pinned Rust install without exporting
+`RUSTC`. Hosted default and native-build capture checks are pending. The guard
+and toolchain pin remain unchanged.
+
+The completed all-feature lint jobs 111090913376 and 111090959717 found
+missing Limited fields in main's explicit-deck constructor and missing
+incremental-trigger action arms in the human bridge. Both are corrected; the
+bridge preserves its explicit unsupported-prompt behavior. Fixture ID tests
+now use the generated catalog positions after the 30-definition main expansion.
+Formatting, workflow lint and diff checks pass; Rust checks are pending.
