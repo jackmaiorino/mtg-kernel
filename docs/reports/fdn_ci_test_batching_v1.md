@@ -11,6 +11,15 @@ the prior Linux receipts, and repeated seed123 remains identical. The repaired
 private bottom-menu library restore case passed. All four current Python shards
 also passed; the overall Rust matrix remains incomplete.
 
+Linux job `111147114731` at the same `7cbfa1cd` source completed successfully.
+The complete log shows all 21 selected integration targets and 347 passing
+cases with no integration failures or ignores, plus the default, native,
+Limited library and host-safe CUDA checks. The isolated snapshot passed at
+7.084 microseconds. All three complete original-game receipts equal the
+Windows receipts and the prior Linux receipts; private bottom-menu restore
+also passed. This qualifies the earlier source on Linux. The Windows failure
+above remains, and the arena change below still needs hosted qualification.
+
 The arena now stores its ordered objects in `Arc<Vec<T>>`. Clones share that
 storage, and `push`, `get_mut` (including indexing) and `iter_mut` detach it before
 mutation. Other game-state fields still clone normally. This avoids cloning
