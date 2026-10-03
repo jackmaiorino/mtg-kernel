@@ -276,6 +276,14 @@ pub struct SpellbenchBridgeServerV1 {
     game: Option<SpellbenchBridgeGameV1>,
     used_game_ids: HashSet<String>,
     last_exchange: Option<CachedSpellbenchExchangeV1>,
+    private_preview: Option<PrivatePreviewCacheV1>,
+}
+
+struct PrivatePreviewCacheV1 {
+    game_id: String,
+    root_step: u64,
+    prefix: Vec<u32>,
+    copy: Box<SpellbenchBridgeServerV1>,
 }
 
 impl Default for SpellbenchBridgeServerV1 {
@@ -309,6 +317,7 @@ impl SpellbenchBridgeServerV1 {
             game: None,
             used_game_ids: HashSet::new(),
             last_exchange: None,
+            private_preview: None,
         }
     }
 
@@ -488,7 +497,7 @@ impl SpellbenchBridgeServerV1 {
         }
     }
 
-    fn handle_preview_steps(&self, request_id: &str, game_id: &str, expected_step: u64, ids: &[u32]) -> Value {
+    fn handle_preview_steps(&mut self, request_id: &str, game_id: &str, expected_step: u64, ids: &[u32]) -> Value {
         let reject = |message| error_response_value_v1(Some(request_id), "malformed_request", message);
         if !self.options.private_v2_support || !self.options.x_kernel_flat_v4 {
             return reject("private decomposition views require both opt-in bridge flags");
@@ -507,17 +516,24 @@ impl SpellbenchBridgeServerV1 {
         if !is_block && !arrangement {
             return reject("private view is only for an unfinished blocker or arrangement declaration");
         }
-        let mut copy = Self::with_options(self.identity.clone(), self.options);
-        copy.game = Some(SpellbenchBridgeGameV1 {
+        let cached = self.private_preview.take().filter(|cache|
+            cache.game_id == game_id && cache.root_step == expected_step && ids.starts_with(&cache.prefix));
+        let (mut copy, start) = if let Some(cache) = cached {
+            (*cache.copy, cache.prefix.len())
+        } else {
+            let mut copy = Self::with_options(self.identity.clone(), self.options);
+            copy.game = Some(SpellbenchBridgeGameV1 {
             game_id: game.game_id.clone(), episode_id: game.episode_id,
             session: game.session.clone(), terminal_sent: false, flat_v4: game.flat_v4.clone(),
             flat_v4_rows: game.flat_v4_rows.clone(), flat_v4_scratch: FlatV4EncodeScratchV1::default(),
             private_block_root_step: game.private_block_root_step,
             #[cfg(test)] force_flat_v4_encode_error: game.force_flat_v4_encode_error,
-        });
+            });
+            (copy, 0)
+        };
         let complete = || json!({"response_type": "private_complete", "protocol": SPELLBENCH_PROTOCOL_V1,
             "request_id": request_id, "game_id": game_id, "expected_step": expected_step});
-        for (position, &id) in ids.iter().enumerate() {
+        for (position, &id) in ids.iter().enumerate().skip(start) {
             let current = match copy.game.as_ref().unwrap().session.current_response() {
                 RlSessionResponseV1::Decision(value) => value,
                 _ => return reject("private prefix crossed the declaration boundary"),
@@ -562,11 +578,16 @@ impl SpellbenchBridgeServerV1 {
             Ok(value) => value, Err(_) => return reject("private view failed encoding"),
         };
         let support = private_v2_support(game);
-        match copy.session_response_to_wire(request_id, game_id, response, counts, extension, Some(support)) {
+        let answer = match copy.session_response_to_wire(request_id, game_id, response, counts, extension, Some(support)) {
             WireResponseV1::Decision(view) => json!({"response_type": "private_preview", "protocol": SPELLBENCH_PROTOCOL_V1,
                 "request_id": request_id, "view": view}),
             _ => reject("private prefix crossed the declaration boundary"),
+        };
+        if answer["response_type"] == "private_preview" {
+            self.private_preview = Some(PrivatePreviewCacheV1 { game_id: game_id.to_owned(),
+                root_step: expected_step, prefix: ids.to_vec(), copy: Box::new(copy) });
         }
+        answer
     }
 
     fn handle_reset(&mut self, request_id: &str, reset: SpellbenchResetFieldsV1<'_>) -> Value {
@@ -709,6 +730,7 @@ impl SpellbenchBridgeServerV1 {
         };
         game.terminal_sent = matches!(wire, WireResponseV1::Terminal(_));
         self.used_game_ids.insert(game_id.to_string());
+        self.private_preview = None;
         self.game = Some(game);
         match wire {
             WireResponseV1::Decision(value) | WireResponseV1::Terminal(value) => value,
@@ -722,6 +744,7 @@ impl SpellbenchBridgeServerV1 {
         expected_step: u64,
         selection: &SpellbenchSelectionV1,
     ) -> Value {
+        self.private_preview = None;
         let Some(game) = self.game.as_mut() else {
             return error_response_value_v1(
                 Some(request_id),
@@ -1236,12 +1259,29 @@ fn private_v2_support(game: &SpellbenchBridgeGameV1) -> Value {
         }
         support["cost_selected_count"] = json!(pending.sacrifice_chosen.len());
     } else if let Some(pending) = state.engine.pending_activation.as_ref().filter(|pending| PlayerSeatV1::from(pending.controller) == actor) {
+        match crate::rl::spellbench_pending_activation_public_v2(state, actor_id) {
+            Ok(Some((instance, item))) => support["announcing_activation"] = json!({"instance": instance, "item": item}),
+            _ => support["projection_error"] = json!("invalid pending activation announcement"),
+        }
         support["target_bounds"] = json!({"minimum": crate::engine::target_min_count(pending.target_spec),
             "maximum": crate::engine::target_count(pending.target_spec), "selected_count": pending.targets_chosen.len(), "slot": 0});
         support["cost_selected_count"] = json!(pending.object_cost_chosen.len());
     } else if let Some(pending) = state.engine.pending_optional_cost_sacrifice.as_ref().filter(|pending| PlayerSeatV1::from(pending.player) == actor) {
         support["cost_selected_count"] = json!(pending.chosen.len());
     }
+    let mut mana_indices = serde_json::Map::new();
+    for action in &decision.legal_actions {
+        if let ActionSemanticV1::ActivateManaAbility { actor: owner, source, mana_choice: Some(choice), .. } = &action.semantic {
+            if *owner != actor { support["projection_error"] = json!("foreign mana ability row"); continue; }
+            let object = state.objects.get(crate::ids::ObjectId(source.arena_id));
+            let definition = &crate::card_def::CARD_DEFS[object.card_def as usize];
+            match definition.mana_ability_index(*choice, object.v4.chosen_color) {
+                Some(index) => { mana_indices.insert(action.selected_index.to_string(), json!(index)); },
+                None => support["projection_error"] = json!("unbound mana ability row"),
+            }
+        }
+    }
+    support["mana_ability_indices"] = Value::Object(mana_indices);
     // V5 already supplies the other effective keyword flags. These two are
     // missing from that frozen schema; inspect only its visible battlefield
     // records, never enumerate hidden objects or serialize whole game state.

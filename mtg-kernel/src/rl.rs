@@ -6597,6 +6597,16 @@ pub(crate) fn spellbench_pending_trigger_public_v2(
         crate::engine::target_min_count(spec), crate::engine::target_count(spec), item.targets.len())))
 }
 
+pub(crate) fn spellbench_pending_activation_public_v2(state: &GameState, actor: PlayerId)
+    -> Result<Option<(String, StackItemPublicV2)>> {
+    let Some(item) = crate::engine::spellbench_pending_activation_announcement(state, actor)
+        .map_err(RlContractError)? else { return Ok(None); };
+    // Exact pending-activation validation permits incomplete target prefixes.
+    // Only the announcing actor may inspect a hand ability before disclosure.
+    let public = stack_item_public_v2_from_frozen(state, actor, state.stack.len() as u32, &item)?;
+    Ok(Some((item.v4.stack_item_id.0.to_string(), public)))
+}
+
 pub(crate) fn spellbench_detached_resolution_public_v2(
     state: &GameState,
     actor: PlayerId,

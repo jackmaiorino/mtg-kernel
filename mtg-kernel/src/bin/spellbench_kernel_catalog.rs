@@ -4,12 +4,13 @@ use mtg_kernel::card_def::{CardDef, Keywords, CARD_DEFS, KERNEL_CARDDB_HASH};
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::runtime_decks::RUNTIME_DECKS;
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn normalized(value: impl std::fmt::Debug) -> String {
-    if format!("{value:?}") == "WizardAllCaps" { return "wizard".to_owned(); }
+    let raw = format!("{value:?}");
+    let raw = raw.strip_suffix("AllCaps").unwrap_or(&raw);
     let mut out = String::new();
-    for (index, ch) in format!("{value:?}").chars().enumerate() {
+    for (index, ch) in raw.chars().enumerate() {
         if index > 0 && ch.is_ascii_uppercase() { out.push('_'); }
         out.push(ch.to_ascii_lowercase());
     }
@@ -61,7 +62,7 @@ fn main() {
                 "characteristics": {
                     "supertypes": def.supertypes.iter().map(normalized).collect::<Vec<_>>(),
                     "types": def.types_for_face(face_index).iter().map(normalized).collect::<Vec<_>>(),
-                    "subtypes": def.subtypes_for_face(face_index).iter().map(normalized).collect::<Vec<_>>(),
+                    "subtypes": def.subtypes_for_face(face_index).iter().map(normalized).collect::<BTreeSet<_>>(),
                     "colors": def.colors_for_face(face_index).iter().filter_map(|c| color(*c)).collect::<Vec<_>>(),
                     "mana_value": u32::from(def.cost.generic) + def.cost.pips.len() as u32,
                     "power": def.power_for_face(face_index).map(i32::from),
@@ -82,4 +83,22 @@ fn main() {
     println!("{}", json!({"schema": "spellbench-kernel-public-catalog/v1",
         "card_db_hash": format!("{KERNEL_CARDDB_HASH:016x}"),
         "catalog": catalog, "cards": cards, "subtypes": subtypes}));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_catalog_normalizes_printed_faerie_subtypes_and_mana_indices() {
+        for name in ["Faerie Miscreant", "Spellstutter Sprite", "Faerie Seer"] {
+            let def = CARD_DEFS.iter().find(|def| def.name == name).unwrap();
+            let names: BTreeSet<_> = def.subtypes.iter().map(normalized).collect();
+            assert!(names.contains("faerie"), "{name}: {names:?}");
+            assert!(names.iter().all(|name| !name.ends_with("_all_caps")));
+        }
+        let gate = CARD_DEFS.iter().find(|def| def.name == "Heap Gate").unwrap();
+        assert_eq!(gate.mana_ability_index(ManaColor::C, None), Some(0));
+        assert_eq!(gate.mana_ability_index(ManaColor::W, None), Some(1));
+    }
 }

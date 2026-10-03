@@ -74,6 +74,10 @@ pub struct EngineState {
     /// costs run after the item was popped. Private neutral mode only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spellbench_detached_resolution: Option<StackItem>,
+    /// Neutral activation announcement, retaining its original producer and
+    /// a reserved identity until the paid ability is installed on the stack.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spellbench_pending_activation: Option<StackItem>,
     /// Last allocated private stack-incarnation id. Zero remains reserved for
     /// legacy/default-constructed state, so every engine-created item is
     /// distinguishable from an unstamped continuation.
@@ -13635,6 +13639,41 @@ fn begin_activation(state: &mut GameState, player: PlayerId, source: ObjectId, a
         },
         object_cost_chosen: vec![],
     });
+    if state.engine.spellbench_neutral_choices {
+        let stack_item_id = next_stack_item_id(state);
+        let producer = AbilitySourceContractV4::capture(state, source);
+        state.engine.spellbench_pending_activation = Some(StackItem {
+            kind: StackItemKind::ActivatedAbility, source, controller: player,
+            targets: vec![], is_copy: false, inline_effect: Some((ability.effect)()),
+            discarded: vec![], is_flashback: false, mode_chosen: 0,
+            madness_offer: false, kicked: false,
+            v4: StackStateV4 { stack_item_id, ability_source_contract: Some(producer),
+                target_spec: Some(ability.target_spec), activated_ability_index: Some(ability_index),
+                ..StackStateV4::default() },
+        });
+    }
+}
+
+pub(crate) fn spellbench_pending_activation_announcement(state: &GameState, actor: PlayerId)
+    -> Result<Option<StackItem>, String> {
+    let Some(pending) = state.engine.pending_activation.as_ref() else { return Ok(None); };
+    if !state.engine.spellbench_neutral_choices || pending.controller != actor { return Ok(None); }
+    validate_pending_activation(state, pending)?;
+    let mut item = state.engine.spellbench_pending_activation.clone().ok_or("missing activation announcement")?;
+    let producer = item.v4.ability_source_contract.ok_or("missing announced producer")?;
+    if item.kind != StackItemKind::ActivatedAbility || item.source != pending.source
+        || item.controller != pending.controller || producer.source != pending.source
+        || producer.controller != pending.controller
+        || producer != AbilitySourceContractV4::capture(state, pending.source)
+        || producer.zone_change_count != pending.source_zone_change_count
+        || item.v4.activated_ability_index != Some(pending.ability_index)
+        || item.v4.target_spec != Some(pending.target_spec) || item.v4.stack_item_id == StackItemId::default()
+        || state.stack.iter().any(|live| live.v4.stack_item_id == item.v4.stack_item_id) {
+        return Err("activation announcement lost its exact pending binding".into());
+    }
+    item.targets = pending.targets_chosen.clone();
+    item.v4.target_contracts = pending.target_contracts.clone();
+    Ok(Some(item))
 }
 
 /// Pays whichever cost this cast settled on (flashback cost; or the
@@ -14280,7 +14319,26 @@ fn push_paid_activation(
     }
     let x_value = activation_x_value(ability, &pending.targets_chosen, state)
         .expect("validated paid activation retains its target-bound X value");
-    let stack_item_id = next_stack_item_id(state);
+    let stack_item_id = if state.engine.spellbench_neutral_choices {
+        let Some(item) = state.engine.spellbench_pending_activation.take() else {
+            state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, pending.source));
+            return;
+        };
+        let producer = item.v4.ability_source_contract;
+        if item.kind != StackItemKind::ActivatedAbility || item.source != pending.source || item.controller != pending.controller
+            || producer.map(|p| p.zone_change_count) != Some(pending.source_zone_change_count)
+            || producer.map(|p| (p.source, p.card_def, p.owner, p.controller, p.zone)) !=
+                Some((ability_source_contract.source, ability_source_contract.card_def, ability_source_contract.owner,
+                      ability_source_contract.controller, ability_source_contract.zone))
+            || item.v4.target_spec != Some(pending.target_spec)
+            || item.v4.activated_ability_index != Some(pending.ability_index)
+            || item.v4.stack_item_id == StackItemId::default()
+            || state.stack.iter().any(|live| live.v4.stack_item_id == item.v4.stack_item_id) {
+            state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, pending.source));
+            return;
+        }
+        item.v4.stack_item_id
+    } else { next_stack_item_id(state) };
     state.stack.push(StackItem {
         kind: StackItemKind::ActivatedAbility,
         source: pending.source,
@@ -15378,10 +15436,49 @@ mod tests {
         assert!(state.engine.spellbench_revealed_partition.is_none());
     }
 
-    /// Lava Dart's flashback cost (`CostComponent::SacrificeLands(1)`) is
-    /// unconditional (no mana alternative to choose between first, unlike
-    /// Fireblast) but still asks a real `Decision::ChooseCostTargets` for
-    /// *which* Mountain when more than 1 is controlled.
+    #[test]
+    fn spellbench_neutral_activation_announcement_retains_identity_through_costs() {
+        for name in ["Makeshift Munitions", "Quirion Ranger"] {
+            let mut state = empty_game();
+            state.engine.spellbench_neutral_choices = true;
+            state.step = Step::Main1;
+            state.priority_player = PlayerId::P0;
+            state.players[0].mana_pool[ManaColor::R.pool_index()] = 2;
+            let source = put_on_battlefield(&mut state, PlayerId::P0, name);
+            let creature = put_on_battlefield(&mut state, PlayerId::P0, "Elvish Mystic");
+            let forest = put_on_battlefield(&mut state, PlayerId::P0, "Forest");
+            begin_activation(&mut state, PlayerId::P0, source, 0);
+            let (instance, initial) = crate::rl::spellbench_pending_activation_public_v2(&state, PlayerId::P0)
+                .unwrap().unwrap();
+            assert_eq!(initial.stack_item_kind, crate::rl::StackItemKindV2::ActivatedAbility);
+            assert!(crate::rl::spellbench_pending_activation_public_v2(&state, PlayerId::P1).unwrap().is_none());
+            let mut tampered = state.clone();
+            tampered.engine.spellbench_pending_activation.as_mut().unwrap().v4
+                .ability_source_contract.as_mut().unwrap().attached_to = Some(ObjectLinkV4 {
+                    object: forest,
+                    zone_change_count: state.objects.get(forest).zone_change_count,
+                });
+            assert!(spellbench_pending_activation_announcement(&tampered, PlayerId::P0).is_err());
+            let target = if name == "Makeshift Munitions" { Target::Player(PlayerId::P1) } else { Target::Object(creature) };
+            step(&mut state, Action::ChooseTarget(target)).unwrap();
+            let after = crate::rl::spellbench_pending_activation_public_v2(&state, PlayerId::P0).unwrap().unwrap();
+            assert_eq!(after.0, instance);
+            assert_eq!(after.1.source, initial.source);
+            assert_eq!(after.1.targets.len(), 1);
+            assert!(matches!(advance_until_decision(&mut state), Decision::ChooseCostTargets { .. }));
+            let other_id = next_stack_item_id(&mut state);
+            assert_ne!(other_id.0.to_string(), instance);
+            step(&mut state, Action::ChooseCostTarget(if name == "Makeshift Munitions" { creature } else { forest })).unwrap();
+            finalize_activation(&mut state);
+            assert!(state.engine.halted.is_none(), "{:?}", state.engine.halted);
+            let paid = state.stack.last().unwrap();
+            assert_eq!(paid.v4.stack_item_id.0.to_string(), instance);
+            assert!(state.engine.spellbench_pending_activation.is_none());
+            let public = crate::rl::stack_item_public_v2(&state, PlayerId::P0, 0, paid).unwrap();
+            assert_eq!(public.source, initial.source);
+        }
+    }
+
     #[test]
     fn lava_dart_flashback_asks_which_mountain_to_sacrifice() {
         let mut state = empty_game();
