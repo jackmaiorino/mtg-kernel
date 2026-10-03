@@ -1,0 +1,13 @@
+# Additive V4 search state boundary
+
+Scope: engineering prerequisite for the information-set search route, not a playing experiment. Independent Fable review `v4-redetermination-review-001`, session `774344c2-35a3-497d-b551-136050e1791e`, confirmed the old core is V2-bound at clone, node key and action consumption. None of those guards will be relaxed. Finish the V4 leaf acceptance checks first.
+
+Clone: add a separate crate-private function requiring the V3 session action mode used by fresh V4 policies, a live decision, and no decision-local library choice. Capture V4 actor-visible observation, ordered normalized semantics, and freshly encoded V4 action rows/binding. Clone, resample unknown zones with the existing deterministic sampler, rebuild candidates using the V3 preparation mechanism, then require the complete V4 visible/action binding to match. Preserve all actor-perspective known hand and library slots. Any mismatch is an error, not a fallback to privileged input.
+
+Initial context exclusion: pending library-search candidates are visible to their chooser without necessarily being entered in positional library knowledge. The existing sampler could relabel those cards. Reject that context explicitly before resampling. Admitting it needs a separately reviewed information-boundary rule. Hidden pending-trigger sources are represented by their frozen contracts and need positive preservation tests. No engine rule or certificate whitelist changes are part of this item.
+
+Companions, subsequent bounded item: a separately versioned node key over V4 actor-visible data and normalized action semantics, and a consume operation that validates freshly encoded V4 rows/binding before stepping. The V3 cache is insufficient for some hidden-trigger states. Do not wire a V4 evaluator into the existing V2 core and call that a V4 search route.
+
+Acceptance: both seats; same seed gives the identical sampled state; selected distinct seeds change hidden state while preserving tensor/output bits; known-card locks remain; hidden-trigger fixtures remain admitted; library-search fixtures return the named unsupported-context error; test-only visible corruption is rejected; original session unchanged. Keep the existing V2 rejection test. Plain frozen V4 policy only; no public/stack wrapper loading. Future statistical and runtime qualification remain separate from these fixed-state checks.
+
+Non-claims: this does not define a calibrated belief distribution, remove strategy fusion, prove rollout quality, or establish tactical or whole-match gains. Those require the later algorithm contract, literature note, powered design, guarded throughput qualification and measured results.

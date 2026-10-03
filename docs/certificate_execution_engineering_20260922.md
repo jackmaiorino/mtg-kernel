@@ -1,0 +1,7 @@
+# Public certificate execution engineering, 2026-09-22
+
+Constructed checks passed:3 tests,0 failures,272.660seconds including build (body0.02seconds), source522a10cf. Evidence E:/mtg-meta-recovery-20260921/certificate-controls-001; six modified source hashes and exact command retained. Existing both-seat positive/negative and information cases now also execute every certified branch, reject mutated semantic menus, reproduce output, and compare three invisible perturbations (own library, opponent library, RNG). The lower=1 strategy is extracted from typed proof nodes captured in that audit, not another run's JSON. Reports carry winning leaves, own/opponent nodes, transitions, headroom and strategy SHA256.
+
+Source non-reachability check passed for8 existing playing/search modules. Reports, not actions or strategies, cross the policy-input diagnostic method. Existing playing authority and seeds unchanged. The diagnostic executor checks unchanged phase/turn/libraries/knowledge/draw counts, opposing hand emptiness and exact game RNG state at every step. This is scoped to the current narrow whitelist, not general information-set search.
+
+Next acceptance: opt-in execute_certificate recorder flag, both fixed archived roots with off/on/on collection equality and original-prefix equality, same leaf counts as earlier proof extraction (cell25=1957, cell45=1), all3 hidden perturbations, no original mutation, fixed-cap output. That integration and natural acceptance are pending. No formal gate, training or model change; M1 unmet.

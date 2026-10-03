@@ -42,3 +42,11 @@ denied. Tested local source is `8931c1a4`; remote source is
 `C:/Users/haley/fdn-lifegain-tests-001.log/.exit` and `-002.log/.exit`,
 both exit zero. Checks are CPU only, two Cargo build jobs; no GPU or
 formal run was launched.
+
+Integrated the current-main counter prefix 567d3ca8. Simultaneous lifelink
+still groups gained life by source, retaining Exemplar's trigger boundaries.
+This mechanics-only prefix adds no definitions or catalog mutation: default
+v34 / 192 definitions and Limited v40 / 218 definitions remain those of the counter
+prefix. The inherited exact-incarnation resampling and Windows compiler-path
+fixes remain in place. Formatting and diff checks passed; composed-source
+hosted regressions remain pending.

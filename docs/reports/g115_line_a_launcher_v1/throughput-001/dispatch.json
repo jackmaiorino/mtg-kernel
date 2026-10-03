@@ -1,0 +1,9 @@
+{
+    "utc":  "2026-09-27T19:24:01.3065870Z",
+    "return_value":  0,
+    "owner_pid":  35844,
+    "command":  "\"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"D:\\mtg-kernel-opus-line-a-launcher-build\\python\\tools\\g115_d3_windows_dispatch.ps1\" -RunConfig \"D:\\e-scratch\\g115-line-a-throughput-001\\control-001\\config.json\"",
+    "hidden":  true,
+    "native_dispatched_directly":  false,
+    "owner_created_utc":  "2026-09-27T19:24:01.2980130Z"
+}

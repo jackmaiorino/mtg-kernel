@@ -1,5 +1,28 @@
 # FDN counter-creature validation
 
+## Integration with current main
+
+Merged main 0b6f5ce5, which contains the earlier FDN batches on the expanded
+192-card Pauper registry. Preserve that default registry and its v34 identity.
+The counter prefix now has 218 definitions and a distinct v40 identity
+`b3dc8eb6d0a6407d`. A catalog-only build-script probe generated that literal;
+it does not compile or validate engine gameplay.
+
+The original counter tuple `39c83779971ee2c4` stays readable. The composed
+counter registry uses a new `FdnCounterCreaturesRebased` profile. The original
+five earlier FDN tuples also remain readable. Added canonical-record replay
+coverage and old-counter publication/resume refusal checks; mutation continues
+to require the actual live identity. No original deck file changed.
+
+Pinned formatting, workflow lint and 20 focused Python deck/session checks
+passed. CI reuses the already qualified grouped-filter and isolated-timing
+helpers, preserving all nine integration targets and all seven library filters. Windows bootstrap normalizes RUSTUP_HOME and the pinned
+RUSTC path, preserving the native path validator. Rust gameplay, native/production
+and complete hosted checks
+for this main integration remain pending. Earlier isolated-source qualification
+below does not prove this composed source passes.
+
+
 Local source `109bd020` implements Gnarlid Colony and Mossborn Hydra.
 Matching committed HaleysPC source is
 `2bba84150a2fcebd0d810591b6218547f90d2b37`.
@@ -15,9 +38,9 @@ See [rules contract](../design/fdn_counter_creatures_v1.md).
 | Build/lint | Feature and default workspace all-target Clippy passed with warnings denied. External binary built. |
 | Python | All 41 focused importer, client, flat-V2 golden and Pauper-manifest checks passed. |
 | External replay | Two identical seed-123/episode-7 games ended naturally at 381 policy steps and 367 physical decisions. Each cast five Colonies and two Hydras, and paid kicker twice. |
-| Production boundaries | Release checks running from clean committed remote source, strict source guard enabled. Passing is not yet claimed. |
-| XMage | Five matching scenarios committed at Mage `d05387387e8`, based on `a5c90fe1800`, and dispatched on HaleysPC. Execution is pending. |
-| Hosted CI | Pending for this new branch. |
+| Production boundaries | All 13 Windows release checks passed: twelve older-profile publisher/resume refusals and a live v38 construct/seal/decode/validate round trip. Combined Limited/production Clippy passed. Clean committed remote source, strict source guard enabled; run 010 exited zero. |
+| XMage | All five matching scenarios passed at Mage `2a0b7edfb59`, based on `a5c90fe1800`: ordinary/kicked Colony, controlled counter trample, Hydra entry and controlled/opposing landfall. Surefire reports zero failures/errors/skips and reactor BUILD SUCCESS. |
+| Hosted CI | PR #124 is open. Head `d6ff281f` passed formatting/lint; remaining hosted checks are pending. |
 
 The external deck has 20 Forest, eight Llanowar Elves, eight Gnarlid Colony
 and four Mossborn Hydra. Its natural outcome is `p1_win`. This is a
@@ -48,9 +71,32 @@ paid compute was launched.
 
 Logs stay outside Git under `C:/Users/haley/`:
 `fdn-counter-tests-009.log/.exit`, `fdn-counter-external-001.py/.json/.log/.exit`,
-`fdn-counter-production-010.log/.exit`, and `fdn-mage-counter-001.log/.exit`.
+`fdn-counter-production-010.log/.exit`, and `fdn-mage-counter-002.log/.exit`.
 Earlier failures are retained. Runs 001/002 caught attempted changes to
 frozen flat sources; those files were restored before passing run 003.
 Runs 004-007 caught old assertions using the narrower counter type.
 Run 008 passed gameplay but found a stale shared catalog fixture. Run 009
 passed after that fixture was updated and wide damage was implemented.
+XMage 001 passed four cases but found that the test scheduled a land play
+while Hydra remained on the stack. Adding the explicit stack-resolution
+wait fixed the schedule, after which 002 passed all five. Source and XML
+SHA-256s are `92539ba6453e76eef7d454e10afe862b78cfc23adab01de2a463f6840834fed3`
+and `fe164ed54f56dd55c6359634f5633964f572b1e0ca083d995312698211c588e9`.
+
+
+First main-integration CI 37080458100 at c6beea63 failed compilation: main's
+new suspended-reference walker did not cover counter doubling or placement
+history, and a native tensorizer test assigned an i16 bonus to the widened
+i32 counter. Added exact-incarnation scanning for bound doubling, physical
+object scanning for counter events, and a lossless test-fixture conversion.
+Two regressions cover matching/unrelated/stale bindings and counter history.
+No hidden referenced object may move during resampling.
+
+The same CI found an inherited --no-fail-fast argument unsupported by the
+workspace runner. Preserve it in the Cargo invocation. Main explicitly
+ignores the snapshot timing case in ordinary suites, so the runner now uses
+--include-ignored with its exact filter to run that one unchanged case. The
+redundant inherited timing step is removed. Select main's actual live-profile
+round-trip test name in the production filters. Formatting, workflow lint,
+Python compilation and diff checks passed after these corrections; complete
+hosted Rust/feature qualification remains pending.

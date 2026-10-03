@@ -1,0 +1,12 @@
+{
+  "schema": "kernel_sideboard_plan_inputs/v1",
+  "rows": [
+    {
+      "self_deck_id": "Burn",
+      "opponent_deck_id": "Rally",
+      "game_index": 2,
+      "cards_in": [],
+      "cards_out": []
+    }
+  ]
+}
