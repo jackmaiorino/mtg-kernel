@@ -1,0 +1,106 @@
+{
+ "schema": "line-b-engineering-throughput-receipt/v1",
+ "name": "throughput-001",
+ "provenance": {
+  "binary": "E:\\pinned-binaries\\822d04268cce1601d2c938cd7fa40f69bcbc46a137bce60c21e3fb59eb946628\\expanded_deck_training_v1.exe",
+  "binary_sha256": "822d04268cce1601d2c938cd7fa40f69bcbc46a137bce60c21e3fb59eb946628",
+  "tool_head": "8e7ac2c05a4da7d5f64fa1cea590457adf08195b"
+ },
+ "seed_name": "throughput-001",
+ "claim": "engineering timing of the teach step on one fixed batch; no outcome claim",
+ "template": {
+  "path": "E:\\mtg-postboard-campaign-20260920\\broader-exposure-pilot-001\\broader\\config.json",
+  "sha256": "d2e4ace81253e6a393d5b3687250f77f5c4af433afd28dda97fa5ee2ab533529"
+ },
+ "roots_requested": 20,
+ "rollouts": 16,
+ "backend": "cpu",
+ "placement": {
+  "priority": "below_normal",
+  "affinity": "all logical processors"
+ },
+ "collect_seconds": 1.046,
+ "runs": {
+  "workers-24": {
+   "workers": 24,
+   "host_cpu_percent_before": 9.8,
+   "update_seconds": 37.957,
+   "teacher_seconds": 31.750519,
+   "roots": 20,
+   "rollouts": 1072,
+   "rollouts_per_second": 33.76322761842098,
+   "physical_decisions_mean": 100.55503731343283,
+   "physical_decisions_max": 1055,
+   "rollout_outcomes": {
+    "complete": 1072
+   },
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 20,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 107795,
+    "policy_steps": 118954,
+    "rollouts": 1072,
+    "selected_roots": 20,
+    "teacher_games": 20
+   },
+   "packet_sha256": "b0a6b848740b681d13a24aac839ddc4c1d5b99592625e31db9032358571428a2"
+  },
+  "workers-08": {
+   "workers": 8,
+   "host_cpu_percent_before": 15.2,
+   "update_seconds": 41.785,
+   "teacher_seconds": 35.8656046,
+   "roots": 20,
+   "rollouts": 1072,
+   "rollouts_per_second": 29.88936090596393,
+   "physical_decisions_mean": 100.55503731343283,
+   "physical_decisions_max": 1055,
+   "rollout_outcomes": {
+    "complete": 1072
+   },
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 20,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 107795,
+    "policy_steps": 118954,
+    "rollouts": 1072,
+    "selected_roots": 20,
+    "teacher_games": 20
+   },
+   "packet_sha256": "b0a6b848740b681d13a24aac839ddc4c1d5b99592625e31db9032358571428a2"
+  },
+  "workers-01": {
+   "workers": 1,
+   "host_cpu_percent_before": 11.2,
+   "update_seconds": 269.676,
+   "teacher_seconds": 263.5591979,
+   "roots": 20,
+   "rollouts": 1072,
+   "rollouts_per_second": 4.067397414097229,
+   "physical_decisions_mean": 100.55503731343283,
+   "physical_decisions_max": 1055,
+   "rollout_outcomes": {
+    "complete": 1072
+   },
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 20,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 107795,
+    "policy_steps": 118954,
+    "rollouts": 1072,
+    "selected_roots": 20,
+    "teacher_games": 20
+   },
+   "packet_sha256": "b0a6b848740b681d13a24aac839ddc4c1d5b99592625e31db9032358571428a2"
+  }
+ },
+ "checks": {
+  "one_packet_across_worker_counts": true
+ }
+}

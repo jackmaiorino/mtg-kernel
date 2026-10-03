@@ -1406,9 +1406,27 @@ mod tests {
         // model_parameter_sha256/train_state_sha256/deck_hashes below are
         // unaffected and still verify against the original parent-commit
         // capture unchanged.
+        //
+        // Re-baselined again for the pauper-meta-cards-v1 card lane's wave 1
+        // (Task 13, identity finalisation): the wave's 21 new cards moved
+        // KERNEL_CARDDB_HASH, which the observation (and so
+        // logical_state_sha256) embeds. Old value:
+        // "69e6a7d0fdbccd6013bd1d2a4f49baa42ef30e8f3218d8076c9388020bfad974".
+        //
+        // Re-baselined again for the Phase 1 card lane merge (2026-09):
+        // merging lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into
+        // the Phase 1 branch moved KERNEL_CARDDB_HASH again (from
+        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause.
+        // Old (wave-1) value:
+        // "4a3d928eb8471a85700680aa2d97e20ace04b8bf8550991af9399450b474e3f5".
+        // This value is shared verbatim by
+        // native_training_store_checkpoint_v3.rs's
+        // GENESIS_LOGICAL_STATE_SHA256_GOLDEN_V1 (same shared fixture
+        // scenario). New value is this test's own live-computed digest,
+        // read directly from a failing run (never hand-typed).
         assert_eq!(
             lower_hex_raw32_v1(result.logical_state_sha256()),
-            "69e6a7d0fdbccd6013bd1d2a4f49baa42ef30e8f3218d8076c9388020bfad974"
+            "d77a82c7a9c4928803be6af2d42c494a37c93091dbafbcdd897d8fc9f2918fae"
         );
         assert_eq!(
             lower_hex_raw32_v1(result.model_parameter_sha256()),
@@ -1421,6 +1439,21 @@ mod tests {
 
         let bindings = result.episode_bindings();
         assert_eq!(bindings.len(), 2);
+        eprintln!(
+            "current checkpoint episode goldens: {:?}",
+            bindings
+                .iter()
+                .map(|b| (
+                    lower_hex_raw32_v1(b.trajectory_sha256()),
+                    b.policy_step_count(),
+                    b.physical_decision_count(),
+                    b.learner_policy_step_count(),
+                    b.opponent_policy_step_count(),
+                    b.learner_physical_decision_count(),
+                    b.opponent_physical_decision_count()
+                ))
+                .collect::<Vec<_>>()
+        );
 
         assert_eq!(bindings[0].episode_index(), 2);
         assert_eq!(bindings[0].environment_seed(), 3_233_989_599_464_222_885);
@@ -1440,7 +1473,7 @@ mod tests {
         // are this test's own live-computed values, read from a failing run.
         assert_eq!(
             lower_hex_raw32_v1(bindings[0].trajectory_sha256()),
-            "ed146f9d608a5d9accd420bc42bc91f7e17b4419078c3788d7d670679f601809"
+            "21dca504b34c30768434a74f82b618c5b5ddbc4c5760ed00edbab53a630ec455"
         );
         assert_eq!(bindings[0].outer_trajectory_sha256_v2(), None);
         assert_eq!(bindings[0].policy_step_count(), 418);
@@ -1460,9 +1493,28 @@ mod tests {
         // Re-baselined once per the owner ruling on record (collab CLAUDE
         // #236, 2026-08-14): observation-derived, see logical_state_sha256
         // above for the full rationale.
+        //
+        // Re-pinned for the pauper-meta-cards-v1 card lane's wave 1 (Task
+        // 13, identity finalisation): the wave's 21 new cards moved
+        // KERNEL_CARDDB_HASH, which the observation embeds. Old value:
+        // "2253bd914bb47db25ab403b212680272cec399a9e4459286b5a6bbcfb2d17b90".
+        //
+        // Re-pinned again for the Phase 1 card lane merge (2026-09): merging
+        // lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the
+        // Phase 1 branch moved KERNEL_CARDDB_HASH again (from
+        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause.
+        // Old (wave-1) value:
+        // "91020a9d924d1a53eeddc9cc59c72c72d7fff44cc10ddf61d775be00d4186778".
+        // deck_hashes/episode_index/environment_seed/learner_seat above, and
+        // bindings[0]'s own step/decision counts, are confirmed unaffected.
+        // New value is this test's own live-computed digest, read directly
+        // from a failing run (never hand-typed).
+        // Main rules fixes changed observation bytes again. CI run
+        // 36812673206 (Linux job 110211057207) confirms both episodes
+        // retain every existing policy and physical decision count.
         assert_eq!(
             lower_hex_raw32_v1(bindings[1].trajectory_sha256()),
-            "abc61dcc821c145ca28feb251c481b95058fd7311a8a644069edbce38a9d1c9c"
+            "e8f3ae4f0b90a8d3184bb0f1f916461cddc64ef04a9e76d2ee178ae68b64837e"
         );
         assert_eq!(bindings[1].outer_trajectory_sha256_v2(), None);
         // Re-baselined once per the owner ruling on record (collab CLAUDE

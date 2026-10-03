@@ -1,0 +1,429 @@
+{
+ "schema": "line-b-engineering-throughput-receipt/v1",
+ "name": "throughput-002",
+ "provenance": {
+  "binary": "E:\\pinned-binaries\\1823e77a570171d44aeb16d6b10154cc4730775315e89de85bef836d7b3acec9\\expanded_deck_training_v1.exe",
+  "binary_sha256": "1823e77a570171d44aeb16d6b10154cc4730775315e89de85bef836d7b3acec9",
+  "tool_head": "427743825c3f515ea78ebca8e31948fc8b97a242"
+ },
+ "seed_name": "throughput-001",
+ "claim": "engineering timing of the teach step on one fixed batch; no outcome claim",
+ "template": {
+  "path": "E:\\mtg-postboard-campaign-20260920\\broader-exposure-pilot-001\\broader\\config.json",
+  "sha256": "d2e4ace81253e6a393d5b3687250f77f5c4af433afd28dda97fa5ee2ab533529"
+ },
+ "roots_requested": 20,
+ "rollouts": 16,
+ "backend": "cpu",
+ "placement": {
+  "priority": "below_normal",
+  "qos": "execution-speed throttling opt-out at spawn, read back per run (windows-owned-child-policy/v1)",
+  "affinity_mask": "0xffff",
+  "pair_mask": "0xffffff"
+ },
+ "collect_seconds": 1.081,
+ "runs": {
+  "workers-01": {
+   "workers": 1,
+   "affinity_mask": "0xffff",
+   "placement_readback": {
+    "affinity_mask": "0xffff",
+    "priority_class": 16384,
+    "power_control_mask": 1,
+    "power_state_mask": 0,
+    "execution_speed_opt_out": true
+   },
+   "host_cpu_percent_before": 30.4,
+   "placement_during_run": {
+    "samples": 57,
+    "logical_processors": 24,
+    "p_core_threads_mean_busy_percent": 10.651315789473685,
+    "e_cores_mean_busy_percent": 6.487938596491229,
+    "per_cpu_mean_busy_percent": [
+     4.1,
+     0.1,
+     4.3,
+     0.1,
+     4.0,
+     2.6,
+     10.1,
+     4.6,
+     14.8,
+     33.3,
+     70.7,
+     6.6,
+     9.3,
+     0.0,
+     5.8,
+     0.0,
+     4.6,
+     7.8,
+     9.0,
+     7.8,
+     15.5,
+     3.5,
+     2.4,
+     1.2
+    ]
+   },
+   "update_seconds": 116.151,
+   "teacher_seconds": 112.8093002,
+   "roots": 20,
+   "rollouts": 1072,
+   "rollouts_per_second": 9.502762609992683,
+   "physical_decisions_mean": 100.55503731343283,
+   "physical_decisions_max": 1055,
+   "rollout_outcomes": {
+    "complete": 1072
+   },
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 20,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 107795,
+    "policy_steps": 118954,
+    "rollouts": 1072,
+    "selected_roots": 20,
+    "teacher_games": 20
+   },
+   "packet_sha256": "b0a6b848740b681d13a24aac839ddc4c1d5b99592625e31db9032358571428a2"
+  },
+  "workers-08": {
+   "workers": 8,
+   "affinity_mask": "0xffff",
+   "placement_readback": {
+    "affinity_mask": "0xffff",
+    "priority_class": 16384,
+    "power_control_mask": 1,
+    "power_state_mask": 0,
+    "execution_speed_opt_out": true
+   },
+   "host_cpu_percent_before": 2.2,
+   "placement_during_run": {
+    "samples": 10,
+    "logical_processors": 24,
+    "p_core_threads_mean_busy_percent": 40.0475,
+    "e_cores_mean_busy_percent": 14.19125,
+    "per_cpu_mean_busy_percent": [
+     34.2,
+     28.0,
+     18.1,
+     47.7,
+     38.8,
+     39.8,
+     41.1,
+     37.3,
+     18.3,
+     74.7,
+     55.8,
+     52.0,
+     38.2,
+     39.5,
+     21.5,
+     55.9,
+     18.6,
+     8.6,
+     6.8,
+     7.8,
+     26.8,
+     17.4,
+     15.1,
+     12.3
+    ]
+   },
+   "update_seconds": 21.188,
+   "teacher_seconds": 17.9820178,
+   "roots": 20,
+   "rollouts": 1072,
+   "rollouts_per_second": 59.61511171454852,
+   "physical_decisions_mean": 100.55503731343283,
+   "physical_decisions_max": 1055,
+   "rollout_outcomes": {
+    "complete": 1072
+   },
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 20,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 107795,
+    "policy_steps": 118954,
+    "rollouts": 1072,
+    "selected_roots": 20,
+    "teacher_games": 20
+   },
+   "packet_sha256": "b0a6b848740b681d13a24aac839ddc4c1d5b99592625e31db9032358571428a2"
+  },
+  "workers-16": {
+   "workers": 16,
+   "affinity_mask": "0xffff",
+   "placement_readback": {
+    "affinity_mask": "0xffff",
+    "priority_class": 16384,
+    "power_control_mask": 1,
+    "power_state_mask": 0,
+    "execution_speed_opt_out": true
+   },
+   "host_cpu_percent_before": 3.5,
+   "placement_during_run": {
+    "samples": 8,
+    "logical_processors": 24,
+    "p_core_threads_mean_busy_percent": 61.66015625,
+    "e_cores_mean_busy_percent": 6.28125,
+    "per_cpu_mean_busy_percent": [
+     58.8,
+     55.6,
+     58.3,
+     53.2,
+     57.2,
+     54.2,
+     62.2,
+     62.8,
+     75.2,
+     54.4,
+     65.9,
+     76.8,
+     59.0,
+     66.8,
+     60.4,
+     65.8,
+     5.7,
+     5.5,
+     6.2,
+     6.2,
+     4.9,
+     7.7,
+     6.8,
+     7.3
+    ]
+   },
+   "update_seconds": 16.976,
+   "teacher_seconds": 13.7982128,
+   "roots": 20,
+   "rollouts": 1072,
+   "rollouts_per_second": 77.69122099638875,
+   "physical_decisions_mean": 100.55503731343283,
+   "physical_decisions_max": 1055,
+   "rollout_outcomes": {
+    "complete": 1072
+   },
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 20,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 107795,
+    "policy_steps": 118954,
+    "rollouts": 1072,
+    "selected_roots": 20,
+    "teacher_games": 20
+   },
+   "packet_sha256": "b0a6b848740b681d13a24aac839ddc4c1d5b99592625e31db9032358571428a2"
+  },
+  "workers-16-mask-0xffffff": {
+   "workers": 16,
+   "affinity_mask": "0xffffff",
+   "placement_readback": {
+    "affinity_mask": "0xffffff",
+    "priority_class": 16384,
+    "power_control_mask": 1,
+    "power_state_mask": 0,
+    "execution_speed_opt_out": true
+   },
+   "host_cpu_percent_before": 4.4,
+   "placement_during_run": {
+    "samples": 8,
+    "logical_processors": 24,
+    "p_core_threads_mean_busy_percent": 55.0515625,
+    "e_cores_mean_busy_percent": 36.415625,
+    "per_cpu_mean_busy_percent": [
+     55.0,
+     39.7,
+     58.4,
+     44.4,
+     59.4,
+     47.5,
+     59.0,
+     54.1,
+     46.8,
+     59.0,
+     74.6,
+     55.8,
+     49.2,
+     64.2,
+     61.5,
+     52.3,
+     30.4,
+     33.7,
+     31.5,
+     35.9,
+     34.0,
+     41.6,
+     42.2,
+     42.1
+    ]
+   },
+   "update_seconds": 16.62,
+   "teacher_seconds": 13.37543,
+   "roots": 20,
+   "rollouts": 1072,
+   "rollouts_per_second": 80.14695602309608,
+   "physical_decisions_mean": 100.55503731343283,
+   "physical_decisions_max": 1055,
+   "rollout_outcomes": {
+    "complete": 1072
+   },
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 20,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 107795,
+    "policy_steps": 118954,
+    "rollouts": 1072,
+    "selected_roots": 20,
+    "teacher_games": 20
+   },
+   "packet_sha256": "b0a6b848740b681d13a24aac839ddc4c1d5b99592625e31db9032358571428a2"
+  },
+  "workers-24": {
+   "workers": 24,
+   "affinity_mask": "0xffff",
+   "placement_readback": {
+    "affinity_mask": "0xffff",
+    "priority_class": 16384,
+    "power_control_mask": 1,
+    "power_state_mask": 0,
+    "execution_speed_opt_out": true
+   },
+   "host_cpu_percent_before": 1.5,
+   "placement_during_run": {
+    "samples": 8,
+    "logical_processors": 24,
+    "p_core_threads_mean_busy_percent": 64.625,
+    "e_cores_mean_busy_percent": 11.181249999999999,
+    "per_cpu_mean_busy_percent": [
+     63.7,
+     61.5,
+     62.5,
+     62.7,
+     60.7,
+     62.4,
+     61.0,
+     63.7,
+     66.8,
+     73.2,
+     65.2,
+     77.1,
+     62.1,
+     62.5,
+     67.0,
+     62.0,
+     12.9,
+     11.2,
+     9.8,
+     9.8,
+     5.8,
+     8.9,
+     17.3,
+     13.7
+    ]
+   },
+   "update_seconds": 17.091,
+   "teacher_seconds": 13.9134909,
+   "roots": 20,
+   "rollouts": 1072,
+   "rollouts_per_second": 77.04752227207048,
+   "physical_decisions_mean": 100.55503731343283,
+   "physical_decisions_max": 1055,
+   "rollout_outcomes": {
+    "complete": 1072
+   },
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 20,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 107795,
+    "policy_steps": 118954,
+    "rollouts": 1072,
+    "selected_roots": 20,
+    "teacher_games": 20
+   },
+   "packet_sha256": "b0a6b848740b681d13a24aac839ddc4c1d5b99592625e31db9032358571428a2"
+  },
+  "workers-24-mask-0xffffff": {
+   "workers": 24,
+   "affinity_mask": "0xffffff",
+   "placement_readback": {
+    "affinity_mask": "0xffffff",
+    "priority_class": 16384,
+    "power_control_mask": 1,
+    "power_state_mask": 0,
+    "execution_speed_opt_out": true
+   },
+   "host_cpu_percent_before": 5.1,
+   "placement_during_run": {
+    "samples": 7,
+    "logical_processors": 24,
+    "p_core_threads_mean_busy_percent": 56.38928571428571,
+    "e_cores_mean_busy_percent": 45.683928571428574,
+    "per_cpu_mean_busy_percent": [
+     59.3,
+     47.7,
+     60.7,
+     47.3,
+     60.5,
+     46.5,
+     59.8,
+     46.1,
+     73.4,
+     49.9,
+     55.7,
+     69.8,
+     58.1,
+     49.9,
+     55.7,
+     61.9,
+     39.8,
+     43.8,
+     41.7,
+     46.3,
+     47.7,
+     45.3,
+     46.8,
+     54.0
+    ]
+   },
+   "update_seconds": 14.314,
+   "teacher_seconds": 11.143006,
+   "roots": 20,
+   "rollouts": 1072,
+   "rollouts_per_second": 96.20384302045606,
+   "physical_decisions_mean": 100.55503731343283,
+   "physical_decisions_max": 1055,
+   "rollout_outcomes": {
+    "complete": 1072
+   },
+   "census": {
+    "censored_rollouts": 0,
+    "censored_roots": 0,
+    "complete_roots": 20,
+    "no_eligible_root_games": 0,
+    "physical_decisions": 107795,
+    "policy_steps": 118954,
+    "rollouts": 1072,
+    "selected_roots": 20,
+    "teacher_games": 20
+   },
+   "packet_sha256": "b0a6b848740b681d13a24aac839ddc4c1d5b99592625e31db9032358571428a2"
+  }
+ },
+ "checks": {
+  "one_packet_across_worker_counts": true,
+  "execution_speed_opt_out_read_back_on_every_run": true,
+  "affinity_read_back_as_requested_on_every_run": true,
+  "packet_equals_expected": true
+ }
+}

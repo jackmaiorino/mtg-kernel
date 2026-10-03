@@ -1,0 +1,21 @@
+# Prospective tactical cases and corrected control: construction result
+
+All 48 new public tactical cases passed the predeclared engine-witness and hidden-state checks. The corrected control labels passed all 16 seat pairs and 768 legal-menu permutations. No learner ran, no candidate was scored on the new cases, and the reserved 100 retention games remain unparsed/unscored.
+
+The construction was fixed in `public_terminal_retention_experiment_inputs_20260921.md`, source `28493eb1`, before generating the cases. It changes the previous four-action layouts using a third opposing attacker, one/two inactive friendly creatures, and unseen counter values. The resulting target menus have 5 actions in 8 cases, 6 in 24, and 7 in 16. Each acting seat has eight face-required wins, eight creature-required wins and eight no-win controls: 32 unique-win cases and 16 no-win cases total.
+
+For each claimed win/loss, the actual engine supplied the natural-terminal witness. Two manufactured hidden library orders produced equal visible V4 inputs, legal semantics, tensors, witnesses and internal parent scores for all 48 public positions. Parent scores were used only for that invariance check, not exported as tactical-performance results. Fresh-process data bytes match. There are zero duplicate new tensors and zero exact overlaps with the original 32 training plus consumed 24 evaluation tensors. The old evaluation inputs were read only for that duplicate check; no old candidate score or outcome metric selected these cases. Creature-family unresolved alternatives retain their classification and are not called losses.
+
+The separately exported control uses sorted actor-relative action semantics rather than raw legal indices. Every target differs from its certified winner. Both actors receive the same mapped semantic target in all 16 paired states, and every one of the 24 permutations of each four-action menu preserves that target. The exported file is an explicitly incorrect imitation target, not a changed gameplay reward or natural-win label. The original training data and previous failed control run remain unchanged. This mapping is qualified for these fixtures; arbitrary arena-ID invariance remains unproven. Existing legacy training code still has its old raw-index mode, so the new campaign must explicitly consume and reverify this label file.
+
+Artifacts:
+
+- `E:/mtg-meta-recovery-20260921/terminal-retention-validation-001/validation.json`: SHA `7737e3b3f90f31b6b2bafd3a764e8a1a2215789762ffef2860ce8eaa1f4a2d25`; 48 positions, 96 hidden-world checks, completion receipt alongside.
+- `E:/mtg-meta-recovery-20260921/terminal-semantic-teacher-labels-001/labels.json`: SHA `e498b35653cc012f6dc2de84719ceb0225ecd0290adde466124beec9e4456233`; exporter `python/tools/terminal_semantic_teacher_labels_v1.py`.
+- `E:/mtg-meta-recovery-20260921/retention-validation-tools-001`: successful build, binary SHA `9263d92398d08a9c563d4762d6cd44b60ad136d79f32cc17c9dc19fb1e59599d`.
+
+Build cost was 113.08 seconds using four BelowNormal jobs on E drive. Case generation and fresh replay took 0.490 and 0.277 seconds. This was a small correctness construction, not a substantive simulation or training campaign. Final ownership checks found no active owned native jobs on either PC and preserved seven idle human sessions. No paid compute was used.
+
+The subsequent comparison is specified in `public_terminal_retention_comparison_plan_20260921.md`: original g115, correct-label beta 0, correct-label beta 0.5, and semantic-control beta 0.5; fixed 32-update endpoints; explicit integer tactical/fit gates and a paired block-bootstrap retention gate. These gates were fixed before new candidate scoring. The supported launcher, throughput qualification and result evaluation still need implementation. Do not use repeated two-update engineering calls or the legacy raw-index control as substitutes.
+
+These synthetic families are correlated and are not natural games, unseen-card generalization or human-strength evidence. Fable review remains missing under the known zero-read quota error until September 22 at 07:00 EDT. Authorized reversible preparation proceeded with this gap recorded; no review endorsement, promotion or human-preview change is implied. CP7 outcomes remain excluded.
