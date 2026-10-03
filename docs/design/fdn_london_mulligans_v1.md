@@ -52,6 +52,7 @@ Prove these behaviors with named tests:
 | invalid_bottom_choice_is_atomic_for_foreign_duplicate_and_out_of_zone_cards | Reject invalid picks without mutation |
 | stale_hand_incarnation_is_rejected_before_mutation | Exact hand bindings reject moved-and-returned cards |
 | restore_each_pregame_phase_reproduces_choices_rng_and_zone_incarnations | Snapshot and JSON restore reproduce next choice and state |
+| policy_v5_and_v6_preserve_london_public_state_and_own_hand | Both observation versions retain public pregame facts and expose only the observer's hand; legacy games omit the field |
 | schema_four_exposes_private_hand_and_bound_mulligan_bottom_actions | Public counts, own hand, schema identity, retries and stale-action refusal |
 | schemas_one_to_three_keep_historical_opening_deal_and_refuse_schema_four | Existing resets stay compatible and refuse the new mode |
 | london_session_snapshot_restores_pending_bottom_menu_binding_and_transition | Pending session restore preserves menu, binding, response and hash |

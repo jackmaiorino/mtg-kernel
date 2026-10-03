@@ -1889,13 +1889,7 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
         projection: PublicObservationProjectionV5 {
             surface: base.projection,
             policy_surface_context,
-            london_mulligans: state.london_mulligans_v1.as_ref().map(|pregame| {
-                PublicLondonMulligansV1 {
-                    phase: pregame.phase().to_string(),
-                    counts: pregame.counts(),
-                    kept: pregame.kept(),
-                }
-            }),
+            london_mulligans: public_london_mulligans_v1(state),
             foundations_combat: public_foundations_combat_v1(state)?,
         },
         own_hand: base.own_hand,
@@ -1927,6 +1921,17 @@ fn public_foundations_combat_v1(state: &GameState) -> Result<Option<PublicFounda
             })
         })
         .transpose()
+}
+
+fn public_london_mulligans_v1(state: &GameState) -> Option<PublicLondonMulligansV1> {
+    state
+        .london_mulligans_v1
+        .as_ref()
+        .map(|pregame| PublicLondonMulligansV1 {
+            phase: pregame.phase().to_string(),
+            counts: pregame.counts(),
+            kept: pregame.kept(),
+        })
 }
 
 // Shared projection components, not an ObservationV5. Each version applies
@@ -2063,6 +2068,7 @@ fn build_policy_observation_v6(request: PolicyObservationBuildV5<'_>) -> Result<
             surface: base.projection,
             policy_surface_context,
             foundations_combat: public_foundations_combat_v1(state)?,
+            london_mulligans: public_london_mulligans_v1(state),
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,

@@ -1,5 +1,25 @@
 # London mulligans validation status
 
+## Current composed source
+
+The source incorporates main fe479186 and the complete original fixture
+catalog (236 definitions/v51, `bd1385731e43c4a1`). Both unchanged decks resolve
+40/40. Composed-source gameplay, replay/restore and full hosted qualification
+remain pending; the older isolated-stack results below do not qualify it.
+
+CI37088170810 at2397921e failed default Clippy because main's V6 observation
+initializer omitted London's public projection and its human prompt consumers
+did not cover the new action variants. Both observation versions now use the
+same public mulligan projection. The actor match covers London choices while
+the Pauper human prompt retains its refusal of custom-game choices. The new
+`policy_v5_and_v6_preserve_london_public_state_and_own_hand` case checks announce,
+bottom and complete phases for both observers, exact own-hand identities, and
+omission in legacy games. Hosted verification of the repair remains pending.
+Local Rust 1.94.1 formatting, diff checks and all 22 focused Python deck/session
+tests pass after the repair; they do not establish Rust gameplay qualification.
+
+## Historical qualification
+
 Schema 4 adds London mulligans to the original fixture gameplay interface.
 The focused Rust rules, original fixture games and pending-session restore
 passed on Ubuntu. XMage's16 Witness and7 London reference cases also passed.

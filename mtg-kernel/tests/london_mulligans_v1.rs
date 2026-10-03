@@ -4,7 +4,10 @@ use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::limited_session_v1::LimitedJsonlServerV1;
 use mtg_kernel::london_mulligan_v1::enable_london_mulligans_v1;
-use mtg_kernel::rl::build_deck_pair_state_with_starting_player_v1;
+use mtg_kernel::policy_surface_v5::PolicySurfaceV5;
+use mtg_kernel::rl::{
+    build_deck_pair_state_with_starting_player_v1, observe_policy_v5, observe_policy_v6,
+};
 use mtg_kernel::state::{GameState, Step, Zone};
 use serde_json::{json, Value};
 #[cfg(feature = "limited-fdn-fixtures")]
@@ -51,6 +54,62 @@ fn bottom(state: &mut GameState, player: PlayerId, remaining: u8) -> ObjectId {
     let card = candidates[0];
     engine::step(state, Action::ChooseLondonBottom(card)).unwrap();
     card
+}
+
+#[test]
+fn policy_v5_and_v6_preserve_london_public_state_and_own_hand() {
+    fn assert_observations(state: &GameState, expected: Option<Value>) {
+        let surface = PolicySurfaceV5::new_with_engine_priority_v1();
+        for observer in [PlayerId::P0, PlayerId::P1] {
+            let v5 = observe_policy_v5(state, &surface, observer, 0, 0, 0, 1).unwrap();
+            let v6 = observe_policy_v6(state, &surface, observer, 0, 0, 0, 1).unwrap();
+            assert_eq!(v5.projection, v6.projection);
+            assert_eq!(v5.own_hand, v6.own_hand);
+            assert_eq!(
+                v6.own_hand
+                    .iter()
+                    .map(|card| ObjectId(card.stable.arena_id))
+                    .collect::<Vec<_>>(),
+                state.players[observer.index()].hand
+            );
+            assert!(v6
+                .own_hand
+                .iter()
+                .all(|card| card.stable.owner == observer.into()));
+            let projection = serde_json::to_value(&v6.projection).unwrap();
+            assert_eq!(projection.get("london_mulligans"), expected.as_ref());
+        }
+    }
+
+    let cards = vec![card_id_by_name("Forest").unwrap(); 40];
+    let legacy =
+        build_deck_pair_state_with_starting_player_v1(123, &cards, &cards, PlayerId::P0).unwrap();
+    assert_observations(&legacy, None);
+
+    let mut state = opening(PlayerId::P0);
+    assert_observations(
+        &state,
+        Some(json!({"phase":"announce", "counts":[0,0], "kept":[false,false]})),
+    );
+    announce(&mut state, PlayerId::P0, 0, true);
+    announce(&mut state, PlayerId::P1, 0, false);
+    engine::advance_until_decision(&mut state);
+    assert_observations(
+        &state,
+        Some(json!({"phase":"bottom", "counts":[1,0], "kept":[false,true]})),
+    );
+    bottom(&mut state, PlayerId::P0, 1);
+    engine::advance_until_decision(&mut state);
+    assert_observations(
+        &state,
+        Some(json!({"phase":"announce", "counts":[1,0], "kept":[false,true]})),
+    );
+    announce(&mut state, PlayerId::P0, 1, false);
+    engine::advance_until_decision(&mut state);
+    assert_observations(
+        &state,
+        Some(json!({"phase":"complete", "counts":[1,0], "kept":[true,true]})),
+    );
 }
 
 #[test]
