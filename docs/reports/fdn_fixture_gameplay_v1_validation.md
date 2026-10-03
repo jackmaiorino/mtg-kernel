@@ -4,18 +4,31 @@
 
 The complete implementation stack now incorporates main fe479186 and all
 original fixture card/token dependencies, combat, pending choices and London
-mulligans. London source is cd7f451b and the CI composition is ae4b2087.
+mulligans. London gameplay source is cd7f451b and the CI composition is 7cbfa1cd.
 The Voyage walker correction and London V6 observation/prompt repair are present
 in the final source. Full composed-source hosted qualification remains pending.
 Earlier isolated-stack passes below do not qualify this source.
 
-The engine, cards and Rust tests match London PR139 at cd7f451b. Its original
-runtime jobs remain live. CI PR140 at ae4b2087 adds two Windows test-procedure
-changes: explicit release in the reservation regression and high priority for
-the short isolated snapshot timing process. Its full matrix must qualify that
-procedure. The report branch incorporates those changes and differs from
+The gameplay code, cards and London tests match London PR139 at cd7f451b. Its
+original runtime jobs remain live. CI PR140 at 7cbfa1cd adds a feature-gated
+profile-type import in the Windows publication tests and two Windows
+test-procedure changes: explicit release in the reservation regression and
+high priority for the short isolated snapshot timing process. Its full matrix
+must qualify that source and procedure. The report branch incorporates those changes and differs from
 PR140 only in Markdown, so its path-filtered Rust-test skips provide no
 additional gameplay evidence.
+
+Draw Windows job111114931404 atb296504e passed its default release and native
+boundary steps, including the unchanged snapshot case at17.433microseconds.
+All11selected Limited integration targets passed185cases with no failures or
+ignores. The following library compilation failed with E0433 because three
+Windows publication tests used NativeRunCatalogProfileV1 without importing
+it. CUDA was skipped and the job remains a failure. The same omission exists
+in the other fixture prefixes. The two-line, feature-gated test import is
+committed throughout the owned stack; pinned rustfmt and diff checks pass.
+Draw's Linux job111114931489 passed its full runtime matrix, with the snapshot
+case at5.456microseconds and the corrected live-catalog expectation passing in
+default and Limited builds. Current Windows qualification remains pending.
 CI37088170810 at2397921e failed default Clippy on the omitted V6 London field
 and unmatched human-prompt action variants. The repair shares the public
 mulligan projection across V5/V6 and preserves the human prompt's existing
