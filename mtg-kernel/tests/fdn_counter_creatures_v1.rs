@@ -132,8 +132,8 @@ fn cast_colony(
 #[test]
 fn definitions_append_and_bind_entry_kicker_and_static_recipes() {
     for (id, name, stats) in [
-        (186, "Gnarlid Colony", (2, 2)),
-        (187, "Mossborn Hydra", (0, 0)),
+        (216, "Gnarlid Colony", (2, 2)),
+        (217, "Mossborn Hydra", (0, 0)),
     ] {
         assert_eq!(card_id_by_name(name), Some(id));
         let def = &CARD_DEFS[id as usize];
