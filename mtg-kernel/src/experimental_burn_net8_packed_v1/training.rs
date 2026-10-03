@@ -29,6 +29,8 @@ use std::process::Command;
 
 pub(crate) mod entropy;
 pub(crate) mod line_b_root;
+#[cfg(test)]
+mod ppo_tests;
 pub(crate) mod public_inputs;
 pub(crate) mod stack_inputs;
 
@@ -2293,6 +2295,73 @@ fn dense_group_loss_coefficients_v1(
         (policy_sum + value_sum.mul_scalar(value_coefficient))
             .div_scalar(normalization_group_count),
     )
+}
+
+/// Clipped-surrogate PPO sibling of `dense_group_loss_gae_v1`. Per group,
+/// `r = exp(joint - behavior_joint)` and the policy term is
+/// `-min(r * A, clamp(r, 1 - clip, 1 + clip) * A)`; the value term and the
+/// normalization are unchanged. At `r = 1` its policy gradient equals the GAE
+/// loss's. `behavior_joint` is a host constant, so it carries no gradient.
+/// Also returns the detached per-group ratios for statistics.
+fn dense_group_loss_ppo_v1(
+    logits: Tensor<CudaAutodiffBackendV1, 1>,
+    values: Tensor<CudaAutodiffBackendV1, 1>,
+    plan: &DenseGroupLossPlanGaeV1,
+    behavior_joint: &[f32],
+    clip: f32,
+    value_coefficient: f32,
+    normalization_group_count: f32,
+) -> Result<(Tensor<CudaAutodiffBackendV1, 1>, Tensor<CudaBackendV1, 1>), Box<dyn Error>> {
+    if values.dims()[0] != plan.substeps
+        || behavior_joint.len() != plan.group_count
+        || behavior_joint.iter().any(|v| !v.is_finite())
+        || !clip.is_finite()
+        || clip <= 0.0
+        || clip > 1.0
+        || !value_coefficient.is_finite()
+        || value_coefficient <= 0.0
+        || !normalization_group_count.is_finite()
+        || normalization_group_count < plan.group_count as f32
+    {
+        return Err(training_error(
+            "dense ppo group loss shape/parameter mismatch",
+        ));
+    }
+    let device = plan.value_targets.device();
+    let padded = logits
+        .clone()
+        .select(0, plan.pad_gather.clone())
+        .reshape([plan.substeps, plan.max_actions])
+        + plan.pad_mask.clone();
+    let row_max = padded.clone().max_dim(1).detach();
+    let log_sum_exp = (padded - row_max.clone()).exp().sum_dim(1).log() + row_max;
+    let selected_logits = logits.select(0, plan.selected_gather.clone());
+    let selected_log_probabilities = selected_logits - log_sum_exp.squeeze_dim::<1>(1);
+    let joint_log_probabilities = Tensor::zeros([plan.group_count], &device).scatter(
+        0,
+        plan.group_scatter.clone(),
+        selected_log_probabilities,
+        IndexingUpdateOp::Add,
+    );
+    let behavior: Tensor<CudaAutodiffBackendV1, 1> = Tensor::from_data(
+        TensorData::new(behavior_joint.to_vec(), [plan.group_count]),
+        &device,
+    );
+    let ratios = (joint_log_probabilities - behavior).exp();
+    let unclipped = ratios.clone().mul(plan.advantages.clone());
+    let clipped = ratios
+        .clone()
+        .clamp(1.0 - clip, 1.0 + clip)
+        .mul(plan.advantages.clone());
+    let policy_sum = unclipped.min_pair(clipped).mul_scalar(-1.0).sum();
+    let group_values = values.select(0, plan.group_first_gather.clone());
+    let value_error = group_values - plan.value_targets.clone();
+    let value_sum = value_error.clone().mul(value_error).sum();
+    Ok((
+        (policy_sum + value_sum.mul_scalar(value_coefficient))
+            .div_scalar(normalization_group_count),
+        ratios.inner(),
+    ))
 }
 
 /// Test-only policy-anchor sibling of the production dense grouped loss.

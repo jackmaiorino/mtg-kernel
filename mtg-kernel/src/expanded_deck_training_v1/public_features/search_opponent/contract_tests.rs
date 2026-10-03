@@ -102,6 +102,7 @@ fn run_receipt_binds_frozen_identities_and_is_absent_for_ordinary_runs() {
         max_chunk_substeps: 128,
         projection_mode: ProjectionMode::StateOnly,
         entropy_coefficient: 0.0,
+        ppo: None,
     };
     assert!(run_receipt(&config(vec![episode(false)]), "c", 0..1)
         .unwrap()
