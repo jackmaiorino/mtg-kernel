@@ -4796,6 +4796,10 @@ impl RlEpisodeSessionV1 {
             physical_decision_count: 0,
             current: None,
             terminal: None,
+            #[cfg(feature = "limited-fdn-fixtures")]
+            limited_incremental_trigger_order: false,
+            #[cfg(feature = "limited-fdn-fixtures")]
+            limited_trigger_order: None,
         };
         session.advance_to_decision_or_terminal_profiled(None);
         Ok(session)
