@@ -265,19 +265,31 @@ class HostReservationTests(unittest.TestCase):
         last = hr.status(token)["token_events"][-1]
         self.assertEqual((last["kind"], last["outcome"]), ("release", "success"))
 
-    def chain(self, seconds):
+    def chain(self, seconds, *, release_file=None):
         """A spawns B and waits for it; B spawns C and exits at once; so A and
-        B are gone while C lives. C writes its pid, sleeps, then writes done."""
+        B are gone while C lives. C waits for time or an explicit release."""
         pid_file, done_file = Path(self.root) / "c.pid", Path(self.root) / "c.done"
-        c = (f"import os, time; open({str(pid_file)!r}, 'w').write(str(os.getpid())); "
-             f"time.sleep({seconds}); open({str(done_file)!r}, 'w').write('done')")
+        c = ("import os, time\n"
+             f"open({str(pid_file)!r}, 'w').write(str(os.getpid()))\n")
+        if release_file is None:
+            c += f"time.sleep({seconds})\n"
+        else:
+            c += (f"deadline = time.monotonic() + {seconds}\n"
+                  f"while not os.path.exists({str(release_file)!r}):\n"
+                  "    if time.monotonic() >= deadline:\n"
+                  "        raise TimeoutError('test did not release C')\n"
+                  "    time.sleep(0.05)\n")
+        c += f"open({str(done_file)!r}, 'w').write('done')"
         b = f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {c!r}])"
         a = f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {b!r}]).wait()"
         return [sys.executable, "-c", a], pid_file, done_file
 
     @unittest.skipUnless(WMI_STARTABLE, NO_WMI)
     def test_wmi_chain_with_a_gone_intermediate_holds_until_the_last_process_ends(self):
-        command, pid_file, done_file = self.chain(6)
+        # Keep C alive through WMI inspection, even on a busy runner. The
+        # reservation must stay held until this test explicitly ends C.
+        release_file = Path(self.root) / "c.release"
+        command, pid_file, done_file = self.chain(120, release_file=release_file)
         result = hr.dispatch("test", "wmi-chain", "released after the last process ends", command, cwd=self.root)
         token = result["token"]
         self.assertTrue(wait_until(pid_file.exists, 30))
@@ -289,6 +301,7 @@ class HostReservationTests(unittest.TestCase):
         self.assertTrue(adopt["contained"])
         self.assertEqual(hr.status()["state"], "held")
         self.assertFalse(done_file.exists())
+        release_file.write_text("release")
         self.assertTrue(wait_until(lambda: hr.status()["state"] == "free", 60))
         last = hr.status(token)["token_events"][-1]
         self.assertEqual((last["kind"], last["outcome"]), ("release", "success"))
