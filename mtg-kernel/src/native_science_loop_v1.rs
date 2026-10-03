@@ -607,6 +607,7 @@ fn run_native_science_loop_with_opponents_v1(
         | NativeRunCatalogProfileV1::FdnLuminousRebuke
         | NativeRunCatalogProfileV1::FdnUnchartedVoyage
         | NativeRunCatalogProfileV1::FdnSylvanScavenging
+        | NativeRunCatalogProfileV1::FdnCelestialArmor
         | NativeRunCatalogProfileV1::FdnCounterCreaturesRebased
         | NativeRunCatalogProfileV1::FdnLifegainCreaturesRebased
         | NativeRunCatalogProfileV1::FdnDrawCreaturesRebased
@@ -616,7 +617,8 @@ fn run_native_science_loop_with_opponents_v1(
         | NativeRunCatalogProfileV1::FdnProwlerCreatureRebased
         | NativeRunCatalogProfileV1::FdnLuminousRebukeRebased
         | NativeRunCatalogProfileV1::FdnUnchartedVoyageRebased
-        | NativeRunCatalogProfileV1::FdnSylvanScavengingRebased => {}
+        | NativeRunCatalogProfileV1::FdnSylvanScavengingRebased
+        | NativeRunCatalogProfileV1::FdnCelestialArmorRebased => {}
     }
 
     if ladder_opponent.is_some() && population_opponent.is_some() {

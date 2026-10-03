@@ -3430,7 +3430,10 @@ fn keywords_for(card: &CardJson) -> String {
     if card.name == "Healer's Hawk" {
         keywords.push("Keywords::LIFELINK");
     }
-    if matches!(card.name.as_str(), "Cathar Commando" | "Spectral Sailor") {
+    if matches!(
+        card.name.as_str(),
+        "Cathar Commando" | "Spectral Sailor" | "Celestial Armor"
+    ) {
         keywords.push("Keywords::FLASH");
     }
     if card.name == "Treetop Snarespinner" {
@@ -4270,6 +4273,18 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
+        "Celestial Armor" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: Some("W"),
+                generic: 3,
+            }],
+            effect: AbilityEffectRecipe::AttachSourceToTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: true,
+            target_spec: "ControlledCreature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Hunter's Blowgun" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Mana {
                 colored: None,
@@ -4986,6 +5001,7 @@ fn ward_cost_for(name: &str) -> &'static str {
 
 fn equipment_for(name: &str) -> &'static str {
     match name {
+        "Celestial Armor" => "Some(EquipmentDef { power_delta: 2, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::FLYING, other_turn_keywords: Keywords::FLYING, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
         "Black Mage's Rod" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 0, add_subtype: Some(Subtype::Wizard), controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 1, job_select: true, granted_activated_ability: None })",
         "Hunter's Blowgun" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords::DEATHTOUCH, other_turn_keywords: Keywords::REACH, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
         "Viridian Longbow" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: Some(GrantedActivatedAbilityDef { cost: &[CostComponent::Tap], target_spec: TargetSpec::AnyTarget, effect: longbow_ping }) })",
@@ -5024,6 +5040,7 @@ fn delve_for(name: &str) -> bool {
 /// event, target, and effect part of the generated card database identity.
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Celestial Armor" => "etb:target_controlled_creature:attach_exact_source:then_grant_hexproof_indestructible_until_end_of_turn",
         "Mossborn Hydra" => "controlled_land_enters:double_plus_one_counters_on_bound_source",
         "Exemplar of Light" => "controller_gains_positive_life:counter_on_bound_source:1;controller_places_plus_one_counters_on_source:draw:1:limit_per_turn:1",
         "Mischievous Mystic" => "controller_draws_nth_card_this_turn:2:create_faerie_token:1",
@@ -7719,7 +7736,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v49\n"
+            "kernel_carddb/v50\n"
         } else {
             "kernel_carddb/v34\n"
         },
