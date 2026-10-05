@@ -13,6 +13,7 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 sha2 = { version = "0.10", features = ["compress"] }
 
 [features]
+saved-input-scalar-diagnostic = []
 # Diagnostic sidecars only. No fields, hooks or I/O in default builds.
 gameplay-decision-trace-v1 = []
 # Append the FDN registry to the frozen Pauper registry. Off by default so
@@ -98,6 +99,11 @@ required-features = ["flat-action-diagnostic"]
 [[example]]
 name = "native_flat_tensorizer_diagnostic"
 required-features = ["native-flat-tensorizer-diagnostic"]
+
+[[bin]]
+name = "saved_input_scalar_diagnostic"
+path = "src/bin/saved_input_scalar_diagnostic.rs"
+required-features = ["saved-input-scalar-diagnostic"]
 
 [build-dependencies]
 semver = "1"

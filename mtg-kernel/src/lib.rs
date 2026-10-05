@@ -152,6 +152,8 @@ pub(crate) mod deterministic_math_v1;
 // deliberately not a production or performance backend.
 #[allow(dead_code)]
 pub(crate) mod native_policy_value_net_v1;
+#[cfg(feature = "saved-input-scalar-diagnostic")]
+pub mod saved_input_scalar_diagnostic;
 // Shared cfg(test) helper: gates tests that read machine-local sealed
 // evidence (real, already-published run/store artifacts under absolute
 // D:\ / C:\ paths) so they skip cleanly on hosted CI runners instead of
