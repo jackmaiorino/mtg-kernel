@@ -505,6 +505,48 @@ fn omen_is_a_sorcery_cast_method_searches_only_basic_lands_and_shuffles_source()
 }
 
 #[test]
+fn omen_mana_value_uses_its_sorcery_form_for_spellstutter_targets() {
+    let mut state = ready_main(&["Forest"; 8], 0x4f4d_454e_0000_0010);
+    add_mana(&mut state, ManaColor::G, 1);
+    let sagu = put_object(&mut state, PlayerId::P0, "Sagu Wildling", Zone::Hand);
+    put_object(&mut state, PlayerId::P1, "Faerie Seer", Zone::Battlefield);
+    engine::step(&mut state, Action::CastSpell(sagu)).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass { .. }
+    ));
+    assert_eq!(
+        state.stack.last().unwrap().v4.cast_method,
+        Some(CastMethodV4::Omen)
+    );
+    state.priority_player = PlayerId::P1;
+    let spec = TargetSpec::SpellManaValueAtMostControlledSubtypes {
+        first: Subtype::Faerie,
+        second: Some(Subtype::FaerieAllCaps),
+    };
+    assert_eq!(
+        engine::legal_targets_for(spec, &[], &state),
+        vec![Target::Object(sagu)]
+    );
+    let mut normal = ready_main(&["Forest"; 8], 0x4f4d_454e_0000_0011);
+    add_mana(&mut normal, ManaColor::G, 5);
+    let creature = put_object(&mut normal, PlayerId::P0, "Sagu Wildling", Zone::Hand);
+    put_object(&mut normal, PlayerId::P1, "Faerie Seer", Zone::Battlefield);
+    engine::step(&mut normal, Action::CastSpell(creature)).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut normal),
+        Decision::ChooseSpellMode { .. }
+    ));
+    engine::step(&mut normal, Action::ChooseSpellMode(0)).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut normal),
+        Decision::CastSpellOrPass { .. }
+    ));
+    normal.priority_player = PlayerId::P1;
+    assert!(engine::legal_targets_for(spec, &[], &normal).is_empty());
+}
+
+#[test]
 fn omen_may_fail_to_find_and_insufficient_green_cannot_start_either_form() {
     let mut no_mana = ready_main(&["Forest"], 0x4f4d_454e_0000_0010);
     let sagu = put_object(&mut no_mana, PlayerId::P0, "Sagu Wildling", Zone::Hand);
