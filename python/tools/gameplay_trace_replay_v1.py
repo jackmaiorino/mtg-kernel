@@ -98,7 +98,7 @@ def run(plan, report):
                      retained_events_sha256=hashlib.sha256(json.dumps([row for row in rows if row["event"] in events], sort_keys=True).encode()).hexdigest())
         if traced:
             (root / "current-trace.jsonl").rename(target / "trace.jsonl")
-            header, decisions, footer = reader.read_trace(target / "trace.jsonl")
+            header, decisions, footer = reader.read_trace(target / "trace.jsonl", rng_context=reader.primary_rng_context(target / "primary.jsonl"))
             require(footer["complete"], "diagnostic capture is incomplete")
             require(len(decisions) == len(selected), "trace does not cover every executed model action")
             require(header["identity"]["runtime"]["executable_sha256"] == package["runtime"]["executable"]["sha256"], "trace runtime differs")

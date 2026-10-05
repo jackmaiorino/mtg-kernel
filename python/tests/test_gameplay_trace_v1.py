@@ -24,7 +24,9 @@ def record():
         "selected_index": selected,
         "decision": {"episode_id": 1, "step": 4, "legal_action_count": 2},
         "behavior": {"kind": "hamilton_q64", "selected_index": selected, "mass_numerators": [str(1 << 63)] * 2},
-        "rng": {"before": {"state": before}, "after": {"state": (before + reader.GAMMA) & reader.MASK}, "sampler_seed": seed, "inverse_cdf_draw": draw},
+        "rng": {"seat": "p0", "draw_ordinal": 0, "state_commitment_encoding": "sha256-compact-json-SplitMix64/v1", "u64_commitment_encoding": "sha256-u64le/v1",
+                "before_sha256": reader.state_commitment(before), "after_sha256": reader.state_commitment((before + reader.GAMMA) & reader.MASK),
+                "sampler_seed_sha256": reader.u64_commitment(seed), "inverse_cdf_draw_sha256": reader.u64_commitment(draw)},
         "bound_engine_action": {"engine_index": selected, "semantic": {"kind": "pass"}, "episode_id": 1, "step": 4},
         "actor": "p0", "transition": {"actor": "p0", "observation": {"acting_player": "p0"}},
         "logit_bits": [0, 0], "logits": [0.0, 0.0], "encoded_input": tensor,
@@ -40,7 +42,7 @@ def corrupt_record(corrupt):
     elif corrupt == "mass":
         row["behavior"]["mass_numerators"][0] = "1"
     elif corrupt == "rng":
-        row["rng"]["before"]["state"] += 1
+        row["rng"]["draw_ordinal"] += 1
     elif corrupt == "binding":
         row["bound_engine_action"]["engine_index"] ^= 1
     elif corrupt == "actor":
@@ -54,12 +56,12 @@ def corrupt_record(corrupt):
 
 class GameplayTraceReaderTests(unittest.TestCase):
     def test_equal_q64_menu_and_seed_reproduce_selection(self):
-        reader.validate_decision(record())
+        reader.validate_decision(record(), {1: [73, 73]})
 
     def test_corrupt_capture_is_refused(self):
         for corrupt in ("order", "mass", "rng", "binding", "actor", "tensor", "logit"):
             with self.subTest(corrupt=corrupt), self.assertRaises(ValueError):
-                reader.validate_decision(corrupt_record(corrupt))
+                reader.validate_decision(corrupt_record(corrupt), {1: [73, 73]})
 
     def test_reader_refuses_truncated_capture(self):
         with tempfile.TemporaryDirectory() as folder:

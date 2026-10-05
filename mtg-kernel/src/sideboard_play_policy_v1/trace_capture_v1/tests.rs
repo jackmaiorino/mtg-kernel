@@ -61,6 +61,9 @@ fn gameplay_trace_preserves_sampling_binding_transition_and_limits() {
         .collect();
     assert_eq!(rows.iter().filter(|r| r["kind"] == "decision").count(), 2);
     let first = &rows[1];
+    assert!(first["rng"].get("before").is_none());
+    assert!(first["rng"].get("sampler_seed").is_none());
+    assert_eq!(first["rng"]["draw_ordinal"], 0);
     assert_eq!(first["transition"]["applied"], true);
     assert_eq!(
         first["actor"],

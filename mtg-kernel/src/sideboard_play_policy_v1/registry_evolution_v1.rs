@@ -443,6 +443,8 @@ impl FrozenPlayPolicyV1 {
             trace: None,
             #[cfg(feature = "gameplay-decision-trace-v1")]
             trace_draw: None,
+            #[cfg(feature = "gameplay-decision-trace-v1")]
+            trace_draw_count: [0; 2],
             successor: Some(FrozenPlaySuccessorStateV3::default()),
             fresh_successor: None,
         })

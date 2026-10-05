@@ -68,7 +68,8 @@ impl GameplayTraceV1 {
         };
         let header = json!({"schema": SCHEMA_V1, "kind":"header", "run_id":trace.config.run_id,
             "limits":trace.config,"identity":identity,
-            "visibility":"each decision and transition belong only to the recorded actor; private diagnostic file"});
+            "visibility":"each decision and transition belong only to the recorded actor; private diagnostic file",
+            "rng_privacy":"cursor and commitments only; reproduce using private primary journal or coordinator seed context; raw policy seeds can reveal shuffle seeds"});
         trace
             .write_value(&header)
             .map_err(|_| "trace header exceeds limit or cannot be written")?;
