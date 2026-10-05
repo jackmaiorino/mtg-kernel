@@ -213,6 +213,11 @@ pub(crate) fn runtime_identity() -> Result<Value, String> {
         json!({"executable_sha256":format!("{:x}",Sha256::digest(bytes)),
         "kernel_version":env!("CARGO_PKG_VERSION"),"target_os":std::env::consts::OS,
         "target_arch":std::env::consts::ARCH,"forward":"native scalar installed feature generation",
+        "engine_commit":env!("MTG_KERNEL_BUILD_GIT_HEAD"),
+        "tracked_tree_sha256":env!("MTG_KERNEL_BUILD_TRACKED_TREE_SHA256"),
+        "tracked_tree_contract":env!("MTG_KERNEL_BUILD_TRACKED_TREE_CONTRACT"),
+        "build_git_clean":env!("MTG_KERNEL_BUILD_GIT_CLEAN"),
+        "toolchain_file_sha256":format!("{:x}",Sha256::digest(include_bytes!("../../rust-toolchain.toml"))),
         "trace_feature":"gameplay-decision-trace-v1"}),
     )
 }

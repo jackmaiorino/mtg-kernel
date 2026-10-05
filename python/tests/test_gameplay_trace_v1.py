@@ -4,8 +4,8 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
-
-import pytest
+import tempfile
+import unittest
 
 _path = Path(__file__).parents[1] / "tools/gameplay_trace_v1.py"
 _spec = importlib.util.spec_from_file_location("gameplay_trace_reader", _path)
@@ -33,12 +33,7 @@ def record():
     return row
 
 
-def test_equal_q64_menu_and_seed_reproduce_selection():
-    reader.validate_decision(record())
-
-
-@pytest.mark.parametrize("corrupt", ["order", "mass", "rng", "binding", "actor", "tensor", "logit"])
-def test_corrupt_capture_is_refused(corrupt):
+def corrupt_record(corrupt):
     row = copy.deepcopy(record())
     if corrupt == "order":
         row["ordered_actions"].reverse()
@@ -54,12 +49,21 @@ def test_corrupt_capture_is_refused(corrupt):
         row["encoded_input"]["state"][0] = 1
     else:
         row["logit_bits"][0] = 1065353216
-    with pytest.raises(ValueError):
-        reader.validate_decision(row)
+    return row
 
 
-def test_reader_refuses_truncated_capture(tmp_path):
-    path = tmp_path / "trace.jsonl"
-    path.write_text(json.dumps({"schema": reader.SCHEMA, "kind": "header", "run_id": "test"}) + "\n")
-    with pytest.raises(ValueError, match="missing header/footer"):
-        reader.read_trace(path)
+class GameplayTraceReaderTests(unittest.TestCase):
+    def test_equal_q64_menu_and_seed_reproduce_selection(self):
+        reader.validate_decision(record())
+
+    def test_corrupt_capture_is_refused(self):
+        for corrupt in ("order", "mass", "rng", "binding", "actor", "tensor", "logit"):
+            with self.subTest(corrupt=corrupt), self.assertRaises(ValueError):
+                reader.validate_decision(corrupt_record(corrupt))
+
+    def test_reader_refuses_truncated_capture(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "trace.jsonl"
+            path.write_text(json.dumps({"schema": reader.SCHEMA, "kind": "header", "run_id": "test"}) + "\n")
+            with self.assertRaisesRegex(ValueError, "missing header/footer"):
+                reader.read_trace(path)

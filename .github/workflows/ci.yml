@@ -142,11 +142,6 @@ jobs:
       - name: Run Rust release tests
         run: cargo test --release --locked --workspace --all-targets --no-fail-fast
 
-      - name: Check opt-in gameplay decision tracing
-        run: |
-          cargo clippy --release --locked -p mtg-kernel --all-targets --features gameplay-decision-trace-v1 -- -D warnings
-          cargo test --release --locked -p mtg-kernel --features gameplay-decision-trace-v1 --lib gameplay_trace
-
       # Reuse the release test binary from the full suite. Calling Cargo with
       # --lib changes feature unification and needlessly rebuilds the library.
       # The existing 40us check still runs alone in its own test process.
@@ -158,6 +153,11 @@ jobs:
           $testBinary = $testBinaries[0].FullName
           & $testBinary snapshot::tests::snapshot_clone_cost_is_bounded --exact --ignored --test-threads=1
           exit $LASTEXITCODE
+
+      - name: Check opt-in gameplay decision tracing
+        run: |
+          cargo clippy --release --locked -p mtg-kernel --all-targets --features gameplay-decision-trace-v1 -- -D warnings
+          cargo test --release --locked -p mtg-kernel --features gameplay-decision-trace-v1 --lib gameplay_trace
 
       - name: Validate native Store production feature boundary
         shell: pwsh
