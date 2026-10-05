@@ -1355,6 +1355,16 @@ pub struct CardDef {
 }
 
 impl CardDef {
+    /// Printed alternative spell form selected by the shared Omen/Adventure
+    /// cast method. Other alternative costs (including Bestow) retain the
+    /// ordinary printed mana value and must not use this definition.
+    pub fn omen_spell_form(&self) -> Option<(Cost, &'static [CardType])> {
+        self.adventure
+            .as_ref()
+            .map(|form| (form.cost, form.types))
+            .or_else(|| self.omen.as_ref().map(|form| (form.cost, form.types)))
+    }
+
     pub fn has_type(&self, t: CardType) -> bool {
         self.types.contains(&t)
     }

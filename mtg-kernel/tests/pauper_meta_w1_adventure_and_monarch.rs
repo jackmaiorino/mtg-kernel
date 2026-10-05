@@ -183,6 +183,26 @@ fn forktail_sweep_is_cast_from_hand_then_the_dragon_is_cast_from_exile() {
         state.stack.iter().any(|item| item.source == fang_dragon),
         "Forktail Sweep spell on stack"
     );
+    // The shared Omen discriminant must use Adventure's printed {1}{R}
+    // value, not the creature's seven, for mana-value target eligibility.
+    put_object(&mut state, PlayerId::P1, "Faerie Seer", Zone::Battlefield);
+    put_object(
+        &mut state,
+        PlayerId::P1,
+        "Faerie Miscreant",
+        Zone::Battlefield,
+    );
+    let prior_priority = state.priority_player;
+    state.priority_player = PlayerId::P1;
+    let spec = mtg_kernel::card_def::TargetSpec::SpellManaValueAtMostControlledSubtypes {
+        first: mtg_kernel::card_def::Subtype::Faerie,
+        second: Some(mtg_kernel::card_def::Subtype::FaerieAllCaps),
+    };
+    assert_eq!(
+        engine::legal_targets_for(spec, &[], &state),
+        vec![Target::Object(fang_dragon)]
+    );
+    state.priority_player = prior_priority;
     resolve_until_idle(&mut state);
 
     assert_eq!(
