@@ -220,3 +220,48 @@ pub fn run() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn condition(id: String, original: bool) -> Condition {
+        serde_json::from_value(json!({"id":id,"expected_logit_bits":original.then_some(vec![0_u32]),
+            "encoded_input":{"float_encoding":"IEEE754 binary32 u32 bits, flattened row-major",
+            "state":[],"object_features":[],"object_card_ids":[],"object_groups":[],"object_node_ids":[],
+            "edge_features":[],"edge_source_indices":[],"edge_target_indices":[],"action_features":[],
+            "action_ref_features":[],"action_ref_card_ids":[],"action_ref_action_indices":[],"action_ref_node_indices":[]}})).unwrap()
+    }
+
+    fn request() -> Request {
+        Request {
+            originals: (0..4)
+                .map(|i| condition(format!("original-{i}"), true))
+                .collect(),
+            hybrids: (0..12)
+                .map(|i| condition(format!("hybrid-{i}"), false))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn refuses_missing_original_bits_and_extra_conditions() {
+        let mut value = request();
+        assert!(validate_counts(&value).is_ok());
+        value.originals[0].expected_logit_bits = None;
+        assert!(validate_counts(&value).is_err());
+        let mut value = request();
+        value.hybrids.push(condition("extra".into(), false));
+        assert!(validate_counts(&value).is_err());
+    }
+
+    #[test]
+    fn refuses_duplicate_identity_and_hybrid_parity_metadata() {
+        let mut value = request();
+        value.hybrids[0].id = value.originals[0].id.clone();
+        assert!(validate_counts(&value).is_err());
+        let mut value = request();
+        value.hybrids[0].expected_logit_bits = Some(vec![0]);
+        assert!(validate_counts(&value).is_err());
+    }
+}
