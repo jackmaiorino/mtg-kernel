@@ -842,11 +842,36 @@ impl HumanMatchServiceV2 {
 
 pub fn serve_human_match_v2(
     config_path: &Path,
+    input: impl BufRead,
+    output: impl Write,
+) -> Result<(), String> {
+    let config: HumanMatchConfigV2 = strict(&read_bounded(config_path, MAX_CONFIG_BYTES)?)?;
+    let service = HumanMatchServiceV2::new(config)?;
+    serve_service_v2(service, input, output)
+}
+
+#[cfg(feature = "gameplay-decision-trace-v1")]
+pub fn serve_human_match_traced_v2(
+    config_path: &Path,
+    trace_config_path: &Path,
+    input: impl BufRead,
+    output: impl Write,
+) -> Result<(), String> {
+    let config: HumanMatchConfigV2 = strict(&read_bounded(config_path, MAX_CONFIG_BYTES)?)?;
+    let trace_config = strict::<crate::gameplay_trace_v1::GameplayTraceConfigV1>(&read_bounded(
+        trace_config_path,
+        MAX_CONFIG_BYTES,
+    )?)?;
+    let mut service = HumanMatchServiceV2::new(config)?;
+    service.policy.enable_gameplay_trace_v1(trace_config)?;
+    serve_service_v2(service, input, output)
+}
+
+fn serve_service_v2(
+    mut service: HumanMatchServiceV2,
     mut input: impl BufRead,
     mut output: impl Write,
 ) -> Result<(), String> {
-    let config: HumanMatchConfigV2 = strict(&read_bounded(config_path, MAX_CONFIG_BYTES)?)?;
-    let mut service = HumanMatchServiceV2::new(config)?;
     loop {
         let mut line = Vec::new();
         let read = input

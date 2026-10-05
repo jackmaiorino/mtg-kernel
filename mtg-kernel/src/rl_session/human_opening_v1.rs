@@ -32,6 +32,8 @@ impl FastActorSessionV1 {
             current: None,
             flat_action_contract_mode: FlatActionContractModeV1::V3,
             v3_spell_target_reference_adapter: false,
+            #[cfg(feature = "gameplay-decision-trace-v1")]
+            trace_pending: crate::gameplay_trace_v1::TraceSlot::default(),
             flat_action_cache_spare: None,
             flat_action_cache_spare_v2: None,
             terminal: None,

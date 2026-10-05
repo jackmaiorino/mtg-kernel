@@ -154,6 +154,11 @@ jobs:
           & $testBinary snapshot::tests::snapshot_clone_cost_is_bounded --exact --ignored --test-threads=1
           exit $LASTEXITCODE
 
+      - name: Check opt-in gameplay decision tracing
+        run: |
+          cargo clippy --release --locked -p mtg-kernel --all-targets --features gameplay-decision-trace-v1 -- -D warnings
+          cargo test --release --locked -p mtg-kernel --features gameplay-decision-trace-v1 --lib gameplay_trace
+
       - name: Validate native Store production feature boundary
         shell: pwsh
         run: |
