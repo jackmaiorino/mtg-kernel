@@ -90,7 +90,14 @@ impl FrozenPlayPolicyV1 {
                 selected,
                 record,
             }),
-            Err(_) => GameplayTraceV1::error(handle, "capture_failed_actor_visible_projection"),
+            Err(reason) => {
+                let stage = match reason.as_str() {
+                    "unsupported actor-visible label" => "actor_visible_label_unavailable",
+                    "trace menu count differs" => "trace_menu_count_differs",
+                    _ => "capture_failed_actor_visible_projection",
+                };
+                GameplayTraceV1::error(handle, stage);
+            }
         }
     }
 }

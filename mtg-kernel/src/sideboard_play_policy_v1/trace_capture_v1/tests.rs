@@ -130,3 +130,28 @@ fn gameplay_trace_excludes_unseen_cards_and_library_order() {
     }
     assert_eq!(records[0], records[1]);
 }
+
+#[test]
+fn gameplay_trace_labels_retained_menu_without_ui_canonicalization() {
+    // Actor-visible step99 from the retained development audit. The UI rejects
+    // this graph; instrumentation must still name its engine-ordered actions.
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../tests/data/gameplay_trace_visible_menu_v1.json"
+    ))
+    .unwrap();
+    let observation = serde_json::from_value(fixture["observation"].clone()).unwrap();
+    let actions: Vec<crate::rl::ActionSemanticV1> =
+        serde_json::from_value(fixture["actions"].clone()).unwrap();
+    let labels = crate::human_bo3_v1::gameplay_trace_labels_v1(&observation, &actions).unwrap();
+    assert_eq!(labels.len(), actions.len());
+    for (action, label) in actions.iter().zip(&labels) {
+        if let crate::rl::ActionSemanticV1::ActivateManaAbility { source, .. }
+        | crate::rl::ActionSemanticV1::ActivateAbility { source, .. } = action
+        {
+            assert!(
+                label.contains(crate::card_def::CARD_DEFS[source.card_db_id as usize].object_name)
+            );
+            assert!(!label.contains("arena_id"));
+        }
+    }
+}

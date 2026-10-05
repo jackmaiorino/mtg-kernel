@@ -1035,14 +1035,47 @@ pub(crate) fn gameplay_trace_labels_v1(
     actions: &[ActionSemanticV1],
 ) -> Result<Vec<String>, Error> {
     let mut handles = Handles::new(observation)?;
-    let initial = project_state(observation, &mut handles)?;
-    handles.canonicalize(&initial)?;
+    // Register only the already projected visible facts. Diagnostic labels keep
+    // engine order and do not need the UI's canonical graph/tie ordering.
+    project_state(observation, &mut handles)?;
     actions
         .iter()
         .map(|action| {
             super::labels::label(action, observation, &handles, observation.acting_player)
+                .or_else(|_| gameplay_trace_semantic_label_v1(action, &handles))
         })
         .collect()
+}
+
+#[cfg(feature = "gameplay-decision-trace-v1")]
+fn gameplay_trace_semantic_label_v1(
+    action: &ActionSemanticV1,
+    handles: &Handles,
+) -> Result<String, Error> {
+    fn name_refs(value: &mut serde_json::Value, handles: &Handles) -> Result<(), Error> {
+        match value {
+            serde_json::Value::Object(fields) if fields.contains_key("arena_id") => {
+                let reference: CardStableRefV1 = serde_json::from_value(value.clone())
+                    .map_err(|_| Error::InvalidVisibleReference)?;
+                *value = serde_json::Value::String(handles.name(&reference)?);
+            }
+            serde_json::Value::Object(fields) => {
+                for child in fields.values_mut() {
+                    name_refs(child, handles)?;
+                }
+            }
+            serde_json::Value::Array(children) => {
+                for child in children {
+                    name_refs(child, handles)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    let mut semantic = serde_json::to_value(action).map_err(|_| Error::InvalidVisibleReference)?;
+    name_refs(&mut semantic, handles)?;
+    Ok(format!("Engine semantic: {semantic}"))
 }
 
 fn projection_diagnostic_error(
