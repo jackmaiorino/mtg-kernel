@@ -185,6 +185,15 @@ impl Clone for TraceSlot {
         Self::default()
     }
 }
+impl Drop for TraceSlot {
+    fn drop(&mut self) {
+        if let Ok(slot) = self.0.get_mut() {
+            if let Some(pending) = slot.take() {
+                GameplayTraceV1::error(&pending.handle, "sampled_decision_not_executed");
+            }
+        }
+    }
+}
 
 pub(crate) fn tensor_value(t: &NativeFlatDecisionTensorV2) -> Value {
     let bits = |values: &[f32]| values.iter().map(|v| v.to_bits()).collect::<Vec<_>>();

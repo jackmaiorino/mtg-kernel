@@ -87,7 +87,19 @@ fn gameplay_trace_excludes_unseen_cards_and_library_order() {
     for (n, hidden) in ["Lightning Bolt", "Counterspell"].iter().enumerate() {
         let destination = path(&format!("private-{n}"));
         let _ = std::fs::remove_file(&destination);
-        let state = crate::policy_observation_v6::tests::forest_search_state(false, hidden);
+        let mut state = crate::policy_observation_v6::tests::forest_search_state(false, hidden);
+        crate::policy_observation_v6::tests::put(
+            &mut state,
+            crate::ids::PlayerId::P1,
+            hidden,
+            crate::state::Zone::Hand,
+        );
+        crate::policy_observation_v6::tests::put(
+            &mut state,
+            crate::ids::PlayerId::P1,
+            hidden,
+            crate::state::Zone::Library,
+        );
         let mut session = FastActorSessionV1::from_v3_fixture_state(state);
         let mut policy = FrozenPlayPolicyV1::training_fixture_v4();
         policy.reset_sampling_v1([71, 73]);
@@ -113,9 +125,7 @@ fn gameplay_trace_excludes_unseen_cards_and_library_order() {
             .map(|l| serde_json::from_str(l).unwrap())
             .collect();
         assert_eq!(rows.len(), 3);
-        let mut record = rows[1].clone();
-        record.as_object_mut().unwrap().remove("transition");
-        records.push(record);
+        records.push(rows[1].clone());
         std::fs::remove_file(destination).unwrap();
     }
     assert_eq!(records[0], records[1]);
