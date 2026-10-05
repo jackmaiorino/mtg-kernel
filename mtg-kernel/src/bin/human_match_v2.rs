@@ -23,6 +23,15 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let arguments: Vec<_> = std::env::args_os().skip(1).collect();
+    #[cfg(feature = "gameplay-decision-trace-v1")]
+    if arguments.len() == 4 && arguments[0] == "--config" && arguments[2] == "--trace" {
+        return mtg_kernel::human_match_v2::serve_human_match_traced_v2(
+            std::path::Path::new(&arguments[1]),
+            std::path::Path::new(&arguments[3]),
+            std::io::stdin().lock(),
+            std::io::stdout().lock(),
+        );
+    }
     if arguments.len() == 4 && arguments[0] == "--prepare-replay" && arguments[2] == "--output" {
         return prepare_replay(
             std::path::Path::new(&arguments[1]),

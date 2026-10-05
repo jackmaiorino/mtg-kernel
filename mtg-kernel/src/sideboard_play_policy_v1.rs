@@ -7,6 +7,9 @@
 //! retained exactly as exported and are not claimed to have been trained.
 
 use crate::card_def::KERNEL_CARDDB_HASH;
+#[cfg(feature = "gameplay-decision-trace-v1")]
+mod trace_capture_v1;
+
 use crate::fast_sampler::{
     FastCategoricalScratch, WideCategoricalScratchV1, FAST_CATEGORICAL_MAX_ACTIONS,
     FAST_CATEGORICAL_SAMPLER_VERSION, WIDE_CATEGORICAL_MAX_ACTIONS_V1,
@@ -183,6 +186,10 @@ pub struct FrozenPlayPolicyV1 {
     sampler: FastCategoricalScratch,
     seat_rng: [SplitMix64; 2],
     sampling_initialized: bool,
+    #[cfg(feature = "gameplay-decision-trace-v1")]
+    trace: Option<crate::gameplay_trace_v1::TraceHandle>,
+    #[cfg(feature = "gameplay-decision-trace-v1")]
+    trace_draw: Option<serde_json::Value>,
     successor: Option<FrozenPlaySuccessorStateV3>,
     /// Fresh-lineage (V4 contract) sibling of `successor`, independent and
     /// additive: both fields are per-instance, runtime-dispatched, and
@@ -451,6 +458,10 @@ impl FrozenPlayPolicyV1 {
             collection_sampler: None,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
+            #[cfg(feature = "gameplay-decision-trace-v1")]
+            trace: None,
+            #[cfg(feature = "gameplay-decision-trace-v1")]
+            trace_draw: None,
             successor: Some(FrozenPlaySuccessorStateV3::default()),
             fresh_successor: None,
         })
@@ -487,6 +498,10 @@ impl FrozenPlayPolicyV1 {
             collection_sampler: None,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
+            #[cfg(feature = "gameplay-decision-trace-v1")]
+            trace: None,
+            #[cfg(feature = "gameplay-decision-trace-v1")]
+            trace_draw: None,
             successor: None,
             fresh_successor: Some(FrozenPlayFreshSuccessorStateV1::default()),
         })
@@ -558,6 +573,10 @@ impl FrozenPlayPolicyV1 {
             collection_sampler: None,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
+            #[cfg(feature = "gameplay-decision-trace-v1")]
+            trace: None,
+            #[cfg(feature = "gameplay-decision-trace-v1")]
+            trace_draw: None,
             successor: Some(FrozenPlaySuccessorStateV3::default()),
             fresh_successor: None,
         })
@@ -611,6 +630,10 @@ impl FrozenPlayPolicyV1 {
             collection_sampler: None,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
+            #[cfg(feature = "gameplay-decision-trace-v1")]
+            trace: None,
+            #[cfg(feature = "gameplay-decision-trace-v1")]
+            trace_draw: None,
             successor: Some(FrozenPlaySuccessorStateV3::default()),
             fresh_successor: None,
         })
@@ -664,6 +687,10 @@ impl FrozenPlayPolicyV1 {
             collection_sampler: None,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
+            #[cfg(feature = "gameplay-decision-trace-v1")]
+            trace: None,
+            #[cfg(feature = "gameplay-decision-trace-v1")]
+            trace_draw: None,
             successor: Some(FrozenPlaySuccessorStateV3::default()),
             fresh_successor: None,
         };
@@ -729,6 +756,10 @@ impl FrozenPlayPolicyV1 {
             collection_sampler: None,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
+            #[cfg(feature = "gameplay-decision-trace-v1")]
+            trace: None,
+            #[cfg(feature = "gameplay-decision-trace-v1")]
+            trace_draw: None,
             successor: None,
             fresh_successor: Some(FrozenPlayFreshSuccessorStateV1::default()),
         };
@@ -899,6 +930,10 @@ impl FrozenPlayPolicyV1 {
             collection_sampler: None,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
+            #[cfg(feature = "gameplay-decision-trace-v1")]
+            trace: None,
+            #[cfg(feature = "gameplay-decision-trace-v1")]
+            trace_draw: None,
             successor: None,
             fresh_successor: None,
         })
@@ -960,6 +995,10 @@ impl FrozenPlayPolicyV1 {
                 .map(|_| UnclampedSoftmaxScratchV1::default()),
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
+            #[cfg(feature = "gameplay-decision-trace-v1")]
+            trace: None,
+            #[cfg(feature = "gameplay-decision-trace-v1")]
+            trace_draw: None,
             successor: self
                 .successor
                 .is_some()
@@ -1297,11 +1336,14 @@ impl FrozenPlayPolicyV1 {
             return Err("cannot select from a terminal session".into());
         };
         let scores = self.score_fast_session_v1(session)?;
-        self.sample_scores(
+        let selected = self.sample_scores(
             &scores.logits,
             decision.acting_player,
             decision.legal_action_count,
-        )
+        )?;
+        #[cfg(feature = "gameplay-decision-trace-v1")]
+        self.capture_trace_v1(session, decision, selected, &scores);
+        Ok(selected)
     }
 
     fn score_owned(&mut self) -> Result<FrozenPlayDecisionScoresV1, String> {
@@ -1366,7 +1408,18 @@ impl FrozenPlayPolicyV1 {
             PlayerSeatV1::P0 => 0,
             PlayerSeatV1::P1 => 1,
         };
+        #[cfg(feature = "gameplay-decision-trace-v1")]
+        let before = self
+            .trace
+            .as_ref()
+            .map(|_| serde_json::to_value(self.seat_rng[index]).unwrap());
         let seed = self.seat_rng[index].next_u64();
+        #[cfg(feature = "gameplay-decision-trace-v1")]
+        if let Some(before) = before {
+            self.trace_draw = Some(serde_json::json!({"seat":seat,"before":before,
+                "after":self.seat_rng[index],"sampler_seed":seed,
+                "inverse_cdf_draw":crate::fast_sampler::splitmix64_first(seed)}));
+        }
         if let Some(unclamped) = &mut self.collection_sampler {
             // The seat-stream output is the draw itself: never reseeded.
             let selected = unclamped.sample(logits, seed).map_err(|e| e.to_string())?;
@@ -1432,6 +1485,8 @@ impl FrozenPlayPolicyV1 {
                 decision.legal_action_count,
             )
             .map_err(policy_error)?;
+        #[cfg(feature = "gameplay-decision-trace-v1")]
+        self.capture_trace_v1(input.session_for_trace_v1(), decision, selected, &scores);
         Ok((selected, scores))
     }
 }

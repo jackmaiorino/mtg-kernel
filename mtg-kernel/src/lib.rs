@@ -414,6 +414,8 @@ pub mod native_training_store_reference_latest_v2;
 // Private-construction persistence receipt and the strict native generation
 // store boundary. The high-level publisher/read/recovery path lands here.
 pub mod game_summary_v1;
+#[cfg(feature = "gameplay-decision-trace-v1")]
+pub mod gameplay_trace_v1;
 pub mod human_bo3_v1;
 pub mod human_match_v1;
 pub mod human_match_v2;

@@ -1028,6 +1028,23 @@ pub(super) fn project_decision(
     ))
 }
 
+/// Diagnostics preserve the engine vector, including duplicate labels.
+#[cfg(feature = "gameplay-decision-trace-v1")]
+pub(crate) fn gameplay_trace_labels_v1(
+    observation: &v6::ObservationV6,
+    actions: &[ActionSemanticV1],
+) -> Result<Vec<String>, Error> {
+    let mut handles = Handles::new(observation)?;
+    let initial = project_state(observation, &mut handles)?;
+    handles.canonicalize(&initial)?;
+    actions
+        .iter()
+        .map(|action| {
+            super::labels::label(action, observation, &handles, observation.acting_player)
+        })
+        .collect()
+}
+
 fn projection_diagnostic_error(
     stage: &str,
     error: Error,

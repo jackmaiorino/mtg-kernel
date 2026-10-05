@@ -282,6 +282,8 @@ pub enum FlatActionObjectGroupV1 {
 }
 
 mod flat_action_v3;
+#[cfg(feature = "gameplay-decision-trace-v1")]
+mod trace_v1;
 mod v3_spell_target_adapter_v1;
 #[cfg(test)]
 pub(crate) use v3_spell_target_adapter_v1::pyroblast_target_fixture_v1;
@@ -4243,6 +4245,8 @@ pub struct FastActorSessionV1 {
     flat_action_contract_mode: FlatActionContractModeV1,
     // Only enabled on a private, non-stepping encoding copy by the opt-in adapter.
     v3_spell_target_reference_adapter: bool,
+    #[cfg(feature = "gameplay-decision-trace-v1")]
+    trace_pending: crate::gameplay_trace_v1::TraceSlot,
     flat_action_cache_spare: Option<FlatActionDecisionCacheV1>,
     flat_action_cache_spare_v2: Option<FlatActionDecisionCacheV2>,
     terminal: Option<RlSessionTerminalV1>,
@@ -5546,6 +5550,8 @@ impl FastActorSessionV1 {
             current: None,
             flat_action_contract_mode: FlatActionContractModeV1::V2,
             v3_spell_target_reference_adapter: false,
+            #[cfg(feature = "gameplay-decision-trace-v1")]
+            trace_pending: crate::gameplay_trace_v1::TraceSlot::default(),
             flat_action_cache_spare: None,
             flat_action_cache_spare_v2: None,
             terminal: None,
@@ -5602,6 +5608,8 @@ impl FastActorSessionV1 {
             current: None,
             flat_action_contract_mode,
             v3_spell_target_reference_adapter: false,
+            #[cfg(feature = "gameplay-decision-trace-v1")]
+            trace_pending: crate::gameplay_trace_v1::TraceSlot::default(),
             flat_action_cache_spare: None,
             flat_action_cache_spare_v2: None,
             terminal: None,
@@ -6354,12 +6362,30 @@ impl FastActorSessionV1 {
         expected_step: u64,
         selected_index: u32,
     ) -> Result<FastActorResponseV1, RlSessionError> {
-        self.step_with_apply_path(
+        #[cfg(feature = "gameplay-decision-trace-v1")]
+        let pending = self
+            .trace_pending
+            .0
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        let result = self.step_with_apply_path(
             episode_id,
             expected_step,
             selected_index,
             FastActorApplyPathV1::InPlace,
-        )
+        );
+        #[cfg(feature = "gameplay-decision-trace-v1")]
+        if let Some(pending) = pending {
+            self.finish_gameplay_trace_v1(
+                pending,
+                episode_id,
+                expected_step,
+                selected_index,
+                &result,
+            );
+        }
+        result
     }
 
     #[cfg(test)]
