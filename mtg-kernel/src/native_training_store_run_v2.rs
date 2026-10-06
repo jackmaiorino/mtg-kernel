@@ -5948,6 +5948,7 @@ mod tests {
         to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
     }
 
+    #[cfg(feature = "limited-fdn-fixtures")]
     pub(super) fn fixture_bytes_fdn_witness_protection_rebased() -> Vec<u8> {
         let mut record = fixture_record();
         record.environment.card_db_hash_u64_hex =
