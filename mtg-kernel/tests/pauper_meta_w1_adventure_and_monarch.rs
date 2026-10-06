@@ -25,7 +25,7 @@ use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{
-    Counters, GameObject, GameState, ObjectStateV4, StackItemKind, Step, Zone,
+    Counters, GameObject, GameState, ObjectStateV4, StackItemKind, Step, Target, Zone,
 };
 
 fn card_id(name: &str) -> u16 {
