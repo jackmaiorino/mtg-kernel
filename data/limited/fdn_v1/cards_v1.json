@@ -1542,6 +1542,340 @@
         "lifelink"
       ],
       "java_file": "Mage.Sets/src/mage/cards/v/VampireNighthawk.java"
+    },
+    {
+      "name": "Bloodfell Caves",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "B",
+        "R"
+      ],
+      "decks": [
+        "FDN_reference_gainlands_lifegain.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "enters_tapped",
+        "etb_life_gain",
+        "mana_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BloodfellCaves.java"
+    },
+    {
+      "name": "Dismal Backwater",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "U",
+        "B"
+      ],
+      "decks": [
+        "FDN_reference_gainlands_lifegain.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "enters_tapped",
+        "etb_life_gain",
+        "mana_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DismalBackwater.java"
+    },
+    {
+      "name": "Jungle Hollow",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "B",
+        "G"
+      ],
+      "decks": [
+        "FDN_reference_gainlands_lifegain.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "enters_tapped",
+        "etb_life_gain",
+        "mana_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/j/JungleHollow.java"
+    },
+    {
+      "name": "Rugged Highlands",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "R",
+        "G"
+      ],
+      "decks": [
+        "FDN_reference_gainlands_lifegain.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "enters_tapped",
+        "etb_life_gain",
+        "mana_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RuggedHighlands.java"
+    },
+    {
+      "name": "Scoured Barrens",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "W",
+        "B"
+      ],
+      "decks": [
+        "FDN_reference_gainlands_lifegain.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "enters_tapped",
+        "etb_life_gain",
+        "mana_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/ScouredBarrens.java"
+    },
+    {
+      "name": "Swiftwater Cliffs",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "U",
+        "R"
+      ],
+      "decks": [
+        "FDN_reference_gainlands_lifegain.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "enters_tapped",
+        "etb_life_gain",
+        "mana_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SwiftwaterCliffs.java"
+    },
+    {
+      "name": "Tranquil Cove",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "W",
+        "U"
+      ],
+      "decks": [
+        "FDN_reference_gainlands_lifegain.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "enters_tapped",
+        "etb_life_gain",
+        "mana_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TranquilCove.java"
+    },
+    {
+      "name": "Wind-Scarred Crag",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "R",
+        "W"
+      ],
+      "decks": [
+        "FDN_reference_gainlands_lifegain.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "enters_tapped",
+        "etb_life_gain",
+        "mana_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/w/WindScarredCrag.java"
+    },
+    {
+      "name": "Ajani's Pridemate",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Cat",
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_gainlands_lifegain.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "life_gain_trigger",
+        "plus_one_counter"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AjanisPridemate.java"
+    },
+    {
+      "name": "Marauding Blight-Priest",
+      "engine_capability": "full",
+      "mana_cost": "{2}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Vampire",
+        "Cleric"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_gainlands_lifegain.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "life_gain_trigger",
+        "opponent_life_loss"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MaraudingBlightPriest.java"
+    },
+    {
+      "name": "Sanguine Syphoner",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Vampire",
+        "Warlock"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_gainlands_lifegain.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "attack_trigger",
+        "opponent_life_loss",
+        "life_gain"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SanguineSyphoner.java"
     }
   ]
 }

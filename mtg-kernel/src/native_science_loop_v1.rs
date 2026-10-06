@@ -621,7 +621,8 @@ fn run_native_science_loop_with_opponents_v1(
         | NativeRunCatalogProfileV1::FdnSylvanScavengingRebased
         | NativeRunCatalogProfileV1::FdnCelestialArmorRebased
         | NativeRunCatalogProfileV1::FdnWitnessProtectionRebased
-        | NativeRunCatalogProfileV1::FdnKeywordCreatures => {}
+        | NativeRunCatalogProfileV1::FdnKeywordCreatures
+        | NativeRunCatalogProfileV1::FdnGainlandsLifegain => {}
     }
 
     if ladder_opponent.is_some() && population_opponent.is_some() {
