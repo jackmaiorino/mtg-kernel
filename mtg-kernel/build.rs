@@ -3405,6 +3405,7 @@ fn keywords_for(card: &CardJson) -> String {
         | "Guarded Heir"
         | "Sun-Blessed Healer" => keywords.push("Keywords::LIFELINK"),
         "Guardian of the Guildpact" => keywords.push("Keywords::PROTECTION_FROM_MONOCOLORED"),
+        "Brazen Scourge" => keywords.push("Keywords::HASTE"),
         "Samurai Token" => keywords.push("Keywords::VIGILANCE"),
         _ => {}
     }
@@ -3435,6 +3436,24 @@ fn keywords_for(card: &CardJson) -> String {
         "Cathar Commando" | "Spectral Sailor" | "Celestial Armor"
     ) {
         keywords.push("Keywords::FLASH");
+    }
+    // FDN keyword-only creatures, in printed keyword order.
+    match card.name.as_str() {
+        "Serra Angel" => {
+            keywords.push("Keywords::FLYING");
+            keywords.push("Keywords::VIGILANCE");
+        }
+        "Swiftblade Vindicator" => {
+            keywords.push("Keywords::DOUBLE_STRIKE");
+            keywords.push("Keywords::VIGILANCE");
+            keywords.push("Keywords::TRAMPLE");
+        }
+        "Vampire Nighthawk" => {
+            keywords.push("Keywords::FLYING");
+            keywords.push("Keywords::DEATHTOUCH");
+            keywords.push("Keywords::LIFELINK");
+        }
+        _ => {}
     }
     if card.name == "Treetop Snarespinner" {
         keywords.push("Keywords::REACH");
@@ -7737,7 +7756,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v51\n"
+            "kernel_carddb/v52\n"
         } else {
             "kernel_carddb/v34\n"
         },
@@ -8087,6 +8106,9 @@ fn subtype_variant(t: &str) -> &'static str {
         "Hyena" => "Subtype::Hyena",
         "Raccoon" => "Subtype::Raccoon",
         "Citizen" => "Subtype::Citizen",
+        "Turtle" => "Subtype::Turtle",
+        "Gremlin" => "Subtype::Gremlin",
+        "Dinosaur" => "Subtype::Dinosaur",
         "Pirate" => "Subtype::Pirate",
         "Plains" => "Subtype::Plains",
         "ROGUE" => "Subtype::RogueAllCaps",

@@ -1337,6 +1337,211 @@
         "loses_all_abilities"
       ],
       "java_file": "Mage.Sets/src/mage/cards/w/WitnessProtection.java"
+    },
+    {
+      "name": "Aegis Turtle",
+      "engine_capability": "full",
+      "mana_cost": "{U}",
+      "mana_value": 1,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Turtle"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_keyword_creatures.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [],
+      "java_file": "Mage.Sets/src/mage/cards/a/AegisTurtle.java"
+    },
+    {
+      "name": "Brazen Scourge",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}{R}",
+      "mana_value": 3,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Gremlin"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_keyword_creatures.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "haste"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BrazenScourge.java"
+    },
+    {
+      "name": "Quakestrider Ceratops",
+      "engine_capability": "full",
+      "mana_cost": "{3}{G}{G}{G}",
+      "mana_value": 6,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dinosaur"
+      ],
+      "supertypes": [],
+      "power": 12,
+      "toughness": 8,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_keyword_creatures.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [],
+      "java_file": "Mage.Sets/src/mage/cards/q/QuakestriderCeratops.java"
+    },
+    {
+      "name": "Savannah Lions",
+      "engine_capability": "full",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Cat"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_keyword_creatures.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [],
+      "java_file": "Mage.Sets/src/mage/cards/s/SavannahLions.java"
+    },
+    {
+      "name": "Serra Angel",
+      "engine_capability": "full",
+      "mana_cost": "{3}{W}{W}",
+      "mana_value": 5,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Angel"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_keyword_creatures.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying",
+        "vigilance"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SerraAngel.java"
+    },
+    {
+      "name": "Swiftblade Vindicator",
+      "engine_capability": "full",
+      "mana_cost": "{R}{W}",
+      "mana_value": 2,
+      "colors": [
+        "R",
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_keyword_creatures.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "double_strike",
+        "vigilance",
+        "trample"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SwiftbladeVindicator.java"
+    },
+    {
+      "name": "Vampire Nighthawk",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Vampire",
+        "Shaman"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_keyword_creatures.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying",
+        "deathtouch",
+        "lifelink"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/v/VampireNighthawk.java"
     }
   ]
 }
