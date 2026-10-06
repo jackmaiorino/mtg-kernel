@@ -82,8 +82,11 @@ alongside parallel unit tests. Preserve its80objects,200warmups,2000iterations
 and40microsecond assertion. The workspace runner executes every other library
 test normally, then the exact timing test in a fresh one-thread process using
 the same compiled library. All other workspace executables run unchanged.
-The observed failure is retained in the hosted log; isolated success remains
-unproven until CI executes it.
+The observed failure is retained in the hosted log. PR140's complete Ubuntu
+job 111036127712 at 36d54594 executed exactly one isolated timing case and
+passed at 4.81 microseconds per call. The default library's other 1705 tests
+passed, with 43 existing ignores. PR140's Windows release stage is live;
+its exact timing receipt remains pending.
 
 All integration targets, original external games, native CLI checks and
 CUDA host-safe checks retain their existing commands.
@@ -94,13 +97,18 @@ pin, minimal profile, Clippy and rustfmt into its own temporary
 [`RUSTUP_HOME`](https://rust-lang.github.io/rustup/environment-variables.html).
 This avoids the damaged image installation and retains the existing compiler,
 linker and registry cache. The observed bootstrap failure is environmental;
-the fresh installation still needs hosted execution on both platforms.
+the fresh installation passed on both platforms at PR140 source 36d54594.
 The first patch at7dad2e51 was rejected before any job started: `runner.temp`
 is unavailable in job-level `env`. Define it in the installation step and
 publish `RUSTUP_HOME` through `GITHUB_ENV` for subsequent steps, following
 [GitHub's context availability rules](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#context-availability).
 Test selection and build metadata collection are preserved. This is CPU
-correctness verification; current hosted end-to-end checks remain pending.
+correctness verification. Ubuntu's full job completed successfully at
+22:50:49 UTC October 2: all 21 integration targets, 345 focused cases, all nine
+original library filters and host-safe CUDA checks passed. The three production
+filters select zero cases on Linux by their Windows-only configuration; their
+Windows execution remains required. Formatting/all-feature lint and all four
+Python shards passed. The full Windows Rust job is still running.
 The existing healthy PR136 through139 jobs keep running on their original
 sources. This isolated follow-up does not cancel them or claim either PC.
 

@@ -19,21 +19,35 @@ admission. This is not yet a completed gameplay or full-set support claim.
   Correct the Limited expectation to 206; the default expectation remains 162.
   All 19 Limited integration targets, seven session restore tests and 66 RL
   session tests had passed before that assertion. Subsequent checks did not
-  execute; the corrected source still needs complete hosted verification.
+  execute in that failed attempt; corrected-source results are recorded below.
+- CI37048888583 at fdbe23e5: Ubuntu job 110977578991 completed successfully at
+  20:29:36UTC. Its full log confirms all 20 selected Limited integration targets,
+  334 passing cases including 24 Witness cases, 1705 default library tests,
+  seven session restore, 66 RL session and 46 card-definition tests. The Koma,
+  threshold, 143 record tests and host-safe CUDA commands passed. Existing
+  default/record/CUDA exclusions remain 43/3/7 ignored tests. Corrected-source
+  Windows verification is still running.
+- Mage run37049882555 at 5cc4decd8ffe passed all 146 comparisons in 16 selected
+  classes, including 16 Witness, 7 London and 28 combat cases, with no failures,
+  errors or skips. Source/output hashes and XML counts were independently
+  verified. Mage PR15 has green current-head checks at d98525a0a7c. Retained
+  evidence and mirror are listed in the gameplay validation matrix.
 - Catalog-only probe, pinned Rust 1.94.1 and existing build-script dependency
   cache: compilation exit 0 in 1.39 seconds; generator exit 0. This compiles the
   card generator, not the engine. Frozen default v32 remains `64c82a261e078f1a`;
   the new Limited v49 is `3eee8a1cbc874e18`.
 - The new native profile retains v48 Armor read compatibility, rejects older
   profiles for publication/resume against the new build, and has independent
-  literal/live-identity canaries. Their execution remains pending.
+  literal/live-identity canaries. Their Windows-only execution remains pending.
 
 ## Pending checks
 
-- Required prior regressions and complete Rust CI after the focused cases.
-- Strict XMage reference comparisons, including Armor ordering and death LKI.
-- Original UG/WG natural external games in both seats and deterministic replay.
-- London mulligans are a subsequent implementation batch within the goal.
+- Complete corrected-source Windows Rust regressions and publication/resume
+  canaries, followed by current-head CI readiness.
+
+Original UG/WG external games, exact replay and pending London restore passed
+on Ubuntu in London PR139's full Rust job at d43d59a2 and on Windows in PR140's
+compatible Bash step, job 111036127744 at 36d54594, completed 22:12:10 UTC.
 
 At 12:30 EDT October 2 both PCs had actual live reservations. Haley supervisor
 37648 held the sequential training-comparison window; Jack qualification and
@@ -83,8 +97,10 @@ allocation, not host speed. Give that test deterministic projected ranking
 inputs while still running every prefix/full-length process, output comparison,
 and rejection mutation. Production ranking and the separate fastest-allocation
 test stay unchanged. The repaired focused test passed on Jack's PC in 11.616s.
-Hosted verification of the repair is pending; avoid cancelling the active
-Witness workflow for a report-only update.
+Hosted Windows shard 111036193230 at Armor source f13fd955 passed the repaired
+case and all 286 tests; all four current Python shards passed. Armor is ready
+for review using its unchanged Rust code's passing Ubuntu/Windows evidence.
+The active Witness workflow is preserved for the remaining full Windows checks.
 
 ## Current-main integration
 

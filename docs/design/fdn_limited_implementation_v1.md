@@ -8,8 +8,9 @@ claim is authorized by the work plan. Preserve the lead's current PC reservation
 Current fixture milestone: the owned implementation stack through London
 mulligans supports all 39 unique names in the two unchanged decks, plus their
 seven token definitions. Both decks resolve 40/40. Schema-4 external fixture
-games with actual mulligans and pending-choice restore passed on Ubuntu;
-Windows, the final executed combat comparisons and complete regression/CI
+games with actual mulligans and pending-choice restore passed on Ubuntu.
+The final XMage suite passed all 146 cases in 16 classes, including combat
+allocation. Windows integration log audits and complete regression/CI
 verification remain pending. See
 [the gameplay validation matrix](../reports/fdn_fixture_gameplay_v1_validation.md).
 Milestones 5 through 7 remain separate work.
@@ -45,8 +46,8 @@ The originally missing fixture names have seven mechanic batches in
 through generic engine operations, with casting, target loss, payment,
 restoration and combat tests. Batches B through G and London mulligans are
 implemented in the owned PR stack. The remaining fixture work is validation
-and repair of any observed failures, including complete CI and executed combat
-references.
+and repair of any observed failures, including complete CI and audits of the
+Windows test summaries. The executed combat references passed.
 The Forest/Island
 smoke cannot establish Limited playing ability or FDN parity.
 Milestone 4 is complete only after the actual card behavior, required rules,
