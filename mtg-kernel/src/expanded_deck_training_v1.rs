@@ -268,10 +268,17 @@ impl ExpandedLossSelectionV1 {
     pub(crate) fn validate_v1(&self) -> Result<(), String> {
         match self {
             Self::TerminalReinforceValueV3 => Ok(()),
-            Self::GaeUniformKlRecoveryV1 {gamma,lambda,initial_adam_step,..} => {
-                ensure(gamma.to_bits()==1.0_f32.to_bits() && lambda.to_bits()==0.9_f32.to_bits()
-                    && *initial_adam_step==32400,"recovery requires gamma1/lambda0.9/initialAdam32400")
-            },
+            Self::GaeUniformKlRecoveryV1 {
+                gamma,
+                lambda,
+                initial_adam_step,
+                ..
+            } => ensure(
+                gamma.to_bits() == 1.0_f32.to_bits()
+                    && lambda.to_bits() == 0.9_f32.to_bits()
+                    && *initial_adam_step == 32400,
+                "recovery requires gamma1/lambda0.9/initialAdam32400",
+            ),
             Self::GaeAdvantageValueV1 {
                 gamma,
                 lambda,
@@ -1231,18 +1238,33 @@ fn restore_checkpoint_state_v1(
 
 fn validate_exploration_checkpoint_v1(saved: &ExpandedCheckpointV1) -> Result<(), String> {
     let is_recovery = saved.loss_identity == "gae_uniform_kl_recovery/v1";
-    ensure(is_recovery == saved.exploration.is_some(), "checkpoint exploration identity differs")?;
+    ensure(
+        is_recovery == saved.exploration.is_some(),
+        "checkpoint exploration identity differs",
+    )?;
     if let Some(selection) = saved.exploration {
         selection.validate_v1()?;
-        let ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { gamma, lambda, initial_adam_step, .. } = selection else {
+        let ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 {
+            gamma,
+            lambda,
+            initial_adam_step,
+            ..
+        } = selection
+        else {
             return Err("checkpoint exploration selection differs".into());
         };
-        ensure(saved.adam_step > initial_adam_step && saved.adam_step <= initial_adam_step + 64,
-            "checkpoint exploration Adam ancestry differs")?;
-        ensure(saved.gamma_bits == Some(gamma.to_bits()) && saved.gae_lambda_bits == Some(lambda.to_bits())
-            && saved.entropy_coefficient_bits == Some(0.0_f32.to_bits())
-            && saved.learning_rate_bits == 0.0001_f32.to_bits() && saved.value_coefficient_bits == 0.5_f32.to_bits(),
-            "checkpoint exploration scalar metadata differs")?;
+        ensure(
+            saved.adam_step > initial_adam_step && saved.adam_step <= initial_adam_step + 64,
+            "checkpoint exploration Adam ancestry differs",
+        )?;
+        ensure(
+            saved.gamma_bits == Some(gamma.to_bits())
+                && saved.gae_lambda_bits == Some(lambda.to_bits())
+                && saved.entropy_coefficient_bits == Some(0.0_f32.to_bits())
+                && saved.learning_rate_bits == 0.0001_f32.to_bits()
+                && saved.value_coefficient_bits == 0.5_f32.to_bits(),
+            "checkpoint exploration scalar metadata differs",
+        )?;
     }
     Ok(())
 }
@@ -2289,8 +2311,12 @@ pub enum ExpandedTrainingCommandV1 {
 
 pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
     match command {
-        ExpandedTrainingCommandV1::ScoreSavedStates {source,probes,membership_sha256,output_directory} =>
-            exploration_probe_v1::score_v1(source,probes,membership_sha256,output_directory),
+        ExpandedTrainingCommandV1::ScoreSavedStates {
+            source,
+            probes,
+            membership_sha256,
+            output_directory,
+        } => exploration_probe_v1::score_v1(source, probes, membership_sha256, output_directory),
         ExpandedTrainingCommandV1::LineBHeadDistance { treatment, control } => {
             line_b_teacher_packet_v1::line_b_head_distance_v1(&treatment, &control)
         }
@@ -2626,11 +2652,20 @@ fn execute_update_v1(
         "output directory already exists",
     )?;
     let (policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
-    if let ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { initial_adam_step, .. } = loss_selection {
+    if let ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 {
+        initial_adam_step, ..
+    } = loss_selection
+    {
         if state.adam_step_v1() != initial_adam_step {
-            let pin = source.checkpoint.as_ref().ok_or("recovery continuation requires checkpoint")?;
+            let pin = source
+                .checkpoint
+                .as_ref()
+                .ok_or("recovery continuation requires checkpoint")?;
             let saved: ExpandedCheckpointV1 = read_pinned(pin)?;
-            ensure(saved.exploration == Some(loss_selection), "recovery continuation selection differs")?;
+            ensure(
+                saved.exploration == Some(loss_selection),
+                "recovery continuation selection differs",
+            )?;
         }
     }
     if let Some(context) = &transfer {
@@ -2917,19 +2952,48 @@ fn execute_update_v1(
     )]
     let mut line_b_envelope: Option<Value> = None;
     let update = match &loss_selection {
-        ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 {initial_adam_step,recovery,diagnostics,..} => {
-            ensure(matches!(update_backend,ExpandedUpdateBackendV1::Cpu)
-                && matches!(backward_execution,UpdateBackwardExecutionV1::Sequential)
-                && line_b.is_none(),"recovery requires CPU sequential without line_b")?;
-            ensure(learning_rate.to_bits()==0.0001_f32.to_bits() && value_coefficient.to_bits()==0.5_f32.to_bits(),
-                "recovery requires learning rate1e-4/value coefficient0.5")?;
-            let update_index=state.adam_step_v1().checked_add(1).and_then(|x|x.checked_sub(*initial_adam_step))
+        ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 {
+            initial_adam_step,
+            recovery,
+            diagnostics,
+            ..
+        } => {
+            ensure(
+                matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
+                    && matches!(backward_execution, UpdateBackwardExecutionV1::Sequential)
+                    && line_b.is_none(),
+                "recovery requires CPU sequential without line_b",
+            )?;
+            ensure(
+                learning_rate.to_bits() == 0.0001_f32.to_bits()
+                    && value_coefficient.to_bits() == 0.5_f32.to_bits(),
+                "recovery requires learning rate1e-4/value coefficient0.5",
+            )?;
+            let update_index = state
+                .adam_step_v1()
+                .checked_add(1)
+                .and_then(|x| x.checked_sub(*initial_adam_step))
                 .ok_or("recovery Adam update index overflow")?;
-            let beta=crate::native_policy_train_step_v1::exploration_v1::recovery_beta_v1(update_index,*recovery)?;
-            let gae=gae_targets.as_ref().expect("recovery GAE targets");
-            let (result,report)=state.train_step_gae_recovery_v1(generation,&groups,&gae.value_targets,
-                &gae.advantages,value_coefficient,learning_rate,beta,update_index,*diagnostics).map_err(err)?;
-            exploration_report=Some(report);result
+            let beta = crate::native_policy_train_step_v1::exploration_v1::recovery_beta_v1(
+                update_index,
+                *recovery,
+            )?;
+            let gae = gae_targets.as_ref().expect("recovery GAE targets");
+            let (result, report) = state
+                .train_step_gae_recovery_v1(
+                    generation,
+                    &groups,
+                    &gae.value_targets,
+                    &gae.advantages,
+                    value_coefficient,
+                    learning_rate,
+                    beta,
+                    update_index,
+                    *diagnostics,
+                )
+                .map_err(err)?;
+            exploration_report = Some(report);
+            result
         }
         ExpandedLossSelectionV1::TerminalReinforceValueV3 => match (update_backend, generation) {
             (ExpandedUpdateBackendV1::Cpu, FreshLineageGenerationV1::V3) => state
@@ -3232,12 +3296,16 @@ fn execute_update_v1(
         gamma_bits: match &loss_selection {
             ExpandedLossSelectionV1::TerminalReinforceValueV3 => None,
             ExpandedLossSelectionV1::GaeAdvantageValueV1 { gamma, .. }
-            | ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { gamma, .. } => Some(gamma.to_bits()),
+            | ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { gamma, .. } => {
+                Some(gamma.to_bits())
+            }
         },
         gae_lambda_bits: match &loss_selection {
             ExpandedLossSelectionV1::TerminalReinforceValueV3 => None,
             ExpandedLossSelectionV1::GaeAdvantageValueV1 { lambda, .. }
-            | ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { lambda, .. } => Some(lambda.to_bits()),
+            | ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { lambda, .. } => {
+                Some(lambda.to_bits())
+            }
         },
         entropy_coefficient_bits: match &loss_selection {
             ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { .. } => Some(0.0_f32.to_bits()),
@@ -3247,7 +3315,14 @@ fn execute_update_v1(
                 ..
             } => Some(entropy_coefficient.to_bits()),
         },
-        exploration: if matches!(loss_selection,ExpandedLossSelectionV1::GaeUniformKlRecoveryV1{..}) {Some(loss_selection)} else {None},
+        exploration: if matches!(
+            loss_selection,
+            ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { .. }
+        ) {
+            Some(loss_selection)
+        } else {
+            None
+        },
         learning_rate_bits: learning_rate.to_bits(),
         value_coefficient_bits: value_coefficient.to_bits(),
         registry_transfer: transfer
@@ -3995,7 +4070,10 @@ pub(crate) mod tests {
     fn exploration_checkpoint_wire_and_scalar_consistency() {
         let selection: ExpandedLossSelectionV1 = serde_json::from_str(r#"{"kind":"gae_uniform_kl_recovery_v1","gamma":1,"lambda":0.9,"initial_adam_step":32400,"recovery":true,"diagnostics":true}"#).unwrap();
         selection.validate_v1().unwrap();
-        assert_eq!(serde_json::to_value(selection).unwrap()["kind"], "gae_uniform_kl_recovery_v1");
+        assert_eq!(
+            serde_json::to_value(selection).unwrap()["kind"],
+            "gae_uniform_kl_recovery_v1"
+        );
         let (_, _, mut saved) = checkpoint_fixture_v1();
         saved.loss_identity = "gae_uniform_kl_recovery/v1".into();
         saved.exploration = Some(selection);
@@ -4007,13 +4085,19 @@ pub(crate) mod tests {
         saved.value_coefficient_bits = 0.5_f32.to_bits();
         validate_exploration_checkpoint_v1(&saved).unwrap();
         saved.gae_lambda_bits = Some(0.8_f32.to_bits());
-        assert!(validate_exploration_checkpoint_v1(&saved).unwrap_err().contains("scalar metadata"));
+        assert!(validate_exploration_checkpoint_v1(&saved)
+            .unwrap_err()
+            .contains("scalar metadata"));
         saved.gae_lambda_bits = Some(0.9_f32.to_bits());
         saved.adam_step = 32465;
-        assert!(validate_exploration_checkpoint_v1(&saved).unwrap_err().contains("Adam ancestry"));
+        assert!(validate_exploration_checkpoint_v1(&saved)
+            .unwrap_err()
+            .contains("Adam ancestry"));
         saved.adam_step = 32464;
         saved.exploration = None;
-        assert!(validate_exploration_checkpoint_v1(&saved).unwrap_err().contains("identity"));
+        assert!(validate_exploration_checkpoint_v1(&saved)
+            .unwrap_err()
+            .contains("identity"));
     }
 
     #[test]
