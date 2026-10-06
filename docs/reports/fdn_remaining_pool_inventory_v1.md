@@ -11,6 +11,14 @@ Snapshot of the 243 FDN reference names (242 missing plus the partial Ajani) tha
 
 Most frequent XMage building blocks across the remaining names: enters-the-battlefield triggers (44), static abilities (45), flying (34), token creation (29), activated abilities (26), card draw (21), life gain (17), +1/+1 counters (27 across source/target), attack triggers (13), end-step triggers (10), spell-cast triggers (10), library search (10), equipment (7), flashback (7), raid (9).
 
+## Ownership
+
+Issue 110's remaining work is split by mechanic family so parallel threads do not build the same engine primitive twice. The milestone owner keeps this inventory and the issue checklist current and builds the keyword, gainland and simple trigger cards. Separate threads own removal and pumps, tokens and auras, and equipment, kicker, flashback and library search. Custom rares and planeswalkers wait until those land. Each PR appends card ids and bumps the Limited catalog identity, so batches rebase and take the next version just before opening and merge one at a time.
+
+Claimed but not yet merged:
+
+- Equipment/kicker thread, first batch: Evolving Wilds, Burst Lightning, Swiftfoot Boots, Solemn Simulacrum (adds the Golem subtype), Grim Tutor and Quick-Draw Katana; takes the catalog version and ids after `fdn_triggers_tricks_v1`.
+
 ## Tier 0
 
 All but Elementalist Adept (prowess) are implemented by `docs/design/fdn_keyword_creatures_v1.md`.
@@ -19,7 +27,7 @@ Aegis Turtle, Brazen Scourge, Elementalist Adept, Quakestrider Ceratops, Savanna
 
 ## Tier 1
 
-Ajani's Pridemate, Marauding Blight-Priest and Sanguine Syphoner are implemented by `docs/design/fdn_gainlands_lifegain_v1.md`.
+Ajani's Pridemate, Marauding Blight-Priest and Sanguine Syphoner are implemented by `docs/design/fdn_gainlands_lifegain_v1.md`. Burglar Rat, Diregraf Ghoul, Firebrand Archer, Giant Growth, Helpful Hunter, Icewind Elemental, Infestation Sage, Prideful Parent, Spitfire Lagac, Stab, Think Twice and Wary Thespian are implemented by `docs/design/fdn_triggers_tricks_v1.md`.
 
 Adventuring Gear, Aetherize, Affectionate Indrik, Ajani's Pridemate, Akroma's Memorial, Ambush Wolf, An Offer You Can't Refuse, Angel of Finality, Anthem of Champions, Armasaur Guide, Balmor, Battlemage Captain, Banishing Light, Bigfin Bouncer, Bloodthirsty Conqueror, Bloom Tender, Boltwave, Brass's Bounty, Broken Wings, Burglar Rat, Campus Guide, Crackling Cyclops, Crypt Feaster, Crystal Barricade, Dauntless Veteran, Day of Judgment, Diregraf Ghoul, Dragon Trainer, Eager Trufflesnout, Elfsworn Giant, Elvish Regrower, Erudite Wizard, Essence Scatter, Exsanguinate, Felidar Savior, Firebrand Archer, Firespitter Whelp, Giant Growth, Gleaming Barrier, Goblin Surprise, Grim Tutor, Helpful Hunter, Herald of Eternal Dawn, Hero's Downfall, High Fae Trickster, Hungry Ghoul, Icewind Elemental, Infestation Sage, Inspiring Call, Lightshell Duo, Lunar Insight, Macabre Waltz, Make Your Move, Marauding Blight-Priest, Meteor Golem, Mocking Sprite, Omniscience, Phyrexian Arena, Pilfer, Preposterous Proportions, Prideful Parent, Progenitus, Raise the Past, Reassembling Skeleton, Reclamation Sage, Refute, Resolute Reinforcements, Rite of the Dragoncaller, Rune-Scarred Demon, Rune-Sealed Wall, Sanguine Syphoner, Seeker's Folly, Seismic Rupture, Self-Reflection, Shivan Dragon, Sire of Seven Deaths, Slagstorm, Snakeskin Veil, Sower of Chaos, Spitfire Lagac, Stab, Sure Strike, Swiftfoot Boots, Tatyova, Benthic Druid, Temporal Manipulation, Think Twice, Thrill of Possibility, Time Stop, Vanguard Seraph, Wary Thespian, Zombify
 
