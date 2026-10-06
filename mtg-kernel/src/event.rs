@@ -234,6 +234,15 @@ impl ProposedEvent {
             touched_by: Vec::new(),
         })
     }
+    /// A privately selected bottom card is known only to its owner.
+    pub fn private_bottom_library_insert(object: ObjectId) -> ProposedEvent {
+        let mut event = Self::private_top_library_insert(object);
+        if let ProposedEvent::ZoneChange(proposal) = &mut event {
+            proposal.library_placement = LibraryPlacement::Bottom;
+        }
+        event
+    }
+
     /// Moves one publicly identified object to an exact position in its
     /// owner's library. Both observers retain that public identity at its
     /// new incarnation while every pre-existing known position shifts
@@ -486,6 +495,75 @@ pub enum CommittedEvent {
         source_zone_change_count: u32,
         controller: PlayerId,
     },
+    /// A positive placement of +1/+1 counters on one exact incarnation.
+    PlusOneCountersAdded {
+        object: ObjectId,
+        zone_change_count: u32,
+        player: PlayerId,
+        count: i32,
+    },
+    /// Morbid is captured when this step begins, before any later death.
+    BeginningEndStep {
+        active_player: PlayerId,
+        creature_died_this_turn: bool,
+    },
+    /// Immediately precedes a departure whose printed abilities were absent.
+    PrintedAbilitiesRemovedBeforeZoneChange {
+        object: ObjectId,
+        zone_change_count: u32,
+    },
+}
+
+fn initialize_entry_counters(state: &mut GameState, object: ObjectId, kicked: bool) {
+    let live = state.objects.get(object);
+    let definition = &crate::card_def::CARD_DEFS[live.card_def as usize];
+    if definition.is_executable() {
+        if let Some(entry) = definition.enters_with_plus_one_counters {
+            if !entry.if_kicked || kicked {
+                state.objects.get_mut(object).counters.plus1_plus1 = entry.count;
+            }
+        }
+    }
+}
+
+pub(crate) fn log_plus_one_counters_added(
+    state: &mut GameState,
+    object: ObjectId,
+    player: PlayerId,
+    count: i32,
+) {
+    if count <= 0 || !cfg!(feature = "limited-fdn-fixtures") {
+        return;
+    }
+    let committed = CommittedEvent::PlusOneCountersAdded {
+        object,
+        zone_change_count: state.objects.get(object).zone_change_count,
+        player,
+        count,
+    };
+    state.engine.event_log.push(committed.clone());
+    state.engine.event_history.push(committed);
+}
+
+/// Exact checked placement, shared by counter doubling and ordinary effects.
+pub(crate) fn add_plus_one_counters(
+    state: &mut GameState,
+    object: ObjectId,
+    player: PlayerId,
+    count: i32,
+) -> Result<(), String> {
+    let live = state.objects.get(object);
+    if live.zone != Zone::Battlefield || count < 0 {
+        return Err("invalid +1/+1 counter placement".to_string());
+    }
+    let total = live
+        .counters
+        .plus1_plus1
+        .checked_add(count)
+        .ok_or("+1/+1 counter overflow")?;
+    state.objects.get_mut(object).counters.plus1_plus1 = total;
+    log_plus_one_counters_added(state, object, player, count);
+    Ok(())
 }
 
 /// Runs the replace/prevent pass to a fixed point: repeatedly finds an
@@ -735,6 +813,14 @@ pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
 /// Applies the (possibly rewritten) proposal to `GameState` and appends the
 /// resulting `CommittedEvent` to the event log for this resolution.
 pub fn commit(state: &mut GameState, event: ProposedEvent) {
+    commit_with_ability_lki(state, event, None);
+}
+
+fn commit_with_ability_lki(
+    state: &mut GameState,
+    event: ProposedEvent,
+    abilities_removed_before: Option<bool>,
+) {
     let committed = match event {
         ProposedEvent::Damage(d) => {
             let source_has_deathtouch = d.amount > 0
@@ -761,7 +847,14 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
                     );
                     let obj = state.objects.get_mut(id);
                     if !planeswalker || creature {
-                        obj.damage = obj.damage.saturating_add(d.amount.max(0) as u16);
+                        let Some(damage) = obj.damage.checked_add(d.amount.max(0) as u32) else {
+                            state.engine.halted = Some((
+                                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                                d.source,
+                            ));
+                            return;
+                        };
+                        obj.damage = damage;
                         obj.v4.deathtouch_damage |= source_has_deathtouch;
                     }
                 }
@@ -778,6 +871,26 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
         ProposedEvent::ZoneChange(z) => {
             let from = state.objects.get(z.object).zone;
             let controller_before = state.objects.get(z.object).controller;
+            if from == Zone::Battlefield
+                && abilities_removed_before.unwrap_or_else(|| {
+                    !crate::continuous_characteristics_v1::printed_abilities_active(state, z.object)
+                })
+            {
+                let marker = CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange {
+                    object: z.object,
+                    zone_change_count: state.objects.get(z.object).zone_change_count,
+                };
+                state.engine.event_log.push(marker.clone());
+                state.engine.event_history.push(marker);
+            }
+            #[cfg(feature = "limited-fdn-fixtures")]
+            let creature_died = from == Zone::Battlefield
+                && z.to_zone == Zone::Graveyard
+                && crate::engine::object_has_type(
+                    state,
+                    z.object,
+                    crate::card_def::CardType::Creature,
+                );
             commit_zone_change(
                 state,
                 z.object,
@@ -789,6 +902,13 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
                 z.battlefield_face_index,
                 z.battlefield_controller,
             );
+            #[cfg(feature = "limited-fdn-fixtures")]
+            if creature_died && state.objects.get(z.object).zone == Zone::Graveyard {
+                state.creature_death_turn_v1 = Some(crate::state::CreatureDeathTurnV1 {
+                    turn: state.turn,
+                    active_player: state.active_player,
+                });
+            }
             CommittedEvent::ZoneChange {
                 object: z.object,
                 from,
@@ -804,6 +924,9 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
             }
         }
         ProposedEvent::LifeGain(g) => {
+            if g.amount <= 0 {
+                return;
+            }
             state.players[g.player.index()].life += g.amount;
             CommittedEvent::LifeGain {
                 player: g.player,
@@ -870,9 +993,14 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
                 plotted_turn: None,
                 zone_change_count: 0,
             });
+            if cfg!(feature = "limited-fdn-fixtures") {
+                let timestamp = crate::engine::next_timestamp(state);
+                state.objects.get_mut(object).v4.layer_timestamp = Some(timestamp);
+            }
             state.players[t.controller.index()].battlefield.push(object);
             let enters_tapped = permanent_enters_battlefield_tapped(state, object, t.controller);
             state.objects.get_mut(object).tapped = enters_tapped;
+            initialize_entry_counters(state, object, false);
             CommittedEvent::CreateToken {
                 object,
                 token_def: t.token_def,
@@ -919,8 +1047,23 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
         CommittedEvent::ZoneChange { object, .. } if saga_entered => Some(*object),
         _ => None,
     };
+    let entry_counter_object = match &committed {
+        CommittedEvent::ZoneChange {
+            object,
+            to: Zone::Battlefield,
+            ..
+        }
+        | CommittedEvent::CreateToken { object, .. } => Some(*object),
+        _ => None,
+    };
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
+    if let Some(object) = entry_counter_object {
+        let live = state.objects.get(object);
+        let count = live.counters.plus1_plus1;
+        let controller = live.controller;
+        log_plus_one_counters_added(state, object, controller, count);
+    }
     if let Some(source) = saga_source {
         let chapter = {
             let lore = &mut state.objects.get_mut(source).counters.lore;
@@ -948,14 +1091,56 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
         .collect();
     // Lifelink changes life at the same time as the damage. Capture every
     // source/controller before any member of the simultaneous batch can die.
-    let lifelink_gains = survivors
-        .iter()
-        .filter_map(|event| lifelink_gain_for(state, event))
-        .collect::<Vec<_>>();
-    for e in survivors {
-        commit(state, e);
+    // CR 119.9: one source damaging several recipients simultaneously is
+    // one life-gain event. Distinct sources remain distinct, in first-event
+    // order, even when they share a controller.
+    let mut lifelink_gains: Vec<(ObjectId, PlayerId, i32)> = Vec::new();
+    for event in &survivors {
+        let Some((player, amount)) = lifelink_gain_for(state, event) else {
+            continue;
+        };
+        let ProposedEvent::Damage(damage) = event else {
+            unreachable!("only damage causes lifelink");
+        };
+        if let Some((_, _, total)) = lifelink_gains
+            .iter_mut()
+            .find(|(source, controller, _)| *source == damage.source && *controller == player)
+        {
+            let Some(next) = total.checked_add(amount) else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    damage.source,
+                ));
+                return;
+            };
+            *total = next;
+        } else {
+            lifelink_gains.push((damage.source, player, amount));
+        }
     }
-    for (player, amount) in lifelink_gains {
+    if cfg!(feature = "limited-fdn-fixtures") {
+        let ability_removals = survivors
+            .iter()
+            .map(|event| match event {
+                ProposedEvent::ZoneChange(change) => {
+                    !crate::continuous_characteristics_v1::printed_abilities_active(
+                        state,
+                        change.object,
+                    )
+                }
+                _ => false,
+            })
+            .collect::<Vec<_>>();
+        for (event, removed) in survivors.into_iter().zip(ability_removals) {
+            commit_with_ability_lki(state, event, Some(removed));
+        }
+    } else {
+        for event in survivors {
+            commit(state, event);
+        }
+    }
+
+    for (_, player, amount) in lifelink_gains {
         commit(state, ProposedEvent::life_gain(player, amount));
     }
 }
@@ -1257,6 +1442,12 @@ fn commit_zone_change(
         // apart from "moved since, for any reason" without needing a
         // zone-specific special case.
         obj.zone_change_count += 1;
+        if let Some(uses) = &mut state.trigger_uses_v1 {
+            uses.retain(|entry| entry.source.object != id);
+            if uses.is_empty() {
+                state.trigger_uses_v1 = None;
+            }
+        }
         obj.v4.reset_for_zone_change(obj.card_def, to_zone, turn);
         obj.name = crate::card_def::CARD_DEFS[obj.card_def as usize]
             .object_name
@@ -1290,6 +1481,14 @@ fn commit_zone_change(
             obj.tapped = false;
             obj.summoning_sick = false;
         }
+    }
+    if to_zone == Zone::Battlefield {
+        if cfg!(feature = "limited-fdn-fixtures") {
+            let timestamp = crate::engine::next_timestamp(state);
+            state.objects.get_mut(id).v4.layer_timestamp = Some(timestamp);
+        }
+        let kicked = from_zone == Zone::Stack && state.engine.pending_kicked_source == Some(id);
+        initialize_entry_counters(state, id, kicked);
     }
     crate::planeswalker_v1::after_zone_change(state, id);
     if to_zone == Zone::Library {
@@ -1495,6 +1694,117 @@ mod tests {
 
     fn fresh_state() -> GameState {
         GameState::new_from_libraries(&[1, 2, 3], &[4, 5, 6], |c| format!("card-{c}"), 1)
+    }
+
+    fn lifelink_source(state: &mut GameState) -> ObjectId {
+        let source = push_object_into(state, PlayerId::P0, Zone::Battlefield);
+        let definition = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
+        let object = state.objects.get_mut(source);
+        object.card_def = definition;
+        object.v4 = crate::state::ObjectStateV4::from_card_def(definition);
+        object.v4.lifelink_keyword_counters = 1;
+        state.players[0].battlefield.push(source);
+        source
+    }
+
+    fn life_gain_amounts(state: &GameState) -> Vec<i32> {
+        state
+            .engine
+            .event_log
+            .iter()
+            .filter_map(|event| match event {
+                CommittedEvent::LifeGain {
+                    player: PlayerId::P0,
+                    amount,
+                } => Some(*amount),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn lifelink_split_damage_is_one_life_gain_event() {
+        let mut state = fresh_state();
+        let source = lifelink_source(&mut state);
+        let target = push_object_into(&mut state, PlayerId::P1, Zone::Battlefield);
+        propose_and_commit_batch(
+            &mut state,
+            vec![
+                ProposedEvent::damage(source, Target::Object(target), 2),
+                ProposedEvent::damage(source, Target::Player(PlayerId::P1), 3),
+            ],
+        );
+        assert_eq!(state.players[0].life, 25);
+        assert_eq!(state.players[1].life, 17);
+        assert_eq!(state.objects.get(target).damage, 2);
+        assert_eq!(life_gain_amounts(&state), vec![5]);
+    }
+
+    #[test]
+    fn lifelink_distinct_sources_keep_distinct_life_gain_events() {
+        let mut state = fresh_state();
+        let first = lifelink_source(&mut state);
+        let second = lifelink_source(&mut state);
+        propose_and_commit_batch(
+            &mut state,
+            vec![
+                ProposedEvent::damage(first, Target::Player(PlayerId::P1), 2),
+                ProposedEvent::damage(second, Target::Player(PlayerId::P1), 3),
+            ],
+        );
+        assert_eq!(state.players[0].life, 25);
+        assert_eq!(life_gain_amounts(&state), vec![2, 3]);
+    }
+
+    #[test]
+    fn lifelink_sequential_damage_keeps_separate_life_gain_events() {
+        let mut state = fresh_state();
+        let source = lifelink_source(&mut state);
+        for amount in [2, 3] {
+            propose_and_commit(
+                &mut state,
+                ProposedEvent::damage(source, Target::Player(PlayerId::P1), amount),
+            );
+        }
+        assert_eq!(state.players[0].life, 25);
+        assert_eq!(life_gain_amounts(&state), vec![2, 3]);
+    }
+
+    #[test]
+    fn lifelink_split_damage_counts_only_damage_after_prevention() {
+        let mut state = fresh_state();
+        let source = lifelink_source(&mut state);
+        let target = push_object_into(&mut state, PlayerId::P1, Zone::Battlefield);
+        install_combat_damage_prevention(&mut state, target, target);
+        let combat = |target, amount| {
+            ProposedEvent::Damage(DamageProposed {
+                source,
+                target,
+                amount,
+                is_combat: true,
+                touched_by: Vec::new(),
+            })
+        };
+        propose_and_commit_batch(
+            &mut state,
+            vec![
+                combat(Target::Object(target), 2),
+                combat(Target::Player(PlayerId::P1), 3),
+            ],
+        );
+        assert_eq!(state.players[0].life, 23);
+        assert_eq!(state.objects.get(target).damage, 0);
+        assert_eq!(life_gain_amounts(&state), vec![3]);
+    }
+
+    #[test]
+    fn nonpositive_life_gain_does_not_emit_an_event() {
+        let mut state = fresh_state();
+        for amount in [0, -1] {
+            propose_and_commit(&mut state, ProposedEvent::life_gain(PlayerId::P0, amount));
+        }
+        assert_eq!(state.players[0].life, 20);
+        assert!(state.engine.event_log.is_empty());
     }
 
     #[test]

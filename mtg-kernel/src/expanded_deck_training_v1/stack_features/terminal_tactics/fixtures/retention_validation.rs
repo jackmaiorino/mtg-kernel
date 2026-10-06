@@ -32,7 +32,7 @@ fn position(
         let mut attackers = Vec::new();
         for name in ["Avenging Hunter", "Myr Enforcer", "Myr Enforcer"] {
             let id = put(&mut state, opponent, name, Zone::Battlefield);
-            state.objects.get_mut(id).counters.plus1_plus1 = s.attacker_counters;
+            state.objects.get_mut(id).counters.plus1_plus1 = i32::from(s.attacker_counters);
             state.objects.get_mut(id).tapped = true;
             let toughness = engine::effective_toughness(&state, id);
             state.objects.get_mut(id).damage = (toughness - s.damage).try_into().map_err(err)?;
@@ -53,10 +53,10 @@ fn position(
         state.active_player = actor;
         let hunter = put(&mut state, actor, "Avenging Hunter", Zone::Battlefield);
         state.objects.get_mut(hunter).tapped = true;
-        state.objects.get_mut(hunter).counters.plus1_plus1 = s.attacker_counters;
+        state.objects.get_mut(hunter).counters.plus1_plus1 = i32::from(s.attacker_counters);
         state.players[opponent.index()].life = engine::effective_power(&state, hunter);
         let cat = put(&mut state, opponent, "Sacred Cat", Zone::Battlefield);
-        state.objects.get_mut(cat).counters.plus1_plus1 = cat_counters;
+        state.objects.get_mut(cat).counters.plus1_plus1 = i32::from(cat_counters);
         let toughness = engine::effective_toughness(&state, cat);
         state.objects.get_mut(cat).damage = (toughness - s.damage).try_into().map_err(err)?;
         state.engine.combat.attackers = vec![hunter];

@@ -76,10 +76,13 @@ fn kind_of(d: &Decision) -> Kind {
         | Decision::Discard { .. }
         | Decision::DeclareBlockers { .. }
         | Decision::ChooseSpellMode { .. }
+        | Decision::ChooseTriggerMode { .. }
         | Decision::ChooseEffectOption { .. }
         | Decision::ChooseEffectBoolean { .. }
         | Decision::ChooseCombatDamageRange { .. }
         | Decision::ChooseLegendPermanent { .. }
+        | Decision::ChooseLondonMulligan { .. }
+        | Decision::ChooseLondonBottom { .. }
         | Decision::ChooseEffectTargets { .. }
         | Decision::ChooseOptionalCost { .. }
         | Decision::ChooseSpellCopyPayment { .. }
@@ -156,10 +159,13 @@ fn run_goldfish(state: &mut GameState) -> (Vec<Kind>, Vec<i32>) {
             | Decision::Discard { .. }
             | Decision::DeclareBlockers { .. }
             | Decision::ChooseSpellMode { .. }
+            | Decision::ChooseTriggerMode { .. }
             | Decision::ChooseEffectOption { .. }
             | Decision::ChooseEffectBoolean { .. }
             | Decision::ChooseCombatDamageRange { .. }
             | Decision::ChooseLegendPermanent { .. }
+            | Decision::ChooseLondonMulligan { .. }
+            | Decision::ChooseLondonBottom { .. }
             | Decision::ChooseEffectTargets { .. }
             | Decision::ChooseOptionalCost { .. }
             | Decision::ChooseSpellCopyPayment { .. }

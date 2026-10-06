@@ -267,6 +267,14 @@ pub enum EffectCond {
         subtype: Subtype,
         minimum_count: u8,
     },
+    /// Resolution-only check for a live, incarnation-bound spell target.
+    /// Legal targeting and payable counter-unless-pay choices remain available.
+    TargetSpellCanBeCountered(u8),
+    /// Kiora's resolution-time intervening threshold condition.
+    ControllerGraveyardCardCountAtLeast(u8),
+    CreatureDiedThisTurn,
+    /// Resolution-time ferocious condition, using current continuous power.
+    ControlsCreaturePowerAtLeast(i32),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1036,6 +1044,27 @@ pub enum EffectOp {
     PreventCombatDamageToTargetThisTurn {
         target_index: u8,
     },
+    BindDoublePlusOneCountersToTriggerSource,
+    DoublePlusOneCountersOnBoundObject {
+        object: EffectObjectBinding,
+    },
+    /// Return a targeted permanent, choosing an enchantment's host at
+    /// resolution when it is an Aura. The attachment choice is not a target.
+    ReturnTargetPermanentToBattlefield {
+        target_index: u8,
+    },
+    PutBoundAuraOntoBattlefieldAttached {
+        aura: EffectObjectBinding,
+        host: EffectObjectBinding,
+    },
+    /// Uncharted Voyage's owner-selected top-or-bottom move.
+    PutObjectInOwnersLibraryTopOrBottom {
+        object: ObjectRef,
+    },
+    /// Privately inspect one top card, then keep it or move it to the graveyard.
+    SurveilOne {
+        player: PlayerRef,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -1312,6 +1341,13 @@ pub enum EffectFrame {
         canonical_path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
     },
+    SurveilLibraryOne {
+        player: PlayerId,
+        original_library: Vec<EffectObjectBinding>,
+        put_in_graveyard: bool,
+        path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
     /// Authenticated post-answer completion for Delver of Secrets' reveal
     /// choice. The actual public reveal and predicate check are deferred to
     /// this frame (matching `choose_resumable_boolean`'s "the next engine
@@ -1535,6 +1571,17 @@ pub enum EffectTargetSelectionPurpose {
         candidates: Vec<EffectObjectBinding>,
         canonical_path: Vec<u16>,
     },
+    AttachReturningAura {
+        aura: EffectObjectBinding,
+        original_candidates: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+    },
+    SurveilLibraryOne {
+        player: PlayerId,
+        original_library: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1673,6 +1720,12 @@ pub enum EffectOptionChoicePurpose {
         canonical_path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
     },
+    OwnerLibraryTopOrBottom {
+        object: EffectObjectBinding,
+        owner: PlayerId,
+        canonical_path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
 }
 
 /// A policy-visible choice yielded by the generic effect interpreter. This is
@@ -1739,17 +1792,48 @@ pub struct EffectContinuation {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EffectAnsweredChoiceGuard {
-    OwnerLibrarySecondOrBottom { frame: Box<EffectFrame> },
-    CounterUnlessPaysGeneric { frame: Box<EffectFrame> },
-    CounterTargetUnlessPaysGeneric { frame: Box<EffectFrame> },
-    ExileOneFromGraveyard { frame: Box<EffectFrame> },
-    ExileOneMatchingFromGraveyard { frame: Box<EffectFrame> },
-    SacrificeCreature { frame: Box<EffectFrame> },
-    PayManaThen { frame: Box<EffectFrame> },
-    LinkedExileFromRevealedHand { frame: Box<EffectFrame> },
-    SearchLibraryToBattlefieldTapped { frame: Box<EffectFrame> },
-    UndercityRoute { frame: Box<EffectFrame> },
-    UndercityThrone { frame: Box<EffectFrame> },
+    OwnerLibrarySecondOrBottom {
+        frame: Box<EffectFrame>,
+    },
+    CounterUnlessPaysGeneric {
+        frame: Box<EffectFrame>,
+    },
+    CounterTargetUnlessPaysGeneric {
+        frame: Box<EffectFrame>,
+    },
+    ExileOneFromGraveyard {
+        frame: Box<EffectFrame>,
+    },
+    ExileOneMatchingFromGraveyard {
+        frame: Box<EffectFrame>,
+    },
+    SacrificeCreature {
+        frame: Box<EffectFrame>,
+    },
+    PayManaThen {
+        frame: Box<EffectFrame>,
+    },
+    LinkedExileFromRevealedHand {
+        frame: Box<EffectFrame>,
+    },
+    SearchLibraryToBattlefieldTapped {
+        frame: Box<EffectFrame>,
+    },
+    UndercityRoute {
+        frame: Box<EffectFrame>,
+    },
+    UndercityThrone {
+        frame: Box<EffectFrame>,
+    },
+    AttachReturningAura {
+        aura: EffectObjectBinding,
+        host: EffectObjectBinding,
+        canonical_path: Vec<u16>,
+        remaining_frames: Vec<EffectFrame>,
+    },
+    SurveilLibraryOne {
+        frame: Box<EffectFrame>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1924,6 +2008,8 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::SearchLibraryToHandUpTo { .. }
         | EffectOp::UntapUpToLands { .. }
         | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. }
+        | EffectOp::PutObjectInOwnersLibraryTopOrBottom { .. }
+        | EffectOp::SurveilOne { .. }
         | EffectOp::CounterUnlessPaysGeneric { .. }
         | EffectOp::CounterTargetUnlessPaysGeneric { .. }
         | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
@@ -1939,6 +2025,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::ReturnLinkedExiledCardToOwnersHand
         | EffectOp::PreventDamageFromChosenColorUntilEndOfTurn { .. }
         | EffectOp::ResolveInitiativeTrigger { .. }
+        | EffectOp::ReturnTargetPermanentToBattlefield { .. }
         | EffectOp::ResolveUndercityThrone { .. }
         | EffectOp::LookAtTopMayRevealThen { .. }
         | EffectOp::Surveil { .. } => true,
@@ -2044,6 +2131,12 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
                         .push(EffectFrame::Program { op: selected, path });
                 }
                 EffectOptionChoicePurpose::OwnerLibrarySecondOrBottom {
+                    object,
+                    owner,
+                    canonical_path,
+                    expected_remaining_frames,
+                }
+                | EffectOptionChoicePurpose::OwnerLibraryTopOrBottom {
                     object,
                     owner,
                     canonical_path,
@@ -2711,6 +2804,30 @@ fn complete_resumable_target_selection(
         })
         .collect::<Result<Vec<_>, String>>()?;
     match purpose {
+        EffectTargetSelectionPurpose::AttachReturningAura {
+            aura,
+            original_candidates,
+            canonical_path,
+        } => {
+            if path != canonical_path
+                || objects.len() != 1
+                || !original_candidates.contains(&objects[0])
+            {
+                return Err("Aura attachment choice changed path or candidate".to_string());
+            }
+            let host = objects[0];
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::AttachReturningAura {
+                    aura,
+                    host,
+                    canonical_path: canonical_path.clone(),
+                    remaining_frames: continuation.frames.clone(),
+                });
+            continuation.frames.push(EffectFrame::Program {
+                op: EffectOp::PutBoundAuraOntoBattlefieldAttached { aura, host },
+                path: canonical_path,
+            });
+        }
         EffectTargetSelectionPurpose::OrderIntoGraveyard {
             preserve_known_identity,
         } => continuation.frames.push(EffectFrame::MoveObjectsBatch {
@@ -2795,6 +2912,28 @@ fn complete_resumable_target_selection(
                     path: continuation_path,
                     canonical_path,
                 });
+        }
+        EffectTargetSelectionPurpose::SurveilLibraryOne {
+            player,
+            original_library,
+            canonical_path,
+            expected_remaining_frames,
+        } => {
+            if path != canonical_path || objects.len() > 1 {
+                return Err("surveil answer changed its path or cardinality".to_string());
+            }
+            let frame = EffectFrame::SurveilLibraryOne {
+                player,
+                original_library,
+                put_in_graveyard: !objects.is_empty(),
+                path: canonical_path,
+                expected_remaining_frames,
+            };
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::SurveilLibraryOne {
+                    frame: Box::new(frame.clone()),
+                });
+            continuation.frames.push(frame);
         }
         EffectTargetSelectionPurpose::ScryLibrary {
             player,
@@ -3215,13 +3354,64 @@ fn validate_effect_target_candidate(
     Ok(())
 }
 
+struct OwnerLibraryRecipe {
+    target_spec: crate::card_def::TargetSpec,
+    first_placement: event::LibraryPlacement,
+    path: Vec<u16>,
+    remainder: Vec<EffectFrame>,
+}
+
+fn owner_library_recipe(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<OwnerLibraryRecipe, String> {
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    match root.as_ref() {
+        EffectOp::PutObjectInOwnersLibrarySecondOrBottom {
+            object: ObjectRef::Target(0),
+        } => Ok(OwnerLibraryRecipe {
+            target_spec: crate::card_def::TargetSpec::NonlandPermanent,
+            first_placement: event::LibraryPlacement::SecondFromTop,
+            path: vec![],
+            remainder: vec![],
+        }),
+        EffectOp::Sequence(ops)
+            if matches!(
+                ops.as_slice(),
+                [
+                    EffectOp::PutObjectInOwnersLibraryTopOrBottom {
+                        object: ObjectRef::Target(0)
+                    },
+                    EffectOp::SurveilOne {
+                        player: PlayerRef::Controller
+                    }
+                ]
+            ) =>
+        {
+            Ok(OwnerLibraryRecipe {
+                target_spec: crate::card_def::TargetSpec::Creature,
+                first_placement: event::LibraryPlacement::Top,
+                path: vec![0],
+                remainder: vec![EffectFrame::Program {
+                    op: EffectOp::SurveilOne {
+                        player: PlayerRef::Controller,
+                    },
+                    path: vec![1],
+                }],
+            })
+        }
+        _ => Err("owner-library choice lost its definition-owned recipe".to_string()),
+    }
+}
+
 fn validate_owner_library_target_binding(
     state: &GameState,
     pending: &EffectContinuation,
     object: EffectObjectBinding,
     owner: PlayerId,
 ) -> Result<(), String> {
-    if pending.resolving_item.v4.target_spec != Some(crate::card_def::TargetSpec::NonlandPermanent)
+    let recipe = owner_library_recipe(state, pending)?;
+    if pending.resolving_item.v4.target_spec != Some(recipe.target_spec)
         || pending.ctx.targets.as_slice() != [Target::Object(object.object)]
     {
         return Err("owner-library choice no longer matches the resolving target".to_string());
@@ -3249,8 +3439,11 @@ fn validate_owner_library_target_binding(
     let live = state.objects.get(object.object);
     if live.owner != owner
         || live.card_def != *card_def
-        || crate::card_def::CARD_DEFS[live.card_def as usize]
-            .has_type(crate::card_def::CardType::Land)
+        || (recipe.target_spec == crate::card_def::TargetSpec::NonlandPermanent
+            && crate::card_def::CARD_DEFS[live.card_def as usize]
+                .has_type(crate::card_def::CardType::Land))
+        || (recipe.target_spec == crate::card_def::TargetSpec::Creature
+            && !crate::engine::object_has_type(state, object.object, CardType::Creature))
     {
         return Err("owner-library choice changed its target owner or definition".to_string());
     }
@@ -3288,8 +3481,9 @@ fn validate_owner_library_placement_frame(
     else {
         return Err("owner-library answer guard does not contain its typed frame".to_string());
     };
+    let recipe = owner_library_recipe(state, pending)?;
     let expected_placement = match option_index {
-        0 => event::LibraryPlacement::SecondFromTop,
+        0 => recipe.first_placement,
         1 => event::LibraryPlacement::Bottom,
         _ => return Err("owner-library answered option index is outside 0..2".to_string()),
     };
@@ -3298,11 +3492,83 @@ fn validate_owner_library_placement_frame(
     }
     let mut expected_path = canonical_path.clone();
     expected_path.push(*option_index);
-    if !canonical_path.is_empty() || !expected_remaining_frames.is_empty() || path != &expected_path
+    if canonical_path != &recipe.path
+        || expected_remaining_frames != &recipe.remainder
+        || path != &expected_path
     {
         return Err("owner-library answered option path changed".to_string());
     }
     validate_owner_library_target_binding(state, pending, *object, *owner)
+}
+
+// CR 111.6: a departed token may still await its state-based cleanup in
+// the library index during resolution, but surveil only looks at cards.
+fn surveil_top_card(
+    state: &GameState,
+    library: &[EffectObjectBinding],
+) -> Option<EffectObjectBinding> {
+    library.iter().copied().find(|binding| {
+        state
+            .objects
+            .try_get(binding.object)
+            .is_some_and(|object| !crate::card_def::CARD_DEFS[object.card_def as usize].is_token)
+    })
+}
+
+fn validate_surveil_one_metadata(
+    state: &GameState,
+    pending: &EffectContinuation,
+    player: PlayerId,
+    original_library: &[EffectObjectBinding],
+    path: &[u16],
+    expected_remaining_frames: &[EffectFrame],
+) -> Result<(), String> {
+    let recipe = owner_library_recipe(state, pending)?;
+    if recipe.first_placement != event::LibraryPlacement::Top
+        || path != [1]
+        || !expected_remaining_frames.is_empty()
+        || player != pending.ctx.controller
+        || surveil_top_card(state, original_library).is_none()
+        || original_library != bind_library_exact(state, player)
+    {
+        return Err(
+            "surveil choice changed its player, library or printed continuation".to_string(),
+        );
+    }
+    for &binding in original_library {
+        validate_effect_object_binding(state, binding)?;
+        if binding.expected_zone != Zone::Library
+            || state.objects.get(binding.object).owner != player
+        {
+            return Err("surveil choice lost its private library binding".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn validate_surveil_one_frame(
+    state: &GameState,
+    pending: &EffectContinuation,
+    frame: &EffectFrame,
+) -> Result<(), String> {
+    let EffectFrame::SurveilLibraryOne {
+        player,
+        original_library,
+        path,
+        expected_remaining_frames,
+        ..
+    } = frame
+    else {
+        return Err("surveil answer guard changed frame kind".to_string());
+    };
+    validate_surveil_one_metadata(
+        state,
+        pending,
+        *player,
+        original_library,
+        path,
+        expected_remaining_frames,
+    )
 }
 
 fn generic_mana_cost(generic: u8) -> Cost {
@@ -4052,6 +4318,87 @@ fn effect_op_at_path<'a>(mut op: &'a EffectOp, path: &[u16]) -> Option<&'a Effec
     Some(op)
 }
 
+fn returning_aura_hosts(
+    state: &GameState,
+    aura: EffectObjectBinding,
+) -> Result<Vec<EffectObjectBinding>, String> {
+    validate_effect_object_binding(state, aura)?;
+    if aura.expected_zone != Zone::Graveyard
+        || !crate::card_def::CARD_DEFS[state.objects.get(aura.object).card_def as usize]
+            .attachment
+            .is_some_and(crate::card_def::AttachmentDef::is_creature_aura)
+    {
+        return Err("returning Aura is not a creature Aura in its graveyard".to_string());
+    }
+    Ok(state
+        .objects
+        .iter()
+        .filter_map(|(object, live)| {
+            (live.zone == Zone::Battlefield
+                && crate::engine::object_has_type(state, object, CardType::Creature)
+                && !(crate::engine::object_is_monocolored(state, aura.object)
+                    && crate::engine::has_effective_keyword(
+                        state,
+                        object,
+                        Keywords::PROTECTION_FROM_MONOCOLORED,
+                    )))
+            .then_some(EffectObjectBinding {
+                object,
+                expected_zone: Zone::Battlefield,
+                expected_zone_change_count: live.zone_change_count,
+            })
+        })
+        .collect())
+}
+
+fn validate_returning_aura_origin(
+    state: &GameState,
+    pending: &EffectContinuation,
+    aura: EffectObjectBinding,
+    path: &[u16],
+) -> Result<(), String> {
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    let Some(EffectOp::ReturnTargetPermanentToBattlefield { target_index }) =
+        effect_op_at_path(root.as_ref(), path)
+    else {
+        return Err("Aura attachment choice lost its return operation".to_string());
+    };
+    let index = usize::from(*target_index);
+    if pending.ctx.targets.get(index) != Some(&Target::Object(aura.object))
+        || !pending.ctx.target_incarnation_matches(index, state)
+        || aura.expected_zone != Zone::Graveyard
+    {
+        return Err("Aura attachment choice changed its graveyard target".to_string());
+    }
+    validate_effect_object_binding(state, aura)
+}
+
+fn put_returning_aura_attached(
+    state: &mut GameState,
+    aura: EffectObjectBinding,
+    host: EffectObjectBinding,
+) -> Result<(), String> {
+    if !returning_aura_hosts(state, aura)?.contains(&host) {
+        return Err("returning Aura host is no longer legal".to_string());
+    }
+    event::propose_and_commit(
+        state,
+        event::ProposedEvent::zone_change(aura.object, Zone::Battlefield),
+    );
+    if state.objects.get(aura.object).zone == Zone::Battlefield {
+        let incarnation = state.objects.get(aura.object).zone_change_count;
+        state
+            .attach_object_exact(
+                aura.object,
+                incarnation,
+                host.object,
+                host.expected_zone_change_count,
+            )
+            .map_err(|_| "returning Aura could not attach to its chosen host".to_string())?;
+    }
+    Ok(())
+}
+
 fn validate_search_library_to_battlefield_origin(
     state: &GameState,
     pending: &EffectContinuation,
@@ -4468,6 +4815,8 @@ fn apply_undercity_throne_result(
             .checked_add(3)
             .ok_or("Throne +1/+1 counter overflow")?;
         let expires_at_turn = until_players_next_turn_expiry(state, binding.player)?;
+        let timestamp =
+            cfg!(feature = "limited-fdn-fixtures").then(|| crate::engine::next_timestamp(state));
         state
             .engine
             .until_next_turn_keywords
@@ -4477,6 +4826,7 @@ fn apply_undercity_throne_result(
                 holder: binding.player,
                 expires_at_turn,
                 keywords: Keywords::HEXPROOF,
+                timestamp,
             });
         state.engine.until_next_turn_keywords.sort_by_key(|effect| {
             (
@@ -4698,7 +5048,16 @@ fn validate_answered_choice_guard(
 ) -> Result<(), String> {
     for frame in &pending.frames {
         if let EffectFrame::Program { op, .. } = frame {
-            validate_resumable_program(op)?;
+            if matches!(op, EffectOp::PutBoundAuraOntoBattlefieldAttached { .. }) {
+                if !matches!(
+                    pending.answered_choice_guard,
+                    Some(EffectAnsweredChoiceGuard::AttachReturningAura { .. })
+                ) {
+                    return Err("bound Aura attachment has no answered choice guard".to_string());
+                }
+            } else {
+                validate_resumable_program(op)?;
+            }
         }
     }
     match &pending.answered_choice_guard {
@@ -4739,6 +5098,21 @@ fn validate_answered_choice_guard(
                 return Err("owner-library answered continuation frame stack changed".to_string());
             }
             validate_owner_library_placement_frame(state, pending, frame)?;
+        }
+        Some(EffectAnsweredChoiceGuard::SurveilLibraryOne { frame }) => {
+            let EffectFrame::SurveilLibraryOne {
+                expected_remaining_frames,
+                ..
+            } = frame.as_ref()
+            else {
+                return Err("surveil answer guard changed frame kind".to_string());
+            };
+            let mut expected = expected_remaining_frames.clone();
+            expected.push((**frame).clone());
+            if pending.choice.is_some() || pending.frames != expected {
+                return Err("surveil answered continuation changed".to_string());
+            }
+            validate_surveil_one_frame(state, pending, frame)?;
         }
         Some(EffectAnsweredChoiceGuard::CounterUnlessPaysGeneric { frame }) => {
             if pending.choice.is_some() {
@@ -4922,6 +5296,28 @@ fn validate_answered_choice_guard(
             }
             validate_undercity_throne_frame(state, pending, frame)?;
         }
+        Some(EffectAnsweredChoiceGuard::AttachReturningAura {
+            aura,
+            host,
+            canonical_path,
+            remaining_frames,
+        }) => {
+            let mut expected = remaining_frames.clone();
+            expected.push(EffectFrame::Program {
+                op: EffectOp::PutBoundAuraOntoBattlefieldAttached {
+                    aura: *aura,
+                    host: *host,
+                },
+                path: canonical_path.clone(),
+            });
+            if pending.choice.is_some() || pending.frames != expected {
+                return Err("answered Aura attachment continuation changed".to_string());
+            }
+            validate_returning_aura_origin(state, pending, *aura, canonical_path)?;
+            if !returning_aura_hosts(state, *aura)?.contains(host) {
+                return Err("answered Aura attachment host changed".to_string());
+            }
+        }
     }
     Ok(())
 }
@@ -4974,6 +5370,36 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 validate_effect_target_candidate(state, candidate)?;
             }
             match purpose {
+                EffectTargetSelectionPurpose::AttachReturningAura {
+                    aura,
+                    original_candidates,
+                    canonical_path,
+                } => {
+                    if *chooser != pending.ctx.controller
+                        || path != canonical_path
+                        || *min_targets != 1
+                        || *max_targets != 1
+                        || !*ordered
+                        || !selected.is_empty()
+                        || original_candidates.len() < 2
+                    {
+                        return Err("Aura attachment choice has a noncanonical shape".to_string());
+                    }
+                    validate_returning_aura_origin(state, pending, *aura, canonical_path)?;
+                    if returning_aura_hosts(state, *aura)? != *original_candidates
+                        || legal
+                            != &original_candidates
+                                .iter()
+                                .copied()
+                                .map(|binding| EffectTargetCandidate {
+                                    target: Target::Object(binding.object),
+                                    expected_object: Some(binding),
+                                })
+                                .collect::<Vec<_>>()
+                    {
+                        return Err("Aura attachment candidates changed".to_string());
+                    }
+                }
                 EffectTargetSelectionPurpose::OrderMilledIntoGraveyard => {
                     let bindings = selected
                         .iter()
@@ -5083,6 +5509,44 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     if partition != original {
                         return Err("hand-to-library candidates do not partition the bound hand"
                             .to_string());
+                    }
+                }
+                EffectTargetSelectionPurpose::SurveilLibraryOne {
+                    player: library_player,
+                    original_library,
+                    canonical_path,
+                    expected_remaining_frames,
+                } => {
+                    validate_surveil_one_metadata(
+                        state,
+                        pending,
+                        *library_player,
+                        original_library,
+                        canonical_path,
+                        expected_remaining_frames,
+                    )?;
+                    let top = surveil_top_card(state, original_library)
+                        .ok_or_else(|| "surveil lost its top card".to_string())?;
+                    let expected = EffectTargetCandidate {
+                        target: Target::Object(top.object),
+                        expected_object: Some(top),
+                    };
+                    if chooser != library_player
+                        || path != canonical_path
+                        || pending.frames != *expected_remaining_frames
+                        || *min_targets != 0
+                        || *max_targets != 1
+                        || *ordered
+                        || selected.len() + legal.len() != 1
+                        || selected
+                            .iter()
+                            .chain(legal)
+                            .any(|candidate| candidate != &expected)
+                    {
+                        return Err(
+                            "surveil prompt changed its chooser, shape or bound top card"
+                                .to_string(),
+                        );
                     }
                 }
                 EffectTargetSelectionPurpose::ScryLibrary {
@@ -5999,6 +6463,11 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 canonical_path,
                 expected_remaining_frames,
             } => {
+                if owner_library_recipe(state, pending)?.first_placement
+                    != event::LibraryPlacement::SecondFromTop
+                {
+                    return Err("second-or-bottom choice changed its printed operation".to_string());
+                }
                 if !path.is_empty() || !canonical_path.is_empty() {
                     return Err(
                         "owner-library placement choice is not the generated root path".to_string(),
@@ -6034,6 +6503,40 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     return Err(
                         "owner-library placement choice changed its bound object, owner, or printed option order"
                         .to_string(),
+                    );
+                }
+                validate_owner_library_target_binding(state, pending, *object, *owner)?;
+            }
+            EffectOptionChoicePurpose::OwnerLibraryTopOrBottom {
+                object,
+                owner,
+                canonical_path,
+                expected_remaining_frames,
+            } => {
+                let recipe = owner_library_recipe(state, pending)?;
+                let expected_options = vec![
+                    EffectOp::PutBoundObjectInOwnersLibrary {
+                        object: *object,
+                        owner: *owner,
+                        placement: event::LibraryPlacement::Top,
+                    },
+                    EffectOp::PutBoundObjectInOwnersLibrary {
+                        object: *object,
+                        owner: *owner,
+                        placement: event::LibraryPlacement::Bottom,
+                    },
+                ];
+                if recipe.first_placement != event::LibraryPlacement::Top
+                    || player != owner
+                    || path != canonical_path
+                    || canonical_path != &recipe.path
+                    || expected_remaining_frames != &recipe.remainder
+                    || pending.frames != recipe.remainder
+                    || options != &expected_options
+                {
+                    return Err(
+                        "top-or-bottom choice changed its owner, options or printed remainder"
+                            .to_string(),
                     );
                 }
                 validate_owner_library_target_binding(state, pending, *object, *owner)?;
@@ -6212,6 +6715,9 @@ fn validate_resumable_program(op: &EffectOp) -> Result<(), String> {
             return Err(
                 "generated programs cannot contain an already-bound owner-library move".to_string(),
             );
+        }
+        EffectOp::PutBoundAuraOntoBattlefieldAttached { .. } => {
+            return Err("generated programs cannot contain a bound Aura attachment".to_string());
         }
         EffectOp::EnterUndercityRoom { .. } | EffectOp::ResolveUndercityThrone { .. } => {
             return Err("generated programs cannot contain bound Undercity operations".to_string());
@@ -7360,6 +7866,42 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         state.engine.linked_exile_records.push(record);
                     }
                 }
+                EffectFrame::SurveilLibraryOne {
+                    player,
+                    original_library,
+                    put_in_graveyard,
+                    path,
+                    expected_remaining_frames,
+                } => {
+                    let answered = EffectFrame::SurveilLibraryOne {
+                        player,
+                        original_library: original_library.clone(),
+                        put_in_graveyard,
+                        path,
+                        expected_remaining_frames: expected_remaining_frames.clone(),
+                    };
+                    if continuation.frames != expected_remaining_frames
+                        || continuation.answered_choice_guard.as_ref()
+                            != Some(&EffectAnsweredChoiceGuard::SurveilLibraryOne {
+                                frame: Box::new(answered.clone()),
+                            })
+                    {
+                        return Err("surveil answered frame/guard mismatch".to_string());
+                    }
+                    validate_surveil_one_frame(state, &continuation, &answered)?;
+                    continuation.answered_choice_guard = None;
+                    if put_in_graveyard {
+                        event::propose_and_commit(
+                            state,
+                            event::ProposedEvent::zone_change_preserving_known_identity(
+                                surveil_top_card(state, &original_library)
+                                    .ok_or_else(|| "surveil lost its top card".to_string())?
+                                    .object,
+                                Zone::Graveyard,
+                            ),
+                        );
+                    }
+                }
                 EffectFrame::OwnerLibraryPlacement {
                     object,
                     owner,
@@ -7496,6 +8038,86 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
             continue;
         };
         match op {
+            EffectOp::ReturnTargetPermanentToBattlefield { target_index } => {
+                let index = usize::from(target_index);
+                let Some(Target::Object(object)) = continuation.ctx.targets.get(index).copied()
+                else {
+                    return Err("permanent return lacks an object target".to_string());
+                };
+                if !continuation.ctx.target_incarnation_matches(index, state) {
+                    continue;
+                }
+                let live = state.objects.get(object);
+                if live.zone != Zone::Graveyard {
+                    continue;
+                }
+                let aura = EffectObjectBinding {
+                    object,
+                    expected_zone: Zone::Graveyard,
+                    expected_zone_change_count: live.zone_change_count,
+                };
+                if crate::card_def::CARD_DEFS[live.card_def as usize]
+                    .attachment
+                    .is_none()
+                {
+                    event::propose_and_commit(
+                        state,
+                        event::ProposedEvent::zone_change(object, Zone::Battlefield),
+                    );
+                    continue;
+                }
+                let candidates = returning_aura_hosts(state, aura)?;
+                match candidates.as_slice() {
+                    [] => {}
+                    [host] => put_returning_aura_attached(state, aura, *host)?,
+                    _ => {
+                        continuation.choice = Some(PendingEffectChoice::SelectTargets {
+                            player: continuation.ctx.controller,
+                            path: path.clone(),
+                            selected: vec![],
+                            legal: candidates
+                                .iter()
+                                .copied()
+                                .map(|binding| EffectTargetCandidate {
+                                    target: Target::Object(binding.object),
+                                    expected_object: Some(binding),
+                                })
+                                .collect(),
+                            min_targets: 1,
+                            max_targets: 1,
+                            ordered: true,
+                            purpose: EffectTargetSelectionPurpose::AttachReturningAura {
+                                aura,
+                                original_candidates: candidates,
+                                canonical_path: path,
+                            },
+                        });
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
+                }
+            }
+            EffectOp::PutBoundAuraOntoBattlefieldAttached { aura, host } => {
+                let Some(EffectAnsweredChoiceGuard::AttachReturningAura {
+                    aura: expected_aura,
+                    host: expected_host,
+                    canonical_path,
+                    remaining_frames,
+                }) = continuation.answered_choice_guard.as_ref()
+                else {
+                    return Err("Aura attachment lost its answered choice".to_string());
+                };
+                if aura != *expected_aura
+                    || host != *expected_host
+                    || path != *canonical_path
+                    || continuation.frames != *remaining_frames
+                {
+                    return Err("Aura attachment answer changed".to_string());
+                }
+                validate_returning_aura_origin(state, &continuation, aura, &path)?;
+                continuation.answered_choice_guard = None;
+                put_returning_aura_attached(state, aura, host)?;
+            }
             EffectOp::Sequence(ops) => {
                 for (index, inner) in ops.into_iter().enumerate().rev() {
                     let mut inner_path = path.clone();
@@ -7823,6 +8445,39 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         path,
                         canonical_path,
                     });
+            }
+            EffectOp::SurveilOne { player } => {
+                let player = continuation.ctx.resolve_player(player, state);
+                let original_library = bind_library_exact(state, player);
+                if let Some(top) = surveil_top_card(state, &original_library) {
+                    let position = original_library
+                        .iter()
+                        .position(|binding| *binding == top)
+                        .expect("surveil top card belongs to the bound library");
+                    state.reveal_library_top(player, player, position + 1);
+                    let canonical_path = path.clone();
+                    let expected_remaining_frames = continuation.frames.clone();
+                    continuation.choice = Some(PendingEffectChoice::SelectTargets {
+                        player,
+                        path,
+                        selected: vec![],
+                        legal: vec![EffectTargetCandidate {
+                            target: Target::Object(top.object),
+                            expected_object: Some(top),
+                        }],
+                        min_targets: 0,
+                        max_targets: 1,
+                        ordered: false,
+                        purpose: EffectTargetSelectionPurpose::SurveilLibraryOne {
+                            player,
+                            original_library,
+                            canonical_path,
+                            expected_remaining_frames,
+                        },
+                    });
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
             }
             EffectOp::Scry { player, count } => {
                 let player = continuation.ctx.resolve_player(player, state);
@@ -8310,7 +8965,9 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     return Ok(ResumableProgress::Suspended);
                 }
             }
-            EffectOp::PutObjectInOwnersLibrarySecondOrBottom { object } => {
+            EffectOp::PutObjectInOwnersLibrarySecondOrBottom { object }
+            | EffectOp::PutObjectInOwnersLibraryTopOrBottom { object } => {
+                let recipe = owner_library_recipe(state, &continuation)?;
                 let object = continuation.ctx.resolve_object(object);
                 let live = state
                     .objects
@@ -8337,7 +8994,7 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         EffectOp::PutBoundObjectInOwnersLibrary {
                             object: binding,
                             owner,
-                            placement: event::LibraryPlacement::SecondFromTop,
+                            placement: recipe.first_placement,
                         },
                         EffectOp::PutBoundObjectInOwnersLibrary {
                             object: binding,
@@ -8345,11 +9002,20 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                             placement: event::LibraryPlacement::Bottom,
                         },
                     ],
-                    purpose: EffectOptionChoicePurpose::OwnerLibrarySecondOrBottom {
-                        object: binding,
-                        owner,
-                        canonical_path,
-                        expected_remaining_frames,
+                    purpose: if recipe.first_placement == event::LibraryPlacement::Top {
+                        EffectOptionChoicePurpose::OwnerLibraryTopOrBottom {
+                            object: binding,
+                            owner,
+                            canonical_path,
+                            expected_remaining_frames,
+                        }
+                    } else {
+                        EffectOptionChoicePurpose::OwnerLibrarySecondOrBottom {
+                            object: binding,
+                            owner,
+                            canonical_path,
+                            expected_remaining_frames,
+                        }
                     },
                 });
                 state.engine.pending_effect = Some(continuation);
@@ -10274,23 +10940,16 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             {
                 return;
             }
-            let Some(next) = state
-                .objects
-                .get(object_id)
-                .counters
-                .plus1_plus1
-                .checked_add(1)
-            else {
+            if event::add_plus_one_counters(state, object_id, ctx.controller, 1).is_err() {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
                 ));
-                return;
-            };
-            state.objects.get_mut(object_id).counters.plus1_plus1 = next;
+            }
         }
         EffectOp::BindPlusOnePlusOneCounterToTriggerSource
-        | EffectOp::BindPlusOnePlusOneCounterToTriggerEventObject => {
+        | EffectOp::BindPlusOnePlusOneCounterToTriggerEventObject
+        | EffectOp::BindDoublePlusOneCountersToTriggerSource => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -10310,6 +10969,24 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ));
             }
         }
+        EffectOp::DoublePlusOneCountersOnBoundObject { object } => {
+            if validate_effect_object_binding(state, *object).is_err()
+                || object.expected_zone != Zone::Battlefield
+            {
+                return;
+            }
+            let current = state.objects.get(object.object).counters.plus1_plus1;
+            if current <= 0 {
+                return;
+            }
+            if event::add_plus_one_counters(state, object.object, ctx.controller, current).is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
         EffectOp::PutPlusOnePlusOneCounterOnBoundObject { object }
         | EffectOp::PutPlusOnePlusOneCounterOnTriggerEventObject { object } => {
             if validate_effect_object_binding(state, *object).is_err()
@@ -10317,15 +10994,12 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             {
                 return;
             }
-            let counters = &mut state.objects.get_mut(object.object).counters.plus1_plus1;
-            let Some(next) = counters.checked_add(1) else {
+            if event::add_plus_one_counters(state, object.object, ctx.controller, 1).is_err() {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
                 ));
-                return;
-            };
-            *counters = next;
+            }
         }
         EffectOp::GainLife { player, amount } => {
             let player = ctx.resolve_player(*player, state);
@@ -10457,9 +11131,27 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 object: target,
                 zone_change_count: state.objects.get(target).zone_change_count,
             };
-            state.objects.get_mut(ctx.source).v4.attached_to = Some(link);
-            if !state.objects.get(target).attachments.contains(&ctx.source) {
-                state.objects.get_mut(target).attachments.push(ctx.source);
+            if cfg!(feature = "limited-fdn-fixtures") {
+                let source_generation = state.objects.get(ctx.source).zone_change_count;
+                if state
+                    .attach_object_exact(
+                        ctx.source,
+                        source_generation,
+                        target,
+                        link.zone_change_count,
+                    )
+                    .is_err()
+                {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                }
+            } else {
+                state.objects.get_mut(ctx.source).v4.attached_to = Some(link);
+                if !state.objects.get(target).attachments.contains(&ctx.source) {
+                    state.objects.get_mut(target).attachments.push(ctx.source);
+                }
             }
         }
         EffectOp::TapAttachedCreatureAndDamageControllerByPower => {
@@ -10733,7 +11425,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             }
             let next = (
-                live.counters.plus1_plus1.checked_add(*plus1_plus1),
+                live.counters
+                    .plus1_plus1
+                    .checked_add(i32::from(*plus1_plus1)),
                 live.v4.lifelink_keyword_counters.checked_add(*lifelink),
                 live.counters.stun.checked_add(*stun),
             );
@@ -10744,10 +11438,21 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ));
                 return;
             };
+            let keyword_timestamp = (cfg!(feature = "limited-fdn-fixtures") && *lifelink > 0)
+                .then(|| crate::engine::next_timestamp(state));
             let object = state.objects.get_mut(object);
+            if keyword_timestamp.is_some() {
+                object.v4.lifelink_counter_timestamp = keyword_timestamp;
+            }
             object.counters.plus1_plus1 = next_plus;
             object.v4.lifelink_keyword_counters = next_lifelink;
             object.counters.stun = next_stun;
+            event::log_plus_one_counters_added(
+                state,
+                ctx.resolve_object(ObjectRef::Target(*target_index)),
+                ctx.controller,
+                i32::from(*plus1_plus1),
+            );
         }
         EffectOp::CreateTokenAndAttachSource { token_def } => {
             let Some(token) = crate::card_def::CARD_DEFS.get(*token_def as usize) else {
@@ -11641,7 +12346,13 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ));
                 return;
             };
-            state.objects.get_mut(ctx.source).counters.plus1_plus1 = amount;
+            state.objects.get_mut(ctx.source).counters.plus1_plus1 = i32::from(amount);
+            event::log_plus_one_counters_added(
+                state,
+                ctx.source,
+                ctx.controller,
+                i32::from(amount),
+            );
         }
         EffectOp::PutSourceOntoBattlefieldAttachedToTargetWithXPlusOneCounters { target } => {
             let ObjectRef::Target(target_index) = target else {
@@ -11674,7 +12385,13 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ));
                 return;
             };
-            state.objects.get_mut(ctx.source).counters.plus1_plus1 = amount;
+            state.objects.get_mut(ctx.source).counters.plus1_plus1 = i32::from(amount);
+            event::log_plus_one_counters_added(
+                state,
+                ctx.source,
+                ctx.controller,
+                i32::from(amount),
+            );
             let link = ObjectLinkV4 {
                 object: target,
                 zone_change_count: state.objects.get(target).zone_change_count,
@@ -11804,16 +12521,13 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ));
                 return;
             }
-            let count = i16::from(*count);
-            let counters = &mut state.objects.get_mut(object).counters.plus1_plus1;
-            let Some(total) = counters.checked_add(count) else {
+            let count = i32::from(*count);
+            if event::add_plus_one_counters(state, object, ctx.controller, count).is_err() {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
                 ));
-                return;
-            };
-            *counters = total;
+            }
         }
         EffectOp::GoadTargetUntilSourcesNextTurn { object } => {
             let object = ctx.resolve_object(*object);
@@ -11856,6 +12570,8 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::SearchLibraryToHandUpTo { .. }
         | EffectOp::UntapUpToLands { .. }
         | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. }
+        | EffectOp::PutObjectInOwnersLibraryTopOrBottom { .. }
+        | EffectOp::SurveilOne { .. }
         | EffectOp::PutBoundObjectInOwnersLibrary { .. }
         | EffectOp::CounterUnlessPaysGeneric { .. }
         | EffectOp::CounterTargetUnlessPaysGeneric { .. }
@@ -11870,6 +12586,8 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::RevealHandChooseNonlandToLinkedExile { .. }
         | EffectOp::ReturnLinkedExiledCardToOwnersHand
         | EffectOp::ResolveInitiativeTrigger { .. }
+        | EffectOp::ReturnTargetPermanentToBattlefield { .. }
+        | EffectOp::PutBoundAuraOntoBattlefieldAttached { .. }
         | EffectOp::EnterUndercityRoom { .. }
         | EffectOp::ResolveUndercityThrone { .. } => {
             panic!("choice-bearing effects must use the resumable interpreter")
@@ -11878,6 +12596,22 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             panic!("color-choice effects must use the resumable interpreter")
         }
     }
+}
+
+/// Shared trigger-time and resolution-time threshold predicate. Tokens and
+/// virtual spell copies are not cards, including before their next SBA.
+pub(crate) fn controller_graveyard_card_count(state: &GameState, controller: PlayerId) -> usize {
+    state.players[controller.index()]
+        .graveyard
+        .iter()
+        .filter(|&&id| {
+            let object = state.objects.get(id);
+            object.zone == Zone::Graveyard
+                && object.owner == controller
+                && !crate::card_def::CARD_DEFS[object.card_def as usize].is_token
+                && object.spell_copy_origin.is_none()
+        })
+        .count()
 }
 
 fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
@@ -11911,6 +12645,16 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
             Some(Target::Object(id)) => state.objects.get(*id).zone == *zone,
             _ => false,
         },
+        EffectCond::TargetSpellCanBeCountered(index) => {
+            eval_cond(&EffectCond::TargetInZone(*index, Zone::Stack), ctx, state)
+                && match ctx.targets.get(usize::from(*index)) {
+                    Some(Target::Object(object)) => {
+                        !crate::card_def::CARD_DEFS[state.objects.get(*object).card_def as usize]
+                            .spell_cannot_be_countered
+                    }
+                    _ => false,
+                }
+        }
         EffectCond::TargetIsColor(idx, _)
             if !ctx.target_incarnation_matches(*idx as usize, state) =>
         {
@@ -12008,6 +12752,18 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
         EffectCond::OpponentHasCardsInHand => !state.players[ctx.controller.opponent().index()]
             .hand
             .is_empty(),
+        EffectCond::CreatureDiedThisTurn => state.creature_died_this_turn_v1(),
+        EffectCond::ControlsCreaturePowerAtLeast(minimum) => state.players[ctx.controller.index()]
+            .battlefield
+            .iter()
+            .copied()
+            .any(|object| {
+                crate::engine::object_has_type(state, object, CardType::Creature)
+                    && crate::engine::effective_power(state, object) >= *minimum
+            }),
+        EffectCond::ControllerGraveyardCardCountAtLeast(minimum) => {
+            controller_graveyard_card_count(state, ctx.controller) >= usize::from(*minimum)
+        }
     }
 }
 
@@ -12148,6 +12904,55 @@ mod tests {
             &mut state,
         );
         assert_eq!(state.players[0].hand.len(), 2);
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn threshold_counts_graveyard_cards_without_tokens_or_virtual_spell_copies() {
+        use crate::card_def::card_id_by_name;
+        use crate::state::SpellCopyOriginV4;
+        let island = card_id_by_name("Island").unwrap();
+        let mut state =
+            GameState::new_from_libraries(&[island; 7], &[island; 8], |_| "Island".into(), 123);
+        for player in [PlayerId::P0, PlayerId::P1] {
+            for card in state.players[player.index()].library.clone() {
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(card, Zone::Graveyard),
+                );
+            }
+        }
+        assert_eq!(controller_graveyard_card_count(&state, PlayerId::P0), 7);
+        assert_eq!(controller_graveyard_card_count(&state, PlayerId::P1), 8);
+        event::propose_and_commit(
+            &mut state,
+            event::ProposedEvent::create_token(
+                card_id_by_name("Scion of the Deep Token").unwrap(),
+                PlayerId::P0,
+            ),
+        );
+        let token = state.players[0].battlefield[0];
+        event::propose_and_commit(
+            &mut state,
+            event::ProposedEvent::zone_change(token, Zone::Graveyard),
+        );
+        assert_eq!(state.objects.get(token).zone, Zone::Graveyard);
+        assert_eq!(controller_graveyard_card_count(&state, PlayerId::P0), 7);
+        // A virtual spell temporarily in a graveyard is not a card. The SBA
+        // that makes it cease has not yet run at this predicate boundary.
+        let parent = state.players[0].graveyard[0];
+        let mut copy = state.objects.get(parent).clone();
+        copy.spell_copy_origin = Some(SpellCopyOriginV4 {
+            parent,
+            parent_card_def: island,
+            parent_owner: PlayerId::P0,
+            parent_controller: PlayerId::P0,
+            parent_stack_zone_change_count: 0,
+            parent_was_copy: false,
+        });
+        let copy = state.objects.push(copy);
+        state.players[0].graveyard.push(copy);
+        assert_eq!(controller_graveyard_card_count(&state, PlayerId::P0), 7);
     }
 
     fn card_ids(names: &[&str]) -> Vec<u16> {

@@ -39,14 +39,17 @@ impl Scan<'_> {
             PutBoundObjectInOwnersLibrary { object, .. }
             | MoveBoundObject { object, .. }
             | PutPlusOnePlusOneCounterOnBoundObject { object }
+            | DoublePlusOneCountersOnBoundObject { object }
             | PutPlusOnePlusOneCounterOnTriggerEventObject { object }
             | BoostBoundObjectUntilEndOfTurn { object, .. } => self.b(object),
+            PutBoundAuraOntoBattlefieldAttached { aura, host } => self.b(aura) || self.b(host),
             ResolveInitiativeTrigger { binding }
             | EnterUndercityRoom { binding, .. }
             | ResolveUndercityThrone { binding } => self.a(&binding.source),
             ResolveMonarchTrigger { binding } => self.a(&binding.source),
             // Other current leaf programs carry symbolic refs, not physical bindings.
             DealDamage { .. }
+            | ReturnTargetPermanentToBattlefield { .. }
             | GainLife { .. }
             | LoseLife { .. }
             | DrawCards { .. }
@@ -73,6 +76,8 @@ impl Scan<'_> {
             | Scry { .. }
             | SearchLibraryToHand { .. }
             | PutObjectInOwnersLibrarySecondOrBottom { .. }
+            | PutObjectInOwnersLibraryTopOrBottom { .. }
+            | SurveilOne { .. }
             | DestroyObject { .. }
             | CounterUnlessPaysGeneric { .. }
             | DamageEachCreatureWithoutSubtype { .. }
@@ -101,6 +106,7 @@ impl Scan<'_> {
             | DealDamageDynamic { .. }
             | BindPlusOnePlusOneCounterToTriggerSource
             | BindPlusOnePlusOneCounterToTriggerEventObject
+            | BindDoublePlusOneCountersToTriggerSource
             | BindTemporaryBoostToTriggerSource { .. }
             | BoostControlledCreaturesUntilEndOfTurn { .. }
             | GainLifeByAttackingSubtypeCount { .. }
@@ -246,6 +252,11 @@ impl Scan<'_> {
                     || self.op(then)
                     || self.fs(expected_remaining_frames)
             }
+            SurveilLibraryOne {
+                original_library,
+                expected_remaining_frames,
+                ..
+            } => self.bs(original_library) || self.fs(expected_remaining_frames),
             SacrificeChosenCreature {
                 original_candidates,
                 chosen,
@@ -314,6 +325,11 @@ impl Scan<'_> {
         use EffectTargetSelectionPurpose::*;
         match p {
             OrderIntoGraveyard { .. } | OrderMilledIntoGraveyard => false,
+            AttachReturningAura {
+                aura,
+                original_candidates,
+                ..
+            } => self.b(aura) || self.bs(original_candidates),
             OrderLookedLibraryTop {
                 original_prefix, ..
             }
@@ -321,6 +337,11 @@ impl Scan<'_> {
                 original_prefix, ..
             } => self.bs(original_prefix),
             PutHandCardOnLibraryTop { original_hand, .. } => self.bs(original_hand),
+            SurveilLibraryOne {
+                original_library,
+                expected_remaining_frames,
+                ..
+            } => self.bs(original_library) || self.fs(expected_remaining_frames),
             ScryLibrary {
                 original_prefix,
                 stage,
@@ -418,7 +439,12 @@ impl Scan<'_> {
                     use EffectOptionChoicePurpose::*;
                     match purpose {
                         Generic => false,
-                        OwnerLibrarySecondOrBottom {
+                        OwnerLibraryTopOrBottom {
+                            object,
+                            expected_remaining_frames,
+                            ..
+                        }
+                        | OwnerLibrarySecondOrBottom {
                             object,
                             expected_remaining_frames,
                             ..
@@ -519,20 +545,27 @@ pub(super) fn conflicts(
         }
         if let Some(g) = &p.answered_choice_guard {
             use EffectAnsweredChoiceGuard::*;
-            let frame = match g {
+            let guard_conflicts = match g {
                 OwnerLibrarySecondOrBottom { frame }
                 | CounterUnlessPaysGeneric { frame }
                 | CounterTargetUnlessPaysGeneric { frame }
                 | ExileOneFromGraveyard { frame }
+                | SurveilLibraryOne { frame }
                 | ExileOneMatchingFromGraveyard { frame }
                 | SacrificeCreature { frame }
                 | PayManaThen { frame }
                 | LinkedExileFromRevealedHand { frame }
                 | SearchLibraryToBattlefieldTapped { frame }
                 | UndercityRoute { frame }
-                | UndercityThrone { frame } => frame,
+                | UndercityThrone { frame } => s.f(frame),
+                AttachReturningAura {
+                    aura,
+                    host,
+                    remaining_frames,
+                    ..
+                } => s.b(aura) || s.b(host) || s.fs(remaining_frames),
             };
-            if s.f(frame) {
+            if guard_conflicts {
                 return true;
             }
         }
@@ -548,6 +581,8 @@ pub(super) fn conflicts(
             | CreateToken { object, .. }
             | Sacrificed { object, .. }
             | Transformed { object, .. } => s.raw(*object),
+            PlusOneCountersAdded { object, .. }
+            | PrintedAbilitiesRemovedBeforeZoneChange { object, .. } => s.raw(*object),
             Draw { object, .. } => object.is_some_and(|id| s.raw(id)),
             SpellCast { spell, .. } => s.raw(*spell),
             Targeted { target, .. } => s.raw(*target),
@@ -561,7 +596,159 @@ pub(super) fn conflicts(
             } => s.raw(*source) || paid_cost_refs.iter().any(|r| s.raw(r.object)),
             InitiativeTrigger { binding } => s.raw(binding.source.source),
             MonarchTrigger { binding } => s.raw(binding.source.source),
-            LifeLoss { .. } | LifeGain { .. } | ManaAdded { .. } | UpkeepBegan { .. } => false,
+            LifeLoss { .. }
+            | LifeGain { .. }
+            | ManaAdded { .. }
+            | UpkeepBegan { .. }
+            | BeginningEndStep { .. } => false,
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ids::PlayerId;
+    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::state::Zone;
+
+    #[test]
+    fn bound_counter_doubling_keeps_the_referenced_incarnation_out_of_resampling() {
+        let mut state = ready_state();
+        let object = put(&mut state, PlayerId::P1, "Forest", Zone::Library);
+        let other = put(&mut state, PlayerId::P1, "Island", Zone::Library);
+        let binding = EffectObjectBinding {
+            object,
+            expected_zone: Zone::Library,
+            expected_zone_change_count: state.objects.get(object).zone_change_count,
+        };
+        let op = EffectOp::DoublePlusOneCountersOnBoundObject { object: binding };
+        assert!(op_conflicts(&state, &[object], &op));
+        assert!(!op_conflicts(&state, &[other], &op));
+        state.objects.get_mut(object).zone_change_count += 1;
+        assert!(!op_conflicts(&state, &[object], &op));
+    }
+
+    #[test]
+    fn returning_aura_retains_both_incarnations_and_all_attachment_candidates() {
+        let mut state = ready_state();
+        let aura_id = put(&mut state, PlayerId::P1, "Forest", Zone::Library);
+        let host_id = put(&mut state, PlayerId::P1, "Island", Zone::Library);
+        let other = put(&mut state, PlayerId::P1, "Swamp", Zone::Library);
+        let bind = |object| EffectObjectBinding {
+            object,
+            expected_zone: Zone::Library,
+            expected_zone_change_count: state.objects.get(object).zone_change_count,
+        };
+        let aura = bind(aura_id);
+        let host = bind(host_id);
+        let op = EffectOp::PutBoundAuraOntoBattlefieldAttached { aura, host };
+        let purpose = EffectTargetSelectionPurpose::AttachReturningAura {
+            aura,
+            original_candidates: vec![host],
+            canonical_path: vec![],
+        };
+        for object in [aura_id, host_id] {
+            let scan = Scan {
+                state: &state,
+                pool: &[object],
+            };
+            assert!(scan.op(&op));
+            assert!(scan.purpose(&purpose));
+        }
+        let scan = Scan {
+            state: &state,
+            pool: &[other],
+        };
+        assert!(!scan.op(&op));
+        assert!(!scan.purpose(&purpose));
+    }
+
+    #[test]
+    fn counter_placement_history_keeps_its_physical_object_out_of_resampling() {
+        let mut state = ready_state();
+        let object = put(&mut state, PlayerId::P1, "Forest", Zone::Library);
+        let other = put(&mut state, PlayerId::P1, "Island", Zone::Library);
+        state
+            .engine
+            .event_log
+            .push(crate::event::CommittedEvent::PlusOneCountersAdded {
+                object,
+                zone_change_count: state.objects.get(object).zone_change_count,
+                player: PlayerId::P1,
+                count: 1,
+            });
+        assert!(conflicts(&state, &[object], None));
+        assert!(!conflicts(&state, &[other], None));
+    }
+    #[test]
+    fn surveil_selection_and_completion_retain_library_and_remaining_frame_bindings() {
+        let mut state = ready_state();
+        let object = put(&mut state, PlayerId::P1, "Forest", Zone::Library);
+        let other = put(&mut state, PlayerId::P1, "Island", Zone::Library);
+        let unrelated = put(&mut state, PlayerId::P1, "Mountain", Zone::Library);
+        let binding = |id| EffectObjectBinding {
+            object: id,
+            expected_zone: Zone::Library,
+            expected_zone_change_count: state.objects.get(id).zone_change_count,
+        };
+        let original_library = vec![binding(object)];
+        let expected_remaining_frames = vec![EffectFrame::Program {
+            op: EffectOp::DoublePlusOneCountersOnBoundObject {
+                object: binding(other),
+            },
+            path: vec![],
+        }];
+        let frame = EffectFrame::SurveilLibraryOne {
+            player: PlayerId::P1,
+            original_library: original_library.clone(),
+            put_in_graveyard: false,
+            path: vec![],
+            expected_remaining_frames: expected_remaining_frames.clone(),
+        };
+        let purpose = EffectTargetSelectionPurpose::SurveilLibraryOne {
+            player: PlayerId::P1,
+            original_library,
+            canonical_path: vec![],
+            expected_remaining_frames,
+        };
+        for id in [object, other] {
+            let pool = [id];
+            let scan = Scan {
+                state: &state,
+                pool: &pool,
+            };
+            assert!(scan.f(&frame));
+            assert!(scan.purpose(&purpose));
+        }
+        let pool = [unrelated];
+        let scan = Scan {
+            state: &state,
+            pool: &pool,
+        };
+        assert!(!scan.f(&frame));
+        assert!(!scan.purpose(&purpose));
+        state.objects.get_mut(object).zone_change_count += 1;
+        let pool = [object];
+        let scan = Scan {
+            state: &state,
+            pool: &pool,
+        };
+        assert!(!scan.f(&frame));
+        assert!(!scan.purpose(&purpose));
+    }
+    #[test]
+    fn removed_ability_history_keeps_its_physical_object_out_of_resampling() {
+        let mut state = ready_state();
+        let object = put(&mut state, PlayerId::P1, "Forest", Zone::Library);
+        let other = put(&mut state, PlayerId::P1, "Island", Zone::Library);
+        state.engine.event_log.push(
+            crate::event::CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange {
+                object,
+                zone_change_count: state.objects.get(object).zone_change_count,
+            },
+        );
+        assert!(conflicts(&state, &[object], None));
+        assert!(!conflicts(&state, &[other], None));
+    }
 }

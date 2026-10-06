@@ -328,7 +328,11 @@ fn actor(action: &A) -> Option<PlayerSeatV1> {
         | A::ChooseBlockerInclusion { actor, .. }
         | A::OrderTriggers { actor, .. }
         | A::ChooseCombatDamageRange { actor, .. }
+        | A::ChooseLondonMulligan { actor, .. }
+        | A::ChooseLondonBottom { actor, .. }
         | A::ChooseLegendPermanent { actor, .. } => Some(*actor),
+        #[cfg(feature = "limited-fdn-fixtures")]
+        A::ChooseTriggerOrderNext { actor, .. } => Some(*actor),
         A::Ambiguous { .. } => None,
     }
 }
@@ -906,13 +910,17 @@ pub(super) fn label(
                 descriptions.join("; then ")
             )
         }
+        #[cfg(feature = "limited-fdn-fixtures")]
+        A::ChooseTriggerOrderNext { .. } => return Err(Error::UnsupportedPrompt),
         // These visible records do not contain enough human meaning. In
         // particular effect option paths do not describe their outcomes, and
         // same-source triggers require frozen ability provenance, not an index.
-        // Foundations custom-game combat damage and legend-rule choices
+        // Foundations custom-game mulligan, combat damage and legend-rule choices
         // never reach a Pauper Bo3 human prompt.
         A::ChooseEffectNumber { .. }
         | A::ChooseCombatDamageRange { .. }
+        | A::ChooseLondonMulligan { .. }
+        | A::ChooseLondonBottom { .. }
         | A::ChooseLegendPermanent { .. }
         | A::Ambiguous { .. } => return Err(Error::UnsupportedPrompt),
     })

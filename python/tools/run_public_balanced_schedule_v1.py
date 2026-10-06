@@ -153,4 +153,3 @@ if __name__ == '__main__':
     p.add_argument('--scorer', type=Path, required=True)
     a = p.parse_args()
     run(a.root, a.compute, a.scorer)
-

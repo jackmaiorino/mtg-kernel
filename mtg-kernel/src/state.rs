@@ -44,21 +44,51 @@ pub enum Zone {
 
 /// Counter families required by the Pauper pool. Signed storage is deliberate:
 /// effect validation may reject an underflow without first converting between
-/// unrelated integer shapes, while i16 leaves ample headroom for copied and
-/// doubled counter effects.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// unrelated integer shapes. +1/+1 counters use i32 because a Hydra can
+/// exceed i16 after fifteen landfall triggers. Hashes within the old range
+/// retain the original representation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Counters {
-    pub plus1_plus1: i16,
+    pub plus1_plus1: i32,
     pub minus1_minus1: i16,
     pub minus0_minus1: i16,
     pub stun: i16,
     pub lore: i16,
 }
 
+pub(crate) fn hash_plus_one_counters<H: std::hash::Hasher>(count: i32, state: &mut H) {
+    use std::hash::Hash;
+    if let Ok(legacy) = i16::try_from(count) {
+        legacy.hash(state);
+    } else {
+        b"wide_plus_one_counters_v1".hash(state);
+        count.hash(state);
+    }
+}
+
+impl std::hash::Hash for Counters {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        hash_plus_one_counters(self.plus1_plus1, state);
+        self.minus1_minus1.hash(state);
+        self.minus0_minus1.hash(state);
+        self.stun.hash(state);
+        self.lore.hash(state);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ObjectLinkV4 {
     pub object: ObjectId,
     pub zone_change_count: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TriggerUseV1 {
+    pub source: ObjectLinkV4,
+    pub ability_index: u16,
+    pub turn: u32,
+    pub active_player: PlayerId,
+    pub uses: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -87,7 +117,7 @@ pub struct GoadStateV4 {
 /// Schema-v4 dynamic object substrate. Base colors, subtypes, and token
 /// identity are materialized from the registry at object creation, rather
 /// than assigning zero a meaning that would change when mechanics arrive.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObjectStateV4 {
     pub is_token: bool,
     pub face_index: u8,
@@ -133,6 +163,12 @@ pub struct ObjectStateV4 {
     /// restored state reject a unilateral rewrite of either value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finalized_cast_binding: Option<FinalizedCastBindingV1>,
+    /// Timestamp of entering the battlefield or becoming attached to a new host.
+    /// Absent in legacy/default-profile states.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer_timestamp: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifelink_counter_timestamp: Option<u64>,
     /// True iff this exact incarnation is a physical Adventure card sitting
     /// in exile after its Adventure spell resolved (Fang Dragon after
     /// Forktail Sweep resolves), granting its owner permission to cast the
@@ -150,6 +186,38 @@ pub struct ObjectStateV4 {
     /// this set.
     #[serde(default, skip_serializing_if = "bool_is_false")]
     pub on_adventure: bool,
+}
+
+impl Hash for ObjectStateV4 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.is_token.hash(state);
+        self.face_index.hash(state);
+        self.effective_color_mask.hash(state);
+        self.effective_subtype_ids.hash(state);
+        self.chosen_color.hash(state);
+        self.entered_battlefield_turn.hash(state);
+        self.ability_uses_this_turn.hash(state);
+        self.skip_next_untap.hash(state);
+        self.deathtouch_damage.hash(state);
+        self.lifelink_keyword_counters.hash(state);
+        self.goaded_by.hash(state);
+        self.attached_to.hash(state);
+        self.exiled_by.hash(state);
+        self.ward_generic.hash(state);
+        self.minimum_blockers_override.hash(state);
+        self.landwalk_mask.hash(state);
+        self.spell_cast_origin.hash(state);
+        self.finalized_cast_binding.hash(state);
+        self.on_adventure.hash(state);
+        if let Some(timestamp) = self.layer_timestamp {
+            "layer_timestamp/v1".hash(state);
+            timestamp.hash(state);
+        }
+        if let Some(timestamp) = self.lifelink_counter_timestamp {
+            "lifelink_counter_timestamp/v1".hash(state);
+            timestamp.hash(state);
+        }
+    }
 }
 
 impl ObjectStateV4 {
@@ -191,6 +259,8 @@ impl ObjectStateV4 {
             landwalk_mask: 0,
             spell_cast_origin: None,
             finalized_cast_binding: None,
+            layer_timestamp: None,
+            lifelink_counter_timestamp: None,
             on_adventure: false,
         }
     }
@@ -225,7 +295,7 @@ impl ObjectStateV4 {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameObject {
     /// Index into the (not-yet-built) card database.
     pub card_def: u16,
@@ -236,7 +306,7 @@ pub struct GameObject {
     pub zone: Zone,
     pub tapped: bool,
     pub summoning_sick: bool,
-    pub damage: u16,
+    pub damage: u32,
     pub counters: Counters,
     pub attachments: Vec<ObjectId>,
     pub v4: ObjectStateV4,
@@ -268,6 +338,30 @@ pub struct GameObject {
     /// it, structurally, without this module needing to remember to remove
     /// the stale entry.
     pub zone_change_count: u32,
+}
+
+impl Hash for GameObject {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.card_def.hash(state);
+        self.name.hash(state);
+        self.owner.hash(state);
+        self.controller.hash(state);
+        self.zone.hash(state);
+        self.tapped.hash(state);
+        self.summoning_sick.hash(state);
+        if let Ok(legacy) = u16::try_from(self.damage) {
+            legacy.hash(state);
+        } else {
+            b"wide_marked_damage_v1".hash(state);
+            self.damage.hash(state);
+        }
+        self.counters.hash(state);
+        self.attachments.hash(state);
+        self.v4.hash(state);
+        self.spell_copy_origin.hash(state);
+        self.plotted_turn.hash(state);
+        self.zone_change_count.hash(state);
+    }
 }
 
 impl GameObject {
@@ -827,7 +921,9 @@ pub fn stack_target_contract_is_structurally_valid(
                 ..
             },
         ) | (
-            TargetSpec::CreatureOrLandCardInGraveyard | TargetSpec::CreatureCardInOwnGraveyard,
+            TargetSpec::CreatureOrLandCardInGraveyard
+                | TargetSpec::CreatureCardInOwnGraveyard
+                | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_),
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Graveyard,
@@ -1202,6 +1298,14 @@ pub(crate) struct LibraryShuffleToken {
     authorization: LibraryShuffleAuthorization,
 }
 
+/// The active player's turn in which an actual creature death occurred.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreatureDeathTurnV1 {
+    pub turn: u32,
+    pub active_player: PlayerId,
+}
+
 /// `Hash` is manual (see the `impl Hash for GameState` block below this
 /// struct): it must reproduce the exact pre-existing field-hash sequence for
 /// a legacy P0-first state, the same discipline `starting_player`'s serde
@@ -1268,6 +1372,15 @@ pub struct GameState {
     pub pending_legend_rule_v1: Option<crate::legend_rule_v1::PendingLegendRuleV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub planeswalkers_v1: Option<crate::planeswalker_v1::PlaneswalkersV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_uses_v1: Option<Vec<TriggerUseV1>>,
+    /// An actual creature death in the current turn, including token deaths.
+    /// The round counter alone cannot distinguish the two players' turns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creature_death_turn_v1: Option<CreatureDeathTurnV1>,
+    /// Opt-in pregame state. Absent in every historical reset mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub london_mulligans_v1: Option<crate::london_mulligan_v1::LondonMulligansV1>,
 }
 
 /// Reproduces exactly the field-hash sequence `#[derive(Hash)]` produced
@@ -1307,6 +1420,18 @@ impl Hash for GameState {
         if let Some(planeswalkers) = &self.planeswalkers_v1 {
             "planeswalkers-v1".hash(state);
             planeswalkers.hash(state);
+        }
+        if let Some(uses) = &self.trigger_uses_v1 {
+            "trigger-uses-v1".hash(state);
+            uses.hash(state);
+        }
+        if let Some(death) = &self.creature_death_turn_v1 {
+            "creature-death-turn-v1".hash(state);
+            death.hash(state);
+        }
+        if let Some(pregame) = &self.london_mulligans_v1 {
+            "london-mulligans-v1".hash(state);
+            pregame.hash(state);
         }
     }
 }
@@ -1360,6 +1485,12 @@ impl PaidCostRefV4 {
 }
 
 impl GameState {
+    pub fn creature_died_this_turn_v1(&self) -> bool {
+        self.creature_death_turn_v1.is_some_and(|death| {
+            death.turn == self.turn && death.active_player == self.active_player
+        })
+    }
+
     /// Builds a fresh pre-game state from two post-shuffle library orders
     /// (index 0 = top, matching `GoldenTrace::opening_library`). Arena ids
     /// are assigned contiguously in library order, player 0 first, so the
@@ -1443,6 +1574,9 @@ impl GameState {
             engine: crate::engine::EngineState::default(),
             pending_legend_rule_v1: None,
             planeswalkers_v1: None,
+            trigger_uses_v1: None,
+            creature_death_turn_v1: None,
+            london_mulligans_v1: None,
         }
     }
 
@@ -1687,6 +1821,15 @@ impl GameState {
             || target_live.zone_change_count != target_zone_change_count
         {
             return Err(source);
+        }
+        let host_link = ObjectLinkV4 {
+            object: target,
+            zone_change_count: target_zone_change_count,
+        };
+        let changed_host = source_live.v4.attached_to != Some(host_link);
+        if cfg!(feature = "limited-fdn-fixtures") && changed_host {
+            let timestamp = crate::engine::next_timestamp(self);
+            self.objects.get_mut(source).v4.layer_timestamp = Some(timestamp);
         }
         for (_, candidate) in self.objects.iter_mut() {
             candidate.attachments.retain(|&attached| attached != source);

@@ -390,7 +390,7 @@ fn pending_assignment_rejects_priority_and_restores_exactly() {
 fn large_power_has_two_choices_per_prompt_and_logarithmic_depth() {
     let mut state = ready();
     let attacker = put(&mut state, PlayerId::P0, "Myr Enforcer");
-    state.objects.get_mut(attacker).counters.plus1_plus1 = i16::MAX;
+    state.objects.get_mut(attacker).counters.plus1_plus1 = i32::from(i16::MAX);
     let first = put(&mut state, PlayerId::P1, "Myr Enforcer");
     let second = put(&mut state, PlayerId::P1, "Myr Enforcer");
     pair(&mut state, attacker, &[first, second]);
