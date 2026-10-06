@@ -172,15 +172,37 @@ jobs:
           exit $LASTEXITCODE
 
       - name: Validate FDN Limited gameplay and catalog separation
+        shell: pwsh
         run: |
           cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test fdn_fixture_batch_a_v1 --test fdn_fixture_batch_b_v1 --test limited_session_v1 --test limited_priority_v1 --test limited_combat_v1 --test fdn_combat_cards_v1 --test fdn_legend_rule_v1 --test fdn_targeted_spells_v1
-          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib limited_session_v1::tests
-          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib flat_action_slice_refuses_loyalty_and_combat_prevention_before_publish
-          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib card_def::
-          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib native_training_store_run_v2::
-          cargo test --release --locked -p mtg-kernel --features "limited-fdn-fixtures native-training-store-v2-production" --lib pre_fdn_profile
-          cargo test --release --locked -p mtg-kernel --features "limited-fdn-fixtures native-training-store-v2-production" --lib prior_fdn_batch
-          cargo test --release --locked -p mtg-kernel --features "limited-fdn-fixtures native-training-store-v2-production" --lib fdn_profile_record_round_trips
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # Cargo repeatedly rebuilt identical release library variants between
+          # filters on Windows, exhausting the hosted job's six-hour limit.
+          # Select each exact feature variant from Cargo's artifact stream once.
+          function Get-LimitedTestBinary([string] $features) {
+            $records = @(& cargo test --release --locked -p mtg-kernel --features $features --lib --no-run --message-format=json)
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $binaries = @($records | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object {
+              $_.reason -eq 'compiler-artifact' -and $_.target.name -eq 'mtg_kernel' -and
+              $_.target.kind -contains 'lib' -and $_.profile.test -and $_.executable
+            } | ForEach-Object { $_.executable })
+            if ($binaries.Count -ne 1 -or -not (Test-Path -LiteralPath $binaries[0] -PathType Leaf)) {
+              throw "Expected one library test executable for features: $features"
+            }
+            return $binaries[0]
+          }
+
+          $limitedBinary = Get-LimitedTestBinary 'limited-fdn-fixtures'
+          foreach ($filter in @('limited_session_v1::tests', 'flat_action_slice_refuses_loyalty_and_combat_prevention_before_publish', 'card_def::', 'native_training_store_run_v2::')) {
+            & $limitedBinary $filter
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          $productionBinary = Get-LimitedTestBinary 'limited-fdn-fixtures native-training-store-v2-production'
+          foreach ($filter in @('pre_fdn_profile', 'prior_fdn_batch', 'fdn_profile_record_round_trips')) {
+            & $productionBinary $filter
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
       - name: Test host-safe experimental CUDA feature surface
         run: |
