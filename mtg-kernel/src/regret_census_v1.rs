@@ -706,6 +706,165 @@ fn run_spyfix_game(
     Ok(())
 }
 
+fn spy_ready(session: &FastActorSessionV1, seat: usize) -> (bool, usize) {
+    use crate::card_def::{CardType, CARD_DEFS};
+    let st = session.game_state();
+    let me = &st.players[seat];
+    let has = |o: crate::ids::ObjectId, t: CardType| CARD_DEFS[st.objects.get(o).card_def as usize].types.contains(&t);
+    let pool: Vec<String> = zone_names(st, &me.library).into_iter().chain(zone_names(st, &me.graveyard)).collect();
+    let ready = !me.library.iter().any(|&o| has(o, CardType::Land))
+        && pool.iter().any(|n| n == "Dread Return")
+        && pool.iter().any(|n| n == "Lotleth Giant");
+    (ready, me.battlefield.iter().filter(|&&o| has(o, CardType::Creature)).count())
+}
+
+fn named_candidates(session: &FastActorSessionV1) -> Vec<serde_json::Value> {
+    session
+        .diagnostic_current_action_semantics()
+        .unwrap_or_default()
+        .iter()
+        .map(|x| named(serde_json::to_value(x).unwrap_or_default()))
+        .collect()
+}
+
+fn mass(probs: &[f64], cands: &[serde_json::Value], pred: impl Fn(&serde_json::Value) -> bool) -> f64 {
+    cands.iter().zip(probs).filter(|(c, _)| pred(c)).map(|(_, p)| p).sum()
+}
+
+/// Spy combo learning probe. Positions are reached by the reference policy
+/// (REF_SOURCE, default the candidate) playing both seats, so they do not
+/// depend on the checkpoint under test. At the first ready Spy cast offer and
+/// the first live Spy target choice, the candidate is scored on: probability
+/// of casting Spy, probability of targeting itself, probability of choosing
+/// Lotleth Giant at Dread Return after a forced self-mill (candidate pilots,
+/// reference opponent, `rollouts` determinizations), and win rate from the
+/// live target position under its own play.
+fn run_spyprobe_game(
+    cfg: &CensusConfigV1,
+    game: u64,
+    cand: &mut FrozenPlayPolicyV1,
+    refp: &mut FrozenPlayPolicyV1,
+    sink: &Mutex<std::fs::File>,
+) -> Result<(), String> {
+    let n = cfg.decks.len() as u64;
+    let pilot = (game % 2) as usize;
+    let opp_deck = cfg.decks[((game / 2) % n) as usize];
+    let starting = ((game / (2 * n)) % 2) as u8;
+    let seed = mix(cfg.base_seed ^ mix(game));
+    let mut deck_ix = [opp_deck; 2];
+    deck_ix[pilot] = cfg.pilot_deck;
+    let decks = [&RUNTIME_DECKS[deck_ix[0]], &RUNTIME_DECKS[deck_ix[1]]];
+    let mut session =
+        FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
+            1,
+            seed,
+            MAX_PHYSICAL,
+            MAX_PHYSICAL * 128,
+            [decks[0].id.to_owned(), decks[1].id.to_owned()],
+            [decks[0].card_ids.to_vec(), decks[1].card_ids.to_vec()],
+            PlayerId(starting),
+        )
+        .map_err(|e| format!("{e:?}"))?;
+    refp.reset_sampling_v1(paired_policy_seeds_v1(seed));
+    let mut rows = Vec::new();
+    let (mut cast_done, mut target_done) = (false, false);
+    let is = |v: &serde_json::Value, kind: &str, src: &str| v["action_kind"] == kind && v["source"] == src;
+    loop {
+        let FastActorResponseV1::Decision(d) = session.current_response() else { break };
+        if seat_index(d.acting_player) == pilot && d.legal_action_count >= 2 && !(cast_done && target_done) {
+            let cands = named_candidates(&session);
+            let (ready, creatures) = spy_ready(&session, pilot);
+            let turn = session.game_state().turn;
+            if !cast_done && ready && creatures >= 2 && cands.iter().any(|c| is(c, "cast_spell", "Balustrade Spy")) {
+                cast_done = true;
+                cand.reset_sampling_v1([1, 2]);
+                let probs = softmax(&cand.score_fast_session_v1(&session)?.logits);
+                let p = mass(&probs, &cands, |c| is(c, "cast_spell", "Balustrade Spy"));
+                rows.push(json!({"kind":"probe_cast","game":game,"turn":turn,"opp_deck":RUNTIME_DECKS[opp_deck].id,"p_cast_spy":p}));
+            }
+            let target_ix = cands.iter().position(|c| {
+                is(c, "choose_target", "Balustrade Spy") && c["target"]["player"] == format!("p{pilot}")
+            });
+            if !target_done && ready && creatures >= 3 && target_ix.is_some() {
+                target_done = true;
+                cand.reset_sampling_v1([1, 2]);
+                let probs = softmax(&cand.score_fast_session_v1(&session)?.logits);
+                let p_self = probs[target_ix.unwrap()];
+                let m = cfg.rollouts as usize;
+                let (mut lotleth, mut dr_reached, mut wins) = (0.0, 0u32, 0.0);
+                for r in 0..m {
+                    let det = mix(seed ^ mix(0x5059 ^ r as u64));
+                    // Dread Return target after a forced self-mill.
+                    let mut s = session.census_redeterminized_clone_v1(det)?;
+                    s.step(d.episode_id, d.step, target_ix.unwrap() as u32).map_err(|e| format!("{e:?}"))?;
+                    cand.reset_sampling_v1([mix(det ^ 0xA1), mix(det ^ 0xB2)]);
+                    refp.reset_sampling_v1([mix(det ^ 0xC3), mix(det ^ 0xD4)]);
+                    while let FastActorResponseV1::Decision(e) = s.current_response() {
+                        if s.game_state().turn != turn {
+                            break;
+                        }
+                        let a = if seat_index(e.acting_player) == pilot {
+                            let cs = named_candidates(&s);
+                            if cs.iter().any(|c| is(c, "choose_target", "Dread Return")) {
+                                let pr = softmax(&cand.score_fast_session_v1(&s)?.logits);
+                                lotleth += mass(&pr, &cs, |c| {
+                                    is(c, "choose_target", "Dread Return") && c["target"]["object"] == "Lotleth Giant"
+                                });
+                                dr_reached += 1;
+                                break;
+                            }
+                            cand.select_fast_session_v1(&s)?
+                        } else {
+                            refp.select_fast_session_v1(&s)?
+                        };
+                        s.step(e.episode_id, e.step, a).map_err(|e| format!("{e:?}"))?;
+                    }
+                    // Win rate from the live position under the candidate's own play.
+                    let mut s = session.census_redeterminized_clone_v1(det)?;
+                    cand.reset_sampling_v1([mix(det ^ 0xA1), mix(det ^ 0xB2)]);
+                    refp.reset_sampling_v1([mix(det ^ 0xC3), mix(det ^ 0xD4)]);
+                    let score = loop {
+                        match s.current_response() {
+                            FastActorResponseV1::Terminal(t) => {
+                                let natural = t.terminal_classification == TerminalClassificationV1::Natural;
+                                break match t.winner {
+                                    Some(w) if natural => f64::from(u8::from(seat_index(w) == pilot)),
+                                    _ => 0.5,
+                                };
+                            }
+                            FastActorResponseV1::Decision(e) => {
+                                let a = if seat_index(e.acting_player) == pilot {
+                                    cand.select_fast_session_v1(&s)?
+                                } else {
+                                    refp.select_fast_session_v1(&s)?
+                                };
+                                s.step(e.episode_id, e.step, a).map_err(|e| format!("{e:?}"))?;
+                            }
+                        }
+                    };
+                    wins += score;
+                }
+                rows.push(json!({"kind":"probe_target","game":game,"turn":turn,"opp_deck":RUNTIME_DECKS[opp_deck].id,
+                    "p_self":p_self,"dr_reached":dr_reached,"rollouts":m,
+                    "p_lotleth":if dr_reached > 0 { lotleth / f64::from(dr_reached) } else { f64::NAN },
+                    "win_from_position":wins / m as f64}));
+                // The reference continuation must not depend on probe sampling.
+                refp.reset_sampling_v1(paired_policy_seeds_v1(seed ^ mix(d.step)));
+            }
+        }
+        let a = refp.select_fast_session_v1(&session)?;
+        session.step(d.episode_id, d.step, a).map_err(|e| format!("{e:?}"))?;
+    }
+    let mut out = String::new();
+    for r in rows {
+        out.push_str(&r.to_string());
+        out.push('\n');
+    }
+    let mut f = sink.lock().map_err(|_| "sink poisoned")?;
+    f.write_all(out.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub fn run_v1(cfg: CensusConfigV1) -> Result<(), String> {
     let source: ExpandedModelSourceV1 = serde_json::from_slice(
         &std::fs::read(&cfg.source).map_err(|e| e.to_string())?,
@@ -713,6 +872,17 @@ pub fn run_v1(cfg: CensusConfigV1) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
     let (policy, identity) = load_expanded_inference_v1(&source)?;
     eprintln!("loaded {}", serde_json::to_string(&identity).unwrap_or_default());
+    let reference = match std::env::var("REF_SOURCE") {
+        Ok(path) => {
+            let source: ExpandedModelSourceV1 =
+                serde_json::from_slice(&std::fs::read(&path).map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?;
+            let (p, id) = load_expanded_inference_v1(&source)?;
+            eprintln!("reference {}", serde_json::to_string(&id).unwrap_or_default());
+            p
+        }
+        Err(_) => policy.fork_for_collection_v3()?,
+    };
     let sink = Mutex::new(
         std::fs::OpenOptions::new()
             .create(true)
@@ -729,6 +899,7 @@ pub fn run_v1(cfg: CensusConfigV1) -> Result<(), String> {
         for _ in 0..cfg.workers {
             let mut base = policy.fork_for_collection_v3()?;
             let mut roll = policy.fork_for_collection_v3()?;
+            let mut refp = reference.fork_for_collection_v3()?;
             let (cfg, sink, next, done) = (&cfg, &sink, &next, &done);
             handles.push(scope.spawn(move || -> Result<(), String> {
                 loop {
@@ -738,6 +909,8 @@ pub fn run_v1(cfg: CensusConfigV1) -> Result<(), String> {
                     }
                     let result = if cfg.mode == "mulligan" {
                         run_mulligan_game(cfg, g, &mut roll, sink)
+                    } else if cfg.mode == "spyprobe" {
+                        run_spyprobe_game(cfg, g, &mut base, &mut refp, sink)
                     } else if cfg.mode == "spyfix" {
                         run_spyfix_game(cfg, g, &mut base, sink)
                     } else if cfg.mode == "trace" {
