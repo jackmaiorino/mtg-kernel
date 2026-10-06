@@ -101,7 +101,7 @@ fn play_out_traced(
                         let st = session.game_state();
                         let sem = session
                             .diagnostic_current_action_semantics()
-                            .map(|v| format!("{:?}", v[a as usize]))
+                            .map(|v| named(serde_json::to_value(&v[a as usize]).unwrap_or_default()).to_string())
                             .unwrap_or_default();
                         eprintln!(
                             "  t{} {:?} P{} life={:?} k={} -> {}",
@@ -246,7 +246,7 @@ fn evaluate_root(
                 .ok()
                 .and_then(|v| {
                     let (st, rr) = v.split_once(':')?;
-                    (st.parse::<u64>().ok()? == d.step && rr.parse::<usize>().ok()? == r).then_some(60)
+                    (st.parse::<u64>().ok()? == d.step && rr.parse::<usize>().ok()? == r).then_some(400)
                 });
             if trace.is_some() {
                 eprintln!("TRACE step {} rollout {r} action {a}: {:?}", d.step, semantics[a]);
@@ -479,6 +479,233 @@ fn run_pilot_game(
     Ok(())
 }
 
+fn named(v: serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    match v {
+        Value::Object(m) => {
+            if let Some(id) = m.get("card_db_id").and_then(Value::as_u64) {
+                return json!(crate::rl::card_name(id as u16));
+            }
+            Value::Object(m.into_iter().filter(|(k, _)| k != "actor").map(|(k, x)| (k, named(x))).collect())
+        }
+        Value::Array(a) => Value::Array(a.into_iter().map(named).collect()),
+        x => x,
+    }
+}
+
+fn zone_names(state: &crate::state::GameState, ids: &[crate::ids::ObjectId]) -> Vec<String> {
+    ids.iter().map(|&o| state.objects.get(o).name.clone()).collect()
+}
+
+/// Plain-policy games with `cfg.pilot_deck` in the pilot seat. Logs every
+/// pilot multi-action decision with the chosen and offered actions and a
+/// compact view of the pilot's resources, for offline plan analysis.
+fn run_trace_game(
+    cfg: &CensusConfigV1,
+    game: u64,
+    base: &mut FrozenPlayPolicyV1,
+    roll: &mut FrozenPlayPolicyV1,
+    sink: &Mutex<std::fs::File>,
+) -> Result<(), String> {
+    let root_filter = std::env::var("ROOT_FILTER").ok();
+    let mut roots = Vec::new();
+    let n = cfg.decks.len() as u64;
+    let pilot = (game % 2) as usize;
+    let opp_deck = cfg.decks[((game / 2) % n) as usize];
+    let starting = ((game / (2 * n)) % 2) as u8;
+    let seed = mix(cfg.base_seed ^ mix(game));
+    let mut deck_ix = [opp_deck; 2];
+    deck_ix[pilot] = cfg.pilot_deck;
+    let decks = [&RUNTIME_DECKS[deck_ix[0]], &RUNTIME_DECKS[deck_ix[1]]];
+    let mut session =
+        FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
+            1,
+            seed,
+            MAX_PHYSICAL,
+            MAX_PHYSICAL * 128,
+            [decks[0].id.to_owned(), decks[1].id.to_owned()],
+            [decks[0].card_ids.to_vec(), decks[1].card_ids.to_vec()],
+            PlayerId(starting),
+        )
+        .map_err(|e| format!("{e:?}"))?;
+    base.reset_sampling_v1(paired_policy_seeds_v1(seed));
+    let mut rows = Vec::new();
+    let (score, turns) = loop {
+        match session.current_response() {
+            FastActorResponseV1::Terminal(t) => {
+                let natural = t.terminal_classification == TerminalClassificationV1::Natural;
+                break (
+                    match t.winner {
+                        Some(w) if natural => f64::from(u8::from(seat_index(w) == pilot)),
+                        _ => 0.5,
+                    },
+                    session.game_state().turn,
+                );
+            }
+            FastActorResponseV1::Decision(d) => {
+                let a = base.select_fast_session_v1(&session)?;
+                if seat_index(d.acting_player) == pilot && d.legal_action_count >= 2 {
+                    let sem = session.diagnostic_current_action_semantics().ok_or("semantics")?;
+                    if let Some(filter) = root_filter.as_deref() {
+                        let hit = sem.iter().any(|x| {
+                            named(serde_json::to_value(x).unwrap_or_default()).to_string().contains(filter)
+                        });
+                        if hit {
+                            let mut root = evaluate_root(cfg, &session, roll, seed, rows.len() as u64)?;
+                            root["game"] = json!(game);
+                            root["base_chosen"] = json!(a);
+                            root["named"] = json!(sem.iter().map(|x| named(serde_json::to_value(x).unwrap_or_default())).collect::<Vec<_>>());
+                            roots.push(root);
+                        }
+                    }
+                    let probs = softmax(&base.score_fast_session_v1(&session)?.logits);
+                    let st = session.game_state();
+                    let me = &st.players[pilot];
+                    let op = &st.players[1 - pilot];
+                    let cands: Vec<_> = sem.iter().map(|x| named(serde_json::to_value(x).unwrap_or_default())).collect();
+                    rows.push(json!({"kind":"decision","game":game,"turn":st.turn,"step":format!("{:?}",st.step),
+                        "active":st.active_player.0 as usize == pilot,"chosen":a,"probs":probs,"cands":cands,
+                        "life":[me.life,op.life],"pool":me.mana_pool,"hand":zone_names(st,&me.hand),
+                        "bf":zone_names(st,&me.battlefield),"gy":zone_names(st,&me.graveyard),"lib":me.library.len(),
+                        "opp_bf":zone_names(st,&op.battlefield),"opp_hand":op.hand.len(),"stack":st.stack.len()}));
+                }
+                session
+                    .step(d.episode_id, d.step, a)
+                    .map_err(|e| format!("{e:?}"))?;
+            }
+        }
+    };
+    let st = session.game_state();
+    let me = &st.players[pilot];
+    let mut out = json!({"kind":"trace_game","game":game,"pilot_seat":pilot,"pilot_deck":decks[pilot].id,
+        "opp_deck":RUNTIME_DECKS[opp_deck].id,"starting_player":starting,"score":score,"turns":turns,
+        "final_life":[me.life,st.players[1-pilot].life],"final_lib":[me.library.len(),st.players[1-pilot].library.len()],
+        "final_bf":zone_names(st,&me.battlefield),"final_gy":zone_names(st,&me.graveyard),"final_hand":zone_names(st,&me.hand)}).to_string();
+    out.push('\n');
+    for r in rows.into_iter().chain(roots) {
+        out.push_str(&r.to_string());
+        out.push('\n');
+    }
+    let mut f = sink.lock().map_err(|_| "sink poisoned")?;
+    f.write_all(out.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Scripted correction of the two Spy combo choices T1 gets wrong. `level`
+/// 1: Dread Return targets Lotleth Giant when offered. Level 2 adds: Balustrade
+/// Spy targets its controller when the controller's library holds no land, a
+/// Dread Return is in library or graveyard, a Lotleth Giant is in library or
+/// graveyard, and the controller has three creatures to sacrifice. The
+/// controller knows its own library contents, so this uses no hidden info.
+fn spy_combo_override(session: &FastActorSessionV1, seat: usize, level: u8) -> Option<u32> {
+    use crate::card_def::{CardType, CARD_DEFS};
+    let sem = session.diagnostic_current_action_semantics()?;
+    let named_sem: Vec<serde_json::Value> =
+        sem.iter().map(|x| named(serde_json::to_value(x).unwrap_or_default())).collect();
+    let is = |v: &serde_json::Value, kind: &str, src: &str| v["action_kind"] == kind && v["source"] == src;
+    if let Some(i) = named_sem.iter().position(|v| {
+        is(v, "choose_target", "Dread Return") && v["target"]["object"] == "Lotleth Giant"
+    }) {
+        return Some(i as u32);
+    }
+    let spy_target = named_sem.iter().any(|v| is(v, "choose_target", "Balustrade Spy"));
+    let spy_cast = named_sem.iter().position(|v| is(v, "cast_spell", "Balustrade Spy"));
+    if level < 2 || !(spy_target || (level >= 3 && spy_cast.is_some())) {
+        return None;
+    }
+    let st = session.game_state();
+    let me = &st.players[seat];
+    let names = |ids: &[crate::ids::ObjectId]| -> Vec<String> { zone_names(st, ids) };
+    let lib_land = me.library.iter().any(|&o| CARD_DEFS[st.objects.get(o).card_def as usize].types.contains(&CardType::Land));
+    let pool: Vec<String> = names(&me.library).into_iter().chain(names(&me.graveyard)).collect();
+    let creatures = me
+        .battlefield
+        .iter()
+        .filter(|&&o| CARD_DEFS[st.objects.get(o).card_def as usize].types.contains(&CardType::Creature))
+        .count();
+    let ready = !lib_land
+        && pool.iter().any(|n| n == "Dread Return")
+        && pool.iter().any(|n| n == "Lotleth Giant");
+    if !spy_target {
+        // Level 3: cast an offered Spy whenever it would complete the combo
+        // (Spy itself is the third creature to sacrifice).
+        return (ready && creatures >= 2).then(|| spy_cast.unwrap() as u32);
+    }
+    let live = ready && creatures >= 3;
+    let want = if live { seat } else { 1 - seat };
+    named_sem
+        .iter()
+        .position(|v| is(v, "choose_target", "Balustrade Spy") && v["target"]["player"] == format!("p{want}"))
+        .map(|i| i as u32)
+}
+
+/// Paired plain vs scripted-fix games for the Spy pilot (pilot seat as in
+/// `run_pilot_game`). Same seeds and sampling streams for both variants.
+fn run_spyfix_game(
+    cfg: &CensusConfigV1,
+    game: u64,
+    base: &mut FrozenPlayPolicyV1,
+    sink: &Mutex<std::fs::File>,
+) -> Result<(), String> {
+    let n = cfg.decks.len() as u64;
+    let pilot = (game % 2) as usize;
+    let opp_deck = cfg.decks[((game / 2) % n) as usize];
+    let starting = ((game / (2 * n)) % 2) as u8;
+    let seed = mix(cfg.base_seed ^ mix(game));
+    let mut deck_ix = [opp_deck; 2];
+    deck_ix[pilot] = cfg.pilot_deck;
+    let decks = [&RUNTIME_DECKS[deck_ix[0]], &RUNTIME_DECKS[deck_ix[1]]];
+    let mut scores = [0.0f64; 4];
+    let mut overrides = [0u32; 4];
+    let mut turns = [0u32; 4];
+    for level in 0..4u8 {
+        let mut session =
+            FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
+                1,
+                seed,
+                MAX_PHYSICAL,
+                MAX_PHYSICAL * 128,
+                [decks[0].id.to_owned(), decks[1].id.to_owned()],
+                [decks[0].card_ids.to_vec(), decks[1].card_ids.to_vec()],
+                PlayerId(starting),
+            )
+            .map_err(|e| format!("{e:?}"))?;
+        base.reset_sampling_v1(paired_policy_seeds_v1(seed));
+        scores[level as usize] = loop {
+            match session.current_response() {
+                FastActorResponseV1::Terminal(t) => {
+                    let natural = t.terminal_classification == TerminalClassificationV1::Natural;
+                    turns[level as usize] = session.game_state().turn;
+                    break match t.winner {
+                        Some(w) if natural => f64::from(u8::from(seat_index(w) == pilot)),
+                        _ => 0.5,
+                    };
+                }
+                FastActorResponseV1::Decision(d) => {
+                    let mut a = base.select_fast_session_v1(&session)?;
+                    if level > 0 && seat_index(d.acting_player) == pilot {
+                        if let Some(o) = spy_combo_override(&session, pilot, level) {
+                            if o != a {
+                                overrides[level as usize] += 1;
+                            }
+                            a = o;
+                        }
+                    }
+                    session
+                        .step(d.episode_id, d.step, a)
+                        .map_err(|e| format!("{e:?}"))?;
+                }
+            }
+        };
+    }
+    let row = json!({"kind":"spyfix","game":game,"pilot_seat":pilot,"opp_deck":RUNTIME_DECKS[opp_deck].id,
+        "starting_player":starting,"plain":scores[0],"dr_fix":scores[1],"full_fix":scores[2],"cast_fix":scores[3],
+        "overrides":overrides,"turns":turns});
+    let mut f = sink.lock().map_err(|_| "sink poisoned")?;
+    writeln!(f, "{row}").map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub fn run_v1(cfg: CensusConfigV1) -> Result<(), String> {
     let source: ExpandedModelSourceV1 = serde_json::from_slice(
         &std::fs::read(&cfg.source).map_err(|e| e.to_string())?,
@@ -511,6 +738,10 @@ pub fn run_v1(cfg: CensusConfigV1) -> Result<(), String> {
                     }
                     let result = if cfg.mode == "mulligan" {
                         run_mulligan_game(cfg, g, &mut roll, sink)
+                    } else if cfg.mode == "spyfix" {
+                        run_spyfix_game(cfg, g, &mut base, sink)
+                    } else if cfg.mode == "trace" {
+                        run_trace_game(cfg, g, &mut base, &mut roll, sink)
                     } else if cfg.mode == "pilot" {
                         run_pilot_game(cfg, g, &mut base, &mut roll, sink)
                     } else {
