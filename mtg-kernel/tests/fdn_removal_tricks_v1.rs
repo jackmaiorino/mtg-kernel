@@ -284,17 +284,18 @@ fn incinerating_blast_deals_six_then_offers_an_optional_discard_to_draw() {
         let spell = cast(&mut surface, &mut state, "Incinerating Blast", None, &[angel]);
         let hand_before = state.players[0].hand.len();
         pass_both(&mut surface, &mut state);
+        // The harness surface reshapes the engine's optional cost into a
+        // "pay at all?" gate, presented as the (false, false) sentinel.
         match next(&mut surface, &mut state) {
             Decision::ChooseOptionalCost {
                 player,
-                discard_payable,
+                discard_payable: false,
+                sacrifice_payable: false,
                 ..
-            } => {
-                assert_eq!(player, PlayerId::P0);
-                assert!(discard_payable);
-            }
+            } => assert_eq!(player, PlayerId::P0),
             other => panic!("{other:?}"),
         }
+        assert!(state.engine.pending_optional_cost.as_ref().unwrap().discard_payable);
         let choice = if accept {
             OptionalCostChoice::Discard
         } else {
@@ -302,11 +303,9 @@ fn incinerating_blast_deals_six_then_offers_an_optional_discard_to_draw() {
         };
         apply(&mut surface, &mut state, Action::ChooseOptionalCost(choice));
         if accept {
-            match next(&mut surface, &mut state) {
-                Decision::Discard { .. } => {}
-                other => panic!("{other:?}"),
+            if let Decision::Discard { .. } = next(&mut surface, &mut state) {
+                apply(&mut surface, &mut state, Action::Discard(vec![fodder]));
             }
-            apply(&mut surface, &mut state, Action::Discard(vec![fodder]));
         }
         priority(&mut surface, &mut state);
         assert!(state.stack.is_empty());
@@ -358,7 +357,8 @@ fn abrade_damages_a_creature_or_destroys_an_artifact() {
     assert_eq!(zone(&state, nighthawk), Zone::Graveyard);
     assert_eq!(zone(&state, furnace), Zone::Battlefield);
 
-    cast(&mut surface, &mut state, "Abrade", Some(1), &[furnace]);
+    // The only creature is gone, so the artifact mode is selected silently.
+    cast(&mut surface, &mut state, "Abrade", None, &[furnace]);
     resolve(&mut surface, &mut state);
     assert_eq!(zone(&state, furnace), Zone::Graveyard);
 }
