@@ -15,10 +15,11 @@ Most frequent XMage building blocks across the remaining names: enters-the-battl
 
 Issue 110's remaining work is split by mechanic family so parallel threads do not build the same engine primitive twice. The milestone owner keeps this inventory and the issue checklist current and builds the keyword, gainland and simple trigger cards. Separate threads own removal and pumps, tokens and auras, and equipment, kicker, flashback and library search. Custom rares and planeswalkers wait until those land. Each PR appends card ids and bumps the Limited catalog identity, so batches rebase and take the next version just before opening and merge one at a time.
 
-Claimed but not yet merged:
+Claimed but not yet merged, in merge order (each thread tells the next when it merges):
 
 - Equipment/kicker thread, first batch: Evolving Wilds, Burst Lightning, Swiftfoot Boots, Solemn Simulacrum (adds the Golem subtype), Grim Tutor, Quick-Draw Katana, Adventuring Gear and Goldvein Pick; takes v55 after `fdn_triggers_tricks_v1` (v54).
 - Tokens/auras thread, first batch: Dragon Trainer, Resolute Reinforcements, Elfsworn Giant, Eager Trufflesnout, Rite of the Dragoncaller, Heroic Reinforcements, Goblin Surprise, Twinblade Blessing, Blanchwood Armor; takes v56 after the equipment batch.
+- Removal/pumps thread, first batch: Sure Strike, Snakeskin Veil, Seismic Rupture, Boltwave, Day of Judgment, Incinerating Blast, Slagstorm, Abrade, Preposterous Proportions, Bake into a Pie; takes v57 after the tokens/auras batch. Planned next: Hero's Downfall, Broken Wings, Make Your Move, Meteor Golem, Reclamation Sage.
 
 ## Tier 0
 
