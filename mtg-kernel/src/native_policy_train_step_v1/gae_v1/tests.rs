@@ -80,6 +80,68 @@ fn state_bits(state: &NativePolicyValueTrainStateV1) -> (u64, u32, Vec<u32>) {
     (state.adam_step, state.scorer_bias_anchor_bits, bits)
 }
 
+#[test]
+fn exploration_zero_and_diagnostic_switch_preserve_complete_state() {
+    let base = model();
+    let fixture = Fixture::capture(&base);
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let targets = [0.3, -0.2];
+    let advantages = [0.15, -0.4];
+    for beta in [0.0, 0.01] {
+        let mut plain = NativePolicyValueTrainStateV1::new_v1(base.clone()).unwrap();
+        let mut diagnostic = plain.clone();
+        let (a, _) = plain.train_step_gae_recovery_v1(
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3,
+            &groups, &targets, &advantages, VC, LR, beta, 1, false).unwrap();
+        let (b, report) = diagnostic.train_step_gae_recovery_v1(
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3,
+            &groups, &targets, &advantages, VC, LR, beta, 1, true).unwrap();
+        assert_eq!(a.gradients,b.gradients);
+        assert_eq!(a.scorer_bias_gauge,b.scorer_bias_gauge);
+        assert_eq!(a.loss.to_bits(),b.loss.to_bits());
+        assert_eq!(state_bits(&plain),state_bits(&diagnostic));
+        assert_eq!(report["diagnostics"]["extra_backward_passes"],2);
+        assert_eq!(report["diagnostics"]["blocks"].as_array().unwrap().len(),3);
+        assert!(report["diagnostics"]["tanh"]["scorer"]["count"].as_u64().unwrap()>0);
+        if beta == 0.0 {
+            let mut legacy=NativePolicyValueTrainStateV1::new_v1(base.clone()).unwrap();
+            let c=legacy.train_step_gae_feature_transfer_v3(&groups,&targets,&advantages,VC,LR).unwrap();
+            assert_eq!(a.gradients,c.gradients);assert_eq!(a.scorer_bias_gauge,c.scorer_bias_gauge);
+            assert_eq!(a.loss.to_bits(),c.loss.to_bits());
+            assert_eq!(state_bits(&plain),state_bits(&legacy));
+            assert_eq!(plain.state_sha256_v1().unwrap(),legacy.state_sha256_v1().unwrap());
+        }
+    }
+}
+
+#[test]
+fn exploration_group_weighting_and_parameter_derivative() {
+    let base=model();let fixture=Fixture::capture(&base);let steps=fixture.substeps();let groups=groups(&steps);
+    let targets=[0.3,-0.2];let advantages=[0.15,-0.4];let beta=0.01;
+    let mut state=NativePolicyValueTrainStateV1::new_v1(base.clone()).unwrap();
+    let (result,report)=state.train_step_gae_recovery_v1(
+        crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3,
+        &groups,&targets,&advantages,VC,LR,beta,1,false).unwrap();
+    let regularizer=|model:&NativePolicyValueNetV1| -> f64 {
+        groups.iter().flat_map(|g|g.substeps).map(|step| {
+            let NativePolicyForwardInputV1::Encoded(view)=&step.forward else {unreachable!()};
+            exploration_v1::uniform_kl_v1(&model.forward_feature_transfer_v3(**view).unwrap().logits)
+        }).sum::<f64>()/groups.len() as f64
+    };
+    assert_eq!(report["normalization_physical_groups"],2.0);
+    assert!((report["regularizer_sum"].as_f64().unwrap()-regularizer(&base)*2.0).abs()<1e-12);
+    let epsilon=0.002;
+    for name in ["card_embedding.weight","scorer.2.weight","value_head.2.weight"] {
+        let gradient=result.gradients.iter().find(|p|p.name==name).unwrap();
+        let (i,&analytic)=gradient.values.iter().enumerate().max_by(|a,b|a.1.abs().total_cmp(&b.1.abs())).unwrap();
+        let positive=perturbed_model(&base,name,i,epsilon);let negative=perturbed_model(&base,name,i,-epsilon);
+        let loss=|model:&NativePolicyValueNetV1|loss_oracle(model,&groups,&targets,&advantages)+f64::from(beta)*regularizer(model);
+        let numerical=(loss(&positive)-loss(&negative))/(2.0*f64::from(epsilon));
+        assert!((numerical-f64::from(analytic)).abs()<0.003+0.03*f64::from(analytic.abs()),"{name}: {numerical} vs {analytic}");
+    }
+}
+
 /// Each group here is its own single-decision episode. A one-decision
 /// episode's GAE advantage/value_target reduce to today's v3 formula for
 /// *any* gamma/lambda (`bootstrapped_advantage_v1`'s own goldens prove the

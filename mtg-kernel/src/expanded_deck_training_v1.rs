@@ -2,6 +2,8 @@
 //! CPU collection and explicitly selected updates. This successor starts from an inference export with fresh Adam
 //! or resumes its own checkpoint. It never reads or writes a legacy Store.
 
+pub mod exploration_probe_v1;
+
 use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::durable_publication_v1::{
     capture_existing_publication_parent_v1, publish_new_file_v1, DurableFileExpectationV1,
@@ -247,6 +249,13 @@ pub enum ExpandedLossSelectionV1 {
         lambda: f32,
         entropy_coefficient: f32,
     },
+    GaeUniformKlRecoveryV1 {
+        gamma: f32,
+        lambda: f32,
+        initial_adam_step: u64,
+        recovery: bool,
+        diagnostics: bool,
+    },
 }
 
 impl ExpandedLossSelectionV1 {
@@ -259,6 +268,10 @@ impl ExpandedLossSelectionV1 {
     pub(crate) fn validate_v1(&self) -> Result<(), String> {
         match self {
             Self::TerminalReinforceValueV3 => Ok(()),
+            Self::GaeUniformKlRecoveryV1 {gamma,lambda,initial_adam_step,..} => {
+                ensure(gamma.to_bits()==1.0_f32.to_bits() && lambda.to_bits()==0.9_f32.to_bits()
+                    && *initial_adam_step==32400,"recovery requires gamma1/lambda0.9/initialAdam32400")
+            },
             Self::GaeAdvantageValueV1 {
                 gamma,
                 lambda,
@@ -286,6 +299,7 @@ impl ExpandedLossSelectionV1 {
         match self {
             Self::TerminalReinforceValueV3 => "terminal_reinforce_value/v3",
             Self::GaeAdvantageValueV1 { .. } => GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1,
+            Self::GaeUniformKlRecoveryV1 { .. } => "gae_uniform_kl_recovery/v1",
         }
     }
 }
@@ -957,6 +971,8 @@ pub(crate) struct ExpandedCheckpointV1 {
     gae_lambda_bits: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     entropy_coefficient_bits: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    exploration: Option<ExpandedLossSelectionV1>,
     learning_rate_bits: u32,
     value_coefficient_bits: u32,
     #[serde(
@@ -1229,7 +1245,8 @@ fn restore_checkpoint_fields_v1(
     )?;
     ensure(
         saved.loss_identity == "terminal_reinforce_value/v3"
-            || saved.loss_identity == GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1,
+            || saved.loss_identity == GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1
+            || saved.loss_identity == "gae_uniform_kl_recovery/v1",
         "checkpoint loss differs",
     )?;
     // `gamma_bits`/`gae_lambda_bits`/`entropy_coefficient_bits` are required
@@ -1238,7 +1255,17 @@ fn restore_checkpoint_fields_v1(
     // carries them (or a gae checkpoint missing one) fails closed here
     // rather than silently resuming under a different loss than the one
     // that actually produced these parameters.
-    let is_gae = saved.loss_identity == GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1;
+    let is_recovery = saved.loss_identity == "gae_uniform_kl_recovery/v1";
+    ensure(is_recovery == saved.exploration.is_some(),"checkpoint exploration identity differs")?;
+    if let Some(selection)=saved.exploration {
+        selection.validate_v1()?;
+        let ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 {initial_adam_step,..}=selection else {
+            return Err("checkpoint exploration selection differs".into());
+        };
+        ensure(saved.adam_step>initial_adam_step && saved.adam_step<=initial_adam_step+64,
+            "checkpoint exploration Adam ancestry differs")?;
+    }
+    let is_gae = saved.loss_identity == GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1 || is_recovery;
     ensure(
         is_gae
             == (saved.gamma_bits.is_some()
@@ -2147,6 +2174,12 @@ fn replay_learner_groups_v1<'a>(
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ExpandedTrainingCommandV1 {
+    ScoreSavedStates {
+        source: ExpandedModelSourceV1,
+        probes: Vec<exploration_probe_v1::SavedStateProbeV1>,
+        membership_sha256: String,
+        output_directory: PathBuf,
+    },
     Collect {
         source: ExpandedModelSourceV1,
         episodes: Vec<ExpandedEpisodeV1>,
@@ -2246,6 +2279,8 @@ pub enum ExpandedTrainingCommandV1 {
 
 pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
     match command {
+        ExpandedTrainingCommandV1::ScoreSavedStates {source,probes,membership_sha256,output_directory} =>
+            exploration_probe_v1::score_v1(source,probes,membership_sha256,output_directory),
         ExpandedTrainingCommandV1::LineBHeadDistance { treatment, control } => {
             line_b_teacher_packet_v1::line_b_head_distance_v1(&treatment, &control)
         }
@@ -2752,7 +2787,8 @@ fn execute_update_v1(
     // stay byte-identical (design section 2/6).
     let gae_targets = match &loss_selection {
         ExpandedLossSelectionV1::TerminalReinforceValueV3 => None,
-        ExpandedLossSelectionV1::GaeAdvantageValueV1 { gamma, lambda, .. } => Some(
+        ExpandedLossSelectionV1::GaeAdvantageValueV1 { gamma, lambda, .. }
+        | ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { gamma, lambda, .. } => Some(
             compute_gae_targets_v1(&groups, &episode_ordinals, *gamma, *lambda)?,
         ),
     };
@@ -2857,12 +2893,27 @@ fn execute_update_v1(
     };
     let learner_started = std::time::Instant::now();
     let mut line_b_auxiliary = None;
+    let mut exploration_report = None;
     #[cfg_attr(
         not(feature = "experimental-burn-net8-packed-cuda-v1"),
         allow(unused_mut)
     )]
     let mut line_b_envelope: Option<Value> = None;
     let update = match &loss_selection {
+        ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 {initial_adam_step,recovery,diagnostics,..} => {
+            ensure(matches!(update_backend,ExpandedUpdateBackendV1::Cpu)
+                && matches!(backward_execution,UpdateBackwardExecutionV1::Sequential)
+                && line_b.is_none(),"recovery requires CPU sequential without line_b")?;
+            ensure(learning_rate.to_bits()==0.0001_f32.to_bits() && value_coefficient.to_bits()==0.5_f32.to_bits(),
+                "recovery requires learning rate1e-4/value coefficient0.5")?;
+            let update_index=state.adam_step_v1().checked_add(1).and_then(|x|x.checked_sub(*initial_adam_step))
+                .ok_or("recovery Adam update index overflow")?;
+            let beta=crate::native_policy_train_step_v1::exploration_v1::recovery_beta_v1(update_index,*recovery)?;
+            let gae=gae_targets.as_ref().expect("recovery GAE targets");
+            let (result,report)=state.train_step_gae_recovery_v1(generation,&groups,&gae.value_targets,
+                &gae.advantages,value_coefficient,learning_rate,beta,update_index,*diagnostics).map_err(err)?;
+            exploration_report=Some(report);result
+        }
         ExpandedLossSelectionV1::TerminalReinforceValueV3 => match (update_backend, generation) {
             (ExpandedUpdateBackendV1::Cpu, FreshLineageGenerationV1::V3) => state
                 .train_step_feature_transfer_v3(&groups, value_coefficient, learning_rate)
@@ -3163,19 +3214,23 @@ fn execute_update_v1(
         loss_identity: loss_selection.loss_identity_v1().into(),
         gamma_bits: match &loss_selection {
             ExpandedLossSelectionV1::TerminalReinforceValueV3 => None,
-            ExpandedLossSelectionV1::GaeAdvantageValueV1 { gamma, .. } => Some(gamma.to_bits()),
+            ExpandedLossSelectionV1::GaeAdvantageValueV1 { gamma, .. }
+            | ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { gamma, .. } => Some(gamma.to_bits()),
         },
         gae_lambda_bits: match &loss_selection {
             ExpandedLossSelectionV1::TerminalReinforceValueV3 => None,
-            ExpandedLossSelectionV1::GaeAdvantageValueV1 { lambda, .. } => Some(lambda.to_bits()),
+            ExpandedLossSelectionV1::GaeAdvantageValueV1 { lambda, .. }
+            | ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { lambda, .. } => Some(lambda.to_bits()),
         },
         entropy_coefficient_bits: match &loss_selection {
+            ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { .. } => Some(0.0_f32.to_bits()),
             ExpandedLossSelectionV1::TerminalReinforceValueV3 => None,
             ExpandedLossSelectionV1::GaeAdvantageValueV1 {
                 entropy_coefficient,
                 ..
             } => Some(entropy_coefficient.to_bits()),
         },
+        exploration: if matches!(loss_selection,ExpandedLossSelectionV1::GaeUniformKlRecoveryV1{..}) {Some(loss_selection)} else {None},
         learning_rate_bits: learning_rate.to_bits(),
         value_coefficient_bits: value_coefficient.to_bits(),
         registry_transfer: transfer
@@ -3196,6 +3251,7 @@ fn execute_update_v1(
         "published checkpoint round trip differs",
     )?;
     let mut result = json!({"schema":"mtg-kernel-expanded-deck-update/v1", "complete":true, "source":source, "trajectories":trajectories, "checkpoint":checkpoint_pin, "before_state_sha256":before, "after_state_sha256":after, "adam_step":update.adam_step, "physical_decisions":groups.len(), "policy_substeps":update.selected_outputs.len(), "loss":update.loss, "policy_sum":update.policy_sum, "value_sum":update.value_sum, "checkpoint_readback":true, "numerical_backend":"native-cpu-sequential", "loss_identity":loss_selection.loss_identity_v1(), "claim":"engineering update only; no playing-strength or production-throughput claim"});
+    if let Some(exploration)=exploration_report {result["exploration"]=exploration;}
     update_backend.record_update_execution_v1(&mut result);
     if let Some(frozen) = frozen_tensor_sha256 {
         // The update's scorer-bias gauge (the step refuses a residual beyond
@@ -3897,6 +3953,7 @@ pub(crate) mod tests {
             gamma_bits: None,
             gae_lambda_bits: None,
             entropy_coefficient_bits: None,
+            exploration: None,
             learning_rate_bits: 0.001_f32.to_bits(),
             value_coefficient_bits: 0.5_f32.to_bits(),
             registry_transfer: None,
