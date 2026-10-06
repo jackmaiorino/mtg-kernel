@@ -100,8 +100,12 @@ def human_prefix(source, response_pin, cases):
             'unexpected human game start')
     prompts, openings = {}, {}
     for response in responses:
-        require(response['ok'] and response['error'] is None, 'failed original human response')
         view = response['view']
+        if not response['ok'] or response['error'] is not None:
+            require(view['phase'] == 'stopped' and 'decision' not in view and 'opening' not in view,
+                    'failed response contains a required gameplay/opening view')
+            # Retained final ui-138 is a stopped session response, never an action prompt.
+            continue
         if 'decision' in view:
             decision = view['decision']; seq = decision['prompt_seq']
             require(seq not in prompts or prompts[seq] == decision, 'conflicting historical prompt')
