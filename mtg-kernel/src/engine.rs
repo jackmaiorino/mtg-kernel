@@ -5393,70 +5393,77 @@ fn is_castable_now(
                 && can_pay_components(escape.cost, player, id, state)
         }),
         CastMethodV4::Normal => {
-            let normal_ok = main_timing_ok
-                && normal_cast_target_prefix_is_payable(
-                    def,
-                    id,
-                    def.target_spec,
-                    player,
-                    &[],
-                    state,
-                );
-            let alt_ok = def
-                .alt_cost
-                .map(|alt| {
-                    main_timing_ok
-                        && alt_cost_condition_met(alt.condition, player, state)
+            // Every check below is a pure read of `state`, so they are
+            // ordered cheapest-first and short-circuit: a spell outside its
+            // timing window never pays for target or mana enumeration.
+            let normal_ok = || {
+                normal_cast_target_prefix_is_payable(def, id, def.target_spec, player, &[], state)
+            };
+            let alt_ok = || {
+                def.alt_cost.is_some_and(|alt| {
+                    alt_cost_condition_met(alt.condition, player, state)
                         && can_pay_components(alt.components, player, id, state)
                 })
-                .unwrap_or(false);
-            let main_ok = !viable_printed_spell_modes(def, id, player, state).is_empty()
-                && (normal_ok || alt_ok)
+            };
+            let main_ok = main_timing_ok
+                && (normal_ok() || alt_ok())
                 && def
                     .additional_cost
-                    .is_none_or(|add| can_pay_components(add, player, id, state));
-            let omen_ok = supported_omen(def).is_some_and(|omen| {
-                matches!(state.objects.get(id).zone, Zone::Hand | Zone::Exile)
-                    && cast_form_timing_ok(omen.types, Keywords::NONE, player, state)
-                    && target_prefix_can_complete_for_controller_and_source(
-                        omen.target_spec,
-                        &[],
-                        player,
-                        targeting_source_for_object(state, id),
-                        state,
-                    )
-                    && mana::can_pay(&omen.cost, 0, player, state).is_some()
-            });
-            let bestow_ok = supported_bestow(def).is_some_and(|bestow| {
-                matches!(state.objects.get(id).zone, Zone::Hand | Zone::Exile)
-                    && cast_form_timing_ok(&[CardType::Enchantment], Keywords::NONE, player, state)
-                    && target_prefix_can_complete_for_controller_and_source(
-                        bestow.target_spec,
-                        &[],
-                        player,
-                        targeting_source_for_object(state, id),
-                        state,
-                    )
-                    && mana::can_pay(&bestow.cost, 0, player, state).is_some()
-            });
+                    .is_none_or(|add| can_pay_components(add, player, id, state))
+                && !viable_printed_spell_modes(def, id, player, state).is_empty();
+            let omen_ok = || {
+                supported_omen(def).is_some_and(|omen| {
+                    matches!(state.objects.get(id).zone, Zone::Hand | Zone::Exile)
+                        && cast_form_timing_ok(omen.types, Keywords::NONE, player, state)
+                        && target_prefix_can_complete_for_controller_and_source(
+                            omen.target_spec,
+                            &[],
+                            player,
+                            targeting_source_for_object(state, id),
+                            state,
+                        )
+                        && mana::can_pay(&omen.cost, 0, player, state).is_some()
+                })
+            };
+            let bestow_ok = || {
+                supported_bestow(def).is_some_and(|bestow| {
+                    matches!(state.objects.get(id).zone, Zone::Hand | Zone::Exile)
+                        && cast_form_timing_ok(
+                            &[CardType::Enchantment],
+                            Keywords::NONE,
+                            player,
+                            state,
+                        )
+                        && target_prefix_can_complete_for_controller_and_source(
+                            bestow.target_spec,
+                            &[],
+                            player,
+                            targeting_source_for_object(state, id),
+                            state,
+                        )
+                        && mana::can_pay(&bestow.cost, 0, player, state).is_some()
+                })
+            };
             // The Adventure side is only ever offered from Hand -- unlike
             // Omen/Bestow above, exile never legalizes it: a card sitting in
             // exile with `on_adventure` set offers only its creature face
             // (already covered by `main_ok`, zone-agnostic), never the
             // Adventure spell again.
-            let adventure_ok = supported_adventure(def).is_some_and(|adventure| {
-                state.objects.get(id).zone == Zone::Hand
-                    && cast_form_timing_ok(adventure.types, Keywords::NONE, player, state)
-                    && target_prefix_can_complete_for_controller_and_source(
-                        adventure.target_spec,
-                        &[],
-                        player,
-                        targeting_source_for_object(state, id),
-                        state,
-                    )
-                    && mana::can_pay(&adventure.cost, 0, player, state).is_some()
-            });
-            main_ok || omen_ok || bestow_ok || adventure_ok
+            let adventure_ok = || {
+                supported_adventure(def).is_some_and(|adventure| {
+                    state.objects.get(id).zone == Zone::Hand
+                        && cast_form_timing_ok(adventure.types, Keywords::NONE, player, state)
+                        && target_prefix_can_complete_for_controller_and_source(
+                            adventure.target_spec,
+                            &[],
+                            player,
+                            targeting_source_for_object(state, id),
+                            state,
+                        )
+                        && mana::can_pay(&adventure.cost, 0, player, state).is_some()
+                })
+            };
+            main_ok || omen_ok() || bestow_ok() || adventure_ok()
         }
         CastMethodV4::Alternative
         | CastMethodV4::Madness

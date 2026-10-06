@@ -1862,6 +1862,18 @@ pub(crate) fn saga_final_chapter_is_pending(
         })
 }
 
+/// `CARD_DEFS[i].is_token`, packed densely so the per-SBA-pass token sweep
+/// over every object does not stride through full `CardDef` entries.
+fn token_card_defs() -> &'static [bool] {
+    static TABLE: std::sync::OnceLock<Box<[bool]>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        crate::card_def::CARD_DEFS
+            .iter()
+            .map(|card| card.is_token)
+            .collect()
+    })
+}
+
 fn sba_fixed_point_with_protected_triggers(
     state: &mut GameState,
     protected_triggers: &[PendingTrigger],
@@ -2006,13 +2018,11 @@ fn sba_fixed_point_with_protected_triggers(
         // the real v3 corpus: `kernel_gy` carrying a stray "Blood Token"
         // entry the trace's own graveyard snapshot never has, many turns
         // after the token was created and then activated/sacrificed).
+        let token_defs = token_card_defs();
         let leaving: Vec<ObjectId> = state
             .objects
             .iter()
-            .filter(|(_, obj)| {
-                obj.zone != Zone::Battlefield
-                    && crate::card_def::CARD_DEFS[obj.card_def as usize].is_token
-            })
+            .filter(|(_, obj)| obj.zone != Zone::Battlefield && token_defs[obj.card_def as usize])
             .map(|(id, _)| id)
             .collect();
         for id in leaving {
@@ -2122,6 +2132,13 @@ fn triggers_from_events(
                         && object.zone_change_count == entry.source.zone_change_count
                 })
     });
+    if events.is_empty() {
+        // Nothing can match an empty batch; only the use-ledger pruning
+        // above is observable.
+        uses.sort_by_key(|entry| (entry.source.object, entry.ability_index));
+        state.trigger_uses_v1 = (!uses.is_empty()).then_some(uses);
+        return Vec::new();
+    }
     let draws_this_turn_at = draws_this_turn_snapshot(events, state);
     let mut new_triggers = Vec::new();
     let may_trigger = card_defs_with_event_triggers();
