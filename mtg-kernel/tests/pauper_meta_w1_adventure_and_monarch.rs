@@ -25,7 +25,7 @@ use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{
-    Counters, GameObject, GameState, ObjectStateV4, StackItemKind, Step, Zone,
+    Counters, GameObject, GameState, ObjectStateV4, StackItemKind, Step, Target, Zone,
 };
 
 fn card_id(name: &str) -> u16 {
@@ -168,6 +168,14 @@ fn forktail_sweep_is_cast_from_hand_then_the_dragon_is_cast_from_exile() {
     state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
     state.players[0].mana_pool[ManaColor::C.pool_index()] = 1;
 
+    put_object(&mut state, PlayerId::P1, "Faerie Seer", Zone::Battlefield);
+    put_object(
+        &mut state,
+        PlayerId::P1,
+        "Faerie Miscreant",
+        Zone::Battlefield,
+    );
+
     match engine::advance_until_decision(&mut state) {
         Decision::CastSpellOrPass {
             castable_spells, ..
@@ -179,10 +187,28 @@ fn forktail_sweep_is_cast_from_hand_then_the_dragon_is_cast_from_exile() {
     }
 
     engine::step(&mut state, Action::CastSpell(fang_dragon)).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass { .. }
+    ));
+    assert!(state.engine.pending_cast.is_none());
     assert!(
         state.stack.iter().any(|item| item.source == fang_dragon),
         "Forktail Sweep spell on stack"
     );
+    // The shared Omen discriminant must use Adventure's printed {1}{R}
+    // value, not the creature's seven, for mana-value target eligibility.
+    let prior_priority = state.priority_player;
+    state.priority_player = PlayerId::P1;
+    let spec = mtg_kernel::card_def::TargetSpec::SpellManaValueAtMostControlledSubtypes {
+        first: mtg_kernel::card_def::Subtype::Faerie,
+        second: Some(mtg_kernel::card_def::Subtype::FaerieAllCaps),
+    };
+    assert_eq!(
+        engine::legal_targets_for(spec, &[], &state),
+        vec![Target::Object(fang_dragon)]
+    );
+    state.priority_player = prior_priority;
     resolve_until_idle(&mut state);
 
     assert_eq!(
