@@ -337,7 +337,7 @@ fn slagstorm_modes_damage_every_creature_or_each_player() {
     assert_eq!(state.players[1].life, their_life);
 
     let mut state = ready();
-    let mut surface = surface();
+    let mut surface = crate::surface();
     let lions = put(&mut state, PlayerId::P1, "Savannah Lions", Zone::Battlefield);
     let (own_life, their_life) = (state.players[0].life, state.players[1].life);
     cast(&mut surface, &mut state, "Slagstorm", Some(1), &[]);
