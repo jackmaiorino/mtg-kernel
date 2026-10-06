@@ -12,6 +12,7 @@ fn main() {
         max_actions: 8,
         workers: 1,
         decks: (0..9).collect(),
+        mode: "decisions".into(),
     };
     for arg in std::env::args().skip(1) {
         let (k, v) = arg.split_once('=').expect("key=value arguments");
@@ -25,6 +26,7 @@ fn main() {
             "rollouts" => cfg.rollouts = v.parse().unwrap(),
             "max_actions" => cfg.max_actions = v.parse().unwrap(),
             "workers" => cfg.workers = v.parse().unwrap(),
+            "mode" => cfg.mode = v.into(),
             "decks" => cfg.decks = v.split(',').map(|x| x.parse().unwrap()).collect(),
             other => panic!("unknown argument {other}"),
         }

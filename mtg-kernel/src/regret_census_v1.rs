@@ -12,6 +12,7 @@ use crate::paired_bo1_harness_v1::paired_policy_seeds_v1;
 use crate::rl::{PlayerSeatV1, TerminalClassificationV1};
 use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
 use crate::runtime_decks::RUNTIME_DECKS;
+use crate::human_opening_v1::HumanOpeningV1;
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
 use crate::state::SplitMix64;
 use serde_json::json;
@@ -33,6 +34,7 @@ pub struct CensusConfigV1 {
     pub max_actions: usize,
     pub workers: usize,
     pub decks: Vec<usize>,
+    pub mode: String,
 }
 
 fn mix(mut z: u64) -> u64 {
@@ -236,6 +238,100 @@ fn evaluate_root(
         "wins":wins,"rollout_turns":turns,"non_natural":non_natural,"base_chosen":null}))
 }
 
+
+/// Rollout value of an opening for `observer`: continue with the policy until
+/// the observer's first decision, then determinize the observer's information
+/// set and play out. Returns one score per rollout.
+fn opening_rollouts(
+    session0: &FastActorSessionV1,
+    roll: &mut FrozenPlayPolicyV1,
+    observer: usize,
+    seeds: &[u64],
+) -> Result<Vec<f64>, String> {
+    let mut scores = Vec::with_capacity(seeds.len());
+    for &det in seeds {
+        let mut s = session0.clone();
+        roll.reset_sampling_v1([mix(det ^ 0xA1), mix(det ^ 0xB2)]);
+        loop {
+            match s.current_response() {
+                FastActorResponseV1::Decision(d) if seat_index(d.acting_player) != observer => {
+                    let a = roll.select_fast_session_v1(&s)?;
+                    s.step(d.episode_id, d.step, a).map_err(|e| format!("{e:?}"))?;
+                }
+                _ => break,
+            }
+        }
+        if matches!(s.current_response(), FastActorResponseV1::Decision(_)) {
+            s = s.census_redeterminized_clone_v1(det)?;
+        }
+        let (score, _, _) = play_out(&mut s, roll, observer)?;
+        scores.push(score);
+    }
+    Ok(scores)
+}
+
+fn hand_ids(opening: &HumanOpeningV1) -> Vec<u16> {
+    opening.view().hand.iter().map(|c| c.card_id).collect()
+}
+
+fn run_mulligan_game(
+    cfg: &CensusConfigV1,
+    game: u64,
+    roll: &mut FrozenPlayPolicyV1,
+    sink: &Mutex<std::fs::File>,
+) -> Result<(), String> {
+    let n = cfg.decks.len() as u64;
+    let d0 = cfg.decks[(game % n) as usize];
+    let d1 = cfg.decks[((game / n) % n) as usize];
+    let starting = ((game / (n * n)) % 2) as u8;
+    let seed = mix(cfg.base_seed ^ mix(game));
+    let decks = [&RUNTIME_DECKS[d0], &RUNTIME_DECKS[d1]];
+    let ids = [decks[0].id.to_owned(), decks[1].id.to_owned()];
+    let boards = [decks[0].card_ids.to_vec(), decks[1].card_ids.to_vec()];
+    let new_opening = |observer: u8| {
+        HumanOpeningV1::new(1, seed, MAX_PHYSICAL, MAX_PHYSICAL * 128, ids.clone(), boards.clone(),
+            PlayerId(starting), PlayerId(observer))
+    };
+    let m = cfg.rollouts as usize;
+    let mut out = String::new();
+    for observer in 0..2u8 {
+        let obs = observer as usize;
+        let seeds: Vec<u64> = (0..m as u64).map(|r| mix(seed ^ mix(0x4D55 ^ (r << 8) ^ observer as u64))).collect();
+        let mut keep = new_opening(observer)?;
+        let kept_hand = hand_ids(&keep);
+        keep.keep()?;
+        let keep_session = keep.into_session()?;
+        let keep_scores = opening_rollouts(&keep_session, roll, obs, &seeds)?;
+        let mut probe = new_opening(observer)?;
+        probe.mulligan()?;
+        let mull_hand = hand_ids(&probe);
+        let mut seen = Vec::new();
+        let mut bottoms = Vec::new();
+        let half = (m / 2).max(1);
+        for (index, &card) in mull_hand.iter().enumerate() {
+            if seen.contains(&card) {
+                continue;
+            }
+            seen.push(card);
+            let mut opening = new_opening(observer)?;
+            opening.mulligan()?;
+            opening.keep()?;
+            opening.bottom(&[index as u32])?;
+            let session = opening.into_session()?;
+            let scores = opening_rollouts(&session, roll, obs, &seeds[..half])?;
+            bottoms.push(json!({"card":card,"scores":scores}));
+        }
+        let row = json!({"kind":"mulligan","game":game,"seed":seed,"decks":[decks[0].id,decks[1].id],
+            "starting_player":starting,"observer":observer,"kept_hand":kept_hand,"keep_scores":keep_scores,
+            "mulligan_hand":mull_hand,"bottoms":bottoms});
+        out.push_str(&row.to_string());
+        out.push('\n');
+    }
+    let mut f = sink.lock().map_err(|_| "sink poisoned")?;
+    f.write_all(out.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub fn run_v1(cfg: CensusConfigV1) -> Result<(), String> {
     let source: ExpandedModelSourceV1 = serde_json::from_slice(
         &std::fs::read(&cfg.source).map_err(|e| e.to_string())?,
@@ -266,7 +362,12 @@ pub fn run_v1(cfg: CensusConfigV1) -> Result<(), String> {
                     if g >= end {
                         return Ok(());
                     }
-                    if let Err(e) = run_game(cfg, g, &mut base, &mut roll, sink) {
+                    let result = if cfg.mode == "mulligan" {
+                        run_mulligan_game(cfg, g, &mut roll, sink)
+                    } else {
+                        run_game(cfg, g, &mut base, &mut roll, sink)
+                    };
+                    if let Err(e) = result {
                         eprintln!("game {g} failed: {e}");
                         let row = json!({"kind":"error","game":g,"error":e});
                         let mut f = sink.lock().map_err(|_| "sink poisoned")?;
