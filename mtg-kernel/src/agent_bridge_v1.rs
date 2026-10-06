@@ -264,6 +264,10 @@ struct SpellbenchBridgeGameV1 {
     flat_v4_scratch: FlatV4EncodeScratchV1,
     /// Private declaration identity, retained across all attacker-major scans.
     private_block_root_step: Option<u64>,
+    /// Lengths of `event_history`, the observation journal and the object
+    /// arena already sent in private support; the next production decision
+    /// sends what follows.
+    history_cursor: (usize, usize, usize),
     #[cfg(test)]
     force_flat_v4_encode_error: bool,
 }
@@ -527,6 +531,7 @@ impl SpellbenchBridgeServerV1 {
             session: game.session.clone(), terminal_sent: false, flat_v4: game.flat_v4.clone(),
             flat_v4_rows: game.flat_v4_rows.clone(), flat_v4_scratch: FlatV4EncodeScratchV1::default(),
             private_block_root_step: game.private_block_root_step,
+            history_cursor: game.history_cursor,
             #[cfg(test)] force_flat_v4_encode_error: game.force_flat_v4_encode_error,
             });
             (copy, 0)
@@ -712,6 +717,7 @@ impl SpellbenchBridgeServerV1 {
             flat_v4_rows: Vec::new(),
             flat_v4_scratch: FlatV4EncodeScratchV1::default(),
             private_block_root_step: None,
+            history_cursor: (0, 0, 0),
             #[cfg(test)]
             force_flat_v4_encode_error: false,
         };
@@ -721,7 +727,10 @@ impl SpellbenchBridgeServerV1 {
         };
         let wire = match flat_v4 {
             Ok(flat_v4) => {
-                let support = self.options.private_v2_support.then(|| private_v2_support(&game));
+                let support = self
+                    .options
+                    .private_v2_support
+                    .then(|| private_v2_support_with_history(&mut game));
                 self.session_response_to_wire(request_id, game_id, response, counts, flat_v4, support)
             }
             Err(reason) => WireResponseV1::Terminal(
@@ -857,7 +866,10 @@ impl SpellbenchBridgeServerV1 {
                     Ok(flat_v4) => flat_v4,
                     Err(reason) => return self.fail_game_halted(request_id, counts, &reason),
                 };
-                let support = self.options.private_v2_support.then(|| private_v2_support(game));
+                let support = self
+                    .options
+                    .private_v2_support
+                    .then(|| private_v2_support_with_history(game));
                 let wire =
                     self.session_response_to_wire(request_id, game_id, response, counts, flat_v4, support);
                 let game = self.game.as_mut().expect("active game");
@@ -1211,6 +1223,44 @@ fn optional_cost_choice_str_v1(choice: OptionalCostChoice) -> &'static str {
 
 /// Object incarnation key: `(arena_id, zone_change_count)`.
 type ObjectKeyV1 = (u32, u32);
+
+/// Production private support plus the omniscient history the trusted
+/// adapter projects per viewer for `x_public_history_v1`: committed events,
+/// observation notes and newly allocated objects since the previous
+/// production decision, with the absolute offset of the first entry of each.
+/// Each new object carries its owner, its zone when first exported and its
+/// printed front-face name, so the adapter can name a card when a viewer is
+/// entitled to see it. Private previews use [`private_v2_support`] alone and
+/// never advance the cursor.
+fn private_v2_support_with_history(game: &mut SpellbenchBridgeGameV1) -> Value {
+    let mut support = private_v2_support(game);
+    let state = game.session.game_state();
+    let (events_from, notes_from, objects_from) = game.history_cursor;
+    let events = &state.engine.event_history[events_from.min(state.engine.event_history.len())..];
+    let notes = state.observation_journal.notes();
+    let notes = &notes[notes_from.min(notes.len())..];
+    let objects: Vec<Value> = state
+        .objects
+        .iter()
+        .skip(objects_from)
+        .map(|(id, object)| {
+            json!({"object": id, "owner": object.owner,
+                   "card_name": crate::card_def::CARD_DEFS[object.card_def as usize].name,
+                   "is_token": object.v4.is_token, "copy": object.spell_copy_origin.is_some()})
+        })
+        .collect();
+    support["history"] = json!({
+        "events_from": events_from, "events": events,
+        "notes_from": notes_from, "notes": notes,
+        "objects_from": objects_from, "objects": objects,
+    });
+    game.history_cursor = (
+        state.engine.event_history.len(),
+        state.observation_journal.notes().len(),
+        state.objects.len(),
+    );
+    support
+}
 
 fn private_v2_support(game: &SpellbenchBridgeGameV1) -> Value {
     use crate::effect::{EffectBooleanChoicePurpose as B, EffectOptionChoicePurpose as O,
@@ -2084,6 +2134,52 @@ mod tests {
                 actual["extensions"].as_object_mut().unwrap().remove("x_kernel_v2_support");
             }
             assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn private_support_history_slices_are_contiguous_and_complete() {
+        let mut server = SpellbenchBridgeServerV1::with_options(
+            SpellbenchEngineIdentityV1::with_source_revision(None),
+            SpellbenchBridgeOptionsV1 { x_kernel_flat_v4: true, private_v2_support: true });
+        let mut decision = parse_line(&server.handle_line(&reset_line("reset", "g-history", 7)));
+        let (mut events, mut notes, mut objects) = (Vec::new(), Vec::new(), Vec::new());
+        for i in 0..12 {
+            if decision["response_type"] != "decision" {
+                break;
+            }
+            let history = decision["extensions"]["x_kernel_v2_support"]["history"].clone();
+            assert_eq!(history["events_from"], json!(events.len()), "decision {i}");
+            assert_eq!(history["notes_from"], json!(notes.len()), "decision {i}");
+            assert_eq!(history["objects_from"], json!(objects.len()), "decision {i}");
+            objects.extend(history["objects"].as_array().unwrap().iter().cloned());
+            events.extend(history["events"].as_array().unwrap().iter().cloned());
+            notes.extend(history["notes"].as_array().unwrap().iter().cloned());
+            let request = step_line_for(&format!("step-{i}"), &decision, 0);
+            decision = parse_line(&server.handle_line(&request));
+        }
+        let state = server.game.as_ref().unwrap().session.game_state();
+        let expected_events = serde_json::to_value(&state.engine.event_history).unwrap();
+        let sent = events.len();
+        assert_eq!(json!(events), json!(expected_events.as_array().unwrap()[..sent]));
+        let expected_notes = serde_json::to_value(state.observation_journal.notes()).unwrap();
+        assert_eq!(json!(notes), json!(expected_notes.as_array().unwrap()[..notes.len()]));
+        // Opening hands come from shuffled libraries, so the journal is never empty.
+        // Both 60-card decks were allocated before the first decision.
+        assert!(objects.len() >= 120);
+        for (index, object) in objects.iter().enumerate() {
+            assert_eq!(object["object"], json!(index));
+            assert_eq!(object["card_name"], json!(state.objects.get(crate::ids::ObjectId(index as u32)).name));
+        }
+        // Every library removal anchors to the draw or zone change it belongs to.
+        let removals: Vec<_> = notes.iter().filter(|note| note["kind"] == "library_removal").collect();
+        assert!(!removals.is_empty());
+        for note in removals {
+            let event = &events[note["history_len"].as_u64().unwrap() as usize];
+            let owner = &note["owner"];
+            let draw = event.get("Draw").is_some_and(|draw| &draw["player"] == owner);
+            let mill = event.get("ZoneChange").is_some_and(|change| change["from"] == "Library");
+            assert!(draw || mill, "{note} anchors to {event}");
         }
     }
 
@@ -3019,6 +3115,7 @@ mod tests {
             flat_v4_rows: Vec::new(),
             flat_v4_scratch: FlatV4EncodeScratchV1::default(),
             private_block_root_step: None,
+            history_cursor: (0, 0, 0),
             force_flat_v4_encode_error: false,
         };
         let response = game.session.current_response();
