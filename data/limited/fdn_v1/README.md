@@ -18,9 +18,10 @@ The 286 reference names are an observed gameplay dataset, not a complete
 booster manifest. The inventory tool adds all five basic lands and any
 additional fixture cards. After fixture batches A and B and the combat and
 legend-rule, targeted-spell, counter-creature, life-gain, draw, Horde, Koma, Kiora,
-Prowler, Rebuke, Voyage, Scavenging, Armor and Witness slices,
-43 reference names have full registry support, one reference planeswalker
-is partial and 242 remain missing. Both original decks resolve all 40
+Prowler, Rebuke, Voyage, Scavenging, Armor and Witness slices and the first
+milestone-5 keyword-creature batch,
+50 reference names have full registry support, one reference planeswalker
+is partial and 235 remain missing. Both original decks resolve all 40
 mainboard copies, covering all 39 unique fixture names. Dwynen includes its Elf bonuses, attack
 trigger and a real resumable legend-rule choice.
 Printed collector numbers are not a safe
@@ -32,7 +33,7 @@ unchanged 192-definition Pauper registry. The importer combines both files in
 that order and reports their separate SHA-256s. Build the gameplay binary with
 `cargo build --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_env`.
 Default builds retain the Pauper catalog and its v34 identity; the
-Limited feature selects the appended definitions and their v51 identity.
+Limited feature selects the appended definitions and their v52 identity.
 Earlier FDN catalog tuples remain readable and are rejected for mutation
 when they do not match the actual build.
 
@@ -72,6 +73,14 @@ a rules-parity verdict or a Limited-ready policy session.
 Reports are generated on demand rather than committed. Their raw registry,
 deck and names-file hashes identify the exact inputs. No engine registry,
 frozen training manifest or existing session schema is changed by this tool.
+
+`FDN_reference_keyword_creatures.dck` is a synthetic 40-card fixture that
+gives the seven keyword-only reference creatures (Aegis Turtle, Brazen Scourge,
+Quakestrider Ceratops, Savannah Lions, Serra Angel, Swiftblade Vindicator and
+Vampire Nighthawk) the deck coverage every non-token definition requires. It
+resolves fully and is excluded from original-deck coverage counts. See
+`docs/design/fdn_keyword_creatures_v1.md` and the remaining-pool inventory in
+`docs/reports/fdn_remaining_pool_inventory_v1.md`.
 
 `FDN_reference_planeswalker.dck` is a synthetic correctness fixture for
 Bite Down's planeswalker recipient. Ajani has entry loyalty and damage
