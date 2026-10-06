@@ -1,5 +1,28 @@
 # Celestial Armor implementation and verification
 
+## Current Windows timing repair
+
+Windows job `111167180011` at published source `43eab9fe` failed only the
+isolated snapshot check: 65.258 microseconds against the unchanged 40 limit.
+Every other workspace test summary passed. Native, Limited and host-safe CUDA
+steps were skipped, so this job does not qualify the complete Armor matrix.
+The full terminal log is retained as `fdn-rust-current-111167180011.log`.
+
+The runner now gives only the short Windows timing child `HIGH_PRIORITY_CLASS`,
+using the same procedure as CI `92881658`. It retains normal priority for
+correctness tests and the frozen 80 objects, 200 warmups, 2000 iterations and
+40-microsecond assertion. Native CI runner changes now select Rust checks.
+Python compilation, workflow lint and diff checks qualify the backport's
+syntax and selection. Its actual hosted timing effect remains unqualified.
+The same published source's Linux job `111167180017` completed its entire
+default/native/Limited/host-safe CUDA matrix successfully. All 19 selected
+integration targets and affected library filters passed, with no failed test
+summaries. The frozen snapshot measured 6.978 microseconds. All four Python
+shards and formatting/lint checks also passed at that source. The prior run
+is now terminal; its Linux and failed Windows logs are retained before
+publication. Complete hosted qualification of the timing repair remains
+required.
+
 Hosted CI37031403320 at33d84667 passed Ubuntu Rust and both Ubuntu Python
 shards. Windows Python shard0 found a timing-dependent sentinel-coverage test:
 fake process startup legitimately ranked serial first, while the test required
