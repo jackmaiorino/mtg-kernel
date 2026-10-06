@@ -241,6 +241,15 @@ pub enum Subtype {
     Noble,
     Unicorn,
     Ajani,
+    Beast,
+    Cleric,
+    Homunculus,
+    /// Appended for Kiora and Scion of the Deep; existing ids remain fixed.
+    Merfolk,
+    Octopus,
+    Hyena,
+    Raccoon,
+    Citizen,
 }
 
 impl Subtype {
@@ -312,6 +321,22 @@ impl Subtype {
         Subtype::Noble,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Unicorn,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Beast,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Cleric,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Homunculus,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Merfolk,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Octopus,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Hyena,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Raccoon,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Citizen,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -424,6 +449,8 @@ impl Subtype {
                 | Subtype::Squirrel
                 | Subtype::Insect
                 | Subtype::Fish
+                | Subtype::Beast
+                | Subtype::Cleric
         )
     }
 }
@@ -573,6 +600,7 @@ pub enum TargetSpec {
     ControlledCreatureThenOpponentCreature,
     ControlledCreatureThenOpponentCreatureOrPlaneswalker,
     AttackingOrBlockingCreature,
+    NonlandPermanentCardInOwnGraveyardManaValueAtMost(u16),
 }
 
 impl TargetSpec {
@@ -622,6 +650,7 @@ impl TargetSpec {
             TargetSpec::ControlledCreatureThenOpponentCreature => 38,
             TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker => 39,
             TargetSpec::AttackingOrBlockingCreature => 40,
+            TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_) => 41,
         }
     }
 }
@@ -818,6 +847,28 @@ pub enum OptionalAdditionalCostDef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttachmentDef {
     AuraCreature { prevents_untap: bool },
+    AuraCreatureOverride(CreatureCharacteristicsOverrideDef),
+}
+
+impl AttachmentDef {
+    pub const fn is_creature_aura(self) -> bool {
+        matches!(
+            self,
+            Self::AuraCreature { .. } | Self::AuraCreatureOverride(_)
+        )
+    }
+}
+
+/// Layer 3 through 7b characteristics supplied by an attached creature Aura.
+/// Printed identity, supertypes and later-layer modifications are preserved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CreatureCharacteristicsOverrideDef {
+    pub name: &'static str,
+    pub subtype: Subtype,
+    pub colors: &'static [ManaColor],
+    pub power: i16,
+    pub toughness: i16,
+    pub loses_abilities: bool,
 }
 
 /// The ordered alternative cost you may pay instead of a spell's printed
@@ -1071,6 +1122,8 @@ pub enum DynamicCountDef {
     /// One iff the controller has both a creature with the named subtype
     /// and a creature without it. Of One Mind uses Human.
     ControllerHasCreatureWithAndWithoutSubtype(Subtype),
+    /// One iff a chosen spell target is a tapped battlefield creature.
+    SpellTargetsTappedCreature,
 }
 
 /// Reduces only the generic portion of a spell's mana cost, flooring at
@@ -1167,6 +1220,12 @@ pub struct EquipmentDef {
     pub granted_activated_ability: Option<GrantedActivatedAbilityDef>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntersWithPlusOneCountersDef {
+    pub count: i32,
+    pub if_kicked: bool,
+}
+
 pub struct CardDef {
     pub name: &'static str,
     pub capability: CardCapability,
@@ -1177,6 +1236,9 @@ pub struct CardDef {
     /// Static Ward cost materialized when an opposing spell or ability
     /// finishes targeting this permanent. `None` means no implemented Ward.
     pub ward_cost: Option<WardCostDef>,
+    /// Printed protection applying to this card as a spell, including copies.
+    /// It does not protect the permanent's activated or triggered abilities.
+    pub spell_cannot_be_countered: bool,
     /// Printed Equipment behavior shared by attachments, effective
     /// characteristics, cast triggers, and RL continuous-effect projection.
     pub equipment: Option<EquipmentDef>,
@@ -1192,6 +1254,10 @@ pub struct CardDef {
     pub power: Option<i16>,
     pub toughness: Option<i16>,
     pub starting_loyalty: Option<u16>,
+    /// Applied during every entry before triggers and state-based actions.
+    pub enters_with_plus_one_counters: Option<EntersWithPlusOneCountersDef>,
+    /// Continuously grants this keyword to controlled creatures with +1/+1 counters.
+    pub controlled_counter_keyword: Option<Keywords>,
     pub is_land: bool,
     pub produces_mana: &'static [ManaColor],
     /// This card's color identity per 105.1/202.2 (the color of mana
@@ -1696,7 +1762,7 @@ mod tests {
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                216
+                236
             } else {
                 192
             }
@@ -1784,8 +1850,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v39_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x88e0_2f70_cd94_af95;
+    fn card_db_hash_v51_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0xbd13_8573_1e43_c4a1;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
@@ -2290,12 +2356,13 @@ mod tests {
         assert_eq!(counterspell.target_spec, TargetSpec::AnySpellOnStack);
         assert_eq!(dispel.target_spec, TargetSpec::InstantSpellOnStack);
         assert_eq!((counterspell.spell_effect)(), (dispel.spell_effect)());
+        #[cfg(not(feature = "limited-fdn-fixtures"))]
+        let expected_condition = EffectCond::TargetInZone(0, Zone::Stack);
+        #[cfg(feature = "limited-fdn-fixtures")]
+        let expected_condition = EffectCond::TargetSpellCanBeCountered(0);
         assert!(matches!(
             (counterspell.spell_effect)(),
-            Some(EffectOp::Conditional {
-                cond: EffectCond::TargetInZone(0, Zone::Stack),
-                ..
-            })
+            Some(EffectOp::Conditional { cond, .. }) if cond == expected_condition
         ));
     }
 

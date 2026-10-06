@@ -282,12 +282,21 @@ fn random_action_for_decision(
         Decision::ChooseSpellMode { legal_modes, .. } => {
             Action::ChooseSpellMode(legal_modes[rng_below(rng, legal_modes.len())])
         }
+        Decision::ChooseTriggerMode { legal_modes, .. } => {
+            Action::ChooseTriggerMode(legal_modes[rng_below(rng, legal_modes.len())])
+        }
         Decision::ChooseEffectOption { option_count, .. } => {
             Action::ChooseEffectOption(rng_below(rng, *option_count as usize) as u16)
         }
         Decision::ChooseEffectBoolean { .. } => Action::ChooseEffectBoolean(rng_chance(rng, 1, 2)),
         Decision::ChooseLegendPermanent { candidates, .. } => {
             Action::ChooseLegendPermanent(candidates[rng_below(rng, candidates.len())])
+        }
+        Decision::ChooseLondonMulligan { .. } => Action::ChooseLondonMulligan {
+            mulligan: rng_chance(rng, 1, 2),
+        },
+        Decision::ChooseLondonBottom { candidates, .. } => {
+            Action::ChooseLondonBottom(candidates[rng_below(rng, candidates.len())])
         }
         Decision::ChooseCombatDamageRange { .. } => Action::ChooseCombatDamageRange {
             upper_half: rng_chance(rng, 1, 2),

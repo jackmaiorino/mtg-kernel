@@ -59,7 +59,7 @@ pub const POLICY_EPISODE_JSONL_FILENAME: &str = "policy_episodes.jsonl";
 pub const MANIFEST_FILENAME: &str = "manifest.json";
 
 const MAX_SUBSET_OBJECTS: usize = 12;
-const MAX_TRIGGER_ORDER_OBJECTS: usize = 7;
+pub(crate) const MAX_TRIGGER_ORDER_OBJECTS: usize = 7;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RlContractError(pub String);
@@ -697,6 +697,34 @@ pub struct EngineContextV2 {
     pub planeswalkers: Option<Vec<PlaneswalkerSemanticV1>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub combat_damage_prevention: Option<Vec<CombatPreventionSemanticV1>>,
+    /// Exact counts overriding the legacy i16 card field when it is zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wide_plus_one_counters: Option<Vec<WidePlusOneCountersSemanticV1>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wide_marked_damage: Option<Vec<WideMarkedDamageSemanticV1>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_uses: Option<Vec<TriggerUseSemanticV1>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TriggerUseSemanticV1 {
+    pub source: CardStableRefV1,
+    pub ability_index: u16,
+    pub turn: u32,
+    pub active_player: PlayerSeatV1,
+    pub uses: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct WideMarkedDamageSemanticV1 {
+    pub permanent: CardStableRefV1,
+    pub damage: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct WidePlusOneCountersSemanticV1 {
+    pub permanent: CardStableRefV1,
+    pub count: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -896,6 +924,15 @@ pub struct PublicObservationProjectionV5 {
     pub policy_surface_context: PolicySurfaceContextV5,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foundations_combat: Option<PublicFoundationsCombatV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub london_mulligans: Option<PublicLondonMulligansV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicLondonMulligansV1 {
+    pub phase: String,
+    pub counts: [u8; 2],
+    pub kept: [bool; 2],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1088,6 +1125,27 @@ pub enum ActionSemanticV1 {
         actor: PlayerSeatV1,
         keep: CardStableRefV1,
         candidates: Vec<CardStableRefV1>,
+    },
+    /// The opt-in Limited session selects a large simultaneous trigger
+    /// group one index at a time, in bottom-to-top stack order. The prefix
+    /// binds each answer to the exact ordering already selected.
+    #[cfg(feature = "limited-fdn-fixtures")]
+    ChooseTriggerOrderNext {
+        actor: PlayerSeatV1,
+        source: CardStableRefV1,
+        trigger_index: usize,
+        ordered_prefix: Vec<usize>,
+        pending_count: usize,
+    },
+    ChooseLondonMulligan {
+        actor: PlayerSeatV1,
+        mulligan_count: u8,
+        mulligan: bool,
+    },
+    ChooseLondonBottom {
+        actor: PlayerSeatV1,
+        remaining: u8,
+        card: CardStableRefV1,
     },
 }
 
@@ -1831,6 +1889,7 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
         projection: PublicObservationProjectionV5 {
             surface: base.projection,
             policy_surface_context,
+            london_mulligans: public_london_mulligans_v1(state),
             foundations_combat: public_foundations_combat_v1(state)?,
         },
         own_hand: base.own_hand,
@@ -1862,6 +1921,17 @@ fn public_foundations_combat_v1(state: &GameState) -> Result<Option<PublicFounda
             })
         })
         .transpose()
+}
+
+fn public_london_mulligans_v1(state: &GameState) -> Option<PublicLondonMulligansV1> {
+    state
+        .london_mulligans_v1
+        .as_ref()
+        .map(|pregame| PublicLondonMulligansV1 {
+            phase: pregame.phase().to_string(),
+            counts: pregame.counts(),
+            kept: pregame.kept(),
+        })
 }
 
 // Shared projection components, not an ObservationV5. Each version applies
@@ -1998,6 +2068,7 @@ fn build_policy_observation_v6(request: PolicyObservationBuildV5<'_>) -> Result<
             surface: base.projection,
             policy_surface_context,
             foundations_combat: public_foundations_combat_v1(state)?,
+            london_mulligans: public_london_mulligans_v1(state),
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
@@ -2420,6 +2491,46 @@ fn legal_action_records_v5(
     Ok(out)
 }
 
+#[cfg(feature = "limited-fdn-fixtures")]
+pub(crate) fn limited_trigger_order_candidates_v1(
+    player: PlayerId,
+    pending: &[crate::trigger::PendingTrigger],
+    ordered_prefix: &[usize],
+    state: &GameState,
+) -> Result<Vec<PolicyLegalActionCandidateV5>> {
+    let mut selected = vec![false; pending.len()];
+    for &index in ordered_prefix {
+        let chosen = selected
+            .get_mut(index)
+            .ok_or_else(|| RlContractError("trigger prefix index is out of range".into()))?;
+        if *chosen {
+            return Err(RlContractError("trigger prefix repeats an index".into()));
+        }
+        *chosen = true;
+    }
+    let mut candidates = Vec::new();
+    for (index, trigger) in pending.iter().enumerate() {
+        if selected[index] {
+            continue;
+        }
+        let mut order = ordered_prefix.to_vec();
+        order.push(index);
+        candidates.push(CorePolicyActionCandidateV1 {
+            semantic: ActionSemanticV1::ChooseTriggerOrderNext {
+                actor: player.into(),
+                source: card_ref(state, trigger.source)?,
+                trigger_index: index,
+                ordered_prefix: ordered_prefix.to_vec(),
+                pending_count: pending.len(),
+            },
+            policy_action: PolicyActionV5::Surface(SurfaceAction::Action(Action::OrderTriggers(
+                order,
+            ))),
+        });
+    }
+    legal_action_records_v5(candidates)
+}
+
 pub(crate) fn core_policy_action_candidates_v5(
     decision: &PolicyDecisionV5,
     state: &GameState,
@@ -2780,6 +2891,12 @@ fn core_surface_action_candidates_v1(
                 spell,
                 mode_count,
                 legal_modes,
+            }
+            | Decision::ChooseTriggerMode {
+                player,
+                source: spell,
+                mode_count,
+                legal_modes,
             } => {
                 let actor = (*player).into();
                 let source = card_ref(state, *spell)?;
@@ -2792,7 +2909,13 @@ fn core_surface_action_candidates_v1(
                             mode_index,
                             mode_count: *mode_count,
                         },
-                        SurfaceAction::Action(Action::ChooseSpellMode(mode_index)),
+                        SurfaceAction::Action(
+                            if matches!(decision, Decision::ChooseTriggerMode { .. }) {
+                                Action::ChooseTriggerMode(mode_index)
+                            } else {
+                                Action::ChooseSpellMode(mode_index)
+                            },
+                        ),
                     )?;
                 }
             }
@@ -2923,6 +3046,39 @@ fn core_surface_action_candidates_v1(
                             selected_count: *selected_count,
                         },
                         SurfaceAction::Action(Action::FinishEffectSelection),
+                    )?;
+                }
+            }
+            Decision::ChooseLondonMulligan {
+                player,
+                mulligan_count,
+            } => {
+                for mulligan in [false, true] {
+                    push_action(
+                        &mut out,
+                        ActionSemanticV1::ChooseLondonMulligan {
+                            actor: (*player).into(),
+                            mulligan_count: *mulligan_count,
+                            mulligan,
+                        },
+                        SurfaceAction::Action(Action::ChooseLondonMulligan { mulligan }),
+                    )?;
+                }
+            }
+            Decision::ChooseLondonBottom {
+                player,
+                remaining,
+                candidates,
+            } => {
+                for &card in candidates {
+                    push_action(
+                        &mut out,
+                        ActionSemanticV1::ChooseLondonBottom {
+                            actor: (*player).into(),
+                            remaining: *remaining,
+                            card: card_ref(state, card)?,
+                        },
+                        SurfaceAction::Action(Action::ChooseLondonBottom(card)),
                     )?;
                 }
             }
@@ -3210,11 +3366,14 @@ pub fn acting_player_for_surface_decision(
             | Decision::ChooseCastMode { player, .. }
             | Decision::ChooseKicker { player, .. }
             | Decision::ChooseSpellMode { player, .. }
+            | Decision::ChooseTriggerMode { player, .. }
             | Decision::ChooseEffectOption { player, .. }
             | Decision::ChooseEffectTargets { player, .. }
             | Decision::ChooseEffectBoolean { player, .. }
             | Decision::ChooseCombatDamageRange { player, .. }
             | Decision::ChooseLegendPermanent { player, .. }
+            | Decision::ChooseLondonMulligan { player, .. }
+            | Decision::ChooseLondonBottom { player, .. }
             | Decision::ChooseOptionalCost { player, .. }
             | Decision::ChooseSpellCopyPayment { player, .. }
             | Decision::ChooseSpellCopyRetarget { player, .. }
@@ -5241,12 +5400,18 @@ fn public_card(state: &GameState, id: ObjectId) -> Result<CardPublicV1> {
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
     Ok(CardPublicV1 {
         stable: card_ref(state, id)?,
-        card_name: card_name(object.card_def),
+        card_name: if crate::continuous_characteristics_v1::creature_override(state, id).is_some() {
+            engine::effective_name(state, id).to_string()
+        } else {
+            card_name(object.card_def)
+        },
         tapped: object.tapped,
         summoning_sick: object.summoning_sick,
-        damage: object.damage,
+        damage: u16::try_from(object.damage)
+            .map_err(|_| RlContractError("schema-v1 cannot represent wide damage".into()))?,
         counters: CountersV1 {
-            plus1_plus1: object.counters.plus1_plus1,
+            plus1_plus1: i16::try_from(object.counters.plus1_plus1)
+                .map_err(|_| RlContractError("schema-v1 cannot represent wide counters".into()))?,
             minus1_minus1: object.counters.minus1_minus1,
             minus0_minus1: object.counters.minus0_minus1,
             stun: object.counters.stun,
@@ -5268,18 +5433,22 @@ fn public_card_v2(
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
     Ok(CardPublicV2 {
         stable: card_ref(state, id)?,
-        card_name: if object.v4.face_index == 1
-            && matches!(text_mode, ObservationTextModeV2::FullArtifact)
+        card_name: if matches!(text_mode, ObservationTextModeV2::FullArtifact)
+            && (object.v4.face_index == 1
+                || crate::continuous_characteristics_v1::creature_override(state, id).is_some())
         {
-            object.name.clone()
+            engine::effective_name(state, id).to_string()
         } else {
             text_mode.card_name(object.card_def)
         },
         tapped: object.tapped,
         summoning_sick: object.summoning_sick,
-        damage: object.damage,
+        // engine_context.wide_marked_damage overrides this legacy slot.
+        damage: u16::try_from(object.damage).unwrap_or(0),
         counters: CountersV1 {
-            plus1_plus1: object.counters.plus1_plus1,
+            // Extended counts live in engine_context.wide_plus_one_counters.
+            // Zero is the legacy placeholder; flat publication refuses this state.
+            plus1_plus1: i16::try_from(object.counters.plus1_plus1).unwrap_or(0),
             minus1_minus1: object.counters.minus1_minus1,
             minus0_minus1: object.counters.minus0_minus1,
             stun: object.counters.stun,
@@ -5406,9 +5575,8 @@ fn known_hand_cards_v4(
 
 fn card_characteristics_v2(state: &GameState, id: ObjectId) -> CardCharacteristicsV2 {
     let object = state.objects.get(id);
-    let def = &CARD_DEFS[object.card_def as usize];
-    let base_power = def.power_for_face(object.v4.face_index).map(i32::from);
-    let base_toughness = def.toughness_for_face(object.v4.face_index).map(i32::from);
+    let base_power = engine::effective_base_power(state, id);
+    let base_toughness = engine::effective_base_toughness(state, id);
     let has_pt = base_power.is_some() || base_toughness.is_some();
     CardCharacteristicsV2 {
         type_flags: CardTypeFlagsV2 {
@@ -5423,7 +5591,7 @@ fn card_characteristics_v2(state: &GameState, id: ObjectId) -> CardCharacteristi
         base_toughness,
         effective_power: has_pt.then(|| engine::effective_power(state, id)),
         effective_toughness: has_pt.then(|| engine::effective_toughness(state, id)),
-        effective_color_mask: object.v4.effective_color_mask,
+        effective_color_mask: engine::object_color_mask(state, id),
         effective_subtype_ids: engine::effective_subtype_ids(state, id),
         effective_keywords: KeywordFlagsV2 {
             flying: engine::has_effective_keyword(state, id, Keywords::FLYING),
@@ -5444,7 +5612,13 @@ fn card_characteristics_v2(state: &GameState, id: ObjectId) -> CardCharacteristi
                 id,
                 Keywords::PROTECTION_FROM_MONOCOLORED,
             ),
-            ward_generic: object.v4.ward_generic,
+            ward_generic: if crate::continuous_characteristics_v1::printed_abilities_active(
+                state, id,
+            ) {
+                object.v4.ward_generic
+            } else {
+                0
+            },
             minimum_blockers: if engine::object_has_type(state, id, CardType::Creature) {
                 engine::minimum_blockers_required(state, id) as u8
             } else {
@@ -6142,6 +6316,56 @@ fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<Engin
         state.engine.mana_ability_activations != state.engine.mana_ability_count_at_round_open;
 
     Ok(EngineContextV2 {
+        trigger_uses: state
+            .trigger_uses_v1
+            .as_ref()
+            .map(|uses| {
+                uses.iter()
+                    .map(|entry| {
+                        card_ref(state, entry.source.object).map(|source| TriggerUseSemanticV1 {
+                            source,
+                            ability_index: entry.ability_index,
+                            turn: entry.turn,
+                            active_player: entry.active_player.into(),
+                            uses: entry.uses,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })
+            .transpose()?,
+        wide_marked_damage: {
+            let damage = state
+                .objects
+                .iter()
+                .filter(|(_, object)| {
+                    object.zone == Zone::Battlefield && u16::try_from(object.damage).is_err()
+                })
+                .map(|(id, object)| {
+                    card_ref(state, id).map(|permanent| WideMarkedDamageSemanticV1 {
+                        permanent,
+                        damage: object.damage,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            (!damage.is_empty()).then_some(damage)
+        },
+        wide_plus_one_counters: {
+            let counters = state
+                .objects
+                .iter()
+                .filter(|(_, object)| {
+                    object.zone == Zone::Battlefield
+                        && i16::try_from(object.counters.plus1_plus1).is_err()
+                })
+                .map(|(id, object)| {
+                    card_ref(state, id).map(|permanent| WidePlusOneCountersSemanticV1 {
+                        permanent,
+                        count: object.counters.plus1_plus1,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            (!counters.is_empty()).then_some(counters)
+        },
         planeswalkers: (!planeswalkers.is_empty()).then_some(planeswalkers),
         combat_damage_prevention: (!combat_damage_prevention.is_empty())
             .then_some(combat_damage_prevention),
@@ -6309,6 +6533,7 @@ fn pending_effect_semantic_v4(
                                 ..
                             }
                             | crate::effect::EffectTargetSelectionPurpose::ScryLibrary { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryOne { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand {
                                 ..
                             }
@@ -6379,7 +6604,8 @@ fn pending_effect_semantic_v4(
                         },
                         ordered: *ordered,
                         purpose: match purpose {
-                            crate::effect::EffectTargetSelectionPurpose::OrderIntoGraveyard {
+                            crate::effect::EffectTargetSelectionPurpose::SurveilLibraryOne { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::OrderIntoGraveyard {
                                 ..
                             }
                             | crate::effect::EffectTargetSelectionPurpose::OrderMilledIntoGraveyard => {
@@ -6416,6 +6642,9 @@ fn pending_effect_semantic_v4(
                                 ..
                             } => TargetSelectionPurposeV4::SearchResult,
                             crate::effect::EffectTargetSelectionPurpose::UntapLands {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::AttachReturningAura {
                                 ..
                             } => TargetSelectionPurposeV4::PermanentSelection,
                             crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {

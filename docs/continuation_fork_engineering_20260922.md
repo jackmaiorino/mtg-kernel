@@ -16,4 +16,3 @@ Remaining formal blockers: both natural checks, fixed-rule analysis with incompl
 
 
 The fixed analysis helper passed synthetic boundary checks at zero, five, six (including a draw), and incomplete outcomes. Receipt continuation-analysis-check-001.json binds its source hash. This is not measured continuation evidence. The formal input-set and cross-worker identity checks still require end-to-end validation with the dispatcher.
-

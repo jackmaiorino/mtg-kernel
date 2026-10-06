@@ -214,10 +214,13 @@ fn run_goldfish(state: &mut GameState) -> RunResult {
             | Decision::ChooseCostTargets { .. }
             | Decision::Discard { .. }
             | Decision::ChooseSpellMode { .. }
+            | Decision::ChooseTriggerMode { .. }
             | Decision::ChooseEffectOption { .. }
             | Decision::ChooseEffectBoolean { .. }
             | Decision::ChooseCombatDamageRange { .. }
             | Decision::ChooseLegendPermanent { .. }
+            | Decision::ChooseLondonMulligan { .. }
+            | Decision::ChooseLondonBottom { .. }
             | Decision::ChooseEffectTargets { .. }
             | Decision::ChooseOptionalCost { .. }
             | Decision::ChooseSpellCopyPayment { .. }

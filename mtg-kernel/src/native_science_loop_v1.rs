@@ -596,7 +596,31 @@ fn run_native_science_loop_with_opponents_v1(
         | NativeRunCatalogProfileV1::FdnFixtureBatchB
         | NativeRunCatalogProfileV1::FdnCombatCards
         | NativeRunCatalogProfileV1::FdnLegendRule
-        | NativeRunCatalogProfileV1::FdnTargetedSpells => {}
+        | NativeRunCatalogProfileV1::FdnTargetedSpells
+        | NativeRunCatalogProfileV1::FdnCounterCreatures
+        | NativeRunCatalogProfileV1::FdnLifegainCreatures
+        | NativeRunCatalogProfileV1::FdnDrawCreatures
+        | NativeRunCatalogProfileV1::FdnHomunculusCreature
+        | NativeRunCatalogProfileV1::FdnKomaCreature
+        | NativeRunCatalogProfileV1::FdnKioraCreature
+        | NativeRunCatalogProfileV1::FdnProwlerCreature
+        | NativeRunCatalogProfileV1::FdnLuminousRebuke
+        | NativeRunCatalogProfileV1::FdnUnchartedVoyage
+        | NativeRunCatalogProfileV1::FdnSylvanScavenging
+        | NativeRunCatalogProfileV1::FdnCelestialArmor
+        | NativeRunCatalogProfileV1::FdnWitnessProtection
+        | NativeRunCatalogProfileV1::FdnCounterCreaturesRebased
+        | NativeRunCatalogProfileV1::FdnLifegainCreaturesRebased
+        | NativeRunCatalogProfileV1::FdnDrawCreaturesRebased
+        | NativeRunCatalogProfileV1::FdnHomunculusCreatureRebased
+        | NativeRunCatalogProfileV1::FdnKomaCreatureRebased
+        | NativeRunCatalogProfileV1::FdnKioraCreatureRebased
+        | NativeRunCatalogProfileV1::FdnProwlerCreatureRebased
+        | NativeRunCatalogProfileV1::FdnLuminousRebukeRebased
+        | NativeRunCatalogProfileV1::FdnUnchartedVoyageRebased
+        | NativeRunCatalogProfileV1::FdnSylvanScavengingRebased
+        | NativeRunCatalogProfileV1::FdnCelestialArmorRebased
+        | NativeRunCatalogProfileV1::FdnWitnessProtectionRebased => {}
     }
 
     if ladder_opponent.is_some() && population_opponent.is_some() {

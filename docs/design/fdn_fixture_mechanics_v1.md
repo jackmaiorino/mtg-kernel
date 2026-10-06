@@ -1,11 +1,42 @@
 # FDN fixture implementation batches
 
 This inventories the **36 originally missing names** in the two pinned
-40-card fixtures. Batch A registers six and batch B registers eight, with
-their exact tokens. The first combat-card slice completes Beast-Kin Ranger
-and Overrun. The legend-rule slice completes Dwynen. C through G contain
-**19 names still requiring full support**.
-The priority-window PR added no cards.
+40-card fixtures. Through the Witness slice, the registry covers all 36 of
+those names and all seven required token definitions. Both original decks
+resolve 40/40 copies and retain their pinned hashes. London mulligans are
+implemented in custom-game schema 4. The batch table below preserves the
+original decomposition. Complete milestone verification remains pending;
+see the [gameplay validation matrix](../reports/fdn_fixture_gameplay_v1_validation.md).
+
+The [Prowler slice](fdn_prowler_creature_v1.md) implements turn-scoped
+creature death history, its morbid end-step trigger and ward two. Fourteen
+focused kernel checks and twelve strict XMage comparisons pass; broader
+catalog, regression, production and external checks are tracked in its
+[validation report](../reports/fdn_prowler_creature_v1_validation.md).
+
+The [Rebuke slice](fdn_luminous_rebuke_v1.md) adds target-dependent generic
+cost and ordinary creature destruction. Fifteen focused kernel checks,
+eleven XMage comparisons, release boundaries and external replay pass.
+Hosted CI remains pending.
+
+The [Voyage slice](fdn_uncharted_voyage_v1.md) adds owner top-or-bottom
+placement followed by private surveil. Nineteen focused rules checks,
+eleven XMage comparisons, regressions and external replay pass. Release
+mutation boundaries and CI remain pending.
+
+The final card slices are implemented with focused interaction tests:
+
+| Slice | Work | Required checks |
+| --- | --- | --- |
+| Sylvan Scavenging | Add an end-step modal trigger with a controlled-creature counter target or a conditional Raccoon token. | Select mode before its targets; preserve the token mode even below power four; check power at resolution; target loss; exact token; modal and target restore. |
+| Celestial Armor | Add flash Equipment, entry attachment and temporary target hexproof/indestructible, continuous equipped bonuses and equip. | Target loss, legal attachment and movement; target keeps its temporary abilities after Equipment moves; equip timing/payment; destruction and damage protection; restore. |
+| Witness Protection | Apply its Aura's name, type, color, ability-removal and base-stat layers. | Suppress triggers, ward and activations; keep counters and later modifiers; use effective names for legend checks; restore original characteristics when the Aura leaves; attachment and pending-decision restore. |
+
+The [London slice](fdn_london_mulligans_v1.md) adds mulligan and bottoming
+choices to the custom-game interface with replay and pending-choice restore.
+The fixture milestone requires both unchanged decks to load, fixed-seed external games to
+finish naturally, deterministic replay, relevant XMage comparisons and green
+regression/CI evidence. Registry coverage alone does not satisfy that milestone.
 
 Sources: the pinned `.dck` files under `data/limited/fdn_v1/`, the corresponding
 XMage card implementations at `a5c90fe180021e70e2a644ade00eeab07f857a40`, and
@@ -76,15 +107,19 @@ both announcement and resolution, incarnation-safe counters and exact tokens.
 
 The [combat foundation](fdn_combat_damage_v1.md) exposes current damage
 allocation and trample in custom-game schema 3, with focused tests and
-deterministic binary replay. Batch C still needs its card interaction tests.
+deterministic binary replay. Batch C's card interaction tests are implemented.
 The [first combat-card slice](fdn_combat_cards_v1.md) adds Beast-Kin Ranger
 and Overrun, plus Dwynen's Elf bonus and attack trigger. The
 [legend-rule slice](fdn_legend_rule_v1.md) completes Dwynen's required choice.
-Bite Down, Felling
-Blow, Fleeting Flight and Joust Through remain unimplemented.
+The [targeted-spell slice](fdn_targeted_spells_v1.md) implements Bite Down,
+Felling Blow, Fleeting Flight and Joust Through, with casting, target loss,
+partial legality, combat prevention, loyalty damage and restore tests.
+The [counter-creature slice](fdn_counter_creatures_v1.md) implements
+Gnarlid Colony and Mossborn Hydra with entry counters, kicker, continuous
+trample, landfall and wide-counter restoration checks.
 Wizards removed damage assignment order for FDN; arbitrary multi-blocker
-allocation must be a real choice. Bite Down also needs planeswalker targeting
-before its complete rules behavior can be declared supported. D and E build
+allocation must be a real choice. Bite Down's planeswalker recipient is tested
+with a partial reference definition that deck admission refuses. D and E build
 on event-driven counters and predicates; F shares E's ward implementation.
 G should land as separate mechanic slices, each with interaction tests and
 pending-choice restoration checks.

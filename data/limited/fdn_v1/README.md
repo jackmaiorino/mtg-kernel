@@ -17,10 +17,11 @@ statistics omitted. The two deck files are unchanged copies.
 The 286 reference names are an observed gameplay dataset, not a complete
 booster manifest. The inventory tool adds all five basic lands and any
 additional fixture cards. After fixture batches A and B and the combat and
-legend-rule and targeted-spell slices, 28 reference names are fully supported,
-one reference planeswalker is partial and 257 remain missing. UG resolves
-28/40 mainboard copies and WG resolves 29/40. The original fixtures still
-need 15 fully supported card names. Dwynen now includes its Elf bonuses, attack
+legend-rule, targeted-spell, counter-creature, life-gain, draw, Horde, Koma, Kiora,
+Prowler, Rebuke, Voyage, Scavenging, Armor and Witness slices,
+43 reference names have full registry support, one reference planeswalker
+is partial and 242 remain missing. Both original decks resolve all 40
+mainboard copies, covering all 39 unique fixture names. Dwynen includes its Elf bonuses, attack
 trigger and a real resumable legend-rule choice.
 Printed collector numbers are not a safe
 filter for draft availability: these real decks also use alternate printings.
@@ -31,16 +32,26 @@ unchanged 192-definition Pauper registry. The importer combines both files in
 that order and reports their separate SHA-256s. Build the gameplay binary with
 `cargo build --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_env`.
 Default builds retain the Pauper catalog and its v34 identity; the
-Limited feature selects the appended definitions and their v39 identity.
-The older batch A, batch B, combat-card and legend-rule profiles remain
-readable and are rejected for mutation when they do not match the actual
-build.
+Limited feature selects the appended definitions and their v51 identity.
+Earlier FDN catalog tuples remain readable and are rejected for mutation
+when they do not match the actual build.
 
 `kernel_limited_env --foundations-combat-v1` selects custom-game schema 3,
 with full priority windows, damage assignment choices and trample. The
 Python client/tool accepts the matching `--foundations-combat-v1` option.
+Simultaneous groups above seven triggers use `choose_trigger_order_next`
+actions in bottom-to-top stack order. Each action includes the selected
+prefix; placement occurs once after the complete order is selected.
 See `docs/design/fdn_combat_damage_v1.md` for the rules and compatibility
-boundary. Mulligans and the remaining fixture cards still need implementation.
+boundary. `kernel_limited_env --london-mulligans-v1` selects schema 4, adding
+London announcements and private bottom-card choices to those combat rules.
+The Python client/tool accepts the matching option. Original fixed-seed UG/WG
+games with actual mulligans, both seats, exact replay and pending-choice
+restore passed on Ubuntu. Windows's London step ended successfully, including
+its final pending-bottom library command; the integration summaries require
+the complete job log before acceptance. Complete CI remains pending.
+See `docs/reports/fdn_fixture_gameplay_v1_validation.md` for the milestone
+checks and their observed status.
 
 From the repository root, no dependencies or engine build are needed for inspection:
 

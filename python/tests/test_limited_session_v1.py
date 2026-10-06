@@ -35,6 +35,17 @@ for line in sys.stdin:
         reply["combat_rules"] = "wrong" if mode == "foundations-wrong" else "foundations_v1"
         if request["schema_version"] != 3:
             raise RuntimeError("schema-3 request required")
+    if mode.startswith("london"):
+        reply["schema_version"] = 4
+        reply["priority_mode"] = "engine_windows_v1"
+        reply["combat_rules"] = "foundations_v1"
+        reply["mulligan_rules"] = "wrong" if mode == "london-wrong" else "london_v1"
+        if mode == "london-missing":
+            reply.pop("mulligan_rules")
+        if request["schema_version"] != 4:
+            raise RuntimeError("schema-4 request required")
+    if mode == "earlier-with-mulligans":
+        reply["mulligan_rules"] = "london_v1"
     if request["request_type"] == "reset":
         if request["decks"][1]["cards"][0]["name"] == "Missing":
             reply.update(response_type="error", error={"code":"unsupported_deck","message":"seat 1"})
@@ -125,6 +136,20 @@ class LimitedClientTest(unittest.TestCase):
                               ("foundations", False)):
             with self.subTest(mode=mode, enabled=enabled):
                 with LimitedClientV1(self.command(mode), foundations_combat=enabled) as client:
+                    with self.assertRaises(LimitedSessionError):
+                        client.reset(self.decks)
+                    self.assertTrue(client.closed)
+
+    def test_london_requires_schema_four_and_all_rule_identities(self) -> None:
+        first = smoke(self.command("london"), self.decks, london_mulligans=True)
+        second = smoke(self.command("london"), self.decks, london_mulligans=True)
+        self.assertEqual(first, second)
+        self.assertEqual(first["schema"], "kernel_limited_smoke/v4")
+        for mode, enabled in (("foundations", True), ("london-wrong", True),
+                              ("london-missing", True), ("london", False),
+                              ("earlier-with-mulligans", False)):
+            with self.subTest(mode=mode, enabled=enabled):
+                with LimitedClientV1(self.command(mode), london_mulligans=enabled) as client:
                     with self.assertRaises(LimitedSessionError):
                         client.reset(self.decks)
                     self.assertTrue(client.closed)

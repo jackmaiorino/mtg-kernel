@@ -75,11 +75,14 @@ impl PolicyDecisionV5 {
                     | Decision::ChooseCastMode { player, .. }
                     | Decision::ChooseKicker { player, .. }
                     | Decision::ChooseSpellMode { player, .. }
+                    | Decision::ChooseTriggerMode { player, .. }
                     | Decision::ChooseEffectOption { player, .. }
                     | Decision::ChooseEffectTargets { player, .. }
                     | Decision::ChooseEffectBoolean { player, .. }
                     | Decision::ChooseCombatDamageRange { player, .. }
                     | Decision::ChooseLegendPermanent { player, .. }
+                    | Decision::ChooseLondonMulligan { player, .. }
+                    | Decision::ChooseLondonBottom { player, .. }
                     | Decision::ChooseOptionalCost { player, .. }
                     | Decision::ChooseSpellCopyPayment { player, .. }
                     | Decision::ChooseSpellCopyRetarget { player, .. }

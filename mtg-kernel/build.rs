@@ -2502,6 +2502,7 @@ enum Special {
     /// Target nonland permanent; its owner chooses whether the exact bound
     /// incarnation goes second from top or on the bottom of their library.
     DeemInferior,
+    UnchartedVoyage,
     /// Tap target creature and mark that exact battlefield incarnation to
     /// skip its current controller's next untap. Sleep of the Dead is the
     /// first consumer.
@@ -2813,6 +2814,7 @@ impl Special {
                 format!("scry_then_draw:{scry}:{draw}")
             }
             Special::DeemInferior => "deem_inferior".to_string(),
+            Special::UnchartedVoyage => "uncharted_voyage".to_string(),
             Special::TapAndSkipNextUntap => "tap_and_skip_next_untap".to_string(),
             Special::DestroyNonlegendaryCreature => "destroy_nonlegendary_creature".to_string(),
             Special::DestroyCreature => "destroy_creature".to_string(),
@@ -3091,8 +3093,10 @@ fn special_for(name: &str) -> Special {
         "Brainstorm" => Special::DrawThenPutHandOnLibraryTop { draw: 3, put: 2 },
         "Preordain" => Special::ScryThenDraw { scry: 2, draw: 1 },
         "Deem Inferior" => Special::DeemInferior,
+        "Uncharted Voyage" => Special::UnchartedVoyage,
         "Sleep of the Dead" => Special::TapAndSkipNextUntap,
         "Cast Down" => Special::DestroyNonlegendaryCreature,
+        "Luminous Rebuke" => Special::DestroyCreature,
         "Terminate" => Special::DestroyCreature,
         "Snuff Out" => Special::DestroyNonblackCreature,
         "Ancient Grudge" => Special::DestroyArtifact,
@@ -3120,7 +3124,7 @@ fn special_for(name: &str) -> Special {
         "Dread Return" => Special::ReturnOwnGraveyardCreatureToBattlefield,
         "Land Grant" => Special::SearchForestToHand,
         "Unexpected Fangs" => Special::AddPlusOnePlusOneAndLifelinkCounters,
-        "Bind the Monster" => Special::BindTheMonster,
+        "Bind the Monster" | "Witness Protection" => Special::BindTheMonster,
         "Snap" => Special::Snap,
         "Flaring Pain" => Special::DamageCannotBePreventedThisTurn,
         "Prismatic Strands" => Special::PrismaticStrands,
@@ -3261,6 +3265,7 @@ fn effect_recipe_for(card: &CardJson) -> String {
             format!("target=None;spell=ScryThenDraw(Controller,{scry},{draw});mana=None")
         }
         Special::DeemInferior => "target=NonlandPermanent;spell=PutObjectInOwnersLibrarySecondOrBottom(Target0);mana=None".to_string(),
+        Special::UnchartedVoyage => "target=Creature;spell=Sequence(PutObjectInOwnersLibraryTopOrBottom(Target0),SurveilOne(Controller));mana=None".to_string(),
         Special::TapAndSkipNextUntap => {
             "target=Creature;spell=Sequence(TapObject(Target0),SkipNextUntap(Target0));mana=None"
                 .to_string()
@@ -3371,6 +3376,10 @@ fn keywords_for(card: &CardJson) -> String {
         | "Dazzling Angel"
         | "Clinquant Skymage"
         | "Youthful Valkyrie"
+        | "Exemplar of Light"
+        | "Strix Lookout"
+        | "Mischievous Mystic"
+        | "Faerie Token"
         | "Bird Illusion Token"
         | "Faerie Miscreant"
         | "Faerie Seer"
@@ -3388,12 +3397,13 @@ fn keywords_for(card: &CardJson) -> String {
         | "Vitu-Ghazi Inspector"
         | "Webweaver Changeling"
         | "Dwynen, Gilt-Leaf Daen" => keywords.push("Keywords::REACH"),
-        "Spinewoods Paladin" | "Avenging Hunter" | "Beast-Kin Ranger" => {
-            keywords.push("Keywords::TRAMPLE")
-        }
-        "Outlaw Medic" | "Sacred Cat" | "Sacred Cat Embalmed Token" | "Guarded Heir" => {
-            keywords.push("Keywords::LIFELINK")
-        }
+        "Spinewoods Paladin" | "Avenging Hunter" | "Beast-Kin Ranger" | "Mossborn Hydra"
+        | "Koma, World-Eater" => keywords.push("Keywords::TRAMPLE"),
+        "Outlaw Medic"
+        | "Sacred Cat"
+        | "Sacred Cat Embalmed Token"
+        | "Guarded Heir"
+        | "Sun-Blessed Healer" => keywords.push("Keywords::LIFELINK"),
         "Guardian of the Guildpact" => keywords.push("Keywords::PROTECTION_FROM_MONOCOLORED"),
         "Samurai Token" => keywords.push("Keywords::VIGILANCE"),
         _ => {}
@@ -3401,6 +3411,9 @@ fn keywords_for(card: &CardJson) -> String {
     if card.name == "Nyxborn Hydra" {
         keywords.push("Keywords::REACH");
         keywords.push("Keywords::TRAMPLE");
+    }
+    if card.name == "Strix Lookout" {
+        keywords.push("Keywords::VIGILANCE");
     }
     if card.name == "Skeleton Token" {
         keywords.push("Keywords::MENACE");
@@ -3417,7 +3430,10 @@ fn keywords_for(card: &CardJson) -> String {
     if card.name == "Healer's Hawk" {
         keywords.push("Keywords::LIFELINK");
     }
-    if matches!(card.name.as_str(), "Cathar Commando" | "Spectral Sailor") {
+    if matches!(
+        card.name.as_str(),
+        "Cathar Commando" | "Spectral Sailor" | "Celestial Armor"
+    ) {
         keywords.push("Keywords::FLASH");
     }
     if card.name == "Treetop Snarespinner" {
@@ -3508,6 +3524,9 @@ fn additional_mana_abilities_for(name: &str) -> &'static str {
 fn object_name_for(name: &str) -> &str {
     match name {
         "Sacred Cat Embalmed Token" => "Sacred Cat",
+        "Homunculus Horde Token" => "Homunculus Horde",
+        "Koma's Coil Token" => "Koma's Coil",
+        "Scion of the Deep Token" => "Scion of the Deep",
         _ => name,
     }
 }
@@ -3608,7 +3627,24 @@ fn enters_battlefield_tapped_unless_for(name: &str) -> &'static str {
 fn kicker_cost_for(name: &str) -> String {
     match name {
         "Goblin Bushwhacker" => cost_src("{R}"),
+        "Gnarlid Colony" => cost_src("{2}{G}"),
+        "Sun-Blessed Healer" => cost_src("{1}{W}"),
         _ => "None".to_string(),
+    }
+}
+
+fn enters_with_plus_one_counters_for(name: &str) -> &'static str {
+    match name {
+        "Gnarlid Colony" => "Some(EntersWithPlusOneCountersDef { count: 2, if_kicked: true })",
+        "Mossborn Hydra" => "Some(EntersWithPlusOneCountersDef { count: 1, if_kicked: false })",
+        _ => "None",
+    }
+}
+
+fn controlled_counter_keyword_for(name: &str) -> &'static str {
+    match name {
+        "Gnarlid Colony" => "Some(Keywords::TRAMPLE)",
+        _ => "None",
     }
 }
 
@@ -4237,6 +4273,18 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
+        "Celestial Armor" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: Some("W"),
+                generic: 3,
+            }],
+            effect: AbilityEffectRecipe::AttachSourceToTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: true,
+            target_spec: "ControlledCreature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Hunter's Blowgun" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Mana {
                 colored: None,
@@ -4293,6 +4341,24 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
                 colored: Some("U"),
                 generic: 2,
             }],
+            effect: AbilityEffectRecipe::DrawThenDiscard {
+                draw: 1,
+                discard: 1,
+            },
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Strix Lookout" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: Some("U"),
+                    generic: 1,
+                },
+                AbilityCostRecipe::Tap,
+            ],
             effect: AbilityEffectRecipe::DrawThenDiscard {
                 draw: 1,
                 discard: 1,
@@ -4900,6 +4966,9 @@ fn cost_src(mana_cost: &str) -> String {
 
 fn generic_cost_reduction_for(name: &str) -> &'static str {
     match name {
+        "Luminous Rebuke" => {
+            "Some(GenericCostReductionDef { generic_per_count: 3, count: DynamicCountDef::SpellTargetsTappedCreature })"
+        }
         "Myr Enforcer" | "Thoughtcast" | "Refurbished Familiar" => {
             "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerBattlefieldAnyType(&[CardType::Artifact]) })"
         }
@@ -4916,15 +4985,23 @@ fn generic_cost_reduction_for(name: &str) -> &'static str {
     }
 }
 
+fn spell_cannot_be_countered_for(card: &CardJson) -> bool {
+    card.mechanics
+        .iter()
+        .any(|mechanic| mechanic == "cant_be_countered")
+}
+
 fn ward_cost_for(name: &str) -> &'static str {
     match name {
-        "Tolarian Terror" => "Some(WardCostDef::Generic(2))",
+        "Tolarian Terror" | "Cackling Prowler" => "Some(WardCostDef::Generic(2))",
+        "Koma, World-Eater" => "Some(WardCostDef::Generic(4))",
         _ => "None",
     }
 }
 
 fn equipment_for(name: &str) -> &'static str {
     match name {
+        "Celestial Armor" => "Some(EquipmentDef { power_delta: 2, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::FLYING, other_turn_keywords: Keywords::FLYING, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
         "Black Mage's Rod" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 0, add_subtype: Some(Subtype::Wizard), controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 1, job_select: true, granted_activated_ability: None })",
         "Hunter's Blowgun" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords::DEATHTOUCH, other_turn_keywords: Keywords::REACH, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
         "Viridian Longbow" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: Some(GrantedActivatedAbilityDef { cost: &[CostComponent::Tap], target_spec: TargetSpec::AnyTarget, effect: longbow_ping }) })",
@@ -4935,6 +5012,7 @@ fn equipment_for(name: &str) -> &'static str {
 fn attachment_for(name: &str) -> &'static str {
     match name {
         "Bind the Monster" => "Some(AttachmentDef::AuraCreature { prevents_untap: true })",
+        "Witness Protection" => "Some(AttachmentDef::AuraCreatureOverride(CreatureCharacteristicsOverrideDef { name: \"Legitimate Businessperson\", subtype: Subtype::Citizen, colors: &[ManaColor::G, ManaColor::W], power: 1, toughness: 1, loses_abilities: true }))",
         _ => "None",
     }
 }
@@ -4963,6 +5041,16 @@ fn delve_for(name: &str) -> bool {
 /// event, target, and effect part of the generated card database identity.
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Celestial Armor" => "etb:target_controlled_creature:attach_exact_source:then_grant_hexproof_indestructible_until_end_of_turn",
+        "Mossborn Hydra" => "controlled_land_enters:double_plus_one_counters_on_bound_source",
+        "Exemplar of Light" => "controller_gains_positive_life:counter_on_bound_source:1;controller_places_plus_one_counters_on_source:draw:1:limit_per_turn:1",
+        "Mischievous Mystic" => "controller_draws_nth_card_this_turn:2:create_faerie_token:1",
+        "Homunculus Horde" | "Homunculus Horde Token" => "controller_draws_nth_card_this_turn:2:create_homunculus_horde_copy_token:1",
+        "Koma, World-Eater" => "source_combat_damage_to_player:create_blue_3_3_serpent_coil_tokens:4",
+        "Cackling Prowler" => "beginning_controller_end_step_if_creature_died_this_turn:recheck_morbid:plus_one_counter_on_bound_source:1",
+        "Sylvan Scavenging" => "beginning_controller_end_step:mode_before_targets:controlled_creature_plus_one_counter:1|resolution_controls_creature_power_at_least:4:create_green_3_3_raccoon_token:1",
+        "Kiora, the Rising Tide" => "etb:draw:2:then_discard:2;attacks_if_controller_graveyard_cards_at_least:7:recheck_threshold:optional_create_legendary_blue_8_8_octopus_scion:1",
+        "Sun-Blessed Healer" => "etb_if_kicked:recheck_kicked:return_own_graveyard_nonland_permanent_mana_value_at_most:2",
         "Blossoming Sands" | "Thornwood Falls" => "etb:gain_life:1",
         "Dazzling Angel" => "other_controlled_creature_enters:gain_life:1",
         "Beast-Kin Ranger" => "other_controlled_creature_enters:pump_bound_source:1:0:end_of_turn",
@@ -5938,6 +6026,20 @@ fn codegen(cards: &[CardJson]) -> String {
 
     if cards
         .iter()
+        .any(|card| matches!(special_for(&card.name), Special::UnchartedVoyage))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_uncharted_voyage() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![EffectOp::PutObjectInOwnersLibraryTopOrBottom {{ object: ObjectRef::Target(0) }}, EffectOp::SurveilOne {{ player: PlayerRef::Controller }}]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
         .any(|card| matches!(special_for(&card.name), Special::DeemInferior))
     {
         writeln!(
@@ -6405,11 +6507,19 @@ fn codegen(cards: &[CardJson]) -> String {
     // physical-card, flashback, and virtual-copy departure semantics.
     writeln!(out, "fn counter_target_spell_effect() -> EffectOp {{").unwrap();
     writeln!(out, "    EffectOp::Conditional {{").unwrap();
-    writeln!(
-        out,
-        "        cond: EffectCond::TargetInZone(0, Zone::Stack),"
-    )
-    .unwrap();
+    if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
+        writeln!(
+            out,
+            "        cond: EffectCond::TargetSpellCanBeCountered(0),"
+        )
+        .unwrap();
+    } else {
+        writeln!(
+            out,
+            "        cond: EffectCond::TargetInZone(0, Zone::Stack),"
+        )
+        .unwrap();
+    }
     writeln!(out, "        then: Box::new(EffectOp::MoveObject {{ object: ObjectRef::Target(0), to_zone: Zone::Graveyard }}),").unwrap();
     writeln!(out, "        else_: Box::new(EffectOp::Sequence(vec![])),").unwrap();
     writeln!(out, "    }}").unwrap();
@@ -7091,6 +7201,11 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_deem_inferior".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::UnchartedVoyage => (
+                "TargetSpec::Creature",
+                "spell_effect_uncharted_voyage".to_string(),
+                "no_effect".to_string(),
+            ),
             Special::TapAndSkipNextUntap => (
                 "TargetSpec::Creature",
                 "spell_effect_tap_and_skip_next_untap".to_string(),
@@ -7351,6 +7466,12 @@ fn codegen(cards: &[CardJson]) -> String {
         )
         .unwrap();
         writeln!(out, "        ward_cost: {},", ward_cost_for(&c.name)).unwrap();
+        writeln!(
+            out,
+            "        spell_cannot_be_countered: {},",
+            spell_cannot_be_countered_for(c)
+        )
+        .unwrap();
         writeln!(out, "        equipment: {},", equipment_for(&c.name)).unwrap();
         writeln!(out, "        types: &[{types_src}],").unwrap();
         writeln!(out, "        subtypes: &[{subtypes_src}],").unwrap();
@@ -7362,6 +7483,18 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out, "        colors: &[{colors_src}],").unwrap();
         writeln!(out, "        target_spec: {target_spec_src},").unwrap();
         writeln!(out, "        starting_loyalty: {:?},", c.starting_loyalty).unwrap();
+        writeln!(
+            out,
+            "        enters_with_plus_one_counters: {},",
+            enters_with_plus_one_counters_for(&c.name)
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        controlled_counter_keyword: {},",
+            controlled_counter_keyword_for(&c.name)
+        )
+        .unwrap();
         writeln!(out, "        keywords: {},", keywords_for(c)).unwrap();
         writeln!(out, "        spell_effect: {spell_effect_src},").unwrap();
         writeln!(out, "        mana_ability: {mana_ability_src},").unwrap();
@@ -7604,11 +7737,14 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v39\n"
+            "kernel_carddb/v51\n"
         } else {
             "kernel_carddb/v34\n"
         },
     );
+    if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
+        canon.push_str("counter_target_spell_guard=bound_stack_spell_can_be_countered\n");
+    }
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -7627,6 +7763,14 @@ fn codegen(cards: &[CardJson]) -> String {
         canon.push_str(&c.toughness.map(|t| t.to_string()).unwrap_or_default());
         if let Some(loyalty) = c.starting_loyalty {
             canon.push_str(&format!(";starting_loyalty={loyalty}"));
+        }
+        let entry_counters = enters_with_plus_one_counters_for(&c.name);
+        if entry_counters != "None" {
+            canon.push_str(&format!(";entry_counters={entry_counters}"));
+        }
+        let counter_keyword = controlled_counter_keyword_for(&c.name);
+        if counter_keyword != "None" {
+            canon.push_str(&format!(";controlled_counter_keyword={counter_keyword}"));
         }
         canon.push('|');
         canon.push_str(if c.is_land { "L" } else { "-" });
@@ -7652,6 +7796,15 @@ fn codegen(cards: &[CardJson]) -> String {
         canon.push('|');
         canon.push_str(ward_cost_for(&c.name));
         canon.push('|');
+        if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
+            canon.push_str("spell_cannot_be_countered=");
+            canon.push_str(if spell_cannot_be_countered_for(c) {
+                "true"
+            } else {
+                "false"
+            });
+            canon.push('|');
+        }
         canon.push_str("equipment=");
         canon.push_str(equipment_for(&c.name));
         canon.push('|');
@@ -7893,6 +8046,9 @@ fn subtype_variant(t: &str) -> &'static str {
         "Noble" => "Subtype::Noble",
         "Unicorn" => "Subtype::Unicorn",
         "Ajani" => "Subtype::Ajani",
+        "Beast" => "Subtype::Beast",
+        "Cleric" => "Subtype::Cleric",
+        "Homunculus" => "Subtype::Homunculus",
         "Ape" => "Subtype::Ape",
         "Aura" => "Subtype::Aura",
         "BIRD" => "Subtype::BirdAllCaps",
@@ -7919,6 +8075,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Island" => "Subtype::Island",
         "Knight" => "Subtype::Knight",
         "MONK" => "Subtype::Monk",
+        "Merfolk" => "Subtype::Merfolk",
         "MOONFOLK" => "Subtype::Moonfolk",
         "Monkey" => "Subtype::Monkey",
         "Mountain" => "Subtype::Mountain",
@@ -7926,13 +8083,17 @@ fn subtype_variant(t: &str) -> &'static str {
         "NINJA" => "Subtype::NinjaAllCaps",
         "Ninja" => "Subtype::Ninja",
         "Ouphe" => "Subtype::Ouphe",
+        "Octopus" => "Subtype::Octopus",
+        "Hyena" => "Subtype::Hyena",
+        "Raccoon" => "Subtype::Raccoon",
+        "Citizen" => "Subtype::Citizen",
         "Pirate" => "Subtype::Pirate",
         "Plains" => "Subtype::Plains",
         "ROGUE" => "Subtype::RogueAllCaps",
         "Ranger" => "Subtype::Ranger",
         "Rat" => "Subtype::Rat",
         "Rogue" => "Subtype::Rogue",
-        "SERPENT" => "Subtype::Serpent",
+        "SERPENT" | "Serpent" => "Subtype::Serpent",
         "Saga" => "Subtype::Saga",
         "Samurai" => "Subtype::Samurai",
         "Shaman" => "Subtype::Shaman",

@@ -7,7 +7,7 @@ edition.workspace = true
 burn = { version = "=0.21.0", default-features = false, features = ["std", "autodiff"], optional = true }
 burn-cuda = { version = "=0.21.0", default-features = false, features = ["std"], optional = true }
 cudarc = { version = "=0.19.8", default-features = false, features = ["std", "driver", "runtime", "nvrtc", "cublas", "cuda-12080", "dynamic-loading"], optional = true }
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 # `compress` only exports sha2's own compress512 (resumable digests).
 sha2 = { version = "0.10", features = ["compress"] }

@@ -37,7 +37,7 @@ fn position(spec: &Spec, hidden: bool) -> Result<(FastActorSessionV1, Option<Obj
             Zone::Battlefield,
         );
         for id in [first, second] {
-            state.objects.get_mut(id).counters.plus1_plus1 = spec.attacker_counters;
+            state.objects.get_mut(id).counters.plus1_plus1 = i32::from(spec.attacker_counters);
             state.objects.get_mut(id).tapped = true;
             let toughness = engine::effective_toughness(&state, id);
             state.objects.get_mut(id).damage = (toughness - spec.damage).try_into().map_err(err)?;
@@ -53,10 +53,10 @@ fn position(spec: &Spec, hidden: bool) -> Result<(FastActorSessionV1, Option<Obj
         state.active_player = actor;
         let attacker = put(&mut state, actor, spec.attacker, Zone::Battlefield);
         state.objects.get_mut(attacker).tapped = true;
-        state.objects.get_mut(attacker).counters.plus1_plus1 = spec.attacker_counters;
+        state.objects.get_mut(attacker).counters.plus1_plus1 = i32::from(spec.attacker_counters);
         state.players[opponent.index()].life = engine::effective_power(&state, attacker);
         let cat = put(&mut state, opponent, "Sacred Cat", Zone::Battlefield);
-        state.objects.get_mut(cat).counters.plus1_plus1 = spec.cat_counters;
+        state.objects.get_mut(cat).counters.plus1_plus1 = i32::from(spec.cat_counters);
         let toughness = engine::effective_toughness(&state, cat);
         state.objects.get_mut(cat).damage = (toughness - spec.damage).try_into().map_err(err)?;
         state.engine.combat.attackers = vec![attacker];

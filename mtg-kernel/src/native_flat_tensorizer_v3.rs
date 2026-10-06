@@ -131,7 +131,7 @@ pub(crate) fn monstrous_emergence_paid_fixture_v3(
     ));
     if let Some(bonus) = departed_power_bonus {
         assert!(!own_hand);
-        state.objects.get_mut(chosen).counters.plus1_plus1 = bonus;
+        state.objects.get_mut(chosen).counters.plus1_plus1 = i32::from(bonus);
         event::propose_and_commit(
             &mut state,
             ProposedEvent::zone_change(chosen, Zone::Graveyard),

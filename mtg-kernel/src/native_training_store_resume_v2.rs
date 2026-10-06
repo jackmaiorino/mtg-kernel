@@ -686,7 +686,31 @@ fn resume_native_training_store_impl_v1(
         | NativeRunCatalogProfileV1::FdnFixtureBatchB
         | NativeRunCatalogProfileV1::FdnCombatCards
         | NativeRunCatalogProfileV1::FdnLegendRule
-        | NativeRunCatalogProfileV1::FdnTargetedSpells => {
+        | NativeRunCatalogProfileV1::FdnTargetedSpells
+        | NativeRunCatalogProfileV1::FdnCounterCreatures
+        | NativeRunCatalogProfileV1::FdnLifegainCreatures
+        | NativeRunCatalogProfileV1::FdnDrawCreatures
+        | NativeRunCatalogProfileV1::FdnHomunculusCreature
+        | NativeRunCatalogProfileV1::FdnKomaCreature
+        | NativeRunCatalogProfileV1::FdnKioraCreature
+        | NativeRunCatalogProfileV1::FdnProwlerCreature
+        | NativeRunCatalogProfileV1::FdnLuminousRebuke
+        | NativeRunCatalogProfileV1::FdnUnchartedVoyage
+        | NativeRunCatalogProfileV1::FdnSylvanScavenging
+        | NativeRunCatalogProfileV1::FdnCelestialArmor
+        | NativeRunCatalogProfileV1::FdnWitnessProtection
+        | NativeRunCatalogProfileV1::FdnCounterCreaturesRebased
+        | NativeRunCatalogProfileV1::FdnLifegainCreaturesRebased
+        | NativeRunCatalogProfileV1::FdnDrawCreaturesRebased
+        | NativeRunCatalogProfileV1::FdnHomunculusCreatureRebased
+        | NativeRunCatalogProfileV1::FdnKomaCreatureRebased
+        | NativeRunCatalogProfileV1::FdnKioraCreatureRebased
+        | NativeRunCatalogProfileV1::FdnProwlerCreatureRebased
+        | NativeRunCatalogProfileV1::FdnLuminousRebukeRebased
+        | NativeRunCatalogProfileV1::FdnUnchartedVoyageRebased
+        | NativeRunCatalogProfileV1::FdnSylvanScavengingRebased
+        | NativeRunCatalogProfileV1::FdnCelestialArmorRebased
+        | NativeRunCatalogProfileV1::FdnWitnessProtectionRebased => {
             if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
                 return Err(resume_error_v2(
                     NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch,
@@ -1788,6 +1812,196 @@ mod windows_resume_tests {
             .unwrap()
             .into_root();
         let run = decode_train_run_v2(&test_fixture_bytes_fdn_legend_rule_v1()).unwrap();
+        let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+    }
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn resume_rejects_prior_fdn_batch_targeted_spells_before_interacting_with_store_contents() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_targeted_spells_v1;
+        let parent = TestParentV2::new("prior-fdn-targeted-spells");
+        let root = bootstrap_native_training_store_v2(parent.path(), "store")
+            .unwrap()
+            .into_root();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_targeted_spells_v1()).unwrap();
+        let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+    }
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn resume_rejects_prior_fdn_batch_counter_creatures_before_interacting_with_store_contents() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_counter_creatures_v1;
+        let parent = TestParentV2::new("prior-fdn-counter-creatures");
+        let root = bootstrap_native_training_store_v2(parent.path(), "store")
+            .unwrap()
+            .into_root();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_counter_creatures_v1()).unwrap();
+        let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn resume_rejects_prior_fdn_batch_lifegain_creatures_before_interacting_with_store_contents() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_lifegain_creatures_v1;
+        let parent = TestParentV2::new("prior-fdn-lifegain-creatures");
+        let root = bootstrap_native_training_store_v2(parent.path(), "store")
+            .unwrap()
+            .into_root();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_lifegain_creatures_v1()).unwrap();
+        let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn resume_rejects_prior_fdn_batch_draw_creatures_before_interacting_with_store_contents() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_draw_creatures_v1;
+        let parent = TestParentV2::new("prior-fdn-draw-creatures");
+        let root = bootstrap_native_training_store_v2(parent.path(), "store")
+            .unwrap()
+            .into_root();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_draw_creatures_v1()).unwrap();
+        let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn resume_rejects_prior_fdn_batch_homunculus_creature_before_interacting_with_store_contents() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_homunculus_creature_v1;
+        let parent = TestParentV2::new("prior-fdn-homunculus-creature");
+        let root = bootstrap_native_training_store_v2(parent.path(), "store")
+            .unwrap()
+            .into_root();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_homunculus_creature_v1()).unwrap();
+        let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn resume_rejects_prior_fdn_batch_koma_creature_before_interacting_with_store_contents() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_koma_creature_v1;
+        let parent = TestParentV2::new("prior-fdn-koma-creature");
+        let root = bootstrap_native_training_store_v2(parent.path(), "store")
+            .unwrap()
+            .into_root();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_koma_creature_v1()).unwrap();
+        let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn resume_rejects_prior_fdn_batch_kiora_creature_before_interacting_with_store_contents() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_kiora_creature_v1;
+        let parent = TestParentV2::new("prior-fdn-kiora-creature");
+        let root = bootstrap_native_training_store_v2(parent.path(), "store")
+            .unwrap()
+            .into_root();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_kiora_creature_v1()).unwrap();
+        let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn resume_rejects_prior_fdn_batch_prowler_creature_before_interacting_with_store_contents() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_prowler_creature_v1;
+        let parent = TestParentV2::new("prior-fdn-prowler-creature");
+        let root = bootstrap_native_training_store_v2(parent.path(), "store")
+            .unwrap()
+            .into_root();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_prowler_creature_v1()).unwrap();
+        let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn resume_rejects_prior_fdn_batch_luminous_rebuke_before_interacting_with_store_contents() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_luminous_rebuke_v1;
+        let parent = TestParentV2::new("prior-fdn-luminous-rebuke");
+        let root = bootstrap_native_training_store_v2(parent.path(), "store")
+            .unwrap()
+            .into_root();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_luminous_rebuke_v1()).unwrap();
+        let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn resume_rejects_prior_fdn_batch_uncharted_voyage_before_interacting_with_store_contents() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_uncharted_voyage_v1;
+        let parent = TestParentV2::new("prior-fdn-uncharted-voyage");
+        let root = bootstrap_native_training_store_v2(parent.path(), "store")
+            .unwrap()
+            .into_root();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_uncharted_voyage_v1()).unwrap();
+        let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn resume_rejects_prior_fdn_batch_sylvan_scavenging_before_interacting_with_store_contents() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_sylvan_scavenging_v1;
+        let parent = TestParentV2::new("prior-fdn-sylvan-scavenging");
+        let root = bootstrap_native_training_store_v2(parent.path(), "store")
+            .unwrap()
+            .into_root();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_sylvan_scavenging_v1()).unwrap();
+        let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn resume_rejects_prior_fdn_batch_celestial_armor_before_interacting_with_store_contents() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_celestial_armor_v1;
+        let parent = TestParentV2::new("prior-fdn-celestial-armor");
+        let root = bootstrap_native_training_store_v2(parent.path(), "store")
+            .unwrap()
+            .into_root();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_celestial_armor_v1()).unwrap();
         let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
         assert_eq!(
             result.unwrap_err().kind(),

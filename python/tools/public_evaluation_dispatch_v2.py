@@ -163,4 +163,3 @@ try {{
         recovery_seconds=time.monotonic()-recovery_start, jobs=output_jobs, workers=workers, matches=len(fingerprints), fingerprints=fingerprints)
     write(destination/"result.json", result)
     return pin(destination/"result.json")
-

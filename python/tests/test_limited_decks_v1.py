@@ -61,10 +61,10 @@ class LimitedDeckTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "registry version 2"):
             limited.combined_registry(base, [b'{"version":3,"cards":[]}'])
 
-    def test_real_decks_are_40_cards_and_report_missing_behavior(self) -> None:
+    def test_original_decks_are_40_cards_and_fully_resolve(self) -> None:
         for filename, supported_copies, source_sha256 in [
-            ("FDN_top_04956_UG.dck", 28, "bb618d6eaddf04b0a9e51e9a88cd512a04635e99ebca91b11ace4c305d634c86"),
-            ("FDN_top_20626_WG.dck", 29, "be026f1c86e3aabcb294517188d0c5f4f0cdfa3c5e95ee9dedfc51d3cdf814f7"),
+            ("FDN_top_04956_UG.dck", 40, "bb618d6eaddf04b0a9e51e9a88cd512a04635e99ebca91b11ace4c305d634c86"),
+            ("FDN_top_20626_WG.dck", 40, "be026f1c86e3aabcb294517188d0c5f4f0cdfa3c5e95ee9dedfc51d3cdf814f7"),
         ]:
             with self.subTest(filename=filename):
                 self.assertEqual(hashlib.sha256((FIXTURES / filename).read_bytes()).hexdigest(), source_sha256)
@@ -73,9 +73,12 @@ class LimitedDeckTest(unittest.TestCase):
                 self.assertEqual(report["mainboard"]["copies"], 40)
                 self.assertEqual(report["mainboard"]["supported_copies"], supported_copies)
                 self.assertTrue(report["minimum_mainboard_size_met"])
-                self.assertFalse(report["mainboard"]["registry_ready"])
-                with self.assertRaisesRegex(ValueError, "unsupported mainboard"):
-                    limited.resolve_mainboard(deck, self.registry)
+                self.assertEqual(report["mainboard"]["registry_ready"], supported_copies == 40)
+                if supported_copies == 40:
+                    self.assertEqual(len(limited.resolve_mainboard(deck, self.registry)), 40)
+                else:
+                    with self.assertRaisesRegex(ValueError, "unsupported mainboard"):
+                        limited.resolve_mainboard(deck, self.registry)
 
     def test_printings_repeat_counts_and_sideboard_are_preserved(self) -> None:
         deck = limited.parse_dck(
@@ -148,15 +151,18 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("FDN_top_*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
-        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 28)
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 43)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
-                             for card in report["cards"]), 15)
+                             for card in report["cards"]), 0)
 
     def test_cli_refusal_has_no_materialized_ids_and_inspection_is_deterministic(self) -> None:
         args = ["--deck", str(FIXTURES / "FDN_top_04956_UG.dck")]
         stdout, stderr = io.StringIO(), io.StringIO()
-        with redirect_stdout(stdout), redirect_stderr(stderr):
-            self.assertEqual(limited.main(["resolve", *args]), 2)
+        with tempfile.TemporaryDirectory() as tmp:
+            unsupported = Path(tmp) / "unsupported.dck"
+            unsupported.write_text("39 Forest\n1 Never Implemented\n", encoding="utf-8")
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                self.assertEqual(limited.main(["resolve", "--deck", str(unsupported)]), 2)
         self.assertEqual(stdout.getvalue(), "")
         self.assertIn("unsupported mainboard", json.loads(stderr.getvalue())["error"])
         outputs = []
@@ -168,6 +174,20 @@ class LimitedDeckTest(unittest.TestCase):
         self.assertEqual(*outputs)
         report = json.loads(outputs[0])
         self.assertEqual(report["deck_sha256"], hashlib.sha256((FIXTURES / "FDN_top_04956_UG.dck").read_bytes()).hexdigest())
+
+    def test_cli_resolves_both_unchanged_original_decks_in_copy_order(self) -> None:
+        for filename in ["FDN_top_04956_UG.dck", "FDN_top_20626_WG.dck"]:
+            with self.subTest(filename=filename):
+                path = FIXTURES / filename
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    self.assertEqual(limited.main(["resolve", "--deck", str(path)]), 0)
+                report = json.loads(output.getvalue())
+                expected = limited.resolve_mainboard(limited.parse_dck(path.read_text(encoding="utf-8")), self.registry)
+                self.assertEqual(report["card_ids"], expected)
+                self.assertEqual(len(report["card_ids"]), 40)
+                if "UG" in filename:
+                    self.assertEqual(report["card_ids"].count(235), 2)
 
     def test_cli_resolves_supported_deck_and_reports_its_registry_identity(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

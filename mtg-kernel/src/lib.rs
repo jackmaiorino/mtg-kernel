@@ -45,6 +45,7 @@ pub mod bounded_staleness_async_production_v1;
 pub mod bounded_staleness_async_v1;
 pub mod card_def;
 pub mod combat_damage_v1;
+pub(crate) mod continuous_characteristics_v1;
 pub mod legend_rule_v1;
 pub mod planeswalker_v1;
 // Fail-closed canonical JSON codec shared by the native training store's
@@ -102,6 +103,7 @@ pub mod unclamped_softmax_sampler_v1;
 pub mod kernel_native_search_calibration_runner_v1;
 pub mod kernel_native_search_opponent_v1;
 pub mod limited_session_v1;
+pub mod london_mulligan_v1;
 pub mod mana;
 // Model-guided searcher authority record SCHEMA ONLY (design item 4,
 // `CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md` Section 1.4 / 5.3). No
