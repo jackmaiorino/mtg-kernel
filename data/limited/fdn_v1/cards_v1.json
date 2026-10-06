@@ -1765,6 +1765,62 @@
         "artifact_destruction"
       ],
       "java_file": "Mage.Sets/src/mage/cards/a/Abrade.java"
+    },
+    {
+      "name": "Preposterous Proportions",
+      "engine_capability": "full",
+      "mana_cost": "{5}{G}{G}",
+      "mana_value": 7,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "boost_controlled_creatures",
+        "grant_vigilance"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/p/PreposterousProportions.java"
+    },
+    {
+      "name": "Bake into a Pie",
+      "engine_capability": "full",
+      "mana_cost": "{2}{B}{B}",
+      "mana_value": 4,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "destroy_target_creature",
+        "create_food_token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BakeIntoAPie.java"
     }
   ]
 }

@@ -3241,6 +3241,18 @@ fn fdn_program_for(name: &str) -> Option<Special> {
                 effect: "EffectOp::Conditional { cond: EffectCond::TargetInZone(0, Zone::Battlefield), then: Box::new(EffectOp::DestroyObject { object: ObjectRef::Target(0) }), else_: Box::new(EffectOp::Sequence(vec![])) }",
             }),
         },
+        // Creatures you control get +10/+10 and gain vigilance until end of turn.
+        "Preposterous Proportions" => program(
+            "None",
+            "BoostControlledCreatures(10,10,VIGILANCE,exact_incarnations)",
+            "EffectOp::BoostControlledCreaturesUntilEndOfTurn { power: 10, toughness: 10, keywords: Keywords::VIGILANCE }",
+        ),
+        // Destroy target creature. Create a Food token.
+        "Bake into a Pie" => program(
+            "Creature",
+            "Sequence(Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0)),CreateToken(FoodToken,Controller))",
+            "EffectOp::Sequence(vec![EffectOp::Conditional { cond: EffectCond::TargetInZone(0, Zone::Battlefield), then: Box::new(EffectOp::DestroyObject { object: ObjectRef::Target(0) }), else_: Box::new(EffectOp::Sequence(vec![])) }, EffectOp::CreateToken { token_def: crate::card_def::card_id_by_name(\"Food Token\").expect(\"Food Token in CARD_DEFS\"), controller: PlayerRef::Controller }])",
+        ),
         _ => return None,
     })
 }

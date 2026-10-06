@@ -14,7 +14,7 @@ use mtg_kernel::surface_v2::{
     HarnessSurfaceV2, PriorityModeV1, SuppressionAuditMode, SurfaceAction, SurfaceDecision,
 };
 
-const BATCH: [&str; 8] = [
+const BATCH: [&str; 10] = [
     "Sure Strike",
     "Snakeskin Veil",
     "Seismic Rupture",
@@ -23,6 +23,8 @@ const BATCH: [&str; 8] = [
     "Incinerating Blast",
     "Slagstorm",
     "Abrade",
+    "Preposterous Proportions",
+    "Bake into a Pie",
 ];
 
 fn ready() -> GameState {
@@ -169,7 +171,14 @@ fn appended_definitions_are_full_contiguous_and_use_existing_target_shapes() {
     assert_eq!(spec("Sure Strike"), TargetSpec::Creature);
     assert_eq!(spec("Snakeskin Veil"), TargetSpec::ControlledCreature);
     assert_eq!(spec("Incinerating Blast"), TargetSpec::Creature);
-    for name in ["Seismic Rupture", "Boltwave", "Day of Judgment", "Slagstorm"] {
+    assert_eq!(spec("Bake into a Pie"), TargetSpec::Creature);
+    for name in [
+        "Seismic Rupture",
+        "Boltwave",
+        "Day of Judgment",
+        "Slagstorm",
+        "Preposterous Proportions",
+    ] {
         assert_eq!(spec(name), TargetSpec::None, "{name}");
     }
     let def = |name| &CARD_DEFS[usize::from(card_id_by_name(name).unwrap())];
@@ -389,4 +398,34 @@ fn targeted_spells_do_nothing_when_their_target_leaves_before_resolution() {
     assert_eq!(zone(&state, spell), Zone::Graveyard);
     assert_eq!(zone(&state, fodder), Zone::Hand);
     assert_eq!(state.players[0].hand.len(), hand);
+}
+
+#[test]
+fn preposterous_proportions_boosts_only_controlled_creatures_with_vigilance() {
+    let mut state = ready();
+    let mut surface = surface();
+    let own = put(&mut state, PlayerId::P0, "Savannah Lions", Zone::Battlefield);
+    let theirs = put(&mut state, PlayerId::P1, "Savannah Lions", Zone::Battlefield);
+    cast(&mut surface, &mut state, "Preposterous Proportions", None, &[]);
+    resolve(&mut surface, &mut state);
+    assert_eq!(engine::effective_power(&state, own), 12);
+    assert_eq!(engine::effective_toughness(&state, own), 11);
+    assert!(engine::has_effective_keyword(&state, own, Keywords::VIGILANCE));
+    assert_eq!(engine::effective_power(&state, theirs), 2);
+    assert!(!engine::has_effective_keyword(&state, theirs, Keywords::VIGILANCE));
+}
+
+#[test]
+fn bake_into_a_pie_destroys_the_creature_and_creates_a_food_for_its_caster() {
+    let mut state = ready();
+    let mut surface = surface();
+    let angel = put(&mut state, PlayerId::P1, "Serra Angel", Zone::Battlefield);
+    cast(&mut surface, &mut state, "Bake into a Pie", None, &[angel]);
+    let before = state.players[0].battlefield.len();
+    resolve(&mut surface, &mut state);
+    assert_eq!(zone(&state, angel), Zone::Graveyard);
+    assert_eq!(state.players[0].battlefield.len(), before + 1);
+    let food = *state.players[0].battlefield.last().unwrap();
+    assert_eq!(state.objects.get(food).name, "Food Token");
+    assert_eq!(state.objects.get(food).controller, PlayerId::P0);
 }
