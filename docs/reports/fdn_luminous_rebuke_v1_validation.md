@@ -1,5 +1,12 @@
 # FDN Luminous Rebuke implementation and verification
 
+> October 5 integration status: canonical kernel PR #140 preserves this
+> report and its source history. Fixture source `92881658` has passed both full
+> Rust matrices and all four Python shards. Its current-main composition needs
+> fresh CI and exact-head review/merge. Earlier pending/failure statements below
+> refer to their named historical sources. See
+> [current fixture validation](fdn_fixture_gameplay_v1_validation.md).
+
 ## Current snapshot-storage repair
 
 Windows job `111160313009` at published source `2b47e17f` failed only the

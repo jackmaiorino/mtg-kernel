@@ -1,5 +1,12 @@
 # London mulligans validation status
 
+> October 5 integration status: canonical kernel PR #140 preserves this
+> report and its source history. Fixture source `92881658` has passed both full
+> Rust matrices and all four Python shards. Its current-main composition needs
+> fresh CI and exact-head review/merge. Earlier pending/failure statements below
+> refer to their named historical sources. See
+> [current fixture validation](fdn_fixture_gameplay_v1_validation.md).
+
 ## Current composed source
 
 The source incorporates main fe479186 and the complete original fixture

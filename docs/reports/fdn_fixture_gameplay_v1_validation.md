@@ -1,281 +1,111 @@
 # FDN fixture gameplay milestone checks
 
-## Current delivery frontier
+## Current delivery frontier, October 5
 
-The complete implementation stack incorporates main fe479186 and all original
-fixture card/token dependencies, combat, pending choices and London mulligans.
-The current published CI composition is `92881658`, including the arena storage
-change described below. Its hosted qualification is in progress in run `37115415284`.
-Full qualification of that source remains pending. Earlier isolated-stack
-passes below do not qualify this change.
+PR #140 is the canonical integration PR for the two original FDN fixture
+decks. It incorporates current main `85da0e95`, all current kernel prefix heads
+from #124 through #139, the committed Witness repair `53b9eb4d`, and report
+history from #141 through `5ccb37f1`. Every listed local and published head is
+an ancestor of the integration composition; no unique source, fix or receipt
+was discarded. Main's tracing, saved-input diagnostic and guarded launcher
+changes remain intact. This integration needs its own complete CI and current
+diff review before exact-head merge. It is not delivered on main yet.
 
-The cards, London rules, original decks, Voyage walker correction and V6
-observation/prompt repair retain the previously tested behavior. London
-`f904c95c` and CI `7cbfa1cd` repair the Windows profile import and reservation
-regression. The report branch incorporates CI `92881658` and differs only in
-Markdown. Its earlier report-only Rust skips provide no gameplay proof.
+Qualified fixture source `928816583af511220cb36960034591bfab2e3aa0` passed all
+eight hosted checks in run `37115415284`: complete Linux and Windows Rust
+matrices, four Python shards, formatting/lint and change detection. Both Rust
+logs cover all 21 selected Limited integration targets, affected session and
+catalog filters, native production boundaries and host-safe CUDA checks with
+no failed summaries. All five arena unit cases, strengthened GameState restore
+and the private London bottom-menu snapshot restore pass. The frozen snapshot
+check retains 80 objects, 200 warmups, 2,000 iterations and its 40-microsecond
+limit; Linux measured 223 nanoseconds and Windows 583 nanoseconds. Mutation of
+shared arena storage still clones its objects. These are snapshot measurements,
+not complete-turn, search or playing-strength claims.
 
-Windows job `111147114674` at `7cbfa1cd` passed all 24 Witness and 12 London
-integration cases, the three original external games and the repaired private
-bottom-menu library restore. All three complete game receipts equal the prior
-Linux receipts recorded below. The job then failed the unchanged isolated
-snapshot check at 62.836 microseconds against 40, despite the timing-child
-priority change. Later native/Limited/CUDA steps were skipped, so the overall
-Windows job remains a failure. All four Python shards at that source passed.
+All three complete game receipts from current Linux and Windows are identical
+to each other and both London `f904c95c` and earlier `7cbfa1cd` platform lists.
+The repeated seed123 receipts are identical in full. All games use the original
+40-card inputs and the external custom-deck subprocess with London mulligans;
+none ends at the safety cap. Pending decision restoration covers mulligan
+phases, private bottom choices, combat allocation and effect/trigger choices.
 
-Linux job `111147114731` at the same `7cbfa1cd` source completed the entire
-default/native/Limited/host-safe CUDA matrix successfully. All 21 selected
-integration targets passed 347 cases with no integration failures or ignores.
-The isolated snapshot measured 7.084 microseconds. All three complete game
-receipts equal Windows `7cbfa1cd` and the prior Linux receipts; repeated seed123
-is exact and swapped seed701 ends naturally. The private bottom-menu restore
-also passed. These results qualify the earlier Linux source, while the Windows
-failure and the new arena's hosted qualification remain outstanding.
+| Original game | Seat assignment | Physical decisions | Policy steps | Outcome | Transcript SHA-256 |
+| --- | --- | --- | --- | --- | --- |
+| Seed 123, twice | UG / WG | 538 | 544 | Natural P0 win | 7738afcf0a9afff429a1e2e699e631897d2d8a9faba13f698a12a1b04d95c6e1 |
+| Seed 701 | WG / UG | 479 | 491 | Natural P0 win | 610fda6441c5ccf7d98e3e71fdb8e8c67f9c7dfe658ef0b988ebc6a64eef2f6a |
 
-London source `f904c95c` completed both full runtime matrices: Linux job
-`111162992479` and Windows job `111162992480`. All selected integration targets
-and affected library filters passed, with no failed test summaries in either
-complete log. The frozen snapshot measured 7.421 microseconds on Linux and
-18.834 on Windows. All four Python shards, formatting/lint and path detection
-also passed, so all eight checks are successful at that exact source.
-All three complete Windows game receipts equal current Linux and the
-`7cbfa1cd` baseline, including exact repeated seed123 replay and the natural
-swapped seed701 terminal. Private bottom-menu restoration passed on both
-platforms. This qualifies the London source on both platforms and does not
-qualify the later arena storage change in CI `92881658`.
+Both unchanged decks resolve 40/40 copies: 39 distinct fixture names, 80 total
+copies, zero missing or partial fixture cards. Seven required tokens are Elf
+Warrior, Knight, Faerie, Homunculus Horde, Koma's Coil, Scion of the Deep and
+Raccoon. Default catalog is 192 definitions/v34 `064a7c989255ab3c`; complete
+fixture Limited catalog is 236/v51 `bd1385731e43c4a1`. Historical profiles
+remain readable; publication/resume mutation requires the actual live build.
+The pinned original file SHA-256s are:
 
-CI `92881658`, with code introduced by `48b51912`, shares the arena's storage through
-`Arc<Vec<T>>`, detaching before any mutation. This avoids copying every object
-at snapshot capture; the first mutation of shared storage still clones the
-objects. Two arena regressions cover every mutation entry point, stable append
-IDs, legacy JSON and value hashing. The snapshot round trip now checks captured
-bytes and independent mutation after restore. Serde's `rc` feature changes no
-dependency version or lockfile. The entire frozen 80-object workload and timing
-function remain unchanged. Formatting and diff checks pass. Hosted lint job
-`111181187834` passed formatting and all four release Clippy gates: default,
-native Store, Limited and host-safe CUDA compilation, using Rust 1.94.1.
-At that exact source, Linux job `111188356118` completed the full
-Witness/London/default/native/Limited/host-safe CUDA matrix successfully.
-All 21 selected integration targets and affected library filters passed;
-the complete terminal log contains no failed test summaries. All five IDs
-unit tests, the strengthened GameState round trip and private bottom-menu
-restore passed. The unchanged isolated snapshot measured 223 nanoseconds
-(0.223 microseconds) over 2,000 iterations with 80 objects, below the frozen
-40-microsecond limit. This measures capture, not complete turns or search.
-All three complete game receipts equal both London `f904c95c` platform
-receipts and both `7cbfa1cd` baseline receipts, with exact repeated seed123
-replay and natural swapped seed701 termination. Windows job `111188356135`
-has passed its London/original-game step; its complete matrix and receipt
-comparison remain pending.
-Mutating arena APIs now require `T: Clone`, already implemented by `GameObject`.
-The changed arena module's five unit tests passed separately on Windows with
-Rust 1.94.1 and the workspace's exact dependency versions/checksums, including
-both mutation-isolation and legacy-serialization cases. This narrow standalone
-check does not qualify full-engine restoration, gameplay or snapshot timing.
+- UG: `bb618d6eaddf04b0a9e51e9a88cd512a04635e99ebca91b11ace4c305d634c86`
+- WG: `be026f1c86e3aabcb294517188d0c5f4f0cdfa3c5e95ee9dedfc51d3cdf814f7`
 
-At current CI source `92881658`, all four Python shards completed successfully.
-Each built the real release JSONL environment. Full terminal logs confirm:
+Current qualified Python shards at `92881658` built the actual release JSONL
+environment. Ubuntu0 selected 374 tests with 14 skips; Ubuntu1 selected 373
+with 13 skips. Windows0 selected 374 with zero skips; Windows1 selected 373
+with one skip. Every shard has zero failures. Original input/copy-order tests
+and the repaired Windows descendant-lifetime regression pass. Exact jobs:
+`111188356190`, `111188356188`, `111188356176`, `111188356138`.
 
-| Python shard at92881658 | Selected tests | Skips | Failures | Seconds |
-| --- | --- | --- | --- | --- |
-| Ubuntu0, job111188356190 | 374 | 14 | 0 | 493.578 |
-| Ubuntu1, job111188356188 | 373 | 13 | 0 | 666.239 |
-| Windows0, job111188356176 | 374 | 0 | 0 | 923.615 |
-| Windows1, job111188356138 | 373 | 1 | 0 | 930.347 |
+The matching XMage reference at Mage PR #15, source
+`d98525a0a7c8cd1dc526e608c36d5cdbabe39acd`, passed all 146 tests in 16 classes
+with zero failures, errors or skips in run `37050614051`, job `110982798031`.
+This includes four strict damage-allocation cases, 24 combat cases, seven
+London cases and 111 card cases. No Java production behavior changed. These
+reference results remain compatible with the unchanged fixture rules; the
+reference PR and its parent stack remain separate reviewable deliverables.
 
-Both original-deck loading and copy-order resolution pass on Ubuntu, copy-order
-resolution also passes on Windows, and the repaired WMI descendant case passes
-on Windows. Ubuntu executes 720 tests with 27 skips; Windows executes 746 with
-one skip. These results qualify all Python shards and the default environment
-at the new source; the full Windows Rust matrix is still required.
-
-Report source `49ed45c0` completed all four Python shards in run `37109727043`.
-Each shard built the real release JSONL environment. Its Python tests, runner
-and workflow match CI `7cbfa1cd`; that tested source differs only in Markdown.
-Full terminal logs confirm the following results:
-
-| Python shard at49ed45c0 | Selected tests | Skips | Failures | Seconds |
-| --- | --- | --- | --- | --- |
-| Ubuntu0, job111181847843 | 374 | 14 | 0 | 502.931 |
-| Ubuntu1, job111181847813 | 373 | 13 | 0 | 671.629 |
-| Windows0, job111181847797 | 374 | 0 | 0 | 853.563 |
-| Windows1, job111181847792 | 373 | 1 | 0 | 1130.100 |
-
-Ubuntu executes 720 tests with 27 skips; Windows executes 746 with 1 skip.
-The unchanged original-deck copy-order resolution cases pass on both platforms,
-and the repaired WMI descendant-reservation case passes on Windows. These
-results qualify the Python tests and procedure at that prior source. They do
-not qualify the changed arena's environment or replace its full Rust matrix.
-
-Windows job111116304498 atcd7f451b passed24Witness cases and all12London
-integration cases. The original external game test verifies the pinned input
-hashes below, runs seed123 twice with complete receipt equality, and runs
-swapped seed701. All three receipts report natural/natural_game_over and a
-P0 win. Each game performs four explicit bottom choices.
-
-| Earlier Linux/Windows game atcd7f451b/7cbfa1cd | Requests | Physical decisions | Policy steps | Transcript SHA-256 |
-| --- | --- | --- | --- | --- |
-| Seed123, twice with identical complete receipts | 545 | 538 | 544 | 7738afcf0a9afff429a1e2e699e631897d2d8a9faba13f698a12a1b04d95c6e1 |
-| Seed701, seats swapped | 492 | 479 | 491 | 610fda6441c5ccf7d98e3e71fdb8e8c67f9c7dfe658ef0b988ebc6a64eef2f6a |
-
-The pregame restore and V5/V6 public-state/own-hand integration cases also
-pass. The next library build fails with the same missing profile-type import,
-so the private bottom-menu library case and later default/native/FDN/CUDA
-steps did not execute. The overall Windows job remains a failure. CI7cbfa1cd
-and the London backport repair that test scope.
-
-Linux job `111116304494` at `cd7f451b` passes the complete Witness/London,
-default, native, Limited and host-safe CUDA steps. All 21 selected Limited
-integration targets pass 347 cases with zero failures or ignores. Default
-library tests pass 2302 cases with 76 existing ignores, and the unchanged
-snapshot check measures 5.434 microseconds. The pending private bottom-menu,
-combat-damage, priority, discard, kicker, legend, returning-Aura and trigger
-ordering restoration cases pass in the selected library filters.
-
-All three complete Linux game receipts equal the Windows receipts, including
-the pinned original deck hashes, terminal records and transcript hashes.
-The repeated seed123 receipts are identical; swapped seed701 ends naturally.
-This proves composed-source game completion and replay on both platforms.
-The private bottom-menu library case also passes on Windows at `7cbfa1cd`.
-Remaining Windows feature checks and the published arena change still require
-their hosted results.
-
-Draw Windows job111114931404 atb296504e passed its default release and native
-boundary steps, including the unchanged snapshot case at17.433microseconds.
-All11selected Limited integration targets passed185cases with no failures or
-ignores. The following library compilation failed with E0433 because three
-Windows publication tests used NativeRunCatalogProfileV1 without importing
-it. CUDA was skipped and the job remains a failure. The same omission exists
-in the other fixture prefixes. The two-line, feature-gated test import is
-committed throughout the owned stack; pinned rustfmt and diff checks pass.
-Draw's Linux job111114931489 passed its full runtime matrix, with the snapshot
-case at5.456microseconds and the corrected live-catalog expectation passing in
-default and Limited builds. Current Windows qualification remains pending.
-
-Homunculus Linux job `111118452568` at `6b5697a7` and Koma Linux job `111117937900`
-at `51267c7b` pass the complete default, native, Limited and host-safe CUDA
-steps. Their selected Limited integration targets number 12 and 13 respectively;
-their snapshot measurements are 5.369 and 6.844 microseconds. Full terminal logs
-contain no failed test summaries or compilation errors. Each still requires
-Windows qualification with the prepared test-module import repair.
-
-Life-gain Windows job `111116101288` at `5a6fa1ca` passes default/native and all 10
-Limited integration targets, 170 cases with zero failures or ignores. The
-following library compilation fails on two byte-identical duplicate counter
-test names and the missing Windows profile import. Published `2b0963ef` retains one
-copy of each publication/resume regression and adds the import; its assertions
-and filter coverage remain intact. This repair does not change the final
-gameplay source, which already has unique test names. Hosted repair execution
-is still pending.
-CI37088170810 at2397921e failed default Clippy on the omitted V6 London field
-and unmatched human-prompt action variants. The repair shares the public
-mulligan projection across V5/V6 and preserves the human prompt's existing
-custom-game refusal. Its new regression covers public announce/bottom/complete
-facts and exact own-hand identities for both observers, plus legacy omission.
-That new integration case passes in Windows job111116304498. The private
-bottom-menu library case and complete current runtime qualification remain
-pending. Configured all-feature lint already passes on cd7f451b.
-
-Counter, lifelink substrate, Kiora and Prowler Linux jobs reported one stale
-expectation in `default_fixture_decodes_clean_and_classifies_as_the_live_profile`:
-the decoder correctly returned each rebased FDN profile, but the assertion
-still expected Targeted Spells. Every owned prefix now pins its concrete
-rebased profile in that existing regression; the default Pauper expectation,
-production classifier and live-identity checks are unchanged. The repair is
-committed through the full stack. Hosted verification remains pending.
-
-Lifegain-mechanics Windows job111116909367 and Voyage Windows job111114906816
-failed the already isolated snapshot test at68.294 and66.643microseconds,
-respectively, against40. Their native, FDN and CUDA steps were skipped. The
-timing-priority change preserves the snapshot code,80objects,200warmups,
-2000iterations and40microsecond assertion. A local child-process smoke check
-confirms actual normal0x20 and timing0x80 priority. Scheduling contention
-remains a hypothesis; the current CI result must establish whether it helps.
-
-Rebuke Windows job `111116024377` at `7e972928` also fails the isolated snapshot
-test, at 61.49 microseconds. Its later native/Limited/CUDA steps are skipped.
-Its Linux counterpart passes the full matrix. Published Rebuke `5a794540` adds
-the same timing-priority procedure as CI `7cbfa1cd`, the Windows profile import
-and Rust-relevant classification of native CI helpers. The snapshot workload
-and 40-microsecond assertion are unchanged; the hosted performance effect
-remains unproven.
-
-CI37092263828 at94d6fc44 completed successfully. All four Python shards built
-the real default Rust JSONL environment and passed; its Rust matrix was
-skipped because the report-only diff was not Rust-relevant. Those Python
-results qualify the unchanged deck/session client and regression source at
-that commit. The current four-shard results at5bf586eb above also qualify the
-subsequently synchronized reservation test and current Python procedure.
-The changed native runner still requires the current CI140 Rust matrix.
-
-| Python shard at94d6fc44 | Selected tests | Skips | Failures | Seconds |
-| --- | --- | --- | --- | --- |
-| Ubuntu0, job111115367477 | 374 | 14 | 0 | 372.840 |
-| Ubuntu1, job111115367474 | 373 | 13 | 0 | 579.632 |
-| Windows0, job111115367429 | 374 | 0 | 0 | 613.027 |
-| Windows1, job111115367518 | 373 | 1 | 0 | 1032.520 |
-
-Each platform selects747cases: Ubuntu executes720 with27skips and Windows
-executes746 with1skip. Ubuntu includes the unchanged original-deck copy-order
-resolution and schema-four London client admission cases. This is Python
-regression evidence; original Limited games, exact replay and pending restore
-require the runtime job logs.
-
-Fresh catalog-only generation verifies both final identities:
-
-| Catalog | Definitions | Version | CardDB identity |
-| --- | --- | --- | --- |
-| Default main | 192 | v34 | 064a7c989255ab3c |
-| Complete FDN fixtures | 236 | v51 | bd1385731e43c4a1 |
-
-The composed prefixes retain these distinct identities and preserve original
-and earlier composed records for reading. Publishing/resuming mutations must
-match the actual live build.
-
-| Prefix | Definitions | Version | CardDB identity |
-| --- | --- | --- | --- |
-| Counter / lifelink substrate | 218 | v40 | b3dc8eb6d0a6407d |
-| Life-gain cards | 220 | v41 | 958bf2fd746ec314 |
-| Draw cards | 223 | v42 | a1376b708b689b01 |
-| Homunculus | 225 | v43 | f9e239337d933849 |
-| Koma | 227 | v44 | d196a0b706b69e48 |
-| Kiora | 229 | v45 | 2d5aebb949eca8a6 |
-| Prowler | 230 | v46 | 6630c9c09989878f |
-| Rebuke | 231 | v47 | f48d52aff22f0f04 |
-| Voyage | 232 | v48 | 3cd3ce13b2c52a14 |
-| Scavenging | 234 | v49 | 592f678756e75cf5 |
-| Armor | 235 | v50 | f5076bb105d12b32 |
-| Witness / London | 236 | v51 | bd1385731e43c4a1 |
-
-Local checks: 22 focused Python deck/session tests, formatting, workflow lint,
-Python CI-helper compilation and diff checks pass. Both original decks resolve
-in copy order with 40/40 admitted cards. Inventory confirms 39 distinct fixture
-names, 80 copies and zero missing or partial fixture cards. Seven dependency
-tokens remain in the FDN registry. Fresh reference inventory is 43 full,
-1 partial and 242 missing out of 286; this milestone does not claim full-set
-support. The original deck byte hashes remain:
-
-- UG: bb618d6eaddf04b0a9e51e9a88cd512a04635e99ebca91b11ace4c305d634c86
-- WG: be026f1c86e3aabcb294517188d0c5f4f0cdfa3c5e95ee9dedfc51d3cdf814f7
-
-Integration corrections preserve main's wide counters, equipment abilities,
-delve/adventure paths and object hashing while adding the fixture mechanics.
-Prowler and monarch share one end-step trigger-ordering window. The typed
-reference walk retains counter, returning-Aura, Surveil and removed-ability
-bindings. The Windows bootstrap keeps its normalized pinned toolchain directory
-without the compiler override rejected by the existing build guard. The timing
-case remains exact, isolated and explicitly includes the existing ignored test;
-its 40-microsecond limit is unchanged.
-
-| Goal requirement | Current evidence | Remaining check |
+| Goal requirement | Authoritative evidence | Integration status |
 | --- | --- | --- |
-| Original decks and dependencies | Both unchanged decks resolve 40/40; all 39 fixture names admitted; final catalogs generated | Hosted card/rules cases with the prepared arena change |
-| Natural external games | Linux/Windows cd7f451b and Windows7cbfa1cd receipts prove seed123 twice and swapped seed701 end naturally with unchanged original inputs | Qualify the prepared arena source |
-| Deterministic replay | All three complete Linux/Windows receipts match across those runs; repeated seed123 receipts are identical; transcript hashes recorded above | Repeat the original games on the prepared arena source |
-| Pending save/restore | Windows7cbfa1cd private bottom menu, pregame and V5/V6 cases pass; Linux private bottom menu, combat and effect cases pass | Qualify all restoration cases with the prepared arena storage |
-| Rules and regressions | Linux cd7f451b passes all21Limited targets/347cases plus library/default/native/CUDA checks; Windows7cbfa1cd passes24Witness and12London cases before its timing failure; all four Python shards pass at both5bf586eb and7cbfa1cd | Complete the matrix with the unchanged timing gate and new arena isolation/serialization checks |
-| XMage comparisons | PR15 d98525a0: 146 tests/16 classes, zero failures/errors/skips | Reuse for unchanged matching card rules; investigate any actual gameplay discrepancy |
-| Delivery | Own branches and existing PR stack are maintained | Publish final source/report and verify required checks |
+| Both original 40-card decks fully supported | Pinned file hashes, row/copy-order resolution, all 39 names and seven tokens; focused rules tests | Proved at 92881658; composed-main checks pending |
+| Natural external games | Original-fixture subprocess test, two seed123 runs and swapped seed701, full natural terminal receipts | Passed on Linux and Windows at 92881658 |
+| Deterministic replay | Complete repeated receipts and cross-platform/baseline equality, transcript hashes above | Passed at 92881658 |
+| Pending save/restore | London pregame and private-bottom binding/transition tests, combat and effect regressions, arena isolation and exact GameState round trip | Passed in both full matrices at 92881658 |
+| Focused rules, XMage and regressions | 21 kernel integration targets plus library/native/CUDA matrices; 146 matching XMage cases; all four Python shards | Matching source passes; new composition requires full CI |
+| Commit, review and integration | All local/public sibling heads retained in canonical #140; current main retained | Complete diff review, new CI and exact-head main merge pending |
+
+## Prefix reconciliation
+
+All current prefix heads are retained as merge ancestors. Their later Windows
+profile import, reservation regression and timing-child procedure are already
+present in the qualified canonical source. Rebuke and Witness arena backports
+are byte-identical to its three source files. Prowler, Rebuke, Armor and Witness
+report additions and #141's seven report/design updates are preserved.
+
+The #128 conflict concerned removal of a duplicate counter publication/resume
+test in an older catalog prefix. The complete source already has exactly one
+copy of each counter regression; its later life-gain/draw/Homunculus/Koma/Kiora/
+Prowler/Rebuke/Voyage/Scavenging/Armor cases are unique. Retain that complete
+source and the duplicate-removal invariant, rather than dropping later tests.
+No production source changed in this conflict resolution.
+
+- PR #124: `f673b10acfc80a535bbdb77690a348984275c988`
+- PR #125: `1371000ed86069809dab2755f29ad02d19732af3`
+- PR #128: `2ac0b22accecf70b2c69cb3fa7cc47661c4d5883`
+- PR #129: `9c4a3826afaa2d917e55dda31c7e998da7768f98`
+- PR #130: `5f9fa36914866c6f0c9bccb1848b254e7e955301`
+- PR #131: `c5fcce105590f4ba18dcb416cb32e44bf07f80a2`
+- PR #132: `35f27dae036074973914db98b0d5eafc8dcc4735`
+- PR #133: `057740e8aee23326782941b34257edc3f71ce0fc`
+- PR #134: `add3d48561f6845c5cf708974e2cfacd300edefc`
+- PR #135: `330ce16f891350fa0babb891c7953b19c61d0c92`
+- PR #136: `9e7583a83128de57156742600d81292b4948102d`
+- PR #137: `a72f4d1085e805a94caf24e939ff2da3f0ffddcd`
+- PR #138: `53b9eb4d9351a5e37c2be3a6299f276100c219a3`; published predecessor `7b02fc92613ed1f3aa13fc63a82f9b090fa4829d` also retained
+- PR #139: `f904c95c55f299c5fca0744a1e2afa4b29331c9c`
+- PR #141: `5ccb37f13e9cb1cdad2c1563a775c9342f53caf2`; published predecessor `49ed45c066bc301568597ca2399fdbb22365392e` also retained
+
+Broader Foundations coverage remains a separate issue #110 milestone: the
+pinned 286-name observed-gameplay reference has 43 full, one partial and 242
+missing names. It is not a complete booster manifest. Drafting, deck building,
+full-set support, fair search and training are outside this fixture milestone.
+No new training, paid compute, formal measurement or strength claim was made.
 
 ## Historical isolated-stack evidence
 
