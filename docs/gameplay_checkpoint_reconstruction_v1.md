@@ -1,0 +1,23 @@
+# Bounded corrected-input reconstruction
+
+Implementation plan, before execution. Base: `a4e1474b492f2f14ce1ed9ef8e40309fb70e4e8e` (current origin/main, fetched 2026-10-06). Read current global/project/worktree AGENTS and COMPUTE-POLICY. The only open engine PR observed was unrelated147; root owns the new canonical delivery and scorer integration.
+
+Add one feature-gated native driver using existing `HumanOpeningV1`, `FastActorSessionV1`, live V4 menu binding and the V4 encoder/tensorizer. No model constructor, checkpoint loading, forward call, sampler or game continuation. A small Python preparation adapter binds original source pins into an immutable coordinator-only request. It preserves every original case and selected action, never patches encoded arrays. Source rows and public human prompts retain their original pointers.
+
+Seven prefixes are fixed: human292, case0-g115-seat0 201, case0-g115-seat1 114, case1-g115-seat0 8, case1-g115-seat1 11, case2-g115-seat1 23, natural-burn game2 65. Stop before applying the last target action. Total714 gameplay actions and at most32 opening responses. Then one fresh-process duplicate of the shortest successful full prefix (length then ID) establishes bit-identical primary bytes; C011 would add8 actions if successful. No automatic retry or changed actions.
+
+Before every action compare actor, step and complete ordered semantic menu, or the complete public human menu through its live private mapping. Compare observed state recursively. Initially whitelist only a specifically established stale-combat reset outside combat, plus its derived visible-projection hash. Any additional prevention-observation difference is reported as a mismatch until its exact field/value/source justification is recorded. No wholesale deletion of combat, extensions, hashes or metadata. Human public prompt sequence can be normalized to the current prompt only after old prompt binding, menu and visible state match. Mismatches preserve successful earlier targets and mark remaining dependent targets unavailable. All22 status rows remain present.
+
+At successful targets publish schema `gameplay-corrected-input/v1`: case ID, original source/pointer/game/step/actor, exact or corrected status, current observation, engine-ordered `ActionSemanticV1` menu, live binding, `encoded_input` in the existing trace's binary32-bit array format, input SHA, V4 feature/card identities, actual binary/compiled tree/commit identity, and enumerated justified differences. Prefix metadata retains applied-action hashes/history and failure details. No terminal or treatment score fields are read.
+
+Proposed fresh evidence roots, not created by this plan:
+
+- Hot `D:/e-scratch/gameplay-checkpoint-suite-20261006/reconstruction-001`.
+- Cold `E:/mtg-gameplay-checkpoint-suite-20261006/reconstruction-001`.
+- Build `D:/mtg-kernel-gameplay-checkpoint-reconstruction-20261006/target` (owned, isolated, incremental off, at most2 BelowNormal Cargo workers).
+
+Historical full scored trace used15,693,119 bytes/163 rows. Extrapolating714 rows gives about65.6MiB. Use128MiB maximum hot evidence and128MiB verified cold copy; do not claim unmeasured savings from dropping logits. Retain the separate8GiB new build-cache/output ceiling and60GiB per-volume free reserve. Output is create-only and failures remain intact.
+
+Supported execution path: new `python/tools/gameplay_checkpoint_reconstruction_v1.py dispatch --manifest PLAN` uses existing `host_reservation_v1.dispatch` and its contained supervisor, then a worker validates exact binary/input/helper/source pins, held lane/work ID, fresh paths, explicit CPU/memory limits, wall bound, hot/cold size limits and owned STOP files before invoking the native driver. It records children, stops on overflow/STOP/wall, preserves partial files, and hash-verifies the cold copy before completion. This is a bounded no-model correctness reconstruction under COMPUTE-POLICY item4, not a throughput-qualified training/evaluation workload. It must not reclaim another reservation. Root records the manifest and available allocation before execution; no execution occurs in this implementation turn.
+
+Affected checks: synthetic original-source preparation, semantic mismatch rejection, stale-combat whitelist boundaries, unexpected field/array/menu changes, action/opening ceilings, missing cases, create-only/path guards and output serialization; Rust/Python diff check. Root combines the separately owned scorer commit before one bounded build and affected native checks. Preserve pinned Rust1.94.1 and linker identity. No extra research gate is introduced by this routine adapter.
