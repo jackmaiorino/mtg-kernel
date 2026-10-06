@@ -17,7 +17,8 @@ Issue 110's remaining work is split by mechanic family so parallel threads do no
 
 Claimed but not yet merged:
 
-- Equipment/kicker thread, first batch: Evolving Wilds, Burst Lightning, Swiftfoot Boots, Solemn Simulacrum (adds the Golem subtype), Grim Tutor and Quick-Draw Katana; takes the catalog version and ids after `fdn_triggers_tricks_v1`.
+- Equipment/kicker thread, first batch: Evolving Wilds, Burst Lightning, Swiftfoot Boots, Solemn Simulacrum (adds the Golem subtype), Grim Tutor and Quick-Draw Katana; takes v55 after `fdn_triggers_tricks_v1` (v54).
+- Tokens/auras thread, first batch: Dragon Trainer, Resolute Reinforcements, Elfsworn Giant, Eager Trufflesnout, Rite of the Dragoncaller, Heroic Reinforcements, Goblin Surprise, Twinblade Blessing, Blanchwood Armor; takes v56 after the equipment batch.
 
 ## Tier 0
 
