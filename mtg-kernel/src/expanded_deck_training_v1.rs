@@ -1229,6 +1229,24 @@ fn restore_checkpoint_state_v1(
     restore_checkpoint_fields_v1(saved, policy, model)
 }
 
+fn validate_exploration_checkpoint_v1(saved: &ExpandedCheckpointV1) -> Result<(), String> {
+    let is_recovery = saved.loss_identity == "gae_uniform_kl_recovery/v1";
+    ensure(is_recovery == saved.exploration.is_some(), "checkpoint exploration identity differs")?;
+    if let Some(selection) = saved.exploration {
+        selection.validate_v1()?;
+        let ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { gamma, lambda, initial_adam_step, .. } = selection else {
+            return Err("checkpoint exploration selection differs".into());
+        };
+        ensure(saved.adam_step > initial_adam_step && saved.adam_step <= initial_adam_step + 64,
+            "checkpoint exploration Adam ancestry differs")?;
+        ensure(saved.gamma_bits == Some(gamma.to_bits()) && saved.gae_lambda_bits == Some(lambda.to_bits())
+            && saved.entropy_coefficient_bits == Some(0.0_f32.to_bits())
+            && saved.learning_rate_bits == 0.0001_f32.to_bits() && saved.value_coefficient_bits == 0.5_f32.to_bits(),
+            "checkpoint exploration scalar metadata differs")?;
+    }
+    Ok(())
+}
+
 fn restore_checkpoint_fields_v1(
     saved: &ExpandedCheckpointV1,
     policy: &mut FrozenPlayPolicyV1,
@@ -1256,15 +1274,7 @@ fn restore_checkpoint_fields_v1(
     // rather than silently resuming under a different loss than the one
     // that actually produced these parameters.
     let is_recovery = saved.loss_identity == "gae_uniform_kl_recovery/v1";
-    ensure(is_recovery == saved.exploration.is_some(),"checkpoint exploration identity differs")?;
-    if let Some(selection)=saved.exploration {
-        selection.validate_v1()?;
-        let ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 {initial_adam_step,..}=selection else {
-            return Err("checkpoint exploration selection differs".into());
-        };
-        ensure(saved.adam_step>initial_adam_step && saved.adam_step<=initial_adam_step+64,
-            "checkpoint exploration Adam ancestry differs")?;
-    }
+    validate_exploration_checkpoint_v1(saved)?;
     let is_gae = saved.loss_identity == GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1 || is_recovery;
     ensure(
         is_gae
@@ -2616,6 +2626,13 @@ fn execute_update_v1(
         "output directory already exists",
     )?;
     let (policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
+    if let ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { initial_adam_step, .. } = loss_selection {
+        if state.adam_step_v1() != initial_adam_step {
+            let pin = source.checkpoint.as_ref().ok_or("recovery continuation requires checkpoint")?;
+            let saved: ExpandedCheckpointV1 = read_pinned(pin)?;
+            ensure(saved.exploration == Some(loss_selection), "recovery continuation selection differs")?;
+        }
+    }
     if let Some(context) = &transfer {
         context.validate_scalars(learning_rate, value_coefficient)?;
         // Risk (design section 6, "Registry-transfer scalar pinning"): the
@@ -3251,7 +3268,20 @@ fn execute_update_v1(
         "published checkpoint round trip differs",
     )?;
     let mut result = json!({"schema":"mtg-kernel-expanded-deck-update/v1", "complete":true, "source":source, "trajectories":trajectories, "checkpoint":checkpoint_pin, "before_state_sha256":before, "after_state_sha256":after, "adam_step":update.adam_step, "physical_decisions":groups.len(), "policy_substeps":update.selected_outputs.len(), "loss":update.loss, "policy_sum":update.policy_sum, "value_sum":update.value_sum, "checkpoint_readback":true, "numerical_backend":"native-cpu-sequential", "loss_identity":loss_selection.loss_identity_v1(), "claim":"engineering update only; no playing-strength or production-throughput claim"});
-    if let Some(exploration)=exploration_report {result["exploration"]=exploration;}
+    if let Some(mut exploration) = exploration_report {
+        let gauge = &update.scorer_bias_gauge;
+        exploration["scorer_bias_gauge"] = json!({
+            "substep_count":gauge.substep_count,"total_action_count":gauge.total_action_count,
+            "raw_gradient_residual":gauge.raw_gradient_residual,"high_precision_residual":gauge.high_precision_residual,
+            "per_substep_bound_sum":gauge.per_substep_bound_sum,"cross_substep_bound":gauge.cross_substep_bound,
+            "derived_absolute_bound":gauge.derived_absolute_bound,
+            "parameter_before_bits":gauge.parameter_before_bits,"parameter_after_bits":gauge.parameter_after_bits,
+            "within_bound":f64::from(gauge.raw_gradient_residual).abs()<=gauge.derived_absolute_bound
+                && gauge.high_precision_residual.abs()<=gauge.derived_absolute_bound,
+            "anchor_preserved":gauge.parameter_before_bits==gauge.parameter_after_bits
+        });
+        result["exploration"] = exploration;
+    }
     update_backend.record_update_execution_v1(&mut result);
     if let Some(frozen) = frozen_tensor_sha256 {
         // The update's scorer-bias gauge (the step refuses a residual beyond
@@ -3959,6 +3989,31 @@ pub(crate) mod tests {
             registry_transfer: None,
         };
         (policy, model, saved)
+    }
+
+    #[test]
+    fn exploration_checkpoint_wire_and_scalar_consistency() {
+        let selection: ExpandedLossSelectionV1 = serde_json::from_str(r#"{"kind":"gae_uniform_kl_recovery_v1","gamma":1,"lambda":0.9,"initial_adam_step":32400,"recovery":true,"diagnostics":true}"#).unwrap();
+        selection.validate_v1().unwrap();
+        assert_eq!(serde_json::to_value(selection).unwrap()["kind"], "gae_uniform_kl_recovery_v1");
+        let (_, _, mut saved) = checkpoint_fixture_v1();
+        saved.loss_identity = "gae_uniform_kl_recovery/v1".into();
+        saved.exploration = Some(selection);
+        saved.adam_step = 32401;
+        saved.gamma_bits = Some(1.0_f32.to_bits());
+        saved.gae_lambda_bits = Some(0.9_f32.to_bits());
+        saved.entropy_coefficient_bits = Some(0);
+        saved.learning_rate_bits = 0.0001_f32.to_bits();
+        saved.value_coefficient_bits = 0.5_f32.to_bits();
+        validate_exploration_checkpoint_v1(&saved).unwrap();
+        saved.gae_lambda_bits = Some(0.8_f32.to_bits());
+        assert!(validate_exploration_checkpoint_v1(&saved).unwrap_err().contains("scalar metadata"));
+        saved.gae_lambda_bits = Some(0.9_f32.to_bits());
+        saved.adam_step = 32465;
+        assert!(validate_exploration_checkpoint_v1(&saved).unwrap_err().contains("Adam ancestry"));
+        saved.adam_step = 32464;
+        saved.exploration = None;
+        assert!(validate_exploration_checkpoint_v1(&saved).unwrap_err().contains("identity"));
     }
 
     #[test]

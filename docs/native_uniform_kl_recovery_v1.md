@@ -21,6 +21,9 @@ Beta zero skips loss and canonical gradient additions. Old configurations
 retain their existing serialized shape. New checkpoints add `exploration`
 with the selection and use loss identity `gae_uniform_kl_recovery/v1`.
 State hashes still cover the same full parameters and Adam state.
+Continuation after initial Adam32400 requires the identical exploration
+selection, including arm and diagnostics flag. Checkpoint scalar bits and
+Adam age must agree with its exploration metadata.
 
 `update.json.exploration` records update index, beta bits, raw regularizer
 sum, N, objective and optional diagnostics. Updates1,32,64 perform exactly
@@ -41,6 +44,8 @@ with a max-centered binary64 reference, records observed rounding and a
 count-derived accumulation bound, and checks that supplied combined
 gradients equal the declared addition. It never sets a blanket tolerance
 from the final residual. The canonical scalar scorer bias remains anchored.
+The recovery receipt includes the raw and high-precision gauge residuals,
+derived bound, before/after anchor bits and pass indicators.
 
 Forward-only probes use expanded command `mode: score_saved_states` with
 `source`, `probes: [{probe_id, trajectory: {path,sha256}, row_index}]`,
@@ -59,3 +64,11 @@ declared-rounding gauge, parameter finite differences, physical-group
 weighting, complete beta-zero state identity, and diagnostics on/off state
 identity. Release checks use the pinned guarded build helper. Runtime
 qualification and fixed-probe corpus execution belong to the lead.
+
+Observed first check: commit1035f550 passed five exploration and three
+existing GAE release tests under Rust1.94.1 and pinned MSVC linker
+ee9b29be652eee20affa6963a7ce54d01271b0f1b2443e315ea86469cbb95694.
+Receipt: D:/e-scratch/exploration-execution-20261006/loss-checks-001/completion.json.
+Total1218.961s,227050351 logical bytes across cache/output, zero formal games
+and zero paid compute. The following checkpoint/gauge receipt repair adds
+one affected metadata-admission test and requires checks at its own commit.
