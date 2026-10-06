@@ -23,6 +23,11 @@ impl<'a> PairedBo1PolicyInputV1<'a> {
         Self { session, decision }
     }
 
+    #[cfg(feature = "gameplay-decision-trace-v1")]
+    pub(crate) fn session_for_trace_v1(&self) -> &FastActorSessionV1 {
+        self.session
+    }
+
     pub fn decision(&self) -> FastActorDecisionV1 {
         self.decision
     }

@@ -187,6 +187,15 @@ jobs:
       - name: Run Rust release tests
         run: python python/tools/run_rust_workspace_tests.py --no-fail-fast
 
+      - name: Check opt-in gameplay decision tracing
+        run: |
+          cargo clippy --release --locked -p mtg-kernel --all-targets --features gameplay-decision-trace-v1 -- -D warnings
+          cargo test --release --locked -p mtg-kernel --features gameplay-decision-trace-v1 --lib gameplay_trace
+      - name: Saved input scalar diagnostic guards
+        run: |
+          cargo clippy --release --locked -p mtg-kernel --lib --bin saved_input_scalar_diagnostic --features saved-input-scalar-diagnostic -- -D warnings
+          cargo test --release --locked -p mtg-kernel --features saved-input-scalar-diagnostic --lib saved_input_scalar_diagnostic::tests
+
       - name: Validate native Store production feature boundary
         shell: pwsh
         run: |
