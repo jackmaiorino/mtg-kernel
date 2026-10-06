@@ -35,6 +35,7 @@ pub struct CensusConfigV1 {
     pub workers: usize,
     pub decks: Vec<usize>,
     pub mode: String,
+    pub pilot_deck: usize,
 }
 
 fn mix(mut z: u64) -> u64 {
@@ -66,6 +67,16 @@ fn play_out(
     policy: &mut FrozenPlayPolicyV1,
     seat: usize,
 ) -> Result<(f64, u32, bool), String> {
+    play_out_traced(session, policy, seat, None)
+}
+
+fn play_out_traced(
+    session: &mut FastActorSessionV1,
+    policy: &mut FrozenPlayPolicyV1,
+    seat: usize,
+    trace: Option<usize>,
+) -> Result<(f64, u32, bool), String> {
+    let mut traced = 0usize;
     loop {
         match session.current_response() {
             FastActorResponseV1::Terminal(t) => {
@@ -84,6 +95,25 @@ fn play_out(
             }
             FastActorResponseV1::Decision(d) => {
                 let a = policy.select_fast_session_v1(session)?;
+                if let Some(limit) = trace {
+                    if traced < limit && d.legal_action_count > 1 {
+                        traced += 1;
+                        let st = session.game_state();
+                        let sem = session
+                            .diagnostic_current_action_semantics()
+                            .map(|v| format!("{:?}", v[a as usize]))
+                            .unwrap_or_default();
+                        eprintln!(
+                            "  t{} {:?} P{} life={:?} k={} -> {}",
+                            st.turn,
+                            st.step,
+                            seat_index(d.acting_player),
+                            [st.players[0].life, st.players[1].life],
+                            d.legal_action_count,
+                            sem.chars().take(200).collect::<String>()
+                        );
+                    }
+                }
                 session
                     .step(d.episode_id, d.step, a)
                     .map_err(|e| format!("{e:?}"))?;
@@ -212,7 +242,19 @@ fn evaluate_root(
             s.step(d.episode_id, d.step, a as u32)
                 .map_err(|e| format!("root step {a}: {e:?}"))?;
             roll.reset_sampling_v1(pol);
-            let (score, turn, natural) = play_out(&mut s, roll, actor)?;
+            let trace = std::env::var("CENSUS_TRACE")
+                .ok()
+                .and_then(|v| {
+                    let (st, rr) = v.split_once(':')?;
+                    (st.parse::<u64>().ok()? == d.step && rr.parse::<usize>().ok()? == r).then_some(60)
+                });
+            if trace.is_some() {
+                eprintln!("TRACE step {} rollout {r} action {a}: {:?}", d.step, semantics[a]);
+            }
+            let (score, turn, natural) = play_out_traced(&mut s, roll, actor, trace)?;
+            if trace.is_some() {
+                eprintln!("  => score {score} turn {turn}");
+            }
             if !natural {
                 non_natural += 1;
             }
@@ -332,6 +374,111 @@ fn run_mulligan_game(
     Ok(())
 }
 
+/// Rollout-improved pilot: the pilot seat (playing `cfg.pilot_deck`) replaces
+/// each multi-action choice by the best of the policy's top actions under
+/// determinized policy rollouts; the opponent is the plain policy. Each game is
+/// paired with the plain-policy game from the same seed.
+fn run_pilot_game(
+    cfg: &CensusConfigV1,
+    game: u64,
+    base: &mut FrozenPlayPolicyV1,
+    roll: &mut FrozenPlayPolicyV1,
+    sink: &Mutex<std::fs::File>,
+) -> Result<(), String> {
+    let n = cfg.decks.len() as u64;
+    let pilot = (game % 2) as usize;
+    let opp_deck = cfg.decks[((game / 2) % n) as usize];
+    let starting = ((game / (2 * n)) % 2) as u8;
+    let seed = mix(cfg.base_seed ^ mix(game));
+    let mut deck_ix = [opp_deck; 2];
+    deck_ix[pilot] = cfg.pilot_deck;
+    let decks = [&RUNTIME_DECKS[deck_ix[0]], &RUNTIME_DECKS[deck_ix[1]]];
+    let mut scores = [0.0f64; 2];
+    let mut changed = 0u32;
+    let mut evaluated_decisions = 0u32;
+    for (variant_ix, improved) in [false, true].into_iter().enumerate() {
+        let mut session =
+            FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
+                1,
+                seed,
+                MAX_PHYSICAL,
+                MAX_PHYSICAL * 128,
+                [decks[0].id.to_owned(), decks[1].id.to_owned()],
+                [decks[0].card_ids.to_vec(), decks[1].card_ids.to_vec()],
+                PlayerId(starting),
+            )
+            .map_err(|e| format!("{e:?}"))?;
+        base.reset_sampling_v1(paired_policy_seeds_v1(seed));
+        let mut ordinal = 0u64;
+        let score = loop {
+            match session.current_response() {
+                FastActorResponseV1::Terminal(t) => {
+                    let natural = t.terminal_classification == TerminalClassificationV1::Natural;
+                    break match t.winner {
+                        Some(w) if natural => f64::from(u8::from(seat_index(w) == pilot)),
+                        _ => 0.5,
+                    };
+                }
+                FastActorResponseV1::Decision(d) => {
+                    let sampled = base.select_fast_session_v1(&session)?;
+                    let mut a = sampled;
+                    if improved && seat_index(d.acting_player) == pilot && d.legal_action_count >= 2 {
+                        ordinal += 1;
+                        evaluated_decisions += 1;
+                        roll.reset_sampling_v1([1, 2]);
+                        let probs = softmax(&roll.score_fast_session_v1(&session)?.logits);
+                        let mut order: Vec<usize> = (0..probs.len()).collect();
+                        order.sort_by(|&x, &y| probs[y].partial_cmp(&probs[x]).unwrap());
+                        let mut cand: Vec<usize> = order.into_iter().take(cfg.max_actions).collect();
+                        if !cand.contains(&(sampled as usize)) {
+                            cand.push(sampled as usize);
+                        }
+                        let root_seed = mix(seed ^ mix(0x9170 ^ ordinal));
+                        let mut means = vec![0f64; cand.len()];
+                        for r in 0..cfg.rollouts as u64 {
+                            let det = mix(root_seed ^ (r + 1));
+                            let pol = [mix(det ^ 0xA1), mix(det ^ 0xB2)];
+                            for (i, &c) in cand.iter().enumerate() {
+                                let mut s = match session.census_redeterminized_clone_v1(det) {
+                                    Ok(s) => s,
+                                    Err(_) => continue,
+                                };
+                                if s.step(d.episode_id, d.step, c as u32).is_err() {
+                                    means[i] -= 1e3;
+                                    continue;
+                                }
+                                roll.reset_sampling_v1(pol);
+                                let (sc, _, _) = play_out(&mut s, roll, pilot)?;
+                                means[i] += sc / f64::from(cfg.rollouts);
+                            }
+                        }
+                        let own = cand.iter().position(|&c| c == sampled as usize).unwrap();
+                        means[own] += 1.5 / f64::from(cfg.rollouts);
+                        let best = (0..cand.len())
+                            .max_by(|&x, &y| means[x].partial_cmp(&means[y]).unwrap())
+                            .unwrap();
+                        a = cand[best] as u32;
+                        if a != sampled {
+                            changed += 1;
+                        }
+                    }
+                    session
+                        .step(d.episode_id, d.step, a)
+                        .map_err(|e| format!("{e:?}"))?;
+                }
+            }
+        };
+        scores[variant_ix] = score;
+    }
+    let row = json!({"kind":"pilot","game":game,"pilot_seat":pilot,
+        "decks":[decks[0].id,decks[1].id],"pilot_deck":decks[pilot].id,"opp_deck":RUNTIME_DECKS[opp_deck].id,
+        "starting_player":starting,"base":scores[0],"improved":scores[1],
+        "evaluated_decisions":evaluated_decisions,"changed":changed});
+    let mut f = sink.lock().map_err(|_| "sink poisoned")?;
+    writeln!(f, "{row}").map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub fn run_v1(cfg: CensusConfigV1) -> Result<(), String> {
     let source: ExpandedModelSourceV1 = serde_json::from_slice(
         &std::fs::read(&cfg.source).map_err(|e| e.to_string())?,
@@ -364,6 +511,8 @@ pub fn run_v1(cfg: CensusConfigV1) -> Result<(), String> {
                     }
                     let result = if cfg.mode == "mulligan" {
                         run_mulligan_game(cfg, g, &mut roll, sink)
+                    } else if cfg.mode == "pilot" {
+                        run_pilot_game(cfg, g, &mut base, &mut roll, sink)
                     } else {
                         run_game(cfg, g, &mut base, &mut roll, sink)
                     };
