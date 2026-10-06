@@ -2431,11 +2431,18 @@ fn stack_spell_has_type(state: &GameState, item: &StackItem, card_type: CardType
     }
 }
 
-/// Mana value of a spell on the stack. Alternative costs, including Bestow,
-/// do not change mana value; announced X is substituted into each printed X
-/// symbol in the card's mana cost.
+/// Mana value of the selected printed spell form. Bestow and other
+/// alternative costs retain the ordinary value; Omen/Adventure select
+/// their own printed cost before substituting announced X.
 fn stack_spell_mana_value(state: &GameState, item: &StackItem) -> u16 {
     let def = &card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize];
+    if item.v4.cast_method == Some(CastMethodV4::Omen) {
+        if let Some((cost, _)) = def.omen_spell_form() {
+            return u16::from(cost.generic)
+                .saturating_add(cost.pips.len() as u16)
+                .saturating_add(item.v4.x_value.saturating_mul(u16::from(cost.x_count)));
+        }
+    }
     def.mana_value
         .saturating_add(item.v4.x_value.saturating_mul(u16::from(def.cost.x_count)))
 }

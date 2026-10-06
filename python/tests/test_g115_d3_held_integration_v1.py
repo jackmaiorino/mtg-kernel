@@ -26,8 +26,8 @@ class HeldIntegrationTests(unittest.TestCase):
             stack.enter_context(patch.object(runner, 'free_memory', return_value=1))
             stack.enter_context(patch.object(runner.shutil, 'disk_usage', return_value=Mock(free=32 * 2**30)))
             stack.enter_context(patch.dict(runner.os.environ, {}, clear=True))
-            # Exercise placement and receipts inside the frozen campaign window.
-            stack.enter_context(patch.object(runner.time, 'time', return_value=runner.DEADLINE - 60))
+            # Exercise held-spawn receipts before the fixed historical deadline.
+            stack.enter_context(patch.object(runner.time, 'time', return_value=runner.DEADLINE - 1))
             children = [Mock(pid=100+i, returncode=0) for i in range(2)]
             for child in children:
                 child.poll.return_value = 0
