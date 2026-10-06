@@ -98,6 +98,7 @@ impl Scan<'_> {
             | ExilePlayersGraveyard { .. }
             | ExileOneFromPlayersGraveyard { .. }
             | ExileAllGraveyards
+            | DestroyAllCreatures
             | DamageAllTargets { .. }
             | ExileAllArtifactTargets
             | DealDamageByControlledCreatureCount { .. }
