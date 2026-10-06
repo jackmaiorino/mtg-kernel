@@ -1,6 +1,21 @@
 # FDN fixture gameplay milestone checks
 
-## Current delivery frontier, October 5
+## Current delivery status, October 6
+
+The final audit found a CI selector gap in the October 5 composition:
+`current_profile_record_round_trips` selected zero tests. The existing Windows
+test is `fdn_profile_record_round_trips_through_construct_seal_decode_validate`.
+This change selects that existing case under the FDN/native production feature
+combination, so the current catalog's construction, publication, decode and
+read-only validation are actually exercised. Its assertions are unchanged.
+The completed earlier checks remain evidence for their named compositions;
+the corrected selector requires fresh qualification before integration.
+
+The records below describe the October 5 composition and earlier sources.
+Final integration and default-branch acceptance remain tracked in canonical
+issue #110 and PR #140, with durable evidence in collaboration PR #92.
+
+## October 5 integration composition
 
 PR #140 is the canonical integration PR for the two original FDN fixture
 decks. It incorporates current main `85da0e95`, all current kernel prefix heads
