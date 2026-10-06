@@ -1197,6 +1197,83 @@ pub(crate) struct LibraryShuffleToken {
     authorization: LibraryShuffleAuthorization,
 }
 
+/// One observer-scoped fact that `event_history` does not record: a look,
+/// a reveal, a library rearrangement, a whole-library randomization, or the
+/// public position of a library insertion or removal. `history_len` is the
+/// length of `engine.event_history` when the fact was noted, so a reader can
+/// interleave notes with committed events in their true order. Insertion and
+/// removal notes are taken inside the zone change they belong to, before its
+/// `ZoneChange` is appended, so such a note anchors to that event's index.
+///
+/// The journal is observation bookkeeping, never rules state: no rule,
+/// trigger or policy reads it. Spellbench's v2 bridge exports it to its
+/// trusted adapter, which projects it per viewer for `x_public_history_v1`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ObservationNoteKindV1 {
+    /// Every observer's facts about `owner`'s library were cleared: a shuffle
+    /// or another whole-library randomization. Always public.
+    LibraryRandomized { owner: PlayerId },
+    /// `observer` learned these exact library positions (top is 0).
+    LibraryLooked {
+        observer: PlayerId,
+        owner: PlayerId,
+        positions: Vec<(u32, ObjectId)>,
+    },
+    /// The top `ordered.len()` cards were rearranged. Only `revealed_to` know
+    /// the result; everyone else knows only the count.
+    LibraryReordered {
+        owner: PlayerId,
+        ordered: Vec<ObjectId>,
+        revealed_to: Vec<PlayerId>,
+    },
+    /// A scry by `owner`: the owner knows both groups, everyone else knows
+    /// only their sizes.
+    LibraryScried {
+        owner: PlayerId,
+        retained_top: Vec<ObjectId>,
+        ordered_bottom: Vec<ObjectId>,
+    },
+    /// One card of `owner`'s hand was revealed to `observer`.
+    HandCardRevealed {
+        observer: PlayerId,
+        owner: PlayerId,
+        object: ObjectId,
+    },
+    /// A card left `owner`'s library from this publicly determined position.
+    LibraryRemoval { owner: PlayerId, position: u32 },
+    /// A card entered `owner`'s library at this publicly determined position.
+    LibraryInsertion { owner: PlayerId, position: u32 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ObservationNoteV1 {
+    pub history_len: usize,
+    #[serde(flatten)]
+    pub kind: ObservationNoteKindV1,
+}
+
+/// Append-only journal of [`ObservationNoteV1`]. It is deliberately excluded
+/// from equality, hashing and serialization, so every existing state hash,
+/// snapshot and golden is unchanged and two states that differ only in what
+/// was journalled compare equal.
+#[derive(Debug, Clone, Default)]
+pub struct ObservationJournalV1(Vec<ObservationNoteV1>);
+
+impl ObservationJournalV1 {
+    pub fn notes(&self) -> &[ObservationNoteV1] {
+        &self.0
+    }
+}
+
+impl PartialEq for ObservationJournalV1 {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for ObservationJournalV1 {}
+
 /// `Hash` is manual (see the `impl Hash for GameState` block below this
 /// struct): it must reproduce the exact pre-existing field-hash sequence for
 /// a legacy P0-first state, the same discipline `starting_player`'s serde
@@ -1257,6 +1334,10 @@ pub struct GameState {
     /// event log, all owned by the `engine`/`event`/`trigger` modules. See
     /// `engine::EngineState`.
     pub engine: crate::engine::EngineState,
+    /// Observer-scoped facts for observation projection only; see
+    /// [`ObservationJournalV1`]. Not serialized, hashed or compared.
+    #[serde(skip)]
+    pub observation_journal: ObservationJournalV1,
 }
 
 /// Reproduces exactly the field-hash sequence `#[derive(Hash)]` produced
@@ -1422,6 +1503,7 @@ impl GameState {
             }),
             randomness: GameRandomnessState::Legacy(SplitMix64::seed(seed)),
             engine: crate::engine::EngineState::default(),
+            observation_journal: ObservationJournalV1::default(),
         }
     }
 
@@ -1464,6 +1546,15 @@ impl GameState {
         &self.hand_knowledge[observer.index()][owner.index()]
     }
 
+    /// Appends one observer-scoped fact, anchored to the current length of
+    /// `engine.event_history` (see [`ObservationNoteV1`]).
+    pub(crate) fn note_observation(&mut self, kind: ObservationNoteKindV1) {
+        let history_len = self.engine.event_history.len();
+        self.observation_journal
+            .0
+            .push(ObservationNoteV1 { history_len, kind });
+    }
+
     /// Records a revealed hand identity for exactly one observer. The entry
     /// is incarnation-bound and stored in arena-id order for deterministic
     /// snapshots and observation hashes.
@@ -1489,13 +1580,19 @@ impl GameState {
             // future hand mutation would have to reconcile.
             return Ok(());
         }
+        let zone_change_count = card.zone_change_count;
+        self.note_observation(ObservationNoteKindV1::HandCardRevealed {
+            observer,
+            owner,
+            object,
+        });
         let entries = &mut self.hand_knowledge[observer.index()][owner.index()];
         if entries.iter().any(|entry| entry.object == object) {
             return Ok(());
         }
         entries.push(HandKnowledgeEntry {
             object,
-            zone_change_count: card.zone_change_count,
+            zone_change_count,
         });
         entries.sort_by_key(|entry| entry.object);
         Ok(())
@@ -1710,6 +1807,14 @@ impl GameState {
         }
         entries.sort_by_key(|entry| entry.position);
         self.library_knowledge[observer.index()][owner.index()] = entries;
+        let positions = (0..count)
+            .map(|position| (position as u32, self.players[owner.index()].library[position]))
+            .collect();
+        self.note_observation(ObservationNoteKindV1::LibraryLooked {
+            observer,
+            owner,
+            positions,
+        });
     }
 
     /// Records one exact, publicly determined library position without
@@ -1737,6 +1842,11 @@ impl GameState {
             zone_change_count,
         });
         entries.sort_by_key(|entry| entry.position);
+        self.note_observation(ObservationNoteKindV1::LibraryLooked {
+            observer,
+            owner,
+            positions: vec![(position as u32, object)],
+        });
     }
 
     /// Reorders exactly the top `ordered.len()` cards. The supplied ids must
@@ -1781,6 +1891,11 @@ impl GameState {
                 entries.sort_by_key(|entry| entry.position);
             }
         }
+        self.note_observation(ObservationNoteKindV1::LibraryReordered {
+            owner,
+            ordered: ordered.to_vec(),
+            revealed_to: revealed_to.to_vec(),
+        });
         Ok(())
     }
 
@@ -1929,6 +2044,11 @@ impl GameState {
             self.library_knowledge[observer.index()][owner.index()] =
                 std::mem::take(&mut result_knowledge[observer.index()]);
         }
+        self.note_observation(ObservationNoteKindV1::LibraryScried {
+            owner,
+            retained_top: retained_top.to_vec(),
+            ordered_bottom: ordered_bottom.to_vec(),
+        });
         Ok(())
     }
 
@@ -2184,12 +2304,17 @@ impl GameState {
         for observer in [PlayerId::P0, PlayerId::P1] {
             self.library_knowledge[observer.index()][owner.index()].clear();
         }
+        self.note_observation(ObservationNoteKindV1::LibraryRandomized { owner });
     }
 
     /// Updates position facts after a card at a publicly determined library
     /// position leaves. Top-card draws, mills, and impulse exile all use this
     /// exact shift operation.
     pub(crate) fn note_library_removal(&mut self, owner: PlayerId, position: usize) {
+        self.note_observation(ObservationNoteKindV1::LibraryRemoval {
+            owner,
+            position: position as u32,
+        });
         for observer in [PlayerId::P0, PlayerId::P1] {
             let entries = &mut self.library_knowledge[observer.index()][owner.index()];
             entries.retain(|entry| entry.position as usize != position);
@@ -2207,6 +2332,10 @@ impl GameState {
     /// and shifts one slot deeper. A caller with explicit visibility may
     /// reveal the inserted prefix after the zone change commits.
     pub(crate) fn note_library_insertion(&mut self, owner: PlayerId, position: usize) {
+        self.note_observation(ObservationNoteKindV1::LibraryInsertion {
+            owner,
+            position: position as u32,
+        });
         for observer in [PlayerId::P0, PlayerId::P1] {
             for entry in &mut self.library_knowledge[observer.index()][owner.index()] {
                 if entry.position as usize >= position {
@@ -2582,6 +2711,58 @@ mod tests {
 
     /// Builds the canonical legacy capture state: the exact state the frozen
     /// diagnostic golden uses (two-card libraries, seed 99, one draw each).
+    #[test]
+    fn observation_journal_is_excluded_from_equality_hash_and_snapshots() {
+        let mut journalled = legacy_capture_state();
+        let plain = journalled.clone();
+        let before = plain.observation_journal.notes().len();
+        journalled.reveal_library_top(PlayerId::P1, PlayerId::P0, 1);
+        journalled.library_knowledge = plain.library_knowledge.clone();
+        assert_eq!(journalled.observation_journal.notes().len(), before + 1);
+        assert_eq!(journalled, plain);
+        let hash = |state: &GameState| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            state.hash(&mut hasher);
+            hasher.finish()
+        };
+        assert_eq!(hash(&journalled), hash(&plain));
+        assert_eq!(
+            serde_json::to_string(&journalled).unwrap(),
+            serde_json::to_string(&plain).unwrap()
+        );
+    }
+
+    #[test]
+    fn observation_journal_anchors_notes_to_the_event_history() {
+        let mut state = legacy_capture_state();
+        let top = state.players[0].library[0];
+        let before = state.observation_journal.notes().len();
+        state.engine.event_history.push(crate::event::CommittedEvent::UpkeepBegan {
+            player: PlayerId::P0,
+        });
+        let anchor = state.engine.event_history.len();
+        state.reveal_library_top(PlayerId::P1, PlayerId::P0, 1);
+        state.clear_library_knowledge(PlayerId::P0);
+        let notes = &state.observation_journal.notes()[before..];
+        assert_eq!(notes.len(), 2);
+        assert_eq!(notes[0].history_len, anchor);
+        assert_eq!(
+            notes[0].kind,
+            ObservationNoteKindV1::LibraryLooked {
+                observer: PlayerId::P1,
+                owner: PlayerId::P0,
+                positions: vec![(0, top)],
+            }
+        );
+        assert_eq!(
+            notes[1].kind,
+            ObservationNoteKindV1::LibraryRandomized { owner: PlayerId::P0 }
+        );
+        let wire = serde_json::to_value(&notes[1]).unwrap();
+        assert_eq!(wire["kind"], "library_randomized");
+        assert_eq!(wire["history_len"], anchor);
+    }
+
     fn legacy_capture_state() -> GameState {
         let (lib0, lib1) = two_card_libraries();
         let mut state = GameState::new_from_libraries(&lib0, &lib1, debug_names, 99);
