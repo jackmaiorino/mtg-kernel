@@ -156,6 +156,8 @@ pub(crate) mod deterministic_math_v1;
 pub(crate) mod native_policy_value_net_v1;
 #[cfg(feature = "saved-input-scalar-diagnostic")]
 pub mod saved_input_scalar_diagnostic;
+#[cfg(feature = "gameplay-checkpoint-reconstruction-v1")]
+pub mod gameplay_checkpoint_reconstruction_v1;
 // Shared cfg(test) helper: gates tests that read machine-local sealed
 // evidence (real, already-published run/store artifacts under absolute
 // D:\ / C:\ paths) so they skip cleanly on hosted CI runners instead of

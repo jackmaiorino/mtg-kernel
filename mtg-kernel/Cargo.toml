@@ -14,6 +14,7 @@ sha2 = { version = "0.10", features = ["compress"] }
 
 [features]
 saved-input-scalar-diagnostic = []
+gameplay-checkpoint-reconstruction-v1 = ["gameplay-decision-trace-v1"]
 # Diagnostic sidecars only. No fields, hooks or I/O in default builds.
 gameplay-decision-trace-v1 = []
 # Append the FDN registry to the frozen Pauper registry. Off by default so
@@ -104,6 +105,11 @@ required-features = ["native-flat-tensorizer-diagnostic"]
 name = "saved_input_scalar_diagnostic"
 path = "src/bin/saved_input_scalar_diagnostic.rs"
 required-features = ["saved-input-scalar-diagnostic"]
+
+[[bin]]
+name = "gameplay_checkpoint_reconstruction_v1"
+path = "src/bin/gameplay_checkpoint_reconstruction_v1.rs"
+required-features = ["gameplay-checkpoint-reconstruction-v1"]
 
 [build-dependencies]
 semver = "1"
