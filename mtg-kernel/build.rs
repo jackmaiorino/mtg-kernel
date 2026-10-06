@@ -2636,6 +2636,25 @@ enum Special {
         toughness: i32,
         keyword: &'static str,
     },
+    /// A spell program composed only from existing generic `EffectOp`s.
+    /// `recipe` is the stable semantic token hashed into the card database;
+    /// `effect` and the optional second mode's effect are the emitted Rust
+    /// expressions, which are not hashed. FDN removal and combat-trick
+    /// batches add their cards through `fdn_program_for` so each card is one
+    /// table row rather than a new enum variant and four codegen sites.
+    Program {
+        target: &'static str,
+        recipe: &'static str,
+        effect: &'static str,
+        mode2: Option<ProgramMode>,
+    },
+}
+
+#[derive(Clone, Copy)]
+struct ProgramMode {
+    target: &'static str,
+    recipe: &'static str,
+    effect: &'static str,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -2883,6 +2902,10 @@ impl Special {
             Special::BoostControlledCreatures { power, toughness, keyword } => {
                 format!("boost_controlled_creatures:{power}:{toughness}:{keyword}:exact_incarnations")
             }
+            Special::Program { recipe, mode2, .. } => match mode2 {
+                Some(mode) => format!("program:{recipe}:mode2:{}", mode.recipe),
+                None => format!("program:{recipe}"),
+            },
         }
     }
 }
@@ -3143,8 +3166,100 @@ fn special_for(name: &str) -> Special {
             toughness: 3,
             keyword: "TRAMPLE",
         },
-        _ => Special::None,
+        _ => fdn_program_for(name).unwrap_or(Special::None),
     }
+}
+
+/// FDN removal, damage and combat-trick spells that compose existing
+/// generic effect operations. Characteristics and rules text were read from
+/// the XMage card files named in each `cards_v1.json` entry.
+fn fdn_program_for(name: &str) -> Option<Special> {
+    let program = |target, recipe, effect| Special::Program {
+        target,
+        recipe,
+        effect,
+        mode2: None,
+    };
+    Some(match name {
+        // Target creature gets +3/+0 and gains first strike until end of turn.
+        "Sure Strike" => program(
+            "Creature",
+            "Sequence(PumpTargetUntilEndOfTurn(3,0),GrantKeywordTargetUntilEndOfTurn(Target0,FirstStrike))",
+            "EffectOp::Sequence(vec![EffectOp::PumpTargetUntilEndOfTurnDynamic { target: TargetRef::Target(0), power: DynamicValueDef::Fixed(3), toughness: DynamicValueDef::Fixed(0) }, EffectOp::GrantKeywordTargetUntilEndOfTurn { object: ObjectRef::Target(0), keyword: Keywords::FIRST_STRIKE }])",
+        ),
+        // Put a +1/+1 counter on target creature you control. It gains
+        // hexproof until end of turn.
+        "Snakeskin Veil" => program(
+            "ControlledCreature",
+            "Sequence(AddCounters(Target0,PlusOnePlusOne,1),GrantKeywordTargetUntilEndOfTurn(Target0,Hexproof))",
+            "EffectOp::Sequence(vec![EffectOp::AddCountersToTarget { target_index: 0, optional: false, plus1_plus1: 1, lifelink: 0, stun: 0 }, EffectOp::GrantKeywordTargetUntilEndOfTurn { object: ObjectRef::Target(0), keyword: Keywords::HEXPROOF }])",
+        ),
+        // Deals 2 damage to each creature without flying.
+        "Seismic Rupture" => program(
+            "None",
+            "DamageAllCreatures(WithoutKeyword(Flying),2)",
+            "EffectOp::DamageAllCreatures { filter: CreatureFilter::WithoutKeyword(Keywords::FLYING), amount: 2 }",
+        ),
+        // Deals 3 damage to each opponent.
+        "Boltwave" => program(
+            "None",
+            "DealDamage(Opponent,3)",
+            "EffectOp::DealDamage { target: TargetRef::Opponent, amount: 3 }",
+        ),
+        // Destroy all creatures.
+        "Day of Judgment" => program(
+            "None",
+            "DestroyAllCreatures",
+            "EffectOp::DestroyAllCreatures",
+        ),
+        // Deals 6 damage to target creature. You may discard a card. If you
+        // do, draw a card.
+        "Incinerating Blast" => program(
+            "Creature",
+            "Sequence(DealDamage(Target0,6),MayPayCostThen(Discard1,DrawCards(Controller,1)))",
+            "EffectOp::Sequence(vec![EffectOp::DealDamage { target: TargetRef::Target(0), amount: 6 }, EffectOp::MayPayCostThen { discard: 1, sacrifice_lands: 0, return_permanent: None, then: Box::new(EffectOp::DrawCards { player: PlayerRef::Controller, count: 1 }), otherwise: None }])",
+        ),
+        // Choose one -- 3 damage to each creature; or 3 damage to each player.
+        "Slagstorm" => Special::Program {
+            target: "None",
+            recipe: "DamageAllCreatures(All,3)",
+            effect: "EffectOp::DamageAllCreatures { filter: CreatureFilter::All, amount: 3 }",
+            mode2: Some(ProgramMode {
+                target: "None",
+                recipe: "Sequence(DealDamage(Controller,3),DealDamage(Opponent,3))",
+                effect: "EffectOp::Sequence(vec![EffectOp::DealDamage { target: TargetRef::Controller, amount: 3 }, EffectOp::DealDamage { target: TargetRef::Opponent, amount: 3 }])",
+            }),
+        },
+        // Choose one -- 3 damage to target creature; or destroy target artifact.
+        "Abrade" => Special::Program {
+            target: "Creature",
+            recipe: "DealDamage(Target0,3)",
+            effect: "EffectOp::DealDamage { target: TargetRef::Target(0), amount: 3 }",
+            mode2: Some(ProgramMode {
+                target: "ArtifactPermanent",
+                recipe: "Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0))",
+                effect: "EffectOp::Conditional { cond: EffectCond::TargetInZone(0, Zone::Battlefield), then: Box::new(EffectOp::DestroyObject { object: ObjectRef::Target(0) }), else_: Box::new(EffectOp::Sequence(vec![])) }",
+            }),
+        },
+        _ => return None,
+    })
+}
+
+fn program_target_spec_src(target: &str) -> &'static str {
+    match target {
+        "None" => "TargetSpec::None",
+        "Creature" => "TargetSpec::Creature",
+        "ControlledCreature" => "TargetSpec::ControlledCreature",
+        "ArtifactPermanent" => "TargetSpec::ArtifactPermanent",
+        other => panic!("unsupported program target spec {other}"),
+    }
+}
+
+fn program_function_suffix(name: &str) -> String {
+    name.to_ascii_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect()
 }
 
 /// Stable, gameplay-semantic description of the generated spell target,
@@ -3345,6 +3460,13 @@ fn effect_recipe_for(card: &CardJson) -> String {
         // `Special::CleansingWildfire`'s own recipe two lines above, the
         // first and (until Raze) only consumer of that same target spec.
         Special::DestroyLand => "target=Land;spell=DestroyObject(Target0);mana=None".to_string(),
+        Special::Program { target, recipe, mode2, .. } => match mode2 {
+            Some(mode) => format!(
+                "target={target};spell={recipe};mode2_target={};mode2={};mana=None",
+                mode.target, mode.recipe
+            ),
+            None => format!("target={target};spell={recipe};mana=None"),
+        },
     }
 }
 
@@ -4882,6 +5004,11 @@ fn mode2_for(name: &str) -> String {
         Special::PiracyCharm => "Some(ModeDef { target_spec: TargetSpec::Creature, effect: mode2_effect_piracy_charm_pump })".to_string(),
         Special::CastIntoTheFire => "Some(ModeDef { target_spec: TargetSpec::ArtifactPermanent, effect: mode2_effect_cast_into_the_fire_exile_artifact })".to_string(),
         Special::ThrabenCharm => "Some(ModeDef { target_spec: TargetSpec::EnchantmentPermanent, effect: mode2_effect_thraben_charm_destroy_enchantment })".to_string(),
+        Special::Program { mode2: Some(mode), .. } => format!(
+            "Some(ModeDef {{ target_spec: TargetSpec::{}, effect: mode2_effect_program_{} }})",
+            mode.target,
+            program_function_suffix(name)
+        ),
         _ => "None".to_string(),
     }
 }
@@ -7006,6 +7133,21 @@ fn codegen(cards: &[CardJson]) -> String {
         }
     }
 
+    for card in cards {
+        if let Special::Program { effect, mode2, .. } = special_for(&card.name) {
+            let suffix = program_function_suffix(&card.name);
+            writeln!(out, "fn spell_effect_program_{suffix}() -> Option<EffectOp> {{").unwrap();
+            writeln!(out, "    Some({effect})").unwrap();
+            writeln!(out, "}}").unwrap();
+            if let Some(mode) = mode2 {
+                writeln!(out, "fn mode2_effect_program_{suffix}() -> EffectOp {{").unwrap();
+                writeln!(out, "    {}", mode.effect).unwrap();
+                writeln!(out, "}}").unwrap();
+            }
+            writeln!(out).unwrap();
+        }
+    }
+
     // ---- CARD_DEFS -------------------------------------------------
     writeln!(out, "pub static CARD_DEFS: [CardDef; {}] = [", cards.len()).unwrap();
     for (card_index, c) in cards.iter().enumerate() {
@@ -7411,6 +7553,11 @@ fn codegen(cards: &[CardJson]) -> String {
             Special::NyxbornHydra => (
                 "TargetSpec::None",
                 "spell_effect_nyxborn_hydra".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::Program { target, .. } => (
+                program_target_spec_src(target),
+                format!("spell_effect_program_{}", program_function_suffix(&c.name)),
                 "no_effect".to_string(),
             ),
         };

@@ -1542,6 +1542,229 @@
         "lifelink"
       ],
       "java_file": "Mage.Sets/src/mage/cards/v/VampireNighthawk.java"
+    },
+    {
+      "name": "Sure Strike",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "temporary_power_change",
+        "grant_first_strike"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SureStrike.java"
+    },
+    {
+      "name": "Snakeskin Veil",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "plus_one_counter",
+        "grant_hexproof"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SnakeskinVeil.java"
+    },
+    {
+      "name": "Seismic Rupture",
+      "engine_capability": "full",
+      "mana_cost": "{2}{R}",
+      "mana_value": 3,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "damage_each_creature"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SeismicRupture.java"
+    },
+    {
+      "name": "Boltwave",
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "damage_each_opponent"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/Boltwave.java"
+    },
+    {
+      "name": "Day of Judgment",
+      "engine_capability": "full",
+      "mana_cost": "{2}{W}{W}",
+      "mana_value": 4,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "destroy_all_creatures"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DayOfJudgment.java"
+    },
+    {
+      "name": "Incinerating Blast",
+      "engine_capability": "full",
+      "mana_cost": "{4}{R}",
+      "mana_value": 5,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "damage_target_creature",
+        "may_discard_then_draw"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/i/IncineratingBlast.java"
+    },
+    {
+      "name": "Slagstorm",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}{R}",
+      "mana_value": 3,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "modal",
+        "damage_each_creature",
+        "damage_each_player"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/Slagstorm.java"
+    },
+    {
+      "name": "Abrade",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "modal",
+        "damage_target_creature",
+        "artifact_destruction"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/Abrade.java"
     }
   ]
 }
