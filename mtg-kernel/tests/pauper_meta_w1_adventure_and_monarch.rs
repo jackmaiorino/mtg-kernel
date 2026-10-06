@@ -168,6 +168,14 @@ fn forktail_sweep_is_cast_from_hand_then_the_dragon_is_cast_from_exile() {
     state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
     state.players[0].mana_pool[ManaColor::C.pool_index()] = 1;
 
+    put_object(&mut state, PlayerId::P1, "Faerie Seer", Zone::Battlefield);
+    put_object(
+        &mut state,
+        PlayerId::P1,
+        "Faerie Miscreant",
+        Zone::Battlefield,
+    );
+
     match engine::advance_until_decision(&mut state) {
         Decision::CastSpellOrPass {
             castable_spells, ..
@@ -179,19 +187,17 @@ fn forktail_sweep_is_cast_from_hand_then_the_dragon_is_cast_from_exile() {
     }
 
     engine::step(&mut state, Action::CastSpell(fang_dragon)).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass { .. }
+    ));
+    assert!(state.engine.pending_cast.is_none());
     assert!(
         state.stack.iter().any(|item| item.source == fang_dragon),
         "Forktail Sweep spell on stack"
     );
     // The shared Omen discriminant must use Adventure's printed {1}{R}
     // value, not the creature's seven, for mana-value target eligibility.
-    put_object(&mut state, PlayerId::P1, "Faerie Seer", Zone::Battlefield);
-    put_object(
-        &mut state,
-        PlayerId::P1,
-        "Faerie Miscreant",
-        Zone::Battlefield,
-    );
     let prior_priority = state.priority_player;
     state.priority_player = PlayerId::P1;
     let spec = mtg_kernel::card_def::TargetSpec::SpellManaValueAtMostControlledSubtypes {
