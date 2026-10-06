@@ -6554,6 +6554,22 @@ impl FastActorSessionV1 {
         })
     }
 
+    /// Regret census: one determinization of the current actor's information
+    /// set. Unknown hand/library identities are resampled in the clone; the
+    /// current decision's cached candidates are kept, so the caller applies a
+    /// root action before any hidden identity can be observed.
+    pub(crate) fn census_redeterminized_clone_v1(&self, seed: u64) -> Result<Self, String> {
+        let actor = self.current.as_ref().ok_or("no current decision")?.actor;
+        let mut sampled = self.clone();
+        crate::kernel_native_search_opponent_v1::redeterminize_hidden_zones_v1(
+            &mut sampled.state,
+            actor,
+            seed,
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(sampled)
+    }
+
     pub fn snapshot_v1(&self) -> FastActorSessionSnapshotV1 {
         FastActorSessionSnapshotV1(self.clone())
     }
