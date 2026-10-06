@@ -680,6 +680,26 @@ fn setup(prefix: &Prefix, opening_count: &mut u64) -> Result<FastActorSessionV1,
     opening.into_session()
 }
 
+pub(crate) fn corrected_input_record(
+    target: &Value,
+    observation: &Value,
+    actions: &Value,
+    input: &Value,
+    binding: &Value,
+    runtime: &Value,
+    differences: &[Value],
+) -> Result<Value, String> {
+    let card_db_hash = field_u64(observation, "card_db_hash")?;
+    Ok(
+        json!({"schema":"gameplay-corrected-input/v1","case_id":target["case_id"],
+        "origin":target["origin"],"status":if differences.is_empty() {"exact"} else {"corrected"},
+        "observation":observation,"ordered_actions":actions,"semantic_menu_sha256":sha(actions)?,
+        "binding":binding,"encoded_input_sha256":sha(input)?,"encoded_input":input,
+        "feature_contract_digest":FEATURE_CONTRACT_DIGEST_V4,"feature_encoding_digest":FEATURE_ENCODING_DIGEST_V4,
+        "card_db_hash":format!("{card_db_hash:016x}"),"runtime":runtime,"differences":differences}),
+    )
+}
+
 fn prefix_run(
     prefix: &Prefix,
     runtime: &Value,
@@ -734,11 +754,15 @@ fn prefix_run(
                 } else {
                     "corrected"
                 };
-                let record = json!({"schema":"gameplay-corrected-input/v1","case_id":id,
-                    "origin":target["origin"],"status":status,"observation":observation,"ordered_actions":actions,
-                    "semantic_menu_sha256":sha(&actions)?,"binding":binding,"encoded_input_sha256":sha(&input)?,"encoded_input":input,
-                    "feature_contract_digest":FEATURE_CONTRACT_DIGEST_V4,"feature_encoding_digest":FEATURE_ENCODING_DIGEST_V4,
-                    "card_db_hash":observation["card_db_hash"],"runtime":runtime,"differences":diffs});
+                let record = corrected_input_record(
+                    target,
+                    &observation,
+                    &actions,
+                    &input,
+                    &binding,
+                    runtime,
+                    &diffs,
+                )?;
                 let filename = format!("{}-{id}.json", prefix.id);
                 let digest = output.save(&filename, &record)?;
                 cases.push(json!({"case_id":id,"status":status,"input_file":filename,"input_sha256":digest}));

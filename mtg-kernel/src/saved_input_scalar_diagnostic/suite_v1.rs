@@ -480,6 +480,64 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "gameplay-checkpoint-reconstruction-v1")]
+    #[test]
+    fn suite_deserializes_and_validates_actual_producer_envelope() {
+        // Static fixture data only: no session, replay, model or forward call.
+        let golden: Value = serde_json::from_str(include_str!(
+            "../../../data/flat_policy_v2/python_full_features_v2.json"
+        ))
+        .unwrap();
+        let mut observation: Value = serde_json::from_str(
+            golden["cases"][0]["canonical_observation_json"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        observation["schema_version"] = json!(OBSERVATION_SCHEMA_VERSION_V6);
+        observation["card_db_hash"] = json!(KERNEL_CARDDB_HASH);
+        observation["acting_player"] = json!("p0");
+        observation["step_index"] = json!(1);
+        observation["physical_decision_id"] = json!(1);
+        observation["substep_index"] = json!(0);
+        observation["substep_count"] = json!(1);
+        observation["extensions"] = serde_json::to_value(
+            crate::policy_observation_v6::PolicyObservationExtensionsV6::default(),
+        )
+        .unwrap();
+        let actions = json!([
+            {"action_kind":"choose_optional_cost_use","actor":"p0","use_cost":false},
+            {"action_kind":"choose_optional_cost_use","actor":"p0","use_cost":true}]);
+        let record = crate::gameplay_checkpoint_reconstruction_v1::corrected_input_record(
+            &json!({"case_id":"synthetic","origin":{}}),
+            &observation,
+            &actions,
+            &serde_json::to_value(input()).unwrap(),
+            &serde_json::to_value(binding()).unwrap(),
+            &json!({}),
+            &[],
+        )
+        .unwrap();
+        let serialized = serde_json::to_vec(&record).unwrap();
+        let case: CorrectedInput = serde_json::from_slice(&serialized).unwrap();
+        validate_case(
+            &case,
+            &CasePin {
+                case_id: "synthetic".into(),
+                input: PinnedFileV1 {
+                    path: "unused".into(),
+                    sha256: sha(&serialized),
+                },
+            },
+        )
+        .unwrap();
+        assert!(record["card_db_hash"].is_string());
+        assert!(record["observation"]["card_db_hash"].is_u64());
+        let mut wrong = record;
+        wrong["card_db_hash"] = json!(KERNEL_CARDDB_HASH);
+        assert!(serde_json::from_value::<CorrectedInput>(wrong).is_err());
+    }
+
     #[test]
     fn suite_refuses_tensor_shape_nonfinite_and_index_corruption() {
         let good = input();
