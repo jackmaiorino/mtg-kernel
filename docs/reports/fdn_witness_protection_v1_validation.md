@@ -1,5 +1,35 @@
 # Witness Protection validation status
 
+## Current snapshot-storage repair
+
+Windows job `111200190062` at published source `7b02fc92` failed only the
+isolated snapshot timing check: 64.622 microseconds against the frozen 40
+limit, despite already using the high-priority timing child. Focused Witness
+rules and every other workspace test summary passed. Later native, Limited
+and CUDA steps were skipped, so the overall job is a failure. Its complete
+terminal log is retained as `fdn-rust-current-111200190062.log`.
+
+The prepared backport copies the three arena-storage source files from
+`92881658`. `Arena<T>` shares `Arc<Vec<T>>` storage and detaches before every
+mutation. IDs, value hashes and legacy JSON remain value based. Mutating APIs
+require `T: Clone`, which `GameObject` implements. Arena tests cover every
+mutation entry point and legacy serialization; the strengthened GameState
+round trip checks captured bytes and independent mutation after restore.
+The first mutation of shared storage still clones the objects.
+
+The entire frozen 80-object workload and timing function, dependency versions,
+lockfile, compiler/linker pins and card behavior are unchanged. The canonical
+source has passed its complete Linux runtime matrix in job `111188356118`,
+including the arena tests, strengthened restore and original-deck replay;
+the frozen snapshot measured 223 nanoseconds. All four canonical Python shards
+and formatting/lint passed. Canonical Windows runtime qualification remains
+active. These results support the backport but do not qualify this prefix's
+new source or Windows timing. It requires its own full hosted matrix.
+
+The Witness Linux job `111200190079` at `7b02fc92` remains active. Keep that
+job running and hold publication of the prepared repair until no current-run
+job is executing. Earlier entries below record previous source qualification.
+
 The implementation extends the original UG fixture with its two unchanged
 Witness Protection copies. Both pinned decks now resolve 40/40 at registry
 admission. This is not yet a completed gameplay or full-set support claim.
