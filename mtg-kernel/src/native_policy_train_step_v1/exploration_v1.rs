@@ -258,6 +258,9 @@ impl ExplorationDiagnosticsV1 {
                 mut subtraction_bound_squared,
             ) = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
             for p in start..end {
+                // One index joins the aligned parameter, update, and gradient
+                // buffers. Preserve the qualified traversal and reduction order.
+                #[allow(clippy::needless_range_loop)]
                 for i in 0..parameters[p].values.len() {
                     let v = f64::from(self.value[p][i]);
                     let r = f64::from(self.regularizer[p][i]);
