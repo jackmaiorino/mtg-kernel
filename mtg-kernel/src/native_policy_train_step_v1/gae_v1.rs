@@ -206,8 +206,9 @@ impl NativePolicyValueTrainStateV1 {
             input_config,
             imitation,
             None,
+            None,
         )
-        .map(|(result, _)| result)
+        .map(|(result, _, _)| result)
     }
 
     /// Line (b) CPU update: the GAE objective plus the auxiliary term,
@@ -233,7 +234,7 @@ impl NativePolicyValueTrainStateV1 {
             None => BackwardExecutionV1::Sequential,
             Some(worker_limit) => BackwardExecutionV1::FixedPartitions { worker_limit },
         };
-        let (result, auxiliary) = self.train_step_gae_core_v1(
+        let (result, auxiliary, _) = self.train_step_gae_core_v1(
             groups,
             value_targets,
             advantages,
@@ -243,6 +244,7 @@ impl NativePolicyValueTrainStateV1 {
             input_config,
             false,
             Some(line_b),
+            None,
         )?;
         let auxiliary = auxiliary.ok_or(NativePolicyTrainErrorV1::LineBAuxiliary {
             code: "line-b-auxiliary-missing-result",
@@ -285,6 +287,43 @@ impl NativePolicyValueTrainStateV1 {
         )
     }
 
+    /// Recovery is intentionally restricted to the qualified sequential CPU path.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn train_step_gae_recovery_v1(
+        &mut self,
+        generation: crate::sideboard_play_policy_v1::FreshLineageGenerationV1,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        beta: f32,
+        update: u64,
+        diagnostics: bool,
+    ) -> Result<(NativePolicyTrainStepResultV1, serde_json::Value), NativePolicyTrainErrorV1> {
+        let config = match generation {
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3 => {
+                self.model.feature_transfer_config_v3()
+            }
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V4 => {
+                self.model.feature_transfer_config_v4()
+            }
+        };
+        let (result, _, report) = self.train_step_gae_core_v1(
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            BackwardExecutionV1::Sequential,
+            config,
+            false,
+            None,
+            Some((beta, update, diagnostics)),
+        )?;
+        Ok((result, report.expect("recovery report requested")))
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn train_step_gae_core_v1(
         &mut self,
@@ -297,10 +336,12 @@ impl NativePolicyValueTrainStateV1 {
         input_config: NativePolicyValueModelConfigV1,
         imitation: bool,
         line_b: Option<&LineBAuxiliaryInputV1>,
+        exploration: Option<(f32, u64, bool)>,
     ) -> Result<
         (
             NativePolicyTrainStepResultV1,
             Option<LineBAuxiliaryResultV1>,
+            Option<serde_json::Value>,
         ),
         NativePolicyTrainErrorV1,
     > {
@@ -394,7 +435,32 @@ impl NativePolicyValueTrainStateV1 {
             });
         }
         let group_count = exact_group_count_f32(groups.len())?;
-        let loss = (policy_sum + value_coefficient * value_sum) / group_count;
+        let mut loss = (policy_sum + value_coefficient * value_sum) / group_count;
+        let beta = exploration.map_or(0.0, |e| e.0);
+        let regularizer_sum = if exploration.is_some() {
+            group_tapes
+                .iter()
+                .flat_map(|g| &g.tapes)
+                .map(|s| exploration_v1::uniform_kl_v1(s.tape.logits_v1()))
+                .sum::<f64>()
+        } else {
+            0.0
+        };
+        if beta != 0.0 {
+            loss += (f64::from(beta) * regularizer_sum / f64::from(group_count)) as f32;
+        }
+        let diagnostics =
+            if exploration.is_some_and(|(_, t, enabled)| enabled && matches!(t, 1 | 32 | 64)) {
+                Some(exploration_v1::ExplorationDiagnosticsV1::capture(
+                    &parameters,
+                    &group_tapes,
+                    value_coefficient,
+                    group_count,
+                    beta,
+                )?)
+            } else {
+                None
+            };
         finite_scalar("gae_loss", 0, policy_sum)?;
         finite_scalar("gae_loss", 1, value_sum)?;
         finite_scalar("gae_loss", 2, loss)?;
@@ -442,6 +508,23 @@ impl NativePolicyValueTrainStateV1 {
                             reverse_workspace
                                 .d_logits
                                 .push(*gradient - log_probability.exp() * grad_output_sum);
+                        }
+                        if beta != 0.0 {
+                            let actor = reverse_workspace.d_logits.clone();
+                            let regularizer = exploration_v1::uniform_kl_gradient_v1(
+                                &selected.log_probabilities,
+                                beta / group_count,
+                            );
+                            for (d, r) in reverse_workspace.d_logits.iter_mut().zip(&regularizer) {
+                                *d += *r;
+                            }
+                            exploration_v1::observe_regularizer_v1(
+                                &mut gauge_accumulator,
+                                selected.tape.logits_v1(),
+                                &actor,
+                                &reverse_workspace.d_logits,
+                                beta / group_count,
+                            )?;
                         }
                         gauge_accumulator.observe(
                             selected.tape.logits_v1(),
@@ -527,6 +610,11 @@ impl NativePolicyValueTrainStateV1 {
             self.scorer_bias_anchor_bits,
         )?;
 
+        let exploration_result = exploration.map(|(beta, update, _)| serde_json::json!({
+            "schema":"native-uniform-kl-recovery/v1", "update_index":update,"beta_bits":beta.to_bits(),
+            "regularizer_sum":regularizer_sum,"normalization_physical_groups":group_count,
+            "objective":"gae_uniform_kl_recovery/v1", "diagnostics":diagnostics.map(|d|d.finish(&parameters,&gradients,&next_parameters))
+        }));
         let gradient_snapshot = named_state_snapshot(&parameters, &gradients);
         self.model = candidate_model;
         self.adam_step = next_step;
@@ -544,6 +632,7 @@ impl NativePolicyValueTrainStateV1 {
                 scorer_bias_gauge,
             },
             line_b_result,
+            exploration_result,
         ))
     }
 }

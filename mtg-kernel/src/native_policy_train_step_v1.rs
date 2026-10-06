@@ -70,6 +70,7 @@ use std::sync::Arc;
 use std::thread;
 
 mod carryover_probe_v1;
+pub(crate) mod exploration_v1;
 mod gae_v1;
 mod head_only_mask_v1;
 mod line_b_auxiliary_v1;
