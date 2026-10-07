@@ -13,6 +13,13 @@ import random
 import sys
 from pathlib import Path
 
+# Each Gate already taps for one of CawGates' colours and adds one chosen
+# colour; the useful choice is the other one (Citadel Gate: W + U, Sea Gate:
+# U + W).
+USEFUL_GATE_COLOUR = {"Citadel Gate": "U", "Sea Gate": "W"}
+# Main damage colour of each opposing deck, for Prismatic Strands' colour
+# choice. Affinity (mostly colourless) and Wildfire (mixed) are left out.
+STRANDS_COLOUR = {"Burn": "R", "Rally": "R", "Elves": "G", "Spy": "G", "Terror": "U", "Faeries": "U"}
 COMBAT = {"DeclareAttackers", "DeclareBlockers", "CombatDamage", "FirstStrikeDamage"}
 
 
@@ -45,15 +52,32 @@ def behaviour(rows):
                     c["strands_own_turn"] += v
             if parts[0] == "Basilisk Gate" and parts[1] == "activate_ability":
                 c["basilisk_pumps"] += v
-            if parts[1] == "choose_effect_color" and parts[0].endswith("Gate"):
-                c["gate_colour_" + parts[4]] += v
+            if parts[1] == "choose_effect_color" and parts[0] in USEFUL_GATE_COLOUR:
+                c["gate_colour_choices"] += v
+                if parts[4] == USEFUL_GATE_COLOUR[parts[0]]:
+                    c["gate_colour_useful"] += v
+            if (
+                parts[0] == "Prismatic Strands"
+                and parts[1] == "choose_effect_color"
+                and r["opp_deck"] in STRANDS_COLOUR
+            ):
+                c["strands_colour_choices"] += v
+                if parts[4] == STRANDS_COLOUR[r["opp_deck"]]:
+                    c["strands_colour_matches_opponent"] += v
         pumps = set(r["pump_turns"])
         c["pump_then_attack_turns"] += len(pumps & set(r["attacked_turns"]))
         c["attack_turns"] += len(r["attacked_turns"])
         c["turns"] += r["turns"]
         c["opp_damage"] += 20 - r["final_life"][1]
         c["decisions"] += r["pilot_decisions"]
-    return {k: v / n for k, v in sorted(c.items())}
+    out = {k: v / n for k, v in sorted(c.items())}
+    if c["gate_colour_choices"]:
+        out["gate_colour_useful_share"] = c["gate_colour_useful"] / c["gate_colour_choices"]
+    if c["strands_colour_choices"]:
+        out["strands_colour_match_share"] = (
+            c["strands_colour_matches_opponent"] / c["strands_colour_choices"]
+        )
+    return out
 
 
 def main():
@@ -65,15 +89,23 @@ def main():
     games = sorted(set.intersection(*(set(r) for _, r, _ in runs)))
     print(f"paired games: {len(games)}")
     decks = sorted({base[g]["opp_deck"] for g in games})
-    header = f"{'run':<14}{'errors':>7}{'win%':>8}" + "".join(f"{d[:8]:>10}" for d in decks)
+    header = (
+        f"{'run':<14}{'errors':>7}{'win%':>8}{'no-Spy%':>9}"
+        + "".join(f"{d[:8]:>10}" for d in decks)
+    )
     print(header)
     for name, rows, err in runs:
         score = sum(rows[g]["score"] for g in games) / len(games)
+        trained = [g for g in games if rows[g]["opp_deck"] != "Spy"]
+        no_spy = sum(rows[g]["score"] for g in trained) / len(trained)
         per = []
         for d in decks:
             gs = [g for g in games if rows[g]["opp_deck"] == d]
             per.append(100 * sum(rows[g]["score"] for g in gs) / len(gs))
-        print(f"{name:<14}{err:>7}{100 * score:>8.2f}" + "".join(f"{x:>10.1f}" for x in per))
+        print(
+            f"{name:<14}{err:>7}{100 * score:>8.2f}{100 * no_spy:>9.2f}"
+            + "".join(f"{x:>10.1f}" for x in per)
+        )
     rng = random.Random(2026100711)
     print("\npaired difference vs baseline (pp), 95% game bootstrap")
     diffs_all = []
