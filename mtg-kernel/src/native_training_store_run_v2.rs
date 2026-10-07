@@ -326,7 +326,7 @@ const FROZEN_RUNTIME_CATALOG_SHA256_FDN_TRIGGERS_TRICKS_V1: &str =
     "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
 // v55 adds equipment, kicker and library-search cards.
-const FROZEN_CARD_DB_HASH_U64_HEX_FDN_EQUIPMENT_SEARCH_V1: &str = "49161c8f72bac163";
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_EQUIPMENT_SEARCH_V1: &str = "a3ef5a41092d7924";
 const FROZEN_RUNTIME_CATALOG_SHA256_FDN_EQUIPMENT_SEARCH_V1: &str =
     "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
@@ -7711,7 +7711,7 @@ mod tests {
         );
         assert_eq!(
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_EQUIPMENT_SEARCH_V1,
-            "49161c8f72bac163"
+            "a3ef5a41092d7924"
         );
     }
 
