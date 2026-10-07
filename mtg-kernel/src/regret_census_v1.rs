@@ -7,12 +7,12 @@
 //! candidates. Diagnostic only: no training, store records or gates.
 
 use crate::expanded_deck_training_v1::{load_expanded_inference_v1, ExpandedModelSourceV1};
+use crate::human_opening_v1::HumanOpeningV1;
 use crate::ids::PlayerId;
 use crate::paired_bo1_harness_v1::paired_policy_seeds_v1;
 use crate::rl::{PlayerSeatV1, TerminalClassificationV1};
 use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
 use crate::runtime_decks::RUNTIME_DECKS;
-use crate::human_opening_v1::HumanOpeningV1;
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
 use crate::state::SplitMix64;
 use serde_json::json;
@@ -56,11 +56,7 @@ fn seat_index(seat: PlayerSeatV1) -> usize {
 }
 
 fn variant(debug: &str) -> String {
-    debug
-        .split(|c: char| c == ' ' || c == '{' || c == '(')
-        .next()
-        .unwrap_or("")
-        .to_owned()
+    debug.split([' ', '{', '(']).next().unwrap_or("").to_owned()
 }
 
 /// Play to the end with `policy` for both seats; the score for `seat`
@@ -104,7 +100,10 @@ fn play_out_traced(
                         let st = session.game_state();
                         let sem = session
                             .diagnostic_current_action_semantics()
-                            .map(|v| named(serde_json::to_value(&v[a as usize]).unwrap_or_default()).to_string())
+                            .map(|v| {
+                                named(serde_json::to_value(&v[a as usize]).unwrap_or_default())
+                                    .to_string()
+                            })
                             .unwrap_or_default();
                         eprintln!(
                             "  t{} {:?} P{} life={:?} k={} -> {}",
@@ -175,7 +174,13 @@ fn run_game(
                     multi[actor] += 1;
                     let draw = (root_rng.next_u64() >> 11) as f64 / (1u64 << 53) as f64;
                     if draw < cfg.root_prob {
-                        roots.push(evaluate_root(cfg, &session, roll, seed, roots.len() as u64)?);
+                        roots.push(evaluate_root(
+                            cfg,
+                            &session,
+                            roll,
+                            seed,
+                            roots.len() as u64,
+                        )?);
                     }
                 }
                 let a = base.select_fast_session_v1(&session)?;
@@ -245,14 +250,15 @@ fn evaluate_root(
             s.step(d.episode_id, d.step, a as u32)
                 .map_err(|e| format!("root step {a}: {e:?}"))?;
             roll.reset_sampling_v1(pol);
-            let trace = std::env::var("CENSUS_TRACE")
-                .ok()
-                .and_then(|v| {
-                    let (st, rr) = v.split_once(':')?;
-                    (st.parse::<u64>().ok()? == d.step && rr.parse::<usize>().ok()? == r).then_some(400)
-                });
+            let trace = std::env::var("CENSUS_TRACE").ok().and_then(|v| {
+                let (st, rr) = v.split_once(':')?;
+                (st.parse::<u64>().ok()? == d.step && rr.parse::<usize>().ok()? == r).then_some(400)
+            });
             if trace.is_some() {
-                eprintln!("TRACE step {} rollout {r} action {a}: {:?}", d.step, semantics[a]);
+                eprintln!(
+                    "TRACE step {} rollout {r} action {a}: {:?}",
+                    d.step, semantics[a]
+                );
             }
             let (score, turn, natural) = play_out_traced(&mut s, roll, actor, trace)?;
             if trace.is_some() {
@@ -265,7 +271,10 @@ fn evaluate_root(
             turns[i][r] = turn;
         }
     }
-    let kinds: Vec<String> = semantics.iter().map(|s| variant(&format!("{s:?}"))).collect();
+    let kinds: Vec<String> = semantics
+        .iter()
+        .map(|s| variant(&format!("{s:?}")))
+        .collect();
     let detail: Vec<String> = evaluated
         .iter()
         .map(|&a| {
@@ -274,15 +283,16 @@ fn evaluate_root(
         })
         .collect();
     let opp = 1 - actor;
-    Ok(json!({"kind":"root","step":d.step,"actor":actor,"turn":state.turn,
+    Ok(
+        json!({"kind":"root","step":d.step,"actor":actor,"turn":state.turn,
         "phase":format!("{:?}",state.step),"active":state.active_player.0,
         "life":[state.players[actor].life,state.players[opp].life],
         "hand":[state.players[actor].hand.len(),state.players[opp].hand.len()],
         "stack":state.stack.len(),"substep":[d.substep_index,d.substep_count],
         "k":k,"kinds":kinds,"probs":probs,"evaluated":evaluated,"detail":detail,
-        "wins":wins,"rollout_turns":turns,"non_natural":non_natural,"base_chosen":null}))
+        "wins":wins,"rollout_turns":turns,"non_natural":non_natural,"base_chosen":null}),
+    )
 }
-
 
 /// Rollout value of an opening for `observer`: continue with the policy until
 /// the observer's first decision, then determinize the observer's information
@@ -301,7 +311,8 @@ fn opening_rollouts(
             match s.current_response() {
                 FastActorResponseV1::Decision(d) if seat_index(d.acting_player) != observer => {
                     let a = roll.select_fast_session_v1(&s)?;
-                    s.step(d.episode_id, d.step, a).map_err(|e| format!("{e:?}"))?;
+                    s.step(d.episode_id, d.step, a)
+                        .map_err(|e| format!("{e:?}"))?;
                 }
                 _ => break,
             }
@@ -334,14 +345,24 @@ fn run_mulligan_game(
     let ids = [decks[0].id.to_owned(), decks[1].id.to_owned()];
     let boards = [decks[0].card_ids.to_vec(), decks[1].card_ids.to_vec()];
     let new_opening = |observer: u8| {
-        HumanOpeningV1::new(1, seed, MAX_PHYSICAL, MAX_PHYSICAL * 128, ids.clone(), boards.clone(),
-            PlayerId(starting), PlayerId(observer))
+        HumanOpeningV1::new(
+            1,
+            seed,
+            MAX_PHYSICAL,
+            MAX_PHYSICAL * 128,
+            ids.clone(),
+            boards.clone(),
+            PlayerId(starting),
+            PlayerId(observer),
+        )
     };
     let m = cfg.rollouts as usize;
     let mut out = String::new();
     for observer in 0..2u8 {
         let obs = observer as usize;
-        let seeds: Vec<u64> = (0..m as u64).map(|r| mix(seed ^ mix(0x4D55 ^ (r << 8) ^ observer as u64))).collect();
+        let seeds: Vec<u64> = (0..m as u64)
+            .map(|r| mix(seed ^ mix(0x4D55 ^ (r << 8) ^ observer as u64)))
+            .collect();
         let mut keep = new_opening(observer)?;
         let kept_hand = hand_ids(&keep);
         keep.keep()?;
@@ -425,14 +446,16 @@ fn run_pilot_game(
                 FastActorResponseV1::Decision(d) => {
                     let sampled = base.select_fast_session_v1(&session)?;
                     let mut a = sampled;
-                    if improved && seat_index(d.acting_player) == pilot && d.legal_action_count >= 2 {
+                    if improved && seat_index(d.acting_player) == pilot && d.legal_action_count >= 2
+                    {
                         ordinal += 1;
                         evaluated_decisions += 1;
                         roll.reset_sampling_v1([1, 2]);
                         let probs = softmax(&roll.score_fast_session_v1(&session)?.logits);
                         let mut order: Vec<usize> = (0..probs.len()).collect();
                         order.sort_by(|&x, &y| probs[y].partial_cmp(&probs[x]).unwrap());
-                        let mut cand: Vec<usize> = order.into_iter().take(cfg.max_actions).collect();
+                        let mut cand: Vec<usize> =
+                            order.into_iter().take(cfg.max_actions).collect();
                         if !cand.contains(&(sampled as usize)) {
                             cand.push(sampled as usize);
                         }
@@ -489,7 +512,12 @@ fn named(v: serde_json::Value) -> serde_json::Value {
             if let Some(id) = m.get("card_db_id").and_then(Value::as_u64) {
                 return json!(crate::rl::card_name(id as u16));
             }
-            Value::Object(m.into_iter().filter(|(k, _)| k != "actor").map(|(k, x)| (k, named(x))).collect())
+            Value::Object(
+                m.into_iter()
+                    .filter(|(k, _)| k != "actor")
+                    .map(|(k, x)| (k, named(x)))
+                    .collect(),
+            )
         }
         Value::Array(a) => Value::Array(a.into_iter().map(named).collect()),
         x => x,
@@ -497,7 +525,9 @@ fn named(v: serde_json::Value) -> serde_json::Value {
 }
 
 fn zone_names(state: &crate::state::GameState, ids: &[crate::ids::ObjectId]) -> Vec<String> {
-    ids.iter().map(|&o| state.objects.get(o).name.clone()).collect()
+    ids.iter()
+        .map(|&o| state.objects.get(o).name.clone())
+        .collect()
 }
 
 /// Plain-policy games with `cfg.pilot_deck` in the pilot seat. Logs every
@@ -548,16 +578,24 @@ fn run_trace_game(
             FastActorResponseV1::Decision(d) => {
                 let a = base.select_fast_session_v1(&session)?;
                 if seat_index(d.acting_player) == pilot && d.legal_action_count >= 2 {
-                    let sem = session.diagnostic_current_action_semantics().ok_or("semantics")?;
+                    let sem = session
+                        .diagnostic_current_action_semantics()
+                        .ok_or("semantics")?;
                     if let Some(filter) = root_filter.as_deref() {
                         let hit = sem.iter().any(|x| {
-                            named(serde_json::to_value(x).unwrap_or_default()).to_string().contains(filter)
+                            named(serde_json::to_value(x).unwrap_or_default())
+                                .to_string()
+                                .contains(filter)
                         });
                         if hit {
-                            let mut root = evaluate_root(cfg, &session, roll, seed, rows.len() as u64)?;
+                            let mut root =
+                                evaluate_root(cfg, &session, roll, seed, rows.len() as u64)?;
                             root["game"] = json!(game);
                             root["base_chosen"] = json!(a);
-                            root["named"] = json!(sem.iter().map(|x| named(serde_json::to_value(x).unwrap_or_default())).collect::<Vec<_>>());
+                            root["named"] = json!(sem
+                                .iter()
+                                .map(|x| named(serde_json::to_value(x).unwrap_or_default()))
+                                .collect::<Vec<_>>());
                             roots.push(root);
                         }
                     }
@@ -565,7 +603,10 @@ fn run_trace_game(
                     let st = session.game_state();
                     let me = &st.players[pilot];
                     let op = &st.players[1 - pilot];
-                    let cands: Vec<_> = sem.iter().map(|x| named(serde_json::to_value(x).unwrap_or_default())).collect();
+                    let cands: Vec<_> = sem
+                        .iter()
+                        .map(|x| named(serde_json::to_value(x).unwrap_or_default()))
+                        .collect();
                     rows.push(json!({"kind":"decision","game":game,"turn":st.turn,"step":format!("{:?}",st.step),
                         "active":st.active_player.0 as usize == pilot,"chosen":a,"probs":probs,"cands":cands,
                         "life":[me.life,op.life],"pool":me.mana_pool,"hand":zone_names(st,&me.hand),
@@ -603,28 +644,47 @@ fn run_trace_game(
 fn spy_combo_override(session: &FastActorSessionV1, seat: usize, level: u8) -> Option<u32> {
     use crate::card_def::{CardType, CARD_DEFS};
     let sem = session.diagnostic_current_action_semantics()?;
-    let named_sem: Vec<serde_json::Value> =
-        sem.iter().map(|x| named(serde_json::to_value(x).unwrap_or_default())).collect();
-    let is = |v: &serde_json::Value, kind: &str, src: &str| v["action_kind"] == kind && v["source"] == src;
+    let named_sem: Vec<serde_json::Value> = sem
+        .iter()
+        .map(|x| named(serde_json::to_value(x).unwrap_or_default()))
+        .collect();
+    let is = |v: &serde_json::Value, kind: &str, src: &str| {
+        v["action_kind"] == kind && v["source"] == src
+    };
     if let Some(i) = named_sem.iter().position(|v| {
         is(v, "choose_target", "Dread Return") && v["target"]["object"] == "Lotleth Giant"
     }) {
         return Some(i as u32);
     }
-    let spy_target = named_sem.iter().any(|v| is(v, "choose_target", "Balustrade Spy"));
-    let spy_cast = named_sem.iter().position(|v| is(v, "cast_spell", "Balustrade Spy"));
+    let spy_target = named_sem
+        .iter()
+        .any(|v| is(v, "choose_target", "Balustrade Spy"));
+    let spy_cast = named_sem
+        .iter()
+        .position(|v| is(v, "cast_spell", "Balustrade Spy"));
     if level < 2 || !(spy_target || (level >= 3 && spy_cast.is_some())) {
         return None;
     }
     let st = session.game_state();
     let me = &st.players[seat];
     let names = |ids: &[crate::ids::ObjectId]| -> Vec<String> { zone_names(st, ids) };
-    let lib_land = me.library.iter().any(|&o| CARD_DEFS[st.objects.get(o).card_def as usize].types.contains(&CardType::Land));
-    let pool: Vec<String> = names(&me.library).into_iter().chain(names(&me.graveyard)).collect();
+    let lib_land = me.library.iter().any(|&o| {
+        CARD_DEFS[st.objects.get(o).card_def as usize]
+            .types
+            .contains(&CardType::Land)
+    });
+    let pool: Vec<String> = names(&me.library)
+        .into_iter()
+        .chain(names(&me.graveyard))
+        .collect();
     let creatures = me
         .battlefield
         .iter()
-        .filter(|&&o| CARD_DEFS[st.objects.get(o).card_def as usize].types.contains(&CardType::Creature))
+        .filter(|&&o| {
+            CARD_DEFS[st.objects.get(o).card_def as usize]
+                .types
+                .contains(&CardType::Creature)
+        })
         .count();
     let ready = !lib_land
         && pool.iter().any(|n| n == "Dread Return")
@@ -638,7 +698,9 @@ fn spy_combo_override(session: &FastActorSessionV1, seat: usize, level: u8) -> O
     let want = if live { seat } else { 1 - seat };
     named_sem
         .iter()
-        .position(|v| is(v, "choose_target", "Balustrade Spy") && v["target"]["player"] == format!("p{want}"))
+        .position(|v| {
+            is(v, "choose_target", "Balustrade Spy") && v["target"]["player"] == format!("p{want}")
+        })
         .map(|i| i as u32)
 }
 
@@ -713,12 +775,25 @@ fn spy_ready(session: &FastActorSessionV1, seat: usize) -> (bool, usize) {
     use crate::card_def::{CardType, CARD_DEFS};
     let st = session.game_state();
     let me = &st.players[seat];
-    let has = |o: crate::ids::ObjectId, t: CardType| CARD_DEFS[st.objects.get(o).card_def as usize].types.contains(&t);
-    let pool: Vec<String> = zone_names(st, &me.library).into_iter().chain(zone_names(st, &me.graveyard)).collect();
+    let has = |o: crate::ids::ObjectId, t: CardType| {
+        CARD_DEFS[st.objects.get(o).card_def as usize]
+            .types
+            .contains(&t)
+    };
+    let pool: Vec<String> = zone_names(st, &me.library)
+        .into_iter()
+        .chain(zone_names(st, &me.graveyard))
+        .collect();
     let ready = !me.library.iter().any(|&o| has(o, CardType::Land))
         && pool.iter().any(|n| n == "Dread Return")
         && pool.iter().any(|n| n == "Lotleth Giant");
-    (ready, me.battlefield.iter().filter(|&&o| has(o, CardType::Creature)).count())
+    (
+        ready,
+        me.battlefield
+            .iter()
+            .filter(|&&o| has(o, CardType::Creature))
+            .count(),
+    )
 }
 
 fn named_candidates(session: &FastActorSessionV1) -> Vec<serde_json::Value> {
@@ -730,8 +805,17 @@ fn named_candidates(session: &FastActorSessionV1) -> Vec<serde_json::Value> {
         .collect()
 }
 
-fn mass(probs: &[f64], cands: &[serde_json::Value], pred: impl Fn(&serde_json::Value) -> bool) -> f64 {
-    cands.iter().zip(probs).filter(|(c, _)| pred(c)).map(|(_, p)| p).sum()
+fn mass(
+    probs: &[f64],
+    cands: &[serde_json::Value],
+    pred: impl Fn(&serde_json::Value) -> bool,
+) -> f64 {
+    cands
+        .iter()
+        .zip(probs)
+        .filter(|(c, _)| pred(c))
+        .map(|(_, p)| p)
+        .sum()
 }
 
 /// Spy combo learning probe. Positions are reached by the reference policy
@@ -771,14 +855,22 @@ fn run_spyprobe_game(
     refp.reset_sampling_v1(paired_policy_seeds_v1(seed));
     let mut rows = Vec::new();
     let (mut cast_done, mut target_done) = (false, false);
-    let is = |v: &serde_json::Value, kind: &str, src: &str| v["action_kind"] == kind && v["source"] == src;
-    loop {
-        let FastActorResponseV1::Decision(d) = session.current_response() else { break };
-        if seat_index(d.acting_player) == pilot && d.legal_action_count >= 2 && !(cast_done && target_done) {
+    let is = |v: &serde_json::Value, kind: &str, src: &str| {
+        v["action_kind"] == kind && v["source"] == src
+    };
+    while let FastActorResponseV1::Decision(d) = session.current_response() {
+        if seat_index(d.acting_player) == pilot
+            && d.legal_action_count >= 2
+            && !(cast_done && target_done)
+        {
             let cands = named_candidates(&session);
             let (ready, creatures) = spy_ready(&session, pilot);
             let turn = session.game_state().turn;
-            if !cast_done && ready && creatures >= 2 && cands.iter().any(|c| is(c, "cast_spell", "Balustrade Spy")) {
+            if !cast_done
+                && ready
+                && creatures >= 2
+                && cands.iter().any(|c| is(c, "cast_spell", "Balustrade Spy"))
+            {
                 cast_done = true;
                 cand.reset_sampling_v1([1, 2]);
                 let probs = softmax(&cand.score_fast_session_v1(&session)?.logits);
@@ -786,20 +878,22 @@ fn run_spyprobe_game(
                 rows.push(json!({"kind":"probe_cast","game":game,"turn":turn,"opp_deck":RUNTIME_DECKS[opp_deck].id,"p_cast_spy":p}));
             }
             let target_ix = cands.iter().position(|c| {
-                is(c, "choose_target", "Balustrade Spy") && c["target"]["player"] == format!("p{pilot}")
+                is(c, "choose_target", "Balustrade Spy")
+                    && c["target"]["player"] == format!("p{pilot}")
             });
-            if !target_done && ready && creatures >= 3 && target_ix.is_some() {
+            if let Some(target_ix) = target_ix.filter(|_| !target_done && ready && creatures >= 3) {
                 target_done = true;
                 cand.reset_sampling_v1([1, 2]);
                 let probs = softmax(&cand.score_fast_session_v1(&session)?.logits);
-                let p_self = probs[target_ix.unwrap()];
+                let p_self = probs[target_ix];
                 let m = cfg.rollouts as usize;
                 let (mut lotleth, mut dr_reached, mut wins) = (0.0, 0u32, 0.0);
                 for r in 0..m {
                     let det = mix(seed ^ mix(0x5059 ^ r as u64));
                     // Dread Return target after a forced self-mill.
                     let mut s = session.census_redeterminized_clone_v1(det)?;
-                    s.step(d.episode_id, d.step, target_ix.unwrap() as u32).map_err(|e| format!("{e:?}"))?;
+                    s.step(d.episode_id, d.step, target_ix as u32)
+                        .map_err(|e| format!("{e:?}"))?;
                     cand.reset_sampling_v1([mix(det ^ 0xA1), mix(det ^ 0xB2)]);
                     refp.reset_sampling_v1([mix(det ^ 0xC3), mix(det ^ 0xD4)]);
                     while let FastActorResponseV1::Decision(e) = s.current_response() {
@@ -811,7 +905,8 @@ fn run_spyprobe_game(
                             if cs.iter().any(|c| is(c, "choose_target", "Dread Return")) {
                                 let pr = softmax(&cand.score_fast_session_v1(&s)?.logits);
                                 lotleth += mass(&pr, &cs, |c| {
-                                    is(c, "choose_target", "Dread Return") && c["target"]["object"] == "Lotleth Giant"
+                                    is(c, "choose_target", "Dread Return")
+                                        && c["target"]["object"] == "Lotleth Giant"
                                 });
                                 dr_reached += 1;
                                 break;
@@ -820,7 +915,8 @@ fn run_spyprobe_game(
                         } else {
                             refp.select_fast_session_v1(&s)?
                         };
-                        s.step(e.episode_id, e.step, a).map_err(|e| format!("{e:?}"))?;
+                        s.step(e.episode_id, e.step, a)
+                            .map_err(|e| format!("{e:?}"))?;
                     }
                     // Win rate from the live position under the candidate's own play.
                     let mut s = session.census_redeterminized_clone_v1(det)?;
@@ -829,9 +925,12 @@ fn run_spyprobe_game(
                     let score = loop {
                         match s.current_response() {
                             FastActorResponseV1::Terminal(t) => {
-                                let natural = t.terminal_classification == TerminalClassificationV1::Natural;
+                                let natural =
+                                    t.terminal_classification == TerminalClassificationV1::Natural;
                                 break match t.winner {
-                                    Some(w) if natural => f64::from(u8::from(seat_index(w) == pilot)),
+                                    Some(w) if natural => {
+                                        f64::from(u8::from(seat_index(w) == pilot))
+                                    }
                                     _ => 0.5,
                                 };
                             }
@@ -841,7 +940,8 @@ fn run_spyprobe_game(
                                 } else {
                                     refp.select_fast_session_v1(&s)?
                                 };
-                                s.step(e.episode_id, e.step, a).map_err(|e| format!("{e:?}"))?;
+                                s.step(e.episode_id, e.step, a)
+                                    .map_err(|e| format!("{e:?}"))?;
                             }
                         }
                     };
@@ -856,7 +956,9 @@ fn run_spyprobe_game(
             }
         }
         let a = refp.select_fast_session_v1(&session)?;
-        session.step(d.episode_id, d.step, a).map_err(|e| format!("{e:?}"))?;
+        session
+            .step(d.episode_id, d.step, a)
+            .map_err(|e| format!("{e:?}"))?;
     }
     let mut out = String::new();
     for r in rows {
@@ -883,22 +985,34 @@ fn load_policy_v1(path: &str) -> Result<FrozenPlayPolicyV1, String> {
         Some(inner) => (
             inner.clone(),
             raw["parameters_override"].as_str().map(str::to_owned),
-            raw["parameters_override_sha256"].as_str().map(str::to_owned),
+            raw["parameters_override_sha256"]
+                .as_str()
+                .map(str::to_owned),
         ),
         None => (raw.clone(), None, None),
     };
     let source: ExpandedModelSourceV1 =
         serde_json::from_value(source_value).map_err(|e| e.to_string())?;
     let (mut policy, identity) = load_expanded_inference_v1(&source)?;
-    eprintln!("loaded {}", serde_json::to_string(&identity).unwrap_or_default());
+    eprintln!(
+        "loaded {}",
+        serde_json::to_string(&identity).unwrap_or_default()
+    );
     if let Some(op) = override_path {
         let bytes = std::fs::read(&op).map_err(|e| e.to_string())?;
-        let digest: String = Sha256::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect();
+        let digest: String = Sha256::digest(&bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
         if Some(&digest) != override_sha.as_ref() {
-            return Err(format!("parameter override sha256 {digest} differs from pin"));
+            return Err(format!(
+                "parameter override sha256 {digest} differs from pin"
+            ));
         }
         let saved: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-        let rows = saved["parameters"].as_array().ok_or("override has no parameters")?;
+        let rows = saved["parameters"]
+            .as_array()
+            .ok_or("override has no parameters")?;
         let mut params = policy.training_parameters_v3();
         if rows.len() != params.len() {
             return Err("override parameter count differs".into());
@@ -911,7 +1025,11 @@ fn load_policy_v1(path: &str) -> Result<FrozenPlayPolicyV1, String> {
                 .as_array()
                 .ok_or("override values")?
                 .iter()
-                .map(|v| v.as_u64().map(|b| f32::from_bits(b as u32)).ok_or("override value"))
+                .map(|v| {
+                    v.as_u64()
+                        .map(|b| f32::from_bits(b as u32))
+                        .ok_or("override value")
+                })
                 .collect::<Result<_, _>>()?;
             if values.len() != p.values.len() {
                 return Err(format!("override shape differs at {}", p.name));
@@ -978,7 +1096,10 @@ pub fn run_v1(cfg: CensusConfigV1) -> Result<(), String> {
                         writeln!(f, "{row}").map_err(|e| e.to_string())?;
                     }
                     let c = done.fetch_add(1, Ordering::SeqCst) + 1;
-                    eprintln!("game {g} done ({c}) at {:.1}s", started.elapsed().as_secs_f64());
+                    eprintln!(
+                        "game {g} done ({c}) at {:.1}s",
+                        started.elapsed().as_secs_f64()
+                    );
                 }
             }));
         }

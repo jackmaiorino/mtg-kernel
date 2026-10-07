@@ -106,10 +106,11 @@ pub(super) fn run_duel_game(
                     if src == "Basilisk Gate" && kind == "activate_ability" {
                         pump_turns.push(st.turn);
                     }
-                    if kind == "choose_attacker_inclusion" && v["include"] == json!(true) {
-                        if attacked_turns.last() != Some(&st.turn) {
-                            attacked_turns.push(st.turn);
-                        }
+                    if kind == "choose_attacker_inclusion"
+                        && v["include"] == json!(true)
+                        && attacked_turns.last() != Some(&st.turn)
+                    {
+                        attacked_turns.push(st.turn);
                     }
                     if kind == "cast_spell" {
                         bump(format!("cast|{src}|{side}"));

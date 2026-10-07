@@ -82,7 +82,12 @@ fn combat_state(seed: u64) -> GameState {
     state.step = Step::Main1;
     state.active_player = PlayerId::P0;
     state.priority_player = PlayerId::P0;
-    put_object(&mut state, PlayerId::P0, "Voldaren Epicure", Zone::Battlefield);
+    put_object(
+        &mut state,
+        PlayerId::P0,
+        "Voldaren Epicure",
+        Zone::Battlefield,
+    );
     state
 }
 
@@ -91,7 +96,12 @@ fn strands_from_hand_is_offered_in_the_opponents_combat() {
     let mut state = combat_state(0x5431_0001);
     let strands = put_object(&mut state, PlayerId::P1, "Prismatic Strands", Zone::Hand);
     for _ in 0..3 {
-        put_object(&mut state, PlayerId::P1, "Azorius Guildgate", Zone::Battlefield);
+        put_object(
+            &mut state,
+            PlayerId::P1,
+            "Azorius Guildgate",
+            Zone::Battlefield,
+        );
     }
     let windows = p1_windows_for(&mut state, strands);
     assert!(
@@ -111,7 +121,12 @@ fn strands_from_hand_is_offered_in_the_opponents_combat() {
 #[test]
 fn strands_flashback_is_offered_in_the_opponents_combat() {
     let mut state = combat_state(0x5431_0002);
-    let strands = put_object(&mut state, PlayerId::P1, "Prismatic Strands", Zone::Graveyard);
+    let strands = put_object(
+        &mut state,
+        PlayerId::P1,
+        "Prismatic Strands",
+        Zone::Graveyard,
+    );
     put_object(&mut state, PlayerId::P1, "Sacred Cat", Zone::Battlefield);
     let windows = p1_windows_for(&mut state, strands);
     assert!(
@@ -133,5 +148,8 @@ fn strands_needs_white_mana_from_the_chosen_gate_colours() {
     }
     let windows = p1_windows_for(&mut state, strands);
     assert!(!windows.is_empty());
-    assert!(windows.iter().all(|&(_, castable)| !castable), "{windows:?}");
+    assert!(
+        windows.iter().all(|&(_, castable)| !castable),
+        "{windows:?}"
+    );
 }

@@ -10,13 +10,13 @@
 
 use super::{mix, named, seat_index, MAX_PHYSICAL};
 use crate::card_def::{CardType, CARD_DEFS};
+use crate::ids::PlayerId;
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::native_flat_tensorizer_v4::NativeFlatDecisionTensorV4;
 use crate::paired_bo1_harness_v1::paired_policy_seeds_v1;
 use crate::rl::TerminalClassificationV1;
 use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
 use crate::runtime_decks::RUNTIME_DECKS;
-use crate::ids::PlayerId;
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
 use crate::state::{GameState, ObjectStateV4, SplitMix64};
 use serde_json::{json, Value};
@@ -34,12 +34,19 @@ fn bits(v: &[f32]) -> Vec<u32> {
 }
 
 /// Which tensor components differ between two encodings.
-fn tensor_diff(a: &NativeFlatDecisionTensorV2, b: &NativeFlatDecisionTensorV2) -> Vec<&'static str> {
+fn tensor_diff(
+    a: &NativeFlatDecisionTensorV2,
+    b: &NativeFlatDecisionTensorV2,
+) -> Vec<&'static str> {
     let mut out = Vec::new();
-    if a.state.len() != b.state.len() || bits(&a.state[..STATE_HEAD]) != bits(&b.state[..STATE_HEAD]) {
+    if a.state.len() != b.state.len()
+        || bits(&a.state[..STATE_HEAD]) != bits(&b.state[..STATE_HEAD])
+    {
         out.push("state_head");
     }
-    if a.state.len() == b.state.len() && bits(&a.state[STATE_HEAD..]) != bits(&b.state[STATE_HEAD..]) {
+    if a.state.len() == b.state.len()
+        && bits(&a.state[STATE_HEAD..]) != bits(&b.state[STATE_HEAD..])
+    {
         out.push("state_digest");
     }
     if bits(&a.object_features) != bits(&b.object_features)
@@ -81,15 +88,19 @@ fn tensor_diff(a: &NativeFlatDecisionTensorV2, b: &NativeFlatDecisionTensorV2) -
 
 /// Non-hash inputs differ (what the model can use beyond 96 random numbers).
 fn semantic_differs(diff: &[&str]) -> bool {
-    diff.iter().any(|d| *d != "state_digest" && *d != "action_hash" && *d != "node_ids")
+    diff.iter()
+        .any(|d| *d != "state_digest" && *d != "action_hash" && *d != "node_ids")
 }
 
 /// Groups of legal actions whose explicit features and references (ref
 /// features plus referenced node) are identical: told apart only by hash.
+/// A legal action's reference features with the referenced node index.
+type ActionRefs = Vec<(Vec<u32>, i64)>;
+
 fn hash_only_groups(t: &NativeFlatDecisionTensorV2) -> Vec<Vec<usize>> {
     let n = t.action_features.len() / ACTION_DIM;
-    let mut keys: BTreeMap<(Vec<u32>, Vec<(Vec<u32>, i64)>), Vec<usize>> = BTreeMap::new();
-    let mut refs: Vec<Vec<(Vec<u32>, i64)>> = vec![Vec::new(); n];
+    let mut keys: BTreeMap<(Vec<u32>, ActionRefs), Vec<usize>> = BTreeMap::new();
+    let mut refs: Vec<ActionRefs> = vec![Vec::new(); n];
     for (r, &a) in t.action_ref_action_indices.iter().enumerate() {
         refs[a as usize].push((
             bits(&t.action_ref_features[r * REF_DIM..(r + 1) * REF_DIM]),
@@ -99,7 +110,9 @@ fn hash_only_groups(t: &NativeFlatDecisionTensorV2) -> Vec<Vec<usize>> {
     for (i, row) in t.action_features.chunks_exact(ACTION_DIM).enumerate() {
         let mut rf = std::mem::take(&mut refs[i]);
         rf.sort();
-        keys.entry((bits(&row[..ACTION_EXPLICIT]), rf)).or_default().push(i);
+        keys.entry((bits(&row[..ACTION_EXPLICIT]), rf))
+            .or_default()
+            .push(i);
     }
     keys.into_values().filter(|g| g.len() > 1).collect()
 }
@@ -113,7 +126,9 @@ fn tv(p: &[f64], q: &[f64]) -> f64 {
 }
 
 fn argmax(p: &[f64]) -> usize {
-    (0..p.len()).max_by(|&a, &b| p[a].partial_cmp(&p[b]).unwrap()).unwrap()
+    (0..p.len())
+        .max_by(|&a, &b| p[a].partial_cmp(&p[b]).unwrap())
+        .unwrap()
 }
 
 fn score_tensor(
@@ -134,7 +149,9 @@ fn score_tensor(
 }
 
 fn is_land(state: &GameState, o: crate::ids::ObjectId) -> bool {
-    CARD_DEFS[state.objects.get(o).card_def as usize].types.contains(&CardType::Land)
+    CARD_DEFS[state.objects.get(o).card_def as usize]
+        .types
+        .contains(&CardType::Land)
 }
 
 fn set_def(state: &mut GameState, o: crate::ids::ObjectId, def: u16) {
@@ -206,10 +223,14 @@ pub(super) fn run_validity_game(
                     let strands = sem.iter().any(|v| {
                         v["action_kind"] == "cast_spell" && v["source"] == "Prismatic Strands"
                     });
-                    bump(format!("pilot_step|{step}|{}|strands_offered={strands}", if active { "own" } else { "opp" }));
+                    bump(format!(
+                        "pilot_step|{step}|{}|strands_offered={strands}",
+                        if active { "own" } else { "opp" }
+                    ));
                     let me = &st.players[pilot];
                     let has = |zone: &[crate::ids::ObjectId]| {
-                        zone.iter().any(|&o| st.objects.get(o).name == "Prismatic Strands")
+                        zone.iter()
+                            .any(|&o| st.objects.get(o).name == "Prismatic Strands")
                     };
                     let (in_hand, in_gy) = (has(&me.hand), has(&me.graveyard));
                     let priority = sem.iter().any(|v| v["action_kind"] == "pass");
@@ -223,10 +244,18 @@ pub(super) fn run_validity_game(
                         let white_creature = me.battlefield.iter().any(|&o| {
                             let ob = st.objects.get(o);
                             !ob.tapped
-                                && CARD_DEFS[ob.card_def as usize].types.contains(&CardType::Creature)
-                                && CARD_DEFS[ob.card_def as usize].colors.contains(&crate::mana::ManaColor::W)
+                                && CARD_DEFS[ob.card_def as usize]
+                                    .types
+                                    .contains(&CardType::Creature)
+                                && CARD_DEFS[ob.card_def as usize]
+                                    .colors
+                                    .contains(&crate::mana::ManaColor::W)
                         });
-                        let lands = me.battlefield.iter().filter(|&&o| !st.objects.get(o).tapped && is_land(st, o)).count();
+                        let lands = me
+                            .battlefield
+                            .iter()
+                            .filter(|&&o| !st.objects.get(o).tapped && is_land(st, o))
+                            .count();
                         let castable_guess = (in_hand && lands >= 3) || (in_gy && white_creature);
                         bump(format!("strands_not_offered|{step}|{}|hand={in_hand}|gy={in_gy}|guess_castable={castable_guess}", if active { "own" } else { "opp" }));
                         if castable_guess && rows.len() < 400 {
@@ -254,7 +283,11 @@ pub(super) fn run_validity_game(
                 if actor == pilot {
                     let v = &sem[a as usize];
                     if v["source"] == "Prismatic Strands" || v["source"] == "Basilisk Gate" {
-                        bump(format!("pilot_chosen|{}|{step}|{}", kind_of(v), if active { "own" } else { "opp" }));
+                        bump(format!(
+                            "pilot_chosen|{}|{step}|{}",
+                            kind_of(v),
+                            if active { "own" } else { "opp" }
+                        ));
                     }
                 }
                 session
@@ -366,7 +399,10 @@ fn check_decision(
         _ => None,
     };
     if let Some((mine, theirs)) = lib_pair {
-        let (da, db) = (st.objects.get(mine).card_def, st.objects.get(theirs).card_def);
+        let (da, db) = (
+            st.objects.get(mine).card_def,
+            st.objects.get(theirs).card_def,
+        );
         let edited = session.census_edited_clone_v1(|s| {
             set_def(s, mine, db);
             set_def(s, theirs, da);
@@ -380,9 +416,14 @@ fn check_decision(
     // 5b. Graveyard identities: change the oldest and newest card of each
     // graveyard to a card definition from that player's library.
     for (who, player) in [("own", me), ("opp", op)] {
-        let Some(&donor) = player.library.first() else { continue };
+        let Some(&donor) = player.library.first() else {
+            continue;
+        };
         let donor_def = st.objects.get(donor).card_def;
-        for (pos, o) in [("oldest", player.graveyard.first()), ("newest", player.graveyard.last())] {
+        for (pos, o) in [
+            ("oldest", player.graveyard.first()),
+            ("newest", player.graveyard.last()),
+        ] {
             let Some(&o) = o else { continue };
             if st.objects.get(o).card_def == donor_def {
                 continue;
@@ -392,7 +433,10 @@ fn check_decision(
                 Ok((_, te)) => json!(tensor_diff(&t0, &te)),
                 Err(e) => json!(format!("encode_error: {e}")),
             };
-            edits.insert(format!("{who}_graveyard_{pos}"), json!({"len": player.graveyard.len(), "diff": d}));
+            edits.insert(
+                format!("{who}_graveyard_{pos}"),
+                json!({"len": player.graveyard.len(), "diff": d}),
+            );
         }
     }
     // 5c. Prismatic Strands shield colour (when one is active).
@@ -433,16 +477,17 @@ fn check_decision(
     let semantic_edits: serde_json::Map<String, Value> = edits
         .iter()
         .map(|(k, v)| {
-            let diff: Vec<String> = serde_json::from_value(
-                v.get("diff").cloned().unwrap_or_else(|| v.clone()),
-            )
-            .unwrap_or_default();
+            let diff: Vec<String> =
+                serde_json::from_value(v.get("diff").cloned().unwrap_or_else(|| v.clone()))
+                    .unwrap_or_default();
             let refs: Vec<&str> = diff.iter().map(String::as_str).collect();
             (k.clone(), json!(semantic_differs(&refs)))
         })
         .collect();
-    Ok(json!({"kind":"validity_decision","k":p0.len(),"chosen_kinds":sem.get(a0).map(kind_of),
+    Ok(
+        json!({"kind":"validity_decision","k":p0.len(),"chosen_kinds":sem.get(a0).map(kind_of),
         "stateless":stateless,"hidden_diff":hidden_diff,"hidden_errors":hidden_errors,
         "digest_tv":tvs,"digest_argmax_flips":flips,"digest_chosen_shift":chosen_shift,"p_max":p0[a0],
-        "hash_only_groups":groups,"edits":edits,"edits_semantic":semantic_edits}))
+        "hash_only_groups":groups,"edits":edits,"edits_semantic":semantic_edits}),
+    )
 }
