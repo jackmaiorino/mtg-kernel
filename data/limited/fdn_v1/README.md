@@ -19,9 +19,9 @@ booster manifest. The inventory tool adds all five basic lands and any
 additional fixture cards. After fixture batches A and B and the combat and
 legend-rule, targeted-spell, counter-creature, life-gain, draw, Horde, Koma, Kiora,
 Prowler, Rebuke, Voyage, Scavenging, Armor and Witness slices and the first
-milestone-5 keyword-creature, gainland/life-gain and trigger/trick batches,
-73 reference names have full registry support, one reference planeswalker
-is partial and 212 remain missing. Both original decks resolve all 40
+milestone-5 keyword-creature, gainland/life-gain, trigger/trick and
+equipment/library-search batches, 81 reference names have full registry
+support, one reference planeswalker is partial and 204 remain missing. Both original decks resolve all 40
 mainboard copies, covering all 39 unique fixture names. Dwynen includes its Elf bonuses, attack
 trigger and a real resumable legend-rule choice.
 Printed collector numbers are not a safe
@@ -33,7 +33,7 @@ unchanged 192-definition Pauper registry. The importer combines both files in
 that order and reports their separate SHA-256s. Build the gameplay binary with
 `cargo build --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_env`.
 Default builds retain the Pauper catalog and its v34 identity; the
-Limited feature selects the appended definitions and their v54 identity.
+Limited feature selects the appended definitions and their v55 identity.
 Earlier FDN catalog tuples remain readable and are rejected for mutation
 when they do not match the actual build.
 
@@ -89,6 +89,12 @@ see `docs/design/fdn_gainlands_lifegain_v1.md`.
 `FDN_reference_triggers_tricks.dck` covers the third batch: nine trigger
 creatures plus Giant Growth, Stab and Think Twice; see
 `docs/design/fdn_triggers_tricks_v1.md`.
+
+`FDN_reference_equipment_search.dck` is a synthetic 40-card fixture with one
+copy each of Burst Lightning, Evolving Wilds, Solemn Simulacrum, Swiftfoot
+Boots, Grim Tutor, Quick-Draw Katana, Adventuring Gear and Goldvein Pick. It
+resolves fully and is excluded from original-deck coverage counts. See
+`docs/design/fdn_equipment_search_v1.md`.
 
 `FDN_reference_planeswalker.dck` is a synthetic correctness fixture for
 Bite Down's planeswalker recipient. Ajani has entry loyalty and damage
