@@ -137,7 +137,7 @@ def prepare(root, qualification):
             'Fixed known-archetype sideboard plans and Keep7 are supplied to both seats; this does not measure learned sideboarding, mulligans or closed-list deployment.',
             'The V3 singleton adapter is explicitly enabled, and multi-choice encoder failures still invalidate incomplete evaluation.',
             'Run untouched g115 evaluation first. Do not train if the reference evaluator fails. No partial outcome interpretation.',
-            'Fable review failed HTTP429 before reads until September 22 07:00 EDT; no retry or endorsement, proceeding under Jack authority.',
+            'Fable review failed HTTP429 before reads until September 22 07:00 EDT; no retry or endorsement, proceeding under desktop authority.',
             'Local GPU 1 only, no paid compute or broader campaign. CP7 outcomes excluded from selection.']})
     return {'training_episodes': 4000, 'updates_per_arm': 200, 'evaluation_matches': 2352, 'paired_cases': 392}
 

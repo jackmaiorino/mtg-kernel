@@ -68,7 +68,7 @@ before formal measurement through the final manifest:
 | 970003 | `1a1bdb75099b50b4d250d3e03ab6d882718f017e2c6d715bc8a67d3022b627ec` |
 
 This result satisfies every condition precedent in `CLAUDE #187`, activating
-Jack's exact pre-authorization for the scaled self-play population program at
+The maintainer's exact pre-authorization for the scaled self-play population program at
 commit `838920e359c7a1152d97c450f4575c6be2309f22`, document SHA-256
 `b0e836858379137e9f5068f1ed2d3cb98d0d6507d09170d8272caad2a989ea38`.
 

@@ -17,7 +17,7 @@ $cpu=Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor | Where-Object Nam
 $os=Get-CimInstance Win32_OperatingSystem
 $processes=@(Get-Process -Name trainer -ErrorAction SilentlyContinue | Select-Object Id,CPU,StartTime,Path)
 [pscustomobject]@{at=(Get-Date).ToUniversalTime().ToString('o');host=$env:COMPUTERNAME;cpu_percent=$cpu.PercentProcessorTime;free_memory_kib=$os.FreePhysicalMemory;native=$processes;gpu=@(& nvidia-smi --query-gpu=index,uuid,utilization.gpu,memory.used --format=csv,noheader,nounits)} | ConvertTo-Json -Depth 4'''
-    if host == "haleyspc":
+    if host == "computehost":
         import json
         return json.loads(ssh_ps(script))
     import json
@@ -103,8 +103,8 @@ def run(root, compute):
                     record["hosts"][host] = snapshot(host)
                 except Exception as error:
                     record["hosts"][host] = dict(telemetry_error=str(error))
-            if "jack" in hosts:
-                jobs_root = root/"state-prevention-training-001/jack/jobs"
+            if "desktop" in hosts:
+                jobs_root = root/"state-prevention-training-001/desktop/jobs"
                 record["local_progress"] = {}
                 for arm in m["training_configs"]:
                     receipts = sorted((jobs_root/arm/"outputs").glob("*/receipt.json"))

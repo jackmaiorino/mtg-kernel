@@ -1,6 +1,6 @@
 # Paused XMage human adapter
 
-Jack allowed the native interface if XMage integration was substantial. The native browser interface is the active human-feedback path. A rich XMage observation/action translator was still needed, so XMage did not offer an immediate shortcut.
+desktop allowed the native interface if XMage integration was substantial. The native browser interface is the active human-feedback path. A rich XMage observation/action translator was still needed, so XMage did not offer an immediate shortcut.
 
 Preserved native-side prototype files are `xmage_observed_inference_v1.rs`, its binary entrypoint, and `python/tools/xmage_native_observer_v1.py`. The Rust endpoint compiles and accepts explicitly supplied observation tensors. The Python observation projector it imports is not implemented. These files are not a functioning XMage adapter and are not used by the native human match driver.
 

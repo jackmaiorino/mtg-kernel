@@ -20,10 +20,10 @@ class ComputeLaunchTests(unittest.TestCase):
         self.plan = {
             "schema": "public-training-compute-choice/v1", "planned_updates": 200,
             "inventory": {host: {"checked_at": datetime.now(timezone.utc).isoformat(),
-                                  "eligible": host == "jack", "reason": "test allocation"}
-                          for host in ["jack", "haleyspc", "runpod"]},
+                                  "eligible": host == "desktop", "reason": "test allocation"}
+                          for host in ["desktop", "computehost", "runpod"]},
             "candidates": [self.benchmark(1, [10, 5, 5]), self.benchmark(4, [10, 2, 2])],
-            "selected": "jack-4",
+            "selected": "desktop-4",
         }
 
     def put(self, name, value):
@@ -33,7 +33,7 @@ class ComputeLaunchTests(unittest.TestCase):
         return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
     def benchmark(self, workers, times):
-        label = f"jack-{workers}"
+        label = f"desktop-{workers}"
         output = self.root/label/"outputs"
         request = self.put(f"{label}/request.json", {
             "config": {"updates": [[{}, {}]] * 200, "gpu_ordinal": 1}, "resume": None,
@@ -49,8 +49,8 @@ class ComputeLaunchTests(unittest.TestCase):
                    for i in range(3) for name in ["checkpoint.json", "optimizer.json", "episode-000.json", "episode-001.json"]}
         report = self.put(f"{label}/benchmark.json", {
             "config": self.config, "execution": execution, "completion": completion,
-            "host": "jack", "outputs": outputs})
-        return {"id": label, "host": "jack", "workers": workers, "benchmark": report,
+            "host": "desktop", "outputs": outputs})
+        return {"id": label, "host": "desktop", "workers": workers, "benchmark": report,
                 "setup_seconds": 0, "transfer_seconds": 0, "recovery_seconds": 0}
 
     def check(self):
@@ -61,21 +61,21 @@ class ComputeLaunchTests(unittest.TestCase):
         self.assertEqual(self.check()["workers"], 4)
 
     def test_refuses_slower_serial_choice(self):
-        self.plan["selected"] = "jack-1"
+        self.plan["selected"] = "desktop-1"
         with self.assertRaisesRegex(ValueError, "slower"):
             self.check()
 
     def test_serial_measurement_alone_is_not_qualification(self):
         self.plan["candidates"] = self.plan["candidates"][:1]
-        self.plan["selected"] = "jack-1"
+        self.plan["selected"] = "desktop-1"
         with self.assertRaisesRegex(ValueError, "serial timing alone"):
             self.check()
 
     def test_wrong_faster_output_is_rejected(self):
         report = json.loads(Path(self.plan["candidates"][1]["benchmark"]["path"]).read_text())
         report["outputs"]["0000/episode-000.json"] = self.put(
-            "jack-4/outputs/0000/episode-000.json", {"changed_action": True})
-        self.plan["candidates"][1]["benchmark"] = self.put("jack-4/benchmark.json", report)
+            "desktop-4/outputs/0000/episode-000.json", {"changed_action": True})
+        self.plan["candidates"][1]["benchmark"] = self.put("desktop-4/benchmark.json", report)
         with self.assertRaisesRegex(ValueError, "not byte-identical"):
             self.check()
 
@@ -83,7 +83,7 @@ class ComputeLaunchTests(unittest.TestCase):
         first = json.loads(Path(self.plan["candidates"][0]["benchmark"]["path"]).read_text())
         second = json.loads(Path(self.plan["candidates"][1]["benchmark"]["path"]).read_text())
         second["outputs"] = first["outputs"]
-        self.plan["candidates"][1]["benchmark"] = self.put("jack-4/benchmark.json", second)
+        self.plan["candidates"][1]["benchmark"] = self.put("desktop-4/benchmark.json", second)
         with self.assertRaisesRegex(ValueError, "not from the measured execution"):
             self.check()
 
@@ -93,12 +93,12 @@ class ComputeLaunchTests(unittest.TestCase):
             self.check()
 
     def test_stale_inventory_requires_refresh(self):
-        self.plan["inventory"]["haleyspc"]["checked_at"] = "2000-01-01T00:00:00+00:00"
+        self.plan["inventory"]["computehost"]["checked_at"] = "2000-01-01T00:00:00+00:00"
         with self.assertRaisesRegex(ValueError, "refresh resource inventory"):
             self.check()
 
     def test_eligible_unmeasured_machine_prevents_local_fallback(self):
-        self.plan["inventory"]["haleyspc"]["eligible"] = True
+        self.plan["inventory"]["computehost"]["eligible"] = True
         with self.assertRaisesRegex(ValueError, "no throughput measurement"):
             self.check()
 
@@ -107,9 +107,9 @@ class ComputeLaunchTests(unittest.TestCase):
         execution = json.loads(Path(report["execution"]["path"]).read_text())
         request = json.loads(Path(execution["request"]["path"]).read_text())
         request["execution_gpu_ordinal"] = 0
-        execution["request"] = self.put("jack-4/request.json", request)
-        report["execution"] = self.put("jack-4/execution.json", execution)
-        self.plan["candidates"][1]["benchmark"] = self.put("jack-4/benchmark.json", report)
+        execution["request"] = self.put("desktop-4/request.json", request)
+        report["execution"] = self.put("desktop-4/execution.json", execution)
+        self.plan["candidates"][1]["benchmark"] = self.put("desktop-4/benchmark.json", report)
         with self.assertRaisesRegex(ValueError, "device-aware"):
             self.check()
 
@@ -117,8 +117,8 @@ class ComputeLaunchTests(unittest.TestCase):
         report = json.loads(Path(self.plan["candidates"][1]["benchmark"]["path"]).read_text())
         completion = json.loads(Path(report["completion"]["path"]).read_text())
         completion["execution_gpu_ordinal"] = 0
-        report["completion"] = self.put("jack-4/outputs/completion.json", completion)
-        self.plan["candidates"][1]["benchmark"] = self.put("jack-4/benchmark.json", report)
+        report["completion"] = self.put("desktop-4/outputs/completion.json", completion)
+        self.plan["candidates"][1]["benchmark"] = self.put("desktop-4/benchmark.json", report)
         with self.assertRaisesRegex(ValueError, "completion GPU"):
             self.check()
 

@@ -45,7 +45,7 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, r"C:\Users\Jack\IdeaProjects\collab")
+sys.path.insert(0, r"C:\Users\user\IdeaProjects\collab")
 from eb_cs_reference_v1 import compute_eb_cs_trajectory_core, ALPHA_DEFAULT, C_TRUNCATION_DEFAULT  # noqa: E402
 
 SEEDS = [970001, 970002, 970003]

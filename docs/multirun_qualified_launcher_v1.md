@@ -11,10 +11,10 @@ An experiment is a fixed set of independent runs: one seed and one Store per
 run, optionally grouped into arms with per-arm knobs, optionally a resumed
 segment of existing Stores. `python/tools/multirun_launcher_v1.py` runs them
 concurrently, one process per run, across placement slots
-(`<capacity>@<host>:<device>`, for example `2@0+2@1+2@haleyspc:0`), and
-enforces `C:/Users/Jack/COMPUTE-POLICY.md` items 2 to 5 at the launch point:
+(`<capacity>@<host>:<device>`, for example `2@0+2@1+2@computehost:0`), and
+enforces `C:/Users/user/COMPUTE-POLICY.md` items 2 to 5 at the launch point:
 
-1. `inventory` records Jack's PC, HaleysPC (SSH over Tailscale) and RunPod
+1. `inventory` records the primary desktop, the compute host (SSH over Tailscale) and RunPod
    (read-only account query) with a timestamp, eligibility, reason and GPU
    identities.
 2. `qualify` runs every run for a short prefix, first one at a time (the
@@ -90,14 +90,14 @@ README). Round 2 is the evidence for this revision; round 1 is the pre-verdict
 record.
 
 Round 2 (launcher `136443d3`): 10 runs, 2 arms x 5 seeds x 128 updates, on
-Jack's PC and HaleysPC.
+The primary desktop and the compute host.
 
 | Allocation | Episodes/s | Byte-identical to serial golden |
 | --- | --- | --- |
 | 1@gpu0 (serial) | 11.04 | golden + stored repeat |
 | 2@gpu0 + 2@gpu1 | 30.65 | 10/10 |
-| 2@gpu0 + 2@gpu1 + 2@HaleysPC (selected) | 40.12 | 10/10 |
-| 2@gpu0 + 2@gpu1 + 3@HaleysPC | 42.56 | 10/10 |
+| 2@gpu0 + 2@gpu1 + 2@ComputeHost (selected) | 40.12 | 10/10 |
+| 2@gpu0 + 2@gpu1 + 3@ComputeHost | 42.56 | 10/10 |
 
 The full-length sentinel on the selected allocation matched on all 6
 placement x arm entries (233 outputs each) with every device's peak memory
@@ -114,7 +114,7 @@ serial one (77 min projected, about 42 min derived), so it overstates the speedu
 held.
 
 Superseded round-2 passes are kept: one at `cc3036db` selected 3 processes on
-HaleysPC from the prefix, and at full length that 8 GB card crowded (7,867 of
+The compute host from the prefix, and at full length that 8 GB card crowded (7,867 of
 8,188 MiB, 100 percent), its runs took about 2,800 s against about 350 s
 locally, and the experiment took 46.9 min. The remote memory-fit rule and the
 sentinel's full-length memory check came from that run.
@@ -145,15 +145,15 @@ through the launcher:
 | `macro_selfplay_envrand_v2_rung_v1` (`Invoke-MacroTrainingRun`) | `formal.ps1:45` (512 updates, 3 seeds) | fresh run, ladder and envrand knobs | launchable now: one workload, 3 runs, knobs `MULTIRUN_LADDER`, `MULTIRUN_ENVIRONMENT_RANDOMIZATION_V2`; wrapper not rewritten |
 | `regularized_continuation_retest_v1` (`Invoke-NativePilot`) | `full-horizon-training.ps1:246` (512, anchor beta, waves) | fresh or resumed, anchor beta | launchable now: knobs plus `segment`/`parents` for resumed waves; wrapper not rewritten |
 | `scaled_selfplay_population_v1` (`Invoke-ScaledNativePilot`) | `correct-throughput-screen.ps1:34`, `preflight-screen.ps1:58,61,131`, `run-replay.ps1:58` | successor or retest segments (stop and resume) | launchable now as segments; wrappers not rewritten |
-| same family | `run-initial-population-interval.ps1:39`, `run-population-interval.ps1:43` | population runtime | **retired by Jack's ruling 2026-09-23 (CLAUDE #382)**: the harness asserts `stop == resume + 128` for this runtime (`native_science_loop_v1.rs:1644`), so it cannot be prefix-qualified; the gate refuses it from new builds |
-| same family | `run-response-exploiter-build.ps1:186,191,203`, `run-response-exploiter-retry.ps1:315,320,332`, `run-response-exploiter-screen.ps1:174,187,192` | response-exploiter runtime | **retired by Jack's ruling 2026-09-23 (CLAUDE #382)**: the harness permits only a stop at 4 or none for this runtime (`native_science_loop_v1.rs:1658`) |
-| `response_exploiter_v2_campaign_v1` | `run-response-exploiter-v2-build.ps1:135,140,151,164`, `-preflight.ps1:101,116,122`, `-retry-build.ps1:152` | response-exploiter runtime | **retired by Jack's ruling 2026-09-23 (CLAUDE #382)** (same assertion) |
-| `response_exploiter_denovo_screen_v1` | `run-denovo-screen-build.ps1:70`, `run-denovo-512-screen-build.ps1:79` | response-exploiter runtime | **retired by Jack's ruling 2026-09-23 (CLAUDE #382)** (same assertion) |
+| same family | `run-initial-population-interval.ps1:39`, `run-population-interval.ps1:43` | population runtime | **retired by the maintainer's ruling 2026-09-23 (CLAUDE #382)**: the harness asserts `stop == resume + 128` for this runtime (`native_science_loop_v1.rs:1644`), so it cannot be prefix-qualified; the gate refuses it from new builds |
+| same family | `run-response-exploiter-build.ps1:186,191,203`, `run-response-exploiter-retry.ps1:315,320,332`, `run-response-exploiter-screen.ps1:174,187,192` | response-exploiter runtime | **retired by the maintainer's ruling 2026-09-23 (CLAUDE #382)**: the harness permits only a stop at 4 or none for this runtime (`native_science_loop_v1.rs:1658`) |
+| `response_exploiter_v2_campaign_v1` | `run-response-exploiter-v2-build.ps1:135,140,151,164`, `-preflight.ps1:101,116,122`, `-retry-build.ps1:152` | response-exploiter runtime | **retired by the maintainer's ruling 2026-09-23 (CLAUDE #382)** (same assertion) |
+| `response_exploiter_denovo_screen_v1` | `run-denovo-screen-build.ps1:70`, `run-denovo-512-screen-build.ps1:79` | response-exploiter runtime | **retired by the maintainer's ruling 2026-09-23 (CLAUDE #382)** (same assertion) |
 | `exploiter_probe_v3` (`launch_probe.py:1735`) | arm runs (3 runs x 512 per process) | multi-run process | migrate as one run per process (seed = base + offset + ordinal); byte equivalence with the in-process form is expected, not verified; it must be verified before that probe's first launch through the gate |
 
 `run-native.ps1:23` in the population family forwards arguments for every lane
-above and follows their status. Jack ruled on 2026-09-23 (CLAUDE #382,
-`collab/FOR-JACK.md`) to retire the population-v2 and response-exploiter
+above and follows their status. The maintainer ruled on 2026-09-23 (CLAUDE #382,
+`collab/FOR-MAINTAINER.md`) to retire the population-v2 and response-exploiter
 runtimes: the gate refuses them from new builds, no change is funded to let
 them stop early for qualification, and frozen measurements from those lanes
 keep their existing executables and receipts.
@@ -178,7 +178,7 @@ point, and publishes generation-named outputs.
 
 ## Placement notes
 
-- HaleysPC has only a C: drive and no CUDA toolkit. `SshPowerShellExecutor`
+- The compute host has only a C: drive and no CUDA toolkit. `SshPowerShellExecutor`
   mirrors every local drive path under `C:/mtg-node/multirun-mirror/<letter>`
   and maps the drive per session with `subst`, stages the executable, the
   nvrtc/cudart DLLs and the CUDA headers (nvrtc kernel JIT reads
@@ -201,9 +201,9 @@ point, and publishes generation-named outputs.
 | M2 prefix-audit mismatch fails run and experiment | `launch`; `test_m2_*` |
 | M3 serial repeat digests stored and compared | `golden.serial_repeat`; `test_m3_*` |
 | M4 launcher hash and GPU identity checked | `require_choice`, `check_gpu_identity`; `test_m4_*` |
-| M5 blast radius listed; knobs admitted; resume-aware tickets and segments | table above; `test_m5_*`; ticket tests `resumed_segments_*`; blocked rows in FOR-JACK |
+| M5 blast radius listed; knobs admitted; resume-aware tickets and segments | table above; `test_m5_*`; ticket tests `resumed_segments_*`; blocked rows in FOR-MAINTAINER |
 | M6 ticket wording, 65 boundary test, CI note | this doc; `small_checks_need_no_ticket_and_substantial_runs_do` |
-| M7 one countersign target; HaleysPC receipts, watchdog and log check | all round-2 receipts from launcher `136443d3`; SSH executor |
+| M7 one countersign target; the compute host receipts, watchdog and log check | all round-2 receipts from launcher `136443d3`; SSH executor |
 | M8 committed RunPod evidence | launcher reason text and placement notes |
 | M9 refusal log committed | `docs/reports/multirun_qualified_v1/round2/raw-harness-refusal.txt` (round 1's log is `round1/raw-harness-refusal.txt`) |
 | N1 every used GPU needs a full-length reading | `sentinel_memory_problems` in qualification and the guard; tests `test_n1_*` drive it from real Monitor peaks |

@@ -6,7 +6,7 @@
 
 **Architecture:** The pool catalog (`data/pauper_pool_v1.json`, registered decks for sideboarding and Bo3) grows from nine to eighteen registrations while the runtime catalog (`data/runtime_decks_v1.json`, the nine decks training and RL sample from) stays byte-identical. Cards append to `data/cards_v1.json` (ids are array indexes, so nothing moves). Card programs follow the existing build.rs tables (`special_for`, `effect_recipe_for`, `trigger_recipe_for`, cost tables) plus a small number of new card-neutral primitives (transform in place, granted equipment ability, mass pump, delve, monarch, adventure). Every wave commit records old and new `KERNEL_CARDDB_HASH`.
 
-**Tech Stack:** Rust 2021 (mtg-kernel crate, build.rs codegen), Python 3 tools under `python/tools` run through `uvx uv@0.11.29 run --no-sync python ...`, XMage Java sources in the Mage fork `C:\Users\Jack\IdeaProjects\mage-cycle4-lead` (pinned 72a08a3b) as the rules oracle.
+**Tech Stack:** Rust 2021 (mtg-kernel crate, build.rs codegen), Python 3 tools under `python/tools` run through `uvx uv@0.11.29 run --no-sync python ...`, XMage Java sources in the Mage fork `C:\Users\user\IdeaProjects\mage-cycle4-lead` (pinned 72a08a3b) as the rules oracle.
 
 **Spec:** `docs/superpowers/specs/2026-09-09-pauper-meta-cards-and-sideboarding-design.md` (revision 3, Codex-approved 2026-09-09). Research inputs: `docs/research/pauper_meta_source_lists_2026-09-09.json` and the preserved decklists under `docs/research/pauper_meta_decklists_2026-09-09/`.
 
@@ -17,7 +17,7 @@
 - `data/runtime_decks_v1.json` must not change in this wave (its SHA-256 `68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851` is pinned by the training store). Verify with `sha256sum data/runtime_decks_v1.json` before every commit that touches `data/`.
 - Historical deck registrations (Wildfire, Rally, Affinity, Elves, Spy, Burn, Terror, CawGates, Faeries) and their `.dek` files never change.
 - No card-specific pending state (ROADMAP line 175). New primitives are card-neutral `EffectOp`, `CostComponent`, trigger, or definition shapes with their own unit tests.
-- Every new card's integration test file header cites the XMage Java file and its git blob SHA from the Mage fork at 72a08a3b (`git -C C:\Users\Jack\IdeaProjects\mage-cycle4-lead rev-parse 72a08a3b:Mage.Sets/src/mage/cards/<letter>/<Class>.java`).
+- Every new card's integration test file header cites the XMage Java file and its git blob SHA from the Mage fork at 72a08a3b (`git -C C:\Users\user\IdeaProjects\mage-cycle4-lead rev-parse 72a08a3b:Mage.Sets/src/mage/cards/<letter>/<Class>.java`).
 - A card's `engine_capability` may be `full` in the candidate build so manifests generate, but the wave is not certified until Task 14's branch-coverage check passes (spec 5.3 steps 2 and 4).
 - No em-dashes in any file, comment, or commit message.
 - Python entry point: `uvx uv@0.11.29 run --no-sync python python/tools/<tool>.py` from the worktree root. Rust: `cargo test --locked -p mtg-kernel` from the worktree root (target dir `D:/cargo-target-pauper-meta` via `CARGO_TARGET_DIR`).
@@ -104,7 +104,7 @@ Rules text used by the tests (verified in the Java at 72a08a3b):
 - Modify: `python/tools/generate_pauper_manifests.py:38-39,78-114,248-286`
 - Modify: `python/tests/test_pauper_pool_manifest.py:22-32,163,215-247,458-461`
 - Modify: `oracle/xmage/DeterminizationSampler.java` (add `pauperRegistrationsV2()` after `pauperDefaults()`; `pauperDefaults()` untouched)
-- Modify: `C:\Users\Jack\IdeaProjects\mage-cycle4-lead\Mage.Server.Plugins\Mage.Player.AIRL\src\mage\player\ai\rl\DeterminizationSampler.java` (same method, committed on a new Mage branch `lead/pauper-meta-registrations-v1` from 72a08a3b)
+- Modify: `C:\Users\user\IdeaProjects\mage-cycle4-lead\Mage.Server.Plugins\Mage.Player.AIRL\src\mage\player\ai\rl\DeterminizationSampler.java` (same method, committed on a new Mage branch `lead/pauper-meta-registrations-v1` from 72a08a3b)
 
 **Interfaces:**
 - Consumes: nothing new.
@@ -240,7 +240,7 @@ git push
 **Interfaces:**
 - Produces: `NativeRunCatalogProfileV1::PauperMetaW1` selected when `card_db_hash_u64_hex == FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1 && runtime_catalog_sha256 == FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1` (the runtime catalog is unchanged in this wave).
 
-Note: this is the schema migration the spec's ruling 6 covers. It lands on the card lane only; Jack rules before any store written under this profile is used.
+Note: this is the schema migration the spec's ruling 6 covers. It lands on the card lane only; the maintainer rules before any store written under this profile is used.
 
 - [ ] **Step 1: Write the failing test** next to the existing classifier tests (`grep -n "fn classify_catalog_profile" mtg-kernel/src/native_training_store_run_v2.rs` and the `#[cfg(test)]` block that names `Historical`/`Current`):
 ```rust
@@ -327,7 +327,7 @@ uvx uv@0.11.29 run --no-sync python $P $D/Terror__887001.txt "$O/Deck - Mono-Blu
 uvx uv@0.11.29 run --no-sync python $P $D/Spy__887010.txt "$O/Deck - Spy Combo V2.dek"
 uvx uv@0.11.29 run --no-sync python $P $D/DimirControl__886841.txt "$O/Deck - Dimir Terror V2.dek"
 ```
-(Glint Hawk is not yet in the registry, so the tool's registry check must accept names listed in this plan's metadata table; implement the check as "in `cards_v1.json` or in `--allow-pending Name`" and pass `--allow-pending "Glint Hawk"`.) Copy the nine files to the Mage fork deck directory and verify each loads there: `cd C:\Users\Jack\IdeaProjects\mage-cycle4-lead && mvn -q -pl Mage.Server.Plugins/Mage.Player.AIRL -Dtest=DeterminizationSamplerTest test` if such a test exists (`grep -rl "pauperDefaults" Mage.Server.Plugins/Mage.Player.AIRL/src/test`), otherwise write a five-line JUnit test there that calls `DeterminizationSampler.pauperRegistrationsV2()` and asserts each archetype has 60 mainboard cards; the XMage importer resolves rows by `Name`, so `CatID="0"` is acceptable only if that test passes.
+(Glint Hawk is not yet in the registry, so the tool's registry check must accept names listed in this plan's metadata table; implement the check as "in `cards_v1.json` or in `--allow-pending Name`" and pass `--allow-pending "Glint Hawk"`.) Copy the nine files to the Mage fork deck directory and verify each loads there: `cd C:\Users\user\IdeaProjects\mage-cycle4-lead && mvn -q -pl Mage.Server.Plugins/Mage.Player.AIRL -Dtest=DeterminizationSamplerTest test` if such a test exists (`grep -rl "pauperDefaults" Mage.Server.Plugins/Mage.Player.AIRL/src/test`), otherwise write a five-line JUnit test there that calls `DeterminizationSampler.pauperRegistrationsV2()` and asserts each archetype has 60 mainboard cards; the XMage importer resolves rows by `Name`, so `CatID="0"` is acceptable only if that test passes.
 
 - [ ] **Step 5: Commit** (kernel repo and Mage fork separately, both pushed):
 ```
@@ -353,7 +353,7 @@ git push
 
 - [ ] **Step 1: Registry entries.** Append the six JSON objects. Run `cargo build --locked -p mtg-kernel`. Expected: build.rs panics "card ... has empty deck coverage"? No: each has a non-empty `decks` list. Expected: build succeeds with the cards as `Special::None` (unplayable spells resolve to `spell=None`).
 
-- [ ] **Step 2: Failing tests** in `mtg-kernel/tests/pauper_meta_w1_spells.rs`. Header cites the five Java files and blob SHAs (`git -C C:\Users\Jack\IdeaProjects\mage-cycle4-lead rev-parse 72a08a3b:Mage.Sets/src/mage/cards/t/Terminate.java` and the others). Copy the `card_id`, `card_name`, `put_object` helpers from `tests/deep_analysis.rs:24-60` verbatim, plus a `ready_main1(p0_library: &[&str], p1_library: &[&str]) -> GameState` that mirrors `ready_deep` without the Deep Analysis object (Main1, P0 active with priority, both libraries as given). Tests:
+- [ ] **Step 2: Failing tests** in `mtg-kernel/tests/pauper_meta_w1_spells.rs`. Header cites the five Java files and blob SHAs (`git -C C:\Users\user\IdeaProjects\mage-cycle4-lead rev-parse 72a08a3b:Mage.Sets/src/mage/cards/t/Terminate.java` and the others). Copy the `card_id`, `card_name`, `put_object` helpers from `tests/deep_analysis.rs:24-60` verbatim, plus a `ready_main1(p0_library: &[&str], p1_library: &[&str]) -> GameState` that mirrors `ready_deep` without the Deep Analysis object (Main1, P0 active with priority, both libraries as given). Tests:
 
 ```rust
 #[test]
@@ -661,6 +661,6 @@ git push
 
 ## Self-review notes
 
-- Spec coverage: section 3 catalog versus active set (Task 1), append-only ids (Task 2 tool, Task 5 onward), Mage-fork sampler (Tasks 1, 4, 12), primitives 5.2 for this wave's cards (Tasks 6 to 11), per-wave procedure 5.3 steps 1 (Task 4, 12), 2 (Tasks 5 to 11), 3 (same), 4 (Task 14), 5 (Task 9's `card_id_by_visible_name`; the MTGO correspondence crate lives on the deployment branch and consumes it in a later plan), 6 (Tasks 12, 13); ruling 6 schema migration (Task 3) flagged for Jack.
-- Not in this plan: sideboard plan table (spec 6.1), classifier and controller (6.2, 6.3), Bo3 gate (6.4): separate plans after Jack's rulings 3, 4, and 7.
+- Spec coverage: section 3 catalog versus active set (Task 1), append-only ids (Task 2 tool, Task 5 onward), Mage-fork sampler (Tasks 1, 4, 12), primitives 5.2 for this wave's cards (Tasks 6 to 11), per-wave procedure 5.3 steps 1 (Task 4, 12), 2 (Tasks 5 to 11), 3 (same), 4 (Task 14), 5 (Task 9's `card_id_by_visible_name`; the MTGO correspondence crate lives on the deployment branch and consumes it in a later plan), 6 (Tasks 12, 13); ruling 6 schema migration (Task 3) flagged for the maintainer.
+- Not in this plan: sideboard plan table (spec 6.1), classifier and controller (6.2, 6.3), Bo3 gate (6.4): separate plans after the maintainer's rulings 3, 4, and 7.
 - Type names introduced here and reused across tasks: `Special::DestroyCreature`, `Special::DestroyArtifact`, `Special::DestroyLand`, `Special::DestroyNonblackCreature`, `EffectOp::PumpAllUntilEndOfTurn`, `EffectOp::DealDamageToControllerOfTarget`, `EffectOp::TransformSourceInPlace`, `EffectOp::LookAtTopMayRevealThen`, `EffectCond::ControllerGraveyardCreatureCardsAtLeast`, `AltCostDef`, `AltCostCondition`, `GrantedActivatedAbilityDef`, `AdventureDef`, `Keywords::CANT_BE_BLOCKED`, `TargetSpec::LandPermanent`, `TargetSpec::NonblackCreature`, `PermanentFilter::Land`, `card_id_by_visible_name`, `NativeRunCatalogProfileV1::PauperMetaW1`, `REGISTRATION_SPECS`, `pauperRegistrationsV2`.

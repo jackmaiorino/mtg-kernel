@@ -13,11 +13,11 @@ class DispatcherStorageAdmissionTests(unittest.TestCase):
             dispatch.require_disk_reserve(dispatch.DISK_RESERVE_BYTES - 1)
 
     def test_local_and_remote_preflight_refuse_below_reserve(self):
-        for host, drive in (("jack", "D"), ("haleyspc", "C")):
+        for host, drive in (("desktop", "D"), ("computehost", "C")):
             with self.subTest(host=host):
                 report = dict(host=dispatch.HOSTNAMES[host], active=[],
                               disk_free_bytes=dispatch.DISK_RESERVE_BYTES - 1, gpu=[])
-                if host == "jack":
+                if host == "desktop":
                     context = patch.object(dispatch.subprocess, "check_output",
                                            return_value=json.dumps(report))
                 else:
@@ -26,11 +26,11 @@ class DispatcherStorageAdmissionTests(unittest.TestCase):
                     dispatch.preflight(host, [], drive)
 
     def test_local_and_remote_preflight_accept_exact_reserve(self):
-        for host, drive in (("jack", "D"), ("haleyspc", "C")):
+        for host, drive in (("desktop", "D"), ("computehost", "C")):
             with self.subTest(host=host):
                 report = dict(host=dispatch.HOSTNAMES[host], active=[],
                               disk_free_bytes=dispatch.DISK_RESERVE_BYTES, gpu=[])
-                if host == "jack":
+                if host == "desktop":
                     context = patch.object(dispatch.subprocess, "check_output",
                                            return_value=json.dumps(report))
                 else:

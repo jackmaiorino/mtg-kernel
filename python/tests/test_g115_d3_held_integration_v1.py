@@ -36,7 +36,7 @@ class HeldIntegrationTests(unittest.TestCase):
                 side_effect=ValueError('policy readback refused') if failure else list(zip(children, policies))))
             match = stack.enter_context(patch.object(runner, 'read_match',
                 return_value=dict(sha256='a'*64, games=3, decisions=5)))
-            result = runner.launch({}, 'jack', root)
+            result = runner.launch({}, 'desktop', root)
             saved = json.loads((root / 'completion.json').read_text())
             self.assertEqual(result, saved)
             if failure:

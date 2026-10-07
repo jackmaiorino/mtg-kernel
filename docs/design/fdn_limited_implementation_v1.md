@@ -1,6 +1,6 @@
 # Issue 110: FDN Limited implementation
 
-Assigned by Jack on 2026-09-30. Implementation branch:
+Assigned by the maintainer's on 2026-09-30. Implementation branch:
 `codex/fdn-limited-deck-loading-v1`, based on public main `d9e0910a`.
 This is engineering work; no training, evaluation campaign or playing-strength
 claim is authorized by the work plan. Preserve the lead's current PC reservation.

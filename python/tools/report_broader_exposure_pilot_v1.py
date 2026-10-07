@@ -44,7 +44,7 @@ def report(root):
     lines += ['',f"Evaluation consumed {a['evaluation_worker_seconds']:.2f} summed worker-seconds. Local GPU 1 for training; no paid allocation.",'',
         'The two branches began from untouched g115 full Adam32400 and ended at32600. The intervention replaced half the learner registrations while retaining seeds, roles, opponent assignments, terminal reward, GAE and optimizer settings. Current-policy weights subsequently diverge as part of the treatment.','',
         'This is a conditional curriculum comparison on development-exposed registrations against familiar A48 training opposition. It does not establish unseen-list, untouched-opponent, full-meta or human strength. Keep7 and Keep sideboarding omit learned openings and actual postboard swapping. Canonical retention is aggregate, not simultaneous per-archetype confirmation.','',
-        'Fable review remains unavailable after the known zero-read HTTP429 until September 22 07:00 EDT; no retry or endorsement. Jack authorized bounded local continuation. No CP7 outcomes entered selection. Exact source/model/configuration and match pins are retained in the manifest and complete audits.','']
+        'Fable review remains unavailable after the known zero-read HTTP429 until September 22 07:00 EDT; no retry or endorsement. The maintainer authorized bounded local continuation. No CP7 outcomes entered selection. Exact source/model/configuration and match pins are retained in the manifest and complete audits.','']
     with (root/'RESULTS.md').open('x',encoding='utf-8') as f:f.write('\n'.join(lines))
     write(root/'report-pins.json',{'script':pin(__file__),'analysis':pin(root/'analysis.json'),
           'report':pin(root/'RESULTS.md'),'figure':pin(root/'paired-effects.png')})

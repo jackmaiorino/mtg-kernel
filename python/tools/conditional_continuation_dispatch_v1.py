@@ -49,7 +49,7 @@ def fleet():
     local = owners.local_available()
     from trample_owner_inventory_v1 import inventory
     try:
-        remote = inventory('haleyspc')
+        remote = inventory('computehost')
     except Exception as exc:
         remote = dict(error_type=type(exc).__name__, error=str(exc)[:300])
     cloud = dict(checked_unix=time.time(), allocated=False, eligible=False,
@@ -64,13 +64,13 @@ def fleet():
             cloud['http_status'] = exc.code
         except Exception as exc:
             cloud['error_type'] = type(exc).__name__
-    return dict(checked_unix=time.time(), jack=local, haleyspc=remote, runpod=cloud)
+    return dict(checked_unix=time.time(), desktop=local, computehost=remote, runpod=cloud)
 
 
 def require_local_only(snapshot):
-    remote = snapshot['haleyspc']
+    remote = snapshot['computehost']
     require('error_type' in remote or bool(remote.get('active')),
-            'HaleysPC is available: implement and compare its placement before local-only launch')
+            'the compute host is available: implement and compare its placement before local-only launch')
 
 
 def seed_pair(name, decision, index, formal):
@@ -169,7 +169,7 @@ def main():
             inputs=inputs, jobs=jobs,
             formal_n=400, domain='conditional-continuation-v1', gpu_ordinal=None,
             batch_shape='Both qualification and formal: 16 batches of 25 continuations, same fixed root replay per batch; different seed domains.',
-            allocation='jack CPU BelowNormal; remote eligibility rechecked before formal work')
+            allocation='desktop CPU BelowNormal; remote eligibility rechecked before formal work')
         write(root/'manifest.json', manifest)
         reports = []
         for workers in [n for n in (1, 2, 4, 8, 16) if n <= (os.cpu_count() or 1)]:

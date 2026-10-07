@@ -158,7 +158,7 @@ class FreshTransportTests(unittest.TestCase):
         with self.assertRaises(ValueError): validate_trajectory(trajectory)
 
     def test_v4_fresh_lineage_source_files_are_admitted_alongside_v3(self):
-        # Dual admission (Jack's ruling): V4 is a new arm, never a cutover
+        # Dual admission (the maintainer's ruling): V4 is a new arm, never a cutover
         # that stops re-verifying the sealed V3 evidence above.
         f = synthetic_transport_fixture(self.root/'fixture-v4', source_files_template=SOURCE_FILES_V4)
         proof = initial_state(f['source'],f['inspection'])

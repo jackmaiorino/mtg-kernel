@@ -142,7 +142,7 @@ def main():
     binding.add_argument('--output', type=Path, required=True)
     support = sub.add_parser('support')
     support.add_argument('--manifest', type=Path, required=True)
-    support.add_argument('--host', choices=['jack', 'haleyspc', 'runpod'], required=True)
+    support.add_argument('--host', choices=['desktop', 'computehost', 'runpod'], required=True)
     support.add_argument('--portable-binding', type=Path, required=True)
     support.add_argument('--output', type=Path, required=True)
     support.add_argument('--destination', required=True)

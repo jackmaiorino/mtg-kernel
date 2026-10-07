@@ -33,7 +33,7 @@ Report strict match wins, draws, unresolved counts and paired fresh-head differe
 
 ## Concrete preparation and remaining work
 
-[comparison-preparation.json](C:/Users/Jack/IdeaProjects/sideboarding-integration-20260912/engineering-004/bo3-prep/comparison-preparation.json) preserves the first preparation and **50 unchanged teacher rows**, all source-checked and legal. Observed game-3 training coverage remains 15/25 cells. Prep003 binds the completed head without changing these rows or prep002's reservation.
+[comparison-preparation.json](C:/Users/user/IdeaProjects/sideboarding-integration-20260912/engineering-004/bo3-prep/comparison-preparation.json) preserves the first preparation and **50 unchanged teacher rows**, all source-checked and legal. Observed game-3 training coverage remains 15/25 cells. Prep003 binds the completed head without changing these rows or prep002's reservation.
 
 Freeze ordinary-RL R0 g2304, the existing sampler and explicit V3 revision-2 transfer across arms, with exact identities in that JSON. Search and the one-update expanded-play checkpoint stay outside this comparison; `RunBatch` cannot load the latter. Preserve original and transferred feature identities.
 

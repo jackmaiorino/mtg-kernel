@@ -53,7 +53,7 @@ def calibrate(root, label, allocation, reference_pin, source_pin, recovery_pin, 
         hashes = host_hashes(recovered['hashes'], assigned[host], host)
         map_file = folder/f'{host}-hashes.json'
         write(map_file, hashes)
-        if host == 'jack':
+        if host == 'desktop':
             native = Path(f"{settings['drive']}:/mtg-evaluation-recovery-fixtures/{root.name}/{label}")
             staged = stage(source_local, native, hashes)
             placed[host] = dict(native=str(native), hashes=hashes)
@@ -71,7 +71,7 @@ def calibrate(root, label, allocation, reference_pin, source_pin, recovery_pin, 
         hosts = {}
         for host in sorted(placed):
             entry = placed[host]
-            if host == 'jack':
+            if host == 'desktop':
                 hosts[host] = recover_local(entry['native'], folder/f'local-recovery-{index}', entry['hashes'])
             else:
                 hosts[host] = remote_recovery(folder, remote, entry['native'], entry['hashes'], entry['remote_map'], index)
@@ -120,7 +120,7 @@ def qualify(root, reference, target, reuse=None):
     assert old['binary'] == plan['binary']
     source_pin = complete['dispatch']
     source = read(checked(source_pin))
-    assert set(source['allocation']) == {'haleyspc'}
+    assert set(source['allocation']) == {'computehost'}
     recovery_pin = source['jobs'][0]['recovery']
     reuse_roots = []
     cursor = reuse
@@ -134,7 +134,7 @@ def qualify(root, reference, target, reuse=None):
         cursor = checked(ancestor).parent if ancestor else None
     root.mkdir()
     available, snapshots = {}, {}
-    for host in ('jack', 'haleyspc'):
+    for host in ('desktop', 'computehost'):
         snap = inventory(host); snapshots[host] = snap
         write(root/f'{host}-inventory.json', snap)
         available[host] = dict(checked_at=snap['at'], evidence=pin(root/f'{host}-inventory.json'),
@@ -151,11 +151,11 @@ def qualify(root, reference, target, reuse=None):
     stores, cases = [], []
     for host in snapshots:
         if not available[host]['eligible']: continue
-        for drive in (('C','D','E') if host == 'jack' else ('C',)):
+        for drive in (('C','D','E') if host == 'desktop' else ('C',)):
             disk = storage(snapshots[host], drive)
             settings = {k:disk[k] for k in ('drive','disk_serial','disk_name')}
             stores.append((host,drive,settings['disk_serial']))
-            for workers in ((1,12,24) if host == 'jack' else (1,8,16)):
+            for workers in ((1,12,24) if host == 'desktop' else (1,8,16)):
                 cases.append((f'{host}-{drive.lower()}-w{workers}', {host:dict(settings,workers=workers,job_weight=1)}))
     write(root/'design.json',dict(runner=pin(__file__), target=target_pin, reference=reference_pin,
           question='Choose measured eligible CPU/storage allocation using repeated exact replays and full-output recovery measured once per placement, not per-match extrapolation.',
@@ -175,7 +175,7 @@ def qualify(root, reference, target, reuse=None):
             assert bool(s['active']) != available[h]['eligible'], 'Ownership changed: preserve evidence and qualify the new eligible set'
         return now
     remote = None
-    if available['haleyspc']['eligible']:
+    if available['computehost']['eligible']:
         staging = read(target.parent/'remote-staging.json')
         remote = prepare_remote(root, [v for k,v in staging['assets'].items() if k.startswith('inputs/')])
         helper = Path(__file__).with_name('evaluation_recovery_fixture_v1.py')
@@ -226,8 +226,8 @@ def qualify(root, reference, target, reuse=None):
             write(root/f'{host}-draft.json',subset)
             best[host] = require_choice(root/f'{host}-draft.json',target_pin,plan['binary'])['allocation'][host]
         for weight in (1,2):
-            allocation={h:dict(a,job_weight=weight if h=='jack' else 1) for h,a in best.items()}
-            measure(f'both-jack-weight-{weight}',allocation)
+            allocation={h:dict(a,job_weight=weight if h=='desktop' else 1) for h,a in best.items()}
+            measure(f'both-desktop-weight-{weight}',allocation)
     write(root/'choice-draft.json',choice)
     selected = require_choice(root/'choice-draft.json',target_pin,plan['binary'])
     choice['selected'] = selected['id']

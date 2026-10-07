@@ -6,7 +6,7 @@ Completed 2026-09-30 EDT for issue 110, milestone 2.
 | --- | --- |
 | New Rust integration tests | 7 passed, 0 failed |
 | Existing Pauper session integration tests | 27 passed, 0 failed |
-| Limited Python importer and adapter tests | 14 passed, 0 failed, on Jack's PC and HaleysPC |
+| Limited Python importer and adapter tests | 14 passed, 0 failed, on the primary desktop and the compute host |
 | Clippy, new binary and integration target, warnings denied | Passed |
 | Native subprocess replay | Complete 40-card game twice, byte-identical transcripts |
 | Actual Python-to-Rust adapter replay | Natural terminal twice, identical transcript SHA-256 |
@@ -22,7 +22,7 @@ Small verification manifest:
 - Remote source projection committed at `a5a0d6ca3b70b6100e1fd82134af28ce8d75844d`
   (`codex/fdn-custom-session-verify-v1`); its changed implementation/test files
   are the copied implementation, with documentation left local.
-- Host: HaleysPC. No active build/training/evaluation processes at preparation.
+- Host: The compute host. No active build/training/evaluation processes at preparation.
 - Rust/Cargo: rustc `1.94.1 (e408947bf 2026-03-25)`;
   cargo `1.94.1 (29ea6fb6a 2026-03-24)`, locked dependencies, two build jobs.
 - MSVC linker: installed BuildTools `14.50.35725.0`,
@@ -35,10 +35,10 @@ Small verification manifest:
 - External transcript SHA-256:
   `9a57de1f1140436b1934299eea297923652879c806880b6fc4a4a071ed717174`.
 - GPU ordinal: none. This is bounded correctness verification, no formal run.
-- Dedicated remote checkout: `C:/Users/haley/mtg-kernel-fdn-custom-session-codex`;
-  target directory: `C:/Users/haley/mtg-kernel-fdn-target`.
+- Dedicated remote checkout: `C:/Users/hostuser/mtg-kernel-fdn-custom-session-codex`;
+  target directory: `C:/Users/hostuser/mtg-kernel-fdn-target`.
 
-Commands on HaleysPC, with the dedicated target directory configured:
+Commands on the compute host, with the dedicated target directory configured:
 
 ```text
 cargo clippy --locked -j 2 -p mtg-kernel --bin kernel_limited_env --test limited_session_v1 -- -D warnings
@@ -49,5 +49,5 @@ python -m unittest discover -s python/tests -p 'test_limited*_v1.py' -v
 The external smoke used `LimitedClientV1` against that target's actual
 `debug/kernel_limited_env.exe`, with both fixture decks. The two resulting
 summaries and transcripts matched exactly. Source was formatted with Rustfmt
-before the final Clippy and Rust checks. Jack's PC's lead-owned Q6 timing
+before the final Clippy and Rust checks. The primary desktop's lead-owned Q6 timing
 process remained active; no local Rust build or GPU work was launched.

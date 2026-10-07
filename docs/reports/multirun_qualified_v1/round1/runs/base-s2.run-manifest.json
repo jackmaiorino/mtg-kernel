@@ -7,7 +7,7 @@
   "finished_at": "2026-09-23T05:30:11.791331+00:00",
   "golden_prefix_generation": 12,
   "golden_prefix_identical": true,
-  "host": "jack",
+  "host": "desktop",
   "log": "D:\\multirun-qualified-v1-work\\q1\\launch\\runs\\base-s2\\process.log",
   "output_digest_set_sha256": "308febbe7f5411c83ae92bb84ce42a8d35c55fd5cc5ebd5a4a2127a5f5bde486",
   "run_id": "base-s2",

@@ -1,4 +1,4 @@
-"""Qualify local replica work while a live remote owner occupies Haley."""
+"""Qualify local replica work while a live remote owner occupies compute host."""
 import argparse
 import os
 from pathlib import Path
@@ -74,42 +74,42 @@ def run(root, pilot, reuse=None, exclude_reused=()):
     os.environ["PATH"] = str(cuda / "bin") + os.pathsep + os.environ["PATH"]
     (root / "temp").mkdir()
     os.environ["TEMP"] = os.environ["TMP"] = str(root / "temp")
-    hardware = {host: inventory(host) for host in ["jack", "haleyspc"]}
-    assert not hardware["jack"]["active"], "preserve local native owner"
-    assert hardware["haleyspc"]["active"], "Haley is free: qualify expanded placements"
+    hardware = {host: inventory(host) for host in ["desktop", "computehost"]}
+    assert not hardware["desktop"]["active"], "preserve local native owner"
+    assert hardware["computehost"]["active"], "the compute host is free: qualify expanded placements"
     available = {}
-    for host, device in [("jack", 1)]:
+    for host, device in [("desktop", 1)]:
         snapshot = preflight(host, [place(host, device, 1)])
         snapshot["hardware"] = hardware[host]
         path = root / f"{host}-inventory.json"
         write(path, snapshot)
         devices = [dict(ordinal=device, uuid=place(host, device, 1)["gpu_uuid"], eligible=True,
                         reason="Current idle/free-VRAM check passed; dedicated research device.")]
-        if host == "jack":
+        if host == "desktop":
             devices.append(dict(ordinal=0, uuid=place(host, 0, 1)["gpu_uuid"], eligible=False,
                 reason="Preserve standing headless GPU1 assignment for formal training; desktop GPU0 not assigned to this run."))
         available[host] = dict(checked_at=snapshot["at"], eligible=True,
             reason="No competing native owner; BelowNormal local work authorized.", evidence=pin(path), devices=devices)
-    write(root / "haleyspc-inventory.json", hardware["haleyspc"])
-    available["haleyspc"] = dict(checked_at=hardware["haleyspc"]["at"], eligible=False,
+    write(root / "computehost-inventory.json", hardware["computehost"])
+    available["computehost"] = dict(checked_at=hardware["computehost"]["at"], eligible=False,
         reason="Current live remote native owner; preserve its frozen work.",
-        evidence=pin(root / "haleyspc-inventory.json"), devices=[])
+        evidence=pin(root / "computehost-inventory.json"), devices=[])
     cloud_path = Path("E:/mtg-meta-recovery-20260920/public-device-placement-001/runpod-inventory.json")
     cloud = read(cloud_path)
     available["runpod"] = dict(checked_at=cloud["checked_at"], eligible=False, devices=[], evidence=pin(cloud_path),
         reason="Latest authenticated inventory HTTP403; no new paid compute authorized. No claimed available pod.")
-    stores = {drive: storage(hardware["jack"], drive) for drive in ["C", "D", "E"]}
+    stores = {drive: storage(hardware["desktop"], drive) for drive in ["C", "D", "E"]}
     cases = []
     for drive in ["C", "D", "E"]:
         for count in [1, 10]:
             cases.append((f"local-{drive.lower()}-w{count}", stores[drive],
-                {arm: place("jack", 1, count) for arm in configs}, "sequential"))
+                {arm: place("desktop", 1, count) for arm in configs}, "sequential"))
     write(root / "manifest.json", dict(pilot=pin(pilot / "manifest.json"), runner=pin(__file__), binary=binary,
         configs=configs, dependencies=[pin(Path(__file__).with_name(n)) for n in ["public_training_storage_v1.py",
             "public_training_dispatch_v2.py", "public_evaluation_dispatch_v1.py", "compute_throughput_v2.py",
             "qualify_state_prevention_compute_v1.py"]],
         cases=[dict(id=name, storage=s, placements=p, mode=mode) for name, s, p, mode in cases],
-        availability_scope="Jack only while actual Haley native owner remains live; recheck before full launch.",
+        availability_scope="the maintainer only while actual compute host native owner remains live; recheck before full launch.",
         prefix_updates=3, games_per_case=60, maximum_executed_games=60*len(cases), unique_arm_games=60,
         native_process_cap_seconds=300, remaining_case_launch_budget_seconds=1200,
         archive_scheme=ARCHIVE, full_training_launched=False,
@@ -133,9 +133,9 @@ def run(root, pilot, reuse=None, exclude_reused=()):
             group_pin = pin(old_group)
         else:
             # No incomplete case is imported. Fresh roots preserve any prior failure.
-            remote_now = inventory("haleyspc")
+            remote_now = inventory("computehost")
             write(root / f"remote-owner-{label}.json", remote_now)
-            assert remote_now["active"], "Haley became free: qualify new placements before launching"
+            assert remote_now["active"], "the compute host became free: qualify new placements before launching"
             group_pin = dispatch(root / f"{root.name}-{label}", binary, configs, placements, store, 3, mode=mode)
             executed_games += 60
         group = read(checked(group_pin))

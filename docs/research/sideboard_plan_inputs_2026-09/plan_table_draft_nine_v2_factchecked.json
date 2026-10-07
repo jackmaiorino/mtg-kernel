@@ -168,19 +168,19 @@
     {
      "claim": "Clockwork Percussionist is one of Rally's one-toughness haste goblins and vampires (implying it is a Goblin or a Vampire).",
      "truth": "Clockwork Percussionist is an Artifact Creature - Monkey Toy (1/1, Haste, dies-trigger for impulse draw). It is neither a Goblin nor a Vampire; the rationale mistypes it into the 'goblins and vampires' group.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/c/ClockworkPercussionist.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/c/ClockworkPercussionist.java",
      "invalidates_plan": false
     },
     {
      "claim": "Voldaren Epicure is one of Rally's one-toughness haste goblins and vampires (implying it has Haste).",
      "truth": "Voldaren Epicure (1/1 Vampire) has no Haste ability anywhere in its source. Its only ability is an ETB trigger that deals 1 damage to each opponent and creates a Blood token; it cannot attack the turn it enters.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/v/VoldarenEpicure.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/v/VoldarenEpicure.java",
      "invalidates_plan": false
     },
     {
      "claim": "Goblin Tomb Raider is one of Rally's 'one-toughness' creatures.",
      "truth": "Goblin Tomb Raider is printed 1/2 (this.toughness = new MageInt(2)), not one toughness. It only gains +1/+0 and Haste conditionally while its controller has an artifact; its toughness never drops to 1.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GoblinTombRaider.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GoblinTombRaider.java",
      "invalidates_plan": false
     }
    ],
@@ -241,19 +241,19 @@
     {
      "claim": "Clockwork Percussionist is one of Rally's one-toughness haste goblins and vampires (implying it is a Goblin or a Vampire).",
      "truth": "Clockwork Percussionist is an Artifact Creature - Monkey Toy (1/1, Haste, dies-trigger for impulse draw). It is neither a Goblin nor a Vampire; the rationale mistypes it into the 'goblins and vampires' group.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/c/ClockworkPercussionist.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/c/ClockworkPercussionist.java",
      "invalidates_plan": false
     },
     {
      "claim": "Voldaren Epicure is one of Rally's one-toughness haste goblins and vampires (implying it has Haste).",
      "truth": "Voldaren Epicure (1/1 Vampire) has no Haste ability anywhere in its source. Its only ability is an ETB trigger that deals 1 damage to each opponent and creates a Blood token; it cannot attack the turn it enters.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/v/VoldarenEpicure.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/v/VoldarenEpicure.java",
      "invalidates_plan": false
     },
     {
      "claim": "Goblin Tomb Raider is one of Rally's 'one-toughness' creatures.",
      "truth": "Goblin Tomb Raider is printed 1/2 (this.toughness = new MageInt(2)), not one toughness. It only gains +1/+0 and Haste conditionally while its controller has an artifact; its toughness never drops to 1.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GoblinTombRaider.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GoblinTombRaider.java",
      "invalidates_plan": false
     }
    ],
@@ -432,31 +432,31 @@
     {
      "claim": "\"Elves never uses its graveyard\" (stated as the reason to cut the graveyard-hate package: Nihil Spellbomb, Eviscerator's Insight, Blood Fountain, Nyxborn Hydra, extra Lembas)",
      "truth": "False. Elves' registered mainboard runs Masked Vandal x4, whose ETB ability exiles a creature card from its own graveyard as a cost to exile an opponent's artifact/enchantment (real target against Wildfire's many artifacts: Ichor Wellspring, Blood Fountain, Nihil Spellbomb, Vault of Whispers, Refurbished Familiar, etc.). Elves' registered sideboard also runs Pulse of Murasa x3, which returns a creature or land card from a graveyard to hand and gains 6 life, directly recurring creatures Wildfire's removal (Cast Down) kills. Elves therefore does use its own graveyard as a resource.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Elves.main: Masked Vandal 4; decks.Elves.side: Pulse of Murasa 3); C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/m/MaskedVandal.java; C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PulseOfMurasa.java",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Elves.main: Masked Vandal 4; decks.Elves.side: Pulse of Murasa 3); C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/m/MaskedVandal.java; C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PulseOfMurasa.java",
      "invalidates_plan": true
     },
     {
      "claim": "Eviscerator's Insight is \"graveyard-hate\"",
      "truth": "False. It is a card-draw spell (additional cost: sacrifice an artifact or creature; draw two cards) with Flashback {4}{B}. It has no graveyard-hate effect; its only graveyard tie is that Flashback lets its own controller cast it from their own graveyard, the opposite of hate.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/e/EvisceratorsInsight.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/e/EvisceratorsInsight.java",
      "invalidates_plan": true
     },
     {
      "claim": "Blood Fountain is \"graveyard-hate\"",
      "truth": "False. It creates a Blood token on entry and can later return up to two target creature cards from ITS CONTROLLER'S OWN graveyard to hand. This is self graveyard recursion/value, not hate of an opponent's graveyard.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BloodFountain.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BloodFountain.java",
      "invalidates_plan": true
     },
     {
      "claim": "Nyxborn Hydra is \"graveyard-hate\"",
      "truth": "False. It is a green {X}{G} Hydra/Enchantment Creature with Bestow, Reach, and Trample that enters with X +1/+1 counters. It has no graveyard interaction of any kind.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NyxbornHydra.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NyxbornHydra.java",
      "invalidates_plan": true
     },
     {
      "claim": "Lembas (the \"extra\" copies) is \"graveyard-hate\"",
      "truth": "False. Lembas is a Food artifact that scries then draws a card on entry, and can be sacrificed for {2} to gain 3 life; when it dies it shuffles itself into its owner's library. None of this hates an opponent's graveyard.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/Lembas.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/Lembas.java",
      "invalidates_plan": true
     }
    ],
@@ -517,31 +517,31 @@
     {
      "claim": "\"Elves never uses its graveyard\" (stated as the reason to cut the graveyard-hate package: Nihil Spellbomb, Eviscerator's Insight, Blood Fountain, Nyxborn Hydra, extra Lembas)",
      "truth": "False. Elves' registered mainboard runs Masked Vandal x4, whose ETB ability exiles a creature card from its own graveyard as a cost to exile an opponent's artifact/enchantment (real target against Wildfire's many artifacts: Ichor Wellspring, Blood Fountain, Nihil Spellbomb, Vault of Whispers, Refurbished Familiar, etc.). Elves' registered sideboard also runs Pulse of Murasa x3, which returns a creature or land card from a graveyard to hand and gains 6 life, directly recurring creatures Wildfire's removal (Cast Down) kills. Elves therefore does use its own graveyard as a resource.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Elves.main: Masked Vandal 4; decks.Elves.side: Pulse of Murasa 3); C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/m/MaskedVandal.java; C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PulseOfMurasa.java",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Elves.main: Masked Vandal 4; decks.Elves.side: Pulse of Murasa 3); C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/m/MaskedVandal.java; C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PulseOfMurasa.java",
      "invalidates_plan": true
     },
     {
      "claim": "Eviscerator's Insight is \"graveyard-hate\"",
      "truth": "False. It is a card-draw spell (additional cost: sacrifice an artifact or creature; draw two cards) with Flashback {4}{B}. It has no graveyard-hate effect; its only graveyard tie is that Flashback lets its own controller cast it from their own graveyard, the opposite of hate.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/e/EvisceratorsInsight.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/e/EvisceratorsInsight.java",
      "invalidates_plan": true
     },
     {
      "claim": "Blood Fountain is \"graveyard-hate\"",
      "truth": "False. It creates a Blood token on entry and can later return up to two target creature cards from ITS CONTROLLER'S OWN graveyard to hand. This is self graveyard recursion/value, not hate of an opponent's graveyard.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BloodFountain.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BloodFountain.java",
      "invalidates_plan": true
     },
     {
      "claim": "Nyxborn Hydra is \"graveyard-hate\"",
      "truth": "False. It is a green {X}{G} Hydra/Enchantment Creature with Bestow, Reach, and Trample that enters with X +1/+1 counters. It has no graveyard interaction of any kind.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NyxbornHydra.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NyxbornHydra.java",
      "invalidates_plan": true
     },
     {
      "claim": "Lembas (the \"extra\" copies) is \"graveyard-hate\"",
      "truth": "False. Lembas is a Food artifact that scries then draws a card on entry, and can be sacrificed for {2} to gain 3 life; when it dies it shuffles itself into its owner's library. None of this hates an opponent's graveyard.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/Lembas.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/Lembas.java",
      "invalidates_plan": true
     }
    ],
@@ -592,19 +592,19 @@
     {
      "claim": "Duress strips Dread Return, Winding Way, or Land Grant before Spy can assemble its self-mill-into-reanimation plan (grouping Land Grant with the self-mill/reanimation pieces).",
      "truth": "Land Grant has nothing to do with self-mill or reanimation: it only lets you search your library for a Forest card, reveal it, put it into your hand, then shuffle your library (with an alternate reveal-your-hand cost when you hold no lands). It never puts cards in a graveyard or interacts with one. Dread Return (return a creature card from graveyard to battlefield, or flashback by sacrificing three creatures) and Winding Way (in its 'choose land' mode, dumps the unrevealed nonland cards, including creatures, into the graveyard) genuinely fit the self-mill-into-reanimation description, but Land Grant does not; it is a pure ramp/tutor spell.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/LandGrant.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/LandGrant.java",
      "invalidates_plan": false
     },
     {
      "claim": "Blood Fountain is cut because Spy's high-toughness wall of defenders shrugs off small pings and slow card draw (Blood Fountain grouped under 'slow card draw').",
      "truth": "Blood Fountain has no card-draw ability. Its only abilities are: ETB create a Blood token, and {3}{B}, {T}, Sacrifice: return up to two target creature cards from your graveyard to your hand. It is graveyard recursion and token generation, not a draw spell.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BloodFountain.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BloodFountain.java",
      "invalidates_plan": false
     },
     {
      "claim": "Nyxborn Hydra is cut because Spy's high-toughness wall of defenders shrugs off small pings and slow card draw (Nyxborn Hydra grouped under that description).",
      "truth": "Nyxborn Hydra is not a burn/ping effect or a card-draw spell at all; it is an Enchantment Creature (Bestow {X}{G}{G}) with Reach and Trample that enters the battlefield with X +1/+1 counters (base 0/1). Whatever the merits of cutting it, 'shrugs off small pings and slow card draw' does not describe what this card does.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NyxbornHydra.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NyxbornHydra.java",
      "invalidates_plan": false
     }
    ],
@@ -655,19 +655,19 @@
     {
      "claim": "Duress strips Dread Return, Winding Way, or Land Grant before Spy can assemble its self-mill-into-reanimation plan (grouping Land Grant with the self-mill/reanimation pieces).",
      "truth": "Land Grant has nothing to do with self-mill or reanimation: it only lets you search your library for a Forest card, reveal it, put it into your hand, then shuffle your library (with an alternate reveal-your-hand cost when you hold no lands). It never puts cards in a graveyard or interacts with one. Dread Return (return a creature card from graveyard to battlefield, or flashback by sacrificing three creatures) and Winding Way (in its 'choose land' mode, dumps the unrevealed nonland cards, including creatures, into the graveyard) genuinely fit the self-mill-into-reanimation description, but Land Grant does not; it is a pure ramp/tutor spell.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/LandGrant.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/LandGrant.java",
      "invalidates_plan": false
     },
     {
      "claim": "Blood Fountain is cut because Spy's high-toughness wall of defenders shrugs off small pings and slow card draw (Blood Fountain grouped under 'slow card draw').",
      "truth": "Blood Fountain has no card-draw ability. Its only abilities are: ETB create a Blood token, and {3}{B}, {T}, Sacrifice: return up to two target creature cards from your graveyard to your hand. It is graveyard recursion and token generation, not a draw spell.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BloodFountain.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BloodFountain.java",
      "invalidates_plan": false
     },
     {
      "claim": "Nyxborn Hydra is cut because Spy's high-toughness wall of defenders shrugs off small pings and slow card draw (Nyxborn Hydra grouped under that description).",
      "truth": "Nyxborn Hydra is not a burn/ping effect or a card-draw spell at all; it is an Enchantment Creature (Bestow {X}{G}{G}) with Reach and Trample that enters the battlefield with X +1/+1 counters (base 0/1). Whatever the merits of cutting it, 'shrugs off small pings and slow card draw' does not describe what this card does.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NyxbornHydra.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NyxbornHydra.java",
      "invalidates_plan": false
     }
    ],
@@ -723,7 +723,7 @@
     {
      "claim": "Weather the Storm's storm-doubled life gain directly answers Burn's damage race (i.e., Storm mechanically doubles the life-gain amount).",
      "truth": "Weather the Storm is {1}{G}, gains a flat 3 life, and carries the Storm keyword ability (copy the spell for each spell cast before it this turn, then choose new targets for the copies). Storm does not 'double' anything: with 0 prior spells cast that turn it produces zero extra copies (just 3 life, no doubling at all), and with 2+ prior spells it produces more than double. 'Storm-doubled' mischaracterizes the mechanic, though the underlying strategic point (an instant that can gain a meaningful chunk of life against a fast damage race) is still correct in spirit.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/w/WeatherTheStorm.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/w/WeatherTheStorm.java",
      "invalidates_plan": false
     }
    ],
@@ -779,7 +779,7 @@
     {
      "claim": "Weather the Storm's storm-doubled life gain directly answers Burn's damage race (i.e., Storm mechanically doubles the life-gain amount).",
      "truth": "Weather the Storm is {1}{G}, gains a flat 3 life, and carries the Storm keyword ability (copy the spell for each spell cast before it this turn, then choose new targets for the copies). Storm does not 'double' anything: with 0 prior spells cast that turn it produces zero extra copies (just 3 life, no doubling at all), and with 2+ prior spells it produces more than double. 'Storm-doubled' mischaracterizes the mechanic, though the underlying strategic point (an instant that can gain a meaningful chunk of life against a fast damage race) is still correct in spirit.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/w/WeatherTheStorm.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/w/WeatherTheStorm.java",
      "invalidates_plan": false
     }
    ],
@@ -835,7 +835,7 @@
     {
      "claim": "\"Terror's entire deck is blue\" (used to justify Pyroblast's inclusion)",
      "truth": "Terror's registered mainboard (60) is indeed entirely blue nonland spells (Tolarian Terror, Brainstorm, Counterspell, Lorien Revealed, Cryptic Serpent, Thought Scour, Sleep of the Dead, Mental Note, Deem Inferior, Deep Analysis, Ponder, Murmuring Mystic, Dispel are all colors:[\"U\"]; 16 Islands are colorless lands), but the registered 15-card sideboard contains Gut Shot, a red instant (mana cost {R/P}, colors:[\"R\"], confirmed in GutShot.java: `new CardType[]{CardType.INSTANT}, \"{R/P}\"`). The deck is not literally 'entirely blue' once the full 75 is counted. This does not invalidate the plan: the three cards named as Pyroblast targets (Counterspell, Tolarian Terror, Cryptic Serpent) are each individually confirmed blue in their Java sources, and Pyroblast (which requires the target spell/permanent to be blue, per PyroblastCounterTargetEffect/PyroblastDestroyTargetEffect in Pyroblast.java) has abundant live blue targets throughout Terror's mainboard and most of its sideboard regardless of the one red card.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GutShot.java and C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Terror.side, cards.\"Gut Shot\")",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GutShot.java and C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Terror.side, cards.\"Gut Shot\")",
      "invalidates_plan": false
     }
    ],
@@ -891,7 +891,7 @@
     {
      "claim": "\"Terror's entire deck is blue\" (used to justify Pyroblast's inclusion)",
      "truth": "Terror's registered mainboard (60) is indeed entirely blue nonland spells (Tolarian Terror, Brainstorm, Counterspell, Lorien Revealed, Cryptic Serpent, Thought Scour, Sleep of the Dead, Mental Note, Deem Inferior, Deep Analysis, Ponder, Murmuring Mystic, Dispel are all colors:[\"U\"]; 16 Islands are colorless lands), but the registered 15-card sideboard contains Gut Shot, a red instant (mana cost {R/P}, colors:[\"R\"], confirmed in GutShot.java: `new CardType[]{CardType.INSTANT}, \"{R/P}\"`). The deck is not literally 'entirely blue' once the full 75 is counted. This does not invalidate the plan: the three cards named as Pyroblast targets (Counterspell, Tolarian Terror, Cryptic Serpent) are each individually confirmed blue in their Java sources, and Pyroblast (which requires the target spell/permanent to be blue, per PyroblastCounterTargetEffect/PyroblastDestroyTargetEffect in Pyroblast.java) has abundant live blue targets throughout Terror's mainboard and most of its sideboard regardless of the one red card.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GutShot.java and C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Terror.side, cards.\"Gut Shot\")",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GutShot.java and C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Terror.side, cards.\"Gut Shot\")",
      "invalidates_plan": false
     }
    ],
@@ -947,19 +947,19 @@
     {
      "claim": "CawGates can 'lock the game down with Basilisk Gate' (i.e. Basilisk Gate is part of a lock mechanism)",
      "truth": "Basilisk Gate is a colorless-mana land with subtype Gate; its only other ability is {2},{T}: target creature gets +X/+X until end of turn where X = Gates you control (activate only as sorcery). It has no lock, stax, bounce, or repeatable-control effect of any kind.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BasiliskGate.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BasiliskGate.java",
      "invalidates_plan": true
     },
     {
      "claim": "CawGates can 'lock the game down' with Squadron Hawk",
      "truth": "Squadron Hawk is a vanilla 1/1 flier for {1}{W} whose only ability is an ETB trigger to search for up to three more copies of itself into hand. It is a small evasive tutor/beater, not a lock piece.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SquadronHawk.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SquadronHawk.java",
      "invalidates_plan": true
     },
     {
      "claim": "Implicit premise that 'graveyard hate ... do[es] nothing against a control shell' (i.e. CawGates makes no use of its graveyard)",
      "truth": "CawGates runs 4x Sacred Cat, which has Embalm {W} (exile the card from your graveyard to create a token copy of it) - a genuine graveyard-dependent recursion ability - and Prismatic Strands, which has Flashback (cast it from your graveyard by tapping an untapped white creature) - a repeatable damage-prevention effect cast straight out of the graveyard. Nihil Spellbomb's graveyard-exile effect has real disruptive value against both, so the stated reason for trimming it is false.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SacredCat.java and C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PrismaticStrands.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SacredCat.java and C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PrismaticStrands.java",
      "invalidates_plan": true
     }
    ],
@@ -1015,19 +1015,19 @@
     {
      "claim": "CawGates can 'lock the game down with Basilisk Gate' (i.e. Basilisk Gate is part of a lock mechanism)",
      "truth": "Basilisk Gate is a colorless-mana land with subtype Gate; its only other ability is {2},{T}: target creature gets +X/+X until end of turn where X = Gates you control (activate only as sorcery). It has no lock, stax, bounce, or repeatable-control effect of any kind.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BasiliskGate.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BasiliskGate.java",
      "invalidates_plan": true
     },
     {
      "claim": "CawGates can 'lock the game down' with Squadron Hawk",
      "truth": "Squadron Hawk is a vanilla 1/1 flier for {1}{W} whose only ability is an ETB trigger to search for up to three more copies of itself into hand. It is a small evasive tutor/beater, not a lock piece.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SquadronHawk.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SquadronHawk.java",
      "invalidates_plan": true
     },
     {
      "claim": "Implicit premise that 'graveyard hate ... do[es] nothing against a control shell' (i.e. CawGates makes no use of its graveyard)",
      "truth": "CawGates runs 4x Sacred Cat, which has Embalm {W} (exile the card from your graveyard to create a token copy of it) - a genuine graveyard-dependent recursion ability - and Prismatic Strands, which has Flashback (cast it from your graveyard by tapping an untapped white creature) - a repeatable damage-prevention effect cast straight out of the graveyard. Nihil Spellbomb's graveyard-exile effect has real disruptive value against both, so the stated reason for trimming it is false.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SacredCat.java and C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PrismaticStrands.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SacredCat.java and C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PrismaticStrands.java",
      "invalidates_plan": true
     }
    ],
@@ -1088,13 +1088,13 @@
     {
      "claim": "Breath Weapon sweeps their board of one- and two-toughness fliers like Spellstutter Sprite and Faerie Miscreant",
      "truth": "Breath Weapon's actual text is 'deals 2 damage to each non-Dragon creature' via an untargeted DamageAllEffect(2, filter=\"non-Dragon creature\"). It is not restricted to fliers and is not restricted to the opponent's side: it is a symmetric board sweep that hits every non-Dragon creature in play, on both players' boards, flying or not. Checking Wildfire's own registered creatures shows it would also kill Krark-Clan Shaman (1/1), Refurbished Familiar (2/1), and Troublemaker Ouphe (2/2), none of which are Dragons, while only Writhing Chrysalis (2/3) survives. Separately, no flier in the Faeries 75 actually has 2 toughness: Faerie Seer, Spellstutter Sprite, Harrier Strix, and Faerie Miscreant are all confirmed 1/1, so the 'one- and two-toughness fliers' description matches no real 2-toughness flier in the opposing list.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BreathWeapon.java (cross-checked against KrarkClanShaman.java, RefurbishedFamiliar.java, TroublemakerOuphe.java, WrithingChrysalis.java, FaerieSeer.java, HarrierStrix.java, SpellstutterSprite.java, FaerieMiscreant.java)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BreathWeapon.java (cross-checked against KrarkClanShaman.java, RefurbishedFamiliar.java, TroublemakerOuphe.java, WrithingChrysalis.java, FaerieSeer.java, HarrierStrix.java, SpellstutterSprite.java, FaerieMiscreant.java)",
      "invalidates_plan": true
     },
     {
      "claim": "Faeries never fills a graveyard",
      "truth": "Faeries runs Moon-Circuit Hacker (4 copies in the registered 60), whose combat-damage trigger draws then optionally discards a card (a repeatable loot effect), and Harrier Strix (2 copies), which has an activated {2}{U}: draw a card, then discard a card ability. Both mechanically put cards into the graveyard via discard, so the deck does fill its graveyard, just not for any graveyard-payoff purpose (no flashback/delve/recursion in the registered 75 that cares about it). The literal claim 'never fills a graveyard' is false, though it doesn't change that the graveyard has no value to exile.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/m/MoonCircuitHacker.java and C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/h/HarrierStrix.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/m/MoonCircuitHacker.java and C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/h/HarrierStrix.java",
      "invalidates_plan": false
     }
    ],
@@ -1155,13 +1155,13 @@
     {
      "claim": "Breath Weapon sweeps their board of one- and two-toughness fliers like Spellstutter Sprite and Faerie Miscreant",
      "truth": "Breath Weapon's actual text is 'deals 2 damage to each non-Dragon creature' via an untargeted DamageAllEffect(2, filter=\"non-Dragon creature\"). It is not restricted to fliers and is not restricted to the opponent's side: it is a symmetric board sweep that hits every non-Dragon creature in play, on both players' boards, flying or not. Checking Wildfire's own registered creatures shows it would also kill Krark-Clan Shaman (1/1), Refurbished Familiar (2/1), and Troublemaker Ouphe (2/2), none of which are Dragons, while only Writhing Chrysalis (2/3) survives. Separately, no flier in the Faeries 75 actually has 2 toughness: Faerie Seer, Spellstutter Sprite, Harrier Strix, and Faerie Miscreant are all confirmed 1/1, so the 'one- and two-toughness fliers' description matches no real 2-toughness flier in the opposing list.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BreathWeapon.java (cross-checked against KrarkClanShaman.java, RefurbishedFamiliar.java, TroublemakerOuphe.java, WrithingChrysalis.java, FaerieSeer.java, HarrierStrix.java, SpellstutterSprite.java, FaerieMiscreant.java)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BreathWeapon.java (cross-checked against KrarkClanShaman.java, RefurbishedFamiliar.java, TroublemakerOuphe.java, WrithingChrysalis.java, FaerieSeer.java, HarrierStrix.java, SpellstutterSprite.java, FaerieMiscreant.java)",
      "invalidates_plan": true
     },
     {
      "claim": "Faeries never fills a graveyard",
      "truth": "Faeries runs Moon-Circuit Hacker (4 copies in the registered 60), whose combat-damage trigger draws then optionally discards a card (a repeatable loot effect), and Harrier Strix (2 copies), which has an activated {2}{U}: draw a card, then discard a card ability. Both mechanically put cards into the graveyard via discard, so the deck does fill its graveyard, just not for any graveyard-payoff purpose (no flashback/delve/recursion in the registered 75 that cares about it). The literal claim 'never fills a graveyard' is false, though it doesn't change that the graveyard has no value to exile.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/m/MoonCircuitHacker.java and C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/h/HarrierStrix.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/m/MoonCircuitHacker.java and C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/h/HarrierStrix.java",
      "invalidates_plan": false
     }
    ],
@@ -1328,7 +1328,7 @@
     {
      "claim": "\"keeping Experimental Synthesizer's bodies in play lets our own Galvanic Blast hit metalcraft's 4 damage to answer Myr Enforcer\" (rationale calls Experimental Synthesizer's presence \"bodies\")",
      "truth": "Experimental Synthesizer is CardType.ARTIFACT only; it has no Creature type and produces no 'bodies' by sitting on the battlefield. Its only creature-producing ability requires sacrificing itself ({2}{R}, Sacrifice Experimental Synthesizer: create a 2/2 white Samurai token with vigilance), and the resulting SamuraiToken has CardType.CREATURE only (not Artifact), so using that ability actually removes an artifact from play rather than adding a 'body' that helps metalcraft. Experimental Synthesizer supports Galvanic Blast's metalcraft only while it stays unsacrificed as a plain artifact permanent (contributing 1 to the artifact count), not via any creature bodies.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/e/ExperimentalSynthesizer.java and C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage/src/main/java/mage/game/permanent/token/SamuraiToken.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/e/ExperimentalSynthesizer.java and C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage/src/main/java/mage/game/permanent/token/SamuraiToken.java",
      "invalidates_plan": false
     }
    ],
@@ -1369,7 +1369,7 @@
     {
      "claim": "\"keeping Experimental Synthesizer's bodies in play lets our own Galvanic Blast hit metalcraft's 4 damage to answer Myr Enforcer\" (rationale calls Experimental Synthesizer's presence \"bodies\")",
      "truth": "Experimental Synthesizer is CardType.ARTIFACT only; it has no Creature type and produces no 'bodies' by sitting on the battlefield. Its only creature-producing ability requires sacrificing itself ({2}{R}, Sacrifice Experimental Synthesizer: create a 2/2 white Samurai token with vigilance), and the resulting SamuraiToken has CardType.CREATURE only (not Artifact), so using that ability actually removes an artifact from play rather than adding a 'body' that helps metalcraft. Experimental Synthesizer supports Galvanic Blast's metalcraft only while it stays unsacrificed as a plain artifact permanent (contributing 1 to the artifact count), not via any creature bodies.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/e/ExperimentalSynthesizer.java and C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage/src/main/java/mage/game/permanent/token/SamuraiToken.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/e/ExperimentalSynthesizer.java and C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage/src/main/java/mage/game/permanent/token/SamuraiToken.java",
      "invalidates_plan": false
     }
    ],
@@ -1405,25 +1405,25 @@
     {
      "claim": "Fyndhorn Elves is a 0/1 creature",
      "truth": "Fyndhorn Elves is 1/1 (power = new MageInt(1), toughness = new MageInt(1)), not 0/1.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/FyndhornElves.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/FyndhornElves.java",
      "invalidates_plan": false
     },
     {
      "claim": "Quirion Ranger is part of 'Elves' mana-dork start' alongside Fyndhorn Elves, Elvish Mystic, and Llanowar Elves (implying it is itself a mana-producing dork)",
      "truth": "Quirion Ranger has no mana ability at all. Its only ability is 'Return a Forest you control to its owner's hand: Untap target creature,' usable once per turn. It does not tap for mana and is not a mana dork; the registered card metadata for it also carries no mana_ability/mana_dork tag. (Its listed 1/1 power/toughness is correct.)",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/q/QuirionRanger.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/q/QuirionRanger.java",
      "invalidates_plan": false
     },
     {
      "claim": "Searing Blaze kills a bigger dork ... while dealing 3 to the face",
      "truth": "Searing Blaze's base effect deals only 1 damage to the target creature and 1 damage to the target player. It only deals 3/3 instead of 1/1 if the caster had a land enter the battlefield under their control that same turn (Landfall). The plan states '3 to the face' as if unconditional; it is conditional on that turn's landfall.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SearingBlaze.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SearingBlaze.java",
      "invalidates_plan": false
     },
     {
      "claim": "Priest of Titania is 'a bigger dork or blocker' that needs Searing Blaze (as opposed to End the Festivities' 1-damage sweep)",
      "truth": "Priest of Titania is 1/1 (power=1, toughness=1), the identical toughness of Fyndhorn Elves/Elvish Mystic/Llanowar Elves/Quirion Ranger. It is not tougher or 'bigger' than the dorks End the Festivities already sweeps; End the Festivities' 1 damage to each opposing creature would kill Priest of Titania too, so Searing Blaze's extra damage is not needed to answer it specifically.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PriestOfTitania.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PriestOfTitania.java",
      "invalidates_plan": false
     }
    ],
@@ -1459,25 +1459,25 @@
     {
      "claim": "Fyndhorn Elves is a 0/1 creature",
      "truth": "Fyndhorn Elves is 1/1 (power = new MageInt(1), toughness = new MageInt(1)), not 0/1.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/FyndhornElves.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/FyndhornElves.java",
      "invalidates_plan": false
     },
     {
      "claim": "Quirion Ranger is part of 'Elves' mana-dork start' alongside Fyndhorn Elves, Elvish Mystic, and Llanowar Elves (implying it is itself a mana-producing dork)",
      "truth": "Quirion Ranger has no mana ability at all. Its only ability is 'Return a Forest you control to its owner's hand: Untap target creature,' usable once per turn. It does not tap for mana and is not a mana dork; the registered card metadata for it also carries no mana_ability/mana_dork tag. (Its listed 1/1 power/toughness is correct.)",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/q/QuirionRanger.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/q/QuirionRanger.java",
      "invalidates_plan": false
     },
     {
      "claim": "Searing Blaze kills a bigger dork ... while dealing 3 to the face",
      "truth": "Searing Blaze's base effect deals only 1 damage to the target creature and 1 damage to the target player. It only deals 3/3 instead of 1/1 if the caster had a land enter the battlefield under their control that same turn (Landfall). The plan states '3 to the face' as if unconditional; it is conditional on that turn's landfall.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SearingBlaze.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SearingBlaze.java",
      "invalidates_plan": false
     },
     {
      "claim": "Priest of Titania is 'a bigger dork or blocker' that needs Searing Blaze (as opposed to End the Festivities' 1-damage sweep)",
      "truth": "Priest of Titania is 1/1 (power=1, toughness=1), the identical toughness of Fyndhorn Elves/Elvish Mystic/Llanowar Elves/Quirion Ranger. It is not tougher or 'bigger' than the dorks End the Festivities already sweeps; End the Festivities' 1 damage to each opposing creature would kill Priest of Titania too, so Searing Blaze's extra damage is not needed to answer it specifically.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PriestOfTitania.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PriestOfTitania.java",
      "invalidates_plan": false
     }
    ],
@@ -1513,7 +1513,7 @@
     {
      "claim": "The rationale attributes the Spy deck's self-mill plan to 'Balustrade Spy, Lead the Stampede, and Winding Way' \u2014 i.e. that Lead the Stampede is a self-mill/graveyard-filling card.",
      "truth": "Lead the Stampede does not touch the graveyard at all. It lets you look at the top five cards of your library, take any number of creature cards to hand, and put the REST ON THE BOTTOM of your library in any order (not into the graveyard). It has no mill effect; it is pure card selection. (The registered card metadata for it also only tags 'card_selection', with no 'mill' tag, consistent with the source.) Balustrade Spy (reveals until a land, puts revealed cards in the graveyard) and Winding Way (puts the unchosen-type half of 4 revealed cards into the graveyard) do genuinely self-mill, so the deck's graveyard plan is real, but Lead the Stampede is not a contributor to it.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/LeadTheStampede.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/LeadTheStampede.java",
      "invalidates_plan": false
     }
    ],
@@ -1549,7 +1549,7 @@
     {
      "claim": "The rationale attributes the Spy deck's self-mill plan to 'Balustrade Spy, Lead the Stampede, and Winding Way' \u2014 i.e. that Lead the Stampede is a self-mill/graveyard-filling card.",
      "truth": "Lead the Stampede does not touch the graveyard at all. It lets you look at the top five cards of your library, take any number of creature cards to hand, and put the REST ON THE BOTTOM of your library in any order (not into the graveyard). It has no mill effect; it is pure card selection. (The registered card metadata for it also only tags 'card_selection', with no 'mill' tag, consistent with the source.) Balustrade Spy (reveals until a land, puts revealed cards in the graveyard) and Winding Way (puts the unchosen-type half of 4 revealed cards into the graveyard) do genuinely self-mill, so the deck's graveyard plan is real, but Lead the Stampede is not a contributor to it.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/LeadTheStampede.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/LeadTheStampede.java",
      "invalidates_plan": false
     }
    ],
@@ -1590,7 +1590,7 @@
     {
      "claim": "Experimental Synthesizer neither affects the board or a life total (grouped with Reckless Impulse as cards that don't affect the board)",
      "truth": "Experimental Synthesizer has a second ability beyond its impulse-draw ETB/LTB trigger: '{2}{R}, Sacrifice Experimental Synthesizer: Create a 2/2 white Samurai creature token with vigilance. Activate only as a sorcery.' This does affect the board (adds a 2/2 body). Reckless Impulse, by contrast, genuinely has no board or life-total effect (pure impulse draw of 2 cards).",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/e/ExperimentalSynthesizer.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/e/ExperimentalSynthesizer.java",
      "invalidates_plan": false
     }
    ],
@@ -1631,7 +1631,7 @@
     {
      "claim": "Experimental Synthesizer neither affects the board or a life total (grouped with Reckless Impulse as cards that don't affect the board)",
      "truth": "Experimental Synthesizer has a second ability beyond its impulse-draw ETB/LTB trigger: '{2}{R}, Sacrifice Experimental Synthesizer: Create a 2/2 white Samurai creature token with vigilance. Activate only as a sorcery.' This does affect the board (adds a 2/2 body). Reckless Impulse, by contrast, genuinely has no board or life-total effect (pure impulse draw of 2 cards).",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/e/ExperimentalSynthesizer.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/e/ExperimentalSynthesizer.java",
      "invalidates_plan": false
     }
    ],
@@ -1672,19 +1672,19 @@
     {
      "claim": "Relic of Progenitus strips the graveyard instants/sorceries that make 'those cost-reduced finishers' (Tolarian Terror, Cryptic Serpent, or Murmuring Mystic) cheap, implying Murmuring Mystic has a cost-reduction ability like the other two.",
      "truth": "Murmuring Mystic has no cost-reduction ability at all. Its only ability is 'Whenever you cast an instant or sorcery spell, create a 1/1 blue Bird Illusion creature token with flying' (SpellCastControllerTriggeredAbility + CreateTokenEffect). Only Tolarian Terror and Cryptic Serpent carry the 'costs {1} less to cast for each instant and sorcery card in your graveyard' static ability (SpellCostReductionForEachSourceEffect). Murmuring Mystic is not a cost-reduced finisher.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/m/MurmuringMystic.java (cf. t/TolarianTerror.java, c/CrypticSerpent.java)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/m/MurmuringMystic.java (cf. t/TolarianTerror.java, c/CrypticSerpent.java)",
      "invalidates_plan": false
     },
     {
      "claim": "Red Elemental Blast blows up Tolarian Terror outright.",
      "truth": "Tolarian Terror has Ward {2} (WardAbility with ManaCostsImpl \"{2}\"): whenever it becomes the target of a spell an opponent controls, that spell is countered unless its controller pays an additional {2}. So Red Elemental Blast does not remove Tolarian Terror 'outright' for free; the caster must pay the ward tax or the removal spell is countered. Cryptic Serpent and Murmuring Mystic carry no such ward, so REB is unconditional against those two.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/t/TolarianTerror.java (line 43, WardAbility)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/t/TolarianTerror.java (line 43, WardAbility)",
      "invalidates_plan": false
     },
     {
      "claim": "Reckless Impulse and Experimental Synthesizer come out because they are spells that die to 'the same countermagic' (Counterspell and Dispel) we are trying to play around.",
      "truth": "Dispel's target filter is restricted to 'instant spell' (FilterSpell with CardType.INSTANT predicate); it can only counter instants. Reckless Impulse is a sorcery and Experimental Synthesizer is an artifact, so Dispel cannot legally target or counter either one; only Counterspell (which counters 'target spell' unrestricted) can. The cut cards die to Counterspell, not to both named counterspells as the rationale implies.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/d/Dispel.java (cf. r/RecklessImpulse.java, e/ExperimentalSynthesizer.java)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/d/Dispel.java (cf. r/RecklessImpulse.java, e/ExperimentalSynthesizer.java)",
      "invalidates_plan": false
     }
    ],
@@ -1725,19 +1725,19 @@
     {
      "claim": "Relic of Progenitus strips the graveyard instants/sorceries that make 'those cost-reduced finishers' (Tolarian Terror, Cryptic Serpent, or Murmuring Mystic) cheap, implying Murmuring Mystic has a cost-reduction ability like the other two.",
      "truth": "Murmuring Mystic has no cost-reduction ability at all. Its only ability is 'Whenever you cast an instant or sorcery spell, create a 1/1 blue Bird Illusion creature token with flying' (SpellCastControllerTriggeredAbility + CreateTokenEffect). Only Tolarian Terror and Cryptic Serpent carry the 'costs {1} less to cast for each instant and sorcery card in your graveyard' static ability (SpellCostReductionForEachSourceEffect). Murmuring Mystic is not a cost-reduced finisher.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/m/MurmuringMystic.java (cf. t/TolarianTerror.java, c/CrypticSerpent.java)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/m/MurmuringMystic.java (cf. t/TolarianTerror.java, c/CrypticSerpent.java)",
      "invalidates_plan": false
     },
     {
      "claim": "Red Elemental Blast blows up Tolarian Terror outright.",
      "truth": "Tolarian Terror has Ward {2} (WardAbility with ManaCostsImpl \"{2}\"): whenever it becomes the target of a spell an opponent controls, that spell is countered unless its controller pays an additional {2}. So Red Elemental Blast does not remove Tolarian Terror 'outright' for free; the caster must pay the ward tax or the removal spell is countered. Cryptic Serpent and Murmuring Mystic carry no such ward, so REB is unconditional against those two.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/t/TolarianTerror.java (line 43, WardAbility)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/t/TolarianTerror.java (line 43, WardAbility)",
      "invalidates_plan": false
     },
     {
      "claim": "Reckless Impulse and Experimental Synthesizer come out because they are spells that die to 'the same countermagic' (Counterspell and Dispel) we are trying to play around.",
      "truth": "Dispel's target filter is restricted to 'instant spell' (FilterSpell with CardType.INSTANT predicate); it can only counter instants. Reckless Impulse is a sorcery and Experimental Synthesizer is an artifact, so Dispel cannot legally target or counter either one; only Counterspell (which counters 'target spell' unrestricted) can. The cut cards die to Counterspell, not to both named counterspells as the rationale implies.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/d/Dispel.java (cf. r/RecklessImpulse.java, e/ExperimentalSynthesizer.java)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/d/Dispel.java (cf. r/RecklessImpulse.java, e/ExperimentalSynthesizer.java)",
      "invalidates_plan": false
     }
    ],
@@ -2028,19 +2028,19 @@
     {
      "claim": "Fanatical Offering is 'equipment-dependent' (rationale lumps it with Black Mage's Rod and Hunter's Blowgun as slow and equipment-dependent)",
      "truth": "Fanatical Offering is an Instant ({1}{B}) with no Equipment subtype and no equipment interaction at all: 'As an additional cost to cast this spell, sacrifice an artifact or creature. Draw two cards and create a Map token.' Only Black Mage's Rod and Hunter's Blowgun are actually Equipment.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/FanaticalOffering.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/FanaticalOffering.java",
      "invalidates_plan": false
     },
     {
      "claim": "Cryogen Relic is 'equipment-dependent'",
      "truth": "Cryogen Relic is a plain Artifact ({1}{U}), not Equipment. It draws a card on entering or leaving the battlefield and can be sacrificed for {1}{U} to put a stun counter on a tapped creature; it has no equip ability and does not depend on equipment.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/c/CryogenRelic.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/c/CryogenRelic.java",
      "invalidates_plan": false
     },
     {
      "claim": "Breath Weapon's two damage wipes their 'one-toughness swarm'",
      "truth": "Breath Weapon does deal exactly 2 damage to each non-Dragon creature (confirmed), and it does kill Rally's whole creature base, but not all of that base is 1-toughness: Goblin Tomb Raider is 1/2 and Burning-Tree Emissary is 2/2 (both still die to 2 damage, just not because they are '1-toughness'). Voldaren Epicure, Goblin Bushwhacker, and Clockwork Percussionist are indeed 1/1, and Rally at the Hornburg's Human Soldier tokens are 1/1.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GoblinTombRaider.java and Mage.Sets/src/mage/cards/b/BurningTreeEmissary.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GoblinTombRaider.java and Mage.Sets/src/mage/cards/b/BurningTreeEmissary.java",
      "invalidates_plan": false
     }
    ],
@@ -2091,19 +2091,19 @@
     {
      "claim": "Fanatical Offering is 'equipment-dependent' (rationale lumps it with Black Mage's Rod and Hunter's Blowgun as slow and equipment-dependent)",
      "truth": "Fanatical Offering is an Instant ({1}{B}) with no Equipment subtype and no equipment interaction at all: 'As an additional cost to cast this spell, sacrifice an artifact or creature. Draw two cards and create a Map token.' Only Black Mage's Rod and Hunter's Blowgun are actually Equipment.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/FanaticalOffering.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/FanaticalOffering.java",
      "invalidates_plan": false
     },
     {
      "claim": "Cryogen Relic is 'equipment-dependent'",
      "truth": "Cryogen Relic is a plain Artifact ({1}{U}), not Equipment. It draws a card on entering or leaving the battlefield and can be sacrificed for {1}{U} to put a stun counter on a tapped creature; it has no equip ability and does not depend on equipment.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/c/CryogenRelic.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/c/CryogenRelic.java",
      "invalidates_plan": false
     },
     {
      "claim": "Breath Weapon's two damage wipes their 'one-toughness swarm'",
      "truth": "Breath Weapon does deal exactly 2 damage to each non-Dragon creature (confirmed), and it does kill Rally's whole creature base, but not all of that base is 1-toughness: Goblin Tomb Raider is 1/2 and Burning-Tree Emissary is 2/2 (both still die to 2 damage, just not because they are '1-toughness'). Voldaren Epicure, Goblin Bushwhacker, and Clockwork Percussionist are indeed 1/1, and Rally at the Hornburg's Human Soldier tokens are 1/1.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GoblinTombRaider.java and Mage.Sets/src/mage/cards/b/BurningTreeEmissary.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GoblinTombRaider.java and Mage.Sets/src/mage/cards/b/BurningTreeEmissary.java",
      "invalidates_plan": false
     }
    ],
@@ -2154,7 +2154,7 @@
     {
      "claim": "\"a second Krark-Clan Shaman adds another repeatable answer\" (implies the sideboard copy would bring the deck from 1 to 2 copies)",
      "truth": "The Affinity mainboard already runs 3 copies of Krark-Clan Shaman (registered main count = 3); the sideboard holds exactly 1 more copy. Boarding it in takes the deck from 3 to 4 (the maximum legal count), i.e. this is the fourth copy, not a second copy.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Affinity.main[\"Krark-Clan Shaman\"]=3, decks.Affinity.side[\"Krark-Clan Shaman\"]=1)",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Affinity.main[\"Krark-Clan Shaman\"]=3, decks.Affinity.side[\"Krark-Clan Shaman\"]=1)",
      "invalidates_plan": false
     }
    ],
@@ -2205,7 +2205,7 @@
     {
      "claim": "\"a second Krark-Clan Shaman adds another repeatable answer\" (implies the sideboard copy would bring the deck from 1 to 2 copies)",
      "truth": "The Affinity mainboard already runs 3 copies of Krark-Clan Shaman (registered main count = 3); the sideboard holds exactly 1 more copy. Boarding it in takes the deck from 3 to 4 (the maximum legal count), i.e. this is the fourth copy, not a second copy.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Affinity.main[\"Krark-Clan Shaman\"]=3, decks.Affinity.side[\"Krark-Clan Shaman\"]=1)",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Affinity.main[\"Krark-Clan Shaman\"]=3, decks.Affinity.side[\"Krark-Clan Shaman\"]=1)",
      "invalidates_plan": false
     }
    ],
@@ -2246,7 +2246,7 @@
     {
      "claim": "Quirion Ranger is one of the cards Elves' \"entire mana engine\" is \"built on\", grouped with Fyndhorn Elves/Elvish Mystic/Priest of Titania/Llanowar Elves as a one-toughness \"dork\"",
      "truth": "Quirion Ranger's power/toughness is indeed 1/1, but unlike the other four named cards it has no mana ability at all. Its actual text is: \"Return a Forest you control to its owner's hand: Untap target creature. Activate this ability only once each turn.\" (LimitedTimesPerTurnActivatedAbility with ReturnToHandChosenControlledPermanentCost + UntapTargetEffect). It does not tap for mana or otherwise produce mana; it is a bounce/untap support piece, not a mana dork. Fyndhorn Elves, Elvish Mystic, Llanowar Elves each carry a plain GreenManaAbility (T: Add G), and Priest of Titania carries a DynamicManaAbility (T: Add G per Elf) -- those four are genuine one-toughness mana dorks; Quirion Ranger is not.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/q/QuirionRanger.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/q/QuirionRanger.java",
      "invalidates_plan": false
     }
    ],
@@ -2287,7 +2287,7 @@
     {
      "claim": "Quirion Ranger is one of the cards Elves' \"entire mana engine\" is \"built on\", grouped with Fyndhorn Elves/Elvish Mystic/Priest of Titania/Llanowar Elves as a one-toughness \"dork\"",
      "truth": "Quirion Ranger's power/toughness is indeed 1/1, but unlike the other four named cards it has no mana ability at all. Its actual text is: \"Return a Forest you control to its owner's hand: Untap target creature. Activate this ability only once each turn.\" (LimitedTimesPerTurnActivatedAbility with ReturnToHandChosenControlledPermanentCost + UntapTargetEffect). It does not tap for mana or otherwise produce mana; it is a bounce/untap support piece, not a mana dork. Fyndhorn Elves, Elvish Mystic, Llanowar Elves each carry a plain GreenManaAbility (T: Add G), and Priest of Titania carries a DynamicManaAbility (T: Add G per Elf) -- those four are genuine one-toughness mana dorks; Quirion Ranger is not.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/q/QuirionRanger.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/q/QuirionRanger.java",
      "invalidates_plan": false
     }
    ],
@@ -2318,7 +2318,7 @@
     {
      "claim": "\"Spy's actual self-mill engine is Balustrade Spy's ETB and Undercity Informer's sac ability\" (i.e., that Spy runs/uses Undercity Informer)",
      "truth": "Undercity Informer does not appear anywhere in the registered Spy 60 or 15 (checked full main and side lists), nor anywhere in the registered_nine_75s.json 'cards' metadata registry for any of the nine decks. The Java file exists in the Mage codebase as a real card (2/3, {2}{B}, '{1}, Sacrifice a creature: target player reveals top card until land, mill'), but it is not part of this registered Spy list. Only Balustrade Spy provides Spy's self-mill in the registered list. This is the same category of error (crediting Spy with a card/mechanic it does not run) that the rationale claims was already 'fixed' from the prior version.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Spy.main, decks.Spy.side, cards); Mage.Sets/src/mage/cards/u/UndercityInformer.java",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Spy.main, decks.Spy.side, cards); Mage.Sets/src/mage/cards/u/UndercityInformer.java",
      "invalidates_plan": true
     },
     {
@@ -2355,7 +2355,7 @@
     {
      "claim": "\"Spy's actual self-mill engine is Balustrade Spy's ETB and Undercity Informer's sac ability\" (i.e., that Spy runs/uses Undercity Informer)",
      "truth": "Undercity Informer does not appear anywhere in the registered Spy 60 or 15 (checked full main and side lists), nor anywhere in the registered_nine_75s.json 'cards' metadata registry for any of the nine decks. The Java file exists in the Mage codebase as a real card (2/3, {2}{B}, '{1}, Sacrifice a creature: target player reveals top card until land, mill'), but it is not part of this registered Spy list. Only Balustrade Spy provides Spy's self-mill in the registered list. This is the same category of error (crediting Spy with a card/mechanic it does not run) that the rationale claims was already 'fixed' from the prior version.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Spy.main, decks.Spy.side, cards); Mage.Sets/src/mage/cards/u/UndercityInformer.java",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Spy.main, decks.Spy.side, cards); Mage.Sets/src/mage/cards/u/UndercityInformer.java",
      "invalidates_plan": true
     },
     {
@@ -2515,7 +2515,7 @@
     {
      "claim": "\"Every nonland card Terror plays ... is blue\" (unqualified, i.e. across the whole registered 75, not just the mainboard).",
      "truth": "The registered 60-card Terror mainboard is indeed 100% blue on every nonland card (Tolarian Terror, Brainstorm, Counterspell, Lorien Revealed, Cryptic Serpent, Thought Scour, Sleep of the Dead, Mental Note, Deem Inferior, Deep Analysis, Ponder, Murmuring Mystic, Dispel all have colors:[\"U\"]). But the registered 15-card sideboard contains Gut Shot x4, whose mana cost is {R/P} and whose color is Red, not blue (it can be cast for {R} or by paying 2 life via Phyrexian mana, but its card color is still red). So the literal, unqualified claim that 'every nonland card Terror plays' is blue is false once the registered sideboard is included.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GutShot.java (color/cost confirmed in C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json, decks.Terror.side and cards.\"Gut Shot\")",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GutShot.java (color/cost confirmed in C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json, decks.Terror.side and cards.\"Gut Shot\")",
      "invalidates_plan": false
     }
    ],
@@ -2571,7 +2571,7 @@
     {
      "claim": "\"Every nonland card Terror plays ... is blue\" (unqualified, i.e. across the whole registered 75, not just the mainboard).",
      "truth": "The registered 60-card Terror mainboard is indeed 100% blue on every nonland card (Tolarian Terror, Brainstorm, Counterspell, Lorien Revealed, Cryptic Serpent, Thought Scour, Sleep of the Dead, Mental Note, Deem Inferior, Deep Analysis, Ponder, Murmuring Mystic, Dispel all have colors:[\"U\"]). But the registered 15-card sideboard contains Gut Shot x4, whose mana cost is {R/P} and whose color is Red, not blue (it can be cast for {R} or by paying 2 life via Phyrexian mana, but its card color is still red). So the literal, unqualified claim that 'every nonland card Terror plays' is blue is false once the registered sideboard is included.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GutShot.java (color/cost confirmed in C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json, decks.Terror.side and cards.\"Gut Shot\")",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GutShot.java (color/cost confirmed in C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json, decks.Terror.side and cards.\"Gut Shot\")",
      "invalidates_plan": false
     }
    ],
@@ -2755,7 +2755,7 @@
     {
      "claim": "\"Faeries' whole board (Spellstutter Sprite, Faerie Miscreant, Faerie Seer, Harrier Strix, Moon-Circuit Hacker) is blue and mostly one toughness\" -- i.e., that these five cards are the entirety of Faeries' creature suite.",
      "truth": "The five named cards are real and are indeed blue 1-toughness creatures (Spellstutter Sprite 1/1 {1}{U}, Faerie Miscreant 1/1 {U}, Faerie Seer 1/1 {U}, Harrier Strix 1/1 {U}, Moon-Circuit Hacker 2/1 {1}{U}), but they are not the 'whole board.' The registered Faeries 60 also runs three more blue creature types the rationale omits: Ninja of the Deep Hours (x4, {3}{U}, 2/2), Humbling Elder (x4, {U}, 1/2), and Saiba Cryptomancer (x1, {1}{U}, 0/1). Counting all 8 creature types (27 cards total), 19 are toughness 1 and 8 are toughness 2, and every one of them is blue, so 'mostly one toughness' and 'blue' both still hold for the true whole board; the omission understates rather than undermines the case for Pyroblast/Red Elemental Blast (destroy/counter if blue) and Breath Weapon (2 damage kills toughness-1 and toughness-2 creatures alike).",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Faeries.main); C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NinjaOfTheDeepHours.java; .../h/HumblingElder.java; .../s/SaibaCryptomancer.java",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Faeries.main); C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NinjaOfTheDeepHours.java; .../h/HumblingElder.java; .../s/SaibaCryptomancer.java",
      "invalidates_plan": false
     }
    ],
@@ -2821,7 +2821,7 @@
     {
      "claim": "\"Faeries' whole board (Spellstutter Sprite, Faerie Miscreant, Faerie Seer, Harrier Strix, Moon-Circuit Hacker) is blue and mostly one toughness\" -- i.e., that these five cards are the entirety of Faeries' creature suite.",
      "truth": "The five named cards are real and are indeed blue 1-toughness creatures (Spellstutter Sprite 1/1 {1}{U}, Faerie Miscreant 1/1 {U}, Faerie Seer 1/1 {U}, Harrier Strix 1/1 {U}, Moon-Circuit Hacker 2/1 {1}{U}), but they are not the 'whole board.' The registered Faeries 60 also runs three more blue creature types the rationale omits: Ninja of the Deep Hours (x4, {3}{U}, 2/2), Humbling Elder (x4, {U}, 1/2), and Saiba Cryptomancer (x1, {1}{U}, 0/1). Counting all 8 creature types (27 cards total), 19 are toughness 1 and 8 are toughness 2, and every one of them is blue, so 'mostly one toughness' and 'blue' both still hold for the true whole board; the omission understates rather than undermines the case for Pyroblast/Red Elemental Blast (destroy/counter if blue) and Breath Weapon (2 damage kills toughness-1 and toughness-2 creatures alike).",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Faeries.main); C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NinjaOfTheDeepHours.java; .../h/HumblingElder.java; .../s/SaibaCryptomancer.java",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Faeries.main); C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NinjaOfTheDeepHours.java; .../h/HumblingElder.java; .../s/SaibaCryptomancer.java",
      "invalidates_plan": false
     }
    ],
@@ -3066,7 +3066,7 @@
     {
      "claim": "Wellwisher and Quirion Ranger need a board that Galvanic Blast, Black Mage's Rod, and Krark-Clan Shaman keep tearing down (implying Black Mage's Rod helps destroy/damage the Elves' creature board).",
      "truth": "Black Mage's Rod is a {1}{B} Equipment with Job select (on ETB it creates a 1/1 colorless Hero token and attaches itself to it). Its only ability is a static +1/+0 boost to the equipped creature plus 'Whenever you cast a noncreature spell, this creature deals 1 damage to each opponent' (DamagePlayersEffect targeted at TargetController.OPPONENT). That damage is hard-coded to hit the opposing player only; the card has no ability that targets or damages creatures, so it cannot kill or shrink any Elves creature and does not 'tear down' the board. The other two cards named in the same sentence, Galvanic Blast (2/4 dmg to any target) and Krark-Clan Shaman (sac an artifact: 1 dmg to each non-flying creature), are correctly described as real creature-removal threats.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BlackMagesRod.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BlackMagesRod.java",
      "invalidates_plan": false
     }
    ],
@@ -3117,7 +3117,7 @@
     {
      "claim": "Wellwisher and Quirion Ranger need a board that Galvanic Blast, Black Mage's Rod, and Krark-Clan Shaman keep tearing down (implying Black Mage's Rod helps destroy/damage the Elves' creature board).",
      "truth": "Black Mage's Rod is a {1}{B} Equipment with Job select (on ETB it creates a 1/1 colorless Hero token and attaches itself to it). Its only ability is a static +1/+0 boost to the equipped creature plus 'Whenever you cast a noncreature spell, this creature deals 1 damage to each opponent' (DamagePlayersEffect targeted at TargetController.OPPONENT). That damage is hard-coded to hit the opposing player only; the card has no ability that targets or damages creatures, so it cannot kill or shrink any Elves creature and does not 'tear down' the board. The other two cards named in the same sentence, Galvanic Blast (2/4 dmg to any target) and Krark-Clan Shaman (sac an artifact: 1 dmg to each non-flying creature), are correctly described as real creature-removal threats.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BlackMagesRod.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BlackMagesRod.java",
      "invalidates_plan": false
     }
    ],
@@ -3226,13 +3226,13 @@
     {
      "claim": "\"this list has zero removal or counterspells to punish an extra threat\" (used to justify boarding in Vitu-Ghazi Inspector)",
      "truth": "Spy's registered sideboard includes 2x Fume Spitter ({B}, 1/1): 'Sacrifice Fume Spitter: Put a -1/-1 counter on target creature,' with no controller restriction on the target. This is a real removal spell present in the opponent's registered 15 that can kill small-toughness creatures (it does not kill the 1/3 Vitu-Ghazi Inspector specifically, but the claim that the list has 'zero removal' is factually false). Spy does have zero counterspells.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/FumeSpitter.java (registered in decks.Spy.side, C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/FumeSpitter.java (registered in decks.Spy.side, C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json)",
      "invalidates_plan": true
     },
     {
      "claim": "\"Wellwisher's lifegain is wasted on a deck with no burn or racing damage plan\"",
      "truth": "Spy's registered mainboard includes 2x Lotleth Giant (6/5, {6}{B}): its Undergrowth ETB trigger deals damage directly to target opponent equal to the number of creature cards in its controller's graveyard, a genuine racing/damage plan fueled by the deck's self-mill (Balustrade Spy, Winding Way). The claim that Spy has 'no burn or racing damage plan' is factually false.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/LotlethGiant.java (registered in decks.Spy.main, C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/LotlethGiant.java (registered in decks.Spy.main, C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json)",
      "invalidates_plan": true
     }
    ],
@@ -3263,13 +3263,13 @@
     {
      "claim": "\"this list has zero removal or counterspells to punish an extra threat\" (used to justify boarding in Vitu-Ghazi Inspector)",
      "truth": "Spy's registered sideboard includes 2x Fume Spitter ({B}, 1/1): 'Sacrifice Fume Spitter: Put a -1/-1 counter on target creature,' with no controller restriction on the target. This is a real removal spell present in the opponent's registered 15 that can kill small-toughness creatures (it does not kill the 1/3 Vitu-Ghazi Inspector specifically, but the claim that the list has 'zero removal' is factually false). Spy does have zero counterspells.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/FumeSpitter.java (registered in decks.Spy.side, C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/FumeSpitter.java (registered in decks.Spy.side, C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json)",
      "invalidates_plan": true
     },
     {
      "claim": "\"Wellwisher's lifegain is wasted on a deck with no burn or racing damage plan\"",
      "truth": "Spy's registered mainboard includes 2x Lotleth Giant (6/5, {6}{B}): its Undergrowth ETB trigger deals damage directly to target opponent equal to the number of creature cards in its controller's graveyard, a genuine racing/damage plan fueled by the deck's self-mill (Balustrade Spy, Winding Way). The claim that Spy has 'no burn or racing damage plan' is factually false.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/LotlethGiant.java (registered in decks.Spy.main, C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/LotlethGiant.java (registered in decks.Spy.main, C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json)",
      "invalidates_plan": true
     }
    ],
@@ -3320,7 +3320,7 @@
     {
      "claim": "Vitu-Ghazi Inspector's 1/3 reach body blocks Masked Meower and Voldaren Epicure for free while gaining life against a deck aimed entirely at our face (the life gain is presented as an automatic/reliable feature of the card in this matchup).",
      "truth": "The 1/3 reach stats and the free block against Masked Meower/Voldaren Epicure (both 1/1s) are correct, but the life gain is NOT automatic. Vitu-Ghazi Inspector's only life-gain ability reads: 'When Vitu-Ghazi Inspector enters the battlefield, if evidence was collected, put a +1/+1 counter on target creature and you gain 2 life.' The whole trigger (counter and life gain) fires only if evidence was collected, i.e. only if you paid the OPTIONAL additional cost 'Collect Evidence 6' when casting the spell: 'Exile cards with total mana value 6 or greater from your graveyard.' If that optional cost isn't paid (plausible in the early turns against a fast Burn deck, before the graveyard holds 6+ mana value of cards), no life is gained and no counter is placed. It is also a one-time ETB effect unrelated to blocking, not a recurring or blocking-triggered lifegain effect as the rationale's phrasing implies.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/v/VituGhaziInspector.java (condition mechanics in C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage/src/main/java/mage/abilities/keyword/CollectEvidenceAbility.java)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/v/VituGhaziInspector.java (condition mechanics in C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage/src/main/java/mage/abilities/keyword/CollectEvidenceAbility.java)",
      "invalidates_plan": false
     }
    ],
@@ -3371,7 +3371,7 @@
     {
      "claim": "Vitu-Ghazi Inspector's 1/3 reach body blocks Masked Meower and Voldaren Epicure for free while gaining life against a deck aimed entirely at our face (the life gain is presented as an automatic/reliable feature of the card in this matchup).",
      "truth": "The 1/3 reach stats and the free block against Masked Meower/Voldaren Epicure (both 1/1s) are correct, but the life gain is NOT automatic. Vitu-Ghazi Inspector's only life-gain ability reads: 'When Vitu-Ghazi Inspector enters the battlefield, if evidence was collected, put a +1/+1 counter on target creature and you gain 2 life.' The whole trigger (counter and life gain) fires only if evidence was collected, i.e. only if you paid the OPTIONAL additional cost 'Collect Evidence 6' when casting the spell: 'Exile cards with total mana value 6 or greater from your graveyard.' If that optional cost isn't paid (plausible in the early turns against a fast Burn deck, before the graveyard holds 6+ mana value of cards), no life is gained and no counter is placed. It is also a one-time ETB effect unrelated to blocking, not a recurring or blocking-triggered lifegain effect as the rationale's phrasing implies.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/v/VituGhaziInspector.java (condition mechanics in C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage/src/main/java/mage/abilities/keyword/CollectEvidenceAbility.java)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/v/VituGhaziInspector.java (condition mechanics in C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage/src/main/java/mage/abilities/keyword/CollectEvidenceAbility.java)",
      "invalidates_plan": false
     }
    ],
@@ -3417,7 +3417,7 @@
     {
      "claim": "Vitu-Ghazi Inspector's resilient body rebuilds our board cheaply after a Deem Inferior",
      "truth": "Deem Inferior does not deal damage or check toughness at all: its only effect is \"The owner of target nonland permanent puts it into their library second from the top or on the bottom\" (a library-tuck), after an optional cost reduction based on cards drawn this turn. Toughness (\"resilient body\") is irrelevant to whether a permanent survives it, since the effect removes the permanent from the battlefield outright regardless of stats \u2014 a 1-toughness creature and a 10-toughness creature are equally tucked. Vitu-Ghazi Inspector (1/3) gets removed from play just the same as anything else Deem Inferior targets; it does not stay on the battlefield to \"rebuild\" anything, it has to be redrawn and recast.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/d/DeemInferior.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/d/DeemInferior.java",
      "invalidates_plan": false
     }
    ],
@@ -3463,7 +3463,7 @@
     {
      "claim": "Vitu-Ghazi Inspector's resilient body rebuilds our board cheaply after a Deem Inferior",
      "truth": "Deem Inferior does not deal damage or check toughness at all: its only effect is \"The owner of target nonland permanent puts it into their library second from the top or on the bottom\" (a library-tuck), after an optional cost reduction based on cards drawn this turn. Toughness (\"resilient body\") is irrelevant to whether a permanent survives it, since the effect removes the permanent from the battlefield outright regardless of stats \u2014 a 1-toughness creature and a 10-toughness creature are equally tucked. Vitu-Ghazi Inspector (1/3) gets removed from play just the same as anything else Deem Inferior targets; it does not stay on the battlefield to \"rebuild\" anything, it has to be redrawn and recast.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/d/DeemInferior.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/d/DeemInferior.java",
      "invalidates_plan": false
     }
    ],
@@ -3514,7 +3514,7 @@
     {
      "claim": "Nyxborn Hydra's X cost is exactly what Counterspell and Spell Pierce want to punish.",
      "truth": "Nyxborn Hydra's base card type is Enchantment Creature (CardType.ENCHANTMENT, CardType.CREATURE) with cost {X}{G}; when hardcast (the only way an Elves deck would play it as a threat), it is a creature spell. Spell Pierce's effect is 'Counter target noncreature spell unless its controller pays {2}' and its target filter (StaticFilters.FILTER_SPELL_NON_CREATURE) explicitly excludes any spell with CardType.CREATURE. So Spell Pierce cannot legally target Nyxborn Hydra when it is cast for its normal X cost; only Counterspell (which counters any spell unconditionally) can interact with it in that mode. Spell Pierce would only apply if Nyxborn Hydra were cast via its Bestow {X}{G}{G} cost, making it an Aura (noncreature) spell instead, which is not how a ramp/beatdown Elves list plays this card.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NyxbornHydra.java and C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SpellPierce.java (target filter defined in C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage/src/main/java/mage/filter/StaticFilters.java, FILTER_SPELL_NON_CREATURE)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NyxbornHydra.java and C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SpellPierce.java (target filter defined in C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage/src/main/java/mage/filter/StaticFilters.java, FILTER_SPELL_NON_CREATURE)",
      "invalidates_plan": false
     }
    ],
@@ -3565,7 +3565,7 @@
     {
      "claim": "Nyxborn Hydra's X cost is exactly what Counterspell and Spell Pierce want to punish.",
      "truth": "Nyxborn Hydra's base card type is Enchantment Creature (CardType.ENCHANTMENT, CardType.CREATURE) with cost {X}{G}; when hardcast (the only way an Elves deck would play it as a threat), it is a creature spell. Spell Pierce's effect is 'Counter target noncreature spell unless its controller pays {2}' and its target filter (StaticFilters.FILTER_SPELL_NON_CREATURE) explicitly excludes any spell with CardType.CREATURE. So Spell Pierce cannot legally target Nyxborn Hydra when it is cast for its normal X cost; only Counterspell (which counters any spell unconditionally) can interact with it in that mode. Spell Pierce would only apply if Nyxborn Hydra were cast via its Bestow {X}{G}{G} cost, making it an Aura (noncreature) spell instead, which is not how a ramp/beatdown Elves list plays this card.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NyxbornHydra.java and C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SpellPierce.java (target filter defined in C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage/src/main/java/mage/filter/StaticFilters.java, FILTER_SPELL_NON_CREATURE)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NyxbornHydra.java and C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SpellPierce.java (target filter defined in C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage/src/main/java/mage/filter/StaticFilters.java, FILTER_SPELL_NON_CREATURE)",
      "invalidates_plan": false
     }
    ],
@@ -3606,7 +3606,7 @@
     {
      "claim": "\"Vitu-Ghazi Inspector's reach is the only way our ground-bound Elves stop Faerie Seer, Spellstutter Sprite, Harrier Strix, and Faerie Miscreant from flying over every turn\"",
      "truth": "Reach is not exclusive to Vitu-Ghazi Inspector in this Elves 60. Generous Ent (4 copies in the registered mainboard, untouched by this plan) has the Reach ability outright, and Nyxborn Hydra itself (not only when bestowed) also has Reach as a base ability of the creature -- and the plan leaves 1 of the 4 registered Nyxborn Hydra in the deck after cutting only 3. So the deck already has two independent, larger (5/7 Ent) or additional reach blockers before this swap, and the plan is simultaneously cutting 3 copies of one of them while claiming reach is otherwise absent.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GenerousEnt.java (ReachAbility.getInstance()); C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NyxbornHydra.java (ReachAbility.getInstance() as a base ability, not only via bestow); counts from C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json decks.Elves.main (Generous Ent: 4, Nyxborn Hydra: 4)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GenerousEnt.java (ReachAbility.getInstance()); C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NyxbornHydra.java (ReachAbility.getInstance() as a base ability, not only via bestow); counts from C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json decks.Elves.main (Generous Ent: 4, Nyxborn Hydra: 4)",
      "invalidates_plan": true
     }
    ],
@@ -3647,7 +3647,7 @@
     {
      "claim": "\"Vitu-Ghazi Inspector's reach is the only way our ground-bound Elves stop Faerie Seer, Spellstutter Sprite, Harrier Strix, and Faerie Miscreant from flying over every turn\"",
      "truth": "Reach is not exclusive to Vitu-Ghazi Inspector in this Elves 60. Generous Ent (4 copies in the registered mainboard, untouched by this plan) has the Reach ability outright, and Nyxborn Hydra itself (not only when bestowed) also has Reach as a base ability of the creature -- and the plan leaves 1 of the 4 registered Nyxborn Hydra in the deck after cutting only 3. So the deck already has two independent, larger (5/7 Ent) or additional reach blockers before this swap, and the plan is simultaneously cutting 3 copies of one of them while claiming reach is otherwise absent.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GenerousEnt.java (ReachAbility.getInstance()); C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NyxbornHydra.java (ReachAbility.getInstance() as a base ability, not only via bestow); counts from C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json decks.Elves.main (Generous Ent: 4, Nyxborn Hydra: 4)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GenerousEnt.java (ReachAbility.getInstance()); C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NyxbornHydra.java (ReachAbility.getInstance() as a base ability, not only via bestow); counts from C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json decks.Elves.main (Generous Ent: 4, Nyxborn Hydra: 4)",
      "invalidates_plan": true
     }
    ],
@@ -3776,7 +3776,7 @@
     {
      "claim": "Quirion Ranger is grouped with Land Grant and Lead the Stampede as cards that 'none of them block' the hyper-aggro clock",
      "truth": "Quirion Ranger is a Creature (1/1, Elf Ranger) with no defender restriction, no 'can't block' text, and no ability that prevents blocking; it is fully capable of blocking (e.g. it can chump- or trade-block any of Rally's many 1-power hasty creatures such as Goblin Bushwhacker, Clockwork Percussionist, or Voldaren Epicure). Only Land Grant and Lead the Stampede (both Sorceries) are correctly described as unable to block.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/q/QuirionRanger.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/q/QuirionRanger.java",
      "invalidates_plan": false
     }
    ],
@@ -3827,7 +3827,7 @@
     {
      "claim": "Quirion Ranger is grouped with Land Grant and Lead the Stampede as cards that 'none of them block' the hyper-aggro clock",
      "truth": "Quirion Ranger is a Creature (1/1, Elf Ranger) with no defender restriction, no 'can't block' text, and no ability that prevents blocking; it is fully capable of blocking (e.g. it can chump- or trade-block any of Rally's many 1-power hasty creatures such as Goblin Bushwhacker, Clockwork Percussionist, or Voldaren Epicure). Only Land Grant and Lead the Stampede (both Sorceries) are correctly described as unable to block.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/q/QuirionRanger.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/q/QuirionRanger.java",
      "invalidates_plan": false
     }
    ],
@@ -4267,7 +4267,7 @@
     {
      "claim": "Masked Vandal turns off ... The Modern Age (returning our exiled creature)",
      "truth": "The Modern Age is a Saga (front face Enchantment) whose only effects are: chapters I-II, its OWN controller draws a card then discards a card; chapter III, it exiles itself and returns transformed into Vector Glider (a 2/3 flying Enchantment Creature) under its own controller's control. It never targets, exiles, or otherwise removes any of our creatures, so there is no 'our exiled creature' associated with it to return. Masked Vandal CAN legally exile The Modern Age/Vector Glider (it is an enchantment CawGates controls), but doing so does not return anything of ours to the battlefield -- that return mechanic only exists on Journey to Nowhere, which the same sentence also cites. The claim conflates the two opposing enchantments' behavior.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/t/TheModernAge.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/t/TheModernAge.java",
      "invalidates_plan": false
     }
    ],
@@ -4323,7 +4323,7 @@
     {
      "claim": "Masked Vandal turns off ... The Modern Age (returning our exiled creature)",
      "truth": "The Modern Age is a Saga (front face Enchantment) whose only effects are: chapters I-II, its OWN controller draws a card then discards a card; chapter III, it exiles itself and returns transformed into Vector Glider (a 2/3 flying Enchantment Creature) under its own controller's control. It never targets, exiles, or otherwise removes any of our creatures, so there is no 'our exiled creature' associated with it to return. Masked Vandal CAN legally exile The Modern Age/Vector Glider (it is an enchantment CawGates controls), but doing so does not return anything of ours to the battlefield -- that return mechanic only exists on Journey to Nowhere, which the same sentence also cites. The claim conflates the two opposing enchantments' behavior.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/t/TheModernAge.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/t/TheModernAge.java",
      "invalidates_plan": false
     }
    ],
@@ -4566,19 +4566,19 @@
     {
      "claim": "Voldaren Epicure is one of the \"hasty one-drops\" Rally dumps onto the board",
      "truth": "Voldaren Epicure has no haste ability; it is a {R} 1/1 with only an ETB trigger (deal 1 damage to each opponent, create a Blood token)",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/v/VoldarenEpicure.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/v/VoldarenEpicure.java",
      "invalidates_plan": false
     },
     {
      "claim": "Burning-Tree Emissary is one of the \"hasty one-drops\" Rally dumps onto the board",
      "truth": "Burning-Tree Emissary costs {R/G}{R/G} (CMC 2, not a one-drop) and has no haste ability; its ETB trigger only adds {R}{G} mana",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BurningTreeEmissary.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BurningTreeEmissary.java",
      "invalidates_plan": false
     },
     {
      "claim": "Goblin Tomb Raider is one of the \"hasty one-drops\" Rally dumps onto the board (stated unconditionally)",
      "truth": "Goblin Tomb Raider only gets +1/+0 and haste conditionally, as long as its controller controls an artifact; it is not unconditionally hasty",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GoblinTombRaider.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GoblinTombRaider.java",
      "invalidates_plan": false
     }
    ],
@@ -4609,19 +4609,19 @@
     {
      "claim": "Voldaren Epicure is one of the \"hasty one-drops\" Rally dumps onto the board",
      "truth": "Voldaren Epicure has no haste ability; it is a {R} 1/1 with only an ETB trigger (deal 1 damage to each opponent, create a Blood token)",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/v/VoldarenEpicure.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/v/VoldarenEpicure.java",
      "invalidates_plan": false
     },
     {
      "claim": "Burning-Tree Emissary is one of the \"hasty one-drops\" Rally dumps onto the board",
      "truth": "Burning-Tree Emissary costs {R/G}{R/G} (CMC 2, not a one-drop) and has no haste ability; its ETB trigger only adds {R}{G} mana",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BurningTreeEmissary.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BurningTreeEmissary.java",
      "invalidates_plan": false
     },
     {
      "claim": "Goblin Tomb Raider is one of the \"hasty one-drops\" Rally dumps onto the board (stated unconditionally)",
      "truth": "Goblin Tomb Raider only gets +1/+0 and haste conditionally, as long as its controller controls an artifact; it is not unconditionally hasty",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GoblinTombRaider.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GoblinTombRaider.java",
      "invalidates_plan": false
     }
    ],
@@ -4662,13 +4662,13 @@
     {
      "claim": "Krark-Clan Shaman is one of Affinity's 'cheap artifact creatures' (grouped with Refurbished Familiar and Myr Enforcer as artifact creatures).",
      "truth": "Krark-Clan Shaman is CardType.CREATURE only (Goblin Shaman, {R}, 1/1) with no Artifact type. It is not an artifact card at all; only Refurbished Familiar and Myr Enforcer are Artifact Creatures.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/k/KrarkClanShaman.java (confirmed also by registered_nine_75s.json cards.\"Krark-Clan Shaman\".types = [\"Creature\"])",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/k/KrarkClanShaman.java (confirmed also by registered_nine_75s.json cards.\"Krark-Clan Shaman\".types = [\"Creature\"])",
      "invalidates_plan": false
     },
     {
      "claim": "Myr Enforcer is implied to be one of the 'small bodies' that Searing Blaze answers (grouped with Refurbished Familiar and Krark-Clan Shaman under 'so Searing Blaze answers the small bodies').",
      "truth": "Myr Enforcer is 4/4 (power=4, toughness=4), not a small body. Searing Blaze in this fork deals only 1 damage to the targeted creature by default, or 3 damage only if a land entered the caster's battlefield that turn (landfall) - it never deals more than 3, so it cannot kill a 4-toughness creature. Searing Blaze does answer Refurbished Familiar (2/1) and Krark-Clan Shaman (1/1), which die to even the base 1 damage, but it does not answer Myr Enforcer.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/m/MyrEnforcer.java (power/toughness) and C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SearingBlaze.java (damage effect: 1 dmg base, 3 dmg only on landfall)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/m/MyrEnforcer.java (power/toughness) and C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SearingBlaze.java (damage effect: 1 dmg base, 3 dmg only on landfall)",
      "invalidates_plan": false
     }
    ],
@@ -4709,13 +4709,13 @@
     {
      "claim": "Krark-Clan Shaman is one of Affinity's 'cheap artifact creatures' (grouped with Refurbished Familiar and Myr Enforcer as artifact creatures).",
      "truth": "Krark-Clan Shaman is CardType.CREATURE only (Goblin Shaman, {R}, 1/1) with no Artifact type. It is not an artifact card at all; only Refurbished Familiar and Myr Enforcer are Artifact Creatures.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/k/KrarkClanShaman.java (confirmed also by registered_nine_75s.json cards.\"Krark-Clan Shaman\".types = [\"Creature\"])",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/k/KrarkClanShaman.java (confirmed also by registered_nine_75s.json cards.\"Krark-Clan Shaman\".types = [\"Creature\"])",
      "invalidates_plan": false
     },
     {
      "claim": "Myr Enforcer is implied to be one of the 'small bodies' that Searing Blaze answers (grouped with Refurbished Familiar and Krark-Clan Shaman under 'so Searing Blaze answers the small bodies').",
      "truth": "Myr Enforcer is 4/4 (power=4, toughness=4), not a small body. Searing Blaze in this fork deals only 1 damage to the targeted creature by default, or 3 damage only if a land entered the caster's battlefield that turn (landfall) - it never deals more than 3, so it cannot kill a 4-toughness creature. Searing Blaze does answer Refurbished Familiar (2/1) and Krark-Clan Shaman (1/1), which die to even the base 1 damage, but it does not answer Myr Enforcer.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/m/MyrEnforcer.java (power/toughness) and C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SearingBlaze.java (damage effect: 1 dmg base, 3 dmg only on landfall)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/m/MyrEnforcer.java (power/toughness) and C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SearingBlaze.java (damage effect: 1 dmg base, 3 dmg only on landfall)",
      "invalidates_plan": false
     }
    ],
@@ -4746,7 +4746,7 @@
     {
      "claim": "Priest of Titania is a turn-one mana dork (grouped with Fyndhorn Elves, Elvish Mystic, and Llanowar Elves as cards that power Elves' turn-one ramp).",
      "truth": "Priest of Titania's mana cost is {1}{G} (a two-mana creature), not {G}. It cannot be cast turn one; only Fyndhorn Elves, Elvish Mystic, and Llanowar Elves (each {G}) are actual turn-one dorks. Priest of Titania is still a real mana dork (T: Add {G} for each Elf on the battlefield, 1/1 body) and a legal Searing Blaze target, so the underlying tactic (kill dorks with Searing Blaze) still applies to it, just not on turn one.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PriestOfTitania.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PriestOfTitania.java",
      "invalidates_plan": false
     }
    ],
@@ -4777,7 +4777,7 @@
     {
      "claim": "Priest of Titania is a turn-one mana dork (grouped with Fyndhorn Elves, Elvish Mystic, and Llanowar Elves as cards that power Elves' turn-one ramp).",
      "truth": "Priest of Titania's mana cost is {1}{G} (a two-mana creature), not {G}. It cannot be cast turn one; only Fyndhorn Elves, Elvish Mystic, and Llanowar Elves (each {G}) are actual turn-one dorks. Priest of Titania is still a real mana dork (T: Add {G} for each Elf on the battlefield, 1/1 body) and a legal Searing Blaze target, so the underlying tactic (kill dorks with Searing Blaze) still applies to it, just not on turn one.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PriestOfTitania.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PriestOfTitania.java",
      "invalidates_plan": false
     }
    ],
@@ -4856,7 +4856,7 @@
     {
      "claim": "\"their Sneaky Snacker is exactly as uncastable for them as ours is for us and will never be on their battlefield\" (and, applied to our own copy: Sneaky Snacker is \"a guaranteed dead draw regardless of what the opponent presents\")",
      "truth": "Sneaky Snacker has a second, non-casting path onto the battlefield: 'When you draw your third card in a turn, return Sneaky Snacker from your graveyard to the battlefield tapped,' implemented as a DrawNthCardTriggeredAbility scoped to Zone.GRAVEYARD, so it functions while the card sits in the graveyard and never requires paying its {U}{B} cost. The registered Burn 60 (identical for both players in this mirror) is dense with enablers for exactly this: Faithless Looting x2 (draw 2, discard 2, plus flashback), Highway Robbery x4 (discard a card, draw two), and Grab the Prize x4 (discard a card as a cost, draw two) can both mill Sneaky Snacker into the graveyard and push a player past 3 cards drawn in a turn (natural draw-step card + a 2-card draw spell = 3). So Sneaky Snacker being uncastable by mana is true, but 'will never be on their battlefield' / 'guaranteed dead draw regardless of what the opponent presents' is false: it has a real, mechanically supported route into play on both sides of the mirror that doesn't touch mana color at all.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SneakySnacker.java (ability: DrawNthCardTriggeredAbility(Zone.GRAVEYARD, ReturnSourceFromGraveyardToBattlefieldEffect(...), ..., 3)); corroborated by mage/abilities/common/DrawNthCardTriggeredAbility.java (checkTrigger fires on the controller's Nth DREW_CARD event regardless of zone) and by the registered Burn mainboard's Faithless Looting (2), Highway Robbery (4), Grab the Prize (4) in C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SneakySnacker.java (ability: DrawNthCardTriggeredAbility(Zone.GRAVEYARD, ReturnSourceFromGraveyardToBattlefieldEffect(...), ..., 3)); corroborated by mage/abilities/common/DrawNthCardTriggeredAbility.java (checkTrigger fires on the controller's Nth DREW_CARD event regardless of zone) and by the registered Burn mainboard's Faithless Looting (2), Highway Robbery (4), Grab the Prize (4) in C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json",
      "invalidates_plan": true
     }
    ],
@@ -4887,7 +4887,7 @@
     {
      "claim": "\"their Sneaky Snacker is exactly as uncastable for them as ours is for us and will never be on their battlefield\" (and, applied to our own copy: Sneaky Snacker is \"a guaranteed dead draw regardless of what the opponent presents\")",
      "truth": "Sneaky Snacker has a second, non-casting path onto the battlefield: 'When you draw your third card in a turn, return Sneaky Snacker from your graveyard to the battlefield tapped,' implemented as a DrawNthCardTriggeredAbility scoped to Zone.GRAVEYARD, so it functions while the card sits in the graveyard and never requires paying its {U}{B} cost. The registered Burn 60 (identical for both players in this mirror) is dense with enablers for exactly this: Faithless Looting x2 (draw 2, discard 2, plus flashback), Highway Robbery x4 (discard a card, draw two), and Grab the Prize x4 (discard a card as a cost, draw two) can both mill Sneaky Snacker into the graveyard and push a player past 3 cards drawn in a turn (natural draw-step card + a 2-card draw spell = 3). So Sneaky Snacker being uncastable by mana is true, but 'will never be on their battlefield' / 'guaranteed dead draw regardless of what the opponent presents' is false: it has a real, mechanically supported route into play on both sides of the mirror that doesn't touch mana color at all.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SneakySnacker.java (ability: DrawNthCardTriggeredAbility(Zone.GRAVEYARD, ReturnSourceFromGraveyardToBattlefieldEffect(...), ..., 3)); corroborated by mage/abilities/common/DrawNthCardTriggeredAbility.java (checkTrigger fires on the controller's Nth DREW_CARD event regardless of zone) and by the registered Burn mainboard's Faithless Looting (2), Highway Robbery (4), Grab the Prize (4) in C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SneakySnacker.java (ability: DrawNthCardTriggeredAbility(Zone.GRAVEYARD, ReturnSourceFromGraveyardToBattlefieldEffect(...), ..., 3)); corroborated by mage/abilities/common/DrawNthCardTriggeredAbility.java (checkTrigger fires on the controller's Nth DREW_CARD event regardless of zone) and by the registered Burn mainboard's Faithless Looting (2), Highway Robbery (4), Grab the Prize (4) in C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json",
      "invalidates_plan": true
     }
    ],
@@ -4928,7 +4928,7 @@
     {
      "claim": "\"Terror's entire nonland suite is blue\"",
      "truth": "Terror's registered maindeck (60) is indeed all-blue nonland, but Terror's registered 15-card sideboard is not: it includes Gut Shot, whose mana cost is {R/P} (a red Phyrexian mana symbol). Under standard color rules a card's color comes from the mana symbols in its cost regardless of how it's paid, so Gut Shot is a red card, not blue/colorless. The GutShot.java source shows CardType.INSTANT, cost \"{R/P}\", with no color override. So the claim of an entirely blue 'suite' is false once the registered 15 is included; only the 60-card mainboard is 100% blue nonland.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GutShot.java (cross-checked against decks.Terror.side in C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GutShot.java (cross-checked against decks.Terror.side in C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json)",
      "invalidates_plan": false
     }
    ],
@@ -4969,7 +4969,7 @@
     {
      "claim": "\"Terror's entire nonland suite is blue\"",
      "truth": "Terror's registered maindeck (60) is indeed all-blue nonland, but Terror's registered 15-card sideboard is not: it includes Gut Shot, whose mana cost is {R/P} (a red Phyrexian mana symbol). Under standard color rules a card's color comes from the mana symbols in its cost regardless of how it's paid, so Gut Shot is a red card, not blue/colorless. The GutShot.java source shows CardType.INSTANT, cost \"{R/P}\", with no color override. So the claim of an entirely blue 'suite' is false once the registered 15 is included; only the 60-card mainboard is 100% blue nonland.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GutShot.java (cross-checked against decks.Terror.side in C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/GutShot.java (cross-checked against decks.Terror.side in C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json)",
      "invalidates_plan": false
     }
    ],
@@ -5020,7 +5020,7 @@
     {
      "claim": "The Modern Age is one of the tools (alongside Counterspell and Spell Pierce) that CawGates uses to protect its lifelink/prevention plan, i.e. it functions as countermagic that Pyroblast/Red Elemental Blast are stripping.",
      "truth": "The Modern Age is a Saga, not countermagic. Chapters I-II read 'Draw a card, then discard a card' (a looting/card-selection effect with no counter or protection effect); Chapter III exiles it and returns it transformed into Vector Glider, a 2/3 flying creature. It never counters or prevents anything. It is a blue permanent (front {1}{U}, back colored U), so Pyroblast/REB can still destroy it under their 'destroy target blue permanent' mode, but not for the reason given: it is not interactive countermagic protecting Sacred Cat/Outlaw Medic/Prismatic Strands the way Counterspell and Spell Pierce actually are.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/t/TheModernAge.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/t/TheModernAge.java",
      "invalidates_plan": false
     }
    ],
@@ -5071,7 +5071,7 @@
     {
      "claim": "The Modern Age is one of the tools (alongside Counterspell and Spell Pierce) that CawGates uses to protect its lifelink/prevention plan, i.e. it functions as countermagic that Pyroblast/Red Elemental Blast are stripping.",
      "truth": "The Modern Age is a Saga, not countermagic. Chapters I-II read 'Draw a card, then discard a card' (a looting/card-selection effect with no counter or protection effect); Chapter III exiles it and returns it transformed into Vector Glider, a 2/3 flying creature. It never counters or prevents anything. It is a blue permanent (front {1}{U}, back colored U), so Pyroblast/REB can still destroy it under their 'destroy target blue permanent' mode, but not for the reason given: it is not interactive countermagic protecting Sacred Cat/Outlaw Medic/Prismatic Strands the way Counterspell and Spell Pierce actually are.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/t/TheModernAge.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/t/TheModernAge.java",
      "invalidates_plan": false
     }
    ],
@@ -5210,13 +5210,13 @@
     {
      "claim": "Cleansing Wildfire is part of Wildfire's 'red removal and burn' suite that Hydroblast/Annul turn off.",
      "truth": "Cleansing Wildfire is a {1}{R} sorcery that destroys a TARGET LAND (not a creature) and lets that land's controller search for a basic land and put it onto the battlefield tapped, then the caster draws a card. It deals no damage and never targets a creature or player, so it is neither creature removal nor burn; it is land disruption/fixing plus a cantrip. (It is still red, so Hydroblast can counter it on the stack, but not for the reason stated.)",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/c/CleansingWildfire.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/c/CleansingWildfire.java",
      "invalidates_plan": false
     },
     {
      "claim": "'A second Cryptic Serpent' is one of the weakest cards being cut, implying one copy is trimmed.",
      "truth": "The plan's cards_out lists Cryptic Serpent at count 2, i.e. two copies are being cut from the registered 4-copy mainboard (leaving 2), not a single 'second' copy. The narrative undercounts the actual cut relative to the plan's own cards_out field.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Terror.main.'Cryptic Serpent':4) and the plan's cards_out field",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Terror.main.'Cryptic Serpent':4) and the plan's cards_out field",
      "invalidates_plan": false
     }
    ],
@@ -5267,13 +5267,13 @@
     {
      "claim": "Cleansing Wildfire is part of Wildfire's 'red removal and burn' suite that Hydroblast/Annul turn off.",
      "truth": "Cleansing Wildfire is a {1}{R} sorcery that destroys a TARGET LAND (not a creature) and lets that land's controller search for a basic land and put it onto the battlefield tapped, then the caster draws a card. It deals no damage and never targets a creature or player, so it is neither creature removal nor burn; it is land disruption/fixing plus a cantrip. (It is still red, so Hydroblast can counter it on the stack, but not for the reason stated.)",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/c/CleansingWildfire.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/c/CleansingWildfire.java",
      "invalidates_plan": false
     },
     {
      "claim": "'A second Cryptic Serpent' is one of the weakest cards being cut, implying one copy is trimmed.",
      "truth": "The plan's cards_out lists Cryptic Serpent at count 2, i.e. two copies are being cut from the registered 4-copy mainboard (leaving 2), not a single 'second' copy. The narrative undercounts the actual cut relative to the plan's own cards_out field.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Terror.main.'Cryptic Serpent':4) and the plan's cards_out field",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Terror.main.'Cryptic Serpent':4) and the plan's cards_out field",
      "invalidates_plan": false
     }
    ],
@@ -5334,13 +5334,13 @@
     {
      "claim": "Rally is a \"mono red\" deck (rationale: \"Hydroblast and Blue Elemental Blast pick off Rally's mono red burn and creatures\")",
      "truth": "Rally's registered 60 runs 4x Burning-Tree Emissary at {R/G}{R/G}, whose colors are listed as both R and G in the registered card data and whose Java source confirms the hybrid R/G cost. Rally is red-dominant but not strictly mono-red. This does not invalidate the plan: Burning-Tree Emissary is still red (hybrid cards satisfy a 'red permanent/spell' filter), so Hydroblast and Blue Elemental Blast still validly target it and every other Rally card (all remaining 56 of 60 mainboard cards plus all 15 sideboard cards are strictly red or colorless).",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BurningTreeEmissary.java; C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (cards.\"Burning-Tree Emissary\")",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BurningTreeEmissary.java; C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (cards.\"Burning-Tree Emissary\")",
      "invalidates_plan": false
     },
     {
      "claim": "Mental Note is cut because it is \"too slow or too life costly to survive a deck built to kill by turn four\"",
      "truth": "Mental Note is a {U} instant (mill 2, draw 1) with no life cost and the lowest possible mana cost, so it is neither slow nor life costly; it is the opposite (a cheap, fast cantrip). The stated justification does not fit this specific card. This is a rationale imprecision, not a rules or legality problem: 2 of 4 copies are cut (2 remain), the count does not exceed the registered mainboard total, and it does not touch Terror's core engine (Tolarian Terror, counterspells, Brainstorm/Ponder/Thought Scour all remain full playsets), so it does not invalidate the plan's mechanics.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/m/MentalNote.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/m/MentalNote.java",
      "invalidates_plan": false
     }
    ],
@@ -5401,13 +5401,13 @@
     {
      "claim": "Rally is a \"mono red\" deck (rationale: \"Hydroblast and Blue Elemental Blast pick off Rally's mono red burn and creatures\")",
      "truth": "Rally's registered 60 runs 4x Burning-Tree Emissary at {R/G}{R/G}, whose colors are listed as both R and G in the registered card data and whose Java source confirms the hybrid R/G cost. Rally is red-dominant but not strictly mono-red. This does not invalidate the plan: Burning-Tree Emissary is still red (hybrid cards satisfy a 'red permanent/spell' filter), so Hydroblast and Blue Elemental Blast still validly target it and every other Rally card (all remaining 56 of 60 mainboard cards plus all 15 sideboard cards are strictly red or colorless).",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BurningTreeEmissary.java; C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (cards.\"Burning-Tree Emissary\")",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BurningTreeEmissary.java; C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (cards.\"Burning-Tree Emissary\")",
      "invalidates_plan": false
     },
     {
      "claim": "Mental Note is cut because it is \"too slow or too life costly to survive a deck built to kill by turn four\"",
      "truth": "Mental Note is a {U} instant (mill 2, draw 1) with no life cost and the lowest possible mana cost, so it is neither slow nor life costly; it is the opposite (a cheap, fast cantrip). The stated justification does not fit this specific card. This is a rationale imprecision, not a rules or legality problem: 2 of 4 copies are cut (2 remain), the count does not exceed the registered mainboard total, and it does not touch Terror's core engine (Tolarian Terror, counterspells, Brainstorm/Ponder/Thought Scour all remain full playsets), so it does not invalidate the plan's mechanics.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/m/MentalNote.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/m/MentalNote.java",
      "invalidates_plan": false
     }
    ],
@@ -5576,7 +5576,7 @@
     {
      "claim": "Wellwisher is one of Elves' one-toughness mana dorks (grouped with Fyndhorn Elves, Elvish Mystic, Llanowar Elves, Quirion Ranger)",
      "truth": "Wellwisher is a 1/1 Elf whose only ability is {T}: You gain 1 life for each Elf on the battlefield (SimpleActivatedAbility + GainLifeEffect). It has no mana ability and produces zero mana; it is not a mana dork.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/w/Wellwisher.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/w/Wellwisher.java",
      "invalidates_plan": false
     }
    ],
@@ -5627,7 +5627,7 @@
     {
      "claim": "Wellwisher is one of Elves' one-toughness mana dorks (grouped with Fyndhorn Elves, Elvish Mystic, Llanowar Elves, Quirion Ranger)",
      "truth": "Wellwisher is a 1/1 Elf whose only ability is {T}: You gain 1 life for each Elf on the battlefield (SimpleActivatedAbility + GainLifeEffect). It has no mana ability and produces zero mana; it is not a mana dork.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/w/Wellwisher.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/w/Wellwisher.java",
      "invalidates_plan": false
     }
    ],
@@ -5766,13 +5766,13 @@
     {
      "claim": "Guttersnipe \"whose trigger punishes every spell we cast\"",
      "truth": "Guttersnipe's ability is a SpellCastControllerTriggeredAbility: it triggers when Guttersnipe's controller (Burn, i.e. the opponent) casts an instant or sorcery, dealing 2 damage to each opponent (Terror). It does not trigger on spells cast by Terror (\"we\"). The card punishes Burn's own spellcasting by burning Terror, not the reverse.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/Guttersnipe.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/Guttersnipe.java",
      "invalidates_plan": false
     },
     {
      "claim": "\"Deep Analysis's five life flashback\"",
      "truth": "Deep Analysis's flashback cost in this Mage fork is {1}{U} plus Pay 3 life, not 5 life.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/d/DeepAnalysis.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/d/DeepAnalysis.java",
      "invalidates_plan": false
     }
    ],
@@ -5833,13 +5833,13 @@
     {
      "claim": "Guttersnipe \"whose trigger punishes every spell we cast\"",
      "truth": "Guttersnipe's ability is a SpellCastControllerTriggeredAbility: it triggers when Guttersnipe's controller (Burn, i.e. the opponent) casts an instant or sorcery, dealing 2 damage to each opponent (Terror). It does not trigger on spells cast by Terror (\"we\"). The card punishes Burn's own spellcasting by burning Terror, not the reverse.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/Guttersnipe.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/g/Guttersnipe.java",
      "invalidates_plan": false
     },
     {
      "claim": "\"Deep Analysis's five life flashback\"",
      "truth": "Deep Analysis's flashback cost in this Mage fork is {1}{U} plus Pay 3 life, not 5 life.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/d/DeepAnalysis.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/d/DeepAnalysis.java",
      "invalidates_plan": false
     }
    ],
@@ -5885,7 +5885,7 @@
     {
      "claim": "Rationale describes Sleep of the Dead's effect as just \"a single tap\" (used to justify cutting it as a minor effect alongside the redundant Cryptic Serpent).",
      "truth": "Sleep of the Dead does more than tap once: it taps target creature AND that creature doesn't untap during its controller's next untap step (a two-turn lockdown, not a single tap), and it also carries Escape\u2014{2}{U}, Exile three other cards from your graveyard, letting it be recast from the graveyard for recursive value. The rationale's \"single tap\" framing undersells the card's actual rules text.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SleepOfTheDead.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SleepOfTheDead.java",
      "invalidates_plan": false
     }
    ],
@@ -5931,7 +5931,7 @@
     {
      "claim": "Rationale describes Sleep of the Dead's effect as just \"a single tap\" (used to justify cutting it as a minor effect alongside the redundant Cryptic Serpent).",
      "truth": "Sleep of the Dead does more than tap once: it taps target creature AND that creature doesn't untap during its controller's next untap step (a two-turn lockdown, not a single tap), and it also carries Escape\u2014{2}{U}, Exile three other cards from your graveyard, letting it be recast from the graveyard for recursive value. The rationale's \"single tap\" framing undersells the card's actual rules text.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SleepOfTheDead.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SleepOfTheDead.java",
      "invalidates_plan": false
     }
    ],
@@ -5992,7 +5992,7 @@
     {
      "claim": "Gut Shot kills Sacred Cat, Squadron Hawk, and Outlaw Medic for free",
      "truth": "Outlaw Medic is a 1/3 (this.power = new MageInt(1); this.toughness = new MageInt(3)), not a 1-toughness creature. Gut Shot deals only 1 damage, so it does not kill Outlaw Medic. (Sacred Cat and Squadron Hawk are correctly 1/1 and are killed by Gut Shot.)",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/o/OutlawMedic.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/o/OutlawMedic.java",
      "invalidates_plan": false
     }
    ],
@@ -6053,7 +6053,7 @@
     {
      "claim": "Gut Shot kills Sacred Cat, Squadron Hawk, and Outlaw Medic for free",
      "truth": "Outlaw Medic is a 1/3 (this.power = new MageInt(1); this.toughness = new MageInt(3)), not a 1-toughness creature. Gut Shot deals only 1 damage, so it does not kill Outlaw Medic. (Sacred Cat and Squadron Hawk are correctly 1/1 and are killed by Gut Shot.)",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/o/OutlawMedic.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/o/OutlawMedic.java",
      "invalidates_plan": false
     }
    ],
@@ -6104,7 +6104,7 @@
     {
      "claim": "Humbling Elder is part of Faeries' \"one toughness flying army\" alongside Faerie Seer, Spellstutter Sprite, Harrier Strix, and Faerie Miscreant.",
      "truth": "Humbling Elder is a 1/2 creature with Flash (not Flying); its only other ability is an ETB trigger that gives an opponent's creature -2/-0. It has no flying ability and 2 toughness, not 1, so it is neither part of the \"flying\" nor \"one toughness\" grouping, and Gut Shot's 1 damage would not kill it.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/h/HumblingElder.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/h/HumblingElder.java",
      "invalidates_plan": false
     }
    ],
@@ -6155,7 +6155,7 @@
     {
      "claim": "Humbling Elder is part of Faeries' \"one toughness flying army\" alongside Faerie Seer, Spellstutter Sprite, Harrier Strix, and Faerie Miscreant.",
      "truth": "Humbling Elder is a 1/2 creature with Flash (not Flying); its only other ability is an ETB trigger that gives an opponent's creature -2/-0. It has no flying ability and 2 toughness, not 1, so it is neither part of the \"flying\" nor \"one toughness\" grouping, and Gut Shot's 1 damage would not kill it.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/h/HumblingElder.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/h/HumblingElder.java",
      "invalidates_plan": false
     }
    ],
@@ -6289,19 +6289,19 @@
     {
      "claim": "Hydroblast and Blue Elemental Blast answer Rally's mono-red creature swarm",
      "truth": "Rally's registered mainboard includes Burning-Tree Emissary (mana cost {R/G}{R/G}, colors [R,G]), a hybrid red/green card, so the deck is not strictly mono-red.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json and C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BurningTreeEmissary.java",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json and C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BurningTreeEmissary.java",
      "invalidates_plan": false
     },
     {
      "claim": "Envelop can outright blank Rally at the Hornburg, the sorcery that turns the whole board sideways",
      "truth": "Rally at the Hornburg only grants haste to creatures with the Human subtype (FilterControlledPermanent(SubType.HUMAN, \"Humans\")), not the whole board; of the deck's own named creatures only Burning-Tree Emissary is Human. (The 'outright blank' half of the claim is true in this Mage fork: Envelop is an unconditional 'Counter target sorcery spell' with no red restriction or pay-to-resolve clause.)",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/r/RallyAtTheHornburg.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/r/RallyAtTheHornburg.java",
      "invalidates_plan": false
     },
     {
      "claim": "a spare Preordain/Squadron Hawk/Outlaw Medic are too slow to matter",
      "truth": "The plan's cards_out cuts both copies of Preordain (2 of 2, the full registered playset), not a single spare copy; only Squadron Hawk (1 of 4) and Outlaw Medic (1 of 2) are partial cuts.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.CawGates.main) cross-checked against the plan's own cards_out counts",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.CawGates.main) cross-checked against the plan's own cards_out counts",
      "invalidates_plan": false
     }
    ],
@@ -6357,19 +6357,19 @@
     {
      "claim": "Hydroblast and Blue Elemental Blast answer Rally's mono-red creature swarm",
      "truth": "Rally's registered mainboard includes Burning-Tree Emissary (mana cost {R/G}{R/G}, colors [R,G]), a hybrid red/green card, so the deck is not strictly mono-red.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json and C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BurningTreeEmissary.java",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json and C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BurningTreeEmissary.java",
      "invalidates_plan": false
     },
     {
      "claim": "Envelop can outright blank Rally at the Hornburg, the sorcery that turns the whole board sideways",
      "truth": "Rally at the Hornburg only grants haste to creatures with the Human subtype (FilterControlledPermanent(SubType.HUMAN, \"Humans\")), not the whole board; of the deck's own named creatures only Burning-Tree Emissary is Human. (The 'outright blank' half of the claim is true in this Mage fork: Envelop is an unconditional 'Counter target sorcery spell' with no red restriction or pay-to-resolve clause.)",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/r/RallyAtTheHornburg.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/r/RallyAtTheHornburg.java",
      "invalidates_plan": false
     },
     {
      "claim": "a spare Preordain/Squadron Hawk/Outlaw Medic are too slow to matter",
      "truth": "The plan's cards_out cuts both copies of Preordain (2 of 2, the full registered playset), not a single spare copy; only Squadron Hawk (1 of 4) and Outlaw Medic (1 of 2) are partial cuts.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.CawGates.main) cross-checked against the plan's own cards_out counts",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.CawGates.main) cross-checked against the plan's own cards_out counts",
      "invalidates_plan": false
     }
    ],
@@ -6498,7 +6498,7 @@
     {
      "claim": "\"Envelop is the only live tool in the box against\" Elves (implying every other CawGates sideboard card - Hydroblast, Dispel, Blue Elemental Blast, Pyroblast, Dust to Dust - is dead against Elves' registered 75)",
      "truth": "Hydroblast, Blue Elemental Blast, and Pyroblast are all color-restricted to red or blue targets and Dust to Dust requires 2 target artifacts, so those four are correctly dead (Elves' registered 60+15 is mono-green and artifact-free). But Dispel counters 'target instant spell' with no color restriction, and Elves' registered 15-card sideboard includes Pulse of Murasa x3, which is CardType.INSTANT. So Dispel also has a legal/useful target within Elves' registered 75; Envelop is not literally the only live card in the CawGates sideboard box against this opponent, even though it is the only one that hits Elves' named main-deck engines (Lead the Stampede, Winding Way).",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/d/Dispel.java; C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PulseOfMurasa.java; C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/d/Dispel.java; C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PulseOfMurasa.java; C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json",
      "invalidates_plan": false
     }
    ],
@@ -6529,7 +6529,7 @@
     {
      "claim": "\"Envelop is the only live tool in the box against\" Elves (implying every other CawGates sideboard card - Hydroblast, Dispel, Blue Elemental Blast, Pyroblast, Dust to Dust - is dead against Elves' registered 75)",
      "truth": "Hydroblast, Blue Elemental Blast, and Pyroblast are all color-restricted to red or blue targets and Dust to Dust requires 2 target artifacts, so those four are correctly dead (Elves' registered 60+15 is mono-green and artifact-free). But Dispel counters 'target instant spell' with no color restriction, and Elves' registered 15-card sideboard includes Pulse of Murasa x3, which is CardType.INSTANT. So Dispel also has a legal/useful target within Elves' registered 75; Envelop is not literally the only live card in the CawGates sideboard box against this opponent, even though it is the only one that hits Elves' named main-deck engines (Lead the Stampede, Winding Way).",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/d/Dispel.java; C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PulseOfMurasa.java; C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/d/Dispel.java; C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PulseOfMurasa.java; C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json",
      "invalidates_plan": false
     }
    ],
@@ -6560,13 +6560,13 @@
     {
      "claim": "Lead the Stampede is one of \"the sorceries that fuel the self-mill-into-Lotleth-Giant combo\" (i.e., it mills cards into the graveyard).",
      "truth": "Lead the Stampede looks at the top five cards of the library, lets you put any revealed creature cards into your hand, and puts the REST ON THE BOTTOM OF THE LIBRARY in any order. No cards go to the graveyard; it does not mill and does not feed Lotleth Giant's graveyard-creature-count trigger.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/LeadTheStampede.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/LeadTheStampede.java",
      "invalidates_plan": true
     },
     {
      "claim": "Land Grant is one of \"the sorceries that fuel the self-mill-into-Lotleth-Giant combo\" (i.e., it mills cards into the graveyard).",
      "truth": "Land Grant searches the library for a Forest card, reveals it, puts it into hand, then shuffles the library (with an alternative cost of revealing your hand instead of paying mana if you hold no lands). It never puts any cards into the graveyard; it is a land tutor, not a mill spell, and does not feed Lotleth Giant's graveyard-creature-count trigger.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/LandGrant.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/LandGrant.java",
      "invalidates_plan": true
     }
    ],
@@ -6597,13 +6597,13 @@
     {
      "claim": "Lead the Stampede is one of \"the sorceries that fuel the self-mill-into-Lotleth-Giant combo\" (i.e., it mills cards into the graveyard).",
      "truth": "Lead the Stampede looks at the top five cards of the library, lets you put any revealed creature cards into your hand, and puts the REST ON THE BOTTOM OF THE LIBRARY in any order. No cards go to the graveyard; it does not mill and does not feed Lotleth Giant's graveyard-creature-count trigger.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/LeadTheStampede.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/LeadTheStampede.java",
      "invalidates_plan": true
     },
     {
      "claim": "Land Grant is one of \"the sorceries that fuel the self-mill-into-Lotleth-Giant combo\" (i.e., it mills cards into the graveyard).",
      "truth": "Land Grant searches the library for a Forest card, reveals it, puts it into hand, then shuffles the library (with an alternative cost of revealing your hand instead of paying mana if you hold no lands). It never puts any cards into the graveyard; it is a land tutor, not a mill spell, and does not feed Lotleth Giant's graveyard-creature-count trigger.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/LandGrant.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/l/LandGrant.java",
      "invalidates_plan": true
     }
    ],
@@ -6644,7 +6644,7 @@
     {
      "claim": "Hydroblast and Blue Elemental Blast are answers 'against a mono-red deck' (Burn characterized as mono-red)",
      "truth": "Burn's registered 60-card mainboard is red-dominant but not mono-colored: it runs 4x Sneaky Snacker, a {U}{B} (blue-black) 2/1 flying Faerie Rogue that returns from the graveyard when its controller draws a third card in a turn. That is a full 4-of, not a 1-of tech card, so 'mono-red' is inaccurate for the registered list.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Burn.main, key \"Sneaky Snacker\": 4) and C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SneakySnacker.java (mana cost \"{U}{B}\")",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Burn.main, key \"Sneaky Snacker\": 4) and C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SneakySnacker.java (mana cost \"{U}{B}\")",
      "invalidates_plan": false
     }
    ],
@@ -6685,7 +6685,7 @@
     {
      "claim": "Hydroblast and Blue Elemental Blast are answers 'against a mono-red deck' (Burn characterized as mono-red)",
      "truth": "Burn's registered 60-card mainboard is red-dominant but not mono-colored: it runs 4x Sneaky Snacker, a {U}{B} (blue-black) 2/1 flying Faerie Rogue that returns from the graveyard when its controller draws a third card in a turn. That is a full 4-of, not a 1-of tech card, so 'mono-red' is inaccurate for the registered list.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Burn.main, key \"Sneaky Snacker\": 4) and C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SneakySnacker.java (mana cost \"{U}{B}\")",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Burn.main, key \"Sneaky Snacker\": 4) and C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/s/SneakySnacker.java (mana cost \"{U}{B}\")",
      "invalidates_plan": false
     }
    ],
@@ -6985,19 +6985,19 @@
     {
      "claim": "\"Humbling Elder and Saiba Cryptomancer are fragile 1/1s\"",
      "truth": "Humbling Elder is a 1/2 (power 1, toughness 2) Human Monk with Flash and an ETB -2/-0 trigger on an opponent's creature. Saiba Cryptomancer is a 0/1 (power 0, toughness 1) Moonfolk Ninja with Flash, Backup 1, and Hexproof. Neither creature is a 1/1.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/h/HumblingElder.java (power/toughness fields); s/SaibaCryptomancer.java (power/toughness fields)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/h/HumblingElder.java (power/toughness fields); s/SaibaCryptomancer.java (power/toughness fields)",
      "invalidates_plan": false
     },
     {
      "claim": "Wildfire's grind depends on \"artifact and enchantment value (Ichor Wellspring plus the Cleansing Wildfire bridge-land package)\"",
      "truth": "Cleansing Wildfire is a Sorcery (destroy target land; its controller may search for a basic and put it in tapped; draw a card) \u2014 it is not an Enchantment. Drossforge Bridge and Slagwoods Bridge are Artifact Lands (enter tapped, indestructible, tap for two colors each) \u2014 also not Enchantments. So the cited example supplies no actual enchantment. Wildfire's registered mainboard does contain two real enchantments the rationale never names: Makeshift Munitions (Enchantment) and Nyxborn Hydra (Enchantment Creature).",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/c/CleansingWildfire.java (CardType.SORCERY); d/DrossforgeBridge.java and s/SlagwoodsBridge.java (CardType.ARTIFACT, CardType.LAND)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/c/CleansingWildfire.java (CardType.SORCERY); d/DrossforgeBridge.java and s/SlagwoodsBridge.java (CardType.ARTIFACT, CardType.LAND)",
      "invalidates_plan": false
     },
     {
      "claim": "\"Corrected: the reviewer is right that Krark-Clan Shaman belongs to Affinity, not Wildfire, per the archetype summaries, so that line is dropped\"",
      "truth": "Krark-Clan Shaman is registered in BOTH decks' mainboards: Wildfire runs 3 copies in its 60, and Affinity separately runs 3 in its 60 (plus 1 more in Affinity's sideboard). It is not exclusive to Affinity, so the stated correction is itself factually wrong (though the rationale notes the card choices needed no change regardless).",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Wildfire.main.\"Krark-Clan Shaman\":3 and decks.Affinity.main.\"Krark-Clan Shaman\":3)",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Wildfire.main.\"Krark-Clan Shaman\":3 and decks.Affinity.main.\"Krark-Clan Shaman\":3)",
      "invalidates_plan": false
     }
    ],
@@ -7043,19 +7043,19 @@
     {
      "claim": "\"Humbling Elder and Saiba Cryptomancer are fragile 1/1s\"",
      "truth": "Humbling Elder is a 1/2 (power 1, toughness 2) Human Monk with Flash and an ETB -2/-0 trigger on an opponent's creature. Saiba Cryptomancer is a 0/1 (power 0, toughness 1) Moonfolk Ninja with Flash, Backup 1, and Hexproof. Neither creature is a 1/1.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/h/HumblingElder.java (power/toughness fields); s/SaibaCryptomancer.java (power/toughness fields)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/h/HumblingElder.java (power/toughness fields); s/SaibaCryptomancer.java (power/toughness fields)",
      "invalidates_plan": false
     },
     {
      "claim": "Wildfire's grind depends on \"artifact and enchantment value (Ichor Wellspring plus the Cleansing Wildfire bridge-land package)\"",
      "truth": "Cleansing Wildfire is a Sorcery (destroy target land; its controller may search for a basic and put it in tapped; draw a card) \u2014 it is not an Enchantment. Drossforge Bridge and Slagwoods Bridge are Artifact Lands (enter tapped, indestructible, tap for two colors each) \u2014 also not Enchantments. So the cited example supplies no actual enchantment. Wildfire's registered mainboard does contain two real enchantments the rationale never names: Makeshift Munitions (Enchantment) and Nyxborn Hydra (Enchantment Creature).",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/c/CleansingWildfire.java (CardType.SORCERY); d/DrossforgeBridge.java and s/SlagwoodsBridge.java (CardType.ARTIFACT, CardType.LAND)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/c/CleansingWildfire.java (CardType.SORCERY); d/DrossforgeBridge.java and s/SlagwoodsBridge.java (CardType.ARTIFACT, CardType.LAND)",
      "invalidates_plan": false
     },
     {
      "claim": "\"Corrected: the reviewer is right that Krark-Clan Shaman belongs to Affinity, not Wildfire, per the archetype summaries, so that line is dropped\"",
      "truth": "Krark-Clan Shaman is registered in BOTH decks' mainboards: Wildfire runs 3 copies in its 60, and Affinity separately runs 3 in its 60 (plus 1 more in Affinity's sideboard). It is not exclusive to Affinity, so the stated correction is itself factually wrong (though the rationale notes the card choices needed no change regardless).",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Wildfire.main.\"Krark-Clan Shaman\":3 and decks.Affinity.main.\"Krark-Clan Shaman\":3)",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Wildfire.main.\"Krark-Clan Shaman\":3 and decks.Affinity.main.\"Krark-Clan Shaman\":3)",
      "invalidates_plan": false
     }
    ],
@@ -7101,7 +7101,7 @@
     {
      "claim": "Rationale's correction: \"dropped the Galvanic Blast reference, which belongs to Affinity's list, not Rally's\"",
      "truth": "Galvanic Blast is in Rally's own registered 60-card mainboard (decks.Rally.main[\"Galvanic Blast\"] = 4), not exclusive to Affinity. Affinity's main also lists 4x Galvanic Blast, so the card is common to both decks' registered lists, not unique to Affinity as the rationale asserts.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json",
      "invalidates_plan": false
     }
    ],
@@ -7147,7 +7147,7 @@
     {
      "claim": "Rationale's correction: \"dropped the Galvanic Blast reference, which belongs to Affinity's list, not Rally's\"",
      "truth": "Galvanic Blast is in Rally's own registered 60-card mainboard (decks.Rally.main[\"Galvanic Blast\"] = 4), not exclusive to Affinity. Affinity's main also lists 4x Galvanic Blast, so the card is common to both decks' registered lists, not unique to Affinity as the rationale asserts.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json",
      "invalidates_plan": false
     }
    ],
@@ -7198,13 +7198,13 @@
     {
      "claim": "Corrected: dropped the Ichor Wellspring citation, which belongs to Wildfire's list, not Affinity's",
      "truth": "Ichor Wellspring is registered in Affinity's own mainboard at 4 copies (decks.Affinity.main[\"Ichor Wellspring\"]=4), not exclusively Wildfire's (which has 3). It belongs to both lists. The artifact count in the rationale (\"roughly forty artifacts deep\") is itself correct only because it counts Affinity's own Ichor Wellspring x4 among the 40 artifact-typed cards in Affinity's registered 60 (Refurbished Familiar 4, Ichor Wellspring 4, Nihil Spellbomb 3, Drossforge Bridge 4, Silverbluff Bridge 2, Mistvault Bridge 4, Vault of Whispers 3, Blood Fountain 2, Myr Enforcer 4, Great Furnace 3, Hunter's Blowgun 1, Seat of the Synod 2, Black Mage's Rod 3, Cryogen Relic 1 = 40). So the 'correction' itself is factually wrong, though it does not change any cards_in/cards_out and the underlying 40-artifact figure it was supposedly cleaning up remains true.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Affinity.main and decks.Wildfire.main)",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Affinity.main and decks.Wildfire.main)",
      "invalidates_plan": false
     },
     {
      "claim": "Force Spike's fading soft counter",
      "truth": "Force Spike has no 'fading' mechanic. Its full text is 'Counter target spell unless its controller pays {1}.' There is no fade-counter or diminishing-effect ability on the card; 'fading' is loose descriptive language, not a card mechanic. This doesn't change the validity of cutting the card, so it doesn't affect the plan.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/ForceSpike.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/ForceSpike.java",
      "invalidates_plan": false
     }
    ],
@@ -7255,13 +7255,13 @@
     {
      "claim": "Corrected: dropped the Ichor Wellspring citation, which belongs to Wildfire's list, not Affinity's",
      "truth": "Ichor Wellspring is registered in Affinity's own mainboard at 4 copies (decks.Affinity.main[\"Ichor Wellspring\"]=4), not exclusively Wildfire's (which has 3). It belongs to both lists. The artifact count in the rationale (\"roughly forty artifacts deep\") is itself correct only because it counts Affinity's own Ichor Wellspring x4 among the 40 artifact-typed cards in Affinity's registered 60 (Refurbished Familiar 4, Ichor Wellspring 4, Nihil Spellbomb 3, Drossforge Bridge 4, Silverbluff Bridge 2, Mistvault Bridge 4, Vault of Whispers 3, Blood Fountain 2, Myr Enforcer 4, Great Furnace 3, Hunter's Blowgun 1, Seat of the Synod 2, Black Mage's Rod 3, Cryogen Relic 1 = 40). So the 'correction' itself is factually wrong, though it does not change any cards_in/cards_out and the underlying 40-artifact figure it was supposedly cleaning up remains true.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Affinity.main and decks.Wildfire.main)",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Affinity.main and decks.Wildfire.main)",
      "invalidates_plan": false
     },
     {
      "claim": "Force Spike's fading soft counter",
      "truth": "Force Spike has no 'fading' mechanic. Its full text is 'Counter target spell unless its controller pays {1}.' There is no fade-counter or diminishing-effect ability on the card; 'fading' is loose descriptive language, not a card mechanic. This doesn't change the validity of cutting the card, so it doesn't affect the plan.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/ForceSpike.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/ForceSpike.java",
      "invalidates_plan": false
     }
    ],
@@ -7307,13 +7307,13 @@
     {
      "claim": "Elves' summary lists no artifacts or enchantments, so Annul has no legal target here and is cut from the plan (and the associated 'Corrected' note that 'the reviewer's catch that Nyxborn Hydra is not part of the given Elves summary' justified dropping Annul).",
      "truth": "False. Elves' registered 60-card mainboard includes 4 copies of Nyxborn Hydra, which is an Enchantment Creature (CardType.ENCHANTMENT, CardType.CREATURE in source, a Bestow aura-creature). Nyxborn Hydra is squarely part of the given Elves summary, so Elves' list is not free of enchantments, and casting Nyxborn Hydra is a legal target for Annul (Annul counters target artifact or enchantment spell). The 'reviewer's catch' the rationale cites as the basis for the correction is itself factually wrong.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Elves.main: \"Nyxborn Hydra\": 4); C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NyxbornHydra.java (CardType.ENCHANTMENT, CardType.CREATURE); C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/a/Annul.java (targets artifact or enchantment spell)",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Elves.main: \"Nyxborn Hydra\": 4); C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NyxbornHydra.java (CardType.ENCHANTMENT, CardType.CREATURE); C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/a/Annul.java (targets artifact or enchantment spell)",
      "invalidates_plan": true
     },
     {
      "claim": "Dispel stays in the maindeck since Elves plays zero instants.",
      "truth": "Partially false. Elves' registered 60-card mainboard indeed has zero instants, but Elves' registered 15-card sideboard includes 3 copies of Pulse of Murasa, which is an Instant ({2}{G}: return a creature or land from a graveyard to hand, gain 6 life). So across the registered 75, Elves is not an instant-free deck; they have sideboard access to an instant Dispel could interact with post-board.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Elves.side: \"Pulse of Murasa\": 3); C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PulseOfMurasa.java (CardType.INSTANT)",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Elves.side: \"Pulse of Murasa\": 3); C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PulseOfMurasa.java (CardType.INSTANT)",
      "invalidates_plan": false
     }
    ],
@@ -7359,13 +7359,13 @@
     {
      "claim": "Elves' summary lists no artifacts or enchantments, so Annul has no legal target here and is cut from the plan (and the associated 'Corrected' note that 'the reviewer's catch that Nyxborn Hydra is not part of the given Elves summary' justified dropping Annul).",
      "truth": "False. Elves' registered 60-card mainboard includes 4 copies of Nyxborn Hydra, which is an Enchantment Creature (CardType.ENCHANTMENT, CardType.CREATURE in source, a Bestow aura-creature). Nyxborn Hydra is squarely part of the given Elves summary, so Elves' list is not free of enchantments, and casting Nyxborn Hydra is a legal target for Annul (Annul counters target artifact or enchantment spell). The 'reviewer's catch' the rationale cites as the basis for the correction is itself factually wrong.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Elves.main: \"Nyxborn Hydra\": 4); C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NyxbornHydra.java (CardType.ENCHANTMENT, CardType.CREATURE); C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/a/Annul.java (targets artifact or enchantment spell)",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Elves.main: \"Nyxborn Hydra\": 4); C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NyxbornHydra.java (CardType.ENCHANTMENT, CardType.CREATURE); C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/a/Annul.java (targets artifact or enchantment spell)",
      "invalidates_plan": true
     },
     {
      "claim": "Dispel stays in the maindeck since Elves plays zero instants.",
      "truth": "Partially false. Elves' registered 60-card mainboard indeed has zero instants, but Elves' registered 15-card sideboard includes 3 copies of Pulse of Murasa, which is an Instant ({2}{G}: return a creature or land from a graveyard to hand, gain 6 life). So across the registered 75, Elves is not an instant-free deck; they have sideboard access to an instant Dispel could interact with post-board.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Elves.side: \"Pulse of Murasa\": 3); C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PulseOfMurasa.java (CardType.INSTANT)",
+     "source_file": "C:/Users/user/IdeaProjects/mtg-kernel-pauper-meta-cards/docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json (decks.Elves.side: \"Pulse of Murasa\": 3); C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/p/PulseOfMurasa.java (CardType.INSTANT)",
      "invalidates_plan": false
     }
    ],
@@ -7401,13 +7401,13 @@
     {
      "claim": "\"With no red cards\" (describing Spy's registered list)",
      "truth": "Spy's registered sideboard contains Flaring Pain, cost {1}{R}, CardType.INSTANT (\"Damage can't be prevented this turn\", Flashback {R}) \u2014 a red card is present in the opponent's registered 75.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/FlaringPain.java (card confirmed in Spy.side via registered_nine_75s.json)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/FlaringPain.java (card confirmed in Spy.side via registered_nine_75s.json)",
      "invalidates_plan": true
     },
     {
      "claim": "\"no instants worth holding Dispel up for\" and \"Dispel is dead since Spy's list is entirely sorcery-speed creatures and card selection\"",
      "truth": "Spy's registered sideboard includes Flaring Pain, which is CardType.INSTANT (not a sorcery or creature), giving Dispel (which targets \"instant spell\" via FilterSpell with CardType.INSTANT.getPredicate()) at least one legal target class in the opponent's 75. The claim that the list is \"entirely sorcery-speed creatures and card selection\" is false.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/FlaringPain.java and C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/d/Dispel.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/FlaringPain.java and C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/d/Dispel.java",
      "invalidates_plan": true
     }
    ],
@@ -7443,13 +7443,13 @@
     {
      "claim": "\"With no red cards\" (describing Spy's registered list)",
      "truth": "Spy's registered sideboard contains Flaring Pain, cost {1}{R}, CardType.INSTANT (\"Damage can't be prevented this turn\", Flashback {R}) \u2014 a red card is present in the opponent's registered 75.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/FlaringPain.java (card confirmed in Spy.side via registered_nine_75s.json)",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/FlaringPain.java (card confirmed in Spy.side via registered_nine_75s.json)",
      "invalidates_plan": true
     },
     {
      "claim": "\"no instants worth holding Dispel up for\" and \"Dispel is dead since Spy's list is entirely sorcery-speed creatures and card selection\"",
      "truth": "Spy's registered sideboard includes Flaring Pain, which is CardType.INSTANT (not a sorcery or creature), giving Dispel (which targets \"instant spell\" via FilterSpell with CardType.INSTANT.getPredicate()) at least one legal target class in the opponent's 75. The claim that the list is \"entirely sorcery-speed creatures and card selection\" is false.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/FlaringPain.java and C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/d/Dispel.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/f/FlaringPain.java and C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/d/Dispel.java",
      "invalidates_plan": true
     }
    ],
@@ -7709,13 +7709,13 @@
     {
      "claim": "Bind the Monster locks their best evasive threat, naming Ninja of the Deep Hours as one of the evasive threats it can lock down",
      "truth": "Ninja of the Deep Hours has no evasion ability at all (no flying, unblockable, or menace) per its Mage source \u2014 it only carries NinjutsuAbility and a DealsCombatDamageToAPlayerTriggeredAbility draw trigger. Unlike Spellstutter Sprite and Faerie Miscreant (both of which have FlyingAbility), it is not inherently evasive.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NinjaOfTheDeepHours.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NinjaOfTheDeepHours.java",
      "invalidates_plan": false
     },
     {
      "claim": "Bind the Monster locks Spellstutter Sprite, Ninja of the Deep Hours, or Faerie Miscreant at a trivial one-power life cost",
      "truth": "Bind the Monster deals damage to its own caster equal to the enchanted creature's power. Spellstutter Sprite and Faerie Miscreant are both power 1 (MageInt(1)), matching a one-power cost, but Ninja of the Deep Hours is power 2 (MageInt(2)), so binding it costs 2 life, not one \u2014 the uniform 'one-power' framing is false for that named target.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BindTheMonster.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BindTheMonster.java",
      "invalidates_plan": false
     }
    ],
@@ -7751,13 +7751,13 @@
     {
      "claim": "Bind the Monster locks their best evasive threat, naming Ninja of the Deep Hours as one of the evasive threats it can lock down",
      "truth": "Ninja of the Deep Hours has no evasion ability at all (no flying, unblockable, or menace) per its Mage source \u2014 it only carries NinjutsuAbility and a DealsCombatDamageToAPlayerTriggeredAbility draw trigger. Unlike Spellstutter Sprite and Faerie Miscreant (both of which have FlyingAbility), it is not inherently evasive.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NinjaOfTheDeepHours.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/n/NinjaOfTheDeepHours.java",
      "invalidates_plan": false
     },
     {
      "claim": "Bind the Monster locks Spellstutter Sprite, Ninja of the Deep Hours, or Faerie Miscreant at a trivial one-power life cost",
      "truth": "Bind the Monster deals damage to its own caster equal to the enchanted creature's power. Spellstutter Sprite and Faerie Miscreant are both power 1 (MageInt(1)), matching a one-power cost, but Ninja of the Deep Hours is power 2 (MageInt(2)), so binding it costs 2 life, not one \u2014 the uniform 'one-power' framing is false for that named target.",
-     "source_file": "C:/Users/Jack/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BindTheMonster.java",
+     "source_file": "C:/Users/user/IdeaProjects/mage-cycle4-lead/Mage.Sets/src/mage/cards/b/BindTheMonster.java",
      "invalidates_plan": false
     }
    ],

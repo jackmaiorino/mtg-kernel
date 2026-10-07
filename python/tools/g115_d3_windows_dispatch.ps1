@@ -1,6 +1,6 @@
 param(
     [string]$Manifest,
-    [ValidateSet('jack','haleyspc','runpod')][string]$HostName,
+    [ValidateSet('desktop','computehost','runpod')][string]$HostName,
     [string]$WorkerRoot,
     [string]$ControlRoot,
     [string]$Python,
@@ -105,9 +105,9 @@ if ($launcherName -eq 'g115_d4_timing_launch_v1.py') {
 } elseif ($launcherName -eq 'g115_d4_eval_timing_launch_v1.py') {
     if ($cloudMode -or $plan.schema -ne 'g115-d4-bounded-eval-timing/v1') { throw 'D4 evaluation admits bounded Windows timing only' }
 } elseif ($launcherName -eq 'g115_r14_test_launch_v1.py') {
-    if ($HostName -ne 'jack' -or $plan.schema -ne 'g115-r14-windows-tests/v1') { throw 'R14 tests require the named Jack test owner' }
+    if ($HostName -ne 'desktop' -or $plan.schema -ne 'g115-r14-windows-tests/v1') { throw 'R14 tests require the named desktop test owner' }
 } elseif ($launcherName -eq 'g115_d4_build_launch_v1.py') {
-    if ($HostName -ne 'jack' -or $plan.schema -ne 'g115-d4-windows-build/v1') { throw 'D4 build mode admits the named Jack build launcher only' }
+    if ($HostName -ne 'desktop' -or $plan.schema -ne 'g115-d4-windows-build/v1') { throw 'D4 build mode admits the named desktop build launcher only' }
 } elseif ($launcherName -eq 'g115_d4_replay_timing_launch_v1.py') {
     if ($cloudMode -or $plan.schema -ne 'g115-d4-replay-timing/v1') { throw 'D4 archived replay admits bounded Windows timing only' }
 } elseif ($launcherName -eq 'g115_d4_audit_pipeline_v1.py') {
@@ -115,11 +115,11 @@ if ($launcherName -eq 'g115_d4_timing_launch_v1.py') {
     if ([IO.Path]::GetFileName($plan.observer.path) -ne 'g115_d4_audit_observer_v1.py') { throw 'Audit qualification and production require the named utilization observer' }
     Assert-Hash $plan.observer.path $plan.observer.sha256
 } elseif ($launcherName -eq 'g115_d4_archive_transfer_v1.py') {
-    if ($HostName -ne 'jack' -or $plan.schema -ne 'g115-d4-archive-transfer/v1') { throw 'Archive transfer requires the named Jack WMI sender' }
+    if ($HostName -ne 'desktop' -or $plan.schema -ne 'g115-d4-archive-transfer/v1') { throw 'Archive transfer requires the named desktop WMI sender' }
 } elseif ($launcherName -eq 'g115_d4_audit_verify_v1.py') {
     if ($cloudMode -or $plan.schema -ne 'g115-d4-audit-verification/v1') { throw 'Audit verification requires the bounded Windows verification owner' }
 } elseif ($launcherName -eq 'g115_d4_header_audit_v1.py') {
-    if ($HostName -ne 'jack' -or $plan.schema -ne 'g115-d4-header-audit/v1') { throw 'Header extraction requires the bounded read-only Jack owner' }
+    if ($HostName -ne 'desktop' -or $plan.schema -ne 'g115-d4-header-audit/v1') { throw 'Header extraction requires the bounded read-only desktop owner' }
 } elseif ($launcherName -eq 'g115_line_a_windows_launch_v1.py') {
     if ($cloudMode -or $plan.schema -ne 'g115-line-a-launch/v1') { throw 'Line (a) admits only the named guarded Windows launcher' }
 } elseif ($launcherName -ne 'g115_d3_launch_v1.py') { throw 'Only named supported D3/D4/line (a) launchers are allowed' }

@@ -8,12 +8,12 @@ import argparse,concurrent.futures,copy,hashlib,json,os,pathlib,shutil,signal,su
 P=pathlib.Path
 
 def minimum_reserve(host):
-    # Jack's explicit 32 GiB reservation is workstation-specific. HaleysPC
+    # The maintainer's explicit 32 GiB reservation is workstation-specific. The compute host
     # has 32 GiB total; leave 8 GiB for its OS/user, and stop on pressure.
-    return {'jack':32,'haleyspc':8,'runpod':1}[host]*2**30
+    return {'desktop':32,'computehost':8,'runpod':1}[host]*2**30
 
 def require_no_competing_work(inventory,host):
-    if host in ('jack','haleyspc'):
+    if host in ('desktop','computehost'):
         require(inventory[host]['data'].get('competing_native') == [],
                 'Fresh native-competition census must be present and empty: '+host)
 def require(ok,message):
@@ -66,16 +66,16 @@ def validate(spec):
     require(spec['schema']=='g115-d3-throughput-qualification/v1','Wrong workload kind')
     require(spec['formal_measurement'] is False,'Qualification cannot launch formal measurement')
     require(spec['source_commit']=='cd41885e0ac05586d89bd4b2b7fb1284248689ef','Wrong native source')
-    require(spec['host'] in ('jack','haleyspc','runpod'),'Unknown host')
-    inventory=spec['inventory'];require(set(inventory)=={'jack','haleyspc','runpod'},'Three-host inventory required')
-    require(inventory[spec['host']]['complete'] and 0<=time.time()-inventory['jack']['checked_unix']<=1800,'Fresh placement inventory required')
+    require(spec['host'] in ('desktop','computehost','runpod'),'Unknown host')
+    inventory=spec['inventory'];require(set(inventory)=={'desktop','computehost','runpod'},'Three-host inventory required')
+    require(inventory[spec['host']]['complete'] and 0<=time.time()-inventory['desktop']['checked_unix']<=1800,'Fresh placement inventory required')
     require_no_competing_work(inventory,spec['host'])
     counts=spec['worker_counts'];require(counts[0]==1 and counts==sorted(set(counts)) and len(counts)>=2 and max(counts)<=32,'Serial and increasing parallel comparison required')
     jobs=spec['jobs'];require(len(jobs)==64 and len({j['id'] for j in jobs})==64,'Expected fixed64-case engineering cohort')
     require(sum(j['arm']=='search' for j in jobs)==32 and sum(j['arm']=='baseline' for j in jobs)==32,'Both execution paths required')
     # The secondary CPU's measured serial baseline needs about two hours.
-    # Its unpaid preflight may take four hours; paid and Jack limits stay fixed.
-    group_limit=14400 if spec['host']=='haleyspc' else 9000
+    # Its unpaid preflight may take four hours; paid and desktop limits stay fixed.
+    group_limit=14400 if spec['host']=='computehost' else 9000
     require(0<spec['job_timeout_seconds']<=1800 and 0<spec['group_timeout_seconds']<=group_limit,'Bounded qualification required')
     require(spec['reserve_bytes']>=minimum_reserve(spec['host']),'Memory reserve too small')
     forbidden=set(spec['formal_panel_seeds']);require(len(forbidden)==512,'Shared-panel exclusion missing')
@@ -92,14 +92,14 @@ def resume_prefix(spec,reference,observe_hardware=None):
     The interrupted phase is never reused. Its original attempt stays failed,
     and every match of that phase runs again under the new lease and bound.
     """
-    require(spec['host'] in ('runpod','haleyspc'),'Unsupported phase recovery host')
+    require(spec['host'] in ('runpod','computehost'),'Unsupported phase recovery host')
     previous_path=checked(reference['completion']);previous=read(previous_path)
     old_spec=read(checked(reference['spec']));old_root=previous_path.parent
     require(checked(reference['spec']).resolve()==(old_root/'spec.json').resolve(),
             'Recovered specification must belong to the prior attempt')
     timeout=(spec['host']=='runpod' and previous.get('error_type')=='ValueError' and
              previous.get('error')=='Qualification time bound reached')
-    progress_denied=(spec['host']=='haleyspc' and previous.get('error_type')=='PermissionError' and
+    progress_denied=(spec['host']=='computehost' and previous.get('error_type')=='PermissionError' and
                      previous.get('error','').startswith('[WinError 5] Access is denied:') and
                      "progress.json.partial' -> '" in previous.get('error','') and
                      previous.get('error','').endswith("progress.json'"))

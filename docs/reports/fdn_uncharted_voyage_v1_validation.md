@@ -21,7 +21,7 @@ are appended; older variants and default card identities are preserved.
 
 Functional source: `16fec7c06ce2f7dba3148e760dc18c77320f2011`.
 The owned local checkout is `mtg-kernel-fdn-voyage-codex`; the matching
-HaleysPC checkout uses the same commit. Rust/Cargo 1.94.1, MSVC linker
+compute host checkout uses the same commit. Rust/Cargo 1.94.1, MSVC linker
 14.50.35725.0, two Cargo jobs, no incremental compilation, no debug
 symbols, seed 123 and no GPU. These are small CPU correctness checks.
 
@@ -41,12 +41,12 @@ symbols, seed 123 and no GPU. These are small CPU correctness checks.
 | Production mutation boundaries | Production-003 exited zero: two prior-profile checks, 26 publication/resume boundaries and one profile roundtrip passed. Combined-feature release Clippy passed with warnings denied. |
 | Hosted CI | Pending; no green claim. The new rules suite is included in the Limited CI command. |
 
-Local retained job prefixes are `C:/Users/Jack/fdn-voyage-checks-001`,
+Local retained job prefixes are `C:/Users/user/fdn-voyage-checks-001`,
 `-002`, `-004`, `fdn-voyage-build-001` and `fdn-voyage-external-001`.
 Each has a manifest binding source, toolchains, input/output hashes and
 the guarded launcher's reserve and allocation allowance. Logs stay
 outside Git. The verified release prefix is
-`C:/Users/haley/fdn-voyage-production-003`.
+`C:/Users/hostuser/fdn-voyage-production-003`.
 
 The pinned external binary is 5,821,952 bytes, SHA-256
 `ec0bda5397d0d8c620ff3b44517446315fea0383bb7bdc06937d970a738797d3`.

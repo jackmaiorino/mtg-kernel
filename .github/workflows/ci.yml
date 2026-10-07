@@ -166,7 +166,7 @@ jobs:
             runner: '["self-hosted", "mtg-ci-linux"]'
           - os: windows-2025
             runner: '["self-hosted", "mtg-ci-windows"]'
-    # Self-hosted runners (Jack's PC, HaleysPC) keep a per-group cargo target
+    # Self-hosted runners (the primary desktop, the compute host) keep a per-group cargo target
     # directory between runs, so most builds are incremental, and they avoid
     # GitHub's hosted-runner queue. Pull requests from forks never run on the
     # self-hosted runners.
@@ -190,14 +190,21 @@ jobs:
           if [ -z "${MTG_CI_TARGET_ROOT:-}" ]; then
             printf 'MTG_CI_TARGET_ROOT=%s\n' "$RUNNER_WORKSPACE/../../mtg-ci-target" >> "$GITHUB_ENV"
           fi
+          cargo_bin=
           if ! command -v rustup >/dev/null && [ -x "$HOME/.cargo/bin/rustup" ]; then
-            printf '%s\n' "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          elif [ "$RUNNER_OS" = Windows ] && command -v rustup >/dev/null; then
-            # Bash can reach the Cargo proxies through a PATH entry that
-            # Windows programs cannot (for example one starting with ~), so
-            # Python's subprocess calls failed to find cargo. Publish the
-            # directory bash found as a plain Windows path.
-            cygpath -w "$(dirname "$(command -v rustup)")" >> "$GITHUB_PATH"
+            cargo_bin="$HOME/.cargo/bin"
+          elif [ "$RUNNER_OS" = Windows ] && command -v cargo >/dev/null; then
+            cargo_bin="$(dirname "$(command -v cargo)")"
+          fi
+          if [ -n "$cargo_bin" ]; then
+            # Python's subprocess calls launch cargo through Windows, which
+            # cannot read a bash path such as /c/Users/...; publish a plain
+            # Windows path there.
+            if [ "$RUNNER_OS" = Windows ]; then
+              cargo_bin="$(cygpath -w "$cargo_bin")"
+            fi
+            echo "Adding the Cargo directory to PATH: $cargo_bin"
+            printf '%s\n' "$cargo_bin" >> "$GITHUB_PATH"
           fi
 
       - name: Install pinned Rust in a fresh toolchain directory

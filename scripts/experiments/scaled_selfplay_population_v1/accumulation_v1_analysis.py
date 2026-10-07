@@ -8,7 +8,7 @@ candidate_02_v3.py/candidate_02_v3_analysis.py's own split"). Reuses
 eb_cs_reference_v1.py unmodified (compute_eb_cs_trajectory/gate_decision,
 already gate_class-generic across LARGE-EFFECT/ACCUMULATION -- Section
 1.1's own finding). The one real structural difference from candidate_02:
-reading (b) (CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md Amendment 9, Jack's
+reading (b) (CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md Amendment 9, the maintainer's
 ruling on the sheet's own Section 6.3) is a TWO-ARM, THREE-IDENTITY design
 -- candidate vs a fixed opponent, and anchor/comparator vs the SAME fixed
 opponent -- not candidate_02's own two-identity self-mirror (a single

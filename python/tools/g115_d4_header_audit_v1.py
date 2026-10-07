@@ -1,4 +1,4 @@
-"""Bounded WMI owner for read-only D4 trajectory-header extraction on Jack."""
+"""Bounded WMI owner for read-only D4 trajectory-header extraction on the maintainer."""
 import argparse
 import gzip
 import json
@@ -14,7 +14,7 @@ from windows_owned_child_policy_v1 import configure_owned_child
 
 
 def admission(plan, host):
-    require(os.name == 'nt' and host == 'jack', 'Header extraction is Jack Windows only')
+    require(os.name == 'nt' and host == 'desktop', 'Header extraction is the maintainer Windows only')
     require(plan['schema'] == 'g115-d4-header-audit/v1', 'Wrong header schema')
     require(pinned(plan['documents']['launcher']) == Path(__file__).resolve(), 'Wrong owner')
     pinned(plan['transport']['dispatcher'])
@@ -28,9 +28,9 @@ def admission(plan, host):
     failure = json.loads(pinned(plan['retained_failure']).read_bytes())
     require(not failure['complete'] and failure['rows'] == plan['retained_rows'], 'Wrong partial receipt')
     jobs = [(r['endpoint'], r['update'], s, ref)
-            for r in json.loads(index.read_bytes()) if r['host'] == 'jack'
+            for r in json.loads(index.read_bytes()) if r['host'] == 'desktop'
             for s, ref in enumerate(r['trajectories'])]
-    require(len(jobs) == 24000, 'Expected the fixed 24,000 Jack game slots')
+    require(len(jobs) == 24000, 'Expected the fixed 24,000 desktop game slots')
     count = 0
     with gzip.open(retained, 'rt', encoding='utf-8') as stream:
         for line in stream:
@@ -69,7 +69,7 @@ def main():
     try:
         with (root/'stdout.txt').open('w') as out, (root/'stderr.txt').open('w') as err:
             child = subprocess.Popen([sys.executable, '-B', str(extractor), '--index', str(index),
-                '--index-sha256', plan['index']['sha256'], '--host', 'jack', '--output', str(root/'headers'),
+                '--index-sha256', plan['index']['sha256'], '--host', 'desktop', '--output', str(root/'headers'),
                 '--retained', str(retained), '--retained-sha256', plan['retained']['sha256'],
                 '--retained-rows', str(plan['retained_rows']), '--seconds', str(plan['total_seconds']-15)],
                 stdout=out, stderr=err, creationflags=subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW)

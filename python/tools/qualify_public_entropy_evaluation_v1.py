@@ -82,7 +82,7 @@ def run(root, host, transfer_binary):
     def one(job):
         return execute(root, job["label"], binary, checked(job["request"]))
     folders = {}
-    if host == "jack":
+    if host == "desktop":
         first = one(jobs[0])
         assert first["seconds"] < 20, "cheap scorer timing exceeded envelope"
         with ThreadPoolExecutor(max_workers=4) as pool:
@@ -149,7 +149,7 @@ def run(root, host, transfer_binary):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
-    parser.add_argument("--host", choices=["jack", "haleyspc"], default="jack")
+    parser.add_argument("--host", choices=["desktop", "computehost"], default="desktop")
     parser.add_argument("--transfer-binary", type=Path, required=True)
     if not __debug__:
         raise RuntimeError("run with Python validation enabled")

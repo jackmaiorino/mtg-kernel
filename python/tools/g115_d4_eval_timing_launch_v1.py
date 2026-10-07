@@ -42,7 +42,7 @@ def write(path, value):
 
 
 def validate_limits(plan, host):
-    if plan.get('schema') != 'g115-d4-bounded-eval-timing/v1' or host not in ('jack', 'haleyspc'):
+    if plan.get('schema') != 'g115-d4-bounded-eval-timing/v1' or host not in ('desktop', 'computehost'):
         raise ValueError('bounded Windows evaluation timing only')
     if plan.get('workers') != [1, 4, 8] or plan.get('job_seconds') != 180 or plan.get('total_seconds') != 3600:
         raise ValueError('fixed scaling matrix and time limits required')
@@ -74,7 +74,7 @@ def admission(plan, host):
     place = plan['hosts'][host]
     if place['computer_name'].lower() != os.environ.get('COMPUTERNAME', '').lower():
         raise ValueError('wrong host identity')
-    if place['reserve_memory'] < (32 if host == 'jack' else 8)*1024**3 or place['reserve_disk'] < 60*1024**3:
+    if place['reserve_memory'] < (32 if host == 'desktop' else 8)*1024**3 or place['reserve_disk'] < 60*1024**3:
         raise ValueError('reserve lowered')
     root = Path(place['worker_root'])
     if not root.is_absolute() or root.exists() or not root.parent.is_dir():
@@ -220,7 +220,7 @@ def run(plan, workload, configs, place):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--manifest', type=Path, required=True)
-    parser.add_argument('--host', choices=['jack', 'haleyspc'], required=True)
+    parser.add_argument('--host', choices=['desktop', 'computehost'], required=True)
     parser.add_argument('--root', type=Path)
     parser.add_argument('--check-only', action='store_true')
     args = parser.parse_args()

@@ -26,22 +26,22 @@ Checkpoints publish after every update with source, dataset, arm, backend/device
 
 The supported Python launcher validates its pinned plan, helper dependencies, replay and throughput reports, source inputs and ownership. The native launcher requires compatible, fresh qualification for the substantial 32-update request. This is enforcement in these launch paths, not an operating-system restriction or a claim that every legacy launcher is guarded.
 
-Jack GPU 1 passed the native numerical checks, CPU comparison envelope and fresh GPU checkpoint replay. Haley's GPU remained ineligible: an initial missing-NVRTC problem was repaired using two verified DLLs in a task-local directory and process-local PATH, after which the native device-failure check still failed. Both attempts are preserved. No global CUDA installation was changed. The residual device failure is unresolved and is not numerical qualification.
+The maintainer GPU 1 passed the native numerical checks, CPU comparison envelope and fresh GPU checkpoint replay. The compute host's GPU remained ineligible: an initial missing-NVRTC problem was repaired using two verified DLLs in a task-local directory and process-local PATH, after which the native device-failure check still failed. Both attempts are preserved. No global CUDA installation was changed. The residual device failure is unresolved and is not numerical qualification.
 
 ## Allocation and costs
 
-The fastest qualified allocation was two concurrent independent arms on Jack's SSD, one backward worker per arm. Increasing backward workers did not improve completed workload time. The qualification included Jack and Haley CPU serial/parallel placements, splitting arms across both PCs, and the eligible GPUs. The existing authenticated RunPod availability check returned 403; no paid allocation was made.
+The fastest qualified allocation was two concurrent independent arms on the maintainer's SSD, one backward worker per arm. Increasing backward workers did not improve completed workload time. The qualification included the desktop and the compute host CPU serial/parallel placements, splitting arms across both PCs, and the eligible GPUs. The existing authenticated RunPod availability check returned 403; no paid allocation was made.
 
 | Qualified placement | Forecast for both 32-update arms, including staging/recovery |
 | --- | ---: |
-| Jack CPU, one arm at a time, one backward worker | 23.84 s |
-| Jack CPU, one arm at a time, four backward workers | 23.43 s |
-| Jack CPU, two concurrent arms, one backward worker each | 18.31 s |
-| Haley CPU, two concurrent arms | 78.69 s |
+| The maintainer CPU, one arm at a time, one backward worker | 23.84 s |
+| The maintainer CPU, one arm at a time, four backward workers | 23.43 s |
+| The maintainer CPU, two concurrent arms, one backward worker each | 18.31 s |
+| The compute host CPU, two concurrent arms | 78.69 s |
 | One CPU arm on each PC | 69.68 s |
-| Jack GPU 1 | 38.63 s |
+| The maintainer GPU 1 | 38.63 s |
 
-Forecasts use a short two-update qualification and are uncertain. `allocation-check.json` amortizes measured GPU cold start once per job; the original more conservative forecast is preserved and the selected allocation is unchanged. Haley GPU is excluded after its failed repair qualification.
+Forecasts use a short two-update qualification and are uncertain. `allocation-check.json` amortizes measured GPU cold start once per job; the original more conservative forecast is preserved and the selected allocation is unchanged. The compute host GPU is excluded after its failed repair qualification.
 
 Actual formal stages were 2.884 s staging, 7.385 s execution and 4.231 s recovery, totaling 14.499 s. This excludes owner inventory and other controller overhead. Native training loops were 6.746 s and 6.696 s concurrently. The new binary build took 142.34 s; qualification and troubleshooting cost substantially more than the tiny formal training run. Reuse compatible qualification rather than repeating the grid without a material change. There were 64 updates and 2,048 training-position presentations in total.
 
@@ -51,8 +51,8 @@ Evidence root: `E:/mtg-meta-recovery-20260921/public-terminal-teacher-campaign-0
 
 Correct final state SHA256: `d2f87a3d7c3e9294789a8690385234bfe10468019a45243fdba2c5e3e7f5229a`. Rotated final state SHA256: `e7a9ccff6ef2788d3c089504e8709b27a9eed365daa7c8822a9b7e08a7de0822`. Both endpoints are `checkpoint-032.json` in their respective recovered output directories. Binary SHA256: `026477c89145dae678ddfb0fe9ee89cb0c81218239c9314b63c944bda2d1d993`.
 
-Compute evidence: `public-terminal-teacher-compute-001/choice.json`, `allocation-check.json`, and `engineering/completion.json`. Haley repair evidence: `public-terminal-teacher-cuda-recovery-001/completion.json`. Final owner inventory at 18:06 UTC shows no active owned native jobs on either PC, with seven existing Jack human sessions preserved.
+Compute evidence: `public-terminal-teacher-compute-001/choice.json`, `allocation-check.json`, and `engineering/completion.json`. The compute host repair evidence: `public-terminal-teacher-cuda-recovery-001/completion.json`. Final owner inventory at 18:06 UTC shows no active owned native jobs on either PC, with seven existing desktop human sessions preserved.
 
-The known independent Fable consultation failed HTTP429 with zero source reads and reset September 22 at 07:00 EDT. It was not retried and provides no endorsement. Work proceeded within Jack's existing local authority; objective design, narrow generalization and the implementation retain that review gap. CP7 outcomes were excluded.
+The known independent Fable consultation failed HTTP429 with zero source reads and reset September 22 at 07:00 EDT. It was not retried and provides no endorsement. Work proceeded within the maintainer's existing local authority; objective design, narrow generalization and the implementation retain that review gap. CP7 outcomes were excluded.
 
 Next work should investigate training-side retention and objective behavior without reusing this reserved set for selection. Any successor requires a separately frozen question and fresh evaluation data; this failed gate does not authorize automatic whole-match advancement. The original g115 human preview remains unchanged. Human/league competence is still unproven, and the heartbeat remains paused.

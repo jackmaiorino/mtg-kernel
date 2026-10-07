@@ -54,7 +54,7 @@ def save(path, value):
 
 
 def limits(plan, host, commands):
-    require(plan['schema'] == 'g115-d4-replay-timing/v1' and host in ('jack', 'haleyspc'),
+    require(plan['schema'] == 'g115-d4-replay-timing/v1' and host in ('desktop', 'computehost'),
             'Named Windows replay timing only')
     require(plan['matrix'] == MATRIX and plan['job_seconds'] == 120
             and plan['total_seconds'] == 900, 'Fixed timing matrix and bounds required')
@@ -116,10 +116,10 @@ def admission(plan, host):
         pins(command)
     requested_root = Path(plan['worker_root'])
     root = requested_root.resolve()
-    expected_drive = 'e:' if host == 'jack' else 'c:'
+    expected_drive = 'e:' if host == 'desktop' else 'c:'
     require(requested_root.is_absolute() and root.drive.lower() == expected_drive and not root.exists()
             and root.parent.is_dir(), 'Fresh host-specific evidence drive root required')
-    reserve = (32 if host == 'jack' else 8)*GIB
+    reserve = (32 if host == 'desktop' else 8)*GIB
     live = inventory(root, reserve, plan['output_cap_bytes'])
     require(live['computer_name'].lower() == plan['computer_name'].lower(), 'Wrong computer')
     return commands, binary, root, reserve, live

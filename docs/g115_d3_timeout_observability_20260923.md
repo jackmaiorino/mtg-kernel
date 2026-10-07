@@ -13,14 +13,14 @@ Build completed in186.944s with four BelowNormal compiler jobs and the reserved 
 
 The search case was selected as the shortest completed search by retained execution time, without inspecting outcomes. These are finite correctness controls, not a new strength panel or a representative scaling benchmark. Both conditions also reproduce the original formal stores after only the previously declared V3 build-envelope provenance normalization. All478 progress events pair correctly across239 decisions: matching game/step/actor/physical-id/substep, legal selected index and no returned error. Logging-off emits none of those events. Four recovered native stores and all events were independently rechecked locally. These repetitions do not create independent strength samples.
 
-Initial remote admission refused competing native work before creating a run directory. That refusal remains at `E:/mtg-g115-lineage-20260923/d3-progress-haley-controller-001/`. Fresh three-host inventory003 then found Haley clear and Jack occupied, with corrected-User-Agent RunPod HTTP200/zeroPods. The unchanged four-execution check ran in fresh remote `progress-diagnostic-002`, CPU only, BelowNormal, eight-GiB reserve, 60-second per-execution bound, through `check-d3-progress-diagnostic.py`. No paid allocation or formal launch occurred.
+Initial remote admission refused competing native work before creating a run directory. That refusal remains at `E:/mtg-g115-lineage-20260923/d3-progress-computehost-controller-001/`. Fresh three-host inventory003 then found compute host clear and the maintainer's occupied, with corrected-User-Agent RunPod HTTP200/zeroPods. The unchanged four-execution check ran in fresh remote `progress-diagnostic-002`, CPU only, BelowNormal, eight-GiB reserve, 60-second per-execution bound, through `check-d3-progress-diagnostic.py`. No paid allocation or formal launch occurred.
 
 Evidence under `E:/mtg-g115-lineage-20260923/`:
 
 - `d3-progress-diagnostic-build-001/`: build/source/toolchain receipts.
 - `d3-progress-diagnostic-inventory-003.json`: launch inventory.
-- `d3-progress-haley-controller-002/recovery.zip`: SHA `d8d330ddb5b9eb63abf50720ffc787ce14229f8151f71c49e551cd7bc921f311`.
-- `d3-progress-haley-controller-002/recovered/run/completion.json`: SHA `3776b45da6b6dc326eb84d92049d98ec6af7e131cea32b5755916140fb3abaee`.
+- `d3-progress-computehost-controller-002/recovery.zip`: SHA `d8d330ddb5b9eb63abf50720ffc787ce14229f8151f71c49e551cd7bc921f311`.
+- `d3-progress-computehost-controller-002/recovered/run/completion.json`: SHA `3776b45da6b6dc326eb84d92049d98ec6af7e131cea32b5755916140fb3abaee`.
 - `d3-progress-diagnostic-verification-001.json`: independent verification of four stores and478 events.
 
 Next required evidence is an instrumented diagnosis of the retained timeout case under an explicit guarded compute plan. No larger replay, changed1,800s limit, formal restart, ADVANCE/NO-ADVANCE or D4 selection is authorized by this correctness report. The existing D3 result review and any concrete design amendment still govern consequential decisions. The invalid attempt and all earlier failures remain preserved.

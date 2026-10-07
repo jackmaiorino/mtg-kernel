@@ -6,7 +6,7 @@ New code: python/tools/evaluation_throughput_v2.py and qualify_evaluation_recove
 
 Qualification E:/mtg-meta-recovery-20260921/evaluation-recovery-qualification-001 executed288 engineering BO3,48 unique already-measured cases repeated across1/8/16 workers twice, reversing the parallel order in the second repetition. All240 replay comparisons matched byte-for-byte. It exported the unchanged completed full-panel corpus twice,3412 files each, with zero mismatches. No new training or scientific outcome measurement was performed.
 
-| Haley workers | Median execution of48 cases | Revised full-panel estimate |
+| The compute host workers | Median execution of48 cases | Revised full-panel estimate |
 |---|---:|---:|
 | 1 | 63.489s | 4094.960s |
 | 8 | 15.879s | 1047.794s |
@@ -18,6 +18,6 @@ The first prototype bound calibration too tightly to the already-completed targe
 
 The supported new full-panel entry point is evaluation_throughput_v2.dispatch_qualified. It checks persisted qualification, fresh owners, newly available hosts, output volume and the plan's projection ceiling before dispatch. Historical frozen runners retain v1 semantics. Future runner integrations must call this entry point; arbitrary raw executable launches are not globally prevented by instruction files.
 
-Current qualification excluded Jack because Kimi's native tests were live, and RunPod because authenticated inventory was403 with no new paid authority. The bounded qualification CLI presently measures the idle-Haley case and rejects if Jack becomes eligible, requiring local/storage and combined allocations to be added before launch. The generic guard accepts other placements only with their own full measured evidence. This is not a permanent reservation of Jack or a claim of global hardware optimality.
+Current qualification excluded desktop because Kimi's native tests were live, and RunPod because authenticated inventory was403 with no new paid authority. The bounded qualification CLI presently measures the idle-ComputeHost case and rejects if the maintainer's becomes eligible, requiring local/storage and combined allocations to be added before launch. The generic guard accepts other placements only with their own full measured evidence. This is not a permanent reservation of the maintainer's or a claim of global hardware optimality.
 
-Remaining limitation: native sample execution still includes process/model startup, so scaling it by64 is conservative for larger batches. No second full panel was rerun to advertise a speedup. Fine-grained deterministic shards and startup separation remain follow-up work. Fable's known zero-read429 remains a review gap through September22 07:00EDT, not endorsement. This bounded correction proceeded under Jack's useful-compute and continuing research authority.
+Remaining limitation: native sample execution still includes process/model startup, so scaling it by64 is conservative for larger batches. No second full panel was rerun to advertise a speedup. Fine-grained deterministic shards and startup separation remain follow-up work. Fable's known zero-read429 remains a review gap through September22 07:00EDT, not endorsement. This bounded correction proceeded under the maintainer's useful-compute and continuing research authority.

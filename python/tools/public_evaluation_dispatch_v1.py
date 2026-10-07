@@ -22,8 +22,8 @@ import subprocess
 import time
 import zipfile
 
-REMOTE = "haley@100.71.75.65"
-HOSTS = {"jack": "DESKTOP-DJ1C40R", "haleyspc": "HALEYSPC"}
+REMOTE = os.environ.get('COMPUTE_HOST_SSH', 'compute-host')
+HOSTS = {"desktop": "DESKTOP-DJ1C40R", "computehost": "COMPUTEHOST"}
 
 
 def read(path): return json.loads(Path(path).read_bytes())
@@ -52,7 +52,7 @@ $cpu=Get-CimInstance Win32_Processor
 $os=Get-CimInstance Win32_OperatingSystem
 $active=@(Get-CimInstance Win32_Process | Where-Object {$_.Name -match '^trainer\.exe$|public_feature_training|public-evaluator|cargo|rustc'} | Select-Object Name,ProcessId,CreationDate,CommandLine)
 [pscustomobject]@{at=(Get-Date).ToUniversalTime().ToString('o');host=$env:COMPUTERNAME;cpu=@($cpu | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors);free_memory_kib=$os.FreePhysicalMemory;active=$active;disks=@(Get-Disk | Select-Object Number,FriendlyName,SerialNumber,BusType,Size);volumes=@(Get-Volume | Where-Object {$_.DriveLetter -in @('C','D','E')} | Select-Object DriveLetter,FileSystem,Size,SizeRemaining);partitions=@(Get-Partition | Where-Object {$_.DriveLetter -in @('C','D','E')} | Select-Object DriveLetter,DiskNumber);gpu=@(& nvidia-smi --query-gpu=index,uuid,utilization.gpu,memory.used --format=csv,noheader,nounits)} | ConvertTo-Json -Depth 5'''
-    if host == "haleyspc":
+    if host == "computehost":
         result = json.loads(ssh(script))
     else:
         encoded = base64.b64encode(script.encode("utf-16le")).decode()
@@ -167,8 +167,8 @@ def dispatch(root, label, binary, jobs, allocation, remote, group_wall_seconds=9
         _require((volume["SizeRemaining"] > 10*1024**3))
         canonical = destination/host
         canonical.mkdir()
-        native = Path(f"{drive}:/mtg-state-prevention-eval/{root.name}/{label}") if host == "jack" else Path(remote["native_root"])/label
-        if host == "jack":
+        native = Path(f"{drive}:/mtg-state-prevention-eval/{root.name}/{label}") if host == "desktop" else Path(remote["native_root"])/label
+        if host == "desktop":
             native.mkdir(parents=True)
             shutil.copy2(checked(binary), native/"public-evaluator.exe")
         else:
@@ -185,14 +185,14 @@ def dispatch(root, label, binary, jobs, allocation, remote, group_wall_seconds=9
             native_folder = native/"jobs"/identifier
             request = dict(item["command"], output_directory=str(native_folder/"outputs"))
             write(folder/"request.json", request)
-            if host == "jack":
+            if host == "desktop":
                 native_folder.mkdir(parents=True)
                 shutil.copy2(folder/"request.json", native_folder/"request.json")
             spec["jobs"].append(dict(id=identifier, native_directory=str(native_folder),
                 request=pin(folder/"request.json"),
                 native_request=dict(path=str(native_folder/"request.json"), sha256=pin(folder/"request.json")["sha256"])))
         write(canonical/"spec.json", spec)
-        if host == "jack":
+        if host == "desktop":
             shutil.copy2(canonical/"spec.json", native/"spec.json")
         else:
             bundle = canonical/"requests.zip"
@@ -206,7 +206,7 @@ def dispatch(root, label, binary, jobs, allocation, remote, group_wall_seconds=9
     execute_start = time.monotonic()
     def run_host(host):
         canonical, native, spec = staged[host]
-        if host == "jack":
+        if host == "desktop":
             worker_group(native/"spec.json")
         else:
             script = f'''$created=@()
@@ -233,7 +233,7 @@ try {{
     for host in results:
         canonical, native, spec = staged[host]
         recovered = canonical/"recovered"
-        if host == "jack":
+        if host == "desktop":
             shutil.copytree(native, recovered)
             native_hashes = {p.relative_to(native).as_posix():pin(p)["sha256"] for p in native.rglob("*") if p.is_file()}
             _require((all(pin(recovered/name)["sha256"] == digest for name,digest in native_hashes.items())))

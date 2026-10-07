@@ -32,7 +32,7 @@ def require_choice(choice_path, plan_pin, binary):
     checked(binary)
     _require((choice["binary"] == binary))
     for dependency in choice["dependencies"]: checked(dependency)
-    _require((set(choice["inventory"]) == {"jack", "haleyspc", "runpod"}))
+    _require((set(choice["inventory"]) == {"desktop", "computehost", "runpod"}))
     for host, item in choice["inventory"].items():
         when = datetime.fromisoformat(item["checked_at"])
         _require((when.tzinfo and 0 <= (datetime.now(timezone.utc)-when).total_seconds() < 86400))
@@ -114,7 +114,7 @@ def require_choice(choice_path, plan_pin, binary):
                 ratio = scale*sampled_bytes/reference_match_bytes[host]
                 _require((ratio <= choice['recovery_projection']['max_byte_ratio']), lambda: ("target output estimate exceeds declared recovery projection envelope"))
                 byte_ratio = max(byte_ratio, ratio)
-        remote_setup = choice["remote_setup_seconds"] if "haleyspc" in allocation else 0
+        remote_setup = choice["remote_setup_seconds"] if "computehost" in allocation else 0
         _require((math.isfinite(remote_setup) and remote_setup >= 0))
         native_projection = statistics.median(scale*r["execution_seconds"] for _,r,scale in runs)
         # Full-output recovery is measured directly, not extrapolated per match.
@@ -145,7 +145,7 @@ def dispatch_qualified(root, label, choice_path, plan_pin, remote, group_wall_se
     choice = read(choice_path)
     _require((choice.get("selected")), lambda: ("persist qualification before launch"))
     selected = require_choice(choice_path, plan_pin, plan["binary"])
-    fresh = {host:inventory(host) for host in ("jack", "haleyspc")}
+    fresh = {host:inventory(host) for host in ("desktop", "computehost")}
     _require((all(s["active"] or choice["inventory"][h]["eligible"] for h,s in fresh.items())), lambda: ("availability expanded; qualify new eligible capacity"))
     _require((all(not fresh[h]["active"] for h in selected["allocation"])), lambda: ("preserve active owners"))
     _require((selected["projected_seconds"] <= plan["projection_cap_seconds"]))

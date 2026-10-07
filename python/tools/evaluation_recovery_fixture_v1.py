@@ -49,7 +49,7 @@ def host_hashes(source_hashes, job_ids, host):
         assert not Path(name).is_absolute() and '..' not in parts
         if parts[0] == 'jobs':
             if parts[1] not in job_ids: continue
-        elif name == 'requests.zip' and host == 'jack':
+        elif name == 'requests.zip' and host == 'desktop':
             continue  # The actual local dispatcher never creates this file.
         result[name] = digest
     assert {Path(n).parts[1] for n in result if n.startswith('jobs/')} == set(job_ids)
@@ -141,13 +141,13 @@ def validate_calibration(calibration_pin, allocation, target_plan, binary):
             assert evidence['stage_seconds'] and all(math.isfinite(v) and v >= 0 for v in evidence['stage_seconds'].values())
             assert sum(evidence['stage_seconds'].values()) <= evidence['seconds'] + .01
             recovered = Path(evidence['recovered_directory'])
-            allowed = set(expected) | ({'export-manifest.json'} if host == 'haleyspc' else set())
+            allowed = set(expected) | ({'export-manifest.json'} if host == 'computehost' else set())
             assert {p.relative_to(recovered).as_posix() for p in recovered.rglob('*') if p.is_file()} == allowed
             for name, digest in expected.items(): assert pin(recovered/name)['sha256'] == digest
             size = sum((recovered/n).stat().st_size for n in expected)
             match_bytes = sum((recovered/n).stat().st_size for n in expected if '/outputs/match-' in n)
             assert evidence['uncompressed_bytes'] == size and evidence['match_bytes'] == match_bytes
-            if host == 'haleyspc':
+            if host == 'computehost':
                 checked(evidence['archive'])
                 assert read(recovered/'export-manifest.json') == expected
                 with zipfile.ZipFile(evidence['archive']['path']) as archive:

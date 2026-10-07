@@ -30,7 +30,7 @@ later; source departure and pending-choice restore; and duplicate Scion
 legend choices. Include focused XMage counterparts, catalog/default
 compatibility, prior gameplay, external natural-terminal replay and CI.
 
-The initial nine gameplay checks passed on HaleysPC in
+The initial nine gameplay checks passed on the compute host in
 `fdn-kiora-checks-002`, including pending discard, optional token and legend
 restore. The first runtime attempt exposed a missing attack marker: the
 engine emitted attack events only for its older attack condition. The

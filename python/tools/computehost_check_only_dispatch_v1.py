@@ -1,13 +1,13 @@
-"""HaleysPC check-only dispatch (version 1): one remote process that acquires the host reservation and starts the run.
+"""The compute host check-only dispatch (version 1): one remote process that acquires the host reservation and starts the run.
 
-Runs on HaleysPC over SSH. It checks the staged plan's pins (the runner, the reservation helper, this script and
+Runs on the compute host over SSH. It checks the staged plan's pins (the runner, the reservation helper, this script and
 the bundle) and calls host_reservation_v1.dispatch in this process: acquire, the busy refusal, WMI creation of the
-supervisor running the runner (supervise --token T -- python -u haley_check_only_runner_v1.py ...), and the
+supervisor running the runner (supervise --token T -- python -u computehost_check_only_runner_v1.py ...), and the
 handoff. Acquiring in the dispatching process keeps it the lock's owner until the supervisor adopts (CLAUDE #574).
 It prints the dispatch result as JSON; --status prints the helper's status for a token instead.
 
-Usage: python haley_check_only_dispatch_v1.py --plan PLAN --python PYTHON
-       python haley_check_only_dispatch_v1.py --plan PLAN --python PYTHON --status TOKEN
+Usage: python computehost_check_only_dispatch_v1.py --plan PLAN --python PYTHON
+       python computehost_check_only_dispatch_v1.py --plan PLAN --python PYTHON --status TOKEN
 """
 import argparse
 import hashlib
@@ -39,12 +39,12 @@ def load_helper(path):
 
 def owner_command(plan, plan_path, python):
     return [str(PureWindowsPath(python)), '-u', str(PureWindowsPath(plan['files']['launcher']['path'])),
-            '--manifest', str(PureWindowsPath(plan_path)), '--host', 'haleyspc',
+            '--manifest', str(PureWindowsPath(plan_path)), '--host', 'computehost',
             '--root', str(PureWindowsPath(plan['worker_root']))]
 
 
 def check_pins(plan, plan_path, script_path):
-    require(plan.get('schema') == 'haley-check-only-plan/v1' and plan.get('host') == 'haleyspc', 'plan schema or host')
+    require(plan.get('schema') == 'computehost-check-only-plan/v1' and plan.get('host') == 'computehost', 'plan schema or host')
     keys = ('launcher', 'helper', 'dispatch', 'bundle')
     for key in keys:
         path = plan['files'][key]['path']
@@ -60,7 +60,7 @@ def dispatch(plan, plan_path, python, helper):
     return helper.dispatch(plan['lane'], plan['run_id'], plan['release_condition'],
                            owner_command(plan, plan_path, python), cwd=str(PureWindowsPath(ROOT)),
                            busy_pattern=BUSY_PATTERN,
-                           transport_record={'kind': 'haley-check-only-v1', 'plan_sha256': sha256(plan_path),
+                           transport_record={'kind': 'computehost-check-only-v1', 'plan_sha256': sha256(plan_path),
                                              'dispatch_sha256': plan['files']['dispatch']['sha256']},
                            python=str(PureWindowsPath(python)))
 

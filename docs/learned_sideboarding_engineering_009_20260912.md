@@ -20,9 +20,9 @@ Independent review required nonmonotonic allocation tests, safe duplicate hand c
 
 The real reference inputs cover 65 learner groups and 72 substeps: Affinity as P0 against Elves, and Rally as P1 against Terror. Five groups have multiple substeps; 18 rows have empty edges and none has empty action references. The latter case, the remaining learner decks and real Ward coverage still need complementary qualification inputs. See [input coverage](E:/mtg-kernel-learned-sideboarding-evidence/engineering-009/reference-input-coverage.json).
 
-This adapter has no JSONL/console entrypoint, incremental BO3 controller, executable mulligan/concession path or human game record. It does not make games against Jack ready. Ordinary duplicate hands must work; unresolved ambiguous graph/semantic cases remain explicit unsupported prompts. Keep human feedback separate from later frozen evaluation.
+This adapter has no JSONL/console entrypoint, incremental BO3 controller, executable mulligan/concession path or human game record. It does not make games against the maintainer's ready. Ordinary duplicate hands must work; unresolved ambiguous graph/semantic cases remain explicit unsupported prompts. Keep human feedback separate from later frozen evaluation.
 
-Remaining unsupported meanings include non-mana activated abilities, spell modes, generic effect options/numbers, non-Ward Boolean choices, spell-copy payment, trigger ordering, dynamic mana amounts, some complex costs and ambiguous duplicate reference graphs. Supporting these and the full human match lifecycle is necessary before games against Jack. The completed decision adapter is an engineering component, not a completed campaign requirement.
+Remaining unsupported meanings include non-mana activated abilities, spell modes, generic effect options/numbers, non-Ward Boolean choices, spell-copy payment, trigger ordering, dynamic mana amounts, some complex costs and ambiguous duplicate reference graphs. Supporting these and the full human match lifecycle is necessary before games against the maintainer. The completed decision adapter is an engineering component, not a completed campaign requirement.
 
 ## Review and resource boundary
 

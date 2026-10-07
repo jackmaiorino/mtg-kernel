@@ -244,7 +244,7 @@ pub const MODEL_GUIDED_SEARCH_CHECKPOINT_GENERATION_MAX_V1: u64 = (1_u64 << 63) 
 /// FEASIBILITY only (`LEAD_TEST_TIME_SEARCH_DESIGN_SKETCH_V2.md` Section 5,
 /// stages S0 and S1: "no games" and "CP7-free" respectively). They
 /// authorize no CP7 panel, no S2 search-gain screen, and no formal
-/// measurement of any kind. The S2 and S3 blocks are Jack's own
+/// measurement of any kind. The S2 and S3 blocks are the maintainer's own
 /// launch-parameter decision and are deliberately NOT assigned here, in the
 /// same discipline `KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1`
 /// documents for its own placeholder. The owner law that formal seed
