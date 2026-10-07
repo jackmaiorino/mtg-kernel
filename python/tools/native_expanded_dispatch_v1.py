@@ -25,7 +25,8 @@ from public_training_dispatch_v2 import checked, pin, read, write, DISK_RESERVE_
 
 SCHEMA = "native-expanded-cpu-dispatch/v1"
 CHOICE = "native-expanded-cpu-allocation/v1"
-HOSTS = {"desktop": "DESKTOP-DJ1C40R", "computehost": "COMPUTEHOST"}
+# The compute host's machine name is site configuration, not a public constant.
+HOSTS = {"desktop": "DESKTOP-DJ1C40R", "computehost": os.environ.get("COMPUTE_HOST_NAME", "COMPUTEHOST").upper()}
 CAP = 192 * 1024**3
 
 
