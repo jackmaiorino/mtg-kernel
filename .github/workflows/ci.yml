@@ -152,14 +152,15 @@ jobs:
         os:
           - ubuntu-24.04
           - windows-2025
+        # Slowest groups first: runners take matrix jobs in this order.
         group:
-          - workspace
           - limited
-          - limited-store
+          - workspace
+          - cuda
+          - native-store
           - trace
           - saved-input
-          - native-store
-          - cuda
+          - limited-store
         include:
           - os: ubuntu-24.04
             runner: '["self-hosted", "mtg-ci-linux"]'
