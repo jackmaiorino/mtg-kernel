@@ -242,9 +242,7 @@ def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
     if entry["attempts"]:
         last = entry["attempts"][-1]
         if last.get("outcome") == "complete":
-            # The driver stopped after the block completed: finish from its outputs.
-            for name in (f"{run}-b{block:02d}-episodes.jsonl", f"{run}-b{block:02d}-exposure.json"):
-                (campaign.exposure / name).unlink(missing_ok=True)
+            # The driver stopped after the block completed: finish from the last saved step.
             return finish_block(campaign, run, block, state, entry, last)
         if "outcome" not in last:
             # The driver (and with it the reservation's whole job) ended mid-block.
@@ -305,39 +303,59 @@ def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
 
 
 def finish_block(campaign: Campaign, run: str, block: int, state: dict, entry: dict, record: dict) -> str:
+    """Collect, keep the block-end checkpoint, retain and prune. Each step is
+    saved before the next, so a restart resumes after the last completed step."""
     native = Path(record["native"])
-    summary = collector.collect(run, block, native, Path(campaign.raw["decks"]), campaign.exposure)
-    entry["exposure"] = {"verdict": summary["verdict"],
-                         "summary": pin(campaign.exposure / f"{run}-b{block:02d}-exposure.json")}
-    completion = json.loads((native / "completion.json").read_text(encoding="utf-8"))
-    final = json.loads(Path(completion["iterations"][-1]["path"]).read_text(encoding="utf-8"))
-    update = json.loads(Path(final["update"]["path"]).read_text(encoding="utf-8"))
-    checkpoint = Path(update["checkpoint"]["path"])
-    if not sha256_file(checkpoint) == update["checkpoint"]["sha256"] == summary["final_checkpoint_sha256"]:
-        raise RuntimeError("final checkpoint does not match its update record")
-    kept = campaign.checkpoints / run / f"block-{block:02d}.json"
-    kept.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(checkpoint, kept)
-    entry["final_checkpoint"] = {"path": str(kept), "sha256": sha256_file(kept)}
-    if entry["final_checkpoint"]["sha256"] != update["checkpoint"]["sha256"]:
-        raise RuntimeError("retained checkpoint copy differs")
-    entry["final_adam_step"] = update["adam_step"]
-    if block == 1:
+    if "exposure" not in entry:
+        for name in (f"{run}-b{block:02d}-episodes.jsonl", f"{run}-b{block:02d}-exposure.json"):
+            (campaign.exposure / name).unlink(missing_ok=True)
+        summary = collector.collect(run, block, native, Path(campaign.raw["decks"]), campaign.exposure)
+        entry["exposure"] = {"verdict": summary["verdict"],
+                             "failed_checks": sorted(k for k, v in summary["checks"].items() if not v["pass"]),
+                             "summary": pin(campaign.exposure / f"{run}-b{block:02d}-exposure.json")}
+        campaign.save_state(run, state)
+    summary = json.loads(Path(entry["exposure"]["summary"]["path"]).read_text(encoding="utf-8"))
+    if "final_checkpoint" not in entry:
+        completion = json.loads((native / "completion.json").read_text(encoding="utf-8"))
+        final = json.loads(Path(completion["iterations"][-1]["path"]).read_text(encoding="utf-8"))
+        update = json.loads(Path(final["update"]["path"]).read_text(encoding="utf-8"))
+        checkpoint = Path(update["checkpoint"]["path"])
+        if not sha256_file(checkpoint) == update["checkpoint"]["sha256"] == summary["final_checkpoint_sha256"]:
+            raise RuntimeError("final checkpoint does not match its update record")
+        kept = campaign.checkpoints / run / f"block-{block:02d}.json"
+        kept.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(checkpoint, kept)
+        if sha256_file(kept) != update["checkpoint"]["sha256"]:
+            raise RuntimeError("retained checkpoint copy differs")
+        entry["final_checkpoint"] = {"path": str(kept), "sha256": update["checkpoint"]["sha256"]}
+        entry["final_adam_step"] = update["adam_step"]
+        campaign.save_state(run, state)
+    if block == 1 and "embedding_gate_pass" not in entry:
         gate = collector.embedding_gate(json.loads(Path(campaign.raw["t1_source"]["checkpoint"]["path"]).read_bytes()),
-                                        json.loads(kept.read_bytes()), ndb.load_decks(Path(campaign.raw["decks"])))
+                                        json.loads(Path(entry["final_checkpoint"]["path"]).read_bytes()),
+                                        ndb.load_decks(Path(campaign.raw["decks"])))
         entry["embedding_gate"] = write_json(campaign.exposure / f"{run}-b01-embedding-gate.json", gate)
         entry["embedding_gate_pass"] = gate["pass"]
-    entry["retained"] = retain_block(campaign, run, block, native, summary)
-    entry["cold_root"] = record["cold"]
-    prune_cold(campaign, run, block - campaign.raw["cold_keep_blocks"] + 1, state)
-    campaign.save_state(run, state)
-    campaign.event(run=run, block=block, kind="complete", exposure=summary["verdict"],
-                   final_checkpoint=entry["final_checkpoint"]["sha256"])
-    if summary["verdict"] != "pass" or (block == 1 and not entry["embedding_gate_pass"]):
-        entry["disposition"] = "technical: exposure check failed"
         campaign.save_state(run, state)
-        return "stopped"
-    return "complete"
+    if "retained" not in entry:
+        existing = campaign.retained / run / f"b{block:02d}" / "RETAINED.json"
+        if not native.exists() and existing.exists():
+            entry["retained"] = pin(existing)  # pruned after retention, before the state was saved
+        else:
+            entry["retained"] = retain_block(campaign, run, block, native, summary)
+        entry["cold_root"] = record["cold"]
+        campaign.save_state(run, state)
+    prune_cold(campaign, run, block - campaign.raw["cold_keep_blocks"] + 1, state)
+    failed = entry["exposure"]["failed_checks"] + (["embedding_gate"] if block == 1 and not entry["embedding_gate_pass"] else [])
+    if failed:
+        entry["disposition"] = ("technical: numerical invalidity" if "finite_losses" in failed
+                                else "technical: exposure check failed") + f" ({', '.join(failed)})"
+    else:
+        entry["done"] = True
+    campaign.save_state(run, state)
+    campaign.event(run=run, block=block, kind="complete", exposure=entry["exposure"]["verdict"],
+                   final_checkpoint=entry["final_checkpoint"]["sha256"], failed=failed)
+    return "stopped" if failed else "complete"
 
 
 def drive(campaign: Campaign, run: str) -> None:
@@ -347,7 +365,7 @@ def drive(campaign: Campaign, run: str) -> None:
     try:
         for block in range(1, ndb.BLOCKS + 1):
             entry = state["blocks"].get(str(block))
-            if entry and entry.get("final_checkpoint") and entry.get("exposure", {}).get("verdict") == "pass":
+            if entry and entry.get("done"):
                 continue
             if entry and entry.get("disposition"):
                 state["status"] = "stopped"
@@ -392,7 +410,7 @@ def status_lines(campaign: Campaign) -> list[str]:
     lines = []
     for run_name in ndb.RUNS:
         state = campaign.run_state(run_name)
-        done = sorted(int(k) for k, v in state["blocks"].items() if v.get("final_checkpoint"))
+        done = sorted(int(k) for k, v in state["blocks"].items() if v.get("done"))
         lines.append(f"{run_name} {state['status']} blocks_done={len(done)} last={done[-1] if done else 0}")
     return lines
 

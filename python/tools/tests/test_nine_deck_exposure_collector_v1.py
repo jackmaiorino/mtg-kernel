@@ -20,7 +20,7 @@ def pin(path: Path, value) -> dict:
 
 
 class CollectorTests(unittest.TestCase):
-    def build(self, root: Path, run="r1", block=1, substeps=lambda own: 3, fail_slot=None):
+    def build(self, root: Path, run="r1", block=1, substeps=lambda own: 3, fail_slot=None, loss=lambda index: 0.5):
         decks = ndb.load_decks(DECKS)
         iterations = ndb.block_iterations(run, block, decks)
         pin(root / "run.json", {"config": {"iterations": iterations}})
@@ -47,7 +47,7 @@ class CollectorTests(unittest.TestCase):
             if ledger:
                 collection["non_natural_ledger"] = pin(base / "non-natural.json", {"entries": ledger})
             update_record = {"complete": True, "adam_step": 32401 + index, "policy_substeps": total,
-                             "physical_decisions": total, "loss": 0.5,
+                             "physical_decisions": total, "loss": loss(index), "policy_sum": 1.0, "value_sum": 2.0,
                              "checkpoint": {"path": "x", "sha256": f"{index:064d}"}}
             items.append(pin(base / "complete.json", {
                 "iteration": index, "collection": pin(base / "collection.json", collection),
@@ -71,6 +71,14 @@ class CollectorTests(unittest.TestCase):
             self.build(root / "native", substeps=lambda own: 1 if own == ndb.DECK_NAMES.index("Spy") else 4)
             summary = collector.collect("r1", 1, root / "native", DECKS, root / "out")
         self.assertFalse(summary["checks"]["optimizer_samples"]["pass"])
+        self.assertEqual(summary["verdict"], "fail")
+
+    def test_nonfinite_loss_fails_verdict(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.build(root / "native", loss=lambda index: float("nan") if index == 7 else 0.5)
+            summary = collector.collect("r1", 1, root / "native", DECKS, root / "out")
+        self.assertEqual(summary["checks"]["finite_losses"]["nonfinite_iterations"], [7])
         self.assertEqual(summary["verdict"], "fail")
 
     def test_wrong_block_schedule_refused(self):

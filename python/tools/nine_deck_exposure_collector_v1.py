@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 from collections import Counter
 from pathlib import Path
 
@@ -43,6 +44,7 @@ SPY, CAWGATES = 4, 7
 SEVEN = (0, 1, 2, 3, 5, 6, 8)
 MAX_DISCARD_RATE = 0.05
 MIN_SUBSTEP_RATIO = 0.5
+FINITE_FIELDS = ("loss", "policy_sum", "value_sum")
 RETAIN_UPDATES_PER_BLOCK = 4  # >= 2% of 162 updates, chosen by seeded order
 
 
@@ -173,9 +175,12 @@ def collect(run: str, block: int, native: Path, decks_path: Path, out: Path) -> 
         updates.append({"iteration": iteration, "adam_step": update["adam_step"],
                         "policy_substeps": update["policy_substeps"],
                         "physical_decisions": update["physical_decisions"],
-                        "loss_finite": all(isinstance(update.get(key), (int, float)) for key in ("loss",)),
+                        "losses_finite": all(isinstance(update.get(key), (int, float)) and not isinstance(update.get(key), bool)
+                                             and math.isfinite(update[key]) for key in FINITE_FIELDS),
                         "checkpoint_sha256": update["checkpoint"]["sha256"]})
     checks = exposure_checks(rows, ledger_rows)
+    nonfinite = [update["iteration"] for update in updates if not update["losses_finite"]]
+    checks["finite_losses"] = {"pass": not nonfinite, "fields": list(FINITE_FIELDS), "nonfinite_iterations": nonfinite}
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     rows_path = out / f"{run}-b{block:02d}-episodes.jsonl"
