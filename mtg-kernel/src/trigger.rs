@@ -259,6 +259,67 @@ const SANGUINE_SYPHONER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
     ..etb_trigger(sanguine_syphoner_effect)
 }];
 
+const HELPFUL_HUNTER_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(ichor_wellspring_draw_effect)];
+const PRIDEFUL_PARENT_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(prideful_parent_effect)];
+const ICEWIND_ELEMENTAL_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(icewind_elemental_effect)];
+const BURGLAR_RAT_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(burglar_rat_effect)];
+const INFESTATION_SAGE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::LeftBattlefieldToGraveyard,
+    home_zone: Zone::Graveyard,
+    ..etb_trigger(infestation_sage_effect)
+}];
+const WARY_THESPIAN_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    etb_trigger(conduit_pylons_etb_effect),
+    TriggeredAbilityDef {
+        condition: TriggerCondition::LeftBattlefieldToGraveyard,
+        home_zone: Zone::Graveyard,
+        ..etb_trigger(conduit_pylons_etb_effect)
+    },
+];
+const SPITFIRE_LAGAC_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControlledLandEnters,
+    ..etb_trigger(kessig_flamebreather_effect)
+}];
+
+fn prideful_parent_effect() -> EffectOp {
+    EffectOp::CreateToken {
+        token_def: crate::card_def::card_id_by_name("Cat Token").expect("Cat Token in CARD_DEFS"),
+        controller: PlayerRef::Controller,
+    }
+}
+
+fn icewind_elemental_effect() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        },
+        EffectOp::DiscardCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        },
+    ])
+}
+
+fn burglar_rat_effect() -> EffectOp {
+    // "Each opponent discards a card"; the kernel is strictly 1v1 and the
+    // discarding player chooses.
+    EffectOp::DiscardCards {
+        player: PlayerRef::Opponent,
+        count: 1,
+    }
+}
+
+fn infestation_sage_effect() -> EffectOp {
+    EffectOp::CreateToken {
+        token_def: crate::card_def::card_id_by_name("Insect Token")
+            .expect("Insect Token in CARD_DEFS"),
+        controller: PlayerRef::Controller,
+    }
+}
+
 fn opponent_loses_one_life_effect() -> EffectOp {
     EffectOp::LoseLife {
         player: PlayerRef::Opponent,
@@ -1516,6 +1577,14 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Ajani's Pridemate" => &AJANIS_PRIDEMATE_TRIGGERS,
         "Marauding Blight-Priest" => &MARAUDING_BLIGHT_PRIEST_TRIGGERS,
         "Sanguine Syphoner" => &SANGUINE_SYPHONER_TRIGGERS,
+        "Helpful Hunter" => &HELPFUL_HUNTER_TRIGGERS,
+        "Prideful Parent" => &PRIDEFUL_PARENT_TRIGGERS,
+        "Icewind Elemental" => &ICEWIND_ELEMENTAL_TRIGGERS,
+        "Burglar Rat" => &BURGLAR_RAT_TRIGGERS,
+        "Infestation Sage" => &INFESTATION_SAGE_TRIGGERS,
+        "Wary Thespian" => &WARY_THESPIAN_TRIGGERS,
+        "Firebrand Archer" => &KESSIG_FLAMEBREATHER_TRIGGERS,
+        "Spitfire Lagac" => &SPITFIRE_LAGAC_TRIGGERS,
         "Dazzling Angel" => &DAZZLING_ANGEL_TRIGGERS,
         "Clinquant Skymage" => &CLINQUANT_SKYMAGE_TRIGGERS,
         "Mischievous Mystic" => &MISCHIEVOUS_MYSTIC_TRIGGERS,

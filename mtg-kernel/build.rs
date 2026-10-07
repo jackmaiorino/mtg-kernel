@@ -2370,6 +2370,12 @@ enum Special {
     /// keeping the generated recipe parameterized avoids a runtime card-name
     /// special while leaving room for later draw spells to share it.
     DrawCards(u8),
+    /// A targeted creature stat change until end of turn (Giant Growth,
+    /// Stab).
+    PumpCreature {
+        power: i32,
+        toughness: i32,
+    },
     /// A targeted creature stat change until end of turn followed by a draw.
     PumpCreatureThenDraw {
         power: i32,
@@ -2770,6 +2776,9 @@ impl Special {
             Special::None => "none".to_string(),
             Special::GreatFurnace => "great_furnace:add_r".to_string(),
             Special::DrawCards(count) => format!("draw_cards:{count}"),
+            Special::PumpCreature { power, toughness } => {
+                format!("pump_creature:{power}:{toughness}")
+            }
             Special::PumpCreatureThenDraw { power, toughness, draw } => {
                 format!("pump_creature_then_draw:{power}:{toughness}:{draw}")
             }
@@ -3029,6 +3038,15 @@ fn special_for(name: &str) -> Special {
             draw: 1,
         },
         "Thoughtcast" => Special::DrawCards(2),
+        "Think Twice" => Special::DrawCards(1),
+        "Giant Growth" => Special::PumpCreature {
+            power: 3,
+            toughness: 3,
+        },
+        "Stab" => Special::PumpCreature {
+            power: -2,
+            toughness: -2,
+        },
         "Of One Mind" => Special::DrawCards(2),
         "Eviscerator's Insight" => Special::DrawCards(2),
         "Fanatical Offering" => Special::DrawThenCreateToken {
@@ -3198,6 +3216,9 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::BurnAnyTarget(amount) => {
             format!("target=AnyTarget;spell=DealDamage({amount});mana=None")
         }
+        Special::PumpCreature { power, toughness } => format!(
+            "target=Creature;spell=PumpTargetUntilEndOfTurn({power},{toughness});mana=None"
+        ),
         Special::PumpCreatureThenDraw { power, toughness, draw } => format!(
             "target=Creature;spell=Sequence(PumpTargetUntilEndOfTurn({power},{toughness}),DrawCards(Controller,{draw}));mana=None"
         ),
@@ -3467,6 +3488,8 @@ fn keywords_for(card: &CardJson) -> String {
             keywords.push("Keywords::DEATHTOUCH");
             keywords.push("Keywords::LIFELINK");
         }
+        "Icewind Elemental" | "Insect Token" => keywords.push("Keywords::FLYING"),
+        "Prideful Parent" => keywords.push("Keywords::VIGILANCE"),
         _ => {}
     }
     if card.name == "Treetop Snarespinner" {
@@ -3749,6 +3772,13 @@ fn flashback_for(name: &str) -> String {
             let (pips, generic, x_count) = parse_cost("{1}{U}");
             format!(
                 "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }}), CostComponent::PayLife(3)] }})",
+                pips.join(", ")
+            )
+        }
+        "Think Twice" => {
+            let (pips, generic, x_count) = parse_cost("{2}{U}");
+            format!(
+                "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})] }})",
                 pips.join(", ")
             )
         }
@@ -5097,6 +5127,14 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Ajani's Pridemate" => "controller_gains_positive_life:counter_on_bound_source:1",
         "Marauding Blight-Priest" => "controller_gains_positive_life:opponent_loses_life:1",
         "Sanguine Syphoner" => "source_declared_attacker:opponent_loses_life:1:then_controller_gains_life:1",
+        "Helpful Hunter" => "etb:draw:1",
+        "Prideful Parent" => "etb:create_white_1_1_cat_token:1",
+        "Icewind Elemental" => "etb:draw:1:then_discard:1",
+        "Burglar Rat" => "etb:opponent_discards:1",
+        "Infestation Sage" => "dies:create_black_green_1_1_flying_insect_token:1",
+        "Wary Thespian" => "etb_and_dies:surveil:1",
+        "Firebrand Archer" => "cast_noncreature:damage_opponent:1",
+        "Spitfire Lagac" => "controlled_land_enters:damage_opponent:1",
         "Dazzling Angel" => "other_controlled_creature_enters:gain_life:1",
         "Beast-Kin Ranger" => "other_controlled_creature_enters:pump_bound_source:1:0:end_of_turn",
         "Dwynen, Gilt-Leaf Daen" => "source_declared_attacker:gain_life_current_attacking_elf_count",
@@ -5353,6 +5391,19 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out, "    Some(EffectOp::AddCountersToTarget {{ target_index: 0, optional: false, plus1_plus1: 1, lifelink: 1, stun: 0 }})").unwrap();
         writeln!(out, "}}").unwrap();
         writeln!(out).unwrap();
+    }
+
+    for card in cards {
+        if let Special::PumpCreature { power, toughness } = special_for(&card.name) {
+            let function = card
+                .name
+                .to_ascii_lowercase()
+                .replace([' ', '\'', '-'], "_");
+            writeln!(out, "fn spell_effect_{function}() -> Option<EffectOp> {{").unwrap();
+            writeln!(out, "    Some(EffectOp::PumpTargetUntilEndOfTurnDynamic {{ target: TargetRef::Target(0), power: DynamicValueDef::Fixed({power}), toughness: DynamicValueDef::Fixed({toughness}) }})").unwrap();
+            writeln!(out, "}}").unwrap();
+            writeln!(out).unwrap();
+        }
     }
 
     for card in cards {
@@ -7094,7 +7145,7 @@ fn codegen(cards: &[CardJson]) -> String {
                 format!("spell_effect_draw_{count}"),
                 "no_effect".to_string(),
             ),
-            Special::PumpCreatureThenDraw { .. } => (
+            Special::PumpCreature { .. } | Special::PumpCreatureThenDraw { .. } => (
                 "TargetSpec::Creature",
                 format!(
                     "spell_effect_{}",
@@ -7782,7 +7833,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v53\n"
+            "kernel_carddb/v54\n"
         } else {
             "kernel_carddb/v34\n"
         },
@@ -8136,6 +8187,9 @@ fn subtype_variant(t: &str) -> &'static str {
         "Gremlin" => "Subtype::Gremlin",
         "Dinosaur" => "Subtype::Dinosaur",
         "Warlock" => "Subtype::Warlock",
+        "Insect" => "Subtype::Insect",
+        "Archer" => "Subtype::Archer",
+        "Lizard" => "Subtype::Lizard",
         "Pirate" => "Subtype::Pirate",
         "Plains" => "Subtype::Plains",
         "ROGUE" => "Subtype::RogueAllCaps",
