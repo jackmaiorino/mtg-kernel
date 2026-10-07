@@ -1361,6 +1361,28 @@ impl FrozenPlayPolicyV1 {
         self.score_owned()
     }
 
+    /// Diagnostic only: the V4 tensor filled by the most recent
+    /// `score_fast_session_v1` call on a fresh-lineage (V4) policy.
+    pub(crate) fn diagnostic_last_v4_tensor(&self) -> Option<&NativeFlatDecisionTensorV4> {
+        self.fresh_successor.as_ref().map(|fresh| &fresh.tensor)
+    }
+
+    /// Diagnostic only: run the frozen V4 forward on an edited copy of a
+    /// tensor (for input-ablation tests). Does not touch sampling state.
+    pub(crate) fn diagnostic_forward_v4(
+        &mut self,
+        tensor: &NativeFlatDecisionTensorV4,
+    ) -> Result<FrozenPlayDecisionScoresV1, String> {
+        let output = self
+            .model
+            .forward_feature_transfer_v4(encoded_decision_view_v4(tensor))
+            .map_err(|e| format!("diagnostic V4 forward: {e:?}"))?;
+        Ok(FrozenPlayDecisionScoresV1 {
+            logits: output.logits,
+            value: output.value,
+        })
+    }
+
     pub fn select_fast_session_v1(&mut self, session: &FastActorSessionV1) -> Result<u32, String> {
         let FastActorResponseV1::Decision(decision) = session.current_response() else {
             return Err("cannot select from a terminal session".into());

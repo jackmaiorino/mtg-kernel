@@ -6570,6 +6570,18 @@ impl FastActorSessionV1 {
         Ok(sampled)
     }
 
+    /// Diagnostic only: a clone whose game state is edited by `edit`. The
+    /// current decision's cached candidates are kept, so edits must not
+    /// change the legal action set.
+    pub(crate) fn census_edited_clone_v1(
+        &self,
+        edit: impl FnOnce(&mut crate::state::GameState),
+    ) -> Self {
+        let mut edited = self.clone();
+        edit(&mut edited.state);
+        edited
+    }
+
     pub fn snapshot_v1(&self) -> FastActorSessionSnapshotV1 {
         FastActorSessionSnapshotV1(self.clone())
     }

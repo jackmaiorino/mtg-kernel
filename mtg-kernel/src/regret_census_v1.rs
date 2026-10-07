@@ -20,6 +20,8 @@ use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
+mod validity;
+
 const MAX_PHYSICAL: u64 = 4096;
 
 #[derive(Clone, Debug)]
@@ -915,6 +917,8 @@ pub fn run_v1(cfg: CensusConfigV1) -> Result<(), String> {
                         run_spyfix_game(cfg, g, &mut base, sink)
                     } else if cfg.mode == "trace" {
                         run_trace_game(cfg, g, &mut base, &mut roll, sink)
+                    } else if cfg.mode == "validity" {
+                        validity::run_validity_game(cfg, g, &mut base, &mut roll, sink)
                     } else if cfg.mode == "pilot" {
                         run_pilot_game(cfg, g, &mut base, &mut roll, sink)
                     } else {
