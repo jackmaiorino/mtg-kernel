@@ -29,7 +29,9 @@ env:
 jobs:
   detect-changes:
     name: Detect changed paths
-    runs-on: ubuntu-24.04
+    # A few seconds of git work: run it on the self-hosted Linux runner so
+    # the self-hosted test groups never wait in GitHub's hosted queue.
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted", "mtg-ci-linux"]') || 'ubuntu-24.04' }}
     outputs:
       python_relevant: ${{ steps.classify.outputs.python_relevant }}
       rust_relevant: ${{ steps.classify.outputs.rust_relevant }}
@@ -284,7 +286,7 @@ jobs:
         os:
           - ubuntu-24.04
           - windows-2025
-    runs-on: ubuntu-24.04
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted", "mtg-ci-linux"]') || 'ubuntu-24.04' }}
     steps:
       - name: Require every Rust test group
         run: test "${{ needs.rust-test-groups.result }}" = success
