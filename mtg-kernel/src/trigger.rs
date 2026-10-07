@@ -290,6 +290,26 @@ const SPITFIRE_LAGAC_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
 fn prideful_parent_effect() -> EffectOp {
     EffectOp::CreateToken {
         token_def: crate::card_def::card_id_by_name("Cat Token").expect("Cat Token in CARD_DEFS"),
+const DRAGON_TRAINER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(dragon_trainer_effect)];
+const RESOLUTE_REINFORCEMENTS_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(resolute_reinforcements_effect)];
+const ELFSWORN_GIANT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControlledLandEnters,
+    ..etb_trigger(elfsworn_giant_effect)
+}];
+const EAGER_TRUFFLESNOUT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::DealsCombatDamageToPlayer,
+    ..etb_trigger(generous_ent_effect)
+}];
+const RITE_OF_THE_DRAGONCALLER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastInstantOrSorcery,
+    ..etb_trigger(rite_of_the_dragoncaller_effect)
+}];
+
+fn create_controller_token_effect(name: &str) -> EffectOp {
+    EffectOp::CreateToken {
+        token_def: crate::card_def::card_id_by_name(name)
+            .unwrap_or_else(|| panic!("{name} in CARD_DEFS")),
         controller: PlayerRef::Controller,
     }
 }
@@ -322,6 +342,20 @@ fn infestation_sage_effect() -> EffectOp {
             .expect("Insect Token in CARD_DEFS"),
         controller: PlayerRef::Controller,
     }
+fn dragon_trainer_effect() -> EffectOp {
+    create_controller_token_effect("Dragon Token")
+}
+
+fn resolute_reinforcements_effect() -> EffectOp {
+    create_controller_token_effect("Soldier Token")
+}
+
+fn elfsworn_giant_effect() -> EffectOp {
+    create_controller_token_effect("Elf Warrior Token")
+}
+
+fn rite_of_the_dragoncaller_effect() -> EffectOp {
+    create_controller_token_effect("Dragon 5/5 Token")
 }
 
 fn opponent_loses_one_life_effect() -> EffectOp {
@@ -1681,6 +1715,11 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Wary Thespian" => &WARY_THESPIAN_TRIGGERS,
         "Firebrand Archer" => &KESSIG_FLAMEBREATHER_TRIGGERS,
         "Spitfire Lagac" => &SPITFIRE_LAGAC_TRIGGERS,
+        "Dragon Trainer" => &DRAGON_TRAINER_TRIGGERS,
+        "Resolute Reinforcements" => &RESOLUTE_REINFORCEMENTS_TRIGGERS,
+        "Elfsworn Giant" => &ELFSWORN_GIANT_TRIGGERS,
+        "Eager Trufflesnout" => &EAGER_TRUFFLESNOUT_TRIGGERS,
+        "Rite of the Dragoncaller" => &RITE_OF_THE_DRAGONCALLER_TRIGGERS,
         "Dazzling Angel" => &DAZZLING_ANGEL_TRIGGERS,
         "Clinquant Skymage" => &CLINQUANT_SKYMAGE_TRIGGERS,
         "Mischievous Mystic" => &MISCHIEVOUS_MYSTIC_TRIGGERS,
