@@ -429,3 +429,203 @@ fn bake_into_a_pie_destroys_the_creature_and_creates_a_food_for_its_caster() {
     assert_eq!(state.objects.get(food).name, "Food Token");
     assert_eq!(state.objects.get(food).controller, PlayerId::P0);
 }
+
+/// Pass priority, answering trigger target and optional-effect decisions,
+/// until the stack is empty again.
+fn drive(
+    surface: &mut HarnessSurfaceV2,
+    state: &mut GameState,
+    target: Option<ObjectId>,
+    option: Option<u16>,
+) {
+    for _ in 0..32 {
+        match next(surface, state) {
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => return,
+            Decision::CastSpellOrPass { .. } => apply(surface, state, Action::Pass),
+            Decision::ChooseTargets { legal_targets, .. } => {
+                let target = target.expect("trigger target expected");
+                assert!(legal_targets.contains(&Target::Object(target)));
+                apply(surface, state, Action::ChooseTarget(Target::Object(target)));
+            }
+            Decision::ChooseEffectOption { option_count, .. } => {
+                assert_eq!(option_count, 2);
+                let option = option.expect("optional effect choice expected");
+                apply(surface, state, Action::ChooseEffectOption(option));
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    panic!("stack did not empty");
+}
+
+fn legal_spell_targets(state: &mut GameState, name: &str) -> Vec<Target> {
+    let mut surface = surface();
+    let spell = put(state, PlayerId::P0, name, Zone::Hand);
+    state.players[0].mana_pool = [10; 6];
+    priority(&mut surface, state);
+    apply(&mut surface, state, Action::CastSpell(spell));
+    match next(&mut surface, state) {
+        Decision::ChooseTargets { legal_targets, .. } => legal_targets,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn batch_two_definitions_use_their_new_target_shapes() {
+    let def = |name| &CARD_DEFS[usize::from(card_id_by_name(name).unwrap())];
+    assert_eq!(def("Hero's Downfall").target_spec, TargetSpec::CreatureOrPlaneswalker);
+    assert_eq!(
+        def("Broken Wings").target_spec,
+        TargetSpec::ArtifactEnchantmentOrFlyingCreature
+    );
+    assert_eq!(
+        def("Make Your Move").target_spec,
+        TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour
+    );
+    assert_eq!(TargetSpec::CreatureOrPlaneswalker.stable_id(), 42);
+    assert_eq!(TargetSpec::OpponentNonlandPermanent.stable_id(), 45);
+    let golem = def("Meteor Golem");
+    assert!(golem.has_type(CardType::Artifact) && golem.has_type(CardType::Creature));
+    assert_eq!((golem.power, golem.toughness), (Some(3), Some(3)));
+    let sage = def("Reclamation Sage");
+    assert_eq!((sage.power, sage.toughness), (Some(2), Some(1)));
+    for name in [
+        "Hero's Downfall",
+        "Broken Wings",
+        "Make Your Move",
+        "Meteor Golem",
+        "Reclamation Sage",
+    ] {
+        let id = card_id_by_name(name).unwrap();
+        assert_eq!(CARD_DEFS[usize::from(id)].capability, CardCapability::Full);
+        preflight_fully_supported_deck(&[id]).unwrap();
+    }
+}
+
+#[test]
+fn heros_downfall_destroys_a_creature_or_planeswalker() {
+    let mut state = ready();
+    let mut surface = surface();
+    let angel = put(&mut state, PlayerId::P1, "Serra Angel", Zone::Battlefield);
+    let walker = put(&mut state, PlayerId::P1, "Ajani, Caller of the Pride", Zone::Hand);
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::zone_change(walker, Zone::Battlefield),
+    );
+    let land = put(&mut state, PlayerId::P1, "Forest", Zone::Battlefield);
+    let legal = legal_spell_targets(&mut state.clone(), "Hero's Downfall");
+    assert!(legal.contains(&Target::Object(angel)));
+    assert!(legal.contains(&Target::Object(walker)));
+    assert!(!legal.contains(&Target::Object(land)));
+    cast(&mut surface, &mut state, "Hero's Downfall", None, &[walker]);
+    resolve(&mut surface, &mut state);
+    assert_eq!(zone(&state, walker), Zone::Graveyard);
+    cast(&mut surface, &mut state, "Hero's Downfall", None, &[angel]);
+    resolve(&mut surface, &mut state);
+    assert_eq!(zone(&state, angel), Zone::Graveyard);
+}
+
+#[test]
+fn broken_wings_and_make_your_move_filter_creatures_by_flying_and_power() {
+    let mut state = ready();
+    let angel = put(&mut state, PlayerId::P1, "Serra Angel", Zone::Battlefield);
+    let lions = put(&mut state, PlayerId::P1, "Savannah Lions", Zone::Battlefield);
+    let ceratops = put(&mut state, PlayerId::P1, "Quakestrider Ceratops", Zone::Battlefield);
+    let furnace = put(&mut state, PlayerId::P1, "Great Furnace", Zone::Battlefield);
+    let wings = legal_spell_targets(&mut state.clone(), "Broken Wings");
+    assert!(wings.contains(&Target::Object(angel)));
+    assert!(wings.contains(&Target::Object(furnace)));
+    assert!(!wings.contains(&Target::Object(lions)));
+    assert!(!wings.contains(&Target::Object(ceratops)));
+    let mov = legal_spell_targets(&mut state.clone(), "Make Your Move");
+    assert!(mov.contains(&Target::Object(angel)));
+    assert!(mov.contains(&Target::Object(ceratops)));
+    assert!(mov.contains(&Target::Object(furnace)));
+    assert!(!mov.contains(&Target::Object(lions)));
+
+    let mut surface = surface();
+    cast(&mut surface, &mut state, "Broken Wings", None, &[angel]);
+    resolve(&mut surface, &mut state);
+    assert_eq!(zone(&state, angel), Zone::Graveyard);
+    cast(&mut surface, &mut state, "Make Your Move", None, &[ceratops]);
+    resolve(&mut surface, &mut state);
+    assert_eq!(zone(&state, ceratops), Zone::Graveyard);
+    assert_eq!(zone(&state, lions), Zone::Battlefield);
+}
+
+#[test]
+fn make_your_move_sees_pumped_power_and_fizzles_when_power_drops() {
+    let mut state = ready();
+    let mut surface = surface();
+    let lions = put(&mut state, PlayerId::P1, "Savannah Lions", Zone::Battlefield);
+    assert!(!legal_spell_targets(&mut state.clone(), "Make Your Move")
+        .contains(&Target::Object(lions)));
+    cast(&mut surface, &mut state, "Sure Strike", None, &[lions]);
+    resolve(&mut surface, &mut state);
+    let spell = cast(&mut surface, &mut state, "Make Your Move", None, &[lions]);
+    // Respond by shrinking the creature below power 4: the only target is
+    // illegal on resolution and the spell does nothing.
+    cast(&mut surface, &mut state, "Fleeting Distraction", None, &[lions]);
+    resolve(&mut surface, &mut state);
+    assert_eq!(engine::effective_power(&state, lions), 4);
+    cast(&mut surface, &mut state, "Fleeting Distraction", None, &[lions]);
+    resolve(&mut surface, &mut state);
+    assert_eq!(engine::effective_power(&state, lions), 3);
+    resolve(&mut surface, &mut state);
+    assert_eq!(zone(&state, lions), Zone::Battlefield);
+    assert_eq!(zone(&state, spell), Zone::Graveyard);
+}
+
+#[test]
+fn meteor_golem_destroys_only_an_opponents_nonland_permanent() {
+    let mut state = ready();
+    let mut surface = surface();
+    let own = put(&mut state, PlayerId::P0, "Serra Angel", Zone::Battlefield);
+    let theirs = put(&mut state, PlayerId::P1, "Great Furnace", Zone::Battlefield);
+    let their_land = put(&mut state, PlayerId::P1, "Forest", Zone::Battlefield);
+    let golem = cast(&mut surface, &mut state, "Meteor Golem", None, &[]);
+    apply(&mut surface, &mut state, Action::Pass);
+    match next(&mut surface, &mut state) {
+        Decision::CastSpellOrPass { .. } => apply(&mut surface, &mut state, Action::Pass),
+        other => panic!("{other:?}"),
+    }
+    match next(&mut surface, &mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert_eq!(legal_targets, vec![Target::Object(theirs)]);
+            let _ = (own, their_land);
+            apply(&mut surface, &mut state, Action::ChooseTarget(Target::Object(theirs)));
+        }
+        other => panic!("{other:?}"),
+    }
+    drive(&mut surface, &mut state, None, None);
+    assert_eq!(zone(&state, golem), Zone::Battlefield);
+    assert_eq!(zone(&state, theirs), Zone::Graveyard);
+    assert_eq!(zone(&state, own), Zone::Battlefield);
+    assert_eq!(zone(&state, their_land), Zone::Battlefield);
+}
+
+#[test]
+fn meteor_golem_without_a_legal_target_just_enters() {
+    let mut state = ready();
+    let mut surface = surface();
+    put(&mut state, PlayerId::P1, "Forest", Zone::Battlefield);
+    let golem = cast(&mut surface, &mut state, "Meteor Golem", None, &[]);
+    drive(&mut surface, &mut state, None, None);
+    assert_eq!(zone(&state, golem), Zone::Battlefield);
+}
+
+#[test]
+fn reclamation_sage_may_destroy_an_artifact_or_enchantment() {
+    for destroy in [false, true] {
+        let mut state = ready();
+        let mut surface = surface();
+        let furnace = put(&mut state, PlayerId::P1, "Great Furnace", Zone::Battlefield);
+        let sage = cast(&mut surface, &mut state, "Reclamation Sage", None, &[]);
+        drive(&mut surface, &mut state, Some(furnace), Some(u16::from(destroy)));
+        assert_eq!(zone(&state, sage), Zone::Battlefield);
+        assert_eq!(
+            zone(&state, furnace),
+            if destroy { Zone::Graveyard } else { Zone::Battlefield }
+        );
+    }
+}

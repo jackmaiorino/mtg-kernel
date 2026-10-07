@@ -1821,6 +1821,147 @@
         "create_food_token"
       ],
       "java_file": "Mage.Sets/src/mage/cards/b/BakeIntoAPie.java"
+    },
+    {
+      "name": "Hero's Downfall",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "destroy_target_creature_or_planeswalker"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HerosDownfall.java"
+    },
+    {
+      "name": "Broken Wings",
+      "engine_capability": "full",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "destroy_artifact_enchantment_or_flying_creature"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BrokenWings.java"
+    },
+    {
+      "name": "Make Your Move",
+      "engine_capability": "full",
+      "mana_cost": "{2}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "destroy_artifact_enchantment_or_power_four_creature"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MakeYourMove.java"
+    },
+    {
+      "name": "Meteor Golem",
+      "engine_capability": "full",
+      "mana_cost": "{7}",
+      "mana_value": 7,
+      "colors": [],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Golem"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "etb_trigger",
+        "destroy_opponent_nonland_permanent"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MeteorGolem.java"
+    },
+    {
+      "name": "Reclamation Sage",
+      "engine_capability": "full",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elf",
+        "Shaman"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "etb_trigger",
+        "may_destroy_artifact_enchantment"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/ReclamationSage.java"
     }
   ]
 }

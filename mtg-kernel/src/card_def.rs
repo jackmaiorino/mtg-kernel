@@ -254,6 +254,8 @@ pub enum Subtype {
     Turtle,
     Gremlin,
     Dinosaur,
+    /// Appended for Meteor Golem; existing ids remain fixed.
+    Golem,
 }
 
 impl Subtype {
@@ -347,6 +349,8 @@ impl Subtype {
         Subtype::Gremlin,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Dinosaur,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Golem,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -611,6 +615,15 @@ pub enum TargetSpec {
     ControlledCreatureThenOpponentCreatureOrPlaneswalker,
     AttackingOrBlockingCreature,
     NonlandPermanentCardInOwnGraveyardManaValueAtMost(u16),
+    /// One creature or planeswalker on either battlefield (Hero's Downfall).
+    CreatureOrPlaneswalker,
+    /// One artifact, enchantment, or creature with flying (Broken Wings).
+    ArtifactEnchantmentOrFlyingCreature,
+    /// One artifact, enchantment, or creature with power 4 or greater
+    /// (Make Your Move).
+    ArtifactEnchantmentOrCreaturePowerAtLeastFour,
+    /// One nonland permanent an opponent controls (Meteor Golem).
+    OpponentNonlandPermanent,
 }
 
 impl TargetSpec {
@@ -661,6 +674,10 @@ impl TargetSpec {
             TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker => 39,
             TargetSpec::AttackingOrBlockingCreature => 40,
             TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_) => 41,
+            TargetSpec::CreatureOrPlaneswalker => 42,
+            TargetSpec::ArtifactEnchantmentOrFlyingCreature => 43,
+            TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour => 44,
+            TargetSpec::OpponentNonlandPermanent => 45,
         }
     }
 }
@@ -1833,6 +1850,10 @@ mod tests {
                 39,
             ),
             (TargetSpec::AttackingOrBlockingCreature, 40),
+            (TargetSpec::CreatureOrPlaneswalker, 42),
+            (TargetSpec::ArtifactEnchantmentOrFlyingCreature, 43),
+            (TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour, 44),
+            (TargetSpec::OpponentNonlandPermanent, 45),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);

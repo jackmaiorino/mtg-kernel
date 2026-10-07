@@ -997,6 +997,29 @@ fn humbling_elder_etb_effect() -> EffectOp {
     }
 }
 
+/// Meteor Golem: "When this creature enters, destroy target nonland
+/// permanent an opponent controls."
+fn meteor_golem_etb_effect() -> EffectOp {
+    EffectOp::Conditional {
+        cond: EffectCond::TargetInZone(0, Zone::Battlefield),
+        then: Box::new(EffectOp::DestroyObject {
+            object: ObjectRef::Target(0),
+        }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    }
+}
+
+/// Reclamation Sage: "When this creature enters, you may destroy target
+/// artifact or enchantment." The target is chosen when the trigger is put
+/// on the stack; the controller decides whether to destroy on resolution,
+/// with declining as the first printed option (Kiora's optional shape).
+fn reclamation_sage_etb_effect() -> EffectOp {
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: vec![EffectOp::Sequence(vec![]), meteor_golem_etb_effect()],
+    }
+}
+
 fn moon_circuit_hacker_combat_effect_for_entered_this_turn(entered_this_turn: bool) -> EffectOp {
     let after_draw = if entered_this_turn {
         EffectOp::Sequence(vec![])
@@ -1337,6 +1360,22 @@ const HUMBLING_ELDER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     effect: humbling_elder_etb_effect,
 }];
 
+const METEOR_GOLEM_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: meteor_golem_etb_effect,
+}];
+
+const RECLAMATION_SAGE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: reclamation_sage_etb_effect,
+}];
+
 const MOON_CIRCUIT_HACKER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::DealsCombatDamageToPlayer,
     home_zone: Zone::Battlefield,
@@ -1532,6 +1571,8 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Bojuka Bog" => &BOJUKA_BOG_TRIGGERS,
         "Conduit Pylons" => &CONDUIT_PYLONS_TRIGGERS,
         "Humbling Elder" => &HUMBLING_ELDER_TRIGGERS,
+        "Meteor Golem" => &METEOR_GOLEM_TRIGGERS,
+        "Reclamation Sage" => &RECLAMATION_SAGE_TRIGGERS,
         "Moon-Circuit Hacker" => &MOON_CIRCUIT_HACKER_TRIGGERS,
         "Ninja of the Deep Hours" => &NINJA_OF_THE_DEEP_HOURS_TRIGGERS,
         "Saiba Cryptomancer" => &SAIBA_CRYPTOMANCER_TRIGGERS,
@@ -1562,6 +1603,8 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         "Harrier Strix" => TargetSpec::AnyPermanent,
         "Bojuka Bog" => TargetSpec::AnyPlayer,
         "Humbling Elder" => TargetSpec::OpponentControlledCreature,
+        "Meteor Golem" => TargetSpec::OpponentNonlandPermanent,
+        "Reclamation Sage" => TargetSpec::ArtifactOrEnchantmentPermanent,
         "Saiba Cryptomancer" => TargetSpec::Creature,
         "Spellstutter Sprite" => TargetSpec::SpellManaValueAtMostControlledSubtypes {
             first: Subtype::Faerie,

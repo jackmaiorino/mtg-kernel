@@ -1462,7 +1462,11 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::CreatureOtherThanSource
         | TargetSpec::NonblackCreature
         | TargetSpec::ArtifactOrEnchantmentPermanent
-        | TargetSpec::AttackingOrBlockingCreature => 1,
+        | TargetSpec::AttackingOrBlockingCreature
+        | TargetSpec::CreatureOrPlaneswalker
+        | TargetSpec::ArtifactEnchantmentOrFlyingCreature
+        | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour
+        | TargetSpec::OpponentNonlandPermanent => 1,
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
@@ -2732,6 +2736,34 @@ fn legal_targets_for_controller_from_source(
                 .map(Target::Object)
                 .collect()
         }
+        TargetSpec::CreatureOrPlaneswalker => battlefield_objects(state)
+            .filter(|&id| {
+                object_has_type(state, id, CardType::Creature)
+                    || object_has_type(state, id, CardType::Planeswalker)
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::ArtifactEnchantmentOrFlyingCreature
+        | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour => battlefield_objects(state)
+            .filter(|&id| {
+                object_has_type(state, id, CardType::Artifact)
+                    || object_has_type(state, id, CardType::Enchantment)
+                    || (object_has_type(state, id, CardType::Creature)
+                        && if spec == TargetSpec::ArtifactEnchantmentOrFlyingCreature {
+                            has_effective_keyword(state, id, Keywords::FLYING)
+                        } else {
+                            effective_power(state, id) >= 4
+                        })
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::OpponentNonlandPermanent => battlefield_objects(state)
+            .filter(|&id| {
+                state.objects.get(id).controller != controller
+                    && !object_has_type(state, id, CardType::Land)
+            })
+            .map(Target::Object)
+            .collect(),
         TargetSpec::AttackingOrBlockingCreature => battlefield_objects(state)
             .filter(|&id| {
                 object_has_type(state, id, CardType::Creature)

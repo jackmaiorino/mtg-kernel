@@ -3253,6 +3253,12 @@ fn fdn_program_for(name: &str) -> Option<Special> {
             "Sequence(Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0)),CreateToken(FoodToken,Controller))",
             "EffectOp::Sequence(vec![EffectOp::Conditional { cond: EffectCond::TargetInZone(0, Zone::Battlefield), then: Box::new(EffectOp::DestroyObject { object: ObjectRef::Target(0) }), else_: Box::new(EffectOp::Sequence(vec![])) }, EffectOp::CreateToken { token_def: crate::card_def::card_id_by_name(\"Food Token\").expect(\"Food Token in CARD_DEFS\"), controller: PlayerRef::Controller }])",
         ),
+        // Destroy target creature or planeswalker.
+        "Hero's Downfall" => program("CreatureOrPlaneswalker", "Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0))", "EffectOp::Conditional { cond: EffectCond::TargetInZone(0, Zone::Battlefield), then: Box::new(EffectOp::DestroyObject { object: ObjectRef::Target(0) }), else_: Box::new(EffectOp::Sequence(vec![])) }"),
+        // Destroy target artifact, enchantment, or creature with flying.
+        "Broken Wings" => program("ArtifactEnchantmentOrFlyingCreature", "Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0))", "EffectOp::Conditional { cond: EffectCond::TargetInZone(0, Zone::Battlefield), then: Box::new(EffectOp::DestroyObject { object: ObjectRef::Target(0) }), else_: Box::new(EffectOp::Sequence(vec![])) }"),
+        // Destroy target artifact, enchantment, or creature with power 4 or greater.
+        "Make Your Move" => program("ArtifactEnchantmentOrCreaturePowerAtLeastFour", "Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0))", "EffectOp::Conditional { cond: EffectCond::TargetInZone(0, Zone::Battlefield), then: Box::new(EffectOp::DestroyObject { object: ObjectRef::Target(0) }), else_: Box::new(EffectOp::Sequence(vec![])) }"),
         _ => return None,
     })
 }
@@ -3263,6 +3269,11 @@ fn program_target_spec_src(target: &str) -> &'static str {
         "Creature" => "TargetSpec::Creature",
         "ControlledCreature" => "TargetSpec::ControlledCreature",
         "ArtifactPermanent" => "TargetSpec::ArtifactPermanent",
+        "CreatureOrPlaneswalker" => "TargetSpec::CreatureOrPlaneswalker",
+        "ArtifactEnchantmentOrFlyingCreature" => "TargetSpec::ArtifactEnchantmentOrFlyingCreature",
+        "ArtifactEnchantmentOrCreaturePowerAtLeastFour" => {
+            "TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour"
+        }
         other => panic!("unsupported program target spec {other}"),
     }
 }
@@ -5245,6 +5256,8 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Bojuka Bog" => "etb:target_player:exile_graveyard",
         "Conduit Pylons" => "etb:surveil:1",
         "Humbling Elder" => "etb:target_opponent_creature:pump:-2:0:eot",
+        "Meteor Golem" => "etb:target_opponent_nonland_permanent:destroy",
+        "Reclamation Sage" => "etb:target_artifact_or_enchantment:may_destroy",
         "Moon-Circuit Hacker" => {
             "combat_damage_player:may_draw:discard_unless_source_entered_this_turn:lki"
         }
@@ -8268,6 +8281,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Turtle" => "Subtype::Turtle",
         "Gremlin" => "Subtype::Gremlin",
         "Dinosaur" => "Subtype::Dinosaur",
+        "Golem" => "Subtype::Golem",
         "Pirate" => "Subtype::Pirate",
         "Plains" => "Subtype::Plains",
         "ROGUE" => "Subtype::RogueAllCaps",
