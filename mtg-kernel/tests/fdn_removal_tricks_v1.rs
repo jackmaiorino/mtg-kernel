@@ -217,7 +217,12 @@ fn appended_definitions_are_full_contiguous_and_use_existing_target_shapes() {
 fn sure_strike_gives_three_power_and_first_strike_until_end_of_turn() {
     let mut state = ready();
     let mut surface = surface();
-    let lions = put(&mut state, PlayerId::P1, "Savannah Lions", Zone::Battlefield);
+    let lions = put(
+        &mut state,
+        PlayerId::P1,
+        "Savannah Lions",
+        Zone::Battlefield,
+    );
     cast(&mut surface, &mut state, "Sure Strike", None, &[lions]);
     resolve(&mut surface, &mut state);
     assert_eq!(engine::effective_power(&state, lions), 5);
@@ -233,8 +238,18 @@ fn sure_strike_gives_three_power_and_first_strike_until_end_of_turn() {
 fn snakeskin_veil_targets_only_controlled_creatures_and_adds_counter_and_hexproof() {
     let mut state = ready();
     let mut surface = surface();
-    let own = put(&mut state, PlayerId::P0, "Savannah Lions", Zone::Battlefield);
-    let theirs = put(&mut state, PlayerId::P1, "Savannah Lions", Zone::Battlefield);
+    let own = put(
+        &mut state,
+        PlayerId::P0,
+        "Savannah Lions",
+        Zone::Battlefield,
+    );
+    let theirs = put(
+        &mut state,
+        PlayerId::P1,
+        "Savannah Lions",
+        Zone::Battlefield,
+    );
     let spell = put(&mut state, PlayerId::P0, "Snakeskin Veil", Zone::Hand);
     state.players[0].mana_pool = [10; 6];
     priority(&mut surface, &mut state);
@@ -246,19 +261,32 @@ fn snakeskin_veil_targets_only_controlled_creatures_and_adds_counter_and_hexproo
         }
         other => panic!("{other:?}"),
     }
-    apply(&mut surface, &mut state, Action::ChooseTarget(Target::Object(own)));
+    apply(
+        &mut surface,
+        &mut state,
+        Action::ChooseTarget(Target::Object(own)),
+    );
     priority(&mut surface, &mut state);
     resolve(&mut surface, &mut state);
     assert_eq!(state.objects.get(own).counters.plus1_plus1, 1);
     assert_eq!(engine::effective_power(&state, own), 3);
-    assert!(engine::has_effective_keyword(&state, own, Keywords::HEXPROOF));
+    assert!(engine::has_effective_keyword(
+        &state,
+        own,
+        Keywords::HEXPROOF
+    ));
 }
 
 #[test]
 fn seismic_rupture_damages_only_creatures_without_flying() {
     let mut state = ready();
     let mut surface = surface();
-    let lions = put(&mut state, PlayerId::P1, "Savannah Lions", Zone::Battlefield);
+    let lions = put(
+        &mut state,
+        PlayerId::P1,
+        "Savannah Lions",
+        Zone::Battlefield,
+    );
     let own_turtle = put(&mut state, PlayerId::P0, "Aegis Turtle", Zone::Battlefield);
     let angel = put(&mut state, PlayerId::P1, "Serra Angel", Zone::Battlefield);
     cast(&mut surface, &mut state, "Seismic Rupture", None, &[]);
@@ -285,7 +313,12 @@ fn day_of_judgment_destroys_every_creature_but_not_indestructible_or_noncreature
     let mut state = ready();
     let mut surface = surface();
     let own = put(&mut state, PlayerId::P0, "Serra Angel", Zone::Battlefield);
-    let theirs = put(&mut state, PlayerId::P1, "Vampire Nighthawk", Zone::Battlefield);
+    let theirs = put(
+        &mut state,
+        PlayerId::P1,
+        "Vampire Nighthawk",
+        Zone::Battlefield,
+    );
     let land = put(&mut state, PlayerId::P1, "Forest", Zone::Battlefield);
     let spell = cast(&mut surface, &mut state, "Day of Judgment", None, &[]);
     resolve(&mut surface, &mut state);
@@ -302,7 +335,13 @@ fn incinerating_blast_deals_six_then_offers_an_optional_discard_to_draw() {
         let mut surface = surface();
         let angel = put(&mut state, PlayerId::P1, "Serra Angel", Zone::Battlefield);
         let fodder = put(&mut state, PlayerId::P0, "Forest", Zone::Hand);
-        let spell = cast(&mut surface, &mut state, "Incinerating Blast", None, &[angel]);
+        let spell = cast(
+            &mut surface,
+            &mut state,
+            "Incinerating Blast",
+            None,
+            &[angel],
+        );
         let hand_before = state.players[0].hand.len();
         pass_both(&mut surface, &mut state);
         // The harness surface reshapes the engine's optional cost into a
@@ -316,7 +355,14 @@ fn incinerating_blast_deals_six_then_offers_an_optional_discard_to_draw() {
             } => assert_eq!(player, PlayerId::P0),
             other => panic!("{other:?}"),
         }
-        assert!(state.engine.pending_optional_cost.as_ref().unwrap().discard_payable);
+        assert!(
+            state
+                .engine
+                .pending_optional_cost
+                .as_ref()
+                .unwrap()
+                .discard_payable
+        );
         let choice = if accept {
             OptionalCostChoice::Discard
         } else {
@@ -346,7 +392,12 @@ fn incinerating_blast_deals_six_then_offers_an_optional_discard_to_draw() {
 fn slagstorm_modes_damage_every_creature_or_each_player() {
     let mut state = ready();
     let mut surface = surface();
-    let own = put(&mut state, PlayerId::P0, "Vampire Nighthawk", Zone::Battlefield);
+    let own = put(
+        &mut state,
+        PlayerId::P0,
+        "Vampire Nighthawk",
+        Zone::Battlefield,
+    );
     let angel = put(&mut state, PlayerId::P1, "Serra Angel", Zone::Battlefield);
     let (own_life, their_life) = (state.players[0].life, state.players[1].life);
     cast(&mut surface, &mut state, "Slagstorm", Some(0), &[]);
@@ -358,7 +409,12 @@ fn slagstorm_modes_damage_every_creature_or_each_player() {
 
     let mut state = ready();
     let mut surface = crate::surface();
-    let lions = put(&mut state, PlayerId::P1, "Savannah Lions", Zone::Battlefield);
+    let lions = put(
+        &mut state,
+        PlayerId::P1,
+        "Savannah Lions",
+        Zone::Battlefield,
+    );
     let (own_life, their_life) = (state.players[0].life, state.players[1].life);
     cast(&mut surface, &mut state, "Slagstorm", Some(1), &[]);
     resolve(&mut surface, &mut state);
@@ -371,7 +427,12 @@ fn slagstorm_modes_damage_every_creature_or_each_player() {
 fn abrade_damages_a_creature_or_destroys_an_artifact() {
     let mut state = ready();
     let mut surface = surface();
-    let nighthawk = put(&mut state, PlayerId::P1, "Vampire Nighthawk", Zone::Battlefield);
+    let nighthawk = put(
+        &mut state,
+        PlayerId::P1,
+        "Vampire Nighthawk",
+        Zone::Battlefield,
+    );
     let furnace = put(&mut state, PlayerId::P1, "Great Furnace", Zone::Battlefield);
     cast(&mut surface, &mut state, "Abrade", Some(0), &[nighthawk]);
     resolve(&mut surface, &mut state);
@@ -388,7 +449,12 @@ fn abrade_damages_a_creature_or_destroys_an_artifact() {
 fn abrade_without_an_artifact_selects_the_creature_mode_silently() {
     let mut state = ready();
     let mut surface = surface();
-    let lions = put(&mut state, PlayerId::P1, "Savannah Lions", Zone::Battlefield);
+    let lions = put(
+        &mut state,
+        PlayerId::P1,
+        "Savannah Lions",
+        Zone::Battlefield,
+    );
     cast(&mut surface, &mut state, "Abrade", None, &[lions]);
     resolve(&mut surface, &mut state);
     assert_eq!(zone(&state, lions), Zone::Graveyard);
@@ -400,7 +466,13 @@ fn targeted_spells_do_nothing_when_their_target_leaves_before_resolution() {
     let mut surface = surface();
     let angel = put(&mut state, PlayerId::P1, "Serra Angel", Zone::Battlefield);
     let fodder = put(&mut state, PlayerId::P0, "Forest", Zone::Hand);
-    let spell = cast(&mut surface, &mut state, "Incinerating Blast", None, &[angel]);
+    let spell = cast(
+        &mut surface,
+        &mut state,
+        "Incinerating Blast",
+        None,
+        &[angel],
+    );
     mtg_kernel::event::propose_and_commit(
         &mut state,
         mtg_kernel::event::ProposedEvent::zone_change(angel, Zone::Graveyard),
@@ -416,15 +488,39 @@ fn targeted_spells_do_nothing_when_their_target_leaves_before_resolution() {
 fn preposterous_proportions_boosts_only_controlled_creatures_with_vigilance() {
     let mut state = ready();
     let mut surface = surface();
-    let own = put(&mut state, PlayerId::P0, "Savannah Lions", Zone::Battlefield);
-    let theirs = put(&mut state, PlayerId::P1, "Savannah Lions", Zone::Battlefield);
-    cast(&mut surface, &mut state, "Preposterous Proportions", None, &[]);
+    let own = put(
+        &mut state,
+        PlayerId::P0,
+        "Savannah Lions",
+        Zone::Battlefield,
+    );
+    let theirs = put(
+        &mut state,
+        PlayerId::P1,
+        "Savannah Lions",
+        Zone::Battlefield,
+    );
+    cast(
+        &mut surface,
+        &mut state,
+        "Preposterous Proportions",
+        None,
+        &[],
+    );
     resolve(&mut surface, &mut state);
     assert_eq!(engine::effective_power(&state, own), 12);
     assert_eq!(engine::effective_toughness(&state, own), 11);
-    assert!(engine::has_effective_keyword(&state, own, Keywords::VIGILANCE));
+    assert!(engine::has_effective_keyword(
+        &state,
+        own,
+        Keywords::VIGILANCE
+    ));
     assert_eq!(engine::effective_power(&state, theirs), 2);
-    assert!(!engine::has_effective_keyword(&state, theirs, Keywords::VIGILANCE));
+    assert!(!engine::has_effective_keyword(
+        &state,
+        theirs,
+        Keywords::VIGILANCE
+    ));
 }
 
 #[test]
@@ -485,7 +581,10 @@ fn legal_spell_targets(state: &mut GameState, name: &str) -> Vec<Target> {
 #[test]
 fn batch_two_definitions_use_their_new_target_shapes() {
     let def = |name| &CARD_DEFS[usize::from(card_id_by_name(name).unwrap())];
-    assert_eq!(def("Hero's Downfall").target_spec, TargetSpec::CreatureOrPlaneswalker);
+    assert_eq!(
+        def("Hero's Downfall").target_spec,
+        TargetSpec::CreatureOrPlaneswalker
+    );
     assert_eq!(
         def("Broken Wings").target_spec,
         TargetSpec::ArtifactEnchantmentOrFlyingCreature
@@ -513,7 +612,12 @@ fn heros_downfall_destroys_a_creature_or_planeswalker() {
     let mut state = ready();
     let mut surface = surface();
     let angel = put(&mut state, PlayerId::P1, "Serra Angel", Zone::Battlefield);
-    let walker = put(&mut state, PlayerId::P1, "Ajani, Caller of the Pride", Zone::Hand);
+    let walker = put(
+        &mut state,
+        PlayerId::P1,
+        "Ajani, Caller of the Pride",
+        Zone::Hand,
+    );
     mtg_kernel::event::propose_and_commit(
         &mut state,
         mtg_kernel::event::ProposedEvent::zone_change(walker, Zone::Battlefield),
@@ -535,8 +639,18 @@ fn heros_downfall_destroys_a_creature_or_planeswalker() {
 fn broken_wings_and_make_your_move_filter_creatures_by_flying_and_power() {
     let mut state = ready();
     let angel = put(&mut state, PlayerId::P1, "Serra Angel", Zone::Battlefield);
-    let lions = put(&mut state, PlayerId::P1, "Savannah Lions", Zone::Battlefield);
-    let ceratops = put(&mut state, PlayerId::P1, "Quakestrider Ceratops", Zone::Battlefield);
+    let lions = put(
+        &mut state,
+        PlayerId::P1,
+        "Savannah Lions",
+        Zone::Battlefield,
+    );
+    let ceratops = put(
+        &mut state,
+        PlayerId::P1,
+        "Quakestrider Ceratops",
+        Zone::Battlefield,
+    );
     let furnace = put(&mut state, PlayerId::P1, "Great Furnace", Zone::Battlefield);
     let wings = legal_spell_targets(&mut state.clone(), "Broken Wings");
     assert!(wings.contains(&Target::Object(angel)));
@@ -553,7 +667,13 @@ fn broken_wings_and_make_your_move_filter_creatures_by_flying_and_power() {
     cast(&mut surface, &mut state, "Broken Wings", None, &[angel]);
     resolve(&mut surface, &mut state);
     assert_eq!(zone(&state, angel), Zone::Graveyard);
-    cast(&mut surface, &mut state, "Make Your Move", None, &[ceratops]);
+    cast(
+        &mut surface,
+        &mut state,
+        "Make Your Move",
+        None,
+        &[ceratops],
+    );
     resolve(&mut surface, &mut state);
     assert_eq!(zone(&state, ceratops), Zone::Graveyard);
     assert_eq!(zone(&state, lions), Zone::Battlefield);
@@ -563,16 +683,33 @@ fn broken_wings_and_make_your_move_filter_creatures_by_flying_and_power() {
 fn make_your_move_sees_pumped_power_and_fizzles_when_power_drops() {
     let mut state = ready();
     let mut surface = surface();
-    let lions = put(&mut state, PlayerId::P1, "Savannah Lions", Zone::Battlefield);
+    let lions = put(
+        &mut state,
+        PlayerId::P1,
+        "Savannah Lions",
+        Zone::Battlefield,
+    );
     cast(&mut surface, &mut state, "Sure Strike", None, &[lions]);
     resolve(&mut surface, &mut state);
     let spell = cast(&mut surface, &mut state, "Make Your Move", None, &[lions]);
     // Respond by shrinking the creature below power 4: the only target is
     // illegal on resolution and the spell does nothing.
-    cast(&mut surface, &mut state, "Fleeting Distraction", None, &[lions]);
+    cast(
+        &mut surface,
+        &mut state,
+        "Fleeting Distraction",
+        None,
+        &[lions],
+    );
     resolve(&mut surface, &mut state);
     assert_eq!(engine::effective_power(&state, lions), 4);
-    cast(&mut surface, &mut state, "Fleeting Distraction", None, &[lions]);
+    cast(
+        &mut surface,
+        &mut state,
+        "Fleeting Distraction",
+        None,
+        &[lions],
+    );
     resolve(&mut surface, &mut state);
     assert_eq!(engine::effective_power(&state, lions), 3);
     resolve(&mut surface, &mut state);
@@ -584,8 +721,18 @@ fn make_your_move_sees_pumped_power_and_fizzles_when_power_drops() {
 fn meteor_golem_destroys_only_an_opponents_nonland_permanent() {
     let mut state = ready();
     let mut surface = surface();
-    let own = put(&mut state, PlayerId::P0, "Savannah Lions", Zone::Battlefield);
-    let theirs = put(&mut state, PlayerId::P1, "Savannah Lions", Zone::Battlefield);
+    let own = put(
+        &mut state,
+        PlayerId::P0,
+        "Savannah Lions",
+        Zone::Battlefield,
+    );
+    let theirs = put(
+        &mut state,
+        PlayerId::P1,
+        "Savannah Lions",
+        Zone::Battlefield,
+    );
     // Great Furnace is an artifact land, so "nonland" excludes it.
     let their_artifact_land = put(&mut state, PlayerId::P1, "Great Furnace", Zone::Battlefield);
     let their_angel = put(&mut state, PlayerId::P1, "Serra Angel", Zone::Battlefield);
@@ -598,7 +745,11 @@ fn meteor_golem_destroys_only_an_opponents_nonland_permanent() {
             Decision::CastSpellOrPass { .. } => apply(&mut surface, &mut state, Action::Pass),
             Decision::ChooseTargets { legal_targets, .. } => {
                 offered = Some(legal_targets);
-                apply(&mut surface, &mut state, Action::ChooseTarget(Target::Object(theirs)));
+                apply(
+                    &mut surface,
+                    &mut state,
+                    Action::ChooseTarget(Target::Object(theirs)),
+                );
             }
             other => panic!("{other:?}"),
         }
@@ -632,11 +783,20 @@ fn reclamation_sage_may_destroy_an_artifact_or_enchantment() {
         let mut surface = surface();
         let furnace = put(&mut state, PlayerId::P1, "Great Furnace", Zone::Battlefield);
         let sage = cast(&mut surface, &mut state, "Reclamation Sage", None, &[]);
-        drive(&mut surface, &mut state, Some(furnace), Some(u16::from(destroy)));
+        drive(
+            &mut surface,
+            &mut state,
+            Some(furnace),
+            Some(u16::from(destroy)),
+        );
         assert_eq!(zone(&state, sage), Zone::Battlefield);
         assert_eq!(
             zone(&state, furnace),
-            if destroy { Zone::Graveyard } else { Zone::Battlefield }
+            if destroy {
+                Zone::Graveyard
+            } else {
+                Zone::Battlefield
+            }
         );
     }
 }

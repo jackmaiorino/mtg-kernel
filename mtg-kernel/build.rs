@@ -7161,7 +7161,11 @@ fn codegen(cards: &[CardJson]) -> String {
     for card in cards {
         if let Special::Program { effect, mode2, .. } = special_for(&card.name) {
             let suffix = program_function_suffix(&card.name);
-            writeln!(out, "fn spell_effect_program_{suffix}() -> Option<EffectOp> {{").unwrap();
+            writeln!(
+                out,
+                "fn spell_effect_program_{suffix}() -> Option<EffectOp> {{"
+            )
+            .unwrap();
             writeln!(out, "    Some({effect})").unwrap();
             writeln!(out, "}}").unwrap();
             if let Some(mode) = mode2 {

@@ -1852,7 +1852,10 @@ mod tests {
             (TargetSpec::AttackingOrBlockingCreature, 40),
             (TargetSpec::CreatureOrPlaneswalker, 42),
             (TargetSpec::ArtifactEnchantmentOrFlyingCreature, 43),
-            (TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour, 44),
+            (
+                TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour,
+                44,
+            ),
             (TargetSpec::OpponentNonlandPermanent, 45),
         ];
         for (target_spec, ordinal) in stable_ordinals {
