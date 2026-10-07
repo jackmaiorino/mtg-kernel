@@ -18,6 +18,12 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # CI builds keep opt-level 3 but skip LTO and use parallel codegen: each
+  # feature set is a full release build, and thin LTO with one codegen unit
+  # made those builds most of a multi-hour run. Neither setting changes
+  # program semantics (Rust never relaxes floating-point arithmetic).
+  CARGO_PROFILE_RELEASE_LTO: "false"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
 jobs:
@@ -129,8 +135,10 @@ jobs:
       - name: Run CUDA backend feature Clippy (compile gate, no device)
         run: cargo clippy --release --locked -p mtg-kernel --all-targets --features experimental-burn-net8-packed-cuda-v1 -- -D warnings
 
-  rust-tests:
-    name: Rust tests (${{ matrix.os }})
+  # Each group builds a different feature set, so they run as parallel
+  # jobs; `rust-tests` below keeps the per-OS check names.
+  rust-test-groups:
+    name: Rust tests (${{ matrix.os }}, ${{ matrix.group }})
     needs: detect-changes
     if: needs.detect-changes.outputs.rust_relevant == 'true'
     defaults:
@@ -142,6 +150,14 @@ jobs:
         os:
           - ubuntu-24.04
           - windows-2025
+        group:
+          - workspace
+          - limited
+          - limited-store
+          - trace
+          - saved-input
+          - native-store
+          - cuda
     runs-on: ${{ matrix.os }}
     steps:
       - name: Check out repository
@@ -177,26 +193,32 @@ jobs:
             cargo-registry-tests-${{ matrix.os }}-
 
       - name: Validate Witness Protection layered rules
+        if: matrix.group == 'limited'
         run: cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test fdn_witness_protection_v1
 
       - name: Validate London mulligans and original fixture games
+        if: matrix.group == 'limited'
         run: |
           cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test london_mulligans_v1 -- --nocapture
           cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib london_session_snapshot_restores
 
       - name: Run Rust release tests
+        if: matrix.group == 'workspace'
         run: python python/tools/run_rust_workspace_tests.py --no-fail-fast
 
       - name: Check opt-in gameplay decision tracing
+        if: matrix.group == 'trace'
         run: |
           cargo clippy --release --locked -p mtg-kernel --all-targets --features gameplay-decision-trace-v1 -- -D warnings
           cargo test --release --locked -p mtg-kernel --features gameplay-decision-trace-v1 --lib gameplay_trace
       - name: Saved input scalar diagnostic guards
+        if: matrix.group == 'saved-input'
         run: |
           cargo clippy --release --locked -p mtg-kernel --lib --bin saved_input_scalar_diagnostic --features saved-input-scalar-diagnostic -- -D warnings
           cargo test --release --locked -p mtg-kernel --features saved-input-scalar-diagnostic --lib saved_input_scalar_diagnostic::tests
 
       - name: Validate native Store production feature boundary
+        if: matrix.group == 'native-store'
         shell: pwsh
         run: |
           cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --lib native_store_production_capture_v2::
@@ -205,14 +227,34 @@ jobs:
           exit $LASTEXITCODE
 
       - name: Validate FDN Limited gameplay and catalog separation
+        if: matrix.group == 'limited'
         run: |
-          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test fdn_fixture_batch_a_v1 --test fdn_fixture_batch_b_v1 --test limited_session_v1 --test limited_priority_v1 --test limited_combat_v1 --test fdn_combat_cards_v1 --test fdn_legend_rule_v1 --test fdn_targeted_spells_v1 --test fdn_counter_creatures_v1 --test fdn_lifegain_creatures_v1 --test fdn_draw_creatures_v1 --test fdn_homunculus_creature_v1 --test fdn_koma_creature_v1 --test fdn_kiora_creature_v1 --test fdn_prowler_creature_v1 --test fdn_luminous_rebuke_v1 --test fdn_uncharted_voyage_v1 --test fdn_sylvan_scavenging_v1 --test fdn_celestial_armor_v1 --test fdn_keyword_creatures_v1
+          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test fdn_fixture_batch_a_v1 --test fdn_fixture_batch_b_v1 --test limited_session_v1 --test limited_priority_v1 --test limited_combat_v1 --test fdn_combat_cards_v1 --test fdn_legend_rule_v1 --test fdn_targeted_spells_v1 --test fdn_counter_creatures_v1 --test fdn_lifegain_creatures_v1 --test fdn_draw_creatures_v1 --test fdn_homunculus_creature_v1 --test fdn_koma_creature_v1 --test fdn_kiora_creature_v1 --test fdn_prowler_creature_v1 --test fdn_luminous_rebuke_v1 --test fdn_uncharted_voyage_v1 --test fdn_sylvan_scavenging_v1 --test fdn_celestial_armor_v1 --test fdn_keyword_creatures_v1 --test fdn_gainlands_lifegain_v1
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures limited_session_v1::tests rl_session::tests card_def:: koma_spell_protection threshold_counts_graveyard native_training_store_run_v2::
+
+      - name: Validate FDN profiles under the native Store feature
+        if: matrix.group == 'limited-store'
+        run: |
           python python/tools/run_rust_lib_filters.py --features "limited-fdn-fixtures native-training-store-v2-production" pre_fdn_profile prior_fdn_batch fdn_profile_record_round_trips
 
       - name: Test host-safe experimental CUDA feature surface
+        if: matrix.group == 'cuda'
         run: |
           cargo test --release --locked -p mtg-kernel --features experimental-burn-net8-packed-cuda-v1 --lib experimental_burn_net8_packed_v1::
+
+  rust-tests:
+    name: Rust tests (${{ matrix.os }})
+    needs: [detect-changes, rust-test-groups]
+    if: always() && needs.detect-changes.outputs.rust_relevant == 'true'
+    strategy:
+      matrix:
+        os:
+          - ubuntu-24.04
+          - windows-2025
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every Rust test group
+        run: test "${{ needs.rust-test-groups.result }}" = success
 
   python-tests:
     name: Python tests (${{ matrix.os }}, shard ${{ matrix.shard }})
