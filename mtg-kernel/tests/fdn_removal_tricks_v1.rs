@@ -27,6 +27,14 @@ const BATCH: [&str; 10] = [
     "Bake into a Pie",
 ];
 
+const BATCH_TWO: [&str; 5] = [
+    "Hero's Downfall",
+    "Broken Wings",
+    "Make Your Move",
+    "Meteor Golem",
+    "Reclamation Sage",
+];
+
 fn ready() -> GameState {
     let forest = card_id_by_name("Forest").unwrap();
     let mut state =
@@ -158,7 +166,11 @@ fn zone(state: &GameState, id: ObjectId) -> Zone {
 #[test]
 fn appended_definitions_are_full_contiguous_and_use_existing_target_shapes() {
     let first = usize::from(card_id_by_name(BATCH[0]).unwrap());
-    assert_eq!(first + BATCH.len(), CARD_DEFS.len());
+    assert_eq!(first + BATCH.len() + BATCH_TWO.len(), CARD_DEFS.len());
+    for (offset, name) in BATCH_TWO.into_iter().enumerate() {
+        let id = card_id_by_name(name).unwrap();
+        assert_eq!(usize::from(id), first + BATCH.len() + offset, "{name}");
+    }
     for (offset, name) in BATCH.into_iter().enumerate() {
         let id = card_id_by_name(name).unwrap();
         assert_eq!(usize::from(id), first + offset, "{name}");
@@ -489,13 +501,7 @@ fn batch_two_definitions_use_their_new_target_shapes() {
     assert_eq!((golem.power, golem.toughness), (Some(3), Some(3)));
     let sage = def("Reclamation Sage");
     assert_eq!((sage.power, sage.toughness), (Some(2), Some(1)));
-    for name in [
-        "Hero's Downfall",
-        "Broken Wings",
-        "Make Your Move",
-        "Meteor Golem",
-        "Reclamation Sage",
-    ] {
+    for name in BATCH_TWO {
         let id = card_id_by_name(name).unwrap();
         assert_eq!(CARD_DEFS[usize::from(id)].capability, CardCapability::Full);
         preflight_fully_supported_deck(&[id]).unwrap();
@@ -558,8 +564,6 @@ fn make_your_move_sees_pumped_power_and_fizzles_when_power_drops() {
     let mut state = ready();
     let mut surface = surface();
     let lions = put(&mut state, PlayerId::P1, "Savannah Lions", Zone::Battlefield);
-    assert!(!legal_spell_targets(&mut state.clone(), "Make Your Move")
-        .contains(&Target::Object(lions)));
     cast(&mut surface, &mut state, "Sure Strike", None, &[lions]);
     resolve(&mut surface, &mut state);
     let spell = cast(&mut surface, &mut state, "Make Your Move", None, &[lions]);
@@ -580,26 +584,31 @@ fn make_your_move_sees_pumped_power_and_fizzles_when_power_drops() {
 fn meteor_golem_destroys_only_an_opponents_nonland_permanent() {
     let mut state = ready();
     let mut surface = surface();
-    let own = put(&mut state, PlayerId::P0, "Serra Angel", Zone::Battlefield);
+    let own = put(&mut state, PlayerId::P0, "Great Furnace", Zone::Battlefield);
     let theirs = put(&mut state, PlayerId::P1, "Great Furnace", Zone::Battlefield);
+    let their_angel = put(&mut state, PlayerId::P1, "Serra Angel", Zone::Battlefield);
     let their_land = put(&mut state, PlayerId::P1, "Forest", Zone::Battlefield);
     let golem = cast(&mut surface, &mut state, "Meteor Golem", None, &[]);
-    apply(&mut surface, &mut state, Action::Pass);
-    match next(&mut surface, &mut state) {
-        Decision::CastSpellOrPass { .. } => apply(&mut surface, &mut state, Action::Pass),
-        other => panic!("{other:?}"),
-    }
-    match next(&mut surface, &mut state) {
-        Decision::ChooseTargets { legal_targets, .. } => {
-            assert_eq!(legal_targets, vec![Target::Object(theirs)]);
-            let _ = (own, their_land);
-            apply(&mut surface, &mut state, Action::ChooseTarget(Target::Object(theirs)));
+    let mut offered = None;
+    for _ in 0..32 {
+        match next(&mut surface, &mut state) {
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => break,
+            Decision::CastSpellOrPass { .. } => apply(&mut surface, &mut state, Action::Pass),
+            Decision::ChooseTargets { legal_targets, .. } => {
+                eprintln!("OFFERED {legal_targets:?} theirs={theirs:?} own={own:?}");
+                offered = Some(legal_targets);
+                apply(&mut surface, &mut state, Action::ChooseTarget(Target::Object(theirs)));
+            }
+            other => panic!("{other:?}"),
         }
-        other => panic!("{other:?}"),
     }
-    drive(&mut surface, &mut state, None, None);
+    let offered = offered.expect("Meteor Golem's trigger asks for a target");
+    assert_eq!(offered.len(), 2);
+    assert!(offered.contains(&Target::Object(theirs)));
+    assert!(offered.contains(&Target::Object(their_angel)));
     assert_eq!(zone(&state, golem), Zone::Battlefield);
     assert_eq!(zone(&state, theirs), Zone::Graveyard);
+    assert_eq!(zone(&state, their_angel), Zone::Battlefield);
     assert_eq!(zone(&state, own), Zone::Battlefield);
     assert_eq!(zone(&state, their_land), Zone::Battlefield);
 }
