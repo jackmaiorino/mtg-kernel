@@ -21,9 +21,9 @@ MANIFEST_RELATIVE_PATH = Path("docs/contracts/ACTION_INGRESS_ADMISSION_V1.md")
 ARTIFACT_ROOT_WINDOWS = r"D:\mtg-kernel-action-ingress-admission-v1-20260726"
 TARGET_DIR_WINDOWS = r"E:\cargo-target-action-ingress-admission-v1"
 WORKTREE_WINDOWS = (
-    r"C:\Users\user\IdeaProjects\mtg-kernel-observation-diagnostics-codex"
+    r"C:\Users\Jack\IdeaProjects\mtg-kernel-observation-diagnostics-codex"
 )
-LINUX_REPO = "/mnt/c/Users/user/IdeaProjects/mtg-kernel-observation-diagnostics-codex"
+LINUX_REPO = "/mnt/c/Users/Jack/IdeaProjects/mtg-kernel-observation-diagnostics-codex"
 BRANCH = "codex/observation-diagnostics-v1"
 
 BUILD_RECEIPT_SCHEMA = "mtg-kernel-action-ingress-admission-build-receipt/v1"
