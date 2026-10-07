@@ -335,12 +335,22 @@ fn resolve_git_path(repo_root: &Path, name: &str) -> PathBuf {
     }
 }
 
+/// Cargo treats a rerun-if-changed path that does not exist as changed on
+/// every build, so a missing Git metadata file (a fresh `actions/checkout`
+/// has no packed-refs, and a packed branch has no loose ref) would rerun this
+/// script and rebuild the crate and every test binary on each cargo command.
+/// Skipping one is safe because every commit, checkout or reset that could
+/// create it also appends to logs/HEAD (the HEAD reflog), watched below.
+fn emit_git_path_rerun_input(repo_root: &Path, name: &str) {
+    let path = resolve_git_path(repo_root, name);
+    if path.exists() {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+}
+
 fn emit_commit_tree_rerun_inputs(repo_root: &Path) {
-    for name in ["HEAD", "index", "packed-refs"] {
-        println!(
-            "cargo:rerun-if-changed={}",
-            resolve_git_path(repo_root, name).display()
-        );
+    for name in ["HEAD", "logs/HEAD", "index", "packed-refs"] {
+        emit_git_path_rerun_input(repo_root, name);
     }
     let symbolic_ref = Command::new("git")
         .args(["symbolic-ref", "-q", "HEAD"])
@@ -351,10 +361,7 @@ fn emit_commit_tree_rerun_inputs(repo_root: &Path) {
         let reference = std::str::from_utf8(&symbolic_ref.stdout)
             .expect("git symbolic ref is UTF-8")
             .trim();
-        println!(
-            "cargo:rerun-if-changed={}",
-            resolve_git_path(repo_root, reference).display()
-        );
+        emit_git_path_rerun_input(repo_root, reference);
     }
     let tracked = git_output(
         repo_root,
@@ -399,7 +406,14 @@ fn configure_commit_tree_binding(repo_root: &Path) {
     }
     let status = git_output(
         repo_root,
-        &["status", "--porcelain=v1", "--untracked-files=all"],
+        // --no-optional-locks: refreshing the index here would change a
+        // watched file and rerun this script on the next cargo command.
+        &[
+            "--no-optional-locks",
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+        ],
         "build source status",
     );
     let clean = status.is_empty();
