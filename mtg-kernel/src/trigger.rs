@@ -246,6 +246,32 @@ const fn etb_trigger(effect: fn() -> EffectOp) -> TriggeredAbilityDef {
 }
 
 const GAIN_ONE_LIFE_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(gain_one_life_effect)];
+const AJANIS_PRIDEMATE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControllerGainsLife,
+    ..etb_trigger(writhing_chrysalis_counter_marker_effect)
+}];
+const MARAUDING_BLIGHT_PRIEST_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControllerGainsLife,
+    ..etb_trigger(opponent_loses_one_life_effect)
+}];
+const SANGUINE_SYPHONER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Attacks,
+    ..etb_trigger(sanguine_syphoner_effect)
+}];
+
+fn opponent_loses_one_life_effect() -> EffectOp {
+    EffectOp::LoseLife {
+        player: PlayerRef::Opponent,
+        amount: 1,
+    }
+}
+
+fn sanguine_syphoner_effect() -> EffectOp {
+    EffectOp::Sequence(vec![
+        opponent_loses_one_life_effect(),
+        gain_one_life_effect(),
+    ])
+}
 const DAZZLING_ANGEL_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::OtherControlledCreatureEnters { subtype: None },
     ..etb_trigger(gain_one_life_effect)
@@ -1500,7 +1526,12 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Mossborn Hydra" => &MOSSBORN_HYDRA_TRIGGERS,
         "Beast-Kin Ranger" => &BEAST_KIN_RANGER_TRIGGERS,
         "Dwynen, Gilt-Leaf Daen" => &DWYNEN_TRIGGERS,
-        "Blossoming Sands" | "Thornwood Falls" => &GAIN_ONE_LIFE_TRIGGERS,
+        "Blossoming Sands" | "Thornwood Falls" | "Bloodfell Caves" | "Dismal Backwater"
+        | "Jungle Hollow" | "Rugged Highlands" | "Scoured Barrens" | "Swiftwater Cliffs"
+        | "Tranquil Cove" | "Wind-Scarred Crag" => &GAIN_ONE_LIFE_TRIGGERS,
+        "Ajani's Pridemate" => &AJANIS_PRIDEMATE_TRIGGERS,
+        "Marauding Blight-Priest" => &MARAUDING_BLIGHT_PRIEST_TRIGGERS,
+        "Sanguine Syphoner" => &SANGUINE_SYPHONER_TRIGGERS,
         "Dazzling Angel" => &DAZZLING_ANGEL_TRIGGERS,
         "Clinquant Skymage" => &CLINQUANT_SKYMAGE_TRIGGERS,
         "Mischievous Mystic" => &MISCHIEVOUS_MYSTIC_TRIGGERS,
