@@ -181,6 +181,18 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
+      - name: Prepare the self-hosted runner
+        if: runner.environment == 'self-hosted'
+        run: |
+          # Runners without a configured target root keep one beside their
+          # work directory, so builds still persist between jobs.
+          if [ -z "${MTG_CI_TARGET_ROOT:-}" ]; then
+            printf 'MTG_CI_TARGET_ROOT=%s\n' "$RUNNER_WORKSPACE/../../mtg-ci-target" >> "$GITHUB_ENV"
+          fi
+          if ! command -v rustup >/dev/null && [ -x "$HOME/.cargo/bin/rustup" ]; then
+            printf '%s\n' "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+
       - name: Install pinned Rust in a fresh toolchain directory
         shell: bash
         env:
