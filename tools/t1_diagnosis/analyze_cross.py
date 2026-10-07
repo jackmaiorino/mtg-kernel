@@ -18,7 +18,7 @@ selection or other. Each deviation inherits the paired playout result: success
 when the improved playout scored above the T1-follow-up playout from the same
 initial action and determinization, failure when below, neutral otherwise.
 
-Usage: analyze_cross.py CROSS.jsonl [--boot 2000] [--seed 7] [--examples 3] [--json OUT]
+Usage: analyze_cross.py CROSS.jsonl [MORE.jsonl ...] [--boot 2000] [--seed 7] [--examples 3] [--json OUT]
 """
 
 import argparse
@@ -62,20 +62,26 @@ def fmt(x):
 
 
 def classify(dev):
-    """Keyword classifier over both semantics strings of a deviation."""
+    """Keyword classifier over both semantics strings of a deviation.
+
+    Order: prevention, mana allocation (any mana ability, including a Gate's),
+    Gate targets or colours (a Gate's non-mana ability, target or colour
+    choice), attacks, creature preservation, card selection, other."""
     text = f"{dev.get('sampled_sem') or ''} {dev.get('chosen_sem') or ''}"
-    kinds = set()
+    parsed = []
     for s in (dev.get("sampled_sem"), dev.get("chosen_sem")):
         try:
-            kinds.add(json.loads(s).get("action_kind", ""))
-        except (TypeError, ValueError, AttributeError):
-            pass
+            parsed.append(json.loads(s))
+        except (TypeError, ValueError):
+            parsed.append({})
+    kinds = {p.get("action_kind", "") for p in parsed if isinstance(p, dict)}
+    sources = {str(p.get("source", "")) for p in parsed if isinstance(p, dict)}
     if "Prismatic Strands" in text or "prevent" in text.lower():
         return "prevention"
-    if "Gate" in text or "choose_effect_color" in kinds:
-        return "gate_targets_colours"
     if "activate_mana_ability" in kinds or "mana_choice" in text:
         return "mana_allocation"
+    if any("Gate" in s for s in sources) or "choose_effect_color" in kinds:
+        return "gate_targets_colours"
     if kinds & {"choose_attacker_inclusion", "declare_attackers"}:
         return "attacks"
     if kinds & {"choose_blocker_inclusion", "declare_blockers_for_attacker", "choose_cost_target"} or "sacrific" in text.lower():
@@ -88,21 +94,23 @@ def classify(dev):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cross")
+    ap.add_argument("cross", nargs="+", help="one or more cross output files (rows deduplicated by root_id)")
     ap.add_argument("--boot", type=int, default=2000)
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--examples", type=int, default=3)
     ap.add_argument("--json")
     a = ap.parse_args()
-    rows, errors = [], []
-    with open(a.cross) as f:
-        for line in f:
-            r = json.loads(line)
-            if r.get("kind") == "cross":
-                rows.append(r)
-            elif r.get("kind") == "error":
-                errors.append(r)
-    rows.sort(key=lambda r: r["root_index"])
+    rows, errors, seen = [], [], set()
+    for path in a.cross:
+        with open(path) as f:
+            for line in f:
+                r = json.loads(line)
+                if r.get("kind") == "cross" and r.get("root_id") not in seen:
+                    seen.add(r.get("root_id"))
+                    rows.append(r)
+                elif r.get("kind") == "error":
+                    errors.append(r)
+    rows.sort(key=lambda r: (r["turn"], str(r.get("root_id"))))
     print("T1 TOOLING-QUALIFICATION RESULTS - not research conclusions (T1 never trained on Spy or CawGates).")
     print(f"rows {len(rows)}, error rows {len(errors)}")
     for e in errors:
