@@ -92,7 +92,7 @@ def require_throughput(evidence, work_class, units, binding, now=None):
     for key, value in binding.items():
         require(evidence['binding'].get(key) == value, 'Throughput evidence binds a different ' + key)
     inventory = evidence['inventory']
-    require(set(inventory) == set(HOSTS), 'Inventory must cover desktop, the compute host and RunPod')
+    require(set(inventory) == set(HOSTS), 'Inventory must cover the desktop, the compute host and RunPod')
     for host, item in inventory.items():
         require(0 <= now - item['checked_unix'] <= INVENTORY_MAX_AGE_SECONDS, 'Refresh the inventory: ' + host)
         require(isinstance(item['eligible'], bool) and item['reason'].strip(), 'Inventory needs eligibility and reason')

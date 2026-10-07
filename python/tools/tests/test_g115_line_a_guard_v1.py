@@ -79,7 +79,7 @@ class ThroughputTests(unittest.TestCase):
             self.admit(value)
         value = evidence()
         del value['inventory']['runpod']
-        with self.assertRaisesRegex(ValueError, 'the maintainer, the compute host and RunPod'):
+        with self.assertRaisesRegex(ValueError, 'the desktop, the compute host and RunPod'):
             self.admit(value)
 
     def test_refuses_an_eligible_host_left_unmeasured(self):
