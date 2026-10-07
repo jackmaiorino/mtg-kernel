@@ -186,7 +186,7 @@ def prepare(root, qualification, training_binary):
             final_update=199, terminal_rewards=True),
         allocation="Not yet qualified. Must bind representative ten-game throughput evidence and wall caps before substantial dispatch.",
         advance="All complete and all gates pass: REPLICATE only. Otherwise NO-ADVANCE. No promotion.",
-        review="Fable zero-read HTTP429 until September22 07:00EDT; no repeated retry or endorsement. Bounded continuation under Jack's assignment.",
+        review="Fable zero-read HTTP429 until September22 07:00EDT; no repeated retry or endorsement. Bounded continuation under the maintainer's assignment.",
         non_claim="One lineage, one Gates list, familiar V3 development opposition, sampled KeepSevenV2 and static/Keep boards. No CP7 selection or human/league competence claim."))
     print(dict(prepared=str(root), training_unique_seeds=len(train_seeds), evaluation_matches=2616,
         census=dict(census), independent_balance=dict(joint)), flush=True)

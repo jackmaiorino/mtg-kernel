@@ -18,9 +18,9 @@ import sys
 import time
 import zipfile
 
-REMOTE = "haley@100.71.75.65"
+REMOTE = os.environ.get('COMPUTE_HOST_SSH', 'compute-host')
 REMOTE_INPUT = "C:/mtg-node/public-device-placement-001"
-HOSTNAMES = {"jack": "DESKTOP-DJ1C40R", "haleyspc": "HALEYSPC"}
+HOSTNAMES = {"desktop": "DESKTOP-DJ1C40R", "computehost": "COMPUTEHOST"}
 DISK_RESERVE_BYTES = 60 * 1024**3
 
 
@@ -202,7 +202,7 @@ $active=@(Get-CimInstance Win32_Process | Where-Object {$_.Name -match '^trainer
 $disk=Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='__TARGET_DRIVE__:'"
 if (-not $disk) {throw 'target volume unavailable'}
 [pscustomobject]@{host=$env:COMPUTERNAME;at=(Get-Date).ToUniversalTime().ToString('o');active=$active;disk_free_bytes=[int64]$disk.FreeSpace;gpu=@(& nvidia-smi --query-gpu=index,uuid,memory.free,utilization.gpu --format=csv,noheader,nounits)} | ConvertTo-Json -Depth 3'''.replace("__TARGET_DRIVE__",drive)
-    if host == "haleyspc":
+    if host == "computehost":
         result=json.loads(ssh_ps(script))
     else:
         encoded=base64.b64encode(script.encode("utf-16le")).decode()
@@ -230,7 +230,7 @@ def _dispatch_group(root, binary_pin, configs, placements, mode, stop, wall_seco
     for host in {p["host"] for p in placements.values()}:
         if host not in HOSTNAMES:
             raise ValueError("no qualified dispatcher for host")
-        target_drive = root.drive.rstrip(":") if host == "jack" else "C"
+        target_drive = root.drive.rstrip(":") if host == "desktop" else "C"
         preflights[host] = preflight(host,[p for p in placements.values() if p["host"]==host],target_drive)
     root.mkdir()
     for host, report in preflights.items():
@@ -245,7 +245,7 @@ def _dispatch_group(root, binary_pin, configs, placements, mode, stop, wall_seco
             raise ValueError("no qualified dispatcher for host")
         local = root/host
         (local/"jobs").mkdir(parents=True)
-        remote_root = f"C:/mtg-node/{root.name}" if host == "haleyspc" else str(local)
+        remote_root = f"C:/mtg-node/{root.name}" if host == "computehost" else str(local)
         native_binary = str(Path(remote_root)/"trainer.exe")
         shutil.copy2(binary,local/"trainer.exe")
         group = dict(mode=mode,jobs={})
@@ -264,7 +264,7 @@ def _dispatch_group(root, binary_pin, configs, placements, mode, stop, wall_seco
                 binary=dict(path=native_binary,sha256=binary_pin["sha256"]),
                 request=dict(path=str(Path(native_folder)/"request.json"),sha256=pin(folder/"request.json")["sha256"]))
         write(local/"group.json",group)
-        if host == "haleyspc":
+        if host == "computehost":
             ssh_ps(f"if (Test-Path -LiteralPath '{remote_root}') {{throw 'remote destination exists'}}; New-Item -ItemType Directory -Path '{remote_root}/jobs' | Out-Null")
             shutil.copy2(__file__,local/"worker.py")
             for name in group["jobs"]:
@@ -297,7 +297,7 @@ try {{
 
     def run_host(host):
         local, remote_root, group=staged[host]
-        if host == "jack":
+        if host == "desktop":
             worker_group(local/"group.json")
             return 0.0
         # Native children have their own wall cap even if SSH observation is interrupted.
@@ -344,7 +344,7 @@ try {{
     for name, placement in placements.items():
         host=placement["host"]
         base=staged[host][0]
-        folder=(base/"recovered" if host == "haleyspc" else base)/"jobs"/name
+        folder=(base/"recovered" if host == "computehost" else base)/"jobs"/name
         request=read(folder/"request.json")
         output=folder/"outputs"
         completion=read(output/"completion.json")

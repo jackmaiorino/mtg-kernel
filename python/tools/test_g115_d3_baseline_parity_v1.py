@@ -90,9 +90,9 @@ class BaselineParityTests(unittest.TestCase):
 
     def test_r8_bound_rejects_old_timeout_and_infeasible_tail(self):
         allocation=dict(job_timeout_seconds=10800,shard_timeout_seconds=36000)
-        require_r8_allocation('jack',allocation,22000)
-        with self.assertRaises(ValueError):require_r8_allocation('jack',allocation,24000)
-        with self.assertRaises(ValueError):require_r8_allocation('jack',dict(allocation,job_timeout_seconds=1800),22000)
+        require_r8_allocation('desktop',allocation,22000)
+        with self.assertRaises(ValueError):require_r8_allocation('desktop',allocation,24000)
+        with self.assertRaises(ValueError):require_r8_allocation('desktop',dict(allocation,job_timeout_seconds=1800),22000)
         require_r8_allocation('runpod',dict(allocation,shard_timeout_seconds=25200),12000)
         with self.assertRaises(ValueError):require_r8_allocation('runpod',dict(allocation,shard_timeout_seconds=25200),13000)
 

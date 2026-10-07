@@ -9,7 +9,7 @@
   "finished_at": "2026-09-23T19:21:18.831734+00:00",
   "golden_prefix_generation": 12,
   "golden_prefix_identical": true,
-  "host": "jack",
+  "host": "desktop",
   "log": "D:\\multirun-qualified-v1-work\\q6\\launch\\runs\\base-s3\\process.log",
   "output_digest_set_sha256": "f70e88874a2000932d1d149952d087bbe122f31f484972d8c29d3459dea2c36d",
   "run_id": "base-s3",

@@ -53,7 +53,7 @@ verification sequence. The subsequent status/report update changes no tested
 code, workflow, fixture or catalog bytes.
 
 Local source `7feec2b8b35445ddc77c1e5e8ddf05fd391cc4ef` implements
-Exemplar of Light and Sun-Blessed Healer. Matching committed HaleysPC
+Exemplar of Light and Sun-Blessed Healer. Matching committed compute host
 source is `7fc174bde3c8670ae1afdd919cbac1e68e994e0c`.
 See the [rules contract](../design/fdn_lifegain_creatures_v1.md).
 
@@ -96,10 +96,10 @@ requires mulligans, original-deck natural terminal games, deterministic
 replay/save/restore, remaining rules comparisons and passing CI. This
 batch does not establish full-set coverage or playing strength.
 
-Small manifest: CPU correctness checks on HaleysPC with two Cargo build
+Small manifest: CPU correctness checks on the compute host with two Cargo build
 jobs, GPU ordinal none; Rust/Cargo 1.94.1, MSVC linker 14.50.35725.0. Rules
 setup and external replay use seed 123; other regression seeds are in the
-checked-in tests. Jack's PC reservations remain respected. The XMage
+checked-in tests. The primary desktop reservations remain respected. The XMage
 check uses Maven 3.9.9, Oracle Java 23.0.2, one reactor worker, two active
 processors and bounded heaps. No formal measurement, training or paid
 compute was launched.
@@ -119,7 +119,7 @@ compute was launched.
 | Tested binary | `adf19400bfc000f04238c0881170bba70b247b18359da04425f93419bd092b13` |
 | External transcript | `702442950b19a22fd7de577947c3380f8bb9a7c2d8952afff07f20edf04f04d2` |
 
-Logs stay outside Git under `C:/Users/haley/`:
+Logs stay outside Git under `C:/Users/hostuser/`:
 `fdn-lifegain-pair-checks-001-{1,2,3}.log/.log.exit`,
 `fdn-lifegain-pair-checks-002-{4,5,6}.log/.log.exit`,
 `fdn-lifegain-pair-checks-003-7.log/.log.exit`,

@@ -33,22 +33,22 @@ Native repair source is 6d0a59ee; source checkout at launch is 45368d9e (later d
 
 | Qualification placement | Projected 512-match seconds |
 | --- | ---: |
-| jack-d-w1 | 1168.64 |
-| jack-d-w4 | 355.13 |
-| jack-d-w8 | 267.98 |
-| jack-d-w16 | 251.31 |
-| jack-d-w24 | 247.73 |
-| jack-e-w8 | 412.24 |
-| jack-c-w16 | 273.65 |
-| haley-w1 | 1841.75 |
-| haley-w4 | 689.11 |
-| haley-w8 | 572.25 |
-| haley-w16 | 556.47 |
+| desktop-d-w1 | 1168.64 |
+| desktop-d-w4 | 355.13 |
+| desktop-d-w8 | 267.98 |
+| desktop-d-w16 | 251.31 |
+| desktop-d-w24 | 247.73 |
+| desktop-e-w8 | 412.24 |
+| desktop-c-w16 | 273.65 |
+| computehost-w1 | 1841.75 |
+| computehost-w4 | 689.11 |
+| computehost-w8 | 572.25 |
+| computehost-w16 | 556.47 |
 | both-8-8 | 415.80 |
 | both-24-16 | 415.23 |
 | both-24-16-weight3 | 378.06 |
 
-All 14 placements completed the identical 32-job timing workload with matching complete-output signatures. The supported launcher selected Jack's D drive, 24 BelowNormal workers. Qualification cases totalled 486.26 seconds of measured execution/recovery, excluding separate staging and controller inventory overhead. These sampled forecasts do not establish an exhaustive optimum.
+All 14 placements completed the identical 32-job timing workload with matching complete-output signatures. The supported launcher selected the maintainer's D drive, 24 BelowNormal workers. Qualification cases totalled 486.26 seconds of measured execution/recovery, excluding separate staging and controller inventory overhead. These sampled forecasts do not establish an exhaustive optimum.
 
 Formal execution and recovery took 109.03 seconds, versus a 247.73-second forecast. The local worker group took 107.01 seconds and recovery 1.63 seconds. Final four-reader analysis took 34.66 seconds. Sum of per-job native wall durations was 1981.10 seconds, verification 360.59, compression 103.58; these overlap across workers and must not be added to elapsed time. Longest native job was 25.12 seconds, below the unchanged 180-second cap.
 
@@ -60,6 +60,6 @@ This is a uniform fixed eight-deck development pool against g115. Candidate is i
 
 The next research question is why successful terminal-target teaching changes ordinary gameplay adversely. Use a separately declared read-only diagnostic on these now-consumed traces to distinguish broad policy movement from the specific taught targeting behavior. Any new intervention requires fresh evaluation. Independently, the live human V3 action binding still rejects a shared-source stack fixture handled by V4. Repair and test that interface before a human pilot; offline replay projection is insufficient. Source audit: `E:/mtg-meta-recovery-20260921/human-live-binding-audit-20260921.md`.
 
-Independent Fable review remains missing: the prior consultation failed HTTP429 with zero source reads until September 22 at 07:00 EDT. No repeated retry or endorsement. Proceeding under Jack's explicit research authority preserves this unresolved review gap. CP7 outcomes were excluded. Kimi's Escape branch remains separate and unadopted. Human competitiveness and eventual league readiness remain unproven.
+Independent Fable review remains missing: the prior consultation failed HTTP429 with zero source reads until September 22 at 07:00 EDT. No repeated retry or endorsement. Proceeding under the maintainer's explicit research authority preserves this unresolved review gap. CP7 outcomes were excluded. Kimi's Escape branch remains separate and unadopted. Human competitiveness and eventual league readiness remain unproven.
 
 Evidence root: `E:/mtg-meta-recovery-20260921/teacher-wholematch-dispatch-repaired-001`. Primary files: `plan` referenced by `completion.json`, `choice.json`, `manifest.json`, `formal-result.json`, `analysis.json`, `matchup-seat-results.csv`, and immutable job bundles.

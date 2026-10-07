@@ -1,7 +1,7 @@
 # Rules fix: Undercity room abilities target from the colorless dungeon (v1)
 
 Branch `claude/rules-fix-room-ability-colorless-source` from `main` 54725398.
-Not merged; the lane owner (Codex) and Jack decide.
+Not merged; the lane owner (Codex) and the maintainer's decide.
 
 ## Root cause
 

@@ -13,7 +13,7 @@ from public_evaluation_dispatch_v1 import (
 
 
 def dispatch(root, label, binary, command, host, remote, expected_failure=False):
-    assert host in ["jack", "haleyspc"] and re.fullmatch(r"[a-z0-9-]+", label)
+    assert host in ["desktop", "computehost"] and re.fullmatch(r"[a-z0-9-]+", label)
     assert 1 <= command["workers"] <= 8
     current = inventory(host)
     assert not current["active"], "Preserve existing native owners"
@@ -26,7 +26,7 @@ def dispatch(root, label, binary, command, host, remote, expected_failure=False)
     volume = next(v for v in current["volumes"] if v["DriveLetter"] == "C")
     assert volume["SizeRemaining"] > 10*1024**3
     storage = dict(drive="C", disk_serial=disk["SerialNumber"], disk_name=disk["FriendlyName"])
-    native = Path(f"C:/mtg-policy-replay/{root.name}/{label}") if host == "jack" else Path(remote["native_root"])/label
+    native = Path(f"C:/mtg-policy-replay/{root.name}/{label}") if host == "desktop" else Path(remote["native_root"])/label
     request = dict(command, output_directory=str(native/"job/outputs"))
     write(destination/"request.json", request)
     binary_path = checked(binary)
@@ -35,7 +35,7 @@ def dispatch(root, label, binary, command, host, remote, expected_failure=False)
         group_wall_seconds=180, job_wall_seconds=180, jobs=[dict(id="audit", native_directory=str(native/"job"),
         request=pin(destination/"request.json"), native_request=dict(path=str(native/"job/request.json"), sha256=pin(destination/"request.json")["sha256"]))])
     write(destination/"spec.json", spec)
-    if host == "jack":
+    if host == "desktop":
         (native/"job").mkdir(parents=True)
         shutil.copy2(binary_path, native/"public-replay.exe")
         shutil.copy2(destination/"request.json", native/"job/request.json")
@@ -51,7 +51,7 @@ def dispatch(root, label, binary, command, host, remote, expected_failure=False)
         ssh(f"if ((Get-FileHash -LiteralPath '{native.as_posix()}/request.zip' -Algorithm SHA256).Hash.ToLower() -ne '{pin(bundle)['sha256']}') {{throw 'request transfer differs'}}; Expand-Archive -LiteralPath '{native.as_posix()}/request.zip' -DestinationPath '{native.as_posix()}'")
     staging_seconds = time.monotonic()-before
     begin = time.monotonic()
-    if host == "jack":
+    if host == "desktop":
         try:
             worker_group(native/"spec.json")
         except AssertionError:
@@ -77,7 +77,7 @@ try {{
     execution_seconds = time.monotonic()-begin
     begin = time.monotonic()
     recovered = destination/"recovered"
-    if host == "jack":
+    if host == "desktop":
         shutil.copytree(native, recovered)
         hashes = {p.relative_to(native).as_posix():pin(p)["sha256"] for p in native.rglob("*") if p.is_file()}
     else:

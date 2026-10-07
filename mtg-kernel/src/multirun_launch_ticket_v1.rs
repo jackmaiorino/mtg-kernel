@@ -200,7 +200,7 @@ mod tests {
                 "seed": 424_242,
                 "planned_updates": 256,
                 "stop_after_generation": null,
-                "allocation": "3@jack:0+1@jack:1",
+                "allocation": "3@desktop:0+1@desktop:1",
                 "issued_at": "2026-09-23T00:00:00+00:00",
             });
             edit(&mut ticket);

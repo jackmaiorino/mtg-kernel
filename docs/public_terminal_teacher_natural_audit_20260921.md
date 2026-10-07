@@ -40,17 +40,17 @@ Implementation1ea30595 adds `NaturalAudit` to `public_terminal_teacher_v1`. It l
 
 Attempt001 assumed every recorded opponent wasg115. The first archive passed, but the larger qualification correctly rejected A48 archives before completing. Its root and outputs remain preserved withfailure.json; no formal100-archive result was produced there. Attempt002 keeps exactly the same100 inputs and metrics and verifies each actual opponent identity. A subsequent compiler type error was fixed before native execution; failed build tools002 is preserved. No measurement gate or case was removed to make the corrected attempt pass.
 
-The supported launcher requires a compatible, recent throughput receipt, engineering replay, unchanged helper/dependency/design/input pins and idle-owner checks before the full panel. It does not claim every legacy executable is guarded. It compared four fixed10-archive jobs on JackCPU1/4workers, HaleyCPU1/4workers and a split across both PCs. All normalized complete score outputs match exactly across placements. Existing Haley archive files were verified in place, avoiding a bulk transfer. RunPod's recent authenticated receipt returned403; no paid allocation was made. The scorer uses the nativeCPU inference path for exact archived-score replay; this is not a GPU training benchmark.
+The supported launcher requires a compatible, recent throughput receipt, engineering replay, unchanged helper/dependency/design/input pins and idle-owner checks before the full panel. It does not claim every legacy executable is guarded. It compared four fixed10-archive jobs on DesktopCPU1/4workers, ComputeHostCPU1/4workers and a split across both PCs. All normalized complete score outputs match exactly across placements. Existing the compute host archive files were verified in place, avoiding a bulk transfer. RunPod's recent authenticated receipt returned403; no paid allocation was made. The scorer uses the nativeCPU inference path for exact archived-score replay; this is not a GPU training benchmark.
 
 | Qualified allocation | Forecast for full100 archives, including remote setup/recovery |
 | --- | ---: |
-| Jack, one worker | 26.48 s |
-| Jack, four workers | 10.94 s |
-| Haley, one worker | 51.64 s |
-| Haley, four workers | 26.57 s |
+| The maintainer, one worker | 26.48 s |
+| The maintainer, four workers | 10.94 s |
+| The compute host, one worker | 51.64 s |
+| The compute host, four workers | 26.57 s |
 | Both PCs, four workers each | 15.45 s |
 
-Selected Jack four workers. Actual full execution and local result publication took6.115seconds, excluding separate owner-inventory/controller checks. Qualification wall costs were10.60/4.39/21.13/11.20/6.27seconds for the five allocations, plus3.11seconds initial remote setup and separate inventories. Repeated qualifications warm input caches; these timings are not cold-storage benchmarks. Builds cost145.76seconds for tools001,27.22seconds for the failed tools002 and143.54seconds for tools003. Preparation and qualification cost more than the final audit. Final inventories show no active owned native jobs on either PC; seven idle human sessions are preserved.
+Selected the maintainer's four workers. Actual full execution and local result publication took6.115seconds, excluding separate owner-inventory/controller checks. Qualification wall costs were10.60/4.39/21.13/11.20/6.27seconds for the five allocations, plus3.11seconds initial remote setup and separate inventories. Repeated qualifications warm input caches; these timings are not cold-storage benchmarks. Builds cost145.76seconds for tools001,27.22seconds for the failed tools002 and143.54seconds for tools003. Preparation and qualification cost more than the final audit. Final inventories show no active owned native jobs on either PC; seven idle human sessions are preserved.
 
 Authoritative evidence: `E:/mtg-meta-recovery-20260921/public-terminal-teacher-natural-audit-002/completion.json`, `analysis.json`, `compute-choice.json`, and `engineering/completion.json`. Analysis SHA256 `6faf6553fa5e1b4eaf0b98f7a8575bef1383f48fc6534a1521f2c09188c43621`. Binary SHA256 `33d3493f46f4b78145b205e83ea7a244121817fe4621226fa037660e15ebb4c2`, build `public-terminal-teacher-natural-tools-003`. Helpers `terminal-teacher-natural-audit-v2.py`, `check-terminal-teacher-natural-audit-v2.py`, and `analyze-terminal-teacher-natural-audit-v2.py` retain their pinned completed-run identities.
 

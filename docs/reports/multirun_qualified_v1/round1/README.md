@@ -23,8 +23,8 @@ Bulk Stores stay under `D:/multirun-qualified-v1-work/q1` (not committed).
   `multirun_pilot_v1` science loop, 128-update records, 2 arms (`base`,
   `envrand` with environment randomization v2) x 4 seeds, topology 2x32,
   broker target 16.
-- Inventory at qualification: Jack's PC eligible (24 logical CPUs, RTX 4070
-  SUPER + RTX 3050, no competing trainers); HaleysPC unreachable (SSH
+- Inventory at qualification: The primary desktop eligible (24 logical CPUs, RTX 4070
+  SUPER + RTX 3050, no competing trainers); the compute host unreachable (SSH
   timeout); RunPod account reachable but excluded (Linux pods cannot
   reproduce Windows goldens).
 

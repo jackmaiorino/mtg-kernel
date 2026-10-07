@@ -56,7 +56,7 @@ reject a bare marker or any other prefix.
 - Branch:
   `codex/observation-diagnostics-v1`
 - Worktree:
-  `C:\Users\Jack\IdeaProjects\mtg-kernel-observation-diagnostics-codex`
+  `C:\Users\user\IdeaProjects\mtg-kernel-observation-diagnostics-codex`
 - Artifact root:
   `D:\mtg-kernel-observation-diagnostics-v2-20260727`
 - Dedicated Cargo target:

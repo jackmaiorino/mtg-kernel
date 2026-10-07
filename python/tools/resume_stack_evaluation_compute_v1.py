@@ -16,7 +16,7 @@ def resume(root,previous):
     assert stopped['terminal'] and stopped['exit_code']!=0 and stopped['reason']=='new-case launch budget exhausted'
     assert not (previous/'qualification.json').exists()
     plan_pin=design['plan'];plan=read(checked(plan_pin))
-    root.mkdir();fresh={h:inventory(h) for h in ['jack','haleyspc']};available={}
+    root.mkdir();fresh={h:inventory(h) for h in ['desktop','computehost']};available={}
     for h,s in fresh.items():
         assert not s['active'],'preserve native owner'
         assert s['cpu']==read(previous/(h+'-inventory.json'))['cpu'],'hardware changed'
@@ -39,9 +39,9 @@ def resume(root,previous):
     for host in fresh:
         label=min((k for k in reports if set(reports[k]['allocation'])=={host}),key=lambda k:reports[k]['execution_seconds']+reports[k]['staging_seconds'])
         best[host]=reports[label]['allocation'][host]
-    for weight in [1,2]:cases.append((f'both-jack-weight-{weight}',{h:dict(a,job_weight=weight if h=='jack' else 1) for h,a in best.items()}))
+    for weight in [1,2]:cases.append((f'both-desktop-weight-{weight}',{h:dict(a,job_weight=weight if h=='desktop' else 1) for h,a in best.items()}))
     pending=[label for label,_ in cases if not (previous/label/'result.json').exists()]
-    assert pending==['both-jack-weight-2'],'this continuation is bounded to the one unlaunched final case'
+    assert pending==['both-desktop-weight-2'],'this continuation is bounded to the one unlaunched final case'
     write(root/'design.json',dict(schema='stack-timing-continuation/v1',previous=pin(previous/'design.json'),
         previous_completion=pin(previous/'controller-completion.json'),plan=plan_pin,runner=pin(__file__),
         cases=cases,only_new_case=pending,maximum_new_native_matches=256,total_native_matches_after_completion=2050,

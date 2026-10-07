@@ -150,7 +150,7 @@ v2 invocation and must not be copied into the v2 artifact root.
 - Branch:
   `codex/observation-diagnostics-v1`
 - Worktree:
-  `C:\Users\Jack\IdeaProjects\mtg-kernel-observation-diagnostics-codex`
+  `C:\Users\user\IdeaProjects\mtg-kernel-observation-diagnostics-codex`
 - V2 artifact root:
   `D:\mtg-kernel-action-ingress-admission-v2-20260727`
 - V2 dedicated Cargo target:

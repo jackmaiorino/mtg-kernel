@@ -52,13 +52,13 @@ def require_choice(path,plan_pin):
     _require((plan['schema']=='stack-screen-evaluation/v1' and plan['expected_jobs']==512 and plan['expected_matches']==4096))
     _require((choice['binary']==plan['binary']));checked(plan['binary'])
     for dependency in choice['dependencies']:checked(dependency)
-    _require((set(choice['inventory'])=={'jack','haleyspc','runpod'}))
+    _require((set(choice['inventory'])=={'desktop','computehost','runpod'}))
     for host,row in choice['inventory'].items():
         checked(row['evidence']);when=datetime.fromisoformat(row['checked_at'])
         _require((when.tzinfo and 0<=(datetime.now(timezone.utc)-when).total_seconds()<86400))
         _require((row['reason'] and isinstance(row['eligible'],bool)))
     eligible={h for h,r in choice['inventory'].items() if r['eligible']}
-    _require((eligible=={'jack','haleyspc'}), lambda: ('this bounded grid requires both idle PCs and no paid allocation'))
+    _require((eligible=={'desktop','computehost'}), lambda: ('this bounded grid requires both idle PCs and no paid allocation'))
     options=[];baseline=None;counts={h:set() for h in eligible};cache={}
     for candidate in choice['candidates']:
         report,fingerprints=validate_report(candidate['report'],plan)
@@ -91,7 +91,7 @@ def require_choice(path,plan_pin):
         # Scale complete native jobs only. Fixed staging and export costs must
         # not be multiplied by the sample-to-panel ratio.
         scale=512/32
-        setup=choice['remote_setup_seconds'] if 'haleyspc' in report['allocation'] else 0
+        setup=choice['remote_setup_seconds'] if 'computehost' in report['allocation'] else 0
         _require((math.isfinite(setup) and setup>=0))
         from stack_evaluation_staging_v1 import validate as validate_staging
         staging=validate_staging(candidate['full_staging'],report['allocation'],plan_pin)
@@ -112,7 +112,7 @@ def dispatch_qualified(root,label,choice_path,plan_pin,remote):
     from public_evaluation_dispatch_v2 import dispatch
     choice=read(choice_path);_require((choice['selected'] is not None))
     selected=require_choice(choice_path,plan_pin);plan=read(checked(plan_pin))
-    current={h:inventory(h) for h in ['jack','haleyspc']}
+    current={h:inventory(h) for h in ['desktop','computehost']}
     _require((all(not s['active'] for s in current.values())), lambda: ('preserve active native owners'))
     _require((selected['projected_seconds']<plan['projection_cap_seconds']))
     return dispatch(root,label,plan['binary'],plan['jobs'],selected['allocation'],remote,plan['full_group_wall_cap_seconds'])

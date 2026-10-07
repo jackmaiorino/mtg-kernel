@@ -83,7 +83,7 @@ def prepare(root):
             'Additional training registrations are explicitly development-exposed; not pristine heldouts.',
             'A48 is a familiar training opponent. GAE/reward/optimizer and both full initial Adam states remain fixed.',
             'Preboard only. No supplied canonical sideboard plans are applied to additional lists.',
-            'Fable zero-read HTTP429 until Sep22 07:00 EDT; no retry or endorsement. Jack authorized bounded local work.',
+            'Fable zero-read HTTP429 until Sep22 07:00 EDT; no retry or endorsement. The maintainer authorized bounded local work.',
             'No CP7 outcome selection, paid compute or broad campaign.']}
     write(root/'manifest.json',manifest)
     print({'prepared':True,'games_per_arm':40,'additional_per_broad_arm':20,'additional_list_counts':dict(counts)},flush=True)

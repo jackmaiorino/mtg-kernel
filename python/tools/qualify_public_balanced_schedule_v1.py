@@ -1,6 +1,6 @@
-"""Bounded exact-workload scaling on idle Haley while Jack has a live owner.
+"""Bounded exact-workload scaling on idle compute host while the maintainer has a live owner.
 
-This driver never launches full training and rejects newly idle Jack capacity.
+This driver never launches full training and rejects newly idle desktop capacity.
 """
 import argparse
 from pathlib import Path
@@ -34,7 +34,7 @@ def qualify(root, pilot):
             'public_entropy_available_replica_v2.py', 'public_entropy_remote_replica_v1.py',
             'qualify_state_prevention_compute_v1.py', 'qualify_public_entropy_compute_v1.py',
             'compute_throughput_v2.py', 'public_evaluation_dispatch_v1.py']],
-        non_claim='Timing/correctness only, no outcome inspection or human strength. If Jack becomes idle, requalify expanded placements.'))
+        non_claim='Timing/correctness only, no outcome inspection or human strength. If desktop becomes idle, requalify expanded placements.'))
     reference, candidates, projections, learning = {}, [], {}, {}
     compared = 0
     started = time.monotonic()
@@ -43,7 +43,7 @@ def qualify(root, pilot):
         current = root/f'availability-w{count}'
         current.mkdir()
         availability(current)
-        placements = {arm: place('haleyspc', 0, count) for arm in configs}
+        placements = {arm: place('computehost', 0, count) for arm in configs}
         group_pin = dispatch_qualification(root/f'{root.name}-w{count}', binary, configs,
             placements, 'sequential', updates=3)
         group = read(checked(group_pin))
@@ -61,7 +61,7 @@ def qualify(root, pilot):
             if count == 1:
                 assert execution['seconds'] < 120, 'cheap timing envelope exceeded'
             estimate += execution['seconds'] + 197*sum(r['seconds'] for r in completion['receipts'][1:])/2
-        name = f'haley-w{count}'
+        name = f'computehost-w{count}'
         projections[name] = estimate + group['staging_seconds'] + group['recovery_seconds']*200/3
         candidates.append(dict(id=name, benchmark=group_pin))
         print(dict(case=name, projected_seconds=projections[name], exact_files_compared=compared), flush=True)

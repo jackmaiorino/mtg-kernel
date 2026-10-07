@@ -87,7 +87,7 @@ same-seed subprocess game run twice with byte-identical transcripts. Python
 tests cover the adapter's reset/step flow, server errors, malformed replies,
 timeouts, action bounds and deterministic smoke transcripts.
 
-Build and test placement is HaleysPC, which had no active build/training/eval
+Build and test placement is the compute host, which had no active build/training/eval
 processes at preparation. The dedicated checkout and Cargo target belong to
-this task. Jack's PC retains the lead's Q6 timing reservation. This is bounded
+this task. The primary desktop retains the lead's Q6 timing reservation. This is bounded
 engineering verification with no GPU use or formal measurement.

@@ -1,6 +1,6 @@
 {
   "schema": "g115-line-a-host-throughput/v1",
-  "host": "jack",
+  "host": "desktop",
   "work_class": "bo3-ordinary",
   "binding": {
     "launcher_sha256": "5fd7a05fd2ae0a891e95aaaf6e48be8063f586d89b04cef14c63ebf442b990b6",

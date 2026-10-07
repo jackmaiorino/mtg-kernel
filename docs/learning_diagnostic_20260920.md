@@ -22,7 +22,7 @@ The working inference is to measure drift and confidence before choosing between
 
 The decisive follow-up would score unchanged parent and final policies on the same fixed development decisions, measure actual KL/action disagreement, and inspect representative changed legal choices using public information. If meaningful drift is confirmed, a matched retention intervention becomes better motivated; if not, do not force the anchor hypothesis. Preserve terminal rewards and independent BO3 controls for any eventual learning experiment. Counterbalanced parallel replay timing and machine qualification precede substantial compute.
 
-Fable's fresh September19 review failed HTTP429 with zero source reads untilSeptember22 07:00EDT. Do not retry the known quota failure or imply endorsement. This read-only diagnostic proceeds under Jack's execution assignment. Any subsequent scientific decision retains this review gap and residual uncertainty. No CP7 outcomes are used.
+Fable's fresh September19 review failed HTTP429 with zero source reads untilSeptember22 07:00EDT. Do not retry the known quota failure or imply endorsement. This read-only diagnostic proceeds under the maintainer's execution assignment. Any subsequent scientific decision retains this review gap and residual uncertainty. No CP7 outcomes are used.
 
 ## Additional literature check during independent replication
 

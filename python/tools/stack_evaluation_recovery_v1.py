@@ -60,7 +60,7 @@ def calibrate(root,label,allocation,fixture_pin,remote,remote_source):
     for host,settings in allocation.items():
         selected=host_hashes(hashes,assigned[host],host)
         mapping=folder/(host+'-hashes.json');write(mapping,selected)
-        if host=='jack':
+        if host=='desktop':
             native=Path(f"{settings['drive']}:/mtg-evaluation-recovery-fixtures/{root.name}/{label}")
             result=stage(fixture['source_directory'],native,selected)
             placed[host]=dict(native=str(native),hashes=selected)
@@ -75,7 +75,7 @@ def calibrate(root,label,allocation,fixture_pin,remote,remote_source):
         began=time.monotonic();hosts={}
         for host in sorted(placed):
             p=placed[host]
-            if host=='jack':hosts[host]=recover_local(p['native'],folder/f'jack-recovered-{repeat}',p['hashes'])
+            if host=='desktop':hosts[host]=recover_local(p['native'],folder/f'desktop-recovered-{repeat}',p['hashes'])
             else:hosts[host]=remote_recovery(folder,remote,p['native'],p['hashes'],p['remote_map'],repeat)
         path=folder/f'sample-{repeat}.json'
         write(path,dict(complete=True,seconds=time.monotonic()-began,hosts=hosts,mismatches=0))
@@ -115,14 +115,14 @@ def validate(calibration_pin,allocation,plan_pin):
             expected=host_hashes(hashes,assigned[host],host)
             assert row['hashes']==expected and row['mismatches']==0 and row['files']==len(expected)
             directory=Path(row['recovered_directory'])
-            allowed=set(expected)|({'export-manifest.json'} if host=='haleyspc' else set())
+            allowed=set(expected)|({'export-manifest.json'} if host=='computehost' else set())
             assert {p.relative_to(directory).as_posix() for p in directory.rglob('*') if p.is_file()}==allowed
             for name,digest in expected.items():assert pin(directory/name)['sha256']==digest
             assert row['uncompressed_bytes']==sum((directory/n).stat().st_size for n in expected)
             assert math.isfinite(row['seconds']) and row['seconds']>0
             assert all(math.isfinite(v) and v>=0 for v in row['stage_seconds'].values())
             assert sum(row['stage_seconds'].values())<=row['seconds']+.01
-            if host=='haleyspc':checked(row['archive']);assert read(directory/'export-manifest.json')==expected
+            if host=='computehost':checked(row['archive']);assert read(directory/'export-manifest.json')==expected
         assert math.isfinite(sample['seconds']) and sum(r['seconds'] for r in sample['hosts'].values())<=sample['seconds']+.01
         times.append(sample['seconds'])
     return max(times)

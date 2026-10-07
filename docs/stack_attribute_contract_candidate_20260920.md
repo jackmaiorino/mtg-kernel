@@ -1,6 +1,6 @@
 # Stack attributes: verified gap and candidate follow-up
 
-Read-only check after the prevention replication, on the owned public-collector branch at bb83e26c. Kimi's audit is at `C:/Users/Jack/IdeaProjects/mtg-kernel/docs/audits/observation_sufficiency_audit_20260920.md`. Its trace exposure counts are Kimi-reported, not independently recomputed here. No feature implementation, branch adoption or new training experiment is claimed.
+Read-only check after the prevention replication, on the owned public-collector branch at bb83e26c. Kimi's audit is at `C:/Users/user/IdeaProjects/mtg-kernel/docs/audits/observation_sufficiency_audit_20260920.md`. Its trace exposure counts are Kimi-reported, not independently recomputed here. No feature implementation, branch adoption or new training experiment is claimed.
 
 The current source confirms the relevant transport gap. `mtg-kernel/src/rl.rs` projects kicked, is_flashback, cast_method, mode_chosen and x_value into public stack items. `flat_policy_v2.rs::stack_payload` preserves them in `FlatStackRelationDataV2`. In `native_flat_tensorizer_v2.rs`, the StackTarget edge builder emits an empty numeric payload, while the canonical stack serializer includes the attributes. The public-feature extension does not fill this gap: `public_cost_features_v1.rs::from_actor_v4_v1` produces six global prevention bits and static token-indexed cost rows only.
 

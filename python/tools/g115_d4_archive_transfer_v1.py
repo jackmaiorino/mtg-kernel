@@ -1,4 +1,4 @@
-"""WMI-owned, single-shot transfer of the declared D4 archive packet to Haley."""
+"""WMI-owned, single-shot transfer of the declared D4 archive packet to the compute host."""
 import argparse
 import base64
 import hashlib
@@ -8,7 +8,7 @@ from pathlib import Path, PurePosixPath
 import subprocess
 import time
 
-REMOTE = 'haley@100.71.75.65'
+REMOTE = os.environ.get('COMPUTE_HOST_SSH', 'compute-host')
 ROOT = 'C:/mtg-node/g115-d4-audit-production-20260925-001'
 RESERVE = 60*1024**3
 
@@ -46,7 +46,7 @@ def safe_remote(path):
 
 
 def admission(plan, host):
-    require(os.name=='nt' and host=='jack' and plan['schema']=='g115-d4-archive-transfer/v1', 'Named Windows sender only')
+    require(os.name=='nt' and host=='desktop' and plan['schema']=='g115-d4-archive-transfer/v1', 'Named Windows sender only')
     require(checked(plan['documents']['launcher']).resolve()==Path(__file__).resolve(), 'Wrong transfer owner')
     checked(plan['transport']['dispatcher'])
     require(plan['remote_root']==ROOT and plan['job_cap_bytes']==40_000_000_000 and plan['transfer_cap_bytes']==20_000_000_000 and plan['total_seconds']==1800, 'Fixed bounded transfer scope required')
@@ -61,7 +61,7 @@ def admission(plan, host):
     worker=Path(plan['worker_root'])
     require(worker.is_absolute() and worker.drive.lower()=='e:' and not worker.exists(), 'Fresh E transfer receipt tree required')
     live=json.loads(ssh("[pscustomobject]@{host=$env:COMPUTERNAME;exists=(Test-Path -LiteralPath '"+ROOT+"');free=(Get-Volume -DriveLetter C).SizeRemaining} | ConvertTo-Json"))
-    require(live['host']=='HALEYSPC' and not live['exists'] and live['free']>=RESERVE+plan['job_cap_bytes'], 'Remote root exists or full job reserve unavailable')
+    require(live['host']=='COMPUTEHOST' and not live['exists'] and live['free']>=RESERVE+plan['job_cap_bytes'], 'Remote root exists or full job reserve unavailable')
     return live
 
 

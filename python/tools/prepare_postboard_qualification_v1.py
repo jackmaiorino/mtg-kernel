@@ -177,7 +177,7 @@ def prepare(root, seed):
           'Standalone terminal games, not match-reward training. No strength outcome is a gate or selection input.',
           'The inherited catalog reserved file is empty. This does not establish a project-wide unseen holdout.',
           'Historical trainer reports build HEAD ad1036cb; launch source is clean commit 5239e656 after the run-harness change. Exact historical binary SHA is retained.',
-          'Fable review failed HTTP429 before source reads, reset September 22 07:00 EDT. No retry or endorsement; proceed under Jack authority.'],
+          'Fable review failed HTTP429 before source reads, reset September 22 07:00 EDT. No retry or endorsement; proceed under desktop authority.'],
     })
     return {'root': root.as_posix(), 'updates_per_arm': 4, 'paired_episodes': len(rows),
             'postboard_episodes': sum(x['postboard'] for x in rows),

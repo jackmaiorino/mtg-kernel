@@ -13,7 +13,7 @@ afterwards by the N1 to N3 revision's tooling (read-only over those files).
 
 10 runs: 2 arms (`base`, `envrand` with environment randomization v2) x 5
 seeds, 128-update records, pilot topology 2x32, broker target 16. Hosts
-inventoried: Jack's PC eligible (RTX 4070 SUPER + RTX 3050); HaleysPC eligible
+inventoried: The primary desktop eligible (RTX 4070 SUPER + RTX 3050); the compute host eligible
 (RTX 4060 8 GB, 16 logical CPUs, reached over Tailscale on the LAN path);
 RunPod reachable, excluded (Linux training bytes differ from Windows).
 
@@ -25,17 +25,17 @@ RunPod reachable, excluded (Linux training bytes differ from Windows).
 | 1@gpu0 + 1@gpu1 | 19.40 | 43 min |
 | 2@gpu0 + 1@gpu1 | 25.38 | 37 min |
 | 2@gpu0 + 2@gpu1 | 30.65 | 30 min |
-| 2@gpu0 + 2@gpu1 + 1@HaleysPC | 28.25 | 27 min |
-| **2@gpu0 + 2@gpu1 + 2@HaleysPC (selected)** | **40.12** | **20 min** |
-| 2@gpu0 + 2@gpu1 + 3@HaleysPC | 42.56 | 20 min |
+| 2@gpu0 + 2@gpu1 + 1@ComputeHost | 28.25 | 27 min |
+| **2@gpu0 + 2@gpu1 + 2@ComputeHost (selected)** | **40.12** | **20 min** |
+| 2@gpu0 + 2@gpu1 + 3@ComputeHost | 42.56 | 20 min |
 
 Every concurrent run of every leg is byte-identical to its serial golden
-(12-update prefix), including runs placed on HaleysPC; the serial repeat
+(12-update prefix), including runs placed on the compute host; the serial repeat
 digests equal the golden's. Full-length sentinel on the selected allocation:
 each arm's first run alone on GPU 0 for all 128 updates, then both arms on
 each of the three devices at full width; all 6 entries byte-identical to the
 serial references (233 Store outputs each). Peak GPU memory in the sentinel
-stayed outside the 512 MiB margin (HaleysPC 5,689 of 8,188 MiB; GPU 0 9,218
+stayed outside the 512 MiB margin (the compute host 5,689 of 8,188 MiB; GPU 0 9,218
 of 12,282; GPU 1 5,526 of 6,144).
 
 ## Launch (`experiment-manifest.json`, `runs/`)
@@ -45,7 +45,7 @@ episodes/s**; every prefix audit identical; launch-time GPU identity (name and
 UUID, local and remote) matched the receipt. The serial comparison is
 derived, not measured end to end: the sentinel's two full-length serial runs
 took 270 s and 238 s (`serial-walls.json`, from file timestamps), so 10 runs
-serially come to an estimated 42.3 min: **about 2.9x**. Local runs took 322 to 464 s and HaleysPC runs about
+serially come to an estimated 42.3 min: **about 2.9x**. Local runs took 322 to 464 s and the compute host runs about
 645 s: a 5-run arm fits in one wave at about 2.5x one serial run, and a
 4-run arm fits locally in one wave at about 1.3 to 1.8x.
 
@@ -62,7 +62,7 @@ them trained after the resume point.
 
 - `q3-*`: the first round-2 pass at `201f09b6` (launch 15.3 min, valid),
   superseded because later fixes changed the launcher.
-- `q4-*`: at `cc3036db` the projection selected 3 processes on HaleysPC; at
+- `q4-*`: at `cc3036db` the projection selected 3 processes on the compute host; at
   full length its 8 GB card sat at 7,867 MiB and 100 percent and those runs
   took about 2,800 s against about 350 s locally (46.9 min for the
   experiment). This led to the remote memory-fit rule and the sentinel's
@@ -75,5 +75,5 @@ them trained after the resume point.
 - `raw-harness-refusal.txt` with `raw-harness-refusal.json` (executable hash,
   command, environment): a raw 65-update harness run is refused in under a
   second with no Store created (the 64/65 boundary).
-- `monitor/`: 5-second CPU, local GPU and (every 15 s) HaleysPC GPU samples.
+- `monitor/`: 5-second CPU, local GPU and (every 15 s) the compute host GPU samples.
 - `throughput.png`: the qualification table as a chart.

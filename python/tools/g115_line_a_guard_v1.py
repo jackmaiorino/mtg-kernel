@@ -1,6 +1,6 @@
 """Admission guard for the line (a) launcher: every refusal happens before any spawn.
 
-Enforces C:/Users/Jack/COMPUTE-POLICY.md items 2 to 5 with the 2026-09-25
+Enforces C:/Users/user/COMPUTE-POLICY.md items 2 to 5 with the 2026-09-25
 clarification (shortest projected completion among feasible placements; a
 missed earlier bound is a recorded shortfall, never a veto), the artifact law's
 budget, pinning and scratch clauses (collab/ARTIFACT-LAW.md 1, 2, 4), the
@@ -23,7 +23,7 @@ SCRATCH_SCHEMA = 'g115-line-a-scratch-manifest/v1'
 ORDER_SCHEMA = 'g115-line-a-order/v1'
 SCOPE_SCHEMA = 'g115-line-a-scope/v1'
 LOCK_SCHEMA = 'collab-e-io-lock/v1'
-HOSTS = ('jack', 'haleyspc', 'runpod')
+HOSTS = ('desktop', 'computehost', 'runpod')
 WORK_CLASSES = ('bo3-ordinary', 'bo3-search', 'training', 'training-search')
 INVENTORY_MAX_AGE_SECONDS = 24 * 3600
 DISK_RESERVE_BYTES = 60 * 2**30  # artifact law clause 1: 60 GiB free on the target volume
@@ -33,7 +33,7 @@ WORKSHEET_CATEGORIES = ('outputs', 'scratch', 'staging_copies', 'workspace', 'fa
 METADATA_PERCENT = 15
 SCRATCH_PARENT = 'D:/e-scratch/'
 PINNED_ROOT = 'E:/pinned-binaries'
-E_IO_LOCK = 'C:/Users/Jack/IdeaProjects/collab/LOCKS/e-io.json'
+E_IO_LOCK = (Path.home() / 'IdeaProjects/collab/LOCKS/e-io.json').as_posix()
 
 
 def require(ok, message):
@@ -92,7 +92,7 @@ def require_throughput(evidence, work_class, units, binding, now=None):
     for key, value in binding.items():
         require(evidence['binding'].get(key) == value, 'Throughput evidence binds a different ' + key)
     inventory = evidence['inventory']
-    require(set(inventory) == set(HOSTS), 'Inventory must cover Jack, HaleysPC and RunPod')
+    require(set(inventory) == set(HOSTS), 'Inventory must cover desktop, the compute host and RunPod')
     for host, item in inventory.items():
         require(0 <= now - item['checked_unix'] <= INVENTORY_MAX_AGE_SECONDS, 'Refresh the inventory: ' + host)
         require(isinstance(item['eligible'], bool) and item['reason'].strip(), 'Inventory needs eligibility and reason')

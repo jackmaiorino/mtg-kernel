@@ -19,18 +19,18 @@ def rows(n, tag='x'):
 
 
 def evidence():
-    """Jack's PC measured at 1, 8 and 24 workers; HaleysPC and RunPod ineligible with reasons."""
+    """The primary desktop measured at 1, 8 and 24 workers; the compute host and RunPod ineligible with reasons."""
     phases = [dict(workers=w, seconds=s, completed=48, rows=rows(48)) for w, s in ((1, 480.0), (8, 72.0), (24, 36.0))]
     inventory = dict(
-        jack=dict(checked_unix=NOW - 60, eligible=True, reason='idle, 24 logical CPUs, 2 GPUs', competing=[]),
-        haleyspc=dict(checked_unix=NOW - 60, eligible=False, reason='transport not qualified for this workload'),
+        desktop=dict(checked_unix=NOW - 60, eligible=True, reason='idle, 24 logical CPUs, 2 GPUs', competing=[]),
+        computehost=dict(checked_unix=NOW - 60, eligible=False, reason='transport not qualified for this workload'),
         runpod=dict(checked_unix=NOW - 60, eligible=False, reason='no Linux path for this workload'))
     value = dict(schema=guard.THROUGHPUT_SCHEMA, binding=dict(BINDING, work_class='bo3-ordinary'),
-                 inventory=inventory, hosts=dict(jack=dict(phases=phases, overhead_seconds=30.0)),
-                 placements=[], selected='jack-24')
+                 inventory=inventory, hosts=dict(desktop=dict(phases=phases, overhead_seconds=30.0)),
+                 placements=[], selected='desktop-24')
     for workers in (1, 8, 24):
-        allocation = dict(jack=workers)
-        value['placements'].append(dict(id='jack-%d' % workers, allocation=allocation, eligible=True,
+        allocation = dict(desktop=workers)
+        value['placements'].append(dict(id='desktop-%d' % workers, allocation=allocation, eligible=True,
                                         ineligibility_reason='',
                                         projected_seconds=guard.projected_seconds(value, allocation, 2688)))
     return value
@@ -49,7 +49,7 @@ class ThroughputTests(unittest.TestCase):
         return guard.require_throughput(value, work_class, units, binding, now=NOW)
 
     def test_fastest_feasible_placement_is_admitted(self):
-        self.assertEqual(self.admit(evidence())['id'], 'jack-24')
+        self.assertEqual(self.admit(evidence())['id'], 'desktop-24')
         self.assertAlmostEqual(evidence()['placements'][2]['projected_seconds'], 30.0 + 2688 / (48 / 36.0))
 
     def test_refuses_missing_evidence(self):
@@ -59,44 +59,44 @@ class ThroughputTests(unittest.TestCase):
     def test_refuses_serial_only_or_parallel_only(self):
         for keep in ([0], [1, 2]):
             value = evidence()
-            value['hosts']['jack']['phases'] = [value['hosts']['jack']['phases'][k] for k in keep]
+            value['hosts']['desktop']['phases'] = [value['hosts']['desktop']['phases'][k] for k in keep]
             value['placements'] = [p for p in value['placements']
-                                   if p['allocation']['jack'] in [value['hosts']['jack']['phases'][k]['workers']
+                                   if p['allocation']['desktop'] in [value['hosts']['desktop']['phases'][k]['workers']
                                                                   for k in range(len(keep))]]
             with self.assertRaisesRegex(ValueError, 'Serial and parallel both required'):
                 self.admit(value)
 
     def test_refuses_parallel_output_that_differs_from_serial(self):
         value = evidence()
-        value['hosts']['jack']['phases'][2]['rows'][5]['sha256'] = 'f' * 64
+        value['hosts']['desktop']['phases'][2]['rows'][5]['sha256'] = 'f' * 64
         with self.assertRaisesRegex(ValueError, 'differs from the serial reference'):
             self.admit(value)
 
     def test_refuses_stale_or_incomplete_inventory(self):
         value = evidence()
-        value['inventory']['haleyspc']['checked_unix'] = NOW - 25 * 3600
+        value['inventory']['computehost']['checked_unix'] = NOW - 25 * 3600
         with self.assertRaisesRegex(ValueError, 'Refresh the inventory'):
             self.admit(value)
         value = evidence()
         del value['inventory']['runpod']
-        with self.assertRaisesRegex(ValueError, 'Jack, HaleysPC and RunPod'):
+        with self.assertRaisesRegex(ValueError, 'the maintainer, the compute host and RunPod'):
             self.admit(value)
 
     def test_refuses_an_eligible_host_left_unmeasured(self):
         value = evidence()
-        value['inventory']['haleyspc'].update(eligible=True, competing=[])
-        with self.assertRaisesRegex(ValueError, 'Eligible host was not measured: haleyspc'):
+        value['inventory']['computehost'].update(eligible=True, competing=[])
+        with self.assertRaisesRegex(ValueError, 'Eligible host was not measured: computehost'):
             self.admit(value)
 
     def test_refuses_eligible_host_with_competing_work(self):
         value = evidence()
-        value['inventory']['jack']['competing'] = ['trainer.exe']
+        value['inventory']['desktop']['competing'] = ['trainer.exe']
         with self.assertRaisesRegex(ValueError, 'competing work'):
             self.admit(value)
 
     def test_refuses_a_slower_selection(self):
         value = evidence()
-        value['selected'] = 'jack-8'
+        value['selected'] = 'desktop-8'
         with self.assertRaisesRegex(ValueError, 'A faster feasible placement exists'):
             self.admit(value)
 
@@ -105,13 +105,13 @@ class ThroughputTests(unittest.TestCase):
         value = evidence()
         for placement in value['placements']:
             placement['projected_seconds'] = guard.projected_seconds(value, placement['allocation'], 10**7)
-        self.assertEqual(self.admit(value, units=10**7)['id'], 'jack-24')
+        self.assertEqual(self.admit(value, units=10**7)['id'], 'desktop-24')
 
     def test_a_missed_earlier_bound_is_recorded_as_a_shortfall(self):
         value = evidence()
         value['earlier_bound'] = dict(seconds=100.0, source='CODEX-G115-D3-RESULT-20260924.md:51')
         admitted = self.admit(value)
-        self.assertEqual(admitted['id'], 'jack-24')
+        self.assertEqual(admitted['id'], 'desktop-24')
         self.assertAlmostEqual(admitted['shortfall']['shortfall_seconds'], admitted['projected_seconds'] - 100.0)
         self.assertIsNone(self.admit(evidence())['shortfall'])
         value['earlier_bound'] = dict(seconds=100.0, source=' ')
@@ -191,20 +191,20 @@ class WorksheetTests(unittest.TestCase):
 class ScratchAndLockTests(unittest.TestCase):
     def scratch(self):
         return dict(schema=guard.SCRATCH_SCHEMA, job='g115-line-a-calibration', owner='opus-line-a-launcher',
-                    host='jack', root='D:/e-scratch/g115-line-a-calibration/',
+                    host='desktop', root='D:/e-scratch/g115-line-a-calibration/',
                     sources=[dict(path='E:/mtg-g115-lineage-20260923/x.json', sha256='a' * 64, bytes=10)],
                     disposable=['native/**'], cap_bytes=1_000_000)
 
     def test_scratch_manifest_rules(self):
-        guard.require_scratch_manifest(self.scratch(), 'g115-line-a-calibration', 'jack', 12 * 10**9)
+        guard.require_scratch_manifest(self.scratch(), 'g115-line-a-calibration', 'desktop', 12 * 10**9)
         for change, message in ((dict(root='E:/scratch/'), 'D:/e-scratch/<job>/'),
                                 (dict(sources=[dict(path='D:/x.json', sha256='a' * 64, bytes=1)]), 'E: path'),
                                 (dict(cap_bytes=13 * 10**9), 'inside the job-set cap')):
             with self.assertRaisesRegex(ValueError, message):
-                guard.require_scratch_manifest(dict(self.scratch(), **change), 'g115-line-a-calibration', 'jack',
+                guard.require_scratch_manifest(dict(self.scratch(), **change), 'g115-line-a-calibration', 'desktop',
                                                12 * 10**9)
         with self.assertRaisesRegex(ValueError, 'must precede first use'):
-            guard.require_scratch_manifest(None, 'g115-line-a-calibration', 'jack', 12 * 10**9)
+            guard.require_scratch_manifest(None, 'g115-line-a-calibration', 'desktop', 12 * 10**9)
 
     def test_no_scratch_path_is_an_input_of_record(self):
         guard.require_no_scratch_inputs(dict(inputs=[dict(path='E:/sealed/a.json')]), 'D:/e-scratch/job/')

@@ -50,7 +50,7 @@ def archive_native(native, root):
 
 def dispatch(root, binary, configs, placements, store, updates, wall_seconds=2400, mode="parallel", stack=False):
     root.mkdir()
-    snapshot = inventory("jack")
+    snapshot = inventory("desktop")
     assert not snapshot["active"]
     current = storage(snapshot, store["drive"])
     assert current["disk_serial"] == store["disk_serial"] and current["disk_name"] == store["disk_name"]
@@ -76,7 +76,7 @@ def dispatch(root, binary, configs, placements, store, updates, wall_seconds=240
         except ValueError as error:
             # The dispatcher checks all hosts before creating any host job tree.
             # Retry only this precise preflight failure, never a started job.
-            untouched = not any((native/host).exists() for host in ["jack", "haleyspc"])
+            untouched = not any((native/host).exists() for host in ["desktop", "computehost"])
             if str(error) != "selected GPU is unavailable; preserve its current work" or not untouched:
                 raise
             retries.append(dict(attempt=attempt, native_root=str(native), error=str(error), no_jobs_staged=True))
@@ -119,7 +119,7 @@ def require_storage_choice(path,binary,configs,stack=False):
         assert Path(archived["native_root"]).drive.upper() == store["drive"]+":"
         for arm,item in group["jobs"].items():
             report = read(checked(item))
-            if report["placement"]["host"] == "jack":
+            if report["placement"]["host"] == "desktop":
                 assert Path(report["source_output_directory"]).drive.upper() == store["drive"]+":"
                 measured.setdefault((store["drive"],store["disk_serial"]),set()).add(report["placement"]["workers"])
         for shard in archived["shards"]: checked(shard["archive"])

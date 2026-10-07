@@ -5,7 +5,7 @@ Status: paper-only decision package, amended after `CLAUDE #185` on
 
 ## Decision requested
 
-Jack later decides whether to authorize the program, its seed count, and its
+The maintainer later decides whether to authorize the program, its seed count, and its
 GPU allocation. The regularized continuation retest is complementary and is
 the prerequisite causal de-risking lane. A retest success de-risks this
 launch by showing that the original 512-update collapse can be controlled. A

@@ -2,13 +2,13 @@
   "adapter": "native-science-loop-pilot-v1",
   "candidates": [
     {
-      "allocation": "1@jack:0",
+      "allocation": "1@desktop:0",
       "completed_updates": 120,
       "concurrency": 1,
       "episodes": 7680,
       "episodes_per_second": 11.044265190338352,
       "host_statistics": {
-        "jack": {
+        "desktop": {
           "startup_seconds": 19.405822503566743,
           "steady_update_seconds": 3.3693739622831345,
           "tail_seconds": 9.690922164916993,
@@ -16,9 +16,9 @@
         }
       },
       "hosts": [
-        "jack"
+        "desktop"
       ],
-      "id": "alloc-1atjackd0",
+      "id": "alloc-1atdesktopd0",
       "overhead_seconds": 0.0,
       "per_run": {
         "base-s0": {
@@ -32,7 +32,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s1": {
@@ -46,7 +46,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s2": {
@@ -60,7 +60,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s3": {
@@ -74,7 +74,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s4": {
@@ -88,7 +88,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s0": {
@@ -102,7 +102,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s1": {
@@ -116,7 +116,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s2": {
@@ -130,7 +130,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s3": {
@@ -144,7 +144,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s4": {
@@ -158,7 +158,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         }
       },
@@ -170,13 +170,13 @@
       "tail_seconds": 9.690922164916993,
       "usage": {
         "baseline_memory_mib": {
-          "jack:0": 2883,
-          "jack:1": 9
+          "desktop:0": 2883,
+          "desktop:1": 9
         },
         "cpu_mean_percent": 14.849509377422352,
         "gpu_peak_memory_mib": {
-          "jack:0": 5969,
-          "jack:1": 9
+          "desktop:0": 5969,
+          "desktop:1": 9
         },
         "idle_capacity_events": [
           {
@@ -210,13 +210,13 @@
       "wall_seconds": 695.3835196495056
     },
     {
-      "allocation": "1@jack:0+1@jack:1",
+      "allocation": "1@desktop:0+1@desktop:1",
       "completed_updates": 120,
       "concurrency": 2,
       "episodes": 7680,
       "episodes_per_second": 19.398700573755754,
       "host_statistics": {
-        "jack": {
+        "desktop": {
           "startup_seconds": 20.05678697824478,
           "steady_update_seconds": 3.7727460712194443,
           "tail_seconds": 10.02396535873413,
@@ -224,9 +224,9 @@
         }
       },
       "hosts": [
-        "jack"
+        "desktop"
       ],
-      "id": "alloc-1atjackd0_1atjackd1",
+      "id": "alloc-1atdesktopd0_1atdesktopd1",
       "overhead_seconds": 0.0,
       "per_run": {
         "base-s0": {
@@ -240,7 +240,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s1": {
@@ -254,7 +254,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s2": {
@@ -268,7 +268,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s3": {
@@ -282,7 +282,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s4": {
@@ -296,7 +296,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s0": {
@@ -310,7 +310,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s1": {
@@ -324,7 +324,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s2": {
@@ -338,7 +338,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s3": {
@@ -352,7 +352,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s4": {
@@ -366,7 +366,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         }
       },
@@ -378,13 +378,13 @@
       "tail_seconds": 10.02396535873413,
       "usage": {
         "baseline_memory_mib": {
-          "jack:0": 2876,
-          "jack:1": 9
+          "desktop:0": 2876,
+          "desktop:1": 9
         },
         "cpu_mean_percent": 21.554877361479463,
         "gpu_peak_memory_mib": {
-          "jack:0": 5823,
-          "jack:1": 2608
+          "desktop:0": 5823,
+          "desktop:1": 2608
         },
         "idle_capacity_events": [
           {
@@ -403,13 +403,13 @@
       "wall_seconds": 395.90280652046204
     },
     {
-      "allocation": "2@jack:0+1@jack:1",
+      "allocation": "2@desktop:0+1@desktop:1",
       "completed_updates": 120,
       "concurrency": 3,
       "episodes": 7680,
       "episodes_per_second": 25.37986915157846,
       "host_statistics": {
-        "jack": {
+        "desktop": {
           "startup_seconds": 21.18526976108551,
           "steady_update_seconds": 4.049105960130691,
           "tail_seconds": 10.69887833595276,
@@ -417,9 +417,9 @@
         }
       },
       "hosts": [
-        "jack"
+        "desktop"
       ],
-      "id": "alloc-2atjackd0_1atjackd1",
+      "id": "alloc-2atdesktopd0_1atdesktopd1",
       "overhead_seconds": 0.0,
       "per_run": {
         "base-s0": {
@@ -433,7 +433,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s1": {
@@ -447,7 +447,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s2": {
@@ -461,7 +461,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s3": {
@@ -475,7 +475,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s4": {
@@ -489,7 +489,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s0": {
@@ -503,7 +503,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s1": {
@@ -517,7 +517,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s2": {
@@ -531,7 +531,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s3": {
@@ -545,7 +545,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s4": {
@@ -559,7 +559,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         }
       },
@@ -571,13 +571,13 @@
       "tail_seconds": 10.69887833595276,
       "usage": {
         "baseline_memory_mib": {
-          "jack:0": 2876,
-          "jack:1": 9
+          "desktop:0": 2876,
+          "desktop:1": 9
         },
         "cpu_mean_percent": 28.887145635339948,
         "gpu_peak_memory_mib": {
-          "jack:0": 8768,
-          "jack:1": 2608
+          "desktop:0": 8768,
+          "desktop:1": 2608
         },
         "idle_capacity_events": [
           {
@@ -591,13 +591,13 @@
       "wall_seconds": 302.60203289985657
     },
     {
-      "allocation": "2@jack:0+2@jack:1",
+      "allocation": "2@desktop:0+2@desktop:1",
       "completed_updates": 120,
       "concurrency": 4,
       "episodes": 7680,
       "episodes_per_second": 30.65244279086572,
       "host_statistics": {
-        "jack": {
+        "desktop": {
           "startup_seconds": 21.838647866249083,
           "steady_update_seconds": 4.357344853878021,
           "tail_seconds": 10.948583340644836,
@@ -605,9 +605,9 @@
         }
       },
       "hosts": [
-        "jack"
+        "desktop"
       ],
-      "id": "alloc-2atjackd0_2atjackd1",
+      "id": "alloc-2atdesktopd0_2atdesktopd1",
       "overhead_seconds": 0.0,
       "per_run": {
         "base-s0": {
@@ -621,7 +621,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s1": {
@@ -635,7 +635,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s2": {
@@ -649,7 +649,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s3": {
@@ -663,7 +663,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s4": {
@@ -677,7 +677,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s0": {
@@ -691,7 +691,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s1": {
@@ -705,7 +705,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s2": {
@@ -719,7 +719,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s3": {
@@ -733,7 +733,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s4": {
@@ -747,7 +747,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         }
       },
@@ -759,13 +759,13 @@
       "tail_seconds": 10.948583340644836,
       "usage": {
         "baseline_memory_mib": {
-          "jack:0": 2876,
-          "jack:1": 9
+          "desktop:0": 2876,
+          "desktop:1": 9
         },
         "cpu_mean_percent": 37.15718359103314,
         "gpu_peak_memory_mib": {
-          "jack:0": 8738,
-          "jack:1": 5206
+          "desktop:0": 8738,
+          "desktop:1": 5206
         },
         "idle_capacity_events": [
           {
@@ -779,19 +779,19 @@
       "wall_seconds": 250.55099368095398
     },
     {
-      "allocation": "2@jack:0+2@jack:1+1@haleyspc:0",
+      "allocation": "2@desktop:0+2@desktop:1+1@computehost:0",
       "completed_updates": 120,
       "concurrency": 5,
       "episodes": 7680,
       "episodes_per_second": 28.25213741841135,
       "host_statistics": {
-        "haleyspc": {
+        "computehost": {
           "startup_seconds": 32.92999994754791,
           "steady_update_seconds": 5.9375,
           "tail_seconds": 21.694297671318054,
           "wall_seconds": 271.8378396034241
         },
-        "jack": {
+        "desktop": {
           "startup_seconds": 22.89938732981682,
           "steady_update_seconds": 4.54872440546751,
           "tail_seconds": 11.589239031076431,
@@ -799,10 +799,10 @@
         }
       },
       "hosts": [
-        "haleyspc",
-        "jack"
+        "computehost",
+        "desktop"
       ],
-      "id": "alloc-2atjackd0_2atjackd1_1athaleyspcd0",
+      "id": "alloc-2atdesktopd0_2atdesktopd1_1atcomputehostd0",
       "overhead_seconds": 15.457867400022224,
       "per_run": {
         "base-s0": {
@@ -816,7 +816,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s1": {
@@ -830,7 +830,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s2": {
@@ -844,7 +844,7 @@
             8,
             12
           ],
-          "host": "haleyspc",
+          "host": "computehost",
           "output_count": 30
         },
         "base-s3": {
@@ -858,7 +858,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s4": {
@@ -872,7 +872,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s0": {
@@ -886,7 +886,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s1": {
@@ -900,7 +900,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s2": {
@@ -914,7 +914,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s3": {
@@ -928,7 +928,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s4": {
@@ -942,7 +942,7 @@
             8,
             12
           ],
-          "host": "haleyspc",
+          "host": "computehost",
           "output_count": 30
         }
       },
@@ -954,15 +954,15 @@
       "tail_seconds": 13.610250759124757,
       "usage": {
         "baseline_memory_mib": {
-          "haleyspc:0": 476,
-          "jack:0": 2876,
-          "jack:1": 9
+          "computehost:0": 476,
+          "desktop:0": 2876,
+          "desktop:1": 9
         },
         "cpu_mean_percent": 37.047870025197476,
         "gpu_peak_memory_mib": {
-          "haleyspc:0": 2555,
-          "jack:0": 8738,
-          "jack:1": 5206
+          "computehost:0": 2555,
+          "desktop:0": 8738,
+          "desktop:1": 5206
         },
         "idle_capacity_events": [
           {
@@ -976,19 +976,19 @@
       "wall_seconds": 271.8378396034241
     },
     {
-      "allocation": "2@jack:0+2@jack:1+2@haleyspc:0",
+      "allocation": "2@desktop:0+2@desktop:1+2@computehost:0",
       "completed_updates": 120,
       "concurrency": 6,
       "episodes": 7680,
       "episodes_per_second": 40.11887692677924,
       "host_statistics": {
-        "haleyspc": {
+        "computehost": {
           "startup_seconds": 41.699999928474426,
           "steady_update_seconds": 6.0625,
           "tail_seconds": 20.409679770469666,
           "wall_seconds": 191.431081533432
         },
-        "jack": {
+        "desktop": {
           "startup_seconds": 21.31379882991314,
           "steady_update_seconds": 4.392938990145922,
           "tail_seconds": 11.187815368175507,
@@ -996,10 +996,10 @@
         }
       },
       "hosts": [
-        "haleyspc",
-        "jack"
+        "computehost",
+        "desktop"
       ],
-      "id": "alloc-2atjackd0_2atjackd1_2athaleyspcd0",
+      "id": "alloc-2atdesktopd0_2atdesktopd1_2atcomputehostd0",
       "overhead_seconds": 15.457867400022224,
       "per_run": {
         "base-s0": {
@@ -1013,7 +1013,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s1": {
@@ -1027,7 +1027,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s2": {
@@ -1041,7 +1041,7 @@
             8,
             12
           ],
-          "host": "haleyspc",
+          "host": "computehost",
           "output_count": 30
         },
         "base-s3": {
@@ -1055,7 +1055,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s4": {
@@ -1069,7 +1069,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s0": {
@@ -1083,7 +1083,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s1": {
@@ -1097,7 +1097,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s2": {
@@ -1111,7 +1111,7 @@
             8,
             12
           ],
-          "host": "haleyspc",
+          "host": "computehost",
           "output_count": 30
         },
         "envrand-s3": {
@@ -1125,7 +1125,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s4": {
@@ -1139,7 +1139,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         }
       },
@@ -1151,15 +1151,15 @@
       "tail_seconds": 13.032188248634338,
       "usage": {
         "baseline_memory_mib": {
-          "haleyspc:0": 476,
-          "jack:0": 2876,
-          "jack:1": 9
+          "computehost:0": 476,
+          "desktop:0": 2876,
+          "desktop:1": 9
         },
         "cpu_mean_percent": 39.70853835826064,
         "gpu_peak_memory_mib": {
-          "haleyspc:0": 4825,
-          "jack:0": 8768,
-          "jack:1": 5206
+          "computehost:0": 4825,
+          "desktop:0": 8768,
+          "desktop:1": 5206
         },
         "idle_capacity_events": [],
         "samples": 36
@@ -1167,19 +1167,19 @@
       "wall_seconds": 191.431081533432
     },
     {
-      "allocation": "2@jack:0+2@jack:1+3@haleyspc:0",
+      "allocation": "2@desktop:0+2@desktop:1+3@computehost:0",
       "completed_updates": 120,
       "concurrency": 7,
       "episodes": 7680,
       "episodes_per_second": 42.56385493996175,
       "host_statistics": {
-        "haleyspc": {
+        "computehost": {
           "startup_seconds": 39.04133335749308,
           "steady_update_seconds": 6.708333333333333,
           "tail_seconds": 21.63608439763387,
           "wall_seconds": 180.4347846508026
         },
-        "jack": {
+        "desktop": {
           "startup_seconds": 20.78509659426553,
           "steady_update_seconds": 4.4600644409656525,
           "tail_seconds": 11.184239523751396,
@@ -1187,10 +1187,10 @@
         }
       },
       "hosts": [
-        "haleyspc",
-        "jack"
+        "computehost",
+        "desktop"
       ],
-      "id": "alloc-2atjackd0_2atjackd1_3athaleyspcd0",
+      "id": "alloc-2atdesktopd0_2atdesktopd1_3atcomputehostd0",
       "overhead_seconds": 15.457867400022224,
       "per_run": {
         "base-s0": {
@@ -1204,7 +1204,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s1": {
@@ -1218,7 +1218,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "base-s2": {
@@ -1232,7 +1232,7 @@
             8,
             12
           ],
-          "host": "haleyspc",
+          "host": "computehost",
           "output_count": 30
         },
         "base-s3": {
@@ -1246,7 +1246,7 @@
             8,
             12
           ],
-          "host": "haleyspc",
+          "host": "computehost",
           "output_count": 30
         },
         "base-s4": {
@@ -1260,7 +1260,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s0": {
@@ -1274,7 +1274,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s1": {
@@ -1288,7 +1288,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s2": {
@@ -1302,7 +1302,7 @@
             8,
             12
           ],
-          "host": "haleyspc",
+          "host": "computehost",
           "output_count": 30
         },
         "envrand-s3": {
@@ -1316,7 +1316,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         },
         "envrand-s4": {
@@ -1330,7 +1330,7 @@
             8,
             12
           ],
-          "host": "jack",
+          "host": "desktop",
           "output_count": 30
         }
       },
@@ -1342,15 +1342,15 @@
       "tail_seconds": 14.319792985916138,
       "usage": {
         "baseline_memory_mib": {
-          "haleyspc:0": 476,
-          "jack:0": 2876,
-          "jack:1": 9
+          "computehost:0": 476,
+          "desktop:0": 2876,
+          "desktop:1": 9
         },
         "cpu_mean_percent": 37.27799509299963,
         "gpu_peak_memory_mib": {
-          "haleyspc:0": 6838,
-          "jack:0": 8770,
-          "jack:1": 5206
+          "computehost:0": 6838,
+          "desktop:0": 8770,
+          "desktop:1": 5206
         },
         "idle_capacity_events": [],
         "samples": 34
@@ -1362,7 +1362,7 @@
   "data_tree_sha256": "bf51eeb0332891a4544467aaa059d3126d7731b60a92942f7059f1e8132b246b",
   "executable_sha256": "62bf66b1a917b643fdd9f4ba8b1da08955b205c7c61f46b6669e1825b2975504",
   "golden": {
-    "allocation": "1@jack:0",
+    "allocation": "1@desktop:0",
     "root": "D:\\multirun-qualified-v1-work\\q6\\qualification\\serial-golden",
     "runs": {
       "base-s0": {
@@ -1723,13 +1723,13 @@
     }
   },
   "gpu_footprint_mib": {
-    "haleyspc:0": 2174.5,
-    "jack:0": 3086.0,
-    "jack:1": 2599.0
+    "computehost:0": 2174.5,
+    "desktop:0": 3086.0,
+    "desktop:1": 2599.0
   },
   "inventory": {
     "hosts": {
-      "haleyspc": {
+      "computehost": {
         "checked_at": "2026-09-23T18:09:14.996461+00:00",
         "detail": {
           "competing": 0,
@@ -1742,7 +1742,7 @@
         "eligible": true,
         "reason": "reachable; idle; GPUs present"
       },
-      "jack": {
+      "desktop": {
         "checked_at": "2026-09-23T18:09:14.996461+00:00",
         "detail": {
           "competing_processes": [],
@@ -1791,9 +1791,9 @@
   "planned_updates": 128,
   "qualification_updates": 12,
   "remote_staging": {
-    "haleyspc": {
+    "computehost": {
       "executable_sha256": "62bf66b1a917b643fdd9f4ba8b1da08955b205c7c61f46b6669e1825b2975504",
-      "host": "haleyspc",
+      "host": "computehost",
       "mirror_root": "C:/mtg-node/multirun-mirror",
       "runtime_libraries_sha256": {
         "cudart64_12.dll": "9d9b868955149875ac4ef43442aaaa8913d4a7b3e4d6dd60ee871626aa045768",
@@ -1816,11 +1816,11 @@
     "envrand-s4"
   ],
   "schema": "mtg-kernel-multirun-compute-choice/v1",
-  "selected": "alloc-2atjackd0_2atjackd1_2athaleyspcd0",
+  "selected": "alloc-2atdesktopd0_2atdesktopd1_2atcomputehostd0",
   "selection_rule": "minimum projected completion seconds among byte-identical, fully completed allocations; projection simulates the scheduler with each host's measured startup + planned_updates * steady_update + tail per run, plus staging overhead",
   "sentinel": {
-    "allocation": "2@jack:0+2@jack:1+2@haleyspc:0",
-    "candidate": "alloc-2atjackd0_2atjackd1_2athaleyspcd0",
+    "allocation": "2@desktop:0+2@desktop:1+2@computehost:0",
+    "candidate": "alloc-2atdesktopd0_2atdesktopd1_2atcomputehostd0",
     "entries": [
       {
         "arm": "base",
@@ -1830,8 +1830,8 @@
         "differing_outputs": [],
         "digest_set_sha256": "a320ff8b26b53c3762de11bf361c3b1259a5041fabbee3629b06c5e31093e0f9",
         "exit_code": 0,
-        "host": "jack",
-        "label": "base-s0--jack-0-0",
+        "host": "desktop",
+        "label": "base-s0--desktop-0-0",
         "output_count": 233,
         "run_id": "base-s0"
       },
@@ -1843,8 +1843,8 @@
         "differing_outputs": [],
         "digest_set_sha256": "9d7397ea9b7d7e42cd794b06249dc892aea29122ac3241aaa3e72100d922ba5f",
         "exit_code": 0,
-        "host": "jack",
-        "label": "envrand-s0--jack-0-1",
+        "host": "desktop",
+        "label": "envrand-s0--desktop-0-1",
         "output_count": 233,
         "run_id": "envrand-s0"
       },
@@ -1856,8 +1856,8 @@
         "differing_outputs": [],
         "digest_set_sha256": "a320ff8b26b53c3762de11bf361c3b1259a5041fabbee3629b06c5e31093e0f9",
         "exit_code": 0,
-        "host": "jack",
-        "label": "base-s0--jack-1-0",
+        "host": "desktop",
+        "label": "base-s0--desktop-1-0",
         "output_count": 233,
         "run_id": "base-s0"
       },
@@ -1869,8 +1869,8 @@
         "differing_outputs": [],
         "digest_set_sha256": "9d7397ea9b7d7e42cd794b06249dc892aea29122ac3241aaa3e72100d922ba5f",
         "exit_code": 0,
-        "host": "jack",
-        "label": "envrand-s0--jack-1-1",
+        "host": "desktop",
+        "label": "envrand-s0--desktop-1-1",
         "output_count": 233,
         "run_id": "envrand-s0"
       },
@@ -1882,8 +1882,8 @@
         "differing_outputs": [],
         "digest_set_sha256": "a320ff8b26b53c3762de11bf361c3b1259a5041fabbee3629b06c5e31093e0f9",
         "exit_code": 0,
-        "host": "haleyspc",
-        "label": "base-s0--haleyspc-0-0",
+        "host": "computehost",
+        "label": "base-s0--computehost-0-0",
         "output_count": 233,
         "run_id": "base-s0"
       },
@@ -1895,25 +1895,25 @@
         "differing_outputs": [],
         "digest_set_sha256": "9d7397ea9b7d7e42cd794b06249dc892aea29122ac3241aaa3e72100d922ba5f",
         "exit_code": 0,
-        "host": "haleyspc",
-        "label": "envrand-s0--haleyspc-0-1",
+        "host": "computehost",
+        "label": "envrand-s0--computehost-0-1",
         "output_count": 233,
         "run_id": "envrand-s0"
       }
     ],
     "gpu_peak_memory_mib": {
-      "haleyspc:0": 5689,
-      "jack:0": 9218,
-      "jack:1": 5526
+      "computehost:0": 5689,
+      "desktop:0": 9218,
+      "desktop:1": 5526
     },
     "gpu_total_memory_mib": {
-      "haleyspc:0": 8188,
-      "jack:0": 12282,
-      "jack:1": 6144
+      "computehost:0": 8188,
+      "desktop:0": 12282,
+      "desktop:1": 6144
     },
     "memory_crowded": [],
     "passed": true,
-    "root": "D:\\multirun-qualified-v1-work\\q6\\qualification\\sentinel-alloc-2atjackd0_2atjackd1_2athaleyspcd0",
+    "root": "D:\\multirun-qualified-v1-work\\q6\\qualification\\sentinel-alloc-2atdesktopd0_2atdesktopd1_2atcomputehostd0",
     "serial": {
       "base-s0": {
         "digest_set_sha256": "a320ff8b26b53c3762de11bf361c3b1259a5041fabbee3629b06c5e31093e0f9",

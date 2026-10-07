@@ -8,7 +8,7 @@ The output explicitly names the intervention, base models, raw and applied actio
 
 Qualification: actual live engine Gate bindings, both seats, hidden identities/order/allocation changes, menu permutation, Strands exclusion, unique-color ambiguity, base draw/reset preservation, plus complete baseline trace equality with the existing collector. Six executions cover the two physical seats in each arm and exact baseline/intervention replays. One match has a 60-second cap, total 240 worker seconds; first baseline times six must pass before further dispatch. All executions and natural games must complete. There is no integer improvement gate or statistical claim from this diagnostic.
 
-Fable's September 19 fresh review failed HTTP429 with zero source reads, reset September 22 07:00 EDT. No retry or endorsement. Proceeding under Jack's bounded local authorization retains that independent-review gap. No paid compute, new training, CP7 selection or existing frozen-binary change.
+Fable's September 19 fresh review failed HTTP429 with zero source reads, reset September 22 07:00 EDT. No retry or endorsement. Proceeding under the maintainer's bounded local authorization retains that independent-review gap. No paid compute, new training, CP7 selection or existing frozen-binary change.
 
 ## Completed September 20
 

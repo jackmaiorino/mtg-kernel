@@ -36,7 +36,7 @@ def write(path, value):
 
 
 def admission(manifest, host):
-    if manifest.get('schema') != 'g115-d4-bounded-timing/v1' or host not in ('jack', 'haleyspc'):
+    if manifest.get('schema') != 'g115-d4-bounded-timing/v1' or host not in ('desktop', 'computehost'):
         raise ValueError('only bounded D4 Windows timing supported')
     if set(manifest['configs']) != {'control', 'broader'} or manifest['workers'] != [1, 4, 8]:
         raise ValueError('timing must use two arms and declared serial/4/8 matrix')
@@ -73,11 +73,11 @@ def admission(manifest, host):
             checked(item)
     if placement['computer_name'].lower() != os.environ.get('COMPUTERNAME', '').lower():
         raise ValueError('manifest belongs to another computer')
-    minimum = (32 if host == 'jack' else 8) * 1024**3
+    minimum = (32 if host == 'desktop' else 8) * 1024**3
     if placement['minimum_free_memory_bytes'] < minimum or placement['minimum_free_disk_bytes'] < 60 * 1024**3:
         raise ValueError('resource reserve lowered')
-    if host == 'jack' and placement['gpu_ordinal'] != 1:
-        raise ValueError('Jack timing preserves GPU1 reservation')
+    if host == 'desktop' and placement['gpu_ordinal'] != 1:
+        raise ValueError('desktop timing preserves GPU1 reservation')
     root = Path(placement['worker_root'])
     if not root.is_absolute() or root.exists() or not root.parent.is_dir():
         raise ValueError('fresh absolute root with existing parent required')
@@ -96,7 +96,7 @@ def require_idle_gpu(placement, gpu_csv):
     if row is None or row[1].strip() != placement['gpu_uuid']:
         raise ValueError('selected GPU identity differs')
     utilization, used, free = map(int, row[2:5])
-    if placement['computer_name'].upper() == 'HALEYSPC':
+    if placement['computer_name'].upper() == 'COMPUTEHOST':
         # Existing public-training placement contract permits desktop contexts.
         # The separate native-process census must still pass on every case.
         idle = utilization <= 5 and free >= 2048
@@ -241,7 +241,7 @@ def run(manifest, configs, placement, root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--manifest', type=Path, required=True)
-    parser.add_argument('--host', choices=['jack', 'haleyspc'], required=True)
+    parser.add_argument('--host', choices=['desktop', 'computehost'], required=True)
     parser.add_argument('--root', type=Path)
     parser.add_argument('--check-only', action='store_true')
     args = parser.parse_args()

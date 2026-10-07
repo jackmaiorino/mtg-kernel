@@ -421,7 +421,7 @@ predeclared three-arm micro-rung.
 - Branch:
   `codex/observation-diagnostics-v1`
 - Worktree:
-  `C:\Users\Jack\IdeaProjects\mtg-kernel-observation-diagnostics-codex`
+  `C:\Users\user\IdeaProjects\mtg-kernel-observation-diagnostics-codex`
 - Artifact root:
   `D:\mtg-kernel-action-ingress-admission-v1-20260726`
 - Dedicated Cargo target:

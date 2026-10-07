@@ -15,7 +15,7 @@ class TimingAdmissionTests(unittest.TestCase):
                          workers=[1, 4, 8], job_seconds=180, total_seconds=3600)
 
     def test_valid_bounds(self):
-        for host in ('jack', 'haleyspc'):
+        for host in ('desktop', 'computehost'):
             validate_limits(self.plan, host)
 
     def test_formal_cloud_and_altered_bounds_refused(self):
@@ -26,7 +26,7 @@ class TimingAdmissionTests(unittest.TestCase):
             plan = copy.deepcopy(self.plan)
             plan[key] = value
             with self.assertRaises(ValueError):
-                validate_limits(plan, 'jack')
+                validate_limits(plan, 'desktop')
 
     @unittest.skipUnless(os.name == 'nt', 'Windows handle telemetry')
     def test_owned_handle_cpu_survives_child_exit(self):

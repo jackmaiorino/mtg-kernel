@@ -68,7 +68,7 @@ attack-event emission path for the new threshold trigger.
 
 The verified kernel functional source is local `7ca57acb`, remote
 `0837dfb13135aad0f7ca8f327372387738511471` in
-`C:/Users/haley/mtg-kernel-fdn-kiora-codex`. Rust/Cargo 1.94.1,
+`C:/Users/hostuser/mtg-kernel-fdn-kiora-codex`. Rust/Cargo 1.94.1,
 MSVC linker 14.50.35725.0, two Cargo jobs, no incremental compilation,
 no debug symbols, seed 123 and no GPU. Manifests bind source/input hashes,
 output log hashes and the 60 GiB free-space reserve. The launcher monitors
@@ -84,7 +84,7 @@ with zero failures/errors/skips, in 23.521 seconds. Surefire XML SHA-256
 `337c9d8e608e5f3fc010ec61dd6ceb746fd3f1ba470ef3f445a2d4d63ccd3e88`.
 A storage-guard interruption of the first corrected rerun is preserved.
 Cold owned Cargo and Mage caches are compressed with before/after content
-hash checks; no evidence file is deleted. Claude #813 released Jack's PC and E: writes at 07:18 EDT on October 2.
+hash checks; no evidence file is deleted. Claude #813 released the primary desktop and E: writes at 07:18 EDT on October 2.
 The old reservation was respected through that release.
 
 Both original deck SHA-256s remain unchanged. Registry coverage is UG 37/40
@@ -97,7 +97,7 @@ The production check's first release build took 11 minutes 37 seconds.
 The custom-deck binary built successfully with debug symbols disabled:
 5,771,776 bytes, SHA-256
 `b3a3ecd5df88200b1eecf6de4025981d36b7c66491a6bf56c645ae34450fa478`.
-Hash-verified cold copies on HaleysPC, Jack's PC and E: protect it from subsequent builds.
+Hash-verified cold copies on the compute host, the primary desktop and E: protect it from subsequent builds.
 The small production manifest SHA-256 is
 `baab354f914389f9e6aa219ce400988b764a3be1fc54076be960965e5d1f027e`.
 The external deck used 12 Forest, 12 Island, eight Kiora, four Strix Lookout

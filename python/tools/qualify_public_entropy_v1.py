@@ -25,8 +25,8 @@ def run(root):
     os.environ["PATH"] = str(cuda/"bin")+os.pathsep+os.environ["PATH"]
     (root/"temp").mkdir()
     os.environ["TEMP"] = os.environ["TMP"] = str(root/"temp")
-    placement = place("jack",1,10)
-    current = preflight("jack",[placement])
+    placement = place("desktop",1,10)
+    current = preflight("desktop",[placement])
     m = read(PILOT/"manifest.json")
     training = read(PILOT/"training-audit.json")
     reports = {arm:read(checked(training["arms"][arm]["report"])) for arm in ["control","structured"]}
@@ -39,7 +39,7 @@ def run(root):
         runtime={name:pin(cuda/"bin"/name) for name in ["nvrtc64_120_0.dll","nvrtc-builtins64_128.dll"]},
         dependencies=[pin(Path(__file__).with_name(n)) for n in ["public_training_dispatch_v2.py","public_evaluation_dispatch_v1.py","qualify_state_prevention_compute_v1.py"]],
         question="Verify actual entropy gradients, zero-path compatibility, nonzero optimizer effects, collector parity and fresh-process continuation. No win-rate selection.",
-        review="Known Fable zero-read HTTP429 through Sep22 07:00EDT; no retry/endorsement. Bounded implementation under Jack's research assignment.")
+        review="Known Fable zero-read HTTP429 through Sep22 07:00EDT; no retry/endorsement. Bounded implementation under the maintainer's research assignment.")
     write(root/"manifest.json",plan)
 
     def bounded_command(label,binary,request=None,expected_error=None):
@@ -75,10 +75,10 @@ def run(root):
         first=read(checked(resume))["next_update"] if resume else 0
         scheduled=sum(len(b) for b in config["updates"][first:stop])
         assert games+scheduled<=80 and scheduled<=20
-        p=place("jack",1,workers)
+        p=place("desktop",1,workers)
         folder=root/label
         folder.mkdir()
-        write(folder/"preflight.json",preflight("jack",[p]))
+        write(folder/"preflight.json",preflight("desktop",[p]))
         request=dict(config=config,output_directory=str(folder/"outputs"),resume=resume,stop_after=stop,
             collector_workers=workers,execution_gpu_ordinal=1)
         write(folder/"request.json",request)

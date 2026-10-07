@@ -16,7 +16,7 @@ class EvaluationGuardTests(unittest.TestCase):
         self.placement={'workers':8};self.jobs=[];self.expected=[];self.fingerprints={}
         def save(path,value):self.files[path]=value;return {'path':path,'sha256':path}
         self.save=save
-        worker=save('worker',dict(hostname=guard.HOSTS['jack'],errors=[],workers=8))
+        worker=save('worker',dict(hostname=guard.HOSTS['desktop'],errors=[],workers=8))
         for n in range(32):
             name=f'j{n}';directory=f'job{n}/outputs'
             matches=[{'seed':8*n+i} for i in range(8)]
@@ -24,7 +24,7 @@ class EvaluationGuardTests(unittest.TestCase):
             req=save('req'+name,request)
             self.expected.append(dict(id=name,command={'matches':matches}))
             execution=save('exec'+name,dict(exit_code=0,timeout=False,binary=self.binary,request=req,
-                host='jack',storage=self.placement,native_binary={'sha256':'B'},native_request={'sha256':req['sha256']}))
+                host='desktop',storage=self.placement,native_binary={'sha256':'B'},native_request={'sha256':req['sha256']}))
             recovery=save('recover'+name,dict(mismatches=0))
             digests=[]
             for i,m in enumerate(matches):
@@ -33,8 +33,8 @@ class EvaluationGuardTests(unittest.TestCase):
                 self.fingerprints[f'{name}/{i}']=path
             save(directory+'/start.json',dict(command=request,models=['model']))
             save(directory+'/completion.json',dict(matches=8,match_sha256=digests,natural_games=8,decisions=8))
-            self.jobs.append(dict(id=name,host='jack',request=req,execution=execution,recovery=recovery,output_directory=directory))
-        self.report=dict(jobs=self.jobs,matches=256,allocation={'jack':self.placement},workers={'jack':worker},fingerprints=self.fingerprints)
+            self.jobs.append(dict(id=name,host='desktop',request=req,execution=execution,recovery=recovery,output_directory=directory))
+        self.report=dict(jobs=self.jobs,matches=256,allocation={'desktop':self.placement},workers={'desktop':worker},fingerprints=self.fingerprints)
         self.item=save('report',self.report)
         self.plan=dict(binary=self.binary,qualification_jobs=self.expected)
 

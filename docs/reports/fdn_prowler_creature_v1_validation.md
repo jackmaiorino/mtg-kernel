@@ -45,7 +45,7 @@ cannot inherit an old counter.
 | Hosted CI | Draft [kernel PR #133](https://github.com/jackmaiorino/mtg-kernel/pull/133) is running at `b68eb5b4`; no green claim. |
 
 Kernel functional source is local `6abb312d`, remote `bf4f45f3c7400ecd97307678f0b12d8a6e9fbb1e` in the owned
-`C:/Users/haley/mtg-kernel-fdn-prowler-codex` worktree. Rust/Cargo 1.94.1,
+`C:/Users/hostuser/mtg-kernel-fdn-prowler-codex` worktree. Rust/Cargo 1.94.1,
 MSVC linker 14.50.35725.0, two Cargo jobs, no incremental compilation,
 no debug symbols, seed 123 and no GPU. Small manifests bind source/input
 and output hashes. Checks-004 exited zero above the 60 GiB reserve. During release verification,

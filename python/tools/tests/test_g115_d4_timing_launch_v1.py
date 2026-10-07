@@ -29,32 +29,32 @@ class AdmissionTests(unittest.TestCase):
                 admission(self.plan, host)
         self.plan['schema'] = 'formal'
         with self.assertRaisesRegex(ValueError, 'bounded D4 Windows'):
-            admission(self.plan, 'jack')
+            admission(self.plan, 'desktop')
 
     def test_fixed_matrix_and_wall_limits(self):
         for key, value in [('workers', [1, 16]), ('native_timeout_seconds', 301), ('total_timeout_seconds', 3601)]:
             plan = copy.deepcopy(self.plan)
             plan[key] = value
             with self.assertRaises(ValueError):
-                admission(plan, 'jack')
+                admission(plan, 'desktop')
 
     def test_no_arbitrary_executable(self):
         self.plan['binary']['path'] = 'other.exe'
         with self.assertRaisesRegex(ValueError, 'expanded trainer binary'):
-            admission(self.plan, 'jack')
+            admission(self.plan, 'desktop')
 
     def test_helpers_must_be_pinned(self):
         with self.assertRaisesRegex(ValueError, 'helper pins incomplete'):
-            admission(self.plan, 'jack')
+            admission(self.plan, 'desktop')
 
-    def test_haley_desktop_memory_with_reserve_and_identity(self):
-        p = dict(computer_name='HALEYSPC', gpu_ordinal=0, gpu_uuid='GPU-test')
+    def test_computehost_desktop_memory_with_reserve_and_identity(self):
+        p = dict(computer_name='COMPUTEHOST', gpu_ordinal=0, gpu_uuid='GPU-test')
         require_idle_gpu(p, '0, GPU-test, 0, 518, 7439')
         for line in ['0, GPU-other, 0, 518, 7439', '0, GPU-test, 6, 518, 7439', '0, GPU-test, 0, 7000, 1000']:
             with self.assertRaises(ValueError):
                 require_idle_gpu(p, line)
 
-    def test_jack_strict_idle_is_unchanged(self):
+    def test_desktop_strict_idle_is_unchanged(self):
         p = dict(computer_name='DESKTOP-DJ1C40R', gpu_ordinal=1, gpu_uuid='GPU-test')
         require_idle_gpu(p, '1, GPU-test, 0, 0, 8192')
         for line in ['1, GPU-test, 1, 0, 8192', '1, GPU-test, 0, 518, 7439']:

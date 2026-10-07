@@ -71,7 +71,7 @@ Codex review findings and fixes are in [the training workflow](expanded_deck_tra
 ## Artifacts and use
 
 - [Training workflow](expanded_deck_training_v1.md), [observation revision](sideboard_chosen_creature_observation_v2.md), [dataset utility](sideboard_dataset_preparation_v1.md).
-- Manifest: `C:/Users/Jack/IdeaProjects/sideboarding-integration-20260912/engineering-003/FINAL-MANIFEST.json`.
+- Manifest: `C:/Users/user/IdeaProjects/sideboarding-integration-20260912/engineering-003/FINAL-MANIFEST.json`.
 - Collect/update configs and replay verifier: the manifest directory's `expanded-training/`.
 - Outputs: `E:/mtg-kernel-learned-sideboarding-evidence/engineering-003/`, including `expanded-collect-001`, `expanded-update-001`, `roundtrip-verification-001`, and `dataset-development-002`.
 - Preserved executables: `build-a70f0985/` in the output root. Rust/Cargo 1.94.1, LLVM 21.1.8, MSVC linker 14.50.35725.0; CPU only, GPU ordinal null.

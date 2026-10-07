@@ -71,7 +71,7 @@ class FreshInitializationV1Tests(unittest.TestCase):
         return manifest
 
     def test_v4_source_paths_are_admitted_alongside_v3(self) -> None:
-        # Dual admission (Jack's ruling): V4 is a new arm, never a cutover.
+        # Dual admission (the maintainer's ruling): V4 is a new arm, never a cutover.
         manifest = self.manifest_for_source_paths(fresh.SOURCE_PATHS_V4)
         parsed = fresh.validate_initialization_bytes_v1(self.encoded(manifest), self.payload)
         self.assertEqual(parsed["producer"]["source_files"][5]["path"],

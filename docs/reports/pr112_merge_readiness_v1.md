@@ -2,7 +2,7 @@
 
 Source repairs and baseline witnesses, 2026-10-01. Engineering checks only. The PR bodies and current checks record final readiness.
 
-Jack assigned merge preparation for PR112 and selected a focused teacher PR with main prerequisites prepared separately. PR114 targets main; PR112 targets `codex/g115-main-prerequisites-v1`. Merge order is PR114, then retarget PR112 to main and check the resulting commit. Neither PR is authorized for merge by this preparation request.
+The maintainer assigned merge preparation for PR112 and selected a focused teacher PR with main prerequisites prepared separately. PR114 targets main; PR112 targets `codex/g115-main-prerequisites-v1`. Merge order is PR114, then retarget PR112 to main and check the resulting commit. Neither PR is authorized for merge by this preparation request.
 
 Starting identities:
 

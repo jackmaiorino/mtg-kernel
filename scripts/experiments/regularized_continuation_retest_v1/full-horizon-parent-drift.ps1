@@ -2,7 +2,7 @@ param(
     [string]$TrainingManifestPath = 'D:\mtg-kernel-regularized-continuation-retest-v1\development\full-horizon-training\attempt-003\training-manifest.json',
     [string]$EvidenceRoot = 'D:\mtg-kernel-regularized-continuation-retest-v1\development\seed-1941001',
     [string]$Executable,
-    [string]$DesignDocumentPath = 'C:\Users\Jack\IdeaProjects\mtg-kernel-composed-factorial-v1-codex\docs\native_regularized_continuation_retest_v1.md'
+    [string]$DesignDocumentPath = "$env:USERPROFILE\IdeaProjects\mtg-kernel-composed-factorial-v1-codex\docs\native_regularized_continuation_retest_v1.md"
 )
 
 Set-StrictMode -Version Latest

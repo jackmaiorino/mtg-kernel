@@ -2,7 +2,7 @@
 
 Source commit `eedceb932234b35097eb6f247bcdbdd8b165d837` adds resumable
 legend-rule choices and completes Dwynen, Gilt-Leaf Daen. Matching source
-on HaleysPC is committed as `f725389743cd7209877e5dc5bee046e9305d80e6`.
+on the compute host is committed as `f725389743cd7209877e5dc5bee046e9305d80e6`.
 Follow-up source `a8ab51268211cccd601c59ab93414241588b6b53`
 (remote `dc92aa0536b5451d490b731d004602afe055157b`) verifies refusal of
 the newly superseded v35 catalog at the actual publisher and resume boundaries.
@@ -42,10 +42,10 @@ v33, v34 and v35 identities retain their literals and read compatibility.
 States without pending legend choices retain prior serialized bytes/hashes.
 The native fixed action vocabulary explicitly refuses the new legend action.
 
-Small manifest: CPU only on HaleysPC, two Cargo build jobs, GPU ordinal none,
+Small manifest: CPU only on the compute host, two Cargo build jobs, GPU ordinal none,
 seed 123, episode 7. Rust 1.94.1 (`e408947bf`), Cargo 1.94.1 (`29ea6fb6a`),
 MSVC linker `14.50.35725.0`; Python 3.12.10 remotely and 3.11 locally.
-Jack's PC remains reserved for the lead. No training, formal measurement or
+The primary desktop remains reserved for the lead. No training, formal measurement or
 paid compute was launched. Logs, driver and result remain outside Git.
 
 | Input/output | SHA-256 |
@@ -59,7 +59,7 @@ paid compute was launched. Logs, driver and result remain outside Git.
 | External transcript | `9991b5edc3cc5ba1b786a371f2e1d2fc929582ec53cbffbc684033cc89a9e726` |
 | Result JSON | `bbc714dd446caddf6ad44e089364cbf5439646460f787b890076812d686e643a` |
 
-Validation logs are `C:/Users/haley/fdn-legend-tests-006.log` through
+Validation logs are `C:/Users/hostuser/fdn-legend-tests-006.log` through
 `-012.log`. Earlier failed logs remain: 006 found an obsolete hash assertion,
 007 found a redundant capability assertion, and 008 requested formatting.
 010 refused the uncommitted compatibility tests under the production source
