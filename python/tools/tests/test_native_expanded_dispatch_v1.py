@@ -210,6 +210,75 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "changed pinned"):
             resolver(captured)
 
+    def checkpoint_source(self, values):
+        return {"play_import": "fixed", "checkpoint": self.save({
+            "schema": "checkpoint/v1", "source_import": "fixed-import", "feature_contract_digest": "a",
+            "feature_encoding_digest": "b", "card_db_hash": "c",
+            "parameters": [{"name": "weight", "shape": [2], "values": values}]})}
+
+    def test_permuted_units_family_binds_episode_multiset_and_layout(self):
+        block = copy.deepcopy(self.config)
+        block["initial_source"] = self.checkpoint_source([1, 2])
+        for index, update in enumerate(block["iterations"]):
+            update["episodes"].append({"episode": {"id": f"second-{index}", "seed": 5000 + index, "learner_seat": 1,
+                                       "registered": ["deck-b", f"deck-{index % 3}"]}, "opponent": "initial"})
+        later = copy.deepcopy(block)
+        later["initial_source"] = self.checkpoint_source([7, 9])
+        later["iterations"].reverse()
+        for update in later["iterations"]:
+            update["episodes"].reverse()
+        family = "permuted-units-v1"
+        self.assertEqual(dispatch.workload(block, "training", family=family),
+                         dispatch.workload(later, "training", family=family))
+        self.assertNotEqual(dispatch.workload(block, "training"), dispatch.workload(later, "training"))
+        moved = copy.deepcopy(block)
+        moved["iterations"][0]["episodes"].append(moved["iterations"][1]["episodes"].pop())
+        self.assertNotEqual(dispatch.workload(block, "training", family=family),
+                            dispatch.workload(moved, "training", family=family))
+        changed = copy.deepcopy(block)
+        changed["iterations"][3]["episodes"][1]["opponent"] = "current"
+        self.assertNotEqual(dispatch.workload(block, "training", family=family),
+                            dispatch.workload(changed, "training", family=family))
+        for key, value in (("learning_rate", .001), ("max_non_natural_episode_fraction", .1)):
+            changed = copy.deepcopy(block); changed[key] = value
+            self.assertNotEqual(dispatch.workload(block, "training", family=family),
+                                dispatch.workload(changed, "training", family=family))
+        with self.assertRaisesRegex(ValueError, "training only"):
+            dispatch.workload({"mode": "collect", "source": {}, "episodes": [], "output_directory": "x"},
+                              "evaluation", family=family)
+        with self.assertRaisesRegex(ValueError, "unknown schedule family"):
+            dispatch.workload(block, "training", family="other")
+
+    def test_non_natural_tolerance_must_be_declared(self):
+        self.config["max_non_natural_episode_fraction"] = 0.2
+        request = self.request(1)
+        with patch.object(dispatch, "validate_storage"):
+            with self.assertRaisesRegex(ValueError, "declared"):
+                dispatch.validate_request(request, True)
+            request["non_natural_tolerance"] = 0.1
+            with self.assertRaisesRegex(ValueError, "declared"):
+                dispatch.validate_request(request, True)
+            request["non_natural_tolerance"] = 0.2
+            dispatch.validate_request(request, True)
+            request["schedule_family"] = "unknown"
+            with self.assertRaisesRegex(ValueError, "schedule family"):
+                dispatch.validate_request(request, True)
+
+    def test_tolerant_ledger_enters_fingerprint_and_is_refused_otherwise(self):
+        trajectory = self.save({"terminal": {"terminal_classification": "natural"}})
+        ledger = self.save({"schema": "mtg-kernel-non-natural-collection-ledger/v1",
+                            "entries": [{"slot": 0, "attempt": 1}]})
+        collection = self.save({"complete": True, "trajectories": [trajectory], "non_natural_ledger": ledger})
+        with self.assertRaisesRegex(ValueError, "non-natural collection attempt"):
+            dispatch.collection_fingerprint(collection, 1)
+        ledgers = []
+        self.assertEqual(dispatch.collection_fingerprint(collection, 1, ledgers=ledgers), [trajectory["sha256"]])
+        self.assertEqual(ledgers, [ledger["sha256"]])
+        bad = self.save({"complete": True, "trajectories": [trajectory], "non_natural_ledger": self.save(
+            {"schema": "mtg-kernel-non-natural-collection-ledger/v1", "entries": [{"slot": 3, "attempt": 1}]})})
+        with self.assertRaisesRegex(ValueError, "invalid non-natural ledger"):
+            dispatch.collection_fingerprint(bad, 1, ledgers=[])
+
     def test_storage_projection_preserves_future_volume_reserve(self):
         storage = self.request(2)["storage"]
         free = dispatch.DISK_RESERVE_BYTES + 999

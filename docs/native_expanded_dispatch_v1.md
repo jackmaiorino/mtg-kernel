@@ -107,6 +107,23 @@ projected work plus transport and any measured remaining host queue. Optional
 free PC to finish an independent job sooner while the faster PC is occupied.
 The research lead owns the total campaign queue and shared storage accounting.
 
+Two opt-in request fields serve chained training blocks; requests without them
+behave exactly as before.
+
+- `"schedule_family": "permuted-units-v1"` (training only, in qualification and
+  production requests alike). The family key is then
+  `workload(config, "training", family="permuted-units-v1")`: blocks may order
+  one balanced schedule differently and start from different admitted weights
+  of the same import, feature contract and parameter layout. The multiset of
+  scheduled episodes (without IDs/seeds), episodes per update, opponents, loss,
+  optimizer and tolerance stay bound. One serial/parallel qualification of the
+  first block's first update then covers every block of the schedule.
+- `"non_natural_tolerance": F` (training only) must restate a nonzero
+  `max_non_natural_episode_fraction` of the config. Kept trajectories must still
+  be natural; each update's non-natural ledger SHA256 joins the parity
+  fingerprint, so serial and parallel trials must discard identical attempts.
+  Evaluation still refuses any tolerance.
+
 For recovered remote evidence, an entry may instead be
 `{"report": PIN, "path_mappings": [{"source_root": "C:/captured/root", "local_root": "D:/recovered/root"}]}`.
 Only file location changes; captured bytes and all SHA256s remain fixed. Include
