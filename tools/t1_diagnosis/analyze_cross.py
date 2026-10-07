@@ -173,7 +173,8 @@ def main():
                                           "means": dev.get("means"), "result": label})
     print("\ndeviations per cell: " + ", ".join(f"{c}: {n}" for c, n in sorted(per_cell.items())))
     print("(tie = every candidate had the same inner mean, so the higher-probability rule, not the")
-    print(" search, made the choice differ from T1's sample)")
+    print(" search, made the choice differ from T1's sample; only outputs made before the improved")
+    print(" continuation kept T1's sampled action on ties can contain these)")
     print(f"\n{'class':<24}{'total':>7}{'success':>9}{'failure':>9}{'neutral':>9}{'tie':>7}")
     for cls in CLASSES:
         c = counts[cls]

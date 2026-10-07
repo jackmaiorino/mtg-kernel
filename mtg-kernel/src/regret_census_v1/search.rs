@@ -795,8 +795,10 @@ fn inner_playout(
 }
 
 /// Improved continuation at one focal decision: the top two actions plus one
-/// uniform draw from the rest, `m_inner` plain T1 playouts each on shared
-/// determinizations; the best mean wins (ties to the higher probability).
+/// uniform draw from the rest, plus T1's sampled action if it is not among
+/// them, `m_inner` plain T1 playouts each on shared determinizations. The
+/// sampled action is kept unless another candidate's mean is strictly higher,
+/// so every deviation from T1 is driven by search, not by tie-breaking.
 /// Any inner failure falls back to T1's sampled action and is counted.
 #[allow(
     clippy::too_many_arguments,
@@ -828,6 +830,10 @@ fn improve_decision(
         let mut rng = SplitMix64::seed(mix(dec_seed ^ 0x0C0F));
         cands.extend(uniform_draw(&order[2..], 1, &mut rng));
     }
+    let sampled_in_cands = cands.contains(&(sampled as usize));
+    if !sampled_in_cands {
+        cands.push(sampled as usize);
+    }
     let mut sums = vec![0f64; cands.len()];
     for j in 0..m_inner {
         let det = mix(dec_seed ^ (j as u64 + 1));
@@ -850,7 +856,16 @@ fn improve_decision(
         }
     }
     let means: Vec<f64> = sums.iter().map(|x| x / m_inner as f64).collect();
-    let chosen = cands[best_by_mean(&cands, &means, &probs)] as u32;
+    let own = cands
+        .iter()
+        .position(|&c| c == sampled as usize)
+        .expect("sampled action is a candidate");
+    let best = best_by_mean(&cands, &means, &probs);
+    let chosen = if means[best] > means[own] {
+        cands[best] as u32
+    } else {
+        sampled
+    };
     if log && chosen != sampled {
         let st = s.game_state();
         let sem = sem_strings(s);
@@ -866,7 +881,7 @@ fn improve_decision(
             "cands":cands,"cand_sem":cands.iter().map(|&c| sem.get(c)).collect::<Vec<_>>(),
             "cand_probs":cands.iter().map(|&c| probs[c]).collect::<Vec<_>>(),
             "sampled_prob":probs.get(sampled as usize),"means":means,
-            "sampled_in_cands":cands.contains(&(sampled as usize)),
+            "sampled_in_cands":sampled_in_cands,
             "all_equal":means.iter().all(|m| *m == means[0])}),
         );
     }
