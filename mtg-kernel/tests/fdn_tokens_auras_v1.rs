@@ -167,10 +167,8 @@ fn appended_definitions_match_their_printed_characteristics() {
         assert_eq!(id, first + offset, "{name}");
         assert_eq!(CARD_DEFS[id].capability, CardCapability::Full, "{name}");
     }
-    assert_eq!(
-        CARD_DEFS.len(),
-        first + CARDS.len() + AURAS.len() + TOKENS.len()
-    );
+    // Later batches append after these definitions.
+    assert!(CARD_DEFS.len() >= first + CARDS.len() + AURAS.len() + TOKENS.len());
     for (name, mana_value, colors, subtypes, stats, keywords, triggers) in [
         (
             "Dragon Trainer",
