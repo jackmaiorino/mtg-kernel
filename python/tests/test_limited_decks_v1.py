@@ -60,6 +60,12 @@ class LimitedDeckTest(unittest.TestCase):
         self.assertEqual(ids[:8], list(range(243, 251)))
         self.assertEqual(ids[37:], [251, 252, 253])
 
+    def test_reference_triggers_tricks_resolve_all_forty_copies(self) -> None:
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_triggers_tricks.dck").read_text())
+        ids = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(ids), 40)
+        self.assertEqual(ids[:12], list(range(254, 266)))
+
     def test_extension_rejects_duplicates_and_preserves_base_card_ids(self) -> None:
         base = (REPO_ROOT / "data/cards_v1.json").read_bytes()
         extension = (FIXTURES / "cards_v1.json").read_bytes()
@@ -164,7 +170,7 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("FDN_top_*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
-        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 61)
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 73)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
                              for card in report["cards"]), 0)
 
