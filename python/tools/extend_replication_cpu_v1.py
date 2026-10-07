@@ -1,4 +1,4 @@
-"""Measure Jack's full logical-core count and launch from the extended choice."""
+"""Measure the maintainer's full logical-core count and launch from the extended choice."""
 import argparse
 import copy
 from pathlib import Path
@@ -13,7 +13,7 @@ def extend(root):
     previous = read(root/"qualification.json")
     if not previous["complete"]:
         raise ValueError("original allocation qualification is incomplete")
-    current = inventory("jack")
+    current = inventory("desktop")
     if current["active"]:
         raise ValueError("preserve active native owners")
     threads = sum(cpu["NumberOfLogicalProcessors"] for cpu in current["cpu"])
@@ -28,8 +28,8 @@ def extend(root):
     for drive in ["C", "D", "E"]:
         part = next(p for p in current["partitions"] if p["DriveLetter"] == drive)
         disk = next(d for d in current["disks"] if d["Number"] == part["DiskNumber"])
-        allocation = dict(jack=dict(drive=drive, disk_serial=disk["SerialNumber"], disk_name=disk["FriendlyName"], workers=threads))
-        label = f"jack-{drive.lower()}-w24"
+        allocation = dict(desktop=dict(drive=drive, disk_serial=disk["SerialNumber"], disk_name=disk["FriendlyName"], workers=threads))
+        label = f"desktop-{drive.lower()}-w24"
         report_pin = dispatch(root, label, plan["binary"], plan["qualification_jobs"], allocation, read(root/"remote-staging.json"), 300)
         result = read(checked(report_pin))
         if result["fingerprints"] != reference:

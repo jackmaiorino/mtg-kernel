@@ -7,7 +7,7 @@
   "finished_at": "2026-09-23T05:20:05.714675+00:00",
   "golden_prefix_generation": 12,
   "golden_prefix_identical": true,
-  "host": "jack",
+  "host": "desktop",
   "log": "D:\\multirun-qualified-v1-work\\q1\\launch\\runs\\envrand-s0\\process.log",
   "output_digest_set_sha256": "4cab16373afb12fd17905d5ef1193fb75e591cf583dbb4274f0c108071cc8ff1",
   "run_id": "envrand-s0",

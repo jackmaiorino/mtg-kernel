@@ -143,7 +143,7 @@ class ThroughputModeTests(unittest.TestCase):
     def run_throughput(self, launch, root, **env):
         with patch.object(guard, 'DISK_RESERVE_BYTES', 0), patch.object(guard, 'PINNED_ROOT', str(Path(launch['executable']['path']).parents[1])), \
                 patch.object(launcher.Pool, 'environment', environment_with(**env)):
-            return launcher.throughput(launch, 'jack', root, now=1.0, prefix=PREFIX)
+            return launcher.throughput(launch, 'desktop', root, now=1.0, prefix=PREFIX)
 
     def test_serial_and_parallel_phases_reproduce_the_same_match_hashes(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -169,7 +169,7 @@ class ThroughputModeTests(unittest.TestCase):
                     patch.object(guard, 'PINNED_ROOT', str(Path(launch['executable']['path']).parents[1])), \
                     patch.object(launcher.Pool, 'environment', varying):
                 with self.assertRaisesRegex(ValueError, 'Worker count 2 changed match bytes'):
-                    launcher.throughput(launch, 'jack', Path(directory) / 'run', now=1.0, prefix=PREFIX)
+                    launcher.throughput(launch, 'desktop', Path(directory) / 'run', now=1.0, prefix=PREFIX)
 
     def test_timing_check_stays_small_and_serial_first(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -186,7 +186,7 @@ class ThroughputModeTests(unittest.TestCase):
             launch['executable']['path'] = str(Path(directory) / 'public_feature_evaluation_v1.exe')
             with patch.object(guard, 'PINNED_ROOT', str(pinned.parents[1])):
                 with self.assertRaisesRegex(ValueError, 'pinned copy'):
-                    launcher.throughput(launch, 'jack', Path(directory) / 'run', now=1.0, prefix=PREFIX)
+                    launcher.throughput(launch, 'desktop', Path(directory) / 'run', now=1.0, prefix=PREFIX)
 
 
 
@@ -212,13 +212,13 @@ def qualification_launch(directory):
               for w, s in ((1, 16.0), (8, 4.0))]
     now = 1_790_600_000.0
     evidence = dict(schema=guard.THROUGHPUT_SCHEMA, binding=dict(binding, work_class='bo3-ordinary'),
-                    inventory=dict(jack=dict(checked_unix=now, eligible=True, reason='idle', competing=[]),
-                                   haleyspc=dict(checked_unix=now, eligible=False, reason='staging not engineered'),
+                    inventory=dict(desktop=dict(checked_unix=now, eligible=True, reason='idle', competing=[]),
+                                   computehost=dict(checked_unix=now, eligible=False, reason='staging not engineered'),
                                    runpod=dict(checked_unix=now, eligible=False, reason='no Linux path')),
-                    hosts=dict(jack=dict(phases=phases, overhead_seconds=5.0)), placements=[], selected='jack-8')
+                    hosts=dict(desktop=dict(phases=phases, overhead_seconds=5.0)), placements=[], selected='desktop-8')
     for workers in (1, 8):
-        allocation = dict(jack=workers)
-        evidence['placements'].append(dict(id='jack-%d' % workers, allocation=allocation, eligible=True,
+        allocation = dict(desktop=workers)
+        evidence['placements'].append(dict(id='desktop-%d' % workers, allocation=allocation, eligible=True,
                                            ineligibility_reason='',
                                            projected_seconds=guard.projected_seconds(evidence, allocation, 8)))
     items = [dict(category=c, unit_bytes=100_000, units=8, measured_by=dict(path='E:/r.json', sha256='4' * 64))
@@ -227,7 +227,7 @@ def qualification_launch(directory):
                      cap_bytes=guard.JOB_SET_CAPS['calibration'], items=items,
                      projected_bytes=guard.projected_bytes(items))
     job = 'g115-line-a-qualification-test'
-    scratch = dict(schema=guard.SCRATCH_SCHEMA, job=job, owner='opus-line-a-launcher', host='jack',
+    scratch = dict(schema=guard.SCRATCH_SCHEMA, job=job, owner='opus-line-a-launcher', host='desktop',
                    root='D:/e-scratch/%s/' % job, sources=[dict(path='E:/x.json', sha256='a' * 64, bytes=1)],
                    disposable=['native/**'], cap_bytes=10**9)
     launch = dict(schema=launcher.LAUNCH_SCHEMA, mode='qualification', job=job,
@@ -237,7 +237,7 @@ def qualification_launch(directory):
                   jobs=job_list, throughput_evidence={'bo3-ordinary': ref(directory / 'evidence.json', evidence)},
                   worksheet=ref(directory / 'worksheet.json', worksheet),
                   scratch_manifest=ref(directory / 'scratch.json', scratch),
-                  hosts=dict(jack=dict(volume=str(directory))), deck_packet=PACKET, learner_source=LEARNER,
+                  hosts=dict(desktop=dict(volume=str(directory))), deck_packet=PACKET, learner_source=LEARNER,
                   member_sources=MEMBERS, control_allowance_bytes=1, reservation_bytes=10**6,
                   job_timeout_seconds=60)
     return launch, now
@@ -253,11 +253,11 @@ class AdmittedDispatchTests(unittest.TestCase):
             launch, now = qualification_launch(directory)
             first, second, third = self.patches(directory)
             with first, second, third:
-                placements, admitted = launcher.check(launch, 'jack', now=now)
-                self.assertEqual(placements['bo3-ordinary']['id'], 'jack-8')
+                placements, admitted = launcher.check(launch, 'desktop', now=now)
+                self.assertEqual(placements['bo3-ordinary']['id'], 'desktop-8')
                 root = Path(directory) / 'run'
                 root.mkdir()
-                result = launcher.dispatch(launch, 'jack', root, placements, admitted, prefix=PREFIX)
+                result = launcher.dispatch(launch, 'desktop', root, placements, admitted, prefix=PREFIX)
             self.assertTrue(result['complete'])
             self.assertEqual((result['jobs'], result['completed'], result['not_started']), (8, 8, []))
             self.assertEqual({row['workers'] for row in result['rows']}, {8})
@@ -270,14 +270,14 @@ class AdmittedDispatchTests(unittest.TestCase):
             first, second, third = self.patches(directory)
             with first, second, third:
                 with self.assertRaisesRegex(ValueError, 'worksheet missing'):
-                    launcher.check(dict(launch, worksheet=None), 'jack', now=now)
+                    launcher.check(dict(launch, worksheet=None), 'desktop', now=now)
                 with self.assertRaisesRegex(ValueError, 'Throughput evidence missing'):
-                    launcher.check(dict(launch, throughput_evidence={}), 'jack', now=now)
+                    launcher.check(dict(launch, throughput_evidence={}), 'desktop', now=now)
                 with self.assertRaisesRegex(ValueError, 'Jobs differ'):
-                    launcher.check(dict(launch, jobs=launch['jobs'][:-1]), 'jack', now=now)
+                    launcher.check(dict(launch, jobs=launch['jobs'][:-1]), 'desktop', now=now)
                 formal = dict(launch, mode='calibration')
                 with self.assertRaisesRegex(ValueError, 'schema differs from the launch mode'):
-                    launcher.check(formal, 'jack', now=now)
+                    launcher.check(formal, 'desktop', now=now)
 
     def test_formal_modes_need_a_launchable_set_the_scope_ruling_and_the_yardstick(self):
         import g115_line_a_manifest_v1 as manifest_module
@@ -310,13 +310,13 @@ class AdmittedDispatchTests(unittest.TestCase):
             with first, second, third:
                 digest = launch['executable']['sha256']
                 with self.assertRaisesRegex(ValueError, 'not launchable'):
-                    launcher.check(formal(False, digest, True), 'jack', now=now)
+                    launcher.check(formal(False, digest, True), 'desktop', now=now)
                 with self.assertRaisesRegex(ValueError, 'scope ruling record required'):
-                    launcher.check(formal(True, digest, False), 'jack', now=now)
+                    launcher.check(formal(True, digest, False), 'desktop', now=now)
                 with self.assertRaisesRegex(ValueError, 'pinned yardstick executable'):
-                    launcher.check(formal(True, '9' * 64, True), 'jack', now=now)
-                placements, _ = launcher.check(formal(True, digest, True), 'jack', now=now)
-                self.assertEqual(placements['bo3-ordinary']['id'], 'jack-8')
+                    launcher.check(formal(True, '9' * 64, True), 'desktop', now=now)
+                placements, _ = launcher.check(formal(True, digest, True), 'desktop', now=now)
+                self.assertEqual(placements['bo3-ordinary']['id'], 'desktop-8')
 
     def test_registration_commits_only_the_catalog_file(self):
         calls = []
@@ -359,12 +359,12 @@ def with_search_member(launch, directory, now):
                                                          sha256=guard.sha256_file(ordinary_path))
     search = copy.deepcopy(ordinary)
     search['binding']['work_class'] = 'bo3-search'
-    search['hosts']['jack']['phases'] = [dict(p, seconds=p['seconds'] * (40 if p['workers'] == 1 else 60))
-                                         for p in search['hosts']['jack']['phases']]
+    search['hosts']['desktop']['phases'] = [dict(p, seconds=p['seconds'] * (40 if p['workers'] == 1 else 60))
+                                         for p in search['hosts']['desktop']['phases']]
     search['placements'] = []
     for workers in (1, 8):
-        allocation = dict(jack=workers)
-        search['placements'].append(dict(id='jack-%d' % workers, allocation=allocation, eligible=True,
+        allocation = dict(desktop=workers)
+        search['placements'].append(dict(id='desktop-%d' % workers, allocation=allocation, eligible=True,
                                          ineligibility_reason='',
                                          projected_seconds=guard.projected_seconds(search, allocation, 4)))
     search['selected'] = min(search['placements'], key=lambda p: p['projected_seconds'])['id']
@@ -384,18 +384,18 @@ class WorkClassSplitTests(unittest.TestCase):
             launch, search_selected = with_search_member(base, directory, now)
             with patch.object(guard, 'PINNED_ROOT', str(Path(directory) / 'pinned')), \
                     patch.object(guard, 'DISK_RESERVE_BYTES', 0), patch.object(launcher, 'minimum_reserve', lambda h: 0):
-                placements, admitted = launcher.check(launch, 'jack', now=now)
+                placements, admitted = launcher.check(launch, 'desktop', now=now)
                 self.assertEqual(set(placements), {'bo3-ordinary', 'bo3-search'})
                 self.assertEqual(placements['bo3-search']['id'], search_selected)
                 root = Path(directory) / 'run'
                 root.mkdir()
-                result = launcher.dispatch(launch, 'jack', root, placements, admitted, prefix=PREFIX)
+                result = launcher.dispatch(launch, 'desktop', root, placements, admitted, prefix=PREFIX)
                 with self.assertRaisesRegex(ValueError, 'Throughput evidence missing for bo3-search'):
                     launcher.check(dict(launch, throughput_evidence={'bo3-ordinary': launch['throughput_evidence'][
-                        'bo3-ordinary']}), 'jack', now=now)
+                        'bo3-ordinary']}), 'desktop', now=now)
             self.assertTrue(result['complete'])
             workers = {row['work_class']: row['workers'] for row in result['rows']}
-            self.assertEqual(workers, {'bo3-ordinary': 8, 'bo3-search': placements['bo3-search']['allocation']['jack']})
+            self.assertEqual(workers, {'bo3-ordinary': 8, 'bo3-search': placements['bo3-search']['allocation']['desktop']})
             self.assertEqual(sum(row['work_class'] == 'bo3-search' for row in result['rows']), 4)
             admission = json.loads((root / 'admission.json').read_text())
             self.assertEqual(set(admission['placements']), {'bo3-ordinary', 'bo3-search'})

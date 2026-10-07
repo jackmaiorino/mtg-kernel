@@ -134,7 +134,7 @@ def prepare(root):
                 bootstrap_replicates=10000, bootstrap_seed=fresh("bootstrap"), final_update=199),
             allocation="Unqualified; supported storage/throughput launcher required before substantial work.",
             coefficient_reason="Single beta0.05 hypothesis after analytic gradient and real optimizer qualification; not selected using treatment outcome prefixes.",
-            review="Independent Fable review unavailable: known zero-read HTTP429 until Sep22 07:00EDT. No retry or endorsement; bounded work under Jack's research authority.",
+            review="Independent Fable review unavailable: known zero-read HTTP429 until Sep22 07:00EDT. No retry or endorsement; bounded work under the maintainer's research authority.",
             non_claim="Both replicas must independently pass; no pooled rescue, automatic promotion, CP7 selection or human/league competence claim. Fixed development opponent, KeepSeven and static/Keep boards remain limitations.")
         write(folder / "manifest.json", manifest)
         replica_manifests.append(pin(folder / "manifest.json"))

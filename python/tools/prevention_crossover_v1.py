@@ -85,7 +85,7 @@ def prepare(root):
         design=pin(Path(__file__).parents[2] / "docs/prevention_crossover_design_20260921.md"),
         bootstrap_replicates=10000, bootstrap_seeds={"focal": [202609210101, 202609210102], "canonical": [202609210201, 202609210202]},
         full_group_wall_cap_seconds=1800, projection_cap_seconds=1800,
-        review="Known zero-read Fable HTTP429 until Sep22 07:00EDT; no retry or endorsement. Bounded diagnostic under Jack's execution assignment.",
+        review="Known zero-read Fable HTTP429 until Sep22 07:00EDT; no retry or endorsement. Bounded diagnostic under the maintainer's execution assignment.",
         non_claim="Retrospective fixed-endpoint diagnostic only. No new training, promotion or human-strength claim; no CP7 selection."))
     remote = prepare_remote(root, list(assets.values()))
     print(dict(prepared=str(root), new_matches=3488, jobs=872, qualification_matches=192, remote_staging_seconds=remote["seconds"]), flush=True)
@@ -96,7 +96,7 @@ def qualify(root):
     for key in ["runner", "analysis", "design"]: checked(plan[key])
     remote = read(root / "remote-staging.json")
     availability, stores = {}, {}
-    for host, drives in [("jack", ["C", "D", "E"]), ("haleyspc", ["C"])]:
+    for host, drives in [("desktop", ["C", "D", "E"]), ("computehost", ["C"])]:
         snapshot = inventory(host)
         assert not snapshot["active"], "preserve other native owners"
         path = root / f"{host}-inventory.json"
@@ -113,11 +113,11 @@ def qualify(root):
     def placement(host, drive, workers, weight=1):
         disk = stores[host, drive]
         return dict(drive=drive, disk_serial=disk["SerialNumber"], disk_name=disk["FriendlyName"], workers=workers, job_weight=weight)
-    cases = [(f"jack-c-w{w}", dict(jack=placement("jack", "C", w))) for w in [1, 4, 8, 16, 24]]
-    cases += [(f"jack-{d.lower()}-w{w}", dict(jack=placement("jack", d, w))) for d in ["D", "E"] for w in [1, 24]]
-    cases += [(f"haley-w{w}", dict(haleyspc=placement("haleyspc", "C", w))) for w in [1, 8, 16]]
-    cases += [(f"both-weight{weight}", dict(jack=placement("jack", "C", 24, weight),
-                 haleyspc=placement("haleyspc", "C", 16))) for weight in [1, 3]]
+    cases = [(f"desktop-c-w{w}", dict(desktop=placement("desktop", "C", w))) for w in [1, 4, 8, 16, 24]]
+    cases += [(f"desktop-{d.lower()}-w{w}", dict(desktop=placement("desktop", d, w))) for d in ["D", "E"] for w in [1, 24]]
+    cases += [(f"computehost-w{w}", dict(computehost=placement("computehost", "C", w))) for w in [1, 8, 16]]
+    cases += [(f"both-weight{weight}", dict(desktop=placement("desktop", "C", 24, weight),
+                 computehost=placement("computehost", "C", 16))) for weight in [1, 3]]
     write(root / "qualification-design.json", dict(plan=pin(root / "plan.json"), cases=cases,
         matches_per_case=192, executions=192*len(cases), group_wall_seconds=300,
         first_serial_cap_seconds=180, outcome_selection=False, split_bytes_exact=True))
@@ -126,7 +126,7 @@ def qualify(root):
         report = dispatch(root, label, plan["binary"], plan["qualification_jobs"], allocation, remote, 300)
         result = read(checked(report))
         assert result["fingerprints"] == {name: pin(checked(item))["sha256"] for name, item in plan["replay_reference"].items()}, "split replay differs from original full job"
-        projection = (remote["seconds"] if "haleyspc" in allocation else 0) + result["staging_seconds"] + (result["execution_seconds"]+result["recovery_seconds"])*3488/192
+        projection = (remote["seconds"] if "computehost" in allocation else 0) + result["staging_seconds"] + (result["execution_seconds"]+result["recovery_seconds"])*3488/192
         candidates.append(dict(id=label, report=report))
         projections[label] = projection
         print(label, "complete; projected seconds", round(projection, 2), flush=True)

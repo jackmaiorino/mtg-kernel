@@ -1,7 +1,7 @@
 {
   "schema": "fdn_preflight_prune/v1",
   "sealed_source": "E:\\mtg-fdn-fixtures\\fdn-witness-preflight-001",
-  "mirror": "C:\\Users\\Jack\\fdn-witness-preflight-001-sealed",
+  "mirror": "C:\\Users\\user\\fdn-witness-preflight-001-sealed",
   "regeneration": "Pinned codegen executable plus both sealed JSON catalogs; raw repeated output hash matches. Python check source/command are recorded and committed.",
   "prunable": "Only these owned scratch copies and the uncited probe debug-symbol cache.",
   "paths": [

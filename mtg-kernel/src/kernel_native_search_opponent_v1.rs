@@ -55,7 +55,7 @@ pub const KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1: [u64; 4] =
 /// merged into the calibration-only array above.
 ///
 /// PLACEHOLDER, per the sheet's own Section 13 open item: this literal is
-/// NOT the real cycle-3 launch base_seed. That value is Jack's own
+/// NOT the real cycle-3 launch base_seed. That value is the maintainer's own
 /// launch-parameter decision and is not assigned by the countersigned
 /// sheet. This placeholder exists only so the rest of the pool-registration
 /// mechanism (this file's `validate`, the manifest schema, resolution, and

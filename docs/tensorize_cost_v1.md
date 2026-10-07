@@ -152,10 +152,10 @@ The episode rate did not move. At this concurrency (at most three processes,
 about 6 of 24 cores) the runs are not CPU-bound, so a 1.6x cheaper tensorize
 barely shows.
 
-The 2@gpu1 and HaleysPC allocations were capacity-skipped in both runs.
+The 2@gpu1 and the compute host allocations were capacity-skipped in both runs.
 Another process now holds 263 MiB on GPU 1, so two processes (about 5,724
 MiB) no longer fit in its 5,403 MiB free after the 512 MiB margin. Round 2
-ran on an idle card. HaleysPC had just finished the D3 shard.
+ran on an idle card. The compute host had just finished the D3 shard.
 
 ## What remains
 
@@ -170,7 +170,7 @@ ran on an idle card. HaleysPC had just finished the D3 shard.
 - The one remaining exact lever is hashing the digest tails on the GPU. It
   adds a device dependency to the tensorizer and to search, so it is a
   program decision, not part of this lane.
-- A non-hash feature contract would remove the cost entirely. That is Jack's
+- A non-hash feature contract would remove the cost entirely. That is the maintainer's
   program decision (goal text).
 - For throughput, the binding costs on this host are GPU memory (process
   count per card) and the CPU forward (41 percent of a run's CPU against

@@ -1,7 +1,7 @@
 """Bradley-Terry rating fit over pairwise panel outcomes (cycle-4, derived metric).
 
 Pre-registered as a NON-GATING derived metric (cycle-4 pre-registration
-`OX_CYCLE4_PREREG_SKETCH_V2.md`; adopted after Jack's league-rating request):
+`OX_CYCLE4_PREREG_SKETCH_V2.md`; adopted after the maintainer's league-rating request):
 each refresh's 28-matchup payoff panel, plus any cross-panel games among
 identity-pinned models, feeds one Bradley-Terry fit anchored to a fixed
 reference identity so ratings are comparable across refreshes and cycles.

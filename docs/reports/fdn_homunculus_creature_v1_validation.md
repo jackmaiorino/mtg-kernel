@@ -27,10 +27,10 @@ code, workflow, fixture or catalog bytes.
 
 Homunculus Horde and its token copy are implemented at `d3e09847`, with
 test corrections at `90a8f1cd` and `9b75805b` and v41 compatibility at
-`288fce15`. The card batch was checked on matching HaleysPC commit
+`288fce15`. The card batch was checked on matching compute host commit
 `e0f5ee681eafe98b6d70c3b9f54aaa669568b922`. The later custom-session
 trigger-order extension is implemented through local `6d6f26dd`, matching
-HaleysPC `f3efeef927eb28468a445a21b4418ffa49f76c87`.
+compute host `f3efeef927eb28468a445a21b4418ffa49f76c87`.
 See the [rules contract](../design/fdn_homunculus_creature_v1.md).
 
 | Check | Result |
@@ -59,7 +59,7 @@ of seven or fewer and catalog V5/V6 sessions retain their existing menus.
 The new check cast two Hordes, seven Lookouts and five Mystics, activated
 Lookout 29 times, discarded 19 cards and observed copied Hordes in 29
 decision menus. Both complete replay results, including the transcript
-SHA-256, were equal. The binary is hash-verified in an immutable HaleysPC
+SHA-256, were equal. The binary is hash-verified in an immutable compute host
 pin and the local cold pin at
 `E:/pinned-binaries/10cd104cdd856d51fcf057cd7ce93c28cab552258440687c1424879003d1dac6/kernel_limited_env.exe`.
 
@@ -88,12 +88,12 @@ original-deck natural terminals, remaining rules comparisons and passing
 CI still belong to the full goal. This batch does not establish full FDN
 coverage or playing strength.
 
-Small manifest: CPU correctness checks on HaleysPC with two Cargo build
+Small manifest: CPU correctness checks on the compute host with two Cargo build
 jobs and incremental compilation disabled; GPU ordinal none. Rust/Cargo
 1.94.1, MSVC linker 14.50.35725.0; seed 123 for the new rules and external
 check. Other regression seeds are in the checked-in tests. XMage uses Java
 23.0.2, Maven 3.9.9, one reactor worker, two active processors and bounded
-heaps. Jack's PC reservations remain respected. No formal measurement,
+heaps. The primary desktop reservations remain respected. No formal measurement,
 training or paid compute was launched.
 
 | Input/output | SHA-256 |
@@ -119,7 +119,7 @@ training or paid compute was launched.
 | Second symbol compression manifest | `52a18a89647f905374ab5e41795d97dbbd9c752bd1be69451020770856bd4377` |
 | Remaining symbol compression manifest | `8799c3d7989adf0bc8dc6301a6f1d640778cc2a12f5ea4d32a9e289c09633262` |
 
-Logs remain outside Git under `C:/Users/haley/`:
+Logs remain outside Git under `C:/Users/hostuser/`:
 `fdn-homunculus-checks-003-{1,2,3,4,5,6,7}.log/.log.exit` and
 `fdn-mage-homunculus-004.log/.exit` with its Surefire XML. Earlier failed
 test-setup records remain preserved. The production tests are

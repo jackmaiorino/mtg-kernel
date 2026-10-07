@@ -1347,7 +1347,7 @@ a_b = []
     #[test]
     fn windows_path_grammar_rejects_resolution_and_reparse_spellings() {
         assert!(validate_drive_absolute_windows_path_v1(
-            r"C:\Users\Jack\.rustup\toolchains\stable\bin\rustc.exe"
+            r"C:\Users\user\.rustup\toolchains\stable\bin\rustc.exe"
         )
         .is_ok());
         for invalid in [

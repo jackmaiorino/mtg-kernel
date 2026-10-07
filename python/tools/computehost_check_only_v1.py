@@ -1,43 +1,44 @@
-"""HaleysPC check-only path (version 1): run one cargo test or build command of a pinned mtg-kernel commit on
-HaleysPC and collect pass or fail evidence (goal amendment 2026-09-28 02:15, CLAUDE #563; design CLAUDE #565, #566).
+"""The compute host check-only path (version 1): run one cargo test or build command of a pinned mtg-kernel commit on
+The compute host and collect pass or fail evidence (goal amendment 2026-09-28 02:15, CLAUDE #563; design CLAUDE #565, #566).
 
 Flow, each step through an existing interface:
-  prepare   git bundle of the pinned commit and the plan (schema haley-check-only-plan/v1); one staging map in
+  prepare   git bundle of the pinned commit and the plan (schema computehost-check-only-plan/v1); one staging map in
             the launcher's schema (g115-line-a-staging-map/v1) for the bundle, the runner, the dispatch script,
             the reservation helper and the plan, staged by the launcher's g115_line_a_stage_v1.py (hash checks,
             60 GiB reserve, no overwrite, SHA256 verification).
-  dispatch  haley_check_only_dispatch_v1.py over SSH: one HaleysPC process calls host_reservation_v1.dispatch
+  dispatch  computehost_check_only_dispatch_v1.py over SSH: one compute host process calls host_reservation_v1.dispatch
             (acquire, busy refusal, WMI creation of the supervisor running the runner, handoff), so the
             dispatching process owns the lock until the supervisor adopts (CLAUDE #574).
   collect   the runner's completion and cargo log and the reservation's status copied into
-            docs/reports/haley_check_only_v1/<run-id>/ with a receipt (schema haley-check-only-receipt/v1).
+            docs/reports/computehost_check_only_v1/<run-id>/ with a receipt (schema computehost-check-only-receipt/v1).
 
 Check-only: pass or fail evidence for the suite owner, never a timing or identity receipt; no GPU tests.
-Usage: python python/tools/haley_check_only_v1.py {prepare,dispatch,collect} RUN_DIR [options]
+Usage: python python/tools/computehost_check_only_v1.py {prepare,dispatch,collect} RUN_DIR [options]
 """
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
 
-from haley_check_only_runner_v1 import build_command
+from computehost_check_only_runner_v1 import build_command
 
-HOST = 'haley@100.71.75.65'
+HOST = os.environ.get('COMPUTE_HOST_SSH', 'compute-host')
 ROOT = 'C:/mtg-line-a/check-only/'
 MAP_SCHEMA = 'g115-line-a-staging-map/v1'
-PLAN_SCHEMA = 'haley-check-only-plan/v1'
-RECEIPT_SCHEMA = 'haley-check-only-receipt/v1'
+PLAN_SCHEMA = 'computehost-check-only-plan/v1'
+RECEIPT_SCHEMA = 'computehost-check-only-receipt/v1'
 REPO = Path(__file__).resolve().parents[2]
-REPORTS = REPO / 'docs/reports/haley_check_only_v1'
-RUNNER = Path(__file__).with_name('haley_check_only_runner_v1.py')
-REMOTE_PYTHON = 'C:/Users/haley/AppData/Local/Programs/Python/Python312/python.exe'
-DISPATCH = Path(__file__).with_name('haley_check_only_dispatch_v1.py')
+REPORTS = REPO / 'docs/reports/computehost_check_only_v1'
+RUNNER = Path(__file__).with_name('computehost_check_only_runner_v1.py')
+REMOTE_PYTHON = os.environ.get('COMPUTE_HOST_PYTHON', 'python.exe')
+DISPATCH = Path(__file__).with_name('computehost_check_only_dispatch_v1.py')
 GIB = 2 ** 30
 RESERVE_BYTES = 60 * GIB  # artifact law clause 1, every volume
-GROWTH_BYTES = 8 * GIB  # a panel-suite release test build measured about 1 GB of target on Jack's PC
+GROWTH_BYTES = 8 * GIB  # a panel-suite release test build measured about 1 GB of target on the primary desktop
 # host_reservation_v1.dispatch outcomes. A run started (it may finish before the handoff). Only Held is a definite
 # refusal that leaves nothing acquired for this run (the host is reserved, or the busy refusal cancelled this
 # acquisition); Refused can follow a created supervisor, and an unconfirmed spawn may be running, so neither is retried.
@@ -77,7 +78,7 @@ def entry(local, remote):
 def staging_map(entries, tools_commit):
     for item in entries:
         require(item['remote'].startswith(ROOT) and '..' not in item['remote'], 'a staged path leaves ' + ROOT)
-    return {'schema': MAP_SCHEMA, 'host': 'haleyspc', 'tools_commit': tools_commit, 'files': entries}
+    return {'schema': MAP_SCHEMA, 'host': 'computehost', 'tools_commit': tools_commit, 'files': entries}
 
 
 def make_bundle(repo, ref, commit, out):
@@ -93,7 +94,7 @@ def make_bundle(repo, ref, commit, out):
 
 def make_plan(lane, run_id, commit, cargo_args, files, toolchain, timeout_seconds=5400, growth_bytes=GROWTH_BYTES):
     paths = remote_paths(lane, run_id, commit)
-    return {'schema': PLAN_SCHEMA, 'host': 'haleyspc', 'lane': lane, 'run_id': run_id, 'commit': commit,
+    return {'schema': PLAN_SCHEMA, 'host': 'computehost', 'lane': lane, 'run_id': run_id, 'commit': commit,
             'files': files, 'toolchain': toolchain, 'source_root': paths['source_root'],
             'target_dir': paths['target_dir'], 'temp_dir': paths['temp_dir'], 'worker_root': paths['worker_root'],
             'cargo_args': list(cargo_args), 'timeout_seconds': timeout_seconds,
@@ -124,7 +125,7 @@ def make_receipt(state, collected_dir, staging_receipt_sha256, plan_path):
     if 'cargo.log' in files or completion.get('log_sha256') is not None or not stopped:
         require('cargo.log' in files and completion.get('log_sha256') == files['cargo.log'],
                 'the collected cargo log differs from its producer digest')
-    receipt = {'schema': RECEIPT_SCHEMA, 'host': 'haleyspc', 'lane': state['lane'], 'run_id': state['run_id'],
+    receipt = {'schema': RECEIPT_SCHEMA, 'host': 'computehost', 'lane': state['lane'], 'run_id': state['run_id'],
                'commit': state['commit'], 'cargo_args': state['cargo_args'],
                'started_utc': completion['started_utc'], 'finished_utc': completion['finished_utc'],
                'exit_code': completion['exit_code'],
@@ -150,7 +151,7 @@ def make_receipt(state, collected_dir, staging_receipt_sha256, plan_path):
 
 
 class Remote:
-    """HaleysPC over SSH and scp (BatchMode, no prompts)."""
+    """The compute host over SSH and scp (BatchMode, no prompts)."""
 
     def __init__(self, host=HOST, run=subprocess.run):
         self.host, self.run = host, run
@@ -161,7 +162,7 @@ class Remote:
                           capture_output=True, text=True, timeout=timeout)
         if not check:
             return result
-        require(result.returncode == 0, 'HaleysPC command failed: ' + (result.stderr or result.stdout).strip()[-400:])
+        require(result.returncode == 0, 'the compute host command failed: ' + (result.stderr or result.stdout).strip()[-400:])
         return result.stdout
 
     def fetch(self, remote, local, check=True):

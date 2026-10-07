@@ -28,7 +28,7 @@ def run(root):
     cuda=Path('C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.8')
     os.environ['CUDA_PATH']=str(cuda);os.environ['PATH']=str(cuda/'bin')+os.pathsep+os.environ['PATH']
     os.environ['TEMP']=os.environ['TMP']=str(root/'temp')
-    fresh={host:inventory(host) for host in ['jack','haleyspc']}
+    fresh={host:inventory(host) for host in ['desktop','computehost']}
     available=copy.deepcopy(previous['inventory'])
     for host,snapshot in fresh.items():
         write(root/f'{host}-inventory.json',snapshot)

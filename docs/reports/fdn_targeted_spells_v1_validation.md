@@ -2,7 +2,7 @@
 
 Local source `8da4554e` (merged with parent CI correction at `80f716f5`)
 adds Bite Down, Felling Blow, Fleeting Flight and Joust Through. Matching
-HaleysPC source is `dc5c4b8fb1dfdaefcc1f4f6db3188827cd4b8d74`.
+The compute host source is `dc5c4b8fb1dfdaefcc1f4f6db3188827cd4b8d74`.
 Windows-only live-profile expectations are corrected in local `08db5e0c`
 and remote `94abfc3c0501f619b17ac530a7de843e62876f77`.
 See [rules contract](../design/fdn_targeted_spells_v1.md).
@@ -36,10 +36,10 @@ refuses the reference deck. Optional new state is publicly projected and
 saved/restored; historical absent-field bytes/hashes and frozen flat format
 layouts remain unchanged. The latter refuse unrepresentable live contexts.
 
-Small manifest: CPU correctness checks on HaleysPC, two Cargo build jobs,
+Small manifest: CPU correctness checks on the compute host, two Cargo build jobs,
 GPU ordinal none; seed 123, episode 7. Rust 1.94.1 (`e408947bf`), Cargo
 1.94.1 (`29ea6fb6a`), MSVC linker `14.50.35725.0`, Python 3.12.10 remotely
-and 3.11 locally. Jack's PC remains reserved for the lead. No training,
+and 3.11 locally. The primary desktop remains reserved for the lead. No training,
 formal measurement or paid compute was launched. Source was committed
 before production checks; the strict source guard stays enabled.
 
@@ -55,7 +55,7 @@ before production checks; the strict source guard stays enabled.
 | External driver | `3a99b4f0da5d63845cb7f71e08394e992811e4b7f176ca0d11ef3686c7084e24` |
 | External result JSON | `ed5a8c9d7f54865163a6a4d1b2624075d8db6643b8e13c99916a032181c01aa1` |
 
-Logs and replay files remain outside Git under `C:/Users/haley/`:
+Logs and replay files remain outside Git under `C:/Users/hostuser/`:
 `fdn-targeted-tests-006.log`, `-007.log`, `-008.log`, `-009.log`,
 `-010.log` and
 `fdn-targeted-external-001.py/.json/.log/.exit`. The earlier failed logs

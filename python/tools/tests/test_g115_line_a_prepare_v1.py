@@ -46,19 +46,19 @@ class PrepareTests(unittest.TestCase):
                         phases=[dict(workers=w, seconds=t, completed=56, rows=rows) for w, t in timings])
 
         now = time.time()
-        inventory = dict(jack=dict(checked_unix=now, eligible=True, reason='idle', competing=[]),
-                         haleyspc=dict(checked_unix=now, eligible=True, reason='idle', competing=[]),
+        inventory = dict(desktop=dict(checked_unix=now, eligible=True, reason='idle', competing=[]),
+                         computehost=dict(checked_unix=now, eligible=True, reason='idle', competing=[]),
                          runpod=dict(checked_unix=now, eligible=False, reason='Windows-only transport'))
         evidence = prepare.throughput_evidence(
-            [record('jack', ((1, 112.0), (8, 16.0), (24, 9.0))), record('haleyspc', ((1, 140.0), (8, 24.0)))],
-            inventory, dict(jack=20.0, haleyspc=90.0), 3200, binding, 'bo3-ordinary')
+            [record('desktop', ((1, 112.0), (8, 16.0), (24, 9.0))), record('computehost', ((1, 140.0), (8, 24.0)))],
+            inventory, dict(desktop=20.0, computehost=90.0), 3200, binding, 'bo3-ordinary')
         ids = [p['id'] for p in evidence['placements']]
-        self.assertEqual(ids, ['jack-1', 'jack-8', 'jack-24', 'haleyspc-1', 'haleyspc-8', 'haleyspc-8+jack-24'])
+        self.assertEqual(ids, ['desktop-1', 'desktop-8', 'desktop-24', 'computehost-1', 'computehost-8', 'computehost-8+desktop-24'])
         selected = guard.require_throughput(evidence, 'bo3-ordinary', 3200, binding, now=now)
         self.assertEqual(selected['id'], evidence['selected'])
         best = min(evidence['placements'], key=lambda p: p['projected_seconds'])
         self.assertEqual(selected['id'], best['id'])
-        self.assertEqual(selected['id'], 'haleyspc-8+jack-24')  # 90 s startup is repaid at 3,200 BO3
+        self.assertEqual(selected['id'], 'computehost-8+desktop-24')  # 90 s startup is repaid at 3,200 BO3
 
 
 if __name__ == '__main__':

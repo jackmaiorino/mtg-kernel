@@ -1,38 +1,38 @@
 {
-  "selected": "alloc-2atjackd0_1atjackd1",
+  "selected": "alloc-2atdesktopd0_1atdesktopd1",
   "candidates": [
     {
-      "id": "alloc-1atjackd0",
+      "id": "alloc-1atdesktopd0",
       "status": "qualified",
       "episodes_per_second": 11.5706866087873,
       "projected_seconds": 4241.969274520874
     },
     {
-      "id": "alloc-1atjackd0_1atjackd1",
+      "id": "alloc-1atdesktopd0_1atdesktopd1",
       "status": "qualified",
       "episodes_per_second": 19.963660797298058,
       "projected_seconds": 2389.3531188964844
     },
     {
-      "id": "alloc-2atjackd0_1atjackd1",
+      "id": "alloc-2atdesktopd0_1atdesktopd1",
       "status": "qualified",
       "episodes_per_second": 26.974516453334278,
       "projected_seconds": 2022.2332354545592
     },
     {
-      "id": "alloc-2atjackd0_2atjackd1",
+      "id": "alloc-2atdesktopd0_2atdesktopd1",
       "status": "capacity-skipped",
       "episodes_per_second": null,
       "projected_seconds": null
     },
     {
-      "id": "alloc-2atjackd0_2atjackd1_1athaleyspcd0",
+      "id": "alloc-2atdesktopd0_2atdesktopd1_1atcomputehostd0",
       "status": "capacity-skipped",
       "episodes_per_second": null,
       "projected_seconds": null
     },
     {
-      "id": "alloc-2atjackd0_2atjackd1_2athaleyspcd0",
+      "id": "alloc-2atdesktopd0_2atdesktopd1_2atcomputehostd0",
       "status": "capacity-skipped",
       "episodes_per_second": null,
       "projected_seconds": null

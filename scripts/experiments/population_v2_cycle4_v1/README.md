@@ -434,7 +434,7 @@ implement it, and nothing else in the campaign may alter what they record.
 ### Freeze order (binding)
 
 **The routing record is written BEFORE any M1 CP7 byte becomes readable.**
-Section D: M1 "may inform Jack's continue/escalate decision; it cannot alter
+Section D: M1 "may inform the maintainer's continue/escalate decision; it cannot alter
 the recorded parent, recipe, constants, or any later selector." So the order
 is:
 
@@ -480,7 +480,7 @@ every time it is read.
 D:\cargo-target-cycle4\release\cycle4_m3_audit_v1.exe `
   --mode reference `
   --store-root E:\mtg-kernel-population-v2-cycle3\lineage\real-attempt-003\run-0\store `
-  --audit-note C:\Users\Jack\mtg-kernel-gae-lane\OX_ADVANTAGE_BY_ROLE_AUDIT_RESULT_V1.md `
+  --audit-note C:\Users\user\mtg-kernel-gae-lane\OX_ADVANTAGE_BY_ROLE_AUDIT_RESULT_V1.md `
   --output E:\mtg-kernel-cycle4\routing\m3-reference.json
 ```
 
@@ -537,7 +537,7 @@ python scripts\experiments\population_v2_cycle4_v1\run_m2_common_root_panel_v1.p
   --pool-arm control-r `
   --output-dir E:\mtg-kernel-cycle4\routing\m2 `
   --executable D:\cargo-target-cycle4\release\deps\mtg_kernel-<hash>.exe `
-  --repo-root  C:\Users\Jack\IdeaProjects\mtg-kernel
+  --repo-root  C:\Users\user\IdeaProjects\mtg-kernel
 ```
 
 The panel plays 4 endpoints x 8 pool slots = 32 matchups, 128 roots each (the

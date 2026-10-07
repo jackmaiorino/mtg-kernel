@@ -25,7 +25,7 @@ from public_training_dispatch_v2 import checked, pin, read, write, DISK_RESERVE_
 
 SCHEMA = "native-expanded-cpu-dispatch/v1"
 CHOICE = "native-expanded-cpu-allocation/v1"
-HOSTS = {"jack": "DESKTOP-DJ1C40R", "haleyspc": "HALEYSPC"}
+HOSTS = {"desktop": "DESKTOP-DJ1C40R", "computehost": "COMPUTEHOST"}
 CAP = 192 * 1024**3
 
 
@@ -289,7 +289,7 @@ def require_choice(path, request, verify_outputs=False):
     require(choice["schema"] == CHOICE, "unsupported throughput choice")
     config, runtime = validate_request(request, False)
     family = workload(config, request["kind"])
-    require(set(choice["inventory"]) == {"jack", "haleyspc", "runpod"},
+    require(set(choice["inventory"]) == {"desktop", "computehost", "runpod"},
             "inspect all three placement options")
     eligible = set()
     for host, status in choice["inventory"].items():

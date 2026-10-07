@@ -102,7 +102,7 @@ def run(root):
             else:
                 assert fingerprint == baseline[arm], f"parallel output differs: {label}"
             report_path = root/f"{label}-benchmark.json"
-            write(report_path, dict(host="jack", config=m["training_configs"][arm],
+            write(report_path, dict(host="desktop", config=m["training_configs"][arm],
                 execution=pin(root/f"logs/{label}.execution.json"), completion=pin(folder/"completion.json"), outputs=outputs))
             steady = sum(row["seconds"] for row in completion["receipts"][1:])/2
             result = dict(arm=arm, workers=workers, native_seconds=ex["seconds"],
@@ -130,7 +130,7 @@ def run(root):
         serial_equals_frozen_outputs=True, all_worker_counts_byte_identical=True,
         fresh_process_resume_byte_identical=True, global_placement_qualified=False,
         limitations=["Three initial batches per arm; steady timing uses two batches, not a full campaign.",
-            "One local GPU and storage path. HaleysPC and RunPod placement remain unqualified.",
+            "One local GPU and storage path. The compute host and RunPod placement remain unqualified.",
             "Order is serial,2,4,8 workers; resource/cache drift can affect timings. No playing-strength claim."])
     write(root/"qualification.json", result)
     print(json.dumps(result), flush=True)

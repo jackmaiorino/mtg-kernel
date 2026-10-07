@@ -1,6 +1,6 @@
 # Native scaled self-play replay handoff v1
 
-Status: implementation contract. Jack's authorization is recorded by
+Status: implementation contract. The maintainer's authorization is recorded by
 `CLAUDE #187`; the replay realization and corrected generation mapping are
 countersigned by `CLAUDE #188` and `CLAUDE #189`. This document changes no
 science choice in the authorized population program.

@@ -46,7 +46,7 @@ PRESERVED_V1_TREE_EXPECTATIONS = {
     },
 }
 WORKTREE_WINDOWS = (
-    r"C:\Users\Jack\IdeaProjects\mtg-kernel-observation-diagnostics-codex"
+    r"C:\Users\user\IdeaProjects\mtg-kernel-observation-diagnostics-codex"
 )
 OFFICIAL_WINDOWS_PYTHON = (
     r"D:\mtg-kernel-clean-venv-019f63a2\Scripts\python.exe"
@@ -54,7 +54,7 @@ OFFICIAL_WINDOWS_PYTHON = (
 OFFICIAL_WINDOWS_PYTHON_VERSION = (
     "3.13.14 (main, Jun 23 2026, 15:19:27) [MSC v.1944 64 bit (AMD64)]"
 )
-LINUX_REPO = "/mnt/c/Users/Jack/IdeaProjects/mtg-kernel-observation-diagnostics-codex"
+LINUX_REPO = "/mnt/c/Users/user/IdeaProjects/mtg-kernel-observation-diagnostics-codex"
 BRANCH = "codex/observation-diagnostics-v1"
 RETRY_DIFF_BASE_COMMIT = "395913f0c9664372e0e778056a3b90f7ede4e257"
 FAILED_V1_IMPLEMENTATION_COMMIT = "5d5ed8e856651e56b700915dde1844ea373407ad"

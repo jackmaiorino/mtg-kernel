@@ -166,7 +166,7 @@ jobs:
             runner: '["self-hosted", "mtg-ci-linux"]'
           - os: windows-2025
             runner: '["self-hosted", "mtg-ci-windows"]'
-    # Self-hosted runners (Jack's PC, HaleysPC) keep a per-group cargo target
+    # Self-hosted runners (the primary desktop, the compute host) keep a per-group cargo target
     # directory between runs, so most builds are incremental, and they avoid
     # GitHub's hosted-runner queue. Pull requests from forks never run on the
     # self-hosted runners.

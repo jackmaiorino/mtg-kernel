@@ -3,9 +3,9 @@
 One experiment is a fixed set of independent runs (one seed and one Store per
 run) of one training executable. This launcher runs them concurrently across
 placement slots (a host plus a device ordinal, each with a process capacity)
-and enforces C:/Users/Jack/COMPUTE-POLICY.md items 2 to 5 at the launch point:
+and enforces C:/Users/user/COMPUTE-POLICY.md items 2 to 5 at the launch point:
 
-``inventory``  records Jack's PC, HaleysPC and RunPod availability.
+``inventory``  records the primary desktop, the compute host and RunPod availability.
 ``qualify``    runs every run of the experiment for a short prefix, first one
                at a time (the serial goldens), then under each candidate
                allocation in increasing concurrency. It compares completed-work
@@ -55,8 +55,8 @@ RUN_MANIFEST_SCHEMA = "mtg-kernel-multirun-run-manifest/v1"
 TICKET_SCHEMA = "mtg-kernel-multirun-launch-ticket/v1"
 INVENTORY_SCHEMA = "mtg-kernel-multirun-inventory/v1"
 
-HOSTS = ("jack", "haleyspc", "runpod")
-HALEYSPC_ADDRESS = "haley@100.71.75.65"
+HOSTS = ("desktop", "computehost", "runpod")
+COMPUTEHOST_ADDRESS = os.environ.get('COMPUTE_HOST_SSH', 'compute-host')
 INVENTORY_MAX_AGE_SECONDS = 24 * 3600
 MINIMUM_QUALIFICATION_UPDATES = 3
 # A candidate that fails to beat the best measured aggregate throughput by this
@@ -568,17 +568,17 @@ class Slot:
         return f"{self.capacity}@{self.host}:{self.device}"
 
 
-SLOT_TEXT = re.compile(r"^(\d+)@(?:(jack|haleyspc|runpod):)?(\d+)$")
+SLOT_TEXT = re.compile(r"^(\d+)@(?:(desktop|computehost|runpod):)?(\d+)$")
 
 
 def parse_allocation(text: str) -> list[Slot]:
-    """``3@0+1@1`` or ``3@jack:0+2@haleyspc:0`` -> slots (host defaults to jack)."""
+    """``3@0+1@1`` or ``3@desktop:0+2@computehost:0`` -> slots (host defaults to desktop)."""
     slots = []
     for part in text.split("+"):
         match = SLOT_TEXT.fullmatch(part.strip())
         if not match or int(match.group(1)) < 1:
             raise LaunchRefused(f"bad allocation {text!r}")
-        slots.append(Slot(match.group(2) or "jack", int(match.group(3)), int(match.group(1))))
+        slots.append(Slot(match.group(2) or "desktop", int(match.group(3)), int(match.group(1))))
     keys = [(slot.host, slot.device) for slot in slots]
     if len(set(keys)) != len(keys):
         raise LaunchRefused(f"allocation names a device twice: {text!r}")
@@ -612,7 +612,7 @@ class RunResult:
 class LocalExecutor:
     """Runs one process per run on this machine."""
 
-    host = "jack"
+    host = "desktop"
 
     def __init__(self, workload: Workload):
         self.workload = workload
@@ -1073,7 +1073,7 @@ class Monitor(threading.Thread):
         peaks: dict[str, int] = {}
         for sample in self.samples:
             for gpu in sample["gpus"]:
-                key = f"jack:{gpu['index']}"
+                key = f"desktop:{gpu['index']}"
                 peaks[key] = max(peaks.get(key, 0), gpu["memory_used_mib"])
             for host, gpus in (sample.get("remote_gpus") or {}).items():
                 for gpu in gpus if isinstance(gpus, list) else []:
@@ -1152,9 +1152,9 @@ def probe_runpod(runner=subprocess.run) -> dict:
     return {"eligible": False, "detail": detail, "reason": RUNPOD_PLATFORM_REASON}
 
 
-def take_inventory(haleys_address: str) -> dict:
+def take_inventory(computehost_address: str) -> dict:
     now = iso(utc_now())
-    hosts = {"jack": probe_local(), "haleyspc": probe_ssh(haleys_address), "runpod": probe_runpod()}
+    hosts = {"desktop": probe_local(), "computehost": probe_ssh(computehost_address), "runpod": probe_runpod()}
     for status in hosts.values():
         status["checked_at"] = now
     return {"schema": INVENTORY_SCHEMA, "hosts": hosts}
@@ -1263,7 +1263,7 @@ def device_fits(slots: list[Slot], per_process_mib: Callable[[str, int], float],
     minus the margin. A remote device that oversubscribes spills into shared
     memory and slows every run on it.
     """
-    inventories = inventories or (lambda host: settled_gpu_inventory() if host == "jack" else [])
+    inventories = inventories or (lambda host: settled_gpu_inventory() if host == "desktop" else [])
     reasons = []
     cache: dict[str, dict[int, dict]] = {}
     for slot in slots:
@@ -1288,7 +1288,7 @@ def grow_allocation(slots: list[Slot], per_process: Callable[[int], float], marg
                     devices: list[dict] | None = None) -> list[Slot] | None:
     """The allocation plus one local process on the device with the most spare room, or None if none fits."""
     devices = gpu_inventory() if devices is None else devices
-    capacity = {slot.device: slot.capacity for slot in slots if slot.host == "jack"}
+    capacity = {slot.device: slot.capacity for slot in slots if slot.host == "desktop"}
     best = None
     for gpu in devices:
         need = per_process(gpu["index"])
@@ -1301,10 +1301,10 @@ def grow_allocation(slots: list[Slot], per_process: Callable[[int], float], marg
     if best is None:
         return None
     device = best[1]
-    grown = [Slot(s.host, s.device, s.capacity + (s.host == "jack" and s.device == device)) for s in slots]
+    grown = [Slot(s.host, s.device, s.capacity + (s.host == "desktop" and s.device == device)) for s in slots]
     if device not in capacity:
-        grown.append(Slot("jack", device, 1))
-    return sorted(grown, key=lambda s: (s.host != "jack", s.host, s.device))
+        grown.append(Slot("desktop", device, 1))
+    return sorted(grown, key=lambda s: (s.host != "desktop", s.host, s.device))
 
 
 def sentinel_entries(workload: Workload, slots: list[Slot]) -> list[tuple[str, RunSpec, Slot]]:
@@ -1370,9 +1370,9 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
     if auto_devices:
         if candidates or len(auto_devices) != len(set(auto_devices)):
             raise LaunchRefused("give either explicit allocations or distinct auto devices")
-        candidates = [[Slot("jack", auto_devices[0], 1)]]
-        candidates.append([Slot("jack", device, 1) for device in auto_devices] if len(auto_devices) > 1
-                          else [Slot("jack", auto_devices[0], 2)])
+        candidates = [[Slot("desktop", auto_devices[0], 1)]]
+        candidates.append([Slot("desktop", device, 1) for device in auto_devices] if len(auto_devices) > 1
+                          else [Slot("desktop", auto_devices[0], 2)])
     root.mkdir(parents=True)
     candidates = sorted(candidates, key=concurrency)
     serial = [candidate for candidate in candidates if concurrency(candidate) == 1]
@@ -1389,10 +1389,10 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
 
     def remote_readers() -> dict[str, Callable[[], list[dict]]]:
         return {host: executor.gpus for host, executor in executors.items()
-                if host != "jack" and hasattr(executor, "gpus")}
+                if host != "desktop" and hasattr(executor, "gpus")}
 
     def inventories(host: str) -> list[dict]:
-        if host == "jack":
+        if host == "desktop":
             return settled_gpu_inventory()
         reader = remote_readers().get(host)
         return settled_gpu_inventory(read=reader, interval=5.0) if reader else []
@@ -1514,7 +1514,7 @@ def qualify(workload: Workload, root: Path, candidates: list[list[Slot]], qualif
             if stop_on_saturation and not_useful >= 2:
                 break
         if auto_devices and entry["status"] == "qualified" and not pending:
-            grown = grow_allocation(slots, lambda device: per_process("jack", device),
+            grown = grow_allocation(slots, lambda device: per_process("desktop", device),
                                     devices=settled_gpu_inventory())
             if grown is not None:
                 pending.append(grown)
@@ -1678,7 +1678,7 @@ def require_choice(choice_path: Path, workload: Workload, now: datetime | None =
 
     hosts = choice.get("inventory", {}).get("hosts", {})
     if set(hosts) != set(HOSTS):
-        raise LaunchRefused("inventory must record Jack's PC, HaleysPC and RunPod")
+        raise LaunchRefused("inventory must record the primary desktop, the compute host and RunPod")
     for host, status in hosts.items():
         checked = datetime.fromisoformat(status.get("checked_at", ""))
         if checked.tzinfo is None or not 0 <= (now - checked).total_seconds() <= INVENTORY_MAX_AGE_SECONDS:
@@ -1819,7 +1819,7 @@ def check_gpu_identity(choice: dict, slots: list[Slot], current: Callable[[str],
     for slot in slots:
         recorded = recorded_gpus(hosts.get(slot.host, {}).get("detail", {}))
         if slot.device not in recorded:
-            if recorded or footprint.get(f"{slot.host}:{slot.device}", 0) > 0 or slot.host != "jack":
+            if recorded or footprint.get(f"{slot.host}:{slot.device}", 0) > 0 or slot.host != "desktop":
                 raise LaunchRefused(f"the receipt records no GPU {slot.device} on {slot.host}")
             continue  # a workload that measured no GPU use on a GPU-less inventory
         if slot.host not in live:
@@ -1829,11 +1829,11 @@ def check_gpu_identity(choice: dict, slots: list[Slot], current: Callable[[str],
                                 f"({live[slot.host].get(slot.device)} vs {recorded[slot.device]})")
 
 
-def live_gpus(haleys_address: str) -> Callable[[str], dict[int, tuple[str, str]]]:
+def live_gpus(computehost_address: str) -> Callable[[str], dict[int, tuple[str, str]]]:
     def current(host: str) -> dict[int, tuple[str, str]]:
-        if host == "jack":
+        if host == "desktop":
             return recorded_gpus({"gpus": gpu_inventory()})
-        return recorded_gpus(probe_ssh(haleys_address)["detail"])
+        return recorded_gpus(probe_ssh(computehost_address)["detail"])
     return current
 
 
@@ -1871,12 +1871,12 @@ def launch(workload: Workload, choice_path: Path, root: Path, executors: dict[st
     slots = parse_allocation(selected["allocation"])
     if root.exists():
         raise LaunchRefused(f"launch root already exists: {root}")
-    check_gpu_identity(choice, slots, gpus or live_gpus(HALEYSPC_ADDRESS))
+    check_gpu_identity(choice, slots, gpus or live_gpus(COMPUTEHOST_ADDRESS))
     # Current reservations win: refuse rather than squeeze in beside other GPU work.
     footprint = choice.get("gpu_footprint_mib", {})
 
     def launch_inventory(host: str) -> list[dict]:
-        if host == "jack":
+        if host == "desktop":
             return settled_gpu_inventory()
         reader = getattr(executors.get(host), "gpus", None)
         return settled_gpu_inventory(read=reader, interval=5.0) if reader else []
@@ -1927,7 +1927,7 @@ def launch(workload: Workload, choice_path: Path, root: Path, executors: dict[st
 
     monitor = Monitor(root / "monitor.jsonl", lambda: waiting["count"],
                       remote={s.host: executors[s.host].gpus for s in slots
-                              if s.host != "jack" and hasattr(executors.get(s.host), "gpus")})
+                              if s.host != "desktop" and hasattr(executors.get(s.host), "gpus")})
     monitor.start()
     results, wall = execute_allocation(
         workload, slots, runs_root, workload.launch_stop, executors,
@@ -1999,7 +1999,7 @@ def verify(workload: Workload, choice_path: Path, launch_root: Path, run_ids: li
         entry = manifest["runs"].get(run_id, {})
         if run_id not in runs or entry.get("status") != "complete":
             raise LaunchRefused(f"{run_id} is not a completed run of this launch")
-        ticket = issue_ticket(root / f"{run_id}.ticket.json", workload, runs[run_id], f"1@jack:{device}",
+        ticket = issue_ticket(root / f"{run_id}.ticket.json", workload, runs[run_id], f"1@desktop:{device}",
                               "launch", choice_sha256=choice_sha256, stop_after=workload.launch_stop)
         result = executor.run(runs[run_id], root / run_id, device, workload.launch_stop,
                               {"MULTIRUN_LAUNCH_TICKET": str(ticket)})
@@ -2061,8 +2061,8 @@ def resume_equivalence(workload: Workload, resumed_launch: Path, uninterrupted_l
 # CLI
 
 
-def build_executors(workload: Workload, haleys_address: str) -> dict[str, object]:
-    """Local executor, plus HaleysPC when the workload names the files a remote run needs.
+def build_executors(workload: Workload, computehost_address: str) -> dict[str, object]:
+    """Local executor, plus compute host when the workload names the files a remote run needs.
 
     ``data_root`` is the repository data directory the executable reads by
     path; ``remote_mirror_root`` is where the remote host keeps the mirrored
@@ -2071,11 +2071,11 @@ def build_executors(workload: Workload, haleys_address: str) -> dict[str, object
     ``include`` holds the CUDA headers the kernel JIT needs (all
     machine-local, outside the workload identity).
     """
-    executors: dict[str, object] = {"jack": LocalExecutor(workload)}
+    executors: dict[str, object] = {"desktop": LocalExecutor(workload)}
     raw = workload.raw
     if raw.get("data_root") and raw.get("remote_mirror_root"):
-        executors["haleyspc"] = SshPowerShellExecutor(
-            workload, "haleyspc", haleys_address, Path(raw["data_root"]), raw["remote_mirror_root"],
+        executors["computehost"] = SshPowerShellExecutor(
+            workload, "computehost", computehost_address, Path(raw["data_root"]), raw["remote_mirror_root"],
             [Path(path) for path in raw.get("remote_runtime_libraries", [])], raw.get("remote_cuda_root"))
     return executors
 
@@ -2085,23 +2085,23 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     inventory = commands.add_parser("inventory", help="record placement options")
     inventory.add_argument("--out", type=Path, required=True)
-    inventory.add_argument("--haleyspc", default="haley@100.71.75.65")
+    inventory.add_argument("--computehost", default=os.environ.get('COMPUTE_HOST_SSH', 'compute-host'))
     qualify_parser = commands.add_parser("qualify", help="serial goldens plus scaling comparison")
     qualify_parser.add_argument("--workload", type=Path, required=True)
     qualify_parser.add_argument("--inventory", type=Path, required=True)
     qualify_parser.add_argument("--root", type=Path, required=True)
     qualify_parser.add_argument("--updates", type=int, default=4)
     qualify_parser.add_argument("--allocation", action="append", default=[],
-                                help="e.g. 1@0 (serial), 1@0+1@1, 3@0+1@1, 2@0+2@haleyspc:0")
+                                help="e.g. 1@0 (serial), 1@0+1@1, 3@0+1@1, 2@0+2@computehost:0")
     qualify_parser.add_argument("--auto", help="local devices to sweep adaptively, e.g. 0,1 (instead of "
                                                "--allocation)")
-    qualify_parser.add_argument("--haleyspc", default="haley@100.71.75.65")
+    qualify_parser.add_argument("--computehost", default=os.environ.get('COMPUTE_HOST_SSH', 'compute-host'))
     qualify_parser.add_argument("--no-early-stop", action="store_true")
     launch_parser = commands.add_parser("launch", help="run the experiment on the qualified allocation")
     launch_parser.add_argument("--workload", type=Path, required=True)
     launch_parser.add_argument("--choice", type=Path, required=True)
     launch_parser.add_argument("--root", type=Path, required=True)
-    launch_parser.add_argument("--haleyspc", default="haley@100.71.75.65")
+    launch_parser.add_argument("--computehost", default=os.environ.get('COMPUTE_HOST_SSH', 'compute-host'))
     check = commands.add_parser("check", help="validate a receipt against a workload without launching")
     check.add_argument("--workload", type=Path, required=True)
     check.add_argument("--choice", type=Path, required=True)
@@ -2121,13 +2121,13 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
     try:
         if arguments.command == "inventory":
-            write_json(arguments.out, take_inventory(arguments.haleyspc))
+            write_json(arguments.out, take_inventory(arguments.computehost))
             print(arguments.out)
             return 0
         workload = load_workload(arguments.workload)
         if arguments.command == "qualify":
             inventory_record = read_json(arguments.inventory)
-            executors = build_executors(workload, arguments.haleyspc)
+            executors = build_executors(workload, arguments.computehost)
             auto = [int(device) for device in arguments.auto.split(",")] if arguments.auto else None
             choice = qualify(workload, arguments.root, [parse_allocation(text) for text in arguments.allocation],
                              arguments.updates, inventory_record, executors,
@@ -2151,7 +2151,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({run: entry["byte_identical"] for run, entry in record["runs"].items()}))
             return 0 if all(entry["byte_identical"] for entry in record["runs"].values()) else 1
         manifest = launch(workload, arguments.choice, arguments.root,
-                          build_executors(workload, arguments.haleyspc), gpus=live_gpus(arguments.haleyspc))
+                          build_executors(workload, arguments.computehost), gpus=live_gpus(arguments.computehost))
         print(json.dumps({"status": manifest["status"], "manifest": str(arguments.root / "experiment-manifest.json")}))
         return 0 if manifest["status"] == "complete" else 1
     except LaunchRefused as refusal:

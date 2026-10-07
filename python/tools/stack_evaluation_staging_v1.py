@@ -14,9 +14,9 @@ def measure(root,label,plan_pin,allocation,remote):
     began=time.monotonic();specs={}
     for host in sorted(allocation):
         a=allocation[host];snap=inventory(host);assert not snap['active']
-        native=Path(f"{a['drive']}:/mtg-state-prevention-eval/{root.name}/staging-{label}") if host=='jack' else Path(remote['native_root'])/('staging-'+label)
+        native=Path(f"{a['drive']}:/mtg-state-prevention-eval/{root.name}/staging-{label}") if host=='desktop' else Path(remote['native_root'])/('staging-'+label)
         canonical=folder/host;canonical.mkdir()
-        if host=='jack':
+        if host=='desktop':
             native.mkdir(parents=True);shutil.copy2(checked(plan['binary']),native/'public-evaluator.exe')
         else:
             ssh(f"New-Item -ItemType Directory -Path '{native.as_posix()}' | Out-Null")
@@ -29,12 +29,12 @@ def measure(root,label,plan_pin,allocation,remote):
             native_job=native/'jobs'/identifier
             command=dict(jobs[identifier]['command'],output_directory=str(native_job/'outputs'))
             write(dest/'request.json',command)
-            if host=='jack':native_job.mkdir(parents=True);shutil.copy2(dest/'request.json',native_job/'request.json')
+            if host=='desktop':native_job.mkdir(parents=True);shutil.copy2(dest/'request.json',native_job/'request.json')
             request=pin(dest/'request.json')
             spec['jobs'].append(dict(id=identifier,native_directory=str(native_job),request=request,
                 native_request=dict(path=str(native_job/'request.json'),sha256=request['sha256'])))
         write(canonical/'spec.json',spec)
-        if host=='jack':shutil.copy2(canonical/'spec.json',native/'spec.json')
+        if host=='desktop':shutil.copy2(canonical/'spec.json',native/'spec.json')
         else:
             with zipfile.ZipFile(canonical/'requests.zip','x',compression=zipfile.ZIP_DEFLATED) as archive:
                 archive.write(canonical/'spec.json','spec.json')

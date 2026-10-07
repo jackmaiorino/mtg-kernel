@@ -20,21 +20,21 @@ Verification so far: 17 Python Limited tests, 13 Pauper manifest tests and
 The formerly failing scorer-packet, joined-record and checkpoint-evaluation
 goldens pass. Hosted CI run `36866508690` on source commit `e97f8eae`
 completed successfully: Rust release tests on Ubuntu and Windows, formatting,
-lint and all four Python shards. The separate HaleysPC debug library rerun
+lint and all four Python shards. The separate compute host debug library rerun
 finished with 1,728 passed, three failed and 49 ignored. Two native-search
 tests exceeded their scheduler deadlines; the third rejected its rollout.
 That debug attempt is a failed full-suite check, retained in
-`C:/Users/haley/fdn-catalog-isolation-002.log`.
+`C:/Users/hostuser/fdn-catalog-isolation-002.log`.
 CI now also builds/lints the Limited feature and runs its card, session,
 priority, catalog and incompatible-store-profile checks.
 
 Small manifest: CPU only, GPU ordinal none; Rust/Cargo 1.94.1 and the
-existing MSVC toolchain/cache on HaleysPC, two Cargo build jobs. Local Python
+existing MSVC toolchain/cache on the compute host, two Cargo build jobs. Local Python
 is 3.11. The owned remote verification commit is `93d5f1f`; current logs are
-`C:/Users/haley/fdn-catalog-isolation-002.log` and the corresponding
+`C:/Users/hostuser/fdn-catalog-isolation-002.log` and the corresponding
 `.exit.txt`. The first local rerun was stopped after identifying its
 incorrect FDN fixture selection; its separate `001.log` is retained.
-Jack's PC remains reserved for the lead and the explicitly assigned
+The primary desktop remains reserved for the lead and the explicitly assigned
 Spellbench validation. No formal measurement or GPU work was launched.
 
 The remainder of this report records the original batch A checks and
@@ -42,15 +42,15 @@ supported-subset replay. Fixture coverage is unchanged: 19/40 copies per
 deck, 30 unique fixture names still missing, and batch B remains next.
 
 Engineering verification, 2026-10-01. Source commit
-`57971ba0a0e5e921727d5b54a1db8654b59aa195`; HaleysPC verification commit
+`57971ba0a0e5e921727d5b54a1db8654b59aa195`; the compute host verification commit
 `a05bc00462f00a0bd5d2c0f8cc1e34930206601a`. Both owned branches are committed.
 The six additions are Plains, Healer's Hawk, Fleeting Distraction, Cathar
 Commando, Spectral Sailor and Treetop Snarespinner. The original 162 registry
 records and their IDs remain unchanged; new IDs are 162 through 167.
 
 Small manifest: CPU only, GPU ordinal none, engineering seed 123. Cargo used
-two jobs on HaleysPC and its existing `C:/Users/haley/mtg-kernel-fdn-target`
-cache. Jack's PC remained reserved for the lead's Q6 run; only short stdlib
+two jobs on the compute host and its existing `C:/Users/hostuser/mtg-kernel-fdn-target`
+cache. The primary desktop remained reserved for the lead's Q6 run; only short stdlib
 Python checks ran locally. Rust 1.94.1 (`e408947bf`), Cargo 1.94.1
 (`29ea6fb6a`), MSVC linker file version 14.50.35725.0; Python 3.12.10 remotely
 and 3.11 locally. No experiment, promotion or GPU run occurred.
@@ -94,8 +94,8 @@ strength estimate or completion of the original fixtures.
 
 Commands used `cargo test --locked -p mtg-kernel -j 2` with the integration
 targets and library filters above. Logs and the smoke driver/report are under
-`C:/Users/haley/fdn-batch-a-*`. The verified binary is preserved under
-`C:/Users/haley/fdn-pinned-binaries/3b7ddc66ba0d58757f873e5df1c878b931f6b59094e7db9450c919ce95f041b4/`.
+`C:/Users/hostuser/fdn-batch-a-*`. The verified binary is preserved under
+`C:/Users/hostuser/fdn-pinned-binaries/3b7ddc66ba0d58757f873e5df1c878b931f6b59094e7db9450c919ce95f041b4/`.
 The broad library attempt was stopped during the expensive checkpoint-evaluator
 test; it is not a full-suite pass. Hosted CI remains the full-suite check.
 

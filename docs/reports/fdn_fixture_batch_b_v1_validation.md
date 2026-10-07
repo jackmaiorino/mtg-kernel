@@ -1,7 +1,7 @@
 # FDN fixture batch B validation
 
 Source commit `353969ae209c71f9d0bb86e4346ae843d438e08f` implements eight
-fixture cards and two exact tokens. HaleysPC's corresponding committed source
+fixture cards and two exact tokens. The compute host's corresponding committed source
 is `b8e081d514f4e01d0913f92d0e4451139cebcd91`. New IDs are 168 through 177;
 earlier IDs and the original Pauper registry remain unchanged.
 
@@ -43,10 +43,10 @@ literal pairs remain unchanged. Publication and resume require an exact
 match with the live build. The runtime nine-deck catalog is unchanged.
 
 Small manifest: CPU only; GPU ordinal none; seed 123. Validation ran in the
-owned `C:/Users/haley/mtg-kernel-fdn-batch-b-codex` worktree, with two Cargo
-build jobs and the `C:/Users/haley/mtg-kernel-fdn-batch-b-target` cache.
+owned `C:/Users/hostuser/mtg-kernel-fdn-batch-b-codex` worktree, with two Cargo
+build jobs and the `C:/Users/hostuser/mtg-kernel-fdn-batch-b-target` cache.
 Rust 1.94.1 (`e408947bf`), Cargo 1.94.1 (`29ea6fb6a`), MSVC linker file
-version 14.50.35725.0; Python 3.12.10 remotely and 3.11 locally. Jack's PC
+version 14.50.35725.0; Python 3.12.10 remotely and 3.11 locally. The primary desktop
 remained reserved for the lead's formal work. No GPU run or formal
 measurement occurred.
 
@@ -54,7 +54,7 @@ Focused commands used `cargo test --locked -p mtg-kernel` with the
 `limited-fdn-fixtures` feature and the integration targets above, then
 library filters `card_def::`, `native_training_store_run_v2::`,
 `pre_fdn_profile` and `prior_fdn_batch`. Default card tests omitted the
-feature. Logs are `C:/Users/haley/fdn-batch-b-regressions-001.log` and
+feature. Logs are `C:/Users/hostuser/fdn-batch-b-regressions-001.log` and
 `fdn-batch-b-regressions-002.log`. The first script's production-feature
 debug build was refused because that feature requires release; the
 four mutation checks subsequently passed on the normal Windows test build.
@@ -70,8 +70,8 @@ External inputs were constructed 40-card subsets:
 The deterministic menu policy prefers land, spell, activated ability and
 mana actions, then the first offered choice. Each replay reached a natural
 terminal after 2,231 policy and physical decisions. The driver and report
-are `C:/Users/haley/fdn-batch-b-external-002.py` and
-`C:/Users/haley/fdn-batch-b-external-002.json`.
+are `C:/Users/hostuser/fdn-batch-b-external-002.py` and
+`C:/Users/hostuser/fdn-batch-b-external-002.json`.
 
 | Input/output | SHA-256 |
 | --- | --- |

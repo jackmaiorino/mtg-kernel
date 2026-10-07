@@ -9,7 +9,7 @@ integration and development. It is not the parallel GPU production campaign.
 Run `expanded_deck_training_v1 CONFIG.json`. The two configuration modes are
 `collect` and `update`; their exact typed schemas are in
 `mtg-kernel/src/expanded_deck_training_v1.rs`. Real engineering configurations
-are under `C:/Users/Jack/IdeaProjects/sideboarding-integration-20260912/engineering-003/expanded-training/`.
+are under `C:/Users/user/IdeaProjects/sideboarding-integration-20260912/engineering-003/expanded-training/`.
 
 A model source pins the original inference-import manifest, the current
 successor feature contract/encoding, and an optional successor checkpoint.
@@ -69,7 +69,7 @@ continuation and damaged/stale input rejection.
 
 Independent review was attempted in fresh read-only Fable session
 `435736f5-f380-444f-a02c-985f7f04819c`. It failed HTTP 429 weekly quota with zero
-reads and tokens, so no Fable endorsement is claimed. Jack explicitly assigned
+reads and tokens, so no Fable endorsement is claimed. The maintainer explicitly assigned
 the engineering; work continued with this limitation recorded. Supplementary
 Codex review identified and corrected positive-value-coefficient validation,
 complete terminal/deck binding, deterministic action re-sampling, and aggregate

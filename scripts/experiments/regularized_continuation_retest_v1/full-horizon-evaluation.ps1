@@ -1,9 +1,9 @@
 param(
     [string]$EvidenceRoot = 'D:\mtg-kernel-regularized-continuation-retest-v1\development',
     [string]$TrainingManifestPath = 'D:\mtg-kernel-regularized-continuation-retest-v1\development\full-horizon-training\attempt-003\training-manifest.json',
-    [string]$DesignDocumentPath = 'C:\Users\Jack\IdeaProjects\mtg-kernel-composed-factorial-v1-codex\docs\native_regularized_continuation_retest_v1.md',
+    [string]$DesignDocumentPath = "$env:USERPROFILE\IdeaProjects\mtg-kernel-composed-factorial-v1-codex\docs\native_regularized_continuation_retest_v1.md",
     [string]$ClassifierPath = '',
-    [string]$EbCsReferencePath = 'C:\Users\Jack\IdeaProjects\collab\eb_cs_reference_v1.py',
+    [string]$EbCsReferencePath = "$env:USERPROFILE\IdeaProjects\collab\eb_cs_reference_v1.py",
     [string]$ParentDriftManifestPath = '',
     [string]$PythonCommand = 'python',
     [uint64]$PreflightPairs = 64,

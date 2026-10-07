@@ -2,7 +2,7 @@
 
 Source commit `d1772146af6dd9435169ddbd2e5bacee568ef736` adds custom-game
 damage choices, trample and priority between first-strike and normal waves.
-HaleysPC's matching source is committed as
+The compute host's matching source is committed as
 `029376492fa7ef9be965bf09af8face191d29e8e`; it also includes the earlier
 batch B test-helper configuration fix. Both owned worktrees are on their
 own branches.
@@ -30,10 +30,10 @@ ended after 376 policy steps and 368 physical decisions. This validates
 gameplay transport and deterministic damage choices. It does not establish
 original UG/WG fixture completion, rules parity with XMage, or playing strength.
 
-Small manifest: CPU only, two Cargo build jobs on HaleysPC; GPU ordinal none;
+Small manifest: CPU only, two Cargo build jobs on the compute host; GPU ordinal none;
 seed 123. Rust 1.94.1 (`e408947bf`), Cargo 1.94.1 (`29ea6fb6a`), MSVC linker
 file version `14.50.35725.0`, Python 3.12.10 remotely and 3.11 locally.
-Jack's PC remained reserved for the lead's formal work. No training,
+The primary desktop remained reserved for the lead's formal work. No training,
 formal measurement or paid compute was launched.
 
 | Input/output | SHA-256 |
@@ -45,11 +45,11 @@ formal measurement or paid compute was launched.
 | External transcript | `855703bce81061336a3ccba3a8d344c05d1c3b9dd16c2a7049dd252ea2640a7c` |
 | External result JSON | `13a5bd899adaa87e386bcdf260908fcd0b75bc6d2cca1e76b89588eb07441926` |
 
-Final command logs are `C:/Users/haley/fdn-combat-lint-003.log` and
-`C:/Users/haley/fdn-combat-regressions-002.log`. The latter contains passing
+Final command logs are `C:/Users/hostuser/fdn-combat-lint-003.log` and
+`C:/Users/hostuser/fdn-combat-regressions-002.log`. The latter contains passing
 regressions followed by the type-complexity lint that was subsequently
 fixed; final lint and combat/session checks are in `lint-003`. The external
-driver and result are `C:/Users/haley/fdn-combat-external-001.py` and `.json`.
+driver and result are `C:/Users/hostuser/fdn-combat-external-001.py` and `.json`.
 Two additional Torch-dependent Python feature generators could not run in
 the local Python 3.11 environment because Torch is absent. No full local
 Python or Rust-suite completion is claimed.

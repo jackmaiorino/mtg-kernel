@@ -155,7 +155,7 @@ class ChainSpecTests(unittest.TestCase):
                 ORCH.validate_chain_spec(path)
 
     def test_games_per_cluster_is_four_not_two(self) -> None:
-        # Amendment 9 (sheet), Jack's ruling reading (b): the two-arm
+        # Amendment 9 (sheet), the maintainer's ruling reading (b): the two-arm
         # mechanism is 4 games/cluster, not the original sheet arithmetic's
         # 2. Locks this in as a spec-level assertion, not just a constant.
         self.assertEqual(ORCH.GAMES_PER_CLUSTER, 4)

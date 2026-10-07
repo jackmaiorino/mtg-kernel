@@ -3,7 +3,7 @@
 Source commits `d57f3d411522bfc915faa47b1f7669c43e83a4c3` and
 `41af18f62222f6612e8c85ebb0f44739ed901235` complete Beast-Kin Ranger and
 Overrun, with exact-incarnation temporary boosts and real trample damage.
-HaleysPC's matching source is committed as
+The compute host's matching source is committed as
 `bf6facd81093df1200128db712b0c22e25b5d2b2` on the owned verification branch.
 
 Dwynen's continuous Elf bonus and attack trigger are tested, but the card
@@ -32,10 +32,10 @@ lower-half damage answers, then passes. The identical replay validates these
 rules and their external transport. It does not establish original fixture
 completion, executable XMage parity or playing strength.
 
-Small manifest: CPU only on HaleysPC, two Cargo build jobs, GPU ordinal none,
+Small manifest: CPU only on the compute host, two Cargo build jobs, GPU ordinal none,
 seed 123. Rust 1.94.1 (`e408947bf`), Cargo 1.94.1 (`29ea6fb6a`), MSVC linker
 file version `14.50.35725.0`, Python 3.12.10 remotely and 3.11 locally.
-Jack's PC remained reserved for the lead's formal work. No training,
+The primary desktop remained reserved for the lead's formal work. No training,
 formal measurement or paid compute was launched.
 
 | Input/output | SHA-256 |
@@ -48,14 +48,14 @@ formal measurement or paid compute was launched.
 | External transcript | `49960f4a9802bc0ed709b129ec14ee65fda92ef382cbf74907c417cb55cd8139` |
 | External result JSON | `85d222c0230a3ca91246ae1346d6a52811c041dd38aa72bb83ec2e12d2e8a139` |
 
-Logs are `C:/Users/haley/fdn-combat-cards-tests-004.log`, `-005.log` and
+Logs are `C:/Users/hostuser/fdn-combat-cards-tests-004.log`, `-005.log` and
 `-006.log`. The first contains passing integration/restore checks followed
 by an outdated full-definition count assertion. The second verifies the
 corrected count, records and default regressions, then reports an unreachable
 test match arm. The final log verifies all 19 mechanics tests, Limited Clippy
 and formatting after removing that arm; its exit file is zero. Earlier failed
 logs are retained. No full local Rust or Python suite completion is claimed.
-The external driver and result are `C:/Users/haley/fdn-combat-cards-external-001.py`
+The external driver and result are `C:/Users/hostuser/fdn-combat-cards-external-001.py`
 and `.json`; the result captures the tested binary hash before later default builds.
 
 The original fixture goal stays active. UG resolves 25/40 copies and WG 26/40;

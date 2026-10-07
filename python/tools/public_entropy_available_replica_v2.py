@@ -19,20 +19,20 @@ REVISION = Path(__file__).resolve().parents[2] / "docs/public_entropy_execution_
 
 
 def availability(root):
-    hardware = {host: inventory(host) for host in ["jack", "haleyspc"]}
+    hardware = {host: inventory(host) for host in ["desktop", "computehost"]}
     for host, value in hardware.items():
         write(root / f"{host}-inventory.json", value)
-    assert hardware["jack"]["active"], "Jack is free: qualify newly eligible local/cross allocations"
-    assert not hardware["haleyspc"]["active"], "preserve active Haley owner"
-    gpu = preflight("haleyspc", [place("haleyspc", 0, 1)])
-    write(root / "haley-gpu.json", gpu)
+    assert hardware["desktop"]["active"], "the maintainer is free: qualify newly eligible local/cross allocations"
+    assert not hardware["computehost"]["active"], "preserve active compute host owner"
+    gpu = preflight("computehost", [place("computehost", 0, 1)])
+    write(root / "computehost-gpu.json", gpu)
     cloud = Path("E:/mtg-meta-recovery-20260920/public-device-placement-001/runpod-inventory.json")
     return dict(
-        jack=dict(checked_at=hardware["jack"]["at"], evidence=pin(root / "jack-inventory.json"),
+        desktop=dict(checked_at=hardware["desktop"]["at"], evidence=pin(root / "desktop-inventory.json"),
             eligible=False, devices=[], reason="Fresh inventory records active native owner; preserve its work and desktop GPU0 reservation."),
-        haleyspc=dict(checked_at=hardware["haleyspc"]["at"], evidence=pin(root / "haleyspc-inventory.json"),
+        computehost=dict(checked_at=hardware["computehost"]["at"], evidence=pin(root / "computehost-inventory.json"),
             eligible=True, reason="Current idle native inventory and GPU preflight passed.",
-            devices=[dict(ordinal=0, uuid=place("haleyspc", 0, 1)["gpu_uuid"], eligible=True,
+            devices=[dict(ordinal=0, uuid=place("computehost", 0, 1)["gpu_uuid"], eligible=True,
                 reason="Actual current sole GPU passed free-VRAM/device check.")]),
         runpod=dict(checked_at=read(cloud)["checked_at"], evidence=pin(cloud), eligible=False, devices=[],
             reason="Authenticated inventory HTTP403; no new paid compute authority."))
@@ -54,8 +54,8 @@ def prepare(root, pilot, previous):
     assert before == q["selected"]
     root.mkdir()
     choice["inventory"] = availability(root)
-    old_hardware = read(checked(read(previous / "compute-choice.json")["inventory"]["haleyspc"]["evidence"]))["hardware"]
-    new_hardware = read(root / "haleyspc-inventory.json")
+    old_hardware = read(checked(read(previous / "compute-choice.json")["inventory"]["computehost"]["evidence"]))["hardware"]
+    new_hardware = read(root / "computehost-inventory.json")
     assert old_hardware["host"] == new_hardware["host"]
     assert old_hardware["cpu"] == new_hardware["cpu"]
     assert old_hardware["disks"] == new_hardware["disks"], "storage hardware changed: remeasure"
@@ -112,11 +112,11 @@ def run(root, pilot, scorer):
         while not future.done():
             row = dict(elapsed_seconds=time.monotonic()-started)
             try:
-                row["haleyspc"] = snapshot("haleyspc")
+                row["computehost"] = snapshot("computehost")
             except Exception as error:
                 row["telemetry_error"] = str(error)
             write(telemetry / f"{tick:04}.json", row)
-            print("replica two telemetry", round(row["elapsed_seconds"]), row.get("haleyspc", {}).get("cpu_percent"), flush=True)
+            print("replica two telemetry", round(row["elapsed_seconds"]), row.get("computehost", {}).get("cpu_percent"), flush=True)
             tick += 1
             for _ in range(30):
                 if future.done():

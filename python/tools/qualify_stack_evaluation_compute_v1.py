@@ -17,9 +17,9 @@ def qualify(root,plan_path):
     assert plan['schema']=='stack-screen-evaluation/v1' and len(plan['qualification_jobs'])==32
     assert plan['expected_jobs']==512 and plan['qualification_matches']==256
     root.mkdir()
-    snapshots={h:inventory(h) for h in ['jack','haleyspc']}
+    snapshots={h:inventory(h) for h in ['desktop','computehost']}
     available={};stores={}
-    for host,drive in [('jack','D'),('haleyspc','C')]:
+    for host,drive in [('desktop','D'),('computehost','C')]:
         snapshot=snapshots[host];write(root/(host+'-inventory.json'),snapshot)
         assert not snapshot['active'],'preserve current training or other native work'
         available[host]=dict(checked_at=snapshot['at'],evidence=pin(root/(host+'-inventory.json')),
@@ -29,7 +29,7 @@ def qualify(root,plan_path):
     available['runpod']=dict(checked_at=read(cloud)['checked_at'],evidence=pin(cloud),eligible=False,
         reason='Authenticated inventory HTTP403; no new paid allocation authorized.')
     cases=[]
-    for host,counts in [('jack',[1,8,24]),('haleyspc',[1,8,16])]:
+    for host,counts in [('desktop',[1,8,24]),('computehost',[1,8,16])]:
         for count in counts:cases.append((f'{host}-w{count}',{host:dict(stores[host],workers=count,job_weight=1)}))
     dependencies=[pin(Path(__file__).with_name(n)) for n in ['stack_evaluation_throughput_v1.py',
         'stack_evaluation_recovery_v1.py','public_evaluation_dispatch_v1.py','public_evaluation_dispatch_v2.py',
@@ -37,7 +37,7 @@ def qualify(root,plan_path):
     write(root/'design.json',dict(plan=plan_pin,runner=pin(__file__),dependencies=dependencies,
         question='Choose useful completed eight-match throughput on both PCs including staging and copied full-count recovery.',
         unique_native_cases=256,maximum_native_matches=2050,cases=cases,
-        cross_host_cases='Fastest measured single-host worker counts combined at Jack:Haley job weights1:1 and2:1.',
+        cross_host_cases='Fastest measured single-host worker counts combined at Desktop:ComputeHost job weights1:1 and2:1.',
         cheap_native_cases=2,case_wall_cap_seconds=600,new_case_launch_budget_seconds=1200,
         timing_repetitions=1,recovery_repetitions=2,storage_scope='Current D/C SSD roles, not a new exhaustive disk comparison.',
         no_paid_compute=True,formal_panel_launched=False,review=plan['review'],
@@ -91,7 +91,7 @@ def qualify(root,plan_path):
         # choose completed native+staging cost before measured cross-host tests.
         label=min((k for k in native if set(native[k]['allocation'])=={host}),key=lambda k:native[k]['execution_seconds']+native[k]['staging_seconds'])
         best[host]=native[label]['allocation'][host]
-    for weight in [1,2]:measure(f'both-jack-weight-{weight}',{h:dict(a,job_weight=weight if h=='jack' else 1) for h,a in best.items()})
+    for weight in [1,2]:measure(f'both-desktop-weight-{weight}',{h:dict(a,job_weight=weight if h=='desktop' else 1) for h,a in best.items()})
     choice=dict(schema='stack-evaluation-allocation/v1',plan=plan_pin,binary=plan['binary'],
         inventory=available,candidates=candidates,dependencies=dependencies,selected=None,remote_setup_seconds=remote['seconds'])
     write(root/'choice-draft.json',choice)

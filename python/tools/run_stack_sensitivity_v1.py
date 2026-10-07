@@ -12,7 +12,7 @@ from public_evaluation_dispatch_v1 import inventory,ssh,REMOTE
 PILOT=Path('E:/mtg-postboard-campaign-20260921/public-stack-screen-001')
 TOOLS=Path('E:/mtg-meta-recovery-20260921/public-stack-sensitivity-tools-001')
 REMOTE_BASE='C:/mtg-node/public-stack-sensitivity-001'
-LOCAL_DATA='D:/mtg-training-working/stack-screen-training-native-0/haleyspc/recovered/jobs/structured/outputs'
+LOCAL_DATA='D:/mtg-training-working/stack-screen-training-native-0/computehost/recovered/jobs/structured/outputs'
 REMOTE_DATA='C:/mtg-node/stack-screen-training-native-0/jobs/structured/outputs'
 
 def signature(result):
@@ -41,7 +41,7 @@ def worker(spec):
 
 def main(root):
     root.mkdir();start=time.monotonic()
-    owners={h:inventory(h) for h in ['jack','haleyspc']}
+    owners={h:inventory(h) for h in ['desktop','computehost']}
     assert all(not s['active'] for s in owners.values())
     write(root/'owners-before.json',owners)
     cloud=pin('E:/mtg-meta-recovery-20260920/public-device-placement-001/runpod-inventory.json')
@@ -67,7 +67,7 @@ def main(root):
     setup=time.monotonic()-setup
     remote_binary=dict(path=REMOTE_BASE+'/diagnostic.exe',sha256=binary['sha256'])
     def execute(label,chosen,workers,remote=False):
-        current=inventory('haleyspc' if remote else 'jack');assert not current['active']
+        current=inventory('computehost' if remote else 'desktop');assert not current['active']
         mapped=json.loads(json.dumps(chosen))
         if remote:
             for job in mapped:
@@ -97,10 +97,10 @@ try {{
         return r
     sample=[jobs[i] for i in [0,3,6,9]]
     cases={};reference=None
-    for host in ['jack','haleyspc']:
+    for host in ['desktop','computehost']:
         for workers in [1,4]:
             label=f'{host}-w{workers}'
-            r=execute(label,sample,workers,host=='haleyspc')
+            r=execute(label,sample,workers,host=='computehost')
             sig=[j['signature'] for j in r['jobs']]
             assert reference is None or sig==reference,'saved scoring differs with placement'
             reference=sig;cases[label]=r
@@ -108,8 +108,8 @@ try {{
     def both(label,chosen):
         begin=time.monotonic()
         with ThreadPoolExecutor(max_workers=2) as pool:
-            left=pool.submit(execute,label+'-jack',chosen[::2],4,False)
-            right=pool.submit(execute,label+'-haley',chosen[1::2],4,True)
+            left=pool.submit(execute,label+'-desktop',chosen[::2],4,False)
+            right=pool.submit(execute,label+'-computehost',chosen[1::2],4,True)
             lr,rr=left.result(),right.result()
         return dict(jobs=sorted(lr['jobs']+rr['jobs'],key=lambda j:j['id']),workers=8,
             seconds=max(lr['seconds'],rr['seconds']),wall_seconds=time.monotonic()-begin)
@@ -118,17 +118,17 @@ try {{
     cases['both-w4']=combined
     # Entire 10-job diagnostic is small; include measured per-case transport and
     # setup before choosing a remote placement. No simulated gameplay involved.
-    forecasts={label:2.5*r['seconds']+(r['wall_seconds']-r['seconds'])+(setup if label.startswith(('haley','both')) else 0) for label,r in cases.items()}
+    forecasts={label:2.5*r['seconds']+(r['wall_seconds']-r['seconds'])+(setup if label.startswith(('computehost','both')) else 0) for label,r in cases.items()}
     selected=min(forecasts,key=forecasts.get)
     write(root/'compute-choice.json',dict(cases=cases,forecasts=forecasts,selected=selected,remote_setup_seconds=setup,
         reason='Fastest measured complete-job allocation including both-PC split and transport. Ten total jobs; no larger campaign.'))
     # Qualification and final selection must remain bound to the original inputs.
     saved=read(root/'manifest.json');assert saved['source']==pin(__file__) and saved['jobs']==jobs and saved['binary']==pin(checked(binary))
-    r=both('full',jobs) if selected=='both-w4' else execute('full',jobs,4 if selected.endswith('w4') else 1,selected.startswith('haley'))
+    r=both('full',jobs) if selected=='both-w4' else execute('full',jobs,4 if selected.endswith('w4') else 1,selected.startswith('computehost'))
     assert len(r['jobs'])==10 and sum(len(j['signature']['inputs']) for j in r['jobs'])==100
     write(root/'result.json',dict(complete=True,selected=selected,archives=100,jobs=r['jobs'],seconds=r['wall_seconds'],
         total_seconds=time.monotonic()-start,manifest=pin(root/'manifest.json'),choice=pin(root/'compute-choice.json')))
-    write(root/'owners-after.json',{h:inventory(h) for h in ['jack','haleyspc']})
+    write(root/'owners-after.json',{h:inventory(h) for h in ['desktop','computehost']})
     print(dict(complete=True,archives=100,seconds=r['wall_seconds']),flush=True)
 
 if __name__=='__main__':

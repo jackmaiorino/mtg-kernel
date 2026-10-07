@@ -24,9 +24,9 @@ def validate(spec,inventory):
     require(spec['source']==SOURCE and spec['binary']['sha256']==BINARY,'Unverified diagnostic executable')
     checked(spec['binary']);require(spec['panel']['sha256']==PANEL,'Changed shared panel');panel=read(checked(spec['panel']))
     for ref in spec['readers']:checked(ref)
-    require(spec['host'] in ('jack','haleyspc'),'Only verified Windows diagnostic runtime supported')
-    require(set(inventory)=={'jack','haleyspc','runpod'} and inventory['runpod']['complete'] and inventory['runpod']['http_status']==200,'Corrected-UA three-host inventory required')
-    for host in ('jack','haleyspc'):
+    require(spec['host'] in ('desktop','computehost'),'Only verified Windows diagnostic runtime supported')
+    require(set(inventory)=={'desktop','computehost','runpod'} and inventory['runpod']['complete'] and inventory['runpod']['http_status']==200,'Corrected-UA three-host inventory required')
+    for host in ('desktop','computehost'):
         require(0<=time.time()-inventory[host]['checked_unix']<=600,'Stale fleet inventory')
         if inventory[host]['complete']:require(isinstance(inventory[host]['data'].get('competing_controllers'),list),'Coordinator census missing')
     require(inventory[spec['host']]['complete'] and not inventory[spec['host']]['data']['competing_native'],'Selected host occupied')
@@ -65,12 +65,12 @@ def main():
     sys.path.insert(0,spec['reader_directory'])
     from g115_d3_native_results_v1 import read_match
     from g115_d3_baseline_parity_v1 import normalized_pair
-    reserve=(32 if spec['host']=='jack' else 8)*2**30
+    reserve=(32 if spec['host']=='desktop' else 8)*2**30
     owners(reserve,spec['host']);require(psutil.disk_usage(args.root.anchor).free>=16*2**30,'Disk reserve unavailable')
     if args.choice:
         choice=read(args.choice);require(choice['schema']=='g115-single-timeout-placement/v1' and choice['target']==TARGET and choice['workers']==1,'One sequential timeout case only')
         require(choice['host']==spec['host'] and choice['inventory']==pin(args.inventory),'Placement inventory mismatch')
-        eligible=[h for h in ('jack','haleyspc') if inventory[h]['complete'] and not inventory[h]['data']['competing_native'] and inventory[h]['data']['competing_controllers']==[]]
+        eligible=[h for h in ('desktop','computehost') if inventory[h]['complete'] and not inventory[h]['data']['competing_native'] and inventory[h]['data']['competing_controllers']==[]]
         require(set(choice['qualifications'])==set(eligible),'Every currently clear Windows host must be qualified')
         candidates={}
         for host,ref in choice['qualifications'].items():
@@ -78,7 +78,7 @@ def main():
             require([p['workers'] for p in q['phases']]==[1,2],'Serial/parallel measurements missing')
             candidates[host]=q['phases'][0]['seconds']+choice['remaining_transfer_seconds'][host]
         require(spec['host']==min(candidates,key=candidates.get),'Not fastest qualified single-match placement')
-        require(choice['runpod_disposition']=='No qualified compatible logging runtime; retained uninstrumented cloud serial benchmark is slower than Jack; no paid acceleration established','Cloud disposition required')
+        require(choice['runpod_disposition']=='No qualified compatible logging runtime; retained uninstrumented cloud serial benchmark is slower than the maintainer; no paid acceleration established','Cloud disposition required')
     args.root.mkdir();write(args.root/'manifest.json',dict(spec=pin(args.spec),inventory=pin(args.inventory),choice=pin(args.choice) if args.choice else None,launcher=pin(__file__),controller_census=pin(P(__file__).with_name('g115_active_compute_v1.py')),formal_measurement=False,source=SOURCE,workers=1 if args.choice else [1,2],per_job_bound_seconds=1800 if args.choice else 300,reserve_bytes=reserve,gpu_ordinal=None,scope='One retained timeout, unchanged bound; or fixed consumed correctness/timing controls. No outcomes aggregated.'))
     descriptor=read(checked(spec['v3_source']));envelope=read(checked(descriptor['transfer_envelope']))
     envelope['receipt']['destination_build_git_head']=SOURCE;write(args.root/'envelope.json',envelope)

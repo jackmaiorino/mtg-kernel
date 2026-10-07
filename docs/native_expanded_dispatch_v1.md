@@ -17,10 +17,10 @@ the actual admitted allocation):
   "lane": "codex-terminal-credit-20261005",
   "runtime": {"path": "ABS/runtime.json", "sha256": "SHA256"},
   "config": {"path": "ABS/ordinary-2026100601.json", "sha256": "SHA256"},
-  "root": "ABS/qualification-jack-ordinary-w1",
-  "cold_root": "OTHER/qualification-jack-ordinary-w1",
+  "root": "ABS/qualification-desktop-ordinary-w1",
+  "cold_root": "OTHER/qualification-desktop-ordinary-w1",
   "placement": {
-    "host": "jack", "cpu_affinity": [0, 1, 2, 3],
+    "host": "desktop", "cpu_affinity": [0, 1, 2, 3],
     "workers": 1, "preparation_workers": 1, "memory_bytes": 8589934592
   },
   "storage": {
@@ -85,10 +85,10 @@ Build a choice JSON:
 {
   "schema": "native-expanded-cpu-allocation/v1",
   "inventory": {
-    "jack": {"eligible": true, "reason": "CURRENT EVIDENCE", "checked_at": "ISO UTC",
+    "desktop": {"eligible": true, "reason": "CURRENT EVIDENCE", "checked_at": "ISO UTC",
       "evidence": {"path": "ABS/census.json", "sha256": "SHA256"},
       "cpu_affinity": [0, 1, 2, 3], "transport_seconds": 0},
-    "haleyspc": {"eligible": false, "reason": "CURRENT EVIDENCE", "checked_at": "ISO UTC",
+    "computehost": {"eligible": false, "reason": "CURRENT EVIDENCE", "checked_at": "ISO UTC",
       "evidence": {"path": "ABS/census.json", "sha256": "SHA256"}},
     "runpod": {"eligible": false, "reason": "No paid compute authority", "checked_at": "ISO UTC",
       "evidence": {"path": "ABS/budget-census.json", "sha256": "SHA256"}}

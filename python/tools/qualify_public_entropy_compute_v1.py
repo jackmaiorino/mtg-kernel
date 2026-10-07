@@ -74,17 +74,17 @@ def run(root, pilot, reuse=None, exclude_reused=()):
     os.environ["PATH"] = str(cuda / "bin") + os.pathsep + os.environ["PATH"]
     (root / "temp").mkdir()
     os.environ["TEMP"] = os.environ["TMP"] = str(root / "temp")
-    hardware = {host: inventory(host) for host in ["jack", "haleyspc"]}
+    hardware = {host: inventory(host) for host in ["desktop", "computehost"]}
     assert all(not item["active"] for item in hardware.values()), "preserve competing owners"
     available = {}
-    for host, device in [("jack", 1), ("haleyspc", 0)]:
+    for host, device in [("desktop", 1), ("computehost", 0)]:
         snapshot = preflight(host, [place(host, device, 1)])
         snapshot["hardware"] = hardware[host]
         path = root / f"{host}-inventory.json"
         write(path, snapshot)
         devices = [dict(ordinal=device, uuid=place(host, device, 1)["gpu_uuid"], eligible=True,
                         reason="Current idle/free-VRAM check passed; dedicated research device.")]
-        if host == "jack":
+        if host == "desktop":
             devices.append(dict(ordinal=0, uuid=place(host, 0, 1)["gpu_uuid"], eligible=False,
                 reason="Preserve standing headless GPU1 assignment for formal training; desktop GPU0 not assigned to this run."))
         available[host] = dict(checked_at=snapshot["at"], eligible=True,
@@ -93,15 +93,15 @@ def run(root, pilot, reuse=None, exclude_reused=()):
     cloud = read(cloud_path)
     available["runpod"] = dict(checked_at=cloud["checked_at"], eligible=False, devices=[], evidence=pin(cloud_path),
         reason="Latest authenticated inventory HTTP403; no new paid compute authorized. No claimed available pod.")
-    stores = {drive: storage(hardware["jack"], drive) for drive in ["C", "D", "E"]}
+    stores = {drive: storage(hardware["desktop"], drive) for drive in ["C", "D", "E"]}
     cases = []
     for drive in ["C", "D", "E"]:
         for count in [1, 10]:
             cases.append((f"local-{drive.lower()}-w{count}", stores[drive],
-                {arm: place("jack", 1, count) for arm in configs}, "sequential"))
+                {arm: place("desktop", 1, count) for arm in configs}, "sequential"))
     for count in [1, 4, 10]:
         cases.append((f"cross-d-w{count}", stores["D"],
-            dict(control=place("jack", 1, count), entropy=place("haleyspc", 0, count)), "parallel"))
+            dict(control=place("desktop", 1, count), entropy=place("computehost", 0, count)), "parallel"))
     write(root / "manifest.json", dict(pilot=pin(pilot / "manifest.json"), runner=pin(__file__), binary=binary,
         configs=configs, dependencies=[pin(Path(__file__).with_name(n)) for n in ["public_training_storage_v1.py",
             "public_training_dispatch_v2.py", "public_evaluation_dispatch_v1.py", "compute_throughput_v2.py",

@@ -1,6 +1,6 @@
 # Training-regime review v1 (literature-grounded)
 
-Status: delivered 2026-09-01 under Jack's approval; input to cycle-5
+Status: delivered 2026-09-01 under the maintainer's approval; input to cycle-5
 pre-registration. Produced by four literature lanes (population and
 non-transitivity; hidden-information critics; sample efficiency and
 optimization; search and scale reference points), a CP7 provenance trace,
@@ -25,7 +25,7 @@ processes in a throughput note. Consequences:
   A deterministic search opponent excels at tactically forced sequences
   (burn math, lethal counting), a plausible locus of our losses and a natural
   target for value-head accuracy and, potentially, test-time search on our
-  side (a decision for Jack; section 6).
+  side (a decision for the maintainer; section 6).
 
 ## 1. Ranked candidates (expected effect per cost)
 
@@ -127,13 +127,13 @@ needs on the order of twenty parallel runs. This argues for cheap regime and
 bug fixes over search infrastructure or brute compute, and confirms the gap
 is regime quality at our budget.
 
-## 6. Lead assessment and the question for Jack
+## 6. Lead assessment and the question for the maintainer
 
 Cycle-4 already carries candidate 1 (real rebalancing) and a coarse form of
 candidate 4 (the cell baseline), so it remains the right next measurement.
 Cycle-5 should be pre-registered around candidates 4, 5, 6, and 7 with the
 ladder in section 4, plus the free diagnostics (2, 8, 11). The open decision
-only Jack can make: given that CP7 is itself a search agent, whether a fixed
+only the maintainer can make: given that CP7 is itself a search agent, whether a fixed
 model wrapped in a bounded test-time search (our value net as the leaf
 evaluator, no CP7 contact) is an admissible form for the 60% claim, or a
 separate claim. It is the one lever that attacks exactly the tactical

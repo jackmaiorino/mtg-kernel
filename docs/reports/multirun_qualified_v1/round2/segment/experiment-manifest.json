@@ -1,9 +1,9 @@
 {
-  "allocation": "1@jack:0+1@jack:1",
+  "allocation": "1@desktop:0+1@desktop:1",
   "allocation_evidence": {
     "concurrency": 2,
     "episodes_per_second": 22.089288815093703,
-    "id": "alloc-1atjackd0_1atjackd1",
+    "id": "alloc-1atdesktopd0_1atdesktopd1",
     "projected_seconds": 66.92619669437408,
     "startup_seconds": 14.609937191009521,
     "steady_update_seconds": 2.662265658378601,
@@ -12,21 +12,21 @@
   "alternatives": [
     {
       "episodes_per_second": 11.829197058065379,
-      "id": "alloc-1atjackd0",
+      "id": "alloc-1atdesktopd0",
       "projected_seconds": 122.44952392578125,
       "reasons": [],
       "status": "qualified"
     },
     {
       "episodes_per_second": 22.089288815093703,
-      "id": "alloc-1atjackd0_1atjackd1",
+      "id": "alloc-1atdesktopd0_1atdesktopd1",
       "projected_seconds": 66.92619669437408,
       "reasons": [],
       "status": "qualified"
     },
     {
       "episodes_per_second": 10.590254684175587,
-      "id": "alloc-1atjackd0_1athaleyspcd0",
+      "id": "alloc-1atdesktopd0_1atcomputehostd0",
       "projected_seconds": 120.00641305977479,
       "reasons": [],
       "status": "qualified"
@@ -42,8 +42,8 @@
   "executable_sha256": "62bf66b1a917b643fdd9f4ba8b1da08955b205c7c61f46b6669e1825b2975504",
   "finished_at": "2026-09-23T19:35:24.302881+00:00",
   "inventory_checked_at": {
-    "haleyspc": "2026-09-23T19:24:21.320583+00:00",
-    "jack": "2026-09-23T19:24:21.320583+00:00",
+    "computehost": "2026-09-23T19:24:21.320583+00:00",
+    "desktop": "2026-09-23T19:24:21.320583+00:00",
     "runpod": "2026-09-23T19:24:21.320583+00:00"
   },
   "launcher_sha256": "9b565efccac2dd9d22896d08a9ccf9afe3acf9ecda34ed8c0556bf69e492b682",
@@ -58,7 +58,7 @@
       "finished_at": "2026-09-23T19:35:23.774613+00:00",
       "golden_prefix_generation": 20,
       "golden_prefix_identical": true,
-      "host": "jack",
+      "host": "desktop",
       "log": "D:\\multirun-qualified-v1-work\\q6-segment\\launch\\runs\\base-s0\\process.log",
       "output_digest_set_sha256": "cf55e57a2fdbcd90d5fd9e34a574c86a1da4caafec56751eaa1033295349b4bd",
       "run_root": "D:\\multirun-qualified-v1-work\\q6-segment\\launch\\runs\\base-s0",
@@ -76,7 +76,7 @@
       "finished_at": "2026-09-23T19:35:21.770468+00:00",
       "golden_prefix_generation": 20,
       "golden_prefix_identical": true,
-      "host": "jack",
+      "host": "desktop",
       "log": "D:\\multirun-qualified-v1-work\\q6-segment\\launch\\runs\\envrand-s0\\process.log",
       "output_digest_set_sha256": "fb83e962dcb9bae924888a57fbf18dd31777babdd4c492c21bf5bc78ca6e7f1d",
       "run_root": "D:\\multirun-qualified-v1-work\\q6-segment\\launch\\runs\\envrand-s0",
@@ -91,8 +91,8 @@
   "usage": {
     "cpu_mean_percent": 21.968922837238054,
     "gpu_peak_memory_mib": {
-      "jack:0": 5661,
-      "jack:1": 1808
+      "desktop:0": 5661,
+      "desktop:1": 1808
     },
     "idle_capacity_events": [],
     "samples": 13

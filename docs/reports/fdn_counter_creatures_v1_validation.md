@@ -24,7 +24,7 @@ below does not prove this composed source passes.
 
 
 Local source `109bd020` implements Gnarlid Colony and Mossborn Hydra.
-Matching committed HaleysPC source is
+Matching committed compute host source is
 `2bba84150a2fcebd0d810591b6218547f90d2b37`.
 See [rules contract](../design/fdn_counter_creatures_v1.md).
 
@@ -53,9 +53,9 @@ reference planeswalker. Original fixture coverage is UG 29/40 and WG 32/40;
 remaining mechanics, mulligans, original-deck natural games, executed
 XMage comparisons and passing CI.
 
-Small manifest: CPU correctness checks on HaleysPC, two Cargo build jobs,
+Small manifest: CPU correctness checks on the compute host, two Cargo build jobs,
 GPU ordinal none; Rust/Cargo 1.94.1, MSVC linker 14.50.35725.0, remote Python
-3.12.10, local Python 3.11. Jack's PC reservations remain respected. The
+3.12.10, local Python 3.11. The primary desktop reservations remain respected. The
 XMage check uses Maven 3.9.9, Oracle Java 23.0.2, one reactor worker, two
 active processors and bounded heaps. No formal measurement, training or
 paid compute was launched.
@@ -69,7 +69,7 @@ paid compute was launched.
 | Tested binary | `d2888059cd1e8aa873bfa60c1f88038c94a1d3da5ca17046450a6f87961921af` |
 | External transcript | `95c5dec964ece00d57968a0013ba00bf22c03ad44b7d565114fe3da8e8b88d7d` |
 
-Logs stay outside Git under `C:/Users/haley/`:
+Logs stay outside Git under `C:/Users/hostuser/`:
 `fdn-counter-tests-009.log/.exit`, `fdn-counter-external-001.py/.json/.log/.exit`,
 `fdn-counter-production-010.log/.exit`, and `fdn-mage-counter-002.log/.exit`.
 Earlier failures are retained. Runs 001/002 caught attempted changes to

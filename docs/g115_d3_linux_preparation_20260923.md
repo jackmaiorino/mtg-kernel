@@ -2,7 +2,7 @@
 
 Linux portability acceptance passes on the same consumed Wildfire/Rally engineering identities. No formal panel, paid allocation, strength estimate or fleet placement decision was made.
 
-Native source remains `6604306cd67ccfb7e558b49b6504e033885fb0a8`. The isolated Ubuntu checkout and target are `/home/jack/g115-d3-20260923-002`; the pre-existing Bookworm runtime was inspected but not modified. Rust/Cargo1.94.1, GCC11.4 linker driver, GNU ld2.38 and bundled LLD21.1.8 are recorded in `E:/mtg-g115-lineage-20260923/d3-linux-build-002/toolchain.json`. Four nice10 compiler jobs built offline in149.561 seconds, preserving the32GiB host reserve. Build001 stopped before compilation because the version query omitted rust-lld's `-flavor gnu`; that failure receipt is retained.
+Native source remains `6604306cd67ccfb7e558b49b6504e033885fb0a8`. The isolated Ubuntu checkout and target are `/home/user/g115-d3-20260923-002`; the pre-existing Bookworm runtime was inspected but not modified. Rust/Cargo1.94.1, GCC11.4 linker driver, GNU ld2.38 and bundled LLD21.1.8 are recorded in `E:/mtg-g115-lineage-20260923/d3-linux-build-002/toolchain.json`. Four nice10 compiler jobs built offline in149.561 seconds, preserving the32GiB host reserve. Build001 stopped before compilation because the version query omitted rust-lld's `-flavor gnu`; that failure receipt is retained.
 
 Linux binary SHA256: `d6db661dc93dfec96bc4363c57843d027af4efcd0cae030d5e0797e2422164d4`.
 

@@ -3,7 +3,7 @@ import argparse, collections, concurrent.futures, hashlib, json, os, pathlib, ti
 
 P = pathlib.Path
 BASE = P('E:/mtg-meta-recovery-20260921')
-ARCHIVES = P('D:/mtg-training-working/stack-screen-training-native-0/haleyspc/recovered/jobs/structured/outputs')
+ARCHIVES = P('D:/mtg-training-working/stack-screen-training-native-0/computehost/recovered/jobs/structured/outputs')
 AUDIT = BASE/'public-terminal-teacher-natural-audit-002/completion.json'
 SCHEDULE = ARCHIVES.parent/'request.json'
 

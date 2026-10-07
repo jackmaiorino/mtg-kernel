@@ -38,7 +38,7 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
         return {"schema": dispatch.SCHEMA, "kind": "training", "runtime": self.save(self.runtime),
                 "config": self.save(self.config), "root": str(self.root/f"trial-{workers}"),
                 "cold_root": str(self.root/f"cold-{workers}"),
-                "placement": {"host": "jack", "workers": workers, "preparation_workers": workers,
+                "placement": {"host": "desktop", "workers": workers, "preparation_workers": workers,
                               "cpu_affinity": [0, 1], "memory_bytes": 1024**3},
                 "wall_seconds": 1000,
                 "storage": {"accounting_roots": [str(self.root)], "max_logical_bytes": 1024**3,
@@ -78,10 +78,10 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
 
     def choice(self):
         one, two = self.trial(1, 10), self.trial(2, 6)
-        inventory = {host: {"eligible": host == "jack", "reason": "test placement census",
+        inventory = {host: {"eligible": host == "desktop", "reason": "test placement census",
                             "checked_at": datetime.now(timezone.utc).isoformat(),
                             "evidence": self.save({"host": host}), "cpu_affinity": [0, 1],
-                            "transport_seconds": 0} for host in ("jack", "haleyspc", "runpod")}
+                            "transport_seconds": 0} for host in ("desktop", "computehost", "runpod")}
         return {"schema": dispatch.CHOICE, "inventory": inventory,
                 "qualifications": [one, two],
                 "selected": {dispatch.workload(self.config, "training"): two}}
@@ -148,7 +148,7 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
         choice = self.choice()
         request = self.request(2)
         with patch.object(dispatch, "validate_request", return_value=(self.config, self.runtime)):
-            other = copy.deepcopy(choice); other["inventory"]["haleyspc"]["eligible"] = True
+            other = copy.deepcopy(choice); other["inventory"]["computehost"]["eligible"] = True
             with self.assertRaisesRegex(ValueError, "lacks measured"):
                 dispatch.require_choice(self.save(other), request)
             target = self.root/"trial-2/native/episode.json"

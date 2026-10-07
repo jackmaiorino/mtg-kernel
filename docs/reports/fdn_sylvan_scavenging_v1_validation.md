@@ -27,7 +27,7 @@ must match the live catalog to publish/resume. Default v32 is unchanged.
 | XMage | 12 strict reference cases passed; [Mage PR #12](https://github.com/jackmaiorino/mage/pull/12). |
 | All-target lint | Checks-009 exited zero: Limited all-target Clippy passed with warnings denied (39.98 seconds). Exhaustive example/test adapters handle the appended decision. |
 | Broader regressions/default compatibility | Checks-010 exited zero: 242 prior rules, 125 Limited engine, 62 Limited session/client, 124 default engine and 27 default RL checks pass. Default all-target Clippy and the frozen v32 golden pass; external binary built. |
-| Release publication/resume boundaries | Haley production-001 final exit zero at d85d3251: 2 pre-FDN, 28 prior-FDN and 1 round-trip checks pass; combined Limited/native-production release library Clippy passes. The subsequent public fix changes only the raw benchmark adapter. |
+| Release publication/resume boundaries | The compute host production-001 final exit zero at d85d3251: 2 pre-FDN, 28 prior-FDN and 1 round-trip checks pass; combined Limited/native-production release library Clippy passes. The subsequent public fix changes only the raw benchmark adapter. |
 | External natural completion and replay | Two identical fixed-seed custom-deck games reached natural P1 wins at 366 policy steps each. Each cast Scavenging twice and selected counter mode three times and token mode four times; transcript SHA-256 `d663787890f082082ecafe38774c4d588e4f01b674ff152e57721158735080b1` matches. These smoke decks are distinct from the still-incomplete original fixtures. |
 | Hosted CI | [Run 37025035376](https://github.com/jackmaiorino/mtg-kernel/actions/runs/37025035376) at `7d4c55186e09af803969e913114f1e246f070737` passed all eight checks. Windows Rust finished October 2 at 19:20:19 UTC; Ubuntu Rust, lint and all four Python shards also passed. Later local commits change reports only. |
 | Windows full-log audit | Job `110897892556` has positive test summaries for all 18 Limited integration targets selected by its exact source workflow: 290 passed in total. The complete log has no failed test summaries or native compile-error markers. This audit checks the actual results behind the historical multiline PowerShell step. |
@@ -42,7 +42,7 @@ The inventory observes UG 38/40 and WG 39/40 supported copies. Its
 Celestial Armor, Witness Protection and London mulligans remain necessary
 for the full original-fixture goal.
 
-Retained local prefixes are `C:/Users/Jack/fdn-scavenging-local-core-001`,
+Retained local prefixes are `C:/Users/user/fdn-scavenging-local-core-001`,
 `fdn-scavenging-local-rules-001/002` and `fdn-scavenging-checks-001` onward.
 Manifests bind source, toolchains, inputs, outputs and storage limits.
 Rust/Cargo 1.94.1, MSVC 14.50.35725.0, two Cargo jobs, no incremental
@@ -57,10 +57,10 @@ owned launcher already terminal; no other process was stopped.
 
 These are bounded rules checks, with no full-set or playing-strength claim.
 
-External receipt: `C:/Users/Jack/fdn-scavenging-external-001.json` and
+External receipt: `C:/Users/user/fdn-scavenging-external-001.json` and
 its small manifest. Binary SHA-256
 `e01a810e6b0e438520d843a9389014a10395ad9d53684e0cf6df5657983b4c27`,
-5,848,064 bytes, preserved on E, a separate C copy and a hash-verified Haley copy. Both games use seed
+5,848,064 bytes, preserved on E, a separate C copy and a hash-verified compute host copy. Both games use seed
 123 and episode 7. The external launch checked binary-copy reserves and
 bounded steps but lacked a live output-byte guardian; its manifest records
 that limitation and was written after completion. Future launches use the

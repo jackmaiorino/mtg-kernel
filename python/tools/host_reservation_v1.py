@@ -2,8 +2,8 @@
 
 One reservation per work host, held in one canonical lock file on the machine
 that does the work: C:/mtg-node/host-lock/<HOST>.lock, the same for every user,
-worktree and transport (a lock on Jack's PC reserves nothing on HaleysPC; a
-HaleysPC reservation is taken by running this module on HaleysPC). Windows
+worktree and transport (a lock on the primary desktop reserves nothing on the compute host; a
+compute host reservation is taken by running this module on the compute host). Windows
 only, standard library only (Win32 calls through ctypes).
 
 Contract (collab GOALS/opus-search-opponent-20260927.md, amendment 01:35):

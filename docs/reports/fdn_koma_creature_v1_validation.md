@@ -43,7 +43,7 @@ in source; the exact default v32 golden and frozen default session checks passed
 
 | Check | Current evidence |
 | --- | --- |
-| Core compilation | `fdn-koma-preflight-001` exited zero; Limited Cargo check passed in 29.59 seconds on HaleysPC. |
+| Core compilation | `fdn-koma-preflight-001` exited zero; Limited Cargo check passed in 29.59 seconds on the compute host. |
 | XMage comparisons | All nine strict-choice cases passed in `fdn-mage-koma-004`; see [Mage PR #7](https://github.com/jackmaiorino/mage/pull/7). |
 | Kernel gameplay | All thirteen cases passed in `fdn-koma-gameplay-003`: casting, counters, ward, combat, noncombat exclusion and pending-choice restore. Earlier compile/setup failures remain preserved. |
 | Counter helper | The focused unit check passed: physical spells and copies resist counters; triggered abilities remain counterable; ordinary departure is unchanged. |
@@ -56,7 +56,7 @@ in source; the exact default v32 golden and frozen default session checks passed
 Core source commit: `af94973c`; local integration/catalog source commit:
 `d644f86a`, followed by test correction `b076f733`. The owned remote
 verification branch is `codex/fdn-koma-verify-v1` in
-`C:/Users/haley/mtg-kernel-fdn-lifegain-codex`; its corresponding correction
+`C:/Users/hostuser/mtg-kernel-fdn-lifegain-codex`; its corresponding correction
 commit is `13034eb`. Rust/Cargo 1.94.1, MSVC linker 14.50.35725.0,
 `CARGO_BUILD_JOBS=2`, `CARGO_INCREMENTAL=0`, seed 123, GPU ordinal none.
 
@@ -69,7 +69,7 @@ The blocked position uses a supported Tolarian Terror with four +1/+1
 counters, matching the kernel's 9/9 blocker test. Earlier reference
 results and failed test-build logs remain outside Git.
 
-Claude #813 released Jack's PC and E: writes at 07:18 EDT on October 2.
+Claude #813 released the primary desktop and E: writes at 07:18 EDT on October 2.
 Storage interruptions and compression receipts remain preserved outside Git.
 Compression touched only owned Cargo and Mage caches, preserved content
 hashes and deleted no files. No frozen measurement was interrupted.
@@ -90,8 +90,8 @@ The initial production check refused a debug build (`native_store_build_profile_
 The debug interface binary is 5,765,632 bytes with SHA-256
 `bf8b792fa37a4941f6bc7693870966fe06842fce8457cd354237c46b74abaddf`,
 built from remote source `844f9740328027cd3dae8ee3800af4d94cc2e8a7`.
-Verified copies are under `C:/Users/haley/fdn-pinned-binaries/` and
-`C:/Users/Jack/fdn-pinned-binaries/`, each in that hash's directory.
+Verified copies are under `C:/Users/hostuser/fdn-pinned-binaries/` and
+`C:/Users/user/fdn-pinned-binaries/`, each in that hash's directory.
 The same binary is now verified under `E:/pinned-binaries/` as well.
 
 The bounded external check used 14 Forest, 14 Island, eight Koma and four

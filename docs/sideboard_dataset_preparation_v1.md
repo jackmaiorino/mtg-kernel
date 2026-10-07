@@ -91,7 +91,7 @@ Affinity/Elves in both directions and Terror/Terror. That is only two independen
 holdout components, and it does not establish unseen-deck generalization.
 
 The preparation script and pinned configs are under
-`C:/Users/Jack/IdeaProjects/sideboarding-integration-20260912/engineering-003`.
+`C:/Users/user/IdeaProjects/sideboarding-integration-20260912/engineering-003`.
 The audited JSONL and inventory are under
 `E:/mtg-kernel-learned-sideboarding-evidence/engineering-003/dataset-development-001`.
 The script validates 22 existing fact-checked game-2/game-3 teacher rows covering

@@ -129,7 +129,7 @@ def prepare(root):
             'Seven known opposing registrations and 15 own lists, equally weighted within the specified sample, not meta-weighted.',
             'Four G1 observations per own/opponent/reference cell; marginal own-list summaries contain 28. Sparse profiles cannot establish matchup strength.',
             'Keep7, Keep sideboarding, sampled policy, no search. Does not test learned openings or postboard swaps.',
-            'Fable consultation failed HTTP429 with zero reads until Sep22 07:00 EDT; no retry or endorsement. Proceed under Jack bounded local authority.',
+            'Fable consultation failed HTTP429 with zero reads until Sep22 07:00 EDT; no retry or endorsement. Proceed under desktop bounded local authority.',
             'No CP7 outcome selection, paid compute or training. No human-strength claim.']}
     write(root / 'manifest.json', manifest)
 

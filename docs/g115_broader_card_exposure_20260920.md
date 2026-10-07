@@ -24,7 +24,7 @@ Only after qualification, prepare a separate matched 200-update control versus b
 
 This first slice is explicitly preboard. Exact-registration sideboard plans and learned openings remain necessary for the BO3 goal; do not call Keep-sideboard games a sideboard-policy evaluation. No meta-weighted, held-out opponent or human-strength claim is justified. A48 has distinct fresh initialization but is familiar training opposition. No CP7 outcomes are used.
 
-Fable review remains unavailable following the known zero-read HTTP429 until September 22 07:00 EDT. Jack authorized bounded local continuation and instructed no repeated quota retries. Record that gap and residual uncertainty, without implying endorsement or adding a user-approval step. No paid compute or broad training campaign is authorized here.
+Fable review remains unavailable following the known zero-read HTTP429 until September 22 07:00 EDT. The maintainer authorized bounded local continuation and instructed no repeated quota retries. Record that gap and residual uncertainty, without implying endorsement or adding a user-approval step. No paid compute or broad training campaign is authorized here.
 
 ## Four-update qualification completed
 
