@@ -2524,6 +2524,147 @@
         "equip"
       ],
       "java_file": "Mage.Sets/src/mage/cards/g/GoldveinPick.java"
+    },
+    {
+      "name": "Campus Guide",
+      "engine_capability": "full",
+      "mana_cost": "{2}",
+      "mana_value": 2,
+      "colors": [],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Golem"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_library_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "etb_trigger",
+        "fetch_effect"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CampusGuide.java"
+    },
+    {
+      "name": "Burnished Hart",
+      "engine_capability": "full",
+      "mana_cost": "{3}",
+      "mana_value": 3,
+      "colors": [],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Elk"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_library_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "activated_ability",
+        "sacrifice_cost",
+        "fetch_effect"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BurnishedHart.java"
+    },
+    {
+      "name": "Grow from the Ashes",
+      "engine_capability": "full",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_library_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "kicker",
+        "fetch_effect"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GrowFromTheAshes.java"
+    },
+    {
+      "name": "Revenge of the Rats",
+      "engine_capability": "full",
+      "mana_cost": "{2}{B}{B}",
+      "mana_value": 4,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_library_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "token_creation",
+        "flashback"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RevengeOfTheRats.java"
+    },
+    {
+      "name": "Rat Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Rat"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/RatToken.java",
+      "is_token": true
     }
   ]
 }

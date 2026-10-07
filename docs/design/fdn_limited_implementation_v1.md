@@ -41,8 +41,9 @@ fixture name. Milestone 5's first batch adds seven keyword-only creatures
 gainlands and life-gain creatures (`fdn_gainlands_lifegain_v1.md`), reaching
 61/286, the third adds trigger creatures and three instants
 (`fdn_triggers_tricks_v1.md`), reaching 73/286, and the equipment, kicker and
-library-search batch (`fdn_equipment_search_v1.md`) reaches **81/286**. One
-reference planeswalker remains partial and 204 names are
+library-search batch (`fdn_equipment_search_v1.md`) reaches 81/286, and the
+library-search, kicker and flashback follow-up (`fdn_library_search_v1.md`)
+reaches **85/286**. One reference planeswalker remains partial and 200 names are
 missing from the wider reference; `../reports/fdn_remaining_pool_inventory_v1.md` sizes them.
 
 Milestone 3's opt-in engine priority presentation is implemented on
