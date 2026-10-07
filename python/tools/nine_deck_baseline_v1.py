@@ -33,6 +33,8 @@ import json
 from collections import Counter
 from pathlib import Path
 
+from phase1_breadth_v1.catalog_v1 import canonical_zones, digest, to_native
+
 PREFIX = "nine-deck-baseline-v1"
 RUNS = tuple(f"r{index}" for index in range(1, 7))
 BLOCKS = 20
@@ -42,6 +44,8 @@ UNITS_PER_UPDATE = 5
 UPDATES_PER_BLOCK = DECKS * DECKS * REPEATS // UNITS_PER_UPDATE  # 162
 SEED_MASK = (1 << 63) - 1
 RUNTIME_DECKS_SHA256 = "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851"
+REGISTRATIONS_PATH = "docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json"
+REGISTRATIONS_SHA256 = "095d66eef513caec81585d554cbd49304d1f5b1daf2e7ea969c5b5c982933104"
 DECK_NAMES = ("Wildfire", "Rally", "Affinity", "Elves", "Spy", "Burn", "Terror", "CawGates", "Faeries")
 FIXED_OPPONENT_ID = "fresh-a-block48-end"
 MAX_PHYSICAL_DECISIONS = 100000
@@ -96,17 +100,39 @@ def block_units(run: str, block: int) -> list[list[tuple[int, int, int]]]:
     return [units[index:index + UNITS_PER_UPDATE] for index in range(0, len(units), UNITS_PER_UPDATE)]
 
 
-def load_decks(path: Path) -> list[dict]:
-    """The nine runtime mainboards in deck-index order, as registered decks."""
-    data = Path(path).read_bytes()
+def load_decks(path: Path, registrations: Path | None = None) -> list[dict]:
+    """The nine registered decks in deck-index order, as T1's campaign registered them.
+
+    Mainboard and 15-card sideboard come from the repo's registered nine 75s
+    (labels ``<deck>/<list_sha256[:12]>``, card ids sorted, as the phase-1
+    catalog emits them); each mainboard must equal the pinned runtime
+    mainboard as a multiset. Play is preboard only, so the sideboard is
+    registration metadata.
+    """
+    path = Path(path)
+    data = path.read_bytes()
     if hashlib.sha256(data).hexdigest() != RUNTIME_DECKS_SHA256:
         raise ValueError("runtime decks file differs from the pinned sha256")
-    decks = sorted(json.loads(data)["decks"], key=lambda deck: deck["canonical_pool_order"])
-    if [deck["id"] for deck in decks] != list(DECK_NAMES) or \
-            [deck["canonical_pool_order"] for deck in decks] != list(range(1, DECKS + 1)):
+    runtime = sorted(json.loads(data)["decks"], key=lambda deck: deck["canonical_pool_order"])
+    if [deck["id"] for deck in runtime] != list(DECK_NAMES) or             [deck["canonical_pool_order"] for deck in runtime] != list(range(1, DECKS + 1)):
         raise ValueError("unexpected runtime deck order")
-    return [{"label": deck["id"], "mainboard": [card["card_id"] for card in deck["materialized_mainboard"]],
-             "sideboard": []} for deck in decks]
+    repo = path.resolve().parents[1]
+    registrations = Path(registrations or repo / REGISTRATIONS_PATH)
+    raw = registrations.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != REGISTRATIONS_SHA256:
+        raise ValueError("registered 75s file differs from the pinned sha256")
+    rows = json.loads(raw)["decks"]
+    registry = json.loads((repo / "data" / "cards_v1.json").read_bytes())
+    cards = {card["name"]: (index, card) for index, card in enumerate(registry["cards"])}
+    decks = []
+    for deck in runtime:
+        row = rows[deck["id"]]
+        zones = canonical_zones({"mainboard": row["main"], "sideboard": row["side"]}, {})
+        native = to_native(zones, deck["id"] + "/" + digest(zones)[:12], cards)
+        if Counter(native["mainboard"]) != Counter(card["card_id"] for card in deck["materialized_mainboard"]):
+            raise ValueError(f"registered mainboard of {deck['id']} differs from the runtime mainboard")
+        decks.append(native)
+    return decks
 
 
 def unit_episodes(run: str, block: int, unit: tuple[int, int, int], decks: list[dict]) -> list[dict]:
