@@ -92,5 +92,23 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(len({(c["own"], c["other"], c["repeat"]) for c in cases}), 972)
 
 
+    def test_panel_config_p3_is_p1_subset(self):
+        decks = ndb.load_decks(DECKS)
+        source = {"checkpoint": {"path": "C:/x/c.json", "sha256": "c" * 64}}
+        t1 = {"checkpoint": {"path": "C:/x/t1.json", "sha256": "d" * 64}}
+        p1 = ndb.panel_config("p1", source, t1, decks, "D:/out1", 8)
+        p3 = ndb.panel_config("p3", source, t1, decks, "D:/out3", 1, own_decks=(4, 7))
+        self.assertEqual((p1["mode"], p1["workers"], len(p1["episodes"])), ("collect_parallel", 8, 1944))
+        self.assertEqual((p3["mode"], len(p3["episodes"])), ("collect", 432))
+        self.assertNotIn("workers", p3)
+        strip = lambda e: {k: v for k, v in e.items() if k != "id"}
+        p1_cases = [strip(e) for e in p1["episodes"]]
+        self.assertTrue(all(strip(e) in p1_cases for e in p3["episodes"]))
+        for episode in p1["episodes"]:
+            learner = episode["selected"][episode["learner_seat"]]["label"].split("/")[0]
+            self.assertEqual(learner, ndb.DECK_NAMES[int(episode["id"].split("-o")[1].split("-")[0])])
+            self.assertEqual(episode["opponent"], t1)
+
+
 if __name__ == "__main__":
     unittest.main()

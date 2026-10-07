@@ -235,6 +235,32 @@ def panel_cases(own_decks: tuple[int, ...] = tuple(range(DECKS))) -> list[dict]:
             for o in own_decks for t in range(DECKS) for k in range(PANEL_REPEATS) for seat in (0, 1)]
 
 
+def panel_config(panel: str, source: dict, opponent: dict, decks: list[dict], output_directory: str,
+                 workers: int, own_decks: tuple[int, ...] = tuple(range(DECKS))) -> dict:
+    """Raw-policy panel collection: ``source`` pilots each own deck against a fixed opponent.
+
+    Cases follow ``panel_cases``; a P3 panel (own decks Spy and CawGates) is a
+    subset of P1 with identical case seeds, so P3 at a P1 checkpoint is read
+    from P1's games. Any non-natural terminal fails the collection; it is then
+    reported as incomplete, never dropped.
+    """
+    episodes = []
+    for case in panel_cases(own_decks):
+        own, other, seat = decks[case["own"]], decks[case["other"]], case["seat"]
+        seats = [own, other] if seat == 0 else [other, own]
+        episodes.append({
+            "id": f"{PREFIX}-{panel}-o{case['own']}-t{case['other']}-k{case['repeat']}-s{seat}",
+            "seed": case["seed"], "starting_player": case["starting_player"], "learner_seat": seat,
+            "registered": [dict(deck) for deck in seats], "selected": [dict(deck) for deck in seats],
+            "postboard": False, "max_physical_decisions": MAX_PHYSICAL_DECISIONS,
+            "max_policy_steps": MAX_POLICY_STEPS, "opponent": opponent})
+    config = {"mode": "collect_parallel" if workers > 1 else "collect", "source": source, "episodes": episodes,
+              "max_non_natural_episode_fraction": 0.0, "output_directory": output_directory}
+    if workers > 1:
+        config["workers"] = workers
+    return config
+
+
 def all_seeds() -> dict:
     train = [{"run": run, "block": block, "own": o, "other": t, "repeat": j,
               "seed": unit_seed(run, block, o, t, j)}
