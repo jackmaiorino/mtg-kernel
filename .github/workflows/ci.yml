@@ -192,6 +192,12 @@ jobs:
           fi
           if ! command -v rustup >/dev/null && [ -x "$HOME/.cargo/bin/rustup" ]; then
             printf '%s\n' "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          elif [ "$RUNNER_OS" = Windows ] && command -v rustup >/dev/null; then
+            # Bash can reach the Cargo proxies through a PATH entry that
+            # Windows programs cannot (for example one starting with ~), so
+            # Python's subprocess calls failed to find cargo. Publish the
+            # directory bash found as a plain Windows path.
+            cygpath -w "$(dirname "$(command -v rustup)")" >> "$GITHUB_PATH"
           fi
 
       - name: Install pinned Rust in a fresh toolchain directory

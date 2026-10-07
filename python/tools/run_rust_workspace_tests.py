@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 
@@ -35,10 +34,8 @@ def main() -> int:
         raise ValueError("Workspace suite runner accepts only --no-fail-fast")
     runner = [sys.executable, str(Path(__file__).resolve()), "--run"]
     configuration = "target.'cfg(all())'.runner=" + json.dumps(runner)
-    # Resolve Cargo through PATHEXT: on Windows a cargo.cmd shim is invisible
-    # to a bare CreateProcess("cargo") even though shells find it.
     return subprocess.run([
-        shutil.which("cargo") or "cargo", "test", "--release", "--locked", "--config", configuration,
+        "cargo", "test", "--release", "--locked", "--config", configuration,
         "--workspace", "--all-targets", *sys.argv[1:],
     ], check=False).returncode
 

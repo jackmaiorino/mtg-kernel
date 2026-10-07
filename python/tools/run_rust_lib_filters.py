@@ -6,7 +6,6 @@ import argparse
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 
@@ -43,10 +42,8 @@ def main() -> int:
     environment[FILTERS_ENV] = json.dumps(filters)
     runner = [sys.executable, str(Path(__file__).resolve()), "--run"]
     configuration = "target.'cfg(all())'.runner=" + json.dumps(runner)
-    # Resolve Cargo through PATHEXT: on Windows a cargo.cmd shim is invisible
-    # to a bare CreateProcess("cargo") even though shells find it.
     command = [
-        shutil.which("cargo") or "cargo", "test", "--release", "--locked", "--config", configuration,
+        "cargo", "test", "--release", "--locked", "--config", configuration,
         "-p", "mtg-kernel", "--features", args.features, "--lib",
     ]
     # Cargo supplies its normal package cwd and runtime environment to the
