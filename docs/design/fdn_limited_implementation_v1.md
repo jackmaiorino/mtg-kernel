@@ -37,9 +37,10 @@ and Treetop Snarespinner. That first batch reached 13/286 reference names and
 19/40 copies in each fixture. The fixture stack reached **43/286
 reference names** and **40/40 copies in each fixture**, with no unsupported
 fixture name. Milestone 5's first batch adds seven keyword-only creatures
-(`fdn_keyword_creatures_v1.md`), reaching **50/286**. One reference
-planeswalker remains partial and 235 names are missing from the wider
-reference; `../reports/fdn_remaining_pool_inventory_v1.md` sizes them.
+(`fdn_keyword_creatures_v1.md`), reaching 50/286, and the second adds
+gainlands and life-gain creatures (`fdn_gainlands_lifegain_v1.md`), reaching
+**61/286**. One reference planeswalker remains partial and 224 names are
+missing from the wider reference; `../reports/fdn_remaining_pool_inventory_v1.md` sizes them.
 
 Milestone 3's opt-in engine priority presentation is implemented on
 `codex/fdn-priority-windows-v1`; see `limited_priority_windows_v1.md`.

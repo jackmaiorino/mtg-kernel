@@ -5070,7 +5070,19 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Sylvan Scavenging" => "beginning_controller_end_step:mode_before_targets:controlled_creature_plus_one_counter:1|resolution_controls_creature_power_at_least:4:create_green_3_3_raccoon_token:1",
         "Kiora, the Rising Tide" => "etb:draw:2:then_discard:2;attacks_if_controller_graveyard_cards_at_least:7:recheck_threshold:optional_create_legendary_blue_8_8_octopus_scion:1",
         "Sun-Blessed Healer" => "etb_if_kicked:recheck_kicked:return_own_graveyard_nonland_permanent_mana_value_at_most:2",
-        "Blossoming Sands" | "Thornwood Falls" => "etb:gain_life:1",
+        "Blossoming Sands"
+        | "Thornwood Falls"
+        | "Bloodfell Caves"
+        | "Dismal Backwater"
+        | "Jungle Hollow"
+        | "Rugged Highlands"
+        | "Scoured Barrens"
+        | "Swiftwater Cliffs"
+        | "Tranquil Cove"
+        | "Wind-Scarred Crag" => "etb:gain_life:1",
+        "Ajani's Pridemate" => "controller_gains_positive_life:counter_on_bound_source:1",
+        "Marauding Blight-Priest" => "controller_gains_positive_life:opponent_loses_life:1",
+        "Sanguine Syphoner" => "source_declared_attacker:opponent_loses_life:1:then_controller_gains_life:1",
         "Dazzling Angel" => "other_controlled_creature_enters:gain_life:1",
         "Beast-Kin Ranger" => "other_controlled_creature_enters:pump_bound_source:1:0:end_of_turn",
         "Dwynen, Gilt-Leaf Daen" => "source_declared_attacker:gain_life_current_attacking_elf_count",
@@ -7756,7 +7768,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v52\n"
+            "kernel_carddb/v53\n"
         } else {
             "kernel_carddb/v34\n"
         },
@@ -8109,6 +8121,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Turtle" => "Subtype::Turtle",
         "Gremlin" => "Subtype::Gremlin",
         "Dinosaur" => "Subtype::Dinosaur",
+        "Warlock" => "Subtype::Warlock",
         "Pirate" => "Subtype::Pirate",
         "Plains" => "Subtype::Plains",
         "ROGUE" => "Subtype::RogueAllCaps",

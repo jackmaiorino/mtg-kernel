@@ -19,9 +19,9 @@ booster manifest. The inventory tool adds all five basic lands and any
 additional fixture cards. After fixture batches A and B and the combat and
 legend-rule, targeted-spell, counter-creature, life-gain, draw, Horde, Koma, Kiora,
 Prowler, Rebuke, Voyage, Scavenging, Armor and Witness slices and the first
-milestone-5 keyword-creature batch,
-50 reference names have full registry support, one reference planeswalker
-is partial and 235 remain missing. Both original decks resolve all 40
+milestone-5 keyword-creature and gainland/life-gain batches,
+61 reference names have full registry support, one reference planeswalker
+is partial and 224 remain missing. Both original decks resolve all 40
 mainboard copies, covering all 39 unique fixture names. Dwynen includes its Elf bonuses, attack
 trigger and a real resumable legend-rule choice.
 Printed collector numbers are not a safe
@@ -33,7 +33,7 @@ unchanged 192-definition Pauper registry. The importer combines both files in
 that order and reports their separate SHA-256s. Build the gameplay binary with
 `cargo build --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_env`.
 Default builds retain the Pauper catalog and its v34 identity; the
-Limited feature selects the appended definitions and their v52 identity.
+Limited feature selects the appended definitions and their v53 identity.
 Earlier FDN catalog tuples remain readable and are rejected for mutation
 when they do not match the actual build.
 
@@ -81,6 +81,10 @@ Vampire Nighthawk) the deck coverage every non-token definition requires. It
 resolves fully and is excluded from original-deck coverage counts. See
 `docs/design/fdn_keyword_creatures_v1.md` and the remaining-pool inventory in
 `docs/reports/fdn_remaining_pool_inventory_v1.md`.
+
+`FDN_reference_gainlands_lifegain.dck` likewise covers the eight FDN
+gainlands, Ajani's Pridemate, Marauding Blight-Priest and Sanguine Syphoner;
+see `docs/design/fdn_gainlands_lifegain_v1.md`.
 
 `FDN_reference_planeswalker.dck` is a synthetic correctness fixture for
 Bite Down's planeswalker recipient. Ajani has entry loyalty and damage
