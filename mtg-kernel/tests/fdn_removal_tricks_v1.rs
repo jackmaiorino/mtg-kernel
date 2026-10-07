@@ -584,8 +584,10 @@ fn make_your_move_sees_pumped_power_and_fizzles_when_power_drops() {
 fn meteor_golem_destroys_only_an_opponents_nonland_permanent() {
     let mut state = ready();
     let mut surface = surface();
-    let own = put(&mut state, PlayerId::P0, "Great Furnace", Zone::Battlefield);
-    let theirs = put(&mut state, PlayerId::P1, "Great Furnace", Zone::Battlefield);
+    let own = put(&mut state, PlayerId::P0, "Savannah Lions", Zone::Battlefield);
+    let theirs = put(&mut state, PlayerId::P1, "Savannah Lions", Zone::Battlefield);
+    // Great Furnace is an artifact land, so "nonland" excludes it.
+    let their_artifact_land = put(&mut state, PlayerId::P1, "Great Furnace", Zone::Battlefield);
     let their_angel = put(&mut state, PlayerId::P1, "Serra Angel", Zone::Battlefield);
     let their_land = put(&mut state, PlayerId::P1, "Forest", Zone::Battlefield);
     let golem = cast(&mut surface, &mut state, "Meteor Golem", None, &[]);
@@ -595,7 +597,6 @@ fn meteor_golem_destroys_only_an_opponents_nonland_permanent() {
             Decision::CastSpellOrPass { .. } if state.stack.is_empty() => break,
             Decision::CastSpellOrPass { .. } => apply(&mut surface, &mut state, Action::Pass),
             Decision::ChooseTargets { legal_targets, .. } => {
-                eprintln!("OFFERED {legal_targets:?} theirs={theirs:?} own={own:?}");
                 offered = Some(legal_targets);
                 apply(&mut surface, &mut state, Action::ChooseTarget(Target::Object(theirs)));
             }
@@ -611,6 +612,7 @@ fn meteor_golem_destroys_only_an_opponents_nonland_permanent() {
     assert_eq!(zone(&state, their_angel), Zone::Battlefield);
     assert_eq!(zone(&state, own), Zone::Battlefield);
     assert_eq!(zone(&state, their_land), Zone::Battlefield);
+    assert!(!offered.contains(&Target::Object(their_artifact_land)));
 }
 
 #[test]
