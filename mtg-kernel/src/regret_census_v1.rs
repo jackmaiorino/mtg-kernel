@@ -20,6 +20,7 @@ use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
+mod duel;
 mod validity;
 
 const MAX_PHYSICAL: u64 = 4096;
@@ -867,22 +868,66 @@ fn run_spyprobe_game(
     Ok(())
 }
 
-pub fn run_v1(cfg: CensusConfigV1) -> Result<(), String> {
-    let source: ExpandedModelSourceV1 = serde_json::from_slice(
-        &std::fs::read(&cfg.source).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
-    let (policy, identity) = load_expanded_inference_v1(&source)?;
+/// Loads either a plain `ExpandedModelSourceV1` JSON, or a wrapper
+/// `{"source": <ExpandedModelSourceV1>, "parameters_override": <path>,
+/// "parameters_override_sha256": <hex>}` whose override file holds a
+/// `parameters` list (name/shape/u32-bit values) for the same architecture,
+/// e.g. the legacy parameters of a public-input continuation trained with
+/// public inputs disabled. The override replaces every model parameter.
+fn load_policy_v1(path: &str) -> Result<FrozenPlayPolicyV1, String> {
+    use sha2::{Digest, Sha256};
+    let raw: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    let (source_value, override_path, override_sha) = match raw.get("source") {
+        Some(inner) => (
+            inner.clone(),
+            raw["parameters_override"].as_str().map(str::to_owned),
+            raw["parameters_override_sha256"].as_str().map(str::to_owned),
+        ),
+        None => (raw.clone(), None, None),
+    };
+    let source: ExpandedModelSourceV1 =
+        serde_json::from_value(source_value).map_err(|e| e.to_string())?;
+    let (mut policy, identity) = load_expanded_inference_v1(&source)?;
     eprintln!("loaded {}", serde_json::to_string(&identity).unwrap_or_default());
-    let reference = match std::env::var("REF_SOURCE") {
-        Ok(path) => {
-            let source: ExpandedModelSourceV1 =
-                serde_json::from_slice(&std::fs::read(&path).map_err(|e| e.to_string())?)
-                    .map_err(|e| e.to_string())?;
-            let (p, id) = load_expanded_inference_v1(&source)?;
-            eprintln!("reference {}", serde_json::to_string(&id).unwrap_or_default());
-            p
+    if let Some(op) = override_path {
+        let bytes = std::fs::read(&op).map_err(|e| e.to_string())?;
+        let digest: String = Sha256::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect();
+        if Some(&digest) != override_sha.as_ref() {
+            return Err(format!("parameter override sha256 {digest} differs from pin"));
         }
+        let saved: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+        let rows = saved["parameters"].as_array().ok_or("override has no parameters")?;
+        let mut params = policy.training_parameters_v3();
+        if rows.len() != params.len() {
+            return Err("override parameter count differs".into());
+        }
+        for (p, row) in params.iter_mut().zip(rows) {
+            if row["name"].as_str() != Some(p.name) {
+                return Err(format!("override parameter order differs at {}", p.name));
+            }
+            let values: Vec<f32> = row["values"]
+                .as_array()
+                .ok_or("override values")?
+                .iter()
+                .map(|v| v.as_u64().map(|b| f32::from_bits(b as u32)).ok_or("override value"))
+                .collect::<Result<_, _>>()?;
+            if values.len() != p.values.len() {
+                return Err(format!("override shape differs at {}", p.name));
+            }
+            p.values = values;
+        }
+        policy.replace_training_parameters_v3(&params)?;
+        eprintln!("parameters overridden from {op} (sha256 {digest})");
+    }
+    Ok(policy)
+}
+
+pub fn run_v1(cfg: CensusConfigV1) -> Result<(), String> {
+    let policy = load_policy_v1(&cfg.source)?;
+    let reference = match std::env::var("REF_SOURCE") {
+        Ok(path) => load_policy_v1(&path)?,
         Err(_) => policy.fork_for_collection_v3()?,
     };
     let sink = Mutex::new(
@@ -917,6 +962,8 @@ pub fn run_v1(cfg: CensusConfigV1) -> Result<(), String> {
                         run_spyfix_game(cfg, g, &mut base, sink)
                     } else if cfg.mode == "trace" {
                         run_trace_game(cfg, g, &mut base, &mut roll, sink)
+                    } else if cfg.mode == "duel" {
+                        duel::run_duel_game(cfg, g, &mut base, &mut refp, sink)
                     } else if cfg.mode == "validity" {
                         validity::run_validity_game(cfg, g, &mut base, &mut roll, sink)
                     } else if cfg.mode == "pilot" {
