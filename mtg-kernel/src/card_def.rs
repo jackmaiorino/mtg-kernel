@@ -250,6 +250,16 @@ pub enum Subtype {
     Hyena,
     Raccoon,
     Citizen,
+    /// Appended for the FDN keyword-only creature batch; existing ids remain fixed.
+    Turtle,
+    Gremlin,
+    Dinosaur,
+    /// Appended for Sanguine Syphoner; existing ids remain fixed.
+    Warlock,
+    /// Appended for Firebrand Archer and Spitfire Lagac; existing ids remain
+    /// fixed.
+    Archer,
+    Lizard,
 }
 
 impl Subtype {
@@ -337,6 +347,18 @@ impl Subtype {
         Subtype::Raccoon,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Citizen,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Turtle,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Gremlin,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Dinosaur,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Warlock,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Archer,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Lizard,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -451,6 +473,21 @@ impl Subtype {
                 | Subtype::Fish
                 | Subtype::Beast
                 | Subtype::Cleric
+                | Subtype::Angel
+                | Subtype::Noble
+                | Subtype::Unicorn
+                | Subtype::Homunculus
+                | Subtype::Merfolk
+                | Subtype::Octopus
+                | Subtype::Hyena
+                | Subtype::Raccoon
+                | Subtype::Citizen
+                | Subtype::Turtle
+                | Subtype::Gremlin
+                | Subtype::Dinosaur
+                | Subtype::Warlock
+                | Subtype::Archer
+                | Subtype::Lizard
         )
     }
 }
@@ -1421,6 +1458,16 @@ pub struct CardDef {
 }
 
 impl CardDef {
+    /// Printed alternative spell form selected by the shared Omen/Adventure
+    /// cast method. Other alternative costs (including Bestow) retain the
+    /// ordinary printed mana value and must not use this definition.
+    pub fn omen_spell_form(&self) -> Option<(Cost, &'static [CardType])> {
+        self.adventure
+            .as_ref()
+            .map(|form| (form.cost, form.types))
+            .or_else(|| self.omen.as_ref().map(|form| (form.cost, form.types)))
+    }
+
     pub fn has_type(&self, t: CardType) -> bool {
         self.types.contains(&t)
     }
@@ -1748,11 +1795,13 @@ mod tests {
         // 187-191 (pauper meta wave 2 Task 3), again without renumbering
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
-        // definitions as ids 192-197 after every Pauper definition.
+        // definitions as ids 192-197 after every Pauper definition; later FDN
+        // batches append through id 267 (trigger creatures, tricks and their
+        // tokens).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                236
+                268
             } else {
                 192
             }
@@ -1840,8 +1889,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v51_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0xbd13_8573_1e43_c4a1;
+    fn card_db_hash_v54_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x4076_ff9c_6377_05ce;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
