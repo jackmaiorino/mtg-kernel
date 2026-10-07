@@ -254,6 +254,8 @@ pub enum Subtype {
     Turtle,
     Gremlin,
     Dinosaur,
+    /// Appended for Sanguine Syphoner; existing ids remain fixed.
+    Warlock,
 }
 
 impl Subtype {
@@ -347,6 +349,8 @@ impl Subtype {
         Subtype::Gremlin,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Dinosaur,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Warlock,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -1769,11 +1773,11 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 242 (keyword-only creatures).
+        // batches append through id 253 (gainlands and life-gain creatures).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                243
+                254
             } else {
                 192
             }
@@ -1861,8 +1865,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v52_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x77a1_97d4_0460_bf5c;
+    fn card_db_hash_v53_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0xf0ce_bc58_a1ba_113d;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
