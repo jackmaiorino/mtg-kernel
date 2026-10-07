@@ -159,8 +159,9 @@ def classify_failure(root: Path) -> str:
     return "invalid" if any(marker in text for marker in INVALIDITY_MARKERS) else "interrupted"
 
 
-def dispatch_block(request_path: Path) -> dict:
-    done = subprocess.run([sys.executable, "-B", str(DISPATCH), "dispatch", str(request_path)],
+def dispatch_block(request_path: Path, compute_host_name: str | None = None) -> dict:
+    extra = ["--compute-host-name", compute_host_name] if compute_host_name else []
+    done = subprocess.run([sys.executable, "-B", str(DISPATCH), "dispatch", str(request_path)] + extra,
                           capture_output=True, text=True, cwd=str(TOOLS.parents[1]))
     if done.returncode != 0:
         raise RuntimeError(f"dispatch refused: {done.stderr.strip()[-2000:]}")
@@ -271,7 +272,7 @@ def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
         entry["attempts"].append(record)
         campaign.save_state(run, state)
         campaign.event(run=run, block=block, attempt=attempt, kind="dispatch")
-        result = dispatch_block(Path(request_pin["path"]))
+        result = dispatch_block(Path(request_pin["path"]), campaign.raw.get("compute_host_name"))
         record["dispatch"] = result
         if result.get("state") != "dispatched":
             record["outcome"] = "spawn-" + str(result.get("state"))

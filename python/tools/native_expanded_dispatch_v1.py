@@ -547,7 +547,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("qualify", "dispatch", "_qualify", "_dispatch", "check-choice"))
     parser.add_argument("request", type=Path)
+    # WMI-created supervisors inherit no environment: the launching shell's
+    # COMPUTE_HOST_NAME travels to the guarded child on its command line.
+    parser.add_argument("--compute-host-name")
     args = parser.parse_args()
+    if args.compute_host_name:
+        HOSTS["computehost"] = args.compute_host_name.upper()
     require(args.request.is_absolute(), "absolute request path required")
     request = read(args.request)
     qualification = args.action in ("qualify", "_qualify")
@@ -566,7 +571,8 @@ def main():
         result = reservations.dispatch(
             lane=request["lane"], work_id=Path(request["root"]).name,
             release_condition="native-expanded process, durable archive and guarded receipt complete or fail",
-            command=[sys.executable, "-B", str(Path(__file__).resolve()), "_" + args.action, str(args.request)],
+            command=[sys.executable, "-B", str(Path(__file__).resolve()), "_" + args.action, str(args.request)]
+                    + ["--compute-host-name", HOSTS["computehost"]],
             cwd=str(Path(__file__).resolve().parents[2]),
             busy_pattern=r"native_expanded_training|expanded_deck_training|cargo|rustc|trainer\.exe")
         print(json.dumps(result))
