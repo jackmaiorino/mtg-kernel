@@ -878,6 +878,7 @@ fn dauntless_veteran_attacking_boosts_every_creature_its_controller_controls() {
         &mut state,
         Action::DeclareAttackers(vec![veteran]),
     );
+    priority(&mut surface, &mut state);
     assert_eq!(state.stack.len(), 1);
     resolve(&mut surface, &mut state);
     assert_eq!(engine::effective_power(&state, veteran), 3);

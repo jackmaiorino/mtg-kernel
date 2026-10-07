@@ -3871,10 +3871,12 @@ fn can_pay_components(
                 let obj = state.objects.get(source);
                 let def = &card_def::CARD_DEFS[obj.card_def as usize];
                 // 302.6: a *creature's* tap-cost ability needs continuous
-                // control since the turn began. Irrelevant to every
-                // tap-cost ability in this pool (Blood is an artifact),
-                // kept for correctness if a future card needs it.
-                !(obj.tapped || (def.has_type(CardType::Creature) && obj.summoning_sick))
+                // control since the turn began, unless it has haste
+                // (702.10c; Fanatical Firebrand).
+                !(obj.tapped
+                    || (def.has_type(CardType::Creature)
+                        && obj.summoning_sick
+                        && !has_effective_keyword(state, source, Keywords::HASTE)))
             }
             CostComponent::SacrificeSelf | CostComponent::ExileSelf => true,
             CostComponent::DiscardSelf => {
