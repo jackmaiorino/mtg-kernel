@@ -162,14 +162,13 @@ jobs:
           - cuda
         include:
           - os: ubuntu-24.04
-            runner: '"ubuntu-24.04"'
+            runner: '["self-hosted", "mtg-ci-linux"]'
           - os: windows-2025
             runner: '["self-hosted", "mtg-ci-windows"]'
-    # Windows groups run on self-hosted runners (Jack's PC and HaleysPC),
-    # which keep a per-group cargo target directory between runs, so most
-    # builds are incremental. Hosted Windows is about twice as slow as hosted
-    # Ubuntu, which stays on GitHub's runners. Pull requests from forks never
-    # run on the self-hosted runners.
+    # Self-hosted runners (Jack's PC, HaleysPC) keep a per-group cargo target
+    # directory between runs, so most builds are incremental, and they avoid
+    # GitHub's hosted-runner queue. Pull requests from forks never run on the
+    # self-hosted runners.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.runner) || matrix.os }}
     steps:
       # Windows can resolve `bash` to the WSL launcher in System32 first;
