@@ -187,13 +187,15 @@ jobs:
         env:
           RUSTUP_HOME: ${{ runner.temp }}/fdn-rustup
         run: |
-          # Self-hosted runners keep their own toolchain directory between jobs.
+          # Each self-hosted runner keeps its own toolchain directory between
+          # jobs; runners on one machine must not share one, because
+          # concurrent rustup installs race on its download directory.
           if [ -n "${MTG_CI_TARGET_ROOT:-}" ]; then
             ci_root="$MTG_CI_TARGET_ROOT"
             if [ "$RUNNER_OS" = Windows ]; then
               ci_root="$(cygpath -u "$ci_root")"
             fi
-            RUSTUP_HOME="$(dirname "$ci_root")/fdn-rustup"
+            RUSTUP_HOME="${ci_root%/}-fdn-rustup"
           fi
           if [ "$RUNNER_OS" = Windows ]; then
             export RUSTUP_HOME="$(cygpath -w "$RUSTUP_HOME")"
