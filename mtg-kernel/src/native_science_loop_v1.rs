@@ -623,7 +623,8 @@ fn run_native_science_loop_with_opponents_v1(
         | NativeRunCatalogProfileV1::FdnWitnessProtectionRebased
         | NativeRunCatalogProfileV1::FdnKeywordCreatures
         | NativeRunCatalogProfileV1::FdnGainlandsLifegain
-        | NativeRunCatalogProfileV1::FdnTriggersTricks => {}
+        | NativeRunCatalogProfileV1::FdnTriggersTricks
+        | NativeRunCatalogProfileV1::FdnEquipmentSearch => {}
     }
 
     if ladder_opponent.is_some() && population_opponent.is_some() {

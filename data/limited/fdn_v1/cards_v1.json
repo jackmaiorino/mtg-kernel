@@ -2290,6 +2290,240 @@
       ],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/InsectBlackGreenFlyingToken.java",
       "is_token": true
+    },
+    {
+      "name": "Burst Lightning",
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_equipment_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "kicker",
+        "burn"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BurstLightning.java"
+    },
+    {
+      "name": "Evolving Wilds",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_equipment_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "tap_ability",
+        "sacrifice_cost",
+        "fetch_effect"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EvolvingWilds.java"
+    },
+    {
+      "name": "Solemn Simulacrum",
+      "engine_capability": "full",
+      "mana_cost": "{4}",
+      "mana_value": 4,
+      "colors": [],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Golem"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_equipment_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "etb_trigger",
+        "fetch_effect",
+        "dies_trigger",
+        "may_draw"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SolemnSimulacrum.java"
+    },
+    {
+      "name": "Swiftfoot Boots",
+      "engine_capability": "full",
+      "mana_cost": "{2}",
+      "mana_value": 2,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Equipment"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_equipment_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "equipment",
+        "keyword_grant",
+        "equip"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SwiftfootBoots.java"
+    },
+    {
+      "name": "Grim Tutor",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_equipment_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "tutor",
+        "life_loss"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GrimTutor.java"
+    },
+    {
+      "name": "Quick-Draw Katana",
+      "engine_capability": "full",
+      "mana_cost": "{2}",
+      "mana_value": 2,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Equipment"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_equipment_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "equipment",
+        "conditional_static_pump",
+        "keyword_grant",
+        "equip"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/q/QuickDrawKatana.java"
+    },
+    {
+      "name": "Adventuring Gear",
+      "engine_capability": "full",
+      "mana_cost": "{1}",
+      "mana_value": 1,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Equipment"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_equipment_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "equipment",
+        "landfall",
+        "attached_pump_until_end_of_turn",
+        "equip"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AdventuringGear.java"
+    },
+    {
+      "name": "Goldvein Pick",
+      "engine_capability": "full",
+      "mana_cost": "{2}",
+      "mana_value": 2,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Equipment"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_equipment_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "equipment",
+        "static_pump",
+        "attached_combat_damage_trigger",
+        "treasure_token",
+        "equip"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GoldveinPick.java"
     }
   ]
 }

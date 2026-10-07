@@ -120,6 +120,10 @@ pub enum TriggerCondition {
     AttacksWithControllerGraveyardCardCountAtLeast(u8),
     BeginningControllerEndStepIfCreatureDied,
     BeginningControllerEndStep,
+    /// The creature this Equipment is attached to deals combat damage to a
+    /// player (Goldvein Pick). The committed marker's source incarnation
+    /// must be the Equipment's exact current host.
+    EquippedCreatureDealsCombatDamageToPlayer,
 }
 
 pub struct TriggeredAbilityDef {
@@ -1023,6 +1027,49 @@ fn outlaw_medic_dies_effect() -> EffectOp {
     }
 }
 
+fn adventuring_gear_landfall_effect() -> EffectOp {
+    // "Landfall -- Whenever a land you control enters, equipped creature
+    // gets +2/+2 until end of turn."
+    EffectOp::BoostAttachedCreatureUntilEndOfTurn {
+        power: 2,
+        toughness: 2,
+    }
+}
+
+fn goldvein_pick_combat_damage_effect() -> EffectOp {
+    // "Whenever equipped creature deals combat damage to a player, create a
+    // Treasure token."
+    EffectOp::CreateToken {
+        token_def: crate::card_def::card_id_by_name("Treasure Token")
+            .expect("Treasure Token in CARD_DEFS"),
+        controller: PlayerRef::Controller,
+    }
+}
+
+fn solemn_simulacrum_etb_effect() -> EffectOp {
+    // "When this creature enters, you may search your library for a basic
+    // land card, put that card onto the battlefield tapped, then shuffle."
+    // The zero-card selection is the "may".
+    EffectOp::SearchLibraryToBattlefieldTapped {
+        player: PlayerRef::Controller,
+        filter: crate::effect::LibraryCardFilter::BasicLand,
+    }
+}
+
+fn solemn_simulacrum_dies_effect() -> EffectOp {
+    // "When this creature dies, you may draw a card."
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: vec![
+            EffectOp::Sequence(vec![]),
+            EffectOp::DrawCards {
+                player: PlayerRef::Controller,
+                count: 1,
+            },
+        ],
+    }
+}
+
 fn refurbished_familiar_etb_effect() -> EffectOp {
     // The kernel is strictly 1v1. The opponent chooses and discards one
     // card when possible; otherwise the Familiar's controller draws one.
@@ -1368,6 +1415,39 @@ const OUTLAW_MEDIC_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     effect: outlaw_medic_dies_effect,
 }];
 
+const ADVENTURING_GEAR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControlledLandEnters,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: adventuring_gear_landfall_effect,
+}];
+
+const GOLDVEIN_PICK_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::EquippedCreatureDealsCombatDamageToPlayer,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: goldvein_pick_combat_damage_effect,
+}];
+
+const SOLEMN_SIMULACRUM_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::Etb,
+        home_zone: Zone::Battlefield,
+        intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
+        effect: solemn_simulacrum_etb_effect,
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::LeftBattlefieldToGraveyard,
+        home_zone: Zone::Graveyard,
+        intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
+        effect: solemn_simulacrum_dies_effect,
+    },
+];
+
 const REFURBISHED_FAMILIAR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Etb,
     home_zone: Zone::Battlefield,
@@ -1625,6 +1705,9 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Faerie Miscreant" => &FAERIE_MISCREANT_TRIGGERS,
         "Faerie Seer" => &FAERIE_SEER_TRIGGERS,
         "Outlaw Medic" => &OUTLAW_MEDIC_TRIGGERS,
+        "Solemn Simulacrum" => &SOLEMN_SIMULACRUM_TRIGGERS,
+        "Adventuring Gear" => &ADVENTURING_GEAR_TRIGGERS,
+        "Goldvein Pick" => &GOLDVEIN_PICK_TRIGGERS,
         "Refurbished Familiar" => &REFURBISHED_FAMILIAR_TRIGGERS,
         "Squadron Hawk" => &SQUADRON_HAWK_TRIGGERS,
         "Bind the Monster" => &BIND_THE_MONSTER_TRIGGERS,
@@ -2812,6 +2895,20 @@ fn trigger_matches(
         ) => {
             *event_source == source
                 && state.objects.get(source).zone_change_count == *source_zone_change_count
+        }
+        (
+            TriggerCondition::EquippedCreatureDealsCombatDamageToPlayer,
+            CommittedEvent::CombatDamageToPlayer {
+                source: event_source,
+                source_zone_change_count,
+                ..
+            },
+        ) => {
+            state.objects.get(source).v4.attached_to
+                == Some(crate::state::ObjectLinkV4 {
+                    object: *event_source,
+                    zone_change_count: *source_zone_change_count,
+                })
         }
         (
             TriggerCondition::CastInstantOrSorcery,

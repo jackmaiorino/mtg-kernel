@@ -114,6 +114,7 @@ impl Scan<'_> {
             | PreventCombatDamageToTargetThisTurn { .. }
             | PutSourceOntoBattlefieldAttachedToTarget { .. }
             | TapAttachedCreatureAndDamageControllerByPower
+            | BoostAttachedCreatureUntilEndOfTurn { .. }
             | BackupTarget { .. }
             | PutSourceOntoBattlefieldTappedAndAttacking
             | UntapUpToLands { .. }

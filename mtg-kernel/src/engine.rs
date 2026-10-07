@@ -11117,8 +11117,9 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
             }
         }
     }
-    for (_, equipment) in attached_equipment_profiles(state, id) {
-        power += i32::from(equipment.power_delta);
+    for (equipment_id, equipment) in attached_equipment_profiles(state, id) {
+        let controller_turn = state.active_player == state.objects.get(equipment_id).controller;
+        power += i32::from(equipment.pt_deltas(controller_turn).0);
     }
     for eff in &state.engine.until_end_of_turn {
         match eff {
@@ -11167,8 +11168,9 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
             }
         }
     }
-    for (_, equipment) in attached_equipment_profiles(state, id) {
-        toughness += i32::from(equipment.toughness_delta);
+    for (equipment_id, equipment) in attached_equipment_profiles(state, id) {
+        let controller_turn = state.active_player == state.objects.get(equipment_id).controller;
+        toughness += i32::from(equipment.pt_deltas(controller_turn).1);
     }
     for eff in &state.engine.until_end_of_turn {
         match eff {

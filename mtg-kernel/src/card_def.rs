@@ -260,6 +260,8 @@ pub enum Subtype {
     /// fixed.
     Archer,
     Lizard,
+    /// Appended for the FDN equipment and library-search batch.
+    Golem,
 }
 
 impl Subtype {
@@ -359,6 +361,8 @@ impl Subtype {
         Subtype::Archer,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Lizard,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Golem,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -488,6 +492,7 @@ impl Subtype {
                 | Subtype::Warlock
                 | Subtype::Archer
                 | Subtype::Lizard
+                | Subtype::Golem
         )
     }
 }
@@ -1246,6 +1251,11 @@ fn longbow_ping() -> EffectOp {
 pub struct EquipmentDef {
     pub power_delta: i16,
     pub toughness_delta: i16,
+    /// The power/toughness deltas apply only during the Equipment
+    /// controller's turn (Quick-Draw Katana: "During your turn, equipped
+    /// creature gets +2/+0"). Keyword grants already split by turn through
+    /// `controller_turn_keywords`/`other_turn_keywords`.
+    pub pt_controller_turn_only: bool,
     pub add_subtype: Option<Subtype>,
     pub controller_turn_keywords: Keywords,
     pub other_turn_keywords: Keywords,
@@ -1255,6 +1265,18 @@ pub struct EquipmentDef {
     /// Equipment is attached to it (Viridian Longbow). `None` for every
     /// other Equipment in the pool.
     pub granted_activated_ability: Option<GrantedActivatedAbilityDef>,
+}
+
+impl EquipmentDef {
+    /// The power and toughness deltas this Equipment currently grants,
+    /// given whether it is its controller's turn.
+    pub fn pt_deltas(&self, controller_turn: bool) -> (i16, i16) {
+        if self.pt_controller_turn_only && !controller_turn {
+            (0, 0)
+        } else {
+            (self.power_delta, self.toughness_delta)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1796,12 +1818,11 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 267 (trigger creatures, tricks and their
-        // tokens).
+        // batches append through id 275 (equipment, kicker and library-search cards).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                268
+                276
             } else {
                 192
             }
@@ -1889,8 +1910,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v54_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x4076_ff9c_6377_05ce;
+    fn card_db_hash_v55_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x4916_1c8f_72ba_c163;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
