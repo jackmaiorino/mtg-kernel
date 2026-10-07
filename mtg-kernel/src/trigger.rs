@@ -1554,7 +1554,23 @@ const DELVER_OF_SECRETS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
 /// duplicating as constants here -- see `build.rs`'s module doc on id
 /// stability). Every other card in the pool has no triggered ability
 /// implemented and falls through to `&[]`.
+///
+/// Memoized per definition id: the dispatch below is a pure function of the
+/// static `CARD_DEFS` entry, but its by-name `match` is a long chain of string
+/// compares, and trigger collection calls it for every object in every zone on
+/// every committed event batch.
 pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
+    static TABLE: std::sync::OnceLock<Box<[&'static [TriggeredAbilityDef]]>> =
+        std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        (0..crate::card_def::CARD_DEFS.len())
+            .map(|index| triggers_for_uncached(index as u16))
+            .collect()
+    });
+    table.get(card_def as usize).copied().unwrap_or(&[])
+}
+
+fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
     let Some(card) = crate::card_def::CARD_DEFS.get(card_def as usize) else {
         return &[];
     };
@@ -1946,6 +1962,18 @@ pub(crate) fn saga_final_chapter_is_pending(
         })
 }
 
+/// `CARD_DEFS[i].is_token`, packed densely so the per-SBA-pass token sweep
+/// over every object does not stride through full `CardDef` entries.
+fn token_card_defs() -> &'static [bool] {
+    static TABLE: std::sync::OnceLock<Box<[bool]>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        crate::card_def::CARD_DEFS
+            .iter()
+            .map(|card| card.is_token)
+            .collect()
+    })
+}
+
 fn sba_fixed_point_with_protected_triggers(
     state: &mut GameState,
     protected_triggers: &[PendingTrigger],
@@ -2090,13 +2118,11 @@ fn sba_fixed_point_with_protected_triggers(
         // the real v3 corpus: `kernel_gy` carrying a stray "Blood Token"
         // entry the trace's own graveyard snapshot never has, many turns
         // after the token was created and then activated/sacrificed).
+        let token_defs = token_card_defs();
         let leaving: Vec<ObjectId> = state
             .objects
             .iter()
-            .filter(|(_, obj)| {
-                obj.zone != Zone::Battlefield
-                    && crate::card_def::CARD_DEFS[obj.card_def as usize].is_token
-            })
+            .filter(|(_, obj)| obj.zone != Zone::Battlefield && token_defs[obj.card_def as usize])
             .map(|(id, _)| id)
             .collect();
         for id in leaving {
@@ -2166,6 +2192,29 @@ pub(crate) fn collect_and_process_with_waiting(
     order_apnap(new_triggers, state.active_player)
 }
 
+/// Per-definition flag: whether an object of this definition can produce a
+/// trigger in `triggers_from_events`'s per-object pass (a Saga chapter, a
+/// definition-owned triggered ability, or a generic ward cost). Indexed like
+/// `CARD_DEFS`.
+fn card_defs_with_event_triggers() -> &'static [bool] {
+    static TABLE: std::sync::OnceLock<Box<[bool]>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        crate::card_def::CARD_DEFS
+            .iter()
+            .enumerate()
+            .map(|(index, card)| {
+                card.is_executable()
+                    && (card.saga.is_some()
+                        || !triggers_for(index as u16).is_empty()
+                        || matches!(
+                            card.ward_cost,
+                            Some(crate::card_def::WardCostDef::Generic(_))
+                        ))
+            })
+            .collect()
+    })
+}
+
 fn triggers_from_events(
     state: &mut GameState,
     events: &[CommittedEvent],
@@ -2183,9 +2232,23 @@ fn triggers_from_events(
                         && object.zone_change_count == entry.source.zone_change_count
                 })
     });
+    if events.is_empty() {
+        // Nothing can match an empty batch; only the use-ledger pruning
+        // above is observable.
+        uses.sort_by_key(|entry| (entry.source.object, entry.ability_index));
+        state.trigger_uses_v1 = (!uses.is_empty()).then_some(uses);
+        return Vec::new();
+    }
     let draws_this_turn_at = draws_this_turn_snapshot(events, state);
     let mut new_triggers = Vec::new();
+    let may_trigger = card_defs_with_event_triggers();
     for (id, obj) in state.objects.iter() {
+        // Most objects (lands, vanilla creatures, every library card of a
+        // definition with no triggered ability) can never match; skip them
+        // without touching their large `CardDef` entry.
+        if !may_trigger[obj.card_def as usize] {
+            continue;
+        }
         let card = &crate::card_def::CARD_DEFS[obj.card_def as usize];
         if !card.is_executable() {
             continue;
