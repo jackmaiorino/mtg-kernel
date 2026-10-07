@@ -158,7 +158,17 @@ jobs:
           - saved-input
           - native-store
           - cuda
-    runs-on: ${{ matrix.os }}
+        include:
+          - os: ubuntu-24.04
+            runner: '"ubuntu-24.04"'
+          - os: windows-2025
+            runner: '["self-hosted", "mtg-ci-windows"]'
+    # Windows groups run on self-hosted runners (Jack's PC and HaleysPC),
+    # which keep a per-group cargo target directory between runs, so most
+    # builds are incremental. Hosted Windows is about twice as slow as hosted
+    # Ubuntu, which stays on GitHub's runners. Pull requests from forks never
+    # run on the self-hosted runners.
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.runner) || matrix.os }}
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -168,6 +178,14 @@ jobs:
         env:
           RUSTUP_HOME: ${{ runner.temp }}/fdn-rustup
         run: |
+          # Self-hosted runners keep their own toolchain directory between jobs.
+          if [ -n "${MTG_CI_TARGET_ROOT:-}" ]; then
+            ci_root="$MTG_CI_TARGET_ROOT"
+            if [ "$RUNNER_OS" = Windows ]; then
+              ci_root="$(cygpath -u "$ci_root")"
+            fi
+            RUSTUP_HOME="$(dirname "$ci_root")/fdn-rustup"
+          fi
           if [ "$RUNNER_OS" = Windows ]; then
             export RUSTUP_HOME="$(cygpath -w "$RUSTUP_HOME")"
           fi
@@ -181,7 +199,18 @@ jobs:
         with:
           python-version-file: .python-version
 
+      - name: Use the runner's persistent target directory
+        run: |
+          if [ -n "${MTG_CI_TARGET_ROOT:-}" ]; then
+            target_dir="$MTG_CI_TARGET_ROOT/${{ matrix.group }}"
+            if [ "$RUNNER_OS" = Windows ]; then
+              target_dir="$(cygpath -w "$(cygpath -u "$MTG_CI_TARGET_ROOT")/${{ matrix.group }}")"
+            fi
+            printf 'CARGO_TARGET_DIR=%s\n' "$target_dir" >> "$GITHUB_ENV"
+          fi
+
       - name: Cache cargo registry
+        if: runner.environment == 'github-hosted'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -219,12 +248,9 @@ jobs:
 
       - name: Validate native Store production feature boundary
         if: matrix.group == 'native-store'
-        shell: pwsh
         run: |
           cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --lib native_store_production_capture_v2::
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --test native_cli_platform_stub_v2
-          exit $LASTEXITCODE
 
       - name: Validate FDN Limited gameplay and catalog separation
         if: matrix.group == 'limited'
