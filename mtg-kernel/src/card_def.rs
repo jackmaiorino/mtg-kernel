@@ -1931,7 +1931,7 @@ mod tests {
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
     fn card_db_hash_v56_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x0000_0000_0000_0000;
+        const EXPECTED_FDN: u64 = 0x280f_ffb0_3aa0_3e98;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

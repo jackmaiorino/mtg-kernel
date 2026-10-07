@@ -287,9 +287,6 @@ const SPITFIRE_LAGAC_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     ..etb_trigger(kessig_flamebreather_effect)
 }];
 
-fn prideful_parent_effect() -> EffectOp {
-    EffectOp::CreateToken {
-        token_def: crate::card_def::card_id_by_name("Cat Token").expect("Cat Token in CARD_DEFS"),
 const DRAGON_TRAINER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(dragon_trainer_effect)];
 const RESOLUTE_REINFORCEMENTS_TRIGGERS: [TriggeredAbilityDef; 1] =
     [etb_trigger(resolute_reinforcements_effect)];
@@ -305,6 +302,13 @@ const RITE_OF_THE_DRAGONCALLER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAb
     condition: TriggerCondition::CastInstantOrSorcery,
     ..etb_trigger(rite_of_the_dragoncaller_effect)
 }];
+
+fn prideful_parent_effect() -> EffectOp {
+    EffectOp::CreateToken {
+        token_def: crate::card_def::card_id_by_name("Cat Token").expect("Cat Token in CARD_DEFS"),
+        controller: PlayerRef::Controller,
+    }
+}
 
 fn create_controller_token_effect(name: &str) -> EffectOp {
     EffectOp::CreateToken {
@@ -342,6 +346,8 @@ fn infestation_sage_effect() -> EffectOp {
             .expect("Insect Token in CARD_DEFS"),
         controller: PlayerRef::Controller,
     }
+}
+
 fn dragon_trainer_effect() -> EffectOp {
     create_controller_token_effect("Dragon Token")
 }

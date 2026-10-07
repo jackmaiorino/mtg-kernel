@@ -331,7 +331,7 @@ const FROZEN_RUNTIME_CATALOG_SHA256_FDN_EQUIPMENT_SEARCH_V1: &str =
     "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
 // v56 adds FDN token makers, their tokens and static creature Auras.
-const FROZEN_CARD_DB_HASH_U64_HEX_FDN_TOKENS_AURAS_V1: &str = "0000000000000000";
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_TOKENS_AURAS_V1: &str = "280fffb03aa03e98";
 const FROZEN_RUNTIME_CATALOG_SHA256_FDN_TOKENS_AURAS_V1: &str =
     "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
@@ -6016,17 +6016,6 @@ mod tests {
     }
 
     #[cfg(feature = "limited-fdn-fixtures")]
-    pub(super) fn fixture_bytes_fdn_gainlands_lifegain() -> Vec<u8> {
-        let mut record = fixture_record();
-        record.environment.card_db_hash_u64_hex =
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_GAINLANDS_LIFEGAIN_V1.to_owned();
-        record.environment.runtime_catalog_sha256 =
-            FROZEN_RUNTIME_CATALOG_SHA256_FDN_GAINLANDS_LIFEGAIN_V1.to_owned();
-        refresh_derived(&mut record);
-        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
-    }
-
-    #[cfg(feature = "limited-fdn-fixtures")]
     pub(super) fn fixture_bytes_fdn_keyword_creatures() -> Vec<u8> {
         let mut record = fixture_record();
         record.environment.card_db_hash_u64_hex =
@@ -7754,7 +7743,7 @@ mod tests {
         );
         assert_eq!(
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_TOKENS_AURAS_V1,
-            "0000000000000000"
+            "280fffb03aa03e98"
         );
     }
 
