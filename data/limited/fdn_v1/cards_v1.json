@@ -1876,6 +1876,420 @@
         "life_gain"
       ],
       "java_file": "Mage.Sets/src/mage/cards/s/SanguineSyphoner.java"
+    },
+    {
+      "name": "Helpful Hunter",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Cat"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_triggers_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "etb_trigger",
+        "draw"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HelpfulHunter.java"
+    },
+    {
+      "name": "Prideful Parent",
+      "engine_capability": "full",
+      "mana_cost": "{2}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Cat"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_triggers_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "vigilance",
+        "etb_trigger",
+        "token_creation"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/p/PridefulParent.java"
+    },
+    {
+      "name": "Icewind Elemental",
+      "engine_capability": "full",
+      "mana_cost": "{4}{U}",
+      "mana_value": 5,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elemental"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_triggers_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying",
+        "etb_trigger",
+        "draw",
+        "discard"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/i/IcewindElemental.java"
+    },
+    {
+      "name": "Burglar Rat",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Rat"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_triggers_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "etb_trigger",
+        "opponent_discard"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BurglarRat.java"
+    },
+    {
+      "name": "Diregraf Ghoul",
+      "engine_capability": "full",
+      "mana_cost": "{B}",
+      "mana_value": 1,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Zombie"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_triggers_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "enters_tapped"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DiregrafGhoul.java"
+    },
+    {
+      "name": "Infestation Sage",
+      "engine_capability": "full",
+      "mana_cost": "{B}",
+      "mana_value": 1,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elf",
+        "Warlock"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_triggers_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "dies_trigger",
+        "token_creation"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/i/InfestationSage.java"
+    },
+    {
+      "name": "Wary Thespian",
+      "engine_capability": "full",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Cat",
+        "Druid"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_triggers_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "etb_trigger",
+        "dies_trigger",
+        "surveil"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/w/WaryThespian.java"
+    },
+    {
+      "name": "Firebrand Archer",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Archer"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_triggers_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "spell_cast_trigger",
+        "opponent_damage"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FirebrandArcher.java"
+    },
+    {
+      "name": "Spitfire Lagac",
+      "engine_capability": "full",
+      "mana_cost": "{3}{R}",
+      "mana_value": 4,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Lizard"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_triggers_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "landfall",
+        "opponent_damage"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SpitfireLagac.java"
+    },
+    {
+      "name": "Giant Growth",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_triggers_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "pump_target"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GiantGrowth.java"
+    },
+    {
+      "name": "Stab",
+      "engine_capability": "full",
+      "mana_cost": "{B}",
+      "mana_value": 1,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_triggers_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "pump_target",
+        "removal"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/Stab.java"
+    },
+    {
+      "name": "Think Twice",
+      "engine_capability": "full",
+      "mana_cost": "{1}{U}",
+      "mana_value": 2,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_triggers_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "draw",
+        "flashback"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/ThinkTwice.java"
+    },
+    {
+      "name": "Cat Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Cat"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/CatToken3.java",
+      "is_token": true
+    },
+    {
+      "name": "Insect Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "B",
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Insect"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/InsectBlackGreenFlyingToken.java",
+      "is_token": true
     }
   ]
 }

@@ -29,7 +29,9 @@ env:
 jobs:
   detect-changes:
     name: Detect changed paths
-    runs-on: ubuntu-24.04
+    # A few seconds of git work: run it on the self-hosted Linux runner so
+    # the self-hosted test groups never wait in GitHub's hosted queue.
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted", "mtg-ci-linux"]') || 'ubuntu-24.04' }}
     outputs:
       python_relevant: ${{ steps.classify.outputs.python_relevant }}
       rust_relevant: ${{ steps.classify.outputs.rust_relevant }}
@@ -150,24 +152,76 @@ jobs:
         os:
           - ubuntu-24.04
           - windows-2025
+        # Slowest groups first: runners take matrix jobs in this order.
         group:
-          - workspace
           - limited
-          - limited-store
+          - workspace
+          - cuda
+          - native-store
           - trace
           - saved-input
-          - native-store
-          - cuda
-    runs-on: ${{ matrix.os }}
+          - limited-store
+        include:
+          - os: ubuntu-24.04
+            runner: '["self-hosted", "mtg-ci-linux"]'
+          - os: windows-2025
+            runner: '["self-hosted", "mtg-ci-windows"]'
+    # Self-hosted runners (Jack's PC, HaleysPC) keep a per-group cargo target
+    # directory between runs, so most builds are incremental, and they avoid
+    # GitHub's hosted-runner queue. Pull requests from forks never run on the
+    # self-hosted runners.
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.runner) || matrix.os }}
     steps:
+      # Windows can resolve `bash` to the WSL launcher in System32 first;
+      # put Git Bash ahead of it for every later step.
+      - name: Use Git Bash for bash steps on Windows
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: echo C:\Program Files\Git\bin>>"%GITHUB_PATH%"
+
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Prepare the self-hosted runner
+        if: runner.environment == 'self-hosted'
+        run: |
+          # Runners without a configured target root keep one beside their
+          # work directory, so builds still persist between jobs.
+          if [ -z "${MTG_CI_TARGET_ROOT:-}" ]; then
+            printf 'MTG_CI_TARGET_ROOT=%s\n' "$RUNNER_WORKSPACE/../../mtg-ci-target" >> "$GITHUB_ENV"
+          fi
+          cargo_bin=
+          if ! command -v rustup >/dev/null && [ -x "$HOME/.cargo/bin/rustup" ]; then
+            cargo_bin="$HOME/.cargo/bin"
+          elif [ "$RUNNER_OS" = Windows ] && command -v cargo >/dev/null; then
+            cargo_bin="$(dirname "$(command -v cargo)")"
+          fi
+          if [ -n "$cargo_bin" ]; then
+            # Python's subprocess calls launch cargo through Windows, which
+            # cannot read a bash path such as /c/Users/...; publish a plain
+            # Windows path there.
+            if [ "$RUNNER_OS" = Windows ]; then
+              cargo_bin="$(cygpath -w "$cargo_bin")"
+            fi
+            echo "Adding the Cargo directory to PATH: $cargo_bin"
+            printf '%s\n' "$cargo_bin" >> "$GITHUB_PATH"
+          fi
 
       - name: Install pinned Rust in a fresh toolchain directory
         shell: bash
         env:
           RUSTUP_HOME: ${{ runner.temp }}/fdn-rustup
         run: |
+          # Each self-hosted runner keeps its own toolchain directory between
+          # jobs; runners on one machine must not share one, because
+          # concurrent rustup installs race on its download directory.
+          if [ -n "${MTG_CI_TARGET_ROOT:-}" ]; then
+            ci_root="$MTG_CI_TARGET_ROOT"
+            if [ "$RUNNER_OS" = Windows ]; then
+              ci_root="$(cygpath -u "$ci_root")"
+            fi
+            RUSTUP_HOME="${ci_root%/}-fdn-rustup"
+          fi
           if [ "$RUNNER_OS" = Windows ]; then
             export RUSTUP_HOME="$(cygpath -w "$RUSTUP_HOME")"
           fi
@@ -181,7 +235,18 @@ jobs:
         with:
           python-version-file: .python-version
 
+      - name: Use the runner's persistent target directory
+        run: |
+          if [ -n "${MTG_CI_TARGET_ROOT:-}" ]; then
+            target_dir="$MTG_CI_TARGET_ROOT/${{ matrix.group }}"
+            if [ "$RUNNER_OS" = Windows ]; then
+              target_dir="$(cygpath -w "$(cygpath -u "$MTG_CI_TARGET_ROOT")/${{ matrix.group }}")"
+            fi
+            printf 'CARGO_TARGET_DIR=%s\n' "$target_dir" >> "$GITHUB_ENV"
+          fi
+
       - name: Cache cargo registry
+        if: runner.environment == 'github-hosted'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -219,17 +284,14 @@ jobs:
 
       - name: Validate native Store production feature boundary
         if: matrix.group == 'native-store'
-        shell: pwsh
         run: |
           cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --lib native_store_production_capture_v2::
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --test native_cli_platform_stub_v2
-          exit $LASTEXITCODE
 
       - name: Validate FDN Limited gameplay and catalog separation
         if: matrix.group == 'limited'
         run: |
-          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test fdn_fixture_batch_a_v1 --test fdn_fixture_batch_b_v1 --test limited_session_v1 --test limited_priority_v1 --test limited_combat_v1 --test fdn_combat_cards_v1 --test fdn_legend_rule_v1 --test fdn_targeted_spells_v1 --test fdn_counter_creatures_v1 --test fdn_lifegain_creatures_v1 --test fdn_draw_creatures_v1 --test fdn_homunculus_creature_v1 --test fdn_koma_creature_v1 --test fdn_kiora_creature_v1 --test fdn_prowler_creature_v1 --test fdn_luminous_rebuke_v1 --test fdn_uncharted_voyage_v1 --test fdn_sylvan_scavenging_v1 --test fdn_celestial_armor_v1 --test fdn_keyword_creatures_v1 --test fdn_gainlands_lifegain_v1
+          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test fdn_fixture_batch_a_v1 --test fdn_fixture_batch_b_v1 --test limited_session_v1 --test limited_priority_v1 --test limited_combat_v1 --test fdn_combat_cards_v1 --test fdn_legend_rule_v1 --test fdn_targeted_spells_v1 --test fdn_counter_creatures_v1 --test fdn_lifegain_creatures_v1 --test fdn_draw_creatures_v1 --test fdn_homunculus_creature_v1 --test fdn_koma_creature_v1 --test fdn_kiora_creature_v1 --test fdn_prowler_creature_v1 --test fdn_luminous_rebuke_v1 --test fdn_uncharted_voyage_v1 --test fdn_sylvan_scavenging_v1 --test fdn_celestial_armor_v1 --test fdn_keyword_creatures_v1 --test fdn_gainlands_lifegain_v1 --test fdn_triggers_tricks_v1
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures limited_session_v1::tests rl_session::tests card_def:: koma_spell_protection threshold_counts_graveyard native_training_store_run_v2::
 
       - name: Validate FDN profiles under the native Store feature
@@ -251,7 +313,7 @@ jobs:
         os:
           - ubuntu-24.04
           - windows-2025
-    runs-on: ubuntu-24.04
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted", "mtg-ci-linux"]') || 'ubuntu-24.04' }}
     steps:
       - name: Require every Rust test group
         run: test "${{ needs.rust-test-groups.result }}" = success

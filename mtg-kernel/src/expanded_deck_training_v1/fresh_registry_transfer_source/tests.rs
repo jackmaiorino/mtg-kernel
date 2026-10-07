@@ -110,9 +110,14 @@ fn apply(
 }
 
 fn fixture() -> Fixture {
+    // The tests in this module build fixtures on parallel threads of one
+    // process, and the Windows clock can return the same nanosecond value to
+    // two of them, so the counter keeps each root distinct.
+    static NEXT_FIXTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
-        "fresh-registry-trainer-{}-{}",
+        "fresh-registry-trainer-{}-{}-{}",
         std::process::id(),
+        NEXT_FIXTURE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

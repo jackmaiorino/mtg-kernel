@@ -256,6 +256,10 @@ pub enum Subtype {
     Dinosaur,
     /// Appended for Sanguine Syphoner; existing ids remain fixed.
     Warlock,
+    /// Appended for Firebrand Archer and Spitfire Lagac; existing ids remain
+    /// fixed.
+    Archer,
+    Lizard,
 }
 
 impl Subtype {
@@ -351,6 +355,10 @@ impl Subtype {
         Subtype::Dinosaur,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Warlock,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Archer,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Lizard,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -465,6 +473,21 @@ impl Subtype {
                 | Subtype::Fish
                 | Subtype::Beast
                 | Subtype::Cleric
+                | Subtype::Angel
+                | Subtype::Noble
+                | Subtype::Unicorn
+                | Subtype::Homunculus
+                | Subtype::Merfolk
+                | Subtype::Octopus
+                | Subtype::Hyena
+                | Subtype::Raccoon
+                | Subtype::Citizen
+                | Subtype::Turtle
+                | Subtype::Gremlin
+                | Subtype::Dinosaur
+                | Subtype::Warlock
+                | Subtype::Archer
+                | Subtype::Lizard
         )
     }
 }
@@ -1773,11 +1796,12 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 253 (gainlands and life-gain creatures).
+        // batches append through id 267 (trigger creatures, tricks and their
+        // tokens).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                254
+                268
             } else {
                 192
             }
@@ -1865,8 +1889,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v53_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0xf0ce_bc58_a1ba_113d;
+    fn card_db_hash_v54_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x4076_ff9c_6377_05ce;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
