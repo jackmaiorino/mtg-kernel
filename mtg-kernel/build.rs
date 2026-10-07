@@ -3550,7 +3550,7 @@ fn keywords_for(card: &CardJson) -> String {
         | "Guarded Heir"
         | "Sun-Blessed Healer" => keywords.push("Keywords::LIFELINK"),
         "Guardian of the Guildpact" => keywords.push("Keywords::PROTECTION_FROM_MONOCOLORED"),
-        "Brazen Scourge" => keywords.push("Keywords::HASTE"),
+        "Brazen Scourge" | "Fanatical Firebrand" => keywords.push("Keywords::HASTE"),
         "Samurai Token" => keywords.push("Keywords::VIGILANCE"),
         _ => {}
     }
@@ -4037,6 +4037,16 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
                     filter: PermanentFilterRecipe::ArtifactOrCreature,
                 },
             ],
+            effect: AbilityEffectRecipe::DealDamageAnyTarget(1),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "AnyTarget",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        // {T}, Sacrifice this creature: It deals 1 damage to any target.
+        "Fanatical Firebrand" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Tap, AbilityCostRecipe::SacrificeSelf],
             effect: AbilityEffectRecipe::DealDamageAnyTarget(1),
             activation_zone: "Battlefield",
             sorcery_speed_only: false,
@@ -5257,6 +5267,8 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Conduit Pylons" => "etb:surveil:1",
         "Humbling Elder" => "etb:target_opponent_creature:pump:-2:0:eot",
         "Meteor Golem" => "etb:target_opponent_nonland_permanent:destroy",
+        "Dauntless Veteran" => "source_declared_attacker:boost_controlled_creatures:1:1:none:end_of_turn",
+        "Crackling Cyclops" => "cast_noncreature:pump_bound_source:3:0:end_of_turn",
         "Reclamation Sage" => "etb:target_artifact_or_enchantment:may_destroy",
         "Moon-Circuit Hacker" => {
             "combat_damage_player:may_draw:discard_unless_source_entered_this_turn:lki"
@@ -8286,6 +8298,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Gremlin" => "Subtype::Gremlin",
         "Dinosaur" => "Subtype::Dinosaur",
         "Golem" => "Subtype::Golem",
+        "Cyclops" => "Subtype::Cyclops",
         "Pirate" => "Subtype::Pirate",
         "Plains" => "Subtype::Plains",
         "ROGUE" => "Subtype::RogueAllCaps",

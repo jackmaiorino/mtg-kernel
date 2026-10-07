@@ -256,6 +256,8 @@ pub enum Subtype {
     Dinosaur,
     /// Appended for Meteor Golem; existing ids remain fixed.
     Golem,
+    /// Appended for Crackling Cyclops; existing ids remain fixed.
+    Cyclops,
 }
 
 impl Subtype {
@@ -351,6 +353,8 @@ impl Subtype {
         Subtype::Dinosaur,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Golem,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Cyclops,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:

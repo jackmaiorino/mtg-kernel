@@ -27,12 +27,15 @@ const BATCH: [&str; 10] = [
     "Bake into a Pie",
 ];
 
-const BATCH_TWO: [&str; 5] = [
+const BATCH_TWO: [&str; 8] = [
     "Hero's Downfall",
     "Broken Wings",
     "Make Your Move",
     "Meteor Golem",
     "Reclamation Sage",
+    "Fanatical Firebrand",
+    "Dauntless Veteran",
+    "Crackling Cyclops",
 ];
 
 fn ready() -> GameState {
@@ -799,4 +802,113 @@ fn reclamation_sage_may_destroy_an_artifact_or_enchantment() {
             }
         );
     }
+}
+
+#[test]
+fn fanatical_firebrand_has_haste_and_sacrifices_to_deal_one_damage() {
+    let mut state = ready();
+    let mut surface = surface();
+    let firebrand = put(
+        &mut state,
+        PlayerId::P0,
+        "Fanatical Firebrand",
+        Zone::Battlefield,
+    );
+    state.objects.get_mut(firebrand).summoning_sick = true;
+    assert!(engine::has_effective_keyword(
+        &state,
+        firebrand,
+        Keywords::HASTE
+    ));
+    let life = state.players[1].life;
+    priority(&mut surface, &mut state);
+    apply(
+        &mut surface,
+        &mut state,
+        Action::ActivateAbility(firebrand, 0),
+    );
+    match next(&mut surface, &mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert!(legal_targets.contains(&Target::Player(PlayerId::P1)));
+        }
+        other => panic!("{other:?}"),
+    }
+    apply(
+        &mut surface,
+        &mut state,
+        Action::ChooseTarget(Target::Player(PlayerId::P1)),
+    );
+    priority(&mut surface, &mut state);
+    assert_eq!(zone(&state, firebrand), Zone::Graveyard);
+    resolve(&mut surface, &mut state);
+    assert_eq!(state.players[1].life, life - 1);
+}
+
+#[test]
+fn dauntless_veteran_attacking_boosts_every_creature_its_controller_controls() {
+    let mut state = ready();
+    let mut surface = surface();
+    let veteran = put(
+        &mut state,
+        PlayerId::P0,
+        "Dauntless Veteran",
+        Zone::Battlefield,
+    );
+    let lions = put(
+        &mut state,
+        PlayerId::P0,
+        "Savannah Lions",
+        Zone::Battlefield,
+    );
+    let theirs = put(
+        &mut state,
+        PlayerId::P1,
+        "Savannah Lions",
+        Zone::Battlefield,
+    );
+    state.step = Step::DeclareAttackers;
+    state.engine.combat.attackers_declared = false;
+    state.engine.combat.blockers_declared = false;
+    match next(&mut surface, &mut state) {
+        Decision::DeclareAttackers { .. } => {}
+        other => panic!("{other:?}"),
+    }
+    apply(
+        &mut surface,
+        &mut state,
+        Action::DeclareAttackers(vec![veteran]),
+    );
+    assert_eq!(state.stack.len(), 1);
+    resolve(&mut surface, &mut state);
+    assert_eq!(engine::effective_power(&state, veteran), 3);
+    assert_eq!(engine::effective_toughness(&state, veteran), 3);
+    assert_eq!(engine::effective_power(&state, lions), 3);
+    assert_eq!(engine::effective_toughness(&state, lions), 2);
+    assert_eq!(engine::effective_power(&state, theirs), 2);
+}
+
+#[test]
+fn crackling_cyclops_gets_three_power_only_for_noncreature_spells() {
+    let mut state = ready();
+    let mut surface = surface();
+    let cyclops = put(
+        &mut state,
+        PlayerId::P0,
+        "Crackling Cyclops",
+        Zone::Battlefield,
+    );
+    assert_eq!(engine::effective_power(&state, cyclops), 0);
+    cast(&mut surface, &mut state, "Savannah Lions", None, &[]);
+    assert_eq!(state.stack.len(), 1, "a creature spell does not trigger");
+    resolve(&mut surface, &mut state);
+    cast(&mut surface, &mut state, "Boltwave", None, &[]);
+    assert_eq!(state.stack.len(), 2, "the trigger is above the spell");
+    resolve(&mut surface, &mut state);
+    assert_eq!(engine::effective_power(&state, cyclops), 3);
+    assert_eq!(engine::effective_toughness(&state, cyclops), 4);
+    resolve(&mut surface, &mut state);
+    cast(&mut surface, &mut state, "Boltwave", None, &[]);
+    resolve(&mut surface, &mut state);
+    resolve(&mut surface, &mut state);
+    assert_eq!(engine::effective_power(&state, cyclops), 6);
 }

@@ -1360,6 +1360,35 @@ const HUMBLING_ELDER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     effect: humbling_elder_etb_effect,
 }];
 
+/// Dauntless Veteran: "Whenever this creature attacks, creatures you
+/// control get +1/+1 until end of turn."
+fn dauntless_veteran_attack_effect() -> EffectOp {
+    EffectOp::BoostControlledCreaturesUntilEndOfTurn {
+        power: 1,
+        toughness: 1,
+        keywords: Keywords::NONE,
+    }
+}
+
+const DAUNTLESS_VETERAN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Attacks,
+    ..etb_trigger(dauntless_veteran_attack_effect)
+}];
+
+/// Crackling Cyclops: "Whenever you cast a noncreature spell, this creature
+/// gets +3/+0 until end of turn."
+fn crackling_cyclops_effect() -> EffectOp {
+    EffectOp::BindTemporaryBoostToTriggerSource {
+        power: 3,
+        toughness: 0,
+    }
+}
+
+const CRACKLING_CYCLOPS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastNoncreatureSpell,
+    ..etb_trigger(crackling_cyclops_effect)
+}];
+
 const METEOR_GOLEM_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Etb,
     home_zone: Zone::Battlefield,
@@ -1572,6 +1601,8 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Conduit Pylons" => &CONDUIT_PYLONS_TRIGGERS,
         "Humbling Elder" => &HUMBLING_ELDER_TRIGGERS,
         "Meteor Golem" => &METEOR_GOLEM_TRIGGERS,
+        "Dauntless Veteran" => &DAUNTLESS_VETERAN_TRIGGERS,
+        "Crackling Cyclops" => &CRACKLING_CYCLOPS_TRIGGERS,
         "Reclamation Sage" => &RECLAMATION_SAGE_TRIGGERS,
         "Moon-Circuit Hacker" => &MOON_CIRCUIT_HACKER_TRIGGERS,
         "Ninja of the Deep Hours" => &NINJA_OF_THE_DEEP_HOURS_TRIGGERS,

@@ -1962,6 +1962,100 @@
         "may_destroy_artifact_enchantment"
       ],
       "java_file": "Mage.Sets/src/mage/cards/r/ReclamationSage.java"
+    },
+    {
+      "name": "Fanatical Firebrand",
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Goblin",
+        "Pirate"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "haste",
+        "activated_sacrifice_self",
+        "damage_any_target"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FanaticalFirebrand.java"
+    },
+    {
+      "name": "Dauntless Veteran",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "attack_trigger",
+        "boost_controlled_creatures"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DauntlessVeteran.java"
+    },
+    {
+      "name": "Crackling Cyclops",
+      "engine_capability": "full",
+      "mana_cost": "{2}{R}",
+      "mana_value": 3,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Cyclops",
+        "Wizard"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "cast_noncreature_trigger",
+        "temporary_power_change"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CracklingCyclops.java"
     }
   ]
 }
