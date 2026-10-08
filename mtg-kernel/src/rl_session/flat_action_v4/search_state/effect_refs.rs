@@ -126,6 +126,9 @@ impl Scan<'_> {
             | BindConvokedCreatureCountToLookTop { .. }
             | LookTopTakeCreaturesManaValueAtMostThenShuffle { .. }
             | Incubate { .. }
+            | BindPlusOneCounterOnAnotherTargetToTriggerTarget
+            | PutPlusOnePlusOneCounterOnTargetOtherThan { .. }
+            | ReturnSourceFromGraveyardUnearthed
             | BackupTarget { .. }
             | PutSourceOntoBattlefieldTappedAndAttacking
             | UntapUpToLands { .. }
@@ -613,6 +616,7 @@ pub(super) fn conflicts(
             | ManaAdded { .. }
             | UpkeepBegan { .. }
             | CrimeCommitted { .. }
+            | BeginningOfCombat { .. }
             | PowerBeforeLeavingBattlefield { .. }
             | BeginningEndStep { .. } => false,
         }

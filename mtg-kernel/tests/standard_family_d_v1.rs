@@ -146,6 +146,12 @@ fn family_d_cards_are_fully_supported() {
         "Bat Token",
         "Darkstar Augur",
         "Darkstar Augur Offspring Token",
+        "Ruin-Lurker Bat",
+        "Pawpatch Recruit",
+        "Pawpatch Recruit Offspring Token",
+        "Manifold Mouse",
+        "Manifold Mouse Offspring Token",
+        "Yotian Frontliner",
     ] {
         let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} missing"));
         assert_eq!(
@@ -1178,4 +1184,314 @@ fn darkstar_augur_offspring_and_upkeep_reveal() {
     let hand = &state.players[0].hand;
     assert!(hand.contains(&top[0]) && hand.contains(&top[1]));
     assert_eq!(state.players[0].life, 15);
+}
+
+/// Passes until `until` holds, answering any trigger target prompt with its
+/// first legal target and recording every other non-priority decision.
+fn pass_recording(
+    state: &mut GameState,
+    until: impl Fn(&GameState) -> bool,
+    seen: &mut Vec<Decision>,
+) {
+    for _ in 0..500 {
+        match next(state) {
+            Decision::CastSpellOrPass { .. } if until(state) => return,
+            Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+            Decision::DeclareAttackers { .. } => {
+                engine::step(state, Action::DeclareAttackers(vec![])).unwrap()
+            }
+            Decision::DeclareBlockers { .. } => {
+                engine::step(state, Action::DeclareBlockers(vec![])).unwrap()
+            }
+            Decision::OrderTriggers { pending, .. } => {
+                engine::step(state, Action::OrderTriggers((0..pending.len()).collect())).unwrap()
+            }
+            other => panic!("unexpected decision: {other:?} (seen {seen:?})"),
+        }
+    }
+    panic!("condition never reached");
+}
+
+#[test]
+fn ruin_lurker_bat_scries_at_end_step_only_after_descending() {
+    let mut state = ready();
+    let bat = put(
+        &mut state,
+        PlayerId::P0,
+        "Ruin-Lurker Bat",
+        Zone::Battlefield,
+    );
+    assert!(engine::has_effective_keyword(&state, bat, Keywords::FLYING));
+    assert!(engine::has_effective_keyword(
+        &state,
+        bat,
+        Keywords::LIFELINK
+    ));
+    // No descent this turn: the end step passes with no scry.
+    let mut seen = Vec::new();
+    pass_recording(
+        &mut state,
+        |s| s.active_player == PlayerId::P1 && s.step == Step::Main1,
+        &mut seen,
+    );
+    pass_recording(
+        &mut state,
+        |s| s.active_player == PlayerId::P0 && s.step == Step::Main1,
+        &mut seen,
+    );
+
+    // A permanent card of ours goes to the graveyard: we descended.
+    let frontliner = put(
+        &mut state,
+        PlayerId::P0,
+        "Yotian Frontliner",
+        Zone::Battlefield,
+    );
+    burn(&mut state, PlayerId::P0, Target::Object(frontliner));
+    assert_eq!(state.objects.get(frontliner).zone, Zone::Graveyard);
+    let scry = loop {
+        match next(&mut state) {
+            Decision::CastSpellOrPass { .. } => {
+                assert!(state.active_player == PlayerId::P0, "no scry this turn");
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            Decision::DeclareAttackers { .. } => {
+                engine::step(&mut state, Action::DeclareAttackers(vec![])).unwrap()
+            }
+            other => break other,
+        }
+    };
+    assert_eq!(state.step, Step::End);
+    assert!(
+        matches!(
+            scry,
+            Decision::ChooseEffectTargets {
+                player: PlayerId::P0,
+                ..
+            }
+        ),
+        "{scry:?}"
+    );
+}
+
+#[test]
+fn pawpatch_recruit_counters_another_creature_when_an_opponent_targets_one() {
+    let mut state = ready();
+    let recruit = put(
+        &mut state,
+        PlayerId::P0,
+        "Pawpatch Recruit",
+        Zone::Battlefield,
+    );
+    let swiftspear = put(
+        &mut state,
+        PlayerId::P0,
+        "Monastery Swiftspear",
+        Zone::Battlefield,
+    );
+    assert!(engine::has_effective_keyword(
+        &state,
+        recruit,
+        Keywords::TRAMPLE
+    ));
+
+    // Our own spell targeting our creature does nothing (prowess saves it).
+    burn(&mut state, PlayerId::P0, Target::Object(swiftspear));
+    assert_eq!(state.objects.get(recruit).counters.plus1_plus1, 0);
+    assert_eq!(state.objects.get(swiftspear).zone, Zone::Battlefield);
+
+    // The opponent targets the Swiftspear: the counter can't go on it.
+    state.priority_player = PlayerId::P1;
+    let burst = put(&mut state, PlayerId::P1, "Burst Lightning", Zone::Hand);
+    add_mana(&mut state, PlayerId::P1, &[ManaColor::R], 0);
+    cast(&mut state, burst, &[Target::Object(swiftspear)]);
+    match settle(&mut state) {
+        Some(Decision::ChooseTargets {
+            player,
+            legal_targets,
+            ..
+        }) => {
+            assert_eq!(player, PlayerId::P0);
+            assert_eq!(legal_targets, vec![Target::Object(recruit)]);
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(recruit))).unwrap();
+        }
+        other => panic!("expected the trigger's target, got {other:?}"),
+    }
+    settled(&mut state);
+    assert_eq!(state.objects.get(recruit).counters.plus1_plus1, 1);
+    assert_eq!(state.objects.get(swiftspear).zone, Zone::Graveyard);
+
+    // Targeting the Recruit itself with no other creature to grow: the
+    // trigger has no legal target and is removed, so nothing prompts.
+    state.priority_player = PlayerId::P1;
+    let burst = put(&mut state, PlayerId::P1, "Burst Lightning", Zone::Hand);
+    add_mana(&mut state, PlayerId::P1, &[ManaColor::R], 0);
+    cast(&mut state, burst, &[Target::Object(recruit)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(recruit).zone, Zone::Graveyard);
+}
+
+#[test]
+fn pawpatch_recruit_offspring_copy_is_a_one_one() {
+    let mut state = ready();
+    let recruit = put(&mut state, PlayerId::P0, "Pawpatch Recruit", Zone::Hand);
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::G], 2);
+    engine::step(&mut state, Action::CastSpell(recruit)).unwrap();
+    assert!(matches!(next(&mut state), Decision::ChooseKicker { .. }));
+    engine::step(&mut state, Action::ChooseKicker(true)).unwrap();
+    settled(&mut state);
+    assert_eq!(tokens_named(&state, PlayerId::P0, "Pawpatch Recruit"), 2);
+}
+
+#[test]
+fn manifold_mouse_grants_a_mouse_double_strike_or_trample_each_combat() {
+    let mut state = ready();
+    let mouse = put(
+        &mut state,
+        PlayerId::P0,
+        "Manifold Mouse",
+        Zone::Battlefield,
+    );
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Monastery Swiftspear",
+        Zone::Battlefield,
+    );
+    let mut prompted = false;
+    for _ in 0..20 {
+        match next(&mut state) {
+            Decision::CastSpellOrPass { .. } if state.step == Step::BeginCombat && prompted => {
+                break
+            }
+            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert_eq!(state.step, Step::BeginCombat);
+                assert_eq!(legal_targets, vec![Target::Object(mouse)]);
+                engine::step(&mut state, Action::ChooseTarget(Target::Object(mouse))).unwrap();
+            }
+            Decision::ChooseEffectOption { .. } => {
+                prompted = true;
+                engine::step(&mut state, Action::ChooseEffectOption(1)).unwrap();
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    assert!(prompted);
+    assert!(engine::has_effective_keyword(
+        &state,
+        mouse,
+        Keywords::TRAMPLE
+    ));
+    assert!(!engine::has_effective_keyword(
+        &state,
+        mouse,
+        Keywords::DOUBLE_STRIKE
+    ));
+}
+
+#[test]
+fn manifold_mouse_does_not_trigger_on_the_opponents_turn() {
+    let mut state = ready();
+    put(
+        &mut state,
+        PlayerId::P1,
+        "Manifold Mouse",
+        Zone::Battlefield,
+    );
+    let mut seen = Vec::new();
+    pass_recording(&mut state, |s| s.step == Step::Main2, &mut seen);
+}
+
+#[test]
+fn yotian_frontliner_pumps_another_attacker_and_unearths() {
+    let mut state = ready();
+    let frontliner = put(
+        &mut state,
+        PlayerId::P0,
+        "Yotian Frontliner",
+        Zone::Battlefield,
+    );
+    let swiftspear = put(
+        &mut state,
+        PlayerId::P0,
+        "Monastery Swiftspear",
+        Zone::Battlefield,
+    );
+    attack_with(&mut state, vec![frontliner]);
+    match settle(&mut state) {
+        Some(Decision::ChooseTargets { legal_targets, .. }) => {
+            assert_eq!(legal_targets, vec![Target::Object(swiftspear)]);
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(swiftspear))).unwrap();
+        }
+        other => panic!("expected the attack trigger's target, got {other:?}"),
+    }
+    settled(&mut state);
+    assert_eq!(power_toughness(&state, swiftspear), (2, 3));
+}
+
+#[test]
+fn yotian_frontliner_unearth_returns_with_haste_then_exiles() {
+    let mut state = ready();
+    let frontliner = put(
+        &mut state,
+        PlayerId::P0,
+        "Yotian Frontliner",
+        Zone::Graveyard,
+    );
+    let offered = |state: &mut GameState| matches!(next(state), Decision::CastSpellOrPass { activatable_abilities, .. } if activatable_abilities.contains(&(frontliner, 0)));
+    assert!(!offered(&mut state), "no mana");
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::W], 0);
+    assert!(offered(&mut state));
+    engine::step(&mut state, Action::ActivateAbility(frontliner, 0)).unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(frontliner).zone, Zone::Battlefield);
+    assert!(engine::has_effective_keyword(
+        &state,
+        frontliner,
+        Keywords::HASTE
+    ));
+
+    // Exiled at the beginning of the end step, with no way to cast it.
+    let mut seen = Vec::new();
+    pass_recording(&mut state, |s| s.step == Step::End, &mut seen);
+    settled(&mut state);
+    assert_eq!(state.objects.get(frontliner).zone, Zone::Exile);
+    assert!(!state
+        .engine
+        .exile_play_permissions
+        .iter()
+        .any(|permission| permission.object == frontliner));
+}
+
+#[test]
+fn unearthed_yotian_frontliner_is_exiled_instead_of_dying() {
+    let mut state = ready();
+    let frontliner = put(
+        &mut state,
+        PlayerId::P0,
+        "Yotian Frontliner",
+        Zone::Graveyard,
+    );
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::W], 0);
+    engine::step(&mut state, Action::ActivateAbility(frontliner, 0)).unwrap();
+    settled(&mut state);
+    burn(&mut state, PlayerId::P0, Target::Object(frontliner));
+    assert_eq!(state.objects.get(frontliner).zone, Zone::Exile);
+}
+
+#[test]
+fn unearth_is_sorcery_speed() {
+    let mut state = ready();
+    let frontliner = put(
+        &mut state,
+        PlayerId::P0,
+        "Yotian Frontliner",
+        Zone::Graveyard,
+    );
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::W], 0);
+    state.step = Step::Upkeep;
+    assert!(
+        !matches!(next(&mut state), Decision::CastSpellOrPass { activatable_abilities, .. } if activatable_abilities.contains(&(frontliner, 0)))
+    );
 }

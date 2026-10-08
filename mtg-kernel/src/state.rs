@@ -201,6 +201,12 @@ pub struct ObjectStateV4 {
     /// clears it; resolution carries it onto the permanent.
     #[serde(default, skip_serializing_if = "u8_is_zero")]
     pub convoked_creatures_v1: u8,
+    /// True iff this battlefield incarnation was returned by unearth. It is
+    /// exiled at the beginning of the next end step, and exiled instead if
+    /// it would leave the battlefield any other way. Every zone change
+    /// clears it.
+    #[serde(default, skip_serializing_if = "bool_is_false")]
+    pub unearthed_v1: bool,
 }
 
 impl Hash for ObjectStateV4 {
@@ -238,6 +244,9 @@ impl Hash for ObjectStateV4 {
         if self.convoked_creatures_v1 != 0 {
             "convoked-creatures/v1".hash(state);
             self.convoked_creatures_v1.hash(state);
+        }
+        if self.unearthed_v1 {
+            "unearthed/v1".hash(state);
         }
     }
 }
@@ -291,6 +300,7 @@ impl ObjectStateV4 {
             on_adventure: false,
             warped_v1: false,
             convoked_creatures_v1: 0,
+            unearthed_v1: false,
         }
     }
 
@@ -933,7 +943,9 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::Land
                 | TargetSpec::OpponentArtifactOrEnchantmentPermanent
                 | TargetSpec::ArtifactOrEnchantmentPermanent
-                | TargetSpec::AttackingOrBlockingCreature,
+                | TargetSpec::AttackingOrBlockingCreature
+                | TargetSpec::AnotherControlledCreature
+                | TargetSpec::ControlledCreatureWithSubtype(_),
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Battlefield,

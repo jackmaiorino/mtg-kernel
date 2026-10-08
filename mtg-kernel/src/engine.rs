@@ -1471,7 +1471,9 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::CreatureOtherThanSource
         | TargetSpec::NonblackCreature
         | TargetSpec::ArtifactOrEnchantmentPermanent
-        | TargetSpec::AttackingOrBlockingCreature => 1,
+        | TargetSpec::AttackingOrBlockingCreature
+        | TargetSpec::AnotherControlledCreature
+        | TargetSpec::ControlledCreatureWithSubtype(_) => 1,
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
@@ -2513,12 +2515,16 @@ pub fn legal_targets_for(
 struct TargetingSource {
     object: ObjectId,
     card_def: u16,
+    /// The creature "other than that creature" names, when a trigger's
+    /// target must differ from an object other than its own source.
+    other_than: Option<ObjectId>,
 }
 
 fn targeting_source_for_object(state: &GameState, object: ObjectId) -> Option<TargetingSource> {
     state.objects.try_get(object).map(|live| TargetingSource {
         object,
         card_def: live.card_def,
+        other_than: None,
     })
 }
 
@@ -2547,9 +2553,14 @@ fn triggered_ability_targeting_source(
     if matches!(effect, EffectOp::ResolveInitiativeTrigger { .. }) {
         return None;
     }
+    let other_than = match effect {
+        EffectOp::PutPlusOnePlusOneCounterOnTargetOtherThan { other_than } => Some(*other_than),
+        _ => None,
+    };
     source_contract.map(|contract| TargetingSource {
         object: source,
         card_def: contract.card_def,
+        other_than,
     })
 }
 
@@ -2701,6 +2712,25 @@ fn legal_targets_for_controller_from_source(
                     && object.zone == Zone::Battlefield
                     && card_def::CARD_DEFS[object.card_def as usize].has_type(CardType::Creature))
                 .then_some(id)
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::AnotherControlledCreature => {
+            let excluded = source.map(|source| source.other_than.unwrap_or(source.object));
+            battlefield_objects(state)
+                .filter(|&id| {
+                    state.objects.get(id).controller == controller
+                        && object_has_type(state, id, CardType::Creature)
+                        && Some(id) != excluded
+                })
+                .map(Target::Object)
+                .collect()
+        }
+        TargetSpec::ControlledCreatureWithSubtype(subtype) => battlefield_objects(state)
+            .filter(|&id| {
+                state.objects.get(id).controller == controller
+                    && object_has_type(state, id, CardType::Creature)
+                    && has_effective_subtype(state, id, subtype)
             })
             .map(Target::Object)
             .collect(),
@@ -3092,6 +3122,7 @@ fn activation_legal_targets_with_source_lki(
         Some(TargetingSource {
             object: source,
             card_def: state.objects.get(source).card_def,
+            other_than: None,
         }),
         state,
     )
@@ -10179,6 +10210,7 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
                     StackItemKind::Spell => Some(TargetingSource {
                         object: item.source,
                         card_def: state.objects.get(item.source).card_def,
+                        other_than: None,
                     }),
                     StackItemKind::TriggeredAbility => {
                         let source_contract = item
@@ -10988,6 +11020,15 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
         }
         Step::BeginCombat => {
             state.engine.combat.reset_preserving_rules();
+            #[cfg(feature = "standard-magezero-fixtures")]
+            {
+                let marker = event::CommittedEvent::BeginningOfCombat {
+                    active_player: state.active_player,
+                };
+                state.engine.event_log.push(marker.clone());
+                state.engine.event_history.push(marker);
+                collect_and_queue_triggers(state);
+            }
         }
         Step::CombatDamage => {
             if state.engine.combat.foundations_v1.is_some() {

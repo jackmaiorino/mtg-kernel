@@ -152,6 +152,18 @@ pub enum TriggerCondition {
     /// "...or transforms into [this front face]" (`CommittedEvent::
     /// Transformed` to face zero).
     TransformsIntoFrontFace,
+    /// "At the beginning of your end step, if you descended this turn"
+    /// (a permanent card you owned went to your graveyard this turn).
+    BeginningControllerEndStepIfDescended,
+    /// "Whenever a creature you control becomes the target of a spell or
+    /// ability an opponent controls" (`CommittedEvent::Targeted`).
+    ControlledCreatureBecomesTargetOfOpponent,
+    /// "At the beginning of combat on your turn"
+    /// (`CommittedEvent::BeginningOfCombat`).
+    BeginningOfControllerCombat,
+    /// Unearth's "exile it at the beginning of the next end step"
+    /// (`ObjectStateV4::unearthed_v1`).
+    BeginningEndStepAfterUnearth,
 }
 
 pub struct TriggeredAbilityDef {
@@ -292,6 +304,16 @@ fn materialize_trigger_event_effect(
                 .unwrap_or(0)
                 .max(0),
         };
+    }
+    if matches!(
+        (trigger.effect)(),
+        EffectOp::BindPlusOneCounterOnAnotherTargetToTriggerTarget
+    ) {
+        if let CommittedEvent::Targeted { target, .. } = event {
+            return EffectOp::PutPlusOnePlusOneCounterOnTargetOtherThan {
+                other_than: *target,
+            };
+        }
     }
     if matches!((trigger.effect)(), EffectOp::BindIncubateToTriggerSpell) {
         if let CommittedEvent::SpellCast { spell, .. } = event {
@@ -1115,6 +1137,125 @@ const DARKSTAR_AUGUR_TRIGGERS: [TriggeredAbilityDef; 2] = [
             controller_only: true,
         },
         ..etb_trigger(darkstar_augur_upkeep_effect)
+    },
+];
+
+#[cfg(feature = "standard-magezero-fixtures")]
+fn controller_descended_this_turn(state: &GameState, controller: PlayerId) -> bool {
+    crate::standard_keywords_v1::descended_this_turn(state, controller)
+}
+
+#[cfg(not(feature = "standard-magezero-fixtures"))]
+fn controller_descended_this_turn(_state: &GameState, _controller: PlayerId) -> bool {
+    false
+}
+
+fn scry_one_effect() -> EffectOp {
+    EffectOp::Scry {
+        player: PlayerRef::Controller,
+        count: 1,
+    }
+}
+
+/// Flying, lifelink. At the beginning of your end step, if you descended
+/// this turn, scry 1.
+const RUIN_LURKER_BAT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningControllerEndStepIfDescended,
+    ..etb_trigger(scry_one_effect)
+}];
+
+fn pawpatch_recruit_offspring_effect() -> EffectOp {
+    let token_def = crate::card_def::card_id_by_name("Pawpatch Recruit Offspring Token")
+        .expect("Pawpatch Recruit Offspring Token in CARD_DEFS");
+    EffectOp::Conditional {
+        cond: EffectCond::WasKicked,
+        then: Box::new(EffectOp::CreateToken {
+            token_def,
+            controller: PlayerRef::Controller,
+        }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    }
+}
+
+fn pawpatch_recruit_targeted_effect() -> EffectOp {
+    EffectOp::BindPlusOneCounterOnAnotherTargetToTriggerTarget
+}
+
+/// Offspring {2}, trample. Whenever a creature you control becomes the
+/// target of a spell or ability an opponent controls, put a +1/+1 counter
+/// on target creature you control other than that creature.
+const PAWPATCH_RECRUIT_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        intervening_if_kicked: true,
+        ..etb_trigger(pawpatch_recruit_offspring_effect)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::ControlledCreatureBecomesTargetOfOpponent,
+        ..etb_trigger(pawpatch_recruit_targeted_effect)
+    },
+];
+
+fn manifold_mouse_offspring_effect() -> EffectOp {
+    let token_def = crate::card_def::card_id_by_name("Manifold Mouse Offspring Token")
+        .expect("Manifold Mouse Offspring Token in CARD_DEFS");
+    EffectOp::Conditional {
+        cond: EffectCond::WasKicked,
+        then: Box::new(EffectOp::CreateToken {
+            token_def,
+            controller: PlayerRef::Controller,
+        }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    }
+}
+
+fn manifold_mouse_combat_effect() -> EffectOp {
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: vec![
+            EffectOp::GrantKeywordTargetUntilEndOfTurn {
+                object: ObjectRef::Target(0),
+                keyword: Keywords::DOUBLE_STRIKE,
+            },
+            EffectOp::GrantKeywordTargetUntilEndOfTurn {
+                object: ObjectRef::Target(0),
+                keyword: Keywords::TRAMPLE,
+            },
+        ],
+    }
+}
+
+/// Offspring {2}. At the beginning of combat on your turn, target Mouse you
+/// control gains your choice of double strike or trample until end of turn.
+const MANIFOLD_MOUSE_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        intervening_if_kicked: true,
+        ..etb_trigger(manifold_mouse_offspring_effect)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::BeginningOfControllerCombat,
+        ..etb_trigger(manifold_mouse_combat_effect)
+    },
+];
+
+fn yotian_frontliner_attack_effect() -> EffectOp {
+    EffectOp::PumpTargetUntilEndOfTurnDynamic {
+        target: TargetRef::Target(0),
+        power: DynamicValueDef::Fixed(1),
+        toughness: DynamicValueDef::Fixed(1),
+    }
+}
+
+/// Whenever it attacks, another target creature you control gets +1/+1
+/// until end of turn. Unearth {W} (a graveyard activated ability; its exile
+/// at the next end step shares warp's delayed exile).
+const YOTIAN_FRONTLINER_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::Attacks,
+        ..etb_trigger(yotian_frontliner_attack_effect)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::BeginningEndStepAfterUnearth,
+        ..etb_trigger(warp_exile_effect)
     },
 ];
 
@@ -2119,6 +2260,10 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Slickshot Show-Off" => &SLICKSHOT_SHOW_OFF_TRIGGERS,
         "Sanguine Evangelist" => &SANGUINE_EVANGELIST_TRIGGERS,
         "Darkstar Augur" | "Darkstar Augur Offspring Token" => &DARKSTAR_AUGUR_TRIGGERS,
+        "Ruin-Lurker Bat" => &RUIN_LURKER_BAT_TRIGGERS,
+        "Pawpatch Recruit" | "Pawpatch Recruit Offspring Token" => &PAWPATCH_RECRUIT_TRIGGERS,
+        "Manifold Mouse" | "Manifold Mouse Offspring Token" => &MANIFOLD_MOUSE_TRIGGERS,
+        "Yotian Frontliner" => &YOTIAN_FRONTLINER_TRIGGERS,
         _ => &[],
     }
 }
@@ -2163,6 +2308,28 @@ fn standard_trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetS
                 TargetSpec::None
             })
         }
+        "Pawpatch Recruit" | "Pawpatch Recruit Offspring Token" => Some(
+            if matches!(
+                effect,
+                EffectOp::PutPlusOnePlusOneCounterOnTargetOtherThan { .. }
+            ) {
+                TargetSpec::AnotherControlledCreature
+            } else {
+                TargetSpec::None
+            },
+        ),
+        "Manifold Mouse" | "Manifold Mouse Offspring Token" => {
+            Some(if *effect == manifold_mouse_combat_effect() {
+                TargetSpec::ControlledCreatureWithSubtype(crate::card_def::Subtype::Mouse)
+            } else {
+                TargetSpec::None
+            })
+        }
+        "Yotian Frontliner" => Some(if *effect == yotian_frontliner_attack_effect() {
+            TargetSpec::AnotherControlledCreature
+        } else {
+            TargetSpec::None
+        }),
         "Brutal Cathar" => Some(if *effect == journey_to_nowhere_etb_effect() {
             TargetSpec::OpponentControlledCreature
         } else {
@@ -2231,6 +2398,10 @@ fn source_bound_trigger_program_matches(template: &EffectOp, effect: &EffectOp) 
         )
         | (EffectOp::BindWarpExileToTriggerSource, EffectOp::WarpExileBoundObject { .. })
         | (EffectOp::BindIncubateToTriggerSpell, EffectOp::Incubate { .. })
+        | (
+            EffectOp::BindPlusOneCounterOnAnotherTargetToTriggerTarget,
+            EffectOp::PutPlusOnePlusOneCounterOnTargetOtherThan { .. },
+        )
         | (
             EffectOp::BindDamageOpponentEqualToSourceLastPower,
             EffectOp::DealDamage {
@@ -3519,6 +3690,39 @@ fn trigger_matches(
             TriggerCondition::ControllerCommitsCrime,
             CommittedEvent::CrimeCommitted { player, .. },
         ) => *player == controller,
+        (
+            TriggerCondition::ControlledCreatureBecomesTargetOfOpponent,
+            CommittedEvent::Targeted {
+                target,
+                target_zone_change_count,
+                targeting_controller,
+                ..
+            },
+        ) => {
+            *targeting_controller != controller
+                && state.objects.try_get(*target).is_some_and(|object| {
+                    object.zone == Zone::Battlefield
+                        && object.controller == controller
+                        && object.zone_change_count == *target_zone_change_count
+                })
+                && crate::engine::object_has_type(
+                    state,
+                    *target,
+                    crate::card_def::CardType::Creature,
+                )
+        }
+        (
+            TriggerCondition::BeginningOfControllerCombat,
+            CommittedEvent::BeginningOfCombat { active_player },
+        ) => *active_player == controller,
+        (
+            TriggerCondition::BeginningEndStepAfterUnearth,
+            CommittedEvent::BeginningEndStep { .. },
+        ) => state.objects.get(source).v4.unearthed_v1,
+        (
+            TriggerCondition::BeginningControllerEndStepIfDescended,
+            CommittedEvent::BeginningEndStep { active_player, .. },
+        ) => *active_player == controller && controller_descended_this_turn(state, controller),
         (
             TriggerCondition::TransformsIntoFrontFace,
             CommittedEvent::Transformed {

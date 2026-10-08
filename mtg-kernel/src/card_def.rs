@@ -270,6 +270,7 @@ pub enum Subtype {
     Incubator,
     Werewolf,
     Bat,
+    Rabbit,
 }
 
 impl Subtype {
@@ -381,6 +382,8 @@ impl Subtype {
         Subtype::Werewolf,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Bat,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Rabbit,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -516,6 +519,7 @@ impl Subtype {
                 | Subtype::Shark
                 | Subtype::Werewolf
                 | Subtype::Bat
+                | Subtype::Rabbit
         )
     }
 }
@@ -666,6 +670,13 @@ pub enum TargetSpec {
     ControlledCreatureThenOpponentCreatureOrPlaneswalker,
     AttackingOrBlockingCreature,
     NonlandPermanentCardInOwnGraveyardManaValueAtMost(u16),
+    /// Exactly one creature the announcing player controls other than the
+    /// targeting source, or other than the creature a trigger names
+    /// ("target creature you control other than that creature").
+    AnotherControlledCreature,
+    /// Exactly one creature with this subtype the announcing player
+    /// controls ("target Mouse you control").
+    ControlledCreatureWithSubtype(Subtype),
 }
 
 impl TargetSpec {
@@ -716,6 +727,8 @@ impl TargetSpec {
             TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker => 39,
             TargetSpec::AttackingOrBlockingCreature => 40,
             TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_) => 41,
+            TargetSpec::AnotherControlledCreature => 42,
+            TargetSpec::ControlledCreatureWithSubtype(_) => 43,
         }
     }
 }
@@ -1928,6 +1941,11 @@ mod tests {
                 39,
             ),
             (TargetSpec::AttackingOrBlockingCreature, 40),
+            (TargetSpec::AnotherControlledCreature, 42),
+            (
+                TargetSpec::ControlledCreatureWithSubtype(Subtype::Mouse),
+                43,
+            ),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);

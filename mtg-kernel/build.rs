@@ -3028,6 +3028,8 @@ enum AbilityEffectRecipe {
     },
     /// Transform this permanent (the Incubator token's `{2}`).
     TransformSource,
+    /// Unearth: return the source from its graveyard; it gains haste.
+    Unearth,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3571,6 +3573,8 @@ fn standard_keywords_for(name: &str) -> &'static [&'static str] {
         "Monastery Swiftspear" => &["Keywords::HASTE"],
         "Slickshot Show-Off" => &["Keywords::FLYING", "Keywords::HASTE"],
         "Bat Token" => &["Keywords::FLYING"],
+        "Ruin-Lurker Bat" => &["Keywords::FLYING", "Keywords::LIFELINK"],
+        "Pawpatch Recruit" | "Pawpatch Recruit Offspring Token" => &["Keywords::TRAMPLE"],
         "Darkstar Augur" | "Darkstar Augur Offspring Token" => &["Keywords::FLYING"],
         _ => &[],
     }
@@ -3647,6 +3651,8 @@ fn object_name_for(name: &str) -> &str {
         "Homunculus Horde Token" => "Homunculus Horde",
         "Iridescent Vinelasher Offspring Token" => "Iridescent Vinelasher",
         "Darkstar Augur Offspring Token" => "Darkstar Augur",
+        "Pawpatch Recruit Offspring Token" => "Pawpatch Recruit",
+        "Manifold Mouse Offspring Token" => "Manifold Mouse",
         "Koma's Coil Token" => "Koma's Coil",
         "Scion of the Deep Token" => "Scion of the Deep",
         _ => name,
@@ -3756,6 +3762,7 @@ fn kicker_cost_for(name: &str) -> String {
         // Offspring {2} reuses kicker's optional additional cost.
         "Iridescent Vinelasher" => cost_src("{2}"),
         "Darkstar Augur" => cost_src("{B}"),
+        "Pawpatch Recruit" | "Manifold Mouse" => cost_src("{2}"),
         "Gnarlid Colony" => cost_src("{2}{G}"),
         "Sun-Blessed Healer" => cost_src("{1}{W}"),
         "Burst Lightning" => cost_src("{4}"),
@@ -3952,6 +3959,18 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             effect: AbilityEffectRecipe::DrawCards(1),
             activation_zone: "Battlefield",
             sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Yotian Frontliner" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: Some("W"),
+                generic: 0,
+            }],
+            effect: AbilityEffectRecipe::Unearth,
+            activation_zone: "Graveyard",
+            sorcery_speed_only: true,
             target_spec: "None",
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
@@ -4819,6 +4838,7 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
             format!("pump_source_until_end_of_turn:{power}:{toughness}")
         }
         AbilityEffectRecipe::TransformSource => "transform_source".to_string(),
+        AbilityEffectRecipe::Unearth => "unearth".to_string(),
         AbilityEffectRecipe::AddPlusOnePlusOneCounters(count) => format!("add_plus_one_plus_one_counters:{count}"),
         AbilityEffectRecipe::SearchLibraryToBattlefieldTapped { filter } => format!(
             "search_library_to_battlefield_tapped:{}",
@@ -4974,6 +4994,7 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
             "ability_effect_add_minus_one_minus_one_counter".to_string()
         }
         AbilityEffectRecipe::TransformSource => "ability_effect_transform_source".to_string(),
+        AbilityEffectRecipe::Unearth => "ability_effect_unearth".to_string(),
         AbilityEffectRecipe::PumpSourceUntilEndOfTurn { power, toughness } => format!(
             "ability_effect_pump_source_until_end_of_turn_{}_{}",
             power.to_string().replace('-', "minus_"),
@@ -5415,6 +5436,10 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Slickshot Show-Off" => "cast_noncreature_spell:pump_source:2:0",
         "Sanguine Evangelist" => "battle_cry;etb:create_bat_token;dies:create_bat_token",
         "Darkstar Augur" | "Darkstar Augur Offspring Token" => "etb_if_offspring_paid:create_one_one_token_copy;controller_upkeep:reveal_top_to_hand_lose_life_mana_value",
+        "Ruin-Lurker Bat" => "controller_end_step_if_descended:scry:1",
+        "Pawpatch Recruit" | "Pawpatch Recruit Offspring Token" => "etb_if_offspring_paid:create_one_one_token_copy;controlled_creature_targeted_by_opponent:target_another_controlled_creature:plus_one_counter",
+        "Manifold Mouse" | "Manifold Mouse Offspring Token" => "etb_if_offspring_paid:create_one_one_token_copy;controller_beginning_of_combat:target_controlled_mouse:choose_double_strike_or_trample",
+        "Yotian Frontliner" => "attacks:target_another_controlled_creature:pump:1:1;unearth_next_end_step:exile",
         "Knight-Errant of Eos" => "convoke;etb:look_top:6:take_creatures_mana_value_at_most_convoked:2:shuffle",
         "Brutal Cathar" => "etb_or_transforms_into_front:target_opponent_creature:exile_until_source_leaves;daybound;back_face_nightbound_first_strike_ward_pay_life:3",
         "Forsaken Miner" => "cant_block;graveyard:controller_commits_crime:may_pay:B:return_source_to_battlefield",
@@ -6027,6 +6052,12 @@ fn codegen(cards: &[CardJson]) -> String {
             }
             AbilityEffectRecipe::TransformSource => {
                 writeln!(out, "    EffectOp::TransformSourceInPlace").unwrap();
+            }
+            AbilityEffectRecipe::Unearth => {
+                writeln!(out, "    EffectOp::Sequence(vec![").unwrap();
+                writeln!(out, "        EffectOp::ReturnSourceFromGraveyardUnearthed,").unwrap();
+                writeln!(out, "        EffectOp::GrantKeywordTargetUntilEndOfTurn {{ object: ObjectRef::ThisSource, keyword: Keywords::HASTE }},").unwrap();
+                writeln!(out, "    ])").unwrap();
             }
             AbilityEffectRecipe::PumpSourceUntilEndOfTurn { power, toughness } => {
                 writeln!(out, "    EffectOp::PumpTargetUntilEndOfTurnDynamic {{ target: TargetRef::ThisSource, power: DynamicValueDef::Fixed({power}), toughness: DynamicValueDef::Fixed({toughness}) }}").unwrap();
@@ -8504,6 +8535,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Shark" => "Subtype::Shark",
         "Werewolf" => "Subtype::Werewolf",
         "Bat" => "Subtype::Bat",
+        "Rabbit" => "Subtype::Rabbit",
         "Monk" => "Subtype::Monk",
         "Incubator" => "Subtype::Incubator",
         "Pirate" => "Subtype::Pirate",

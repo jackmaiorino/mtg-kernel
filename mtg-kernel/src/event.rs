@@ -520,6 +520,11 @@ pub enum CommittedEvent {
         zone_change_count: u32,
         power: i32,
     },
+    /// 507.1: the beginning of `active_player`'s beginning of combat step
+    /// (Manifold Mouse). Only `standard-magezero-fixtures` builds emit it.
+    BeginningOfCombat {
+        active_player: PlayerId,
+    },
     /// Morbid is captured when this step begins, before any later death.
     BeginningEndStep {
         active_player: PlayerId,
@@ -886,7 +891,11 @@ fn commit_with_ability_lki(
                 amount: d.amount,
             }
         }
-        ProposedEvent::ZoneChange(z) => {
+        ProposedEvent::ZoneChange(mut z) => {
+            #[cfg(feature = "standard-magezero-fixtures")]
+            crate::standard_keywords_v1::unearth_exile_instead(state, &mut z);
+            #[cfg(not(feature = "standard-magezero-fixtures"))]
+            let _ = &mut z;
             let from = state.objects.get(z.object).zone;
             let controller_before = state.objects.get(z.object).controller;
             if from == Zone::Battlefield

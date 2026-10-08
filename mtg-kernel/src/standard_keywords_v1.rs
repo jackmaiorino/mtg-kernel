@@ -381,3 +381,20 @@ pub(crate) fn power_before_leaving(state: &GameState, object: ObjectId) -> Optio
             _ => None,
         })
 }
+
+/// Unearth: "If it would leave the battlefield, exile it instead of putting
+/// it anywhere else." Applied as every zone change commits, so state-based
+/// deaths and sacrifices are redirected too.
+pub(crate) fn unearth_exile_instead(
+    state: &GameState,
+    change: &mut crate::event::ZoneChangeProposed,
+) {
+    if change.to_zone != Zone::Exile
+        && state
+            .objects
+            .try_get(change.object)
+            .is_some_and(|object| object.zone == Zone::Battlefield && object.v4.unearthed_v1)
+    {
+        change.to_zone = Zone::Exile;
+    }
+}

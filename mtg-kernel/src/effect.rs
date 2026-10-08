@@ -1155,12 +1155,28 @@ pub enum EffectOp {
     /// Trigger collection binds this template to the warped source
     /// incarnation (`WarpExileBoundObject`).
     BindWarpExileToTriggerSource,
-    /// Warp's delayed end-step trigger: exile this exact incarnation if it
-    /// is still on the battlefield, then let its owner cast it from exile
-    /// on a later turn. A source that already left does nothing.
+    /// Warp's (and unearth's) delayed end-step trigger: exile this exact
+    /// incarnation if it is still on the battlefield; a warped one may then
+    /// be cast by its owner from exile on a later turn. A source that
+    /// already left does nothing.
     WarpExileBoundObject {
         object: EffectObjectBinding,
     },
+    /// Trigger collection binds this template to the creature whose
+    /// becoming a target triggered the ability
+    /// (`PutPlusOnePlusOneCounterOnTargetOtherThan`).
+    BindPlusOneCounterOnAnotherTargetToTriggerTarget,
+    /// Put a +1/+1 counter on target 0, a creature "other than" `other_than`.
+    /// Target legality (`TargetSpec::AnotherControlledCreature`) reads the
+    /// exclusion from this op, so the targeted creature is never offered.
+    PutPlusOnePlusOneCounterOnTargetOtherThan {
+        other_than: ObjectId,
+    },
+    /// Unearth's resolution: return this exact graveyard incarnation to the
+    /// battlefield and mark it unearthed (`ObjectStateV4::unearthed_v1`),
+    /// which drives its end-step exile and its leave-the-battlefield exile
+    /// replacement.
+    ReturnSourceFromGraveyardUnearthed,
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -11301,6 +11317,40 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         EffectOp::BindIncubateToTriggerSpell => {
             panic!("unmaterialized incubate");
         }
+        EffectOp::BindPlusOneCounterOnAnotherTargetToTriggerTarget => {
+            panic!("unmaterialized other-than counter");
+        }
+        EffectOp::PutPlusOnePlusOneCounterOnTargetOtherThan { other_than } => {
+            if ctx.targets.first() == Some(&Target::Object(*other_than)) {
+                return;
+            }
+            execute(
+                &EffectOp::PutPlusOnePlusOneCounter {
+                    object: ObjectRef::Target(0),
+                },
+                ctx,
+                state,
+            );
+        }
+        EffectOp::ReturnSourceFromGraveyardUnearthed => {
+            let still_there = ctx.ability_source_contract.is_some_and(|contract| {
+                let object = state.objects.get(contract.source);
+                contract.source == ctx.source
+                    && contract.zone == Zone::Graveyard
+                    && object.zone == Zone::Graveyard
+                    && object.zone_change_count == contract.zone_change_count
+            });
+            if !still_there {
+                return;
+            }
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change(ctx.source, Zone::Battlefield),
+            );
+            if state.objects.get(ctx.source).zone == Zone::Battlefield {
+                state.objects.get_mut(ctx.source).v4.unearthed_v1 = true;
+            }
+        }
         EffectOp::BindConvokedCreatureCountToLookTop { .. } => {
             panic!("unmaterialized convoked look");
         }
@@ -11521,12 +11571,15 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             }
             let owner = live.owner;
+            // Unearth shares this exile; only a warped creature may be cast
+            // from exile afterwards.
+            let warped = live.v4.warped_v1;
             event::propose_and_commit(
                 state,
                 event::ProposedEvent::zone_change(object.object, Zone::Exile),
             );
             let exiled = state.objects.get(object.object);
-            if exiled.zone == Zone::Exile {
+            if warped && exiled.zone == Zone::Exile {
                 let permission = crate::engine::PlayPermission {
                     object: object.object,
                     holder: owner,

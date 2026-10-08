@@ -734,6 +734,199 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/d/DarkstarAugur.java",
       "is_token": true
+    },
+    {
+      "name": "Ruin-Lurker Bat",
+      "engine_capability": "full",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bat"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-BW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "flying",
+        "lifelink",
+        "descend",
+        "scry"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RuinLurkerBat.java"
+    },
+    {
+      "name": "Pawpatch Recruit",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Rabbit",
+        "Warrior"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GW.dck",
+        "Standard16-RG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "offspring",
+        "trample",
+        "becomes_target_trigger",
+        "plus_one_counter"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/p/PawpatchRecruit.java"
+    },
+    {
+      "name": "Pawpatch Recruit Offspring Token",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Rabbit",
+        "Warrior"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "offspring",
+        "trample",
+        "becomes_target_trigger",
+        "plus_one_counter",
+        "token_copy"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/p/PawpatchRecruit.java",
+      "is_token": true
+    },
+    {
+      "name": "Manifold Mouse",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Mouse",
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "offspring",
+        "beginning_of_combat",
+        "choose_keyword"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/ManifoldMouse.java"
+    },
+    {
+      "name": "Manifold Mouse Offspring Token",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Mouse",
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "offspring",
+        "beginning_of_combat",
+        "choose_keyword",
+        "token_copy"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/ManifoldMouse.java",
+      "is_token": true
+    },
+    {
+      "name": "Yotian Frontliner",
+      "engine_capability": "full",
+      "mana_cost": "{1}",
+      "mana_value": 1,
+      "colors": [],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "attack_trigger",
+        "pump",
+        "unearth"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/y/YotianFrontliner.java"
     }
   ]
 }
