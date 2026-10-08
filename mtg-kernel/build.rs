@@ -4946,7 +4946,10 @@ fn activated_ability_face_for(name: &str, index: usize) -> Option<u8> {
     build_standard_v1::activated_ability_face_for(name, index)
 }
 
-fn activated_abilities_for(name: &str) -> String {
+/// Rust source for a card's activated abilities. `canonical` omits the
+/// face of single-faced abilities so earlier catalogs keep their card
+/// database identity byte for byte.
+fn activated_abilities_src(name: &str, canonical: bool) -> String {
     let recipes = activated_ability_recipes_for(name);
     if recipes.is_empty() {
         return "&[]".to_string();
@@ -4972,16 +4975,21 @@ fn activated_abilities_for(name: &str) -> String {
                 None => "None".to_string(),
             };
             let face = match activated_ability_face_for(name, index) {
-                Some(face) => format!("Some({face})"),
-                None => "None".to_string(),
+                Some(face) => format!(", face: Some({face})"),
+                None if canonical => String::new(),
+                None => ", face: None".to_string(),
             };
             format!(
-                "ActivatedAbilityDef {{ cost: &[{costs}], target_spec: TargetSpec::{target_spec}, effect: {effect}, activation_zone: Zone::{zone}, sorcery_speed_only: {sorcery}, activation_target_filter: ActivationTargetFilter::{activation_target_filter}, max_activations_per_turn: {max_activations_per_turn}, face: {face} }}"
+                "ActivatedAbilityDef {{ cost: &[{costs}], target_spec: TargetSpec::{target_spec}, effect: {effect}, activation_zone: Zone::{zone}, sorcery_speed_only: {sorcery}, activation_target_filter: ActivationTargetFilter::{activation_target_filter}, max_activations_per_turn: {max_activations_per_turn}{face} }}"
             )
         })
         .collect::<Vec<_>>()
         .join(", ");
     format!("&[{abilities}]")
+}
+
+fn activated_abilities_for(name: &str) -> String {
+    activated_abilities_src(name, false)
 }
 
 fn activated_abilities_token(name: &str) -> String {
@@ -8254,7 +8262,7 @@ fn codegen(cards: &[CardJson]) -> String {
         canon.push('|');
         canon.push_str(&flashback_for(&c.name));
         canon.push('|');
-        canon.push_str(&activated_abilities_for(&c.name));
+        canon.push_str(&activated_abilities_src(&c.name, true));
         canon.push('|');
         canon.push_str(&plot_cost_for(&c.name));
         canon.push('|');
