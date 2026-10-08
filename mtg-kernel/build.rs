@@ -3663,6 +3663,7 @@ fn transform_face_for(name: &str) -> &'static str {
     match name {
         "The Modern Age" => "Some(TransformFaceDef { name: \"Vector Glider\", types: &[CardType::Enchantment, CardType::Creature], subtypes: &[Subtype::Spirit], colors: &[ManaColor::U], power: Some(2), toughness: Some(3), keywords: Keywords::FLYING })",
         "Delver of Secrets" => "Some(TransformFaceDef { name: \"Insectile Aberration\", types: &[CardType::Creature], subtypes: &[Subtype::Human, Subtype::Insect], colors: &[ManaColor::U], power: Some(3), toughness: Some(2), keywords: Keywords::FLYING })",
+        "Graveyard Trespasser" => "Some(TransformFaceDef { name: \"Graveyard Glutton\", types: &[CardType::Creature], subtypes: &[Subtype::Werewolf], colors: &[ManaColor::B], power: Some(4), toughness: Some(4), keywords: Keywords::NONE })",
         "Brutal Cathar" => "Some(TransformFaceDef { name: \"Moonrage Brute\", types: &[CardType::Creature], subtypes: &[Subtype::Werewolf], colors: &[ManaColor::R], power: Some(3), toughness: Some(3), keywords: Keywords::FIRST_STRIKE })",
         "Incubator Token" => "Some(TransformFaceDef { name: \"Phyrexian Token\", types: &[CardType::Artifact, CardType::Creature], subtypes: &[Subtype::Phyrexian], colors: &[], power: Some(0), toughness: Some(0), keywords: Keywords::NONE })",
         _ => "None",
@@ -3680,6 +3681,7 @@ fn transform_face_name_for(name: &str) -> Option<&'static str> {
         "Delver of Secrets" => Some("Insectile Aberration"),
         "Incubator Token" => Some("Phyrexian Token"),
         "Brutal Cathar" => Some("Moonrage Brute"),
+        "Graveyard Trespasser" => Some("Graveyard Glutton"),
         _ => None,
     }
 }
@@ -5276,6 +5278,7 @@ fn ward_cost_for(name: &str) -> &'static str {
         "Koma, World-Eater" => "Some(WardCostDef::Generic(4))",
         "Axebane Ferox" => "Some(WardCostDef::CollectEvidence(4))",
         "Brutal Cathar" => "Some(WardCostDef::BackFacePayLife(3))",
+        "Graveyard Trespasser" => "Some(WardCostDef::DiscardCard)",
         _ => "None",
     }
 }
@@ -5456,6 +5459,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Monk Token" => "prowess",
         "Yotian Frontliner" => "attacks:target_another_controlled_creature:pump:1:1;unearth_next_end_step:exile",
         "Knight-Errant of Eos" => "convoke;etb:look_top:6:take_creatures_mana_value_at_most_convoked:2:shuffle",
+        "Graveyard Trespasser" => "etb_or_attacks:target_up_to_one_graveyard_card:exile_drain_1_if_creature;ward_discard;daybound;back_face_nightbound_etb_or_attacks:target_up_to_two_graveyard_cards:exile_drain_1_per_creature",
         "Brutal Cathar" => "etb_or_transforms_into_front:target_opponent_creature:exile_until_source_leaves;daybound;back_face_nightbound_first_strike_ward_pay_life:3",
         "Forsaken Miner" => "cant_block;graveyard:controller_commits_crime:may_pay:B:return_source_to_battlefield",
         "Iridescent Vinelasher" | "Iridescent Vinelasher Offspring Token" => "etb_if_offspring_paid:create_one_one_token_copy;landfall:target_opponent:damage:1",

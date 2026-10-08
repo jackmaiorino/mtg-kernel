@@ -185,6 +185,11 @@ pub struct TriggeredAbilityDef {
     /// same-definition board predicate rather than a card-name branch. The
     /// matching resolution-time gate lives in `EffectCond`.
     pub intervening_if_controls_another_source_card: bool,
+    /// The printed face whose text carries this ability: 0 for the front
+    /// face (every ability but a transforming card's back-face ones), 1 for
+    /// the back face. Only a battlefield permanent showing that face
+    /// triggers it.
+    pub face_index: u8,
     pub effect: fn() -> EffectOp,
 }
 
@@ -347,6 +352,7 @@ const fn etb_trigger(effect: fn() -> EffectOp) -> TriggeredAbilityDef {
         home_zone: Zone::Battlefield,
         intervening_if_kicked: false,
         intervening_if_controls_another_source_card: false,
+        face_index: 0,
         effect,
     }
 }
@@ -520,6 +526,7 @@ const CELESTIAL_ARMOR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef 
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: celestial_armor_effect,
 }];
 
@@ -918,6 +925,7 @@ const GUTTERSNIPE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: guttersnipe_effect,
 }];
 const MURMURING_MYSTIC_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
@@ -925,6 +933,7 @@ const MURMURING_MYSTIC_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: murmuring_mystic_effect,
 }];
 const VOLDAREN_EPICURE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
@@ -932,6 +941,7 @@ const VOLDAREN_EPICURE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: voldaren_epicure_effect,
 }];
 const GENEROUS_ENT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
@@ -939,6 +949,7 @@ const GENEROUS_ENT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: generous_ent_effect,
 }];
 const GINGERBREAD_CABIN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
@@ -949,6 +960,7 @@ const GINGERBREAD_CABIN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: gingerbread_cabin_effect,
 }];
 const WRITHING_CHRYSALIS_TRIGGERS: [TriggeredAbilityDef; 2] = [
@@ -957,6 +969,7 @@ const WRITHING_CHRYSALIS_TRIGGERS: [TriggeredAbilityDef; 2] = [
         home_zone: Zone::Stack,
         intervening_if_kicked: false,
         intervening_if_controls_another_source_card: false,
+        face_index: 0,
         effect: writhing_chrysalis_cast_effect,
     },
     TriggeredAbilityDef {
@@ -964,6 +977,7 @@ const WRITHING_CHRYSALIS_TRIGGERS: [TriggeredAbilityDef; 2] = [
         home_zone: Zone::Battlefield,
         intervening_if_kicked: false,
         intervening_if_controls_another_source_card: false,
+        face_index: 0,
         effect: writhing_chrysalis_counter_marker_effect,
     },
 ];
@@ -972,6 +986,7 @@ const BLOOD_FOUNTAIN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: blood_fountain_effect,
 }];
 const SAGU_WILDLING_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
@@ -979,6 +994,7 @@ const SAGU_WILDLING_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: gain_three_life_effect,
 }];
 /// Prowess: whenever you cast a noncreature spell, this creature gets +1/+1
@@ -1288,6 +1304,35 @@ const CORI_STEEL_CUTTER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
     ..etb_trigger(cori_steel_cutter_flurry_effect)
 }];
 
+fn graveyard_trespasser_effect() -> EffectOp {
+    EffectOp::ExileGraveyardTargetsDrainPerCreature { max_targets: 1 }
+}
+
+fn graveyard_glutton_effect() -> EffectOp {
+    EffectOp::ExileGraveyardTargetsDrainPerCreature { max_targets: 2 }
+}
+
+/// Ward—Discard a card (both faces). Whenever it enters or attacks, exile
+/// up to one target card from a graveyard; if a creature card was exiled,
+/// drain 1. Daybound. Graveyard Glutton (4/4, nightbound): the same on
+/// entering or attacking with up to two cards, draining 1 per creature card.
+const GRAVEYARD_TRESPASSER_TRIGGERS: [TriggeredAbilityDef; 4] = [
+    etb_trigger(graveyard_trespasser_effect),
+    TriggeredAbilityDef {
+        condition: TriggerCondition::Attacks,
+        ..etb_trigger(graveyard_trespasser_effect)
+    },
+    TriggeredAbilityDef {
+        face_index: 1,
+        ..etb_trigger(graveyard_glutton_effect)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::Attacks,
+        face_index: 1,
+        ..etb_trigger(graveyard_glutton_effect)
+    },
+];
+
 fn chrome_host_seedshark_effect() -> EffectOp {
     EffectOp::BindIncubateToTriggerSpell
 }
@@ -1413,6 +1458,7 @@ const KESSIG_FLAMEBREATHER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilit
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: kessig_flamebreather_effect,
 }];
 const GIXIAN_INFILTRATOR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
@@ -1420,6 +1466,7 @@ const GIXIAN_INFILTRATOR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityD
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: gixian_infiltrator_effect,
 }];
 const WEBWEAVER_CHANGELING_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
@@ -1427,6 +1474,7 @@ const WEBWEAVER_CHANGELING_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilit
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: webweaver_changeling_effect,
 }];
 const GLINT_HAWK_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
@@ -1434,6 +1482,7 @@ const GLINT_HAWK_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: glint_hawk_effect,
 }];
 const GATECREEPER_VINE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
@@ -1441,6 +1490,7 @@ const GATECREEPER_VINE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: gatecreeper_vine_effect,
 }];
 const BALUSTRADE_SPY_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
@@ -1448,6 +1498,7 @@ const BALUSTRADE_SPY_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: balustrade_spy_effect,
 }];
 const LOTLETH_GIANT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
@@ -1455,6 +1506,7 @@ const LOTLETH_GIANT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: lotleth_giant_effect,
 }];
 const MESMERIC_FIEND_TRIGGERS: [TriggeredAbilityDef; 2] = [
@@ -1463,6 +1515,7 @@ const MESMERIC_FIEND_TRIGGERS: [TriggeredAbilityDef; 2] = [
         home_zone: Zone::Battlefield,
         intervening_if_kicked: false,
         intervening_if_controls_another_source_card: false,
+        face_index: 0,
         effect: mesmeric_fiend_exile_effect,
     },
     TriggeredAbilityDef {
@@ -1472,6 +1525,7 @@ const MESMERIC_FIEND_TRIGGERS: [TriggeredAbilityDef; 2] = [
         home_zone: Zone::Graveyard,
         intervening_if_kicked: false,
         intervening_if_controls_another_source_card: false,
+        face_index: 0,
         effect: mesmeric_fiend_return_effect,
     },
 ];
@@ -1480,6 +1534,7 @@ const GAIN_THREE_LIFE_ETB_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbility
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: gain_three_life_effect,
 }];
 const SNEAKY_SNACKER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
@@ -1487,6 +1542,7 @@ const SNEAKY_SNACKER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     home_zone: Zone::Graveyard,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: sneaky_snacker_effect,
 }];
 
@@ -1839,6 +1895,7 @@ const BURNING_TREE_EMISSARY_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbili
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: burning_tree_emissary_effect,
 }];
 const CLOCKWORK_PERCUSSIONIST_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
@@ -1846,6 +1903,7 @@ const CLOCKWORK_PERCUSSIONIST_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbi
     home_zone: Zone::Graveyard,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: clockwork_percussionist_dies_effect,
 }];
 const ICHOR_WELLSPRING_TRIGGERS: [TriggeredAbilityDef; 2] = [
@@ -1854,6 +1912,7 @@ const ICHOR_WELLSPRING_TRIGGERS: [TriggeredAbilityDef; 2] = [
         home_zone: Zone::Battlefield,
         intervening_if_kicked: false,
         intervening_if_controls_another_source_card: false,
+        face_index: 0,
         effect: ichor_wellspring_draw_effect,
     },
     TriggeredAbilityDef {
@@ -1861,6 +1920,7 @@ const ICHOR_WELLSPRING_TRIGGERS: [TriggeredAbilityDef; 2] = [
         home_zone: Zone::Graveyard,
         intervening_if_kicked: false,
         intervening_if_controls_another_source_card: false,
+        face_index: 0,
         effect: ichor_wellspring_draw_effect,
     },
 ];
@@ -1870,6 +1930,7 @@ const CRYOGEN_RELIC_TRIGGERS: [TriggeredAbilityDef; 2] = [
         home_zone: Zone::Battlefield,
         intervening_if_kicked: false,
         intervening_if_controls_another_source_card: false,
+        face_index: 0,
         effect: ichor_wellspring_draw_effect,
     },
     TriggeredAbilityDef {
@@ -1877,6 +1938,7 @@ const CRYOGEN_RELIC_TRIGGERS: [TriggeredAbilityDef; 2] = [
         home_zone: Zone::Graveyard,
         intervening_if_kicked: false,
         intervening_if_controls_another_source_card: false,
+        face_index: 0,
         effect: ichor_wellspring_draw_effect,
     },
 ];
@@ -1885,6 +1947,7 @@ const JOB_SELECT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: job_select_effect,
 }];
 const NIHIL_SPELLBOMB_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
@@ -1892,6 +1955,7 @@ const NIHIL_SPELLBOMB_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef 
     home_zone: Zone::Graveyard,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: nihil_spellbomb_graveyard_effect,
 }];
 const EXPERIMENTAL_SYNTHESIZER_TRIGGERS: [TriggeredAbilityDef; 2] = [
@@ -1900,6 +1964,7 @@ const EXPERIMENTAL_SYNTHESIZER_TRIGGERS: [TriggeredAbilityDef; 2] = [
         home_zone: Zone::Battlefield,
         intervening_if_kicked: false,
         intervening_if_controls_another_source_card: false,
+        face_index: 0,
         effect: experimental_synthesizer_impulse_effect,
     },
     TriggeredAbilityDef {
@@ -1909,6 +1974,7 @@ const EXPERIMENTAL_SYNTHESIZER_TRIGGERS: [TriggeredAbilityDef; 2] = [
         home_zone: Zone::Graveyard,
         intervening_if_kicked: false,
         intervening_if_controls_another_source_card: false,
+        face_index: 0,
         effect: experimental_synthesizer_impulse_effect,
     },
 ];
@@ -1917,6 +1983,7 @@ const GOBLIN_BUSHWHACKER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityD
     home_zone: Zone::Battlefield,
     intervening_if_kicked: true,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: goblin_bushwhacker_effect,
 }];
 
@@ -1925,6 +1992,7 @@ const FAERIE_MISCREANT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: true,
+    face_index: 0,
     effect: faerie_miscreant_effect,
 }];
 
@@ -1933,6 +2001,7 @@ const FAERIE_SEER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: faerie_seer_effect,
 }];
 
@@ -1941,6 +2010,7 @@ const OUTLAW_MEDIC_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     home_zone: Zone::Graveyard,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: outlaw_medic_dies_effect,
 }];
 
@@ -1949,6 +2019,7 @@ const ADVENTURING_GEAR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: adventuring_gear_landfall_effect,
 }];
 
@@ -1957,6 +2028,7 @@ const GOLDVEIN_PICK_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: goldvein_pick_combat_damage_effect,
 }];
 
@@ -1966,6 +2038,7 @@ const SOLEMN_SIMULACRUM_TRIGGERS: [TriggeredAbilityDef; 2] = [
         home_zone: Zone::Battlefield,
         intervening_if_kicked: false,
         intervening_if_controls_another_source_card: false,
+        face_index: 0,
         effect: solemn_simulacrum_etb_effect,
     },
     TriggeredAbilityDef {
@@ -1973,6 +2046,7 @@ const SOLEMN_SIMULACRUM_TRIGGERS: [TriggeredAbilityDef; 2] = [
         home_zone: Zone::Graveyard,
         intervening_if_kicked: false,
         intervening_if_controls_another_source_card: false,
+        face_index: 0,
         effect: solemn_simulacrum_dies_effect,
     },
 ];
@@ -1982,6 +2056,7 @@ const REFURBISHED_FAMILIAR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilit
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: refurbished_familiar_etb_effect,
 }];
 
@@ -1990,6 +2065,7 @@ const SQUADRON_HAWK_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: squadron_hawk_etb_effect,
 }];
 
@@ -1998,6 +2074,7 @@ const BIND_THE_MONSTER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: bind_the_monster_etb_effect,
 }];
 
@@ -2006,6 +2083,7 @@ const HARRIER_STRIX_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: harrier_strix_etb_effect,
 }];
 
@@ -2014,6 +2092,7 @@ const BOJUKA_BOG_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: bojuka_bog_etb_effect,
 }];
 
@@ -2022,6 +2101,7 @@ const CONDUIT_PYLONS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: conduit_pylons_etb_effect,
 }];
 
@@ -2030,6 +2110,7 @@ const HUMBLING_ELDER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: humbling_elder_etb_effect,
 }];
 
@@ -2038,6 +2119,7 @@ const MOON_CIRCUIT_HACKER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbility
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: moon_circuit_hacker_combat_effect,
 }];
 
@@ -2046,6 +2128,7 @@ const NINJA_OF_THE_DEEP_HOURS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbi
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: ninja_of_the_deep_hours_combat_effect,
 }];
 
@@ -2054,6 +2137,7 @@ const SAIBA_CRYPTOMANCER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityD
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: saiba_cryptomancer_etb_effect,
 }];
 
@@ -2062,6 +2146,7 @@ const SPELLSTUTTER_SPRITE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbility
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: spellstutter_sprite_etb_effect,
 }];
 
@@ -2071,6 +2156,7 @@ const LEMBAS_TRIGGERS: [TriggeredAbilityDef; 2] = [
         home_zone: Zone::Battlefield,
         intervening_if_kicked: false,
         intervening_if_controls_another_source_card: false,
+        face_index: 0,
         effect: lembas_etb_effect,
     },
     TriggeredAbilityDef {
@@ -2078,6 +2164,7 @@ const LEMBAS_TRIGGERS: [TriggeredAbilityDef; 2] = [
         home_zone: Zone::Graveyard,
         intervening_if_kicked: false,
         intervening_if_controls_another_source_card: false,
+        face_index: 0,
         effect: lembas_graveyard_effect,
     },
 ];
@@ -2087,6 +2174,7 @@ const WEATHER_THE_STORM_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
     home_zone: Zone::Stack,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: weather_the_storm_cast_effect,
 }];
 
@@ -2096,6 +2184,7 @@ const JOURNEY_TO_NOWHERE_TRIGGERS: [TriggeredAbilityDef; 2] = [
         home_zone: Zone::Battlefield,
         intervening_if_kicked: false,
         intervening_if_controls_another_source_card: false,
+        face_index: 0,
         effect: journey_to_nowhere_etb_effect,
     },
     TriggeredAbilityDef {
@@ -2105,6 +2194,7 @@ const JOURNEY_TO_NOWHERE_TRIGGERS: [TriggeredAbilityDef; 2] = [
         home_zone: Zone::Graveyard,
         intervening_if_kicked: false,
         intervening_if_controls_another_source_card: false,
+        face_index: 0,
         effect: journey_to_nowhere_ltb_effect,
     },
 ];
@@ -2113,6 +2203,7 @@ const MASKED_VANDAL_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: masked_vandal_etb_effect,
 }];
 
@@ -2121,6 +2212,7 @@ const TROUBLEMAKER_OUPHE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityD
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: troublemaker_ouphe_etb_effect,
 }];
 
@@ -2129,6 +2221,7 @@ const VITU_GHAZI_INSPECTOR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilit
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: vitu_ghazi_inspector_etb_effect,
 }];
 
@@ -2137,6 +2230,7 @@ const AVENGING_HUNTER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef 
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: avenging_hunter_etb_effect,
 }];
 
@@ -2145,6 +2239,7 @@ const AZURE_FLEET_ADMIRAL_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbility
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: azure_fleet_admiral_etb_effect,
 }];
 
@@ -2155,6 +2250,7 @@ const DELVER_OF_SECRETS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
+    face_index: 0,
     effect: delver_of_secrets_effect,
 }];
 
@@ -2294,6 +2390,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Manifold Mouse" | "Manifold Mouse Offspring Token" => &MANIFOLD_MOUSE_TRIGGERS,
         "Yotian Frontliner" => &YOTIAN_FRONTLINER_TRIGGERS,
         "Cori-Steel Cutter" => &CORI_STEEL_CUTTER_TRIGGERS,
+        "Graveyard Trespasser" => &GRAVEYARD_TRESPASSER_TRIGGERS,
         "Monk Token" => &MONASTERY_SWIFTSPEAR_TRIGGERS,
         _ => &[],
     }
@@ -2356,6 +2453,15 @@ fn standard_trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetS
                 TargetSpec::None
             })
         }
+        "Graveyard Trespasser" => Some(match effect {
+            EffectOp::ExileGraveyardTargetsDrainPerCreature { max_targets: 1 } => {
+                TargetSpec::UpToOneCardInGraveyards
+            }
+            EffectOp::ExileGraveyardTargetsDrainPerCreature { max_targets: 2 } => {
+                TargetSpec::UpToTwoCardsInGraveyards
+            }
+            _ => TargetSpec::None,
+        }),
         "Yotian Frontliner" => Some(if *effect == yotian_frontliner_attack_effect() {
             TargetSpec::AnotherControlledCreature
         } else {
@@ -3034,7 +3140,7 @@ fn triggers_from_events(
             // exclusion the Saga chapter/completion paths already apply
             // unconditionally (`obj.v4.face_index != 0` at this file's own
             // SBA and chapter-matching sites).
-            if obj.v4.face_index != 0 {
+            if obj.v4.face_index != def.face_index {
                 continue;
             }
             for (i, ev) in events.iter().enumerate() {
@@ -3187,12 +3293,10 @@ fn triggers_from_events(
         if obj.zone == Zone::Battlefield
             && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
         {
-            let ward_cost = card.ward_cost.filter(|cost| {
-                obj.v4.face_index
-                    == u8::from(matches!(
-                        cost,
-                        crate::card_def::WardCostDef::BackFacePayLife(_)
-                    ))
+            let ward_cost = card.ward_cost.filter(|cost| match cost {
+                crate::card_def::WardCostDef::BackFacePayLife(_) => obj.v4.face_index == 1,
+                crate::card_def::WardCostDef::DiscardCard => true,
+                _ => obj.v4.face_index == 0,
             });
             if let Some(ward_cost) = ward_cost {
                 for event in events {
@@ -3232,6 +3336,12 @@ fn triggers_from_events(
                                     ward_target,
                                     targeting_stack_item: *targeting_stack_item,
                                     minimum_mana_value,
+                                }
+                            }
+                            crate::card_def::WardCostDef::DiscardCard => {
+                                EffectOp::CounterUnlessDiscardsCard {
+                                    ward_target,
+                                    targeting_stack_item: *targeting_stack_item,
                                 }
                             }
                             crate::card_def::WardCostDef::BackFacePayLife(life) => {

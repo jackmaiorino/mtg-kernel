@@ -83,6 +83,7 @@ impl Scan<'_> {
             | CounterUnlessPaysGeneric { .. }
             | CounterUnlessCollectsEvidence { .. }
             | CounterUnlessPaysLife { .. }
+            | CounterUnlessDiscardsCard { .. }
             | DamageEachCreatureWithoutSubtype { .. }
             | CounterTargetUnlessPaysGeneric { .. }
             | GainLifeDynamic { .. }
@@ -129,6 +130,7 @@ impl Scan<'_> {
             | BindPlusOneCounterOnAnotherTargetToTriggerTarget
             | PutPlusOnePlusOneCounterOnTargetOtherThan { .. }
             | ReturnSourceFromGraveyardUnearthed
+            | ExileGraveyardTargetsDrainPerCreature { .. }
             | BackupTarget { .. }
             | PutSourceOntoBattlefieldTappedAndAttacking
             | UntapUpToLands { .. }

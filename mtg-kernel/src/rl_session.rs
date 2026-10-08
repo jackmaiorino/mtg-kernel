@@ -2207,12 +2207,7 @@ fn flat_validate_origin_decision_v1(
                 }
             }
             if *can_finish {
-                let selected_count = state
-                    .engine
-                    .pending_cast
-                    .as_ref()
-                    .filter(|pending| pending.spell == *spell)
-                    .map(|pending| pending.targets_chosen.len() as u16)
+                let selected_count = crate::engine::optional_targets_selected_count(state, *spell)
                     .ok_or_else(invalid)?;
                 let candidate = candidates.last().ok_or_else(invalid)?;
                 if !matches!(

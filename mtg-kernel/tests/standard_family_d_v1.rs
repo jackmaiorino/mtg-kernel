@@ -154,6 +154,7 @@ fn family_d_cards_are_fully_supported() {
         "Yotian Frontliner",
         "Cori-Steel Cutter",
         "Monk Token",
+        "Graveyard Trespasser",
     ] {
         let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} missing"));
         assert_eq!(
@@ -1584,4 +1585,139 @@ fn cori_steel_cutter_equips_for_one_and_red() {
     }
     settled(&mut state);
     assert_eq!(power_toughness(&state, mouse), (2, 3));
+}
+
+/// Answers a trigger's "up to" target prompts with `targets`, then finishes.
+fn choose_up_to(state: &mut GameState, targets: &[Target]) {
+    for target in targets {
+        match next(state) {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert!(
+                    legal_targets.contains(target),
+                    "{target:?} not in {legal_targets:?}"
+                );
+                engine::step(state, Action::ChooseTarget(*target)).unwrap();
+            }
+            other => panic!("expected targets, got {other:?}"),
+        }
+    }
+    if let Decision::ChooseTargets { can_finish, .. } = next(state) {
+        assert!(can_finish);
+        engine::step(state, Action::FinishEffectSelection).unwrap();
+    }
+}
+
+fn cast_trespasser(state: &mut GameState) -> ObjectId {
+    let trespasser = put(state, PlayerId::P0, "Graveyard Trespasser", Zone::Hand);
+    add_mana(state, PlayerId::P0, &[ManaColor::B], 2);
+    assert!(castable(state, trespasser));
+    engine::step(state, Action::CastSpell(trespasser)).unwrap();
+    // Pass priority until the spell resolves and its trigger asks.
+    for _ in 0..10 {
+        if !matches!(next(state), Decision::CastSpellOrPass { .. }) {
+            break;
+        }
+        engine::step(state, Action::Pass).unwrap();
+    }
+    trespasser
+}
+
+#[test]
+fn graveyard_trespasser_exiles_a_graveyard_card_and_drains_for_a_creature() {
+    let mut state = ready();
+    let creature = put(
+        &mut state,
+        PlayerId::P1,
+        "Monastery Swiftspear",
+        Zone::Graveyard,
+    );
+    let land = put(&mut state, PlayerId::P1, "Mountain", Zone::Graveyard);
+    let trespasser = cast_trespasser(&mut state);
+    match next(&mut state) {
+        Decision::ChooseTargets {
+            legal_targets,
+            can_finish,
+            ..
+        } => {
+            assert!(can_finish);
+            assert!(legal_targets.contains(&Target::Object(creature)));
+            assert!(legal_targets.contains(&Target::Object(land)));
+        }
+        other => panic!("expected the enter trigger's targets, got {other:?}"),
+    }
+    choose_up_to(&mut state, &[Target::Object(creature)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(trespasser).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(creature).zone, Zone::Exile);
+    assert_eq!((state.players[0].life, state.players[1].life), (21, 19));
+
+    // A land exiled drains nothing; choosing no target is legal.
+    let mut state = ready();
+    let land = put(&mut state, PlayerId::P1, "Mountain", Zone::Graveyard);
+    cast_trespasser(&mut state);
+    choose_up_to(&mut state, &[Target::Object(land)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(land).zone, Zone::Exile);
+    assert_eq!((state.players[0].life, state.players[1].life), (20, 20));
+
+    let mut state = ready();
+    put(&mut state, PlayerId::P1, "Mountain", Zone::Graveyard);
+    cast_trespasser(&mut state);
+    choose_up_to(&mut state, &[]);
+    settled(&mut state);
+    assert_eq!(state.exile.len(), 0);
+}
+
+#[test]
+fn graveyard_trespasser_ward_makes_opponents_discard_their_cheapest_card() {
+    let mut state = ready();
+    let trespasser = put(
+        &mut state,
+        PlayerId::P1,
+        "Graveyard Trespasser",
+        Zone::Battlefield,
+    );
+    let hellkite = put(&mut state, PlayerId::P0, "Nova Hellkite", Zone::Hand);
+    let mountain = put(&mut state, PlayerId::P0, "Mountain", Zone::Hand);
+    burn(&mut state, PlayerId::P0, Target::Object(trespasser));
+    assert_eq!(state.objects.get(mountain).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(hellkite).zone, Zone::Hand);
+    assert_eq!(state.objects.get(trespasser).damage, 2);
+
+    // With only the Hellkite left it is discarded too; then an empty hand
+    // can't pay and the spell is countered.
+    burn(&mut state, PlayerId::P0, Target::Object(trespasser));
+    assert_eq!(state.objects.get(hellkite).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(trespasser).zone, Zone::Graveyard);
+    let mut state = ready();
+    let trespasser = put(
+        &mut state,
+        PlayerId::P1,
+        "Graveyard Trespasser",
+        Zone::Battlefield,
+    );
+    burn(&mut state, PlayerId::P0, Target::Object(trespasser));
+    assert_eq!(state.objects.get(trespasser).damage, 0);
+}
+
+#[test]
+fn graveyard_trespasser_enters_as_glutton_at_night_and_exiles_two() {
+    use mtg_kernel::state::DayNightV1;
+    let mut state = ready();
+    state.day_night_v1 = Some(DayNightV1::Night);
+    let first = put(
+        &mut state,
+        PlayerId::P1,
+        "Monastery Swiftspear",
+        Zone::Graveyard,
+    );
+    let second = put(&mut state, PlayerId::P1, "Heartfire Hero", Zone::Graveyard);
+    let trespasser = cast_trespasser(&mut state);
+    assert_eq!(state.objects.get(trespasser).name, "Graveyard Glutton");
+    assert_eq!(power_toughness(&state, trespasser), (4, 4));
+    choose_up_to(&mut state, &[Target::Object(first), Target::Object(second)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(first).zone, Zone::Exile);
+    assert_eq!(state.objects.get(second).zone, Zone::Exile);
+    assert_eq!((state.players[0].life, state.players[1].life), (22, 18));
 }

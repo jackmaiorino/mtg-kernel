@@ -1473,7 +1473,8 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::ArtifactOrEnchantmentPermanent
         | TargetSpec::AttackingOrBlockingCreature
         | TargetSpec::AnotherControlledCreature
-        | TargetSpec::ControlledCreatureWithSubtype(_) => 1,
+        | TargetSpec::ControlledCreatureWithSubtype(_)
+        | TargetSpec::UpToOneCardInGraveyards => 1,
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
@@ -1491,6 +1492,7 @@ fn target_min_count(spec: TargetSpec) -> u8 {
         | TargetSpec::UpToTwoCreatures
         | TargetSpec::UpToTwoPlayers
         | TargetSpec::UpToTwoCardsInGraveyards
+        | TargetSpec::UpToOneCardInGraveyards
         | TargetSpec::UpToOneTappedCreature => 0,
         _ => target_count(spec),
     }
@@ -2860,16 +2862,18 @@ fn legal_targets_for_controller_from_source(
             })
             .map(Target::Object)
             .collect(),
-        TargetSpec::UpToTwoCardsInGraveyards => [PlayerId::P0, PlayerId::P1]
-            .into_iter()
-            .flat_map(|player| state.players[player.index()].graveyard.iter().copied())
-            .filter(|id| !targets_chosen.contains(&Target::Object(*id)))
-            .filter(|&id| {
-                let object = state.objects.get(id);
-                object.zone == Zone::Graveyard && !object.v4.is_token
-            })
-            .map(Target::Object)
-            .collect(),
+        TargetSpec::UpToTwoCardsInGraveyards | TargetSpec::UpToOneCardInGraveyards => {
+            [PlayerId::P0, PlayerId::P1]
+                .into_iter()
+                .flat_map(|player| state.players[player.index()].graveyard.iter().copied())
+                .filter(|id| !targets_chosen.contains(&Target::Object(*id)))
+                .filter(|&id| {
+                    let object = state.objects.get(id);
+                    object.zone == Zone::Graveyard && !object.v4.is_token
+                })
+                .map(Target::Object)
+                .collect()
+        }
         TargetSpec::CreatureCardInOwnGraveyard => state.players[controller.index()]
             .graveyard
             .iter()
@@ -9887,6 +9891,14 @@ fn triggered_stack_item_expected_target_spec(
                     targeting_stack_item,
                     crate::card_def::WardCostDef::BackFacePayLife(*life),
                 )),
+                EffectOp::CounterUnlessDiscardsCard {
+                    ward_target,
+                    targeting_stack_item,
+                } => Some((
+                    ward_target,
+                    targeting_stack_item,
+                    crate::card_def::WardCostDef::DiscardCard,
+                )),
                 _ => None,
             };
             match ward {
@@ -12491,7 +12503,11 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
                 < usize::from(target_count(pending_trigger.target_spec))
         {
             validate_pending_trigger(state, pending_trigger)?;
-            if !matches!(&action, Action::ChooseTarget(_)) {
+            let may_finish = pending_trigger.targets.len()
+                >= usize::from(target_min_count(pending_trigger.target_spec));
+            if !(matches!(&action, Action::ChooseTarget(_))
+                || may_finish && matches!(&action, Action::FinishEffectSelection))
+            {
                 return Err(
                     "only ChooseTarget may answer a pending triggered ability target".to_string(),
                 );
@@ -12698,6 +12714,9 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
                 finish_optional_cast_or_collect_evidence(state)
             } else if state.engine.pending_activation.is_some() {
                 finish_optional_activation_targets(state)
+            } else if state.engine.pending_effect.is_none() && !state.engine.pending_triggers.is_empty()
+            {
+                finish_optional_trigger_targets(state)
             } else {
                 effect::finish_resumable_target_selection(state)
             }
@@ -12870,6 +12889,35 @@ fn apply_choose_target(state: &mut GameState, target: Target) -> Result<(), Stri
             Ok(())
         }
     }
+}
+
+/// How many targets the cast or triggered ability now choosing optional
+/// targets from `source` has selected (`Decision::ChooseTargets` with
+/// `can_finish`).
+pub(crate) fn optional_targets_selected_count(state: &GameState, source: ObjectId) -> Option<u16> {
+    if let Some(pending) = state.engine.pending_cast.as_ref() {
+        return (pending.spell == source).then_some(pending.targets_chosen.len() as u16);
+    }
+    state
+        .engine
+        .pending_triggers
+        .first()
+        .filter(|pending| pending.source == source)
+        .map(|pending| pending.targets.len() as u16)
+}
+
+/// Stops choosing "up to" targets for the pending triggered ability being
+/// placed (Graveyard Trespasser) and puts it on the stack with the targets
+/// chosen so far.
+fn finish_optional_trigger_targets(state: &mut GameState) -> Result<(), String> {
+    let TargetingProducer::Trigger(pending) = exact_targeting_producer(state)? else {
+        return Err("no triggered ability is choosing targets".to_string());
+    };
+    if pending.targets.len() < usize::from(target_min_count(pending.target_spec)) {
+        return Err("the triggered ability has not chosen its minimum targets".to_string());
+    }
+    let pending = state.engine.pending_triggers.remove(0);
+    push_trigger_onto_stack(state, pending)
 }
 
 fn apply_choose_optional_additional_cost(

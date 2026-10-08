@@ -287,7 +287,8 @@ impl ObjectStateV4 {
                 // Observations carry only generic Ward amounts.
                 Some(
                     crate::card_def::WardCostDef::CollectEvidence(_)
-                    | crate::card_def::WardCostDef::BackFacePayLife(_),
+                    | crate::card_def::WardCostDef::BackFacePayLife(_)
+                    | crate::card_def::WardCostDef::DiscardCard,
                 )
                 | None => 0,
             },
@@ -980,6 +981,13 @@ pub fn stack_target_contract_is_structurally_valid(
         ) | (
             TargetSpec::UpToTwoCardsInGraveyards,
             0 | 1,
+            StackTargetContractV4::Object {
+                zone: Zone::Graveyard,
+                ..
+            },
+        ) | (
+            TargetSpec::UpToOneCardInGraveyards,
+            0,
             StackTargetContractV4::Object {
                 zone: Zone::Graveyard,
                 ..

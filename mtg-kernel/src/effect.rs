@@ -1178,6 +1178,21 @@ pub enum EffectOp {
     /// which drives its end-step exile and its leave-the-battlefield exile
     /// replacement.
     ReturnSourceFromGraveyardUnearthed,
+    /// Ward—Discard a card: counters the exact stack incarnation that
+    /// targeted the bound Ward permanent unless its controller discards a
+    /// card. Like the other Standard ward costs it never asks: the payer
+    /// pays whenever their hand is not empty, discarding its lowest mana
+    /// value card (the earliest in hand on a tie).
+    CounterUnlessDiscardsCard {
+        ward_target: StackTargetContractV4,
+        targeting_stack_item: StackItemId,
+    },
+    /// Exile each still-legal graveyard card target (at most `max_targets`,
+    /// fixed by the trigger's target specification); each opponent loses 1
+    /// life and the controller gains 1 life per creature card exiled.
+    ExileGraveyardTargetsDrainPerCreature {
+        max_targets: u8,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -11332,6 +11347,71 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ctx,
                 state,
             );
+        }
+        EffectOp::CounterUnlessDiscardsCard {
+            targeting_stack_item,
+            ..
+        } => {
+            let Some(payer) = state
+                .stack
+                .iter()
+                .find(|item| item.v4.stack_item_id == *targeting_stack_item)
+                .map(|item| item.controller)
+            else {
+                return;
+            };
+            let discard = state.players[payer.index()]
+                .hand
+                .iter()
+                .copied()
+                .min_by_key(|&id| {
+                    crate::card_def::CARD_DEFS[state.objects.get(id).card_def as usize].mana_value
+                });
+            if let Some(card) = discard {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::zone_change(card, Zone::Graveyard),
+                );
+            } else if crate::engine::counter_stack_item_by_id(state, *targeting_stack_item).is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
+        EffectOp::ExileGraveyardTargetsDrainPerCreature { max_targets } => {
+            let mut creatures = 0;
+            for index in 0..usize::from(*max_targets).min(ctx.targets.len()) {
+                let Target::Object(card) = ctx.targets[index] else {
+                    continue;
+                };
+                if !ctx.target_incarnation_matches(index, state)
+                    || state.objects.get(card).zone != Zone::Graveyard
+                {
+                    continue;
+                }
+                let is_creature = crate::card_def::CARD_DEFS
+                    [state.objects.get(card).card_def as usize]
+                    .has_type(CardType::Creature);
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::zone_change(card, Zone::Exile),
+                );
+                if is_creature && state.objects.get(card).zone == Zone::Exile {
+                    creatures += 1;
+                }
+            }
+            if creatures > 0 {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::life_loss(ctx.controller.opponent(), creatures),
+                );
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::life_gain(ctx.controller, creatures),
+                );
+            }
         }
         EffectOp::ReturnSourceFromGraveyardUnearthed => {
             let still_there = ctx.ability_source_contract.is_some_and(|contract| {

@@ -988,6 +988,41 @@
       ],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/MonasteryMentorToken.java",
       "is_token": true
+    },
+    {
+      "name": "Graveyard Trespasser",
+      "engine_capability": "full",
+      "mana_cost": "{2}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Werewolf"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "ward_discard",
+        "etb_or_attacks",
+        "graveyard_hate",
+        "drain",
+        "daybound",
+        "transform"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GraveyardTrespasser.java"
     }
   ]
 }

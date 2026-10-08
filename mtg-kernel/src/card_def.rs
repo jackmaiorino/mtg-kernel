@@ -677,6 +677,8 @@ pub enum TargetSpec {
     /// Exactly one creature with this subtype the announcing player
     /// controls ("target Mouse you control").
     ControlledCreatureWithSubtype(Subtype),
+    /// Zero or one nontoken card in either graveyard.
+    UpToOneCardInGraveyards,
 }
 
 impl TargetSpec {
@@ -729,6 +731,7 @@ impl TargetSpec {
             TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_) => 41,
             TargetSpec::AnotherControlledCreature => 42,
             TargetSpec::ControlledCreatureWithSubtype(_) => 43,
+            TargetSpec::UpToOneCardInGraveyards => 44,
         }
     }
 }
@@ -1240,6 +1243,9 @@ pub enum WardCostDef {
     /// Ward—Pay N life, printed on the transform back face only
     /// (MageZero Standard, Moonrage Brute).
     BackFacePayLife(u8),
+    /// Ward—Discard a card, printed on both faces (MageZero Standard,
+    /// Graveyard Trespasser).
+    DiscardCard,
 }
 
 /// Alternate battlefield characteristics for a transforming permanent's
@@ -1946,6 +1952,7 @@ mod tests {
                 TargetSpec::ControlledCreatureWithSubtype(Subtype::Mouse),
                 43,
             ),
+            (TargetSpec::UpToOneCardInGraveyards, 44),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);
@@ -2135,6 +2142,7 @@ mod tests {
                 WardCostDef::BackFacePayLife(amount) => {
                     assert_ne!(amount, 0, "{} has Ward 0", def.name)
                 }
+                WardCostDef::DiscardCard => {}
             }
         }
     }
