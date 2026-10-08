@@ -5354,6 +5354,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Burnout Bashtronaut" => "start_your_engines;max_speed:double_strike",
         "Nova Hellkite" => "etb:target_opponent_creature:damage:1;warp_next_end_step:exile_cast_later_turn",
         "Aloe Alchemist" => "becomes_plotted:target_creature:pump:3:2:trample",
+        "Forsaken Miner" => "cant_block;graveyard:controller_commits_crime:may_pay:B:return_source_to_battlefield",
         "Iridescent Vinelasher" | "Iridescent Vinelasher Offspring Token" => "etb_if_offspring_paid:create_one_one_token_copy;landfall:target_opponent:damage:1",
         _ => "none",
     }

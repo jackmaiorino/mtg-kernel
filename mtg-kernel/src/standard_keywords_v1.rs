@@ -11,11 +11,15 @@
 //! putting the inherent trigger on the stack: nothing in the pool can respond
 //! to it or observe the difference, and it keeps speed free of a source
 //! object. "Max speed" abilities read `speed == 4`.
+//!
+//! Crimes (Outlaws of Thunder Junction, 700.13) are logged as
+//! `CommittedEvent::CrimeCommitted` when a spell, activated ability or
+//! triggered ability finishes targeting (`engine::log_final_targeting_events`).
 
 use crate::card_def::{Keywords, CARD_DEFS};
 use crate::event::CommittedEvent;
 use crate::ids::{ObjectId, PlayerId};
-use crate::state::{CreatureDeathTurnV1, GameState, SpeedV1, Target, Zone};
+use crate::state::{CreatureDeathTurnV1, GameState, SpeedV1, StackItem, Target, Zone};
 
 /// Definitions with "Start your engines!".
 fn has_start_your_engines(card_def: u16) -> bool {
@@ -98,4 +102,30 @@ pub(crate) fn max_speed_keywords(state: &GameState, id: ObjectId) -> Keywords {
     } else {
         Keywords::NONE
     }
+}
+
+/// 700.13: whether a stack item's final targets make its controller commit
+/// a crime: an opponent, a permanent or spell an opponent controls, or a
+/// card in an opponent's graveyard.
+pub(crate) fn targets_commit_crime(state: &GameState, item: &StackItem) -> bool {
+    let controller = item.controller;
+    item.targets.iter().any(|target| match *target {
+        Target::Player(player) => player != controller,
+        Target::Object(id) => {
+            let object = state.objects.get(id);
+            match object.zone {
+                Zone::Battlefield | Zone::Stack => object.controller != controller,
+                Zone::Graveyard => object.owner != controller,
+                _ => false,
+            }
+        }
+    })
+}
+
+/// Printed "This creature can't block."
+pub(crate) fn cant_block(state: &GameState, id: ObjectId) -> bool {
+    CARD_DEFS
+        .get(usize::from(state.objects.get(id).card_def))
+        .is_some_and(|def| def.name == "Forsaken Miner")
+        && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
 }

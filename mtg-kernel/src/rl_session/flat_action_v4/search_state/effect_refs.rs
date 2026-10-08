@@ -603,6 +603,7 @@ pub(super) fn conflicts(
             | LifeGain { .. }
             | ManaAdded { .. }
             | UpkeepBegan { .. }
+            | CrimeCommitted { .. }
             | BeginningEndStep { .. } => false,
         }
     })

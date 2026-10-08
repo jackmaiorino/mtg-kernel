@@ -131,6 +131,8 @@ fn family_d_cards_are_fully_supported() {
         "Full Bore",
         "Iridescent Vinelasher",
         "Iridescent Vinelasher Offspring Token",
+        "Aloe Alchemist",
+        "Forsaken Miner",
     ] {
         let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} missing"));
         assert_eq!(
@@ -511,4 +513,114 @@ fn aloe_alchemist_pumps_target_creature_when_it_becomes_plotted() {
         Keywords::TRAMPLE
     ));
     assert_eq!(power_toughness(&state, bashtronaut), (1, 1));
+}
+
+/// Answers the next optional-payment prompt, then settles.
+fn answer_payment(state: &mut GameState, pay: bool) {
+    match settle(state) {
+        Some(Decision::ChooseEffectBoolean { player, .. }) => {
+            assert_eq!(player, PlayerId::P0);
+            engine::step(state, Action::ChooseEffectBoolean(pay)).unwrap();
+        }
+        other => panic!("expected an optional payment, got {other:?}"),
+    }
+    settled(state);
+}
+
+#[test]
+fn forsaken_miner_returns_when_you_commit_a_crime_and_pay() {
+    let mut state = ready();
+    let miner = put(&mut state, PlayerId::P0, "Forsaken Miner", Zone::Graveyard);
+    let own = put(
+        &mut state,
+        PlayerId::P0,
+        "Burnout Bashtronaut",
+        Zone::Battlefield,
+    );
+
+    // Targeting your own creature is no crime.
+    burn(&mut state, PlayerId::P0, Target::Object(own));
+    assert_eq!(state.objects.get(miner).zone, Zone::Graveyard);
+
+    // Targeting the opponent is; declining leaves it in the graveyard.
+    let burst = put(&mut state, PlayerId::P0, "Burst Lightning", Zone::Hand);
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::R, ManaColor::B], 0);
+    cast(&mut state, burst, &[Target::Player(PlayerId::P1)]);
+    answer_payment(&mut state, false);
+    assert_eq!(state.objects.get(miner).zone, Zone::Graveyard);
+
+    // Targeting an opposing creature with B open: pay and it returns.
+    let theirs = put(
+        &mut state,
+        PlayerId::P1,
+        "Burnout Bashtronaut",
+        Zone::Battlefield,
+    );
+    let burst = put(&mut state, PlayerId::P0, "Burst Lightning", Zone::Hand);
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::R], 0);
+    cast(&mut state, burst, &[Target::Object(theirs)]);
+    answer_payment(&mut state, true);
+    assert_eq!(state.objects.get(miner).zone, Zone::Battlefield);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
+}
+
+#[test]
+fn opponents_crimes_do_not_return_forsaken_miner() {
+    let mut state = ready();
+    let miner = put(&mut state, PlayerId::P0, "Forsaken Miner", Zone::Graveyard);
+    state.priority_player = PlayerId::P1;
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::B], 0);
+    let burst = put(&mut state, PlayerId::P1, "Burst Lightning", Zone::Hand);
+    add_mana(&mut state, PlayerId::P1, &[ManaColor::R], 0);
+    cast(&mut state, burst, &[Target::Player(PlayerId::P0)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(miner).zone, Zone::Graveyard);
+}
+
+#[test]
+fn forsaken_miner_cant_block() {
+    let mut state = ready();
+    let miner = put(
+        &mut state,
+        PlayerId::P1,
+        "Forsaken Miner",
+        Zone::Battlefield,
+    );
+    let attacker = put(
+        &mut state,
+        PlayerId::P0,
+        "Emberheart Challenger",
+        Zone::Battlefield,
+    );
+    let other = put(
+        &mut state,
+        PlayerId::P1,
+        "Burnout Bashtronaut",
+        Zone::Battlefield,
+    );
+    pass_until_blocks(&mut state, attacker, |blockers| {
+        assert!(!blockers.contains(&miner));
+        assert!(blockers.contains(&other));
+    });
+}
+
+fn pass_until_blocks(state: &mut GameState, attacker: ObjectId, check: impl Fn(&[ObjectId])) {
+    for _ in 0..50 {
+        match next(state) {
+            Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+            Decision::DeclareAttackers { .. } => {
+                engine::step(state, Action::DeclareAttackers(vec![attacker])).unwrap()
+            }
+            Decision::DeclareBlockers { legal_blockers, .. } => {
+                let (_, blockers) = legal_blockers
+                    .iter()
+                    .find(|(id, _)| *id == attacker)
+                    .expect("the attacker is listed");
+                check(blockers);
+                return;
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    panic!("no block step");
 }

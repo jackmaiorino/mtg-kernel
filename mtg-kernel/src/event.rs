@@ -502,6 +502,15 @@ pub enum CommittedEvent {
         player: PlayerId,
         count: i32,
     },
+    /// 700.13: `player` committed a crime by casting a spell, activating an
+    /// ability or putting a triggered ability on the stack that targets an
+    /// opponent, anything an opponent controls, or a card in an opponent's
+    /// graveyard. Logged once per stack item, after its final targeting
+    /// markers. Only `standard-magezero-fixtures` builds emit it.
+    CrimeCommitted {
+        player: PlayerId,
+        targeting_stack_item: StackItemId,
+    },
     /// Morbid is captured when this step begins, before any later death.
     BeginningEndStep {
         active_player: PlayerId,
@@ -1154,6 +1163,17 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
 /// later, it doesn't replace the cast event itself).
 pub fn log_spell_cast(state: &mut GameState, spell: ObjectId, controller: PlayerId) {
     let committed = CommittedEvent::SpellCast { spell, controller };
+    state.engine.event_log.push(committed.clone());
+    state.engine.event_history.push(committed);
+}
+
+/// Logs a crime committed by one completed targeting action.
+#[cfg(feature = "standard-magezero-fixtures")]
+pub fn log_crime(state: &mut GameState, player: PlayerId, targeting_stack_item: StackItemId) {
+    let committed = CommittedEvent::CrimeCommitted {
+        player,
+        targeting_stack_item,
+    };
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
 }

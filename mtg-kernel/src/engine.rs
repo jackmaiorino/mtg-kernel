@@ -6196,6 +6196,10 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
             if !def.is_executable() || !object_has_type(state, id, CardType::Creature) {
                 return false;
             }
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if crate::standard_keywords_v1::cant_block(state, id) {
+                return false;
+            }
             if has_effective_keyword(state, attacker, Keywords::PROTECTION_FROM_MONOCOLORED)
                 && object_is_monocolored(state, id)
             {
@@ -9277,6 +9281,12 @@ fn log_final_targeting_events(
             stack_item_id,
             item.controller,
         );
+    }
+    // A copy is neither cast nor put on the stack by its controller's
+    // announcement, so retargeting one never commits a crime.
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if !item.is_copy && crate::standard_keywords_v1::targets_commit_crime(state, item) {
+        event::log_crime(state, item.controller, stack_item_id);
     }
     Ok(())
 }

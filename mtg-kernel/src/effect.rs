@@ -293,6 +293,9 @@ pub enum EffectCond {
     /// The live target permanent at this index resolved from a spell cast
     /// for its warp cost (`ObjectStateV4::warped_v1`).
     TargetWasCastForWarp(u8),
+    /// The resolving triggered ability's source is still the incarnation
+    /// that triggered, in the zone it triggered from.
+    SourceStillInTriggerZone,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -12859,6 +12862,14 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
                     }
                     _ => false,
                 }
+        }
+        EffectCond::SourceStillInTriggerZone => {
+            ctx.ability_source_contract.is_some_and(|contract| {
+                let object = state.objects.get(contract.source);
+                contract.source == ctx.source
+                    && object.zone == contract.zone
+                    && object.zone_change_count == contract.zone_change_count
+            })
         }
         EffectCond::OptionalAdditionalCostPaid(kind) => {
             ctx.optional_additional_cost_paid == Some(*kind)

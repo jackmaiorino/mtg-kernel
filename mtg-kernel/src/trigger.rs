@@ -143,6 +143,8 @@ pub enum TriggerCondition {
     /// card into exile with that stamp, so the move event plus the stamp
     /// identifies the plotting.
     BecomesPlotted,
+    /// "Whenever you commit a crime" (`CommittedEvent::CrimeCommitted`).
+    ControllerCommitsCrime,
 }
 
 pub struct TriggeredAbilityDef {
@@ -941,6 +943,33 @@ const WARP_EXILE_TRIGGER: TriggeredAbilityDef = TriggeredAbilityDef {
 fn warp_exile_effect() -> EffectOp {
     EffectOp::BindWarpExileToTriggerSource
 }
+
+fn forsaken_miner_crime_effect() -> EffectOp {
+    // The optional payment must be the program root; the return re-checks
+    // that the card is still the graveyard incarnation that triggered.
+    EffectOp::MayPayManaThen {
+        player: PlayerRef::Controller,
+        colored: vec![crate::mana::ManaColor::B],
+        generic: 0,
+        then: Box::new(EffectOp::Conditional {
+            cond: EffectCond::SourceStillInTriggerZone,
+            then: Box::new(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            }),
+            else_: Box::new(EffectOp::Sequence(vec![])),
+        }),
+    }
+}
+
+/// Can't block (`standard_keywords_v1::cant_block`). Whenever you commit a
+/// crime, you may pay {B}; if you do, return it from your graveyard to the
+/// battlefield.
+const FORSAKEN_MINER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControllerCommitsCrime,
+    home_zone: Zone::Graveyard,
+    ..etb_trigger(forsaken_miner_crime_effect)
+}];
 
 fn aloe_alchemist_plotted_effect() -> EffectOp {
     EffectOp::Sequence(vec![
@@ -1882,6 +1911,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
             &IRIDESCENT_VINELASHER_TRIGGERS
         }
         "Aloe Alchemist" => &ALOE_ALCHEMIST_TRIGGERS,
+        "Forsaken Miner" => &FORSAKEN_MINER_TRIGGERS,
         _ => &[],
     }
 }
@@ -3232,6 +3262,10 @@ fn trigger_matches(
             TriggerCondition::BeginningOfUpkeep { controller_only },
             CommittedEvent::UpkeepBegan { player },
         ) => !controller_only || *player == controller,
+        (
+            TriggerCondition::ControllerCommitsCrime,
+            CommittedEvent::CrimeCommitted { player, .. },
+        ) => *player == controller,
         (
             TriggerCondition::BecomesPlotted,
             CommittedEvent::ZoneChange {

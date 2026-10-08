@@ -289,6 +289,38 @@
         "targeted_pump"
       ],
       "java_file": "Mage.Sets/src/mage/cards/a/AloeAlchemist.java"
+    },
+    {
+      "name": "Forsaken Miner",
+      "engine_capability": "full",
+      "mana_cost": "{B}",
+      "mana_value": 1,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Skeleton",
+        "Rogue"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "cant_block",
+        "crime",
+        "graveyard_recursion"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/ForsakenMiner.java"
     }
   ]
 }
