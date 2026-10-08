@@ -65,7 +65,7 @@ def job_config(plan: dict, job: dict, native: Path) -> dict:
     decks = ndb.load_decks(Path(plan["decks"]))
     return ndb.panel_config(job["panel"], job["source"], plan["t1_source"], decks, str(native).replace("\\", "/"),
                             plan["placement"]["workers"], own_decks=PANEL_DECKS[job["panel"]],
-                            seat=PANEL_SEAT.get(job["panel"]))
+                            learner_seat=PANEL_SEAT.get(job["panel"]))
 
 
 def rows_from(collection_path: Path, job: dict) -> list[dict]:
