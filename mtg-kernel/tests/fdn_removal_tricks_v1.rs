@@ -169,7 +169,8 @@ fn zone(state: &GameState, id: ObjectId) -> Zone {
 #[test]
 fn appended_definitions_are_full_contiguous_and_use_existing_target_shapes() {
     let first = usize::from(card_id_by_name(BATCH[0]).unwrap());
-    assert_eq!(first + BATCH.len() + BATCH_TWO.len(), CARD_DEFS.len());
+    // Later batches append after these definitions.
+    assert!(first + BATCH.len() + BATCH_TWO.len() <= CARD_DEFS.len());
     for (offset, name) in BATCH_TWO.into_iter().enumerate() {
         let id = card_id_by_name(name).unwrap();
         assert_eq!(usize::from(id), first + BATCH.len() + offset, "{name}");
