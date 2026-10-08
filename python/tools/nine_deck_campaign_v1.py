@@ -48,6 +48,8 @@ TOOLS = Path(__file__).resolve().parent
 DISPATCH = TOOLS / "native_expanded_dispatch_v1.py"
 MAX_ATTEMPTS = 3
 POLL_SECONDS = 30
+BUSY_RETRIES = 10
+BUSY_RETRY_SECONDS = 30
 INVALIDITY_MARKERS = ("non-natural", "non_natural", "nonnatural", "not finite", "non-finite", "nan ")
 SMALL_RECORDS = ("complete.json", "update.json", "collection.json", "non-natural.json", "collect-command.json",
                  "update-command.json", "update-input.json", "restarts.log")
@@ -161,8 +163,14 @@ def classify_failure(root: Path) -> str:
 
 def dispatch_block(request_path: Path, compute_host_name: str | None = None) -> dict:
     extra = ["--compute-host-name", compute_host_name] if compute_host_name else []
-    done = subprocess.run([sys.executable, "-B", str(DISPATCH), "dispatch", str(request_path)] + extra,
-                          capture_output=True, text=True, cwd=str(TOOLS.parents[1]))
+    for _ in range(BUSY_RETRIES):
+        done = subprocess.run([sys.executable, "-B", str(DISPATCH), "dispatch", str(request_path)] + extra,
+                              capture_output=True, text=True, cwd=str(TOOLS.parents[1]))
+        # A busy refusal spawns nothing; it can catch a sibling job of this
+        # reservation in the instant before it is recorded, so wait and retry.
+        if done.returncode == 0 or "busy refusal" not in done.stderr:
+            break
+        time.sleep(BUSY_RETRY_SECONDS)
     if done.returncode != 0:
         raise RuntimeError(f"dispatch refused: {done.stderr.strip()[-2000:]}")
     return json.loads(done.stdout.strip().splitlines()[-1])

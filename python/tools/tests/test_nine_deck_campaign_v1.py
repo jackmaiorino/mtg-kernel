@@ -90,5 +90,18 @@ class DriverTests(unittest.TestCase):
             driver.declared_cores(self.campaign)
 
 
+    def test_busy_refusal_is_retried(self):
+        from unittest.mock import patch
+        busy = type("R", (), {"returncode": 1, "stderr": "Held: busy refusal on HOST", "stdout": ""})()
+        ok = type("R", (), {"returncode": 0, "stderr": "", "stdout": '{"state": "dispatched", "pid": 7}'})()
+        with patch.object(driver.subprocess, "run", side_effect=[busy, busy, ok]) as run, patch.object(driver.time, "sleep"):
+            self.assertEqual(driver.dispatch_block(self.root / "r.json")["pid"], 7)
+        self.assertEqual(run.call_count, 3)
+        other = type("R", (), {"returncode": 1, "stderr": "ValueError: storage", "stdout": ""})()
+        with patch.object(driver.subprocess, "run", side_effect=[other]), patch.object(driver.time, "sleep"):
+            with self.assertRaises(RuntimeError):
+                driver.dispatch_block(self.root / "r.json")
+
+
 if __name__ == "__main__":
     unittest.main()
