@@ -173,12 +173,16 @@ jobs:
           # cores, so they pause for any host reservation.
           - os: ubuntu-24.04
             runner: '"ubuntu-24.04"'
+          # Windows groups also default to hosted runners. The self-hosted
+          # Windows runners go offline whenever their host is reserved, which
+          # left these jobs queued for hours. Setting the repository variable
+          # MTG_CI_WINDOWS_RUNNER to '["self-hosted", "mtg-ci-windows"]'
+          # sends them to the self-hosted runners (the primary desktop, the
+          # compute host), which keep a per-group cargo target directory
+          # between runs, so most builds are incremental.
           - os: windows-2025
-            runner: '["self-hosted", "mtg-ci-windows"]'
-    # Windows groups run on self-hosted runners (the primary desktop, the
-    # compute host), which keep a per-group cargo target directory between
-    # runs, so most builds are incremental. Pull requests from forks never
-    # run on the self-hosted runners.
+            runner: ${{ vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"' }}
+    # Pull requests from forks never run on the self-hosted runners.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.runner) || matrix.os }}
     steps:
       # Windows can resolve `bash` to the WSL launcher in System32 first;
