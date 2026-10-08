@@ -2979,6 +2979,9 @@ enum AbilityCostRecipe {
     /// Craft with artifact's material
     /// (`CostComponent::ExileCraftArtifactMaterial`).
     ExileCraftArtifactMaterial,
+    /// "Remove a net counter from this"
+    /// (`CostComponent::RemoveNetCounterFromSelf`).
+    RemoveNetCounterFromSelf,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4664,6 +4667,9 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::ExileCraftArtifactMaterial => {
             "CostComponent::ExileCraftArtifactMaterial".to_string()
         }
+        AbilityCostRecipe::RemoveNetCounterFromSelf => {
+            "CostComponent::RemoveNetCounterFromSelf".to_string()
+        }
     }
 }
 
@@ -4701,6 +4707,7 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::ExileCraftArtifactMaterial => {
             "exile_craft_artifact_material".to_string()
         }
+        AbilityCostRecipe::RemoveNetCounterFromSelf => "remove_net_counter_from_self".to_string(),
     }
 }
 

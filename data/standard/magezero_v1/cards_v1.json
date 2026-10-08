@@ -1123,6 +1123,40 @@
       "mechanics": [],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/GnomeToken.java",
       "is_token": true
+    },
+    {
+      "name": "Braided Net",
+      "engine_capability": "full",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "counters",
+        "remove_counter_cost",
+        "tap_target",
+        "activation_lock",
+        "craft",
+        "transform",
+        "draw",
+        "library_placement"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BraidedNet.java"
     }
   ]
 }

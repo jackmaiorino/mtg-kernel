@@ -14,7 +14,7 @@ use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 
 /// Appended after the 192 Pauper definitions, in registry order.
-const STANDARD_APPENDED: [&str; 36] = [
+const STANDARD_APPENDED: [&str; 37] = [
     "Plains",
     "Burst Lightning",
     "Teferi, Temporal Pilgrim",
@@ -51,13 +51,15 @@ const STANDARD_APPENDED: [&str; 36] = [
     "The Irencrag",
     "Clay-Fired Bricks",
     "Cosmium Gnome Token",
+    "Braided Net",
 ];
 
 /// Every distinct nonbasic card in the 16 decks that this build fully
 /// supports. Each Standard card batch extends this list.
-const SUPPORTED_NONBASIC: [&str; 31] = [
+const SUPPORTED_NONBASIC: [&str; 32] = [
     "Basilisk Collar",
     "Blue Sun's Twilight",
+    "Braided Net",
     "Breach the Multiverse",
     "Burst Lightning",
     "Candy Trail",
@@ -148,7 +150,7 @@ fn standard_registry_appends_to_the_pauper_prefix_without_fdn() {
 
 #[test]
 fn standard_catalog_identity_is_frozen() {
-    const EXPECTED_STANDARD_V1: u64 = 0xeed8_da23_c23a_9103;
+    const EXPECTED_STANDARD_V1: u64 = 0x9aed_01be_7884_e1c0;
     assert_eq!(
         KERNEL_CARDDB_HASH, EXPECTED_STANDARD_V1,
         "Standard catalog hash {KERNEL_CARDDB_HASH:#018x}"

@@ -3626,6 +3626,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
     let mut chosen_creature_count = 0;
     let mut loyalty_count = 0;
     let mut craft_material_count = 0;
+    let mut net_counter_count = 0;
 
     for component in components {
         match component {
@@ -3707,6 +3708,9 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 craft_material_count += 1;
                 saw_source_changing_component = true;
             }
+            CostComponent::RemoveNetCounterFromSelf => {
+                net_counter_count += 1;
+            }
         }
     }
 
@@ -3727,6 +3731,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
         || reveal_hand_condition_count > 1
         || chosen_creature_count > 1
         || loyalty_count > 1
+        || net_counter_count > 1
     {
         return false;
     }
@@ -3959,6 +3964,9 @@ fn can_pay_components(
             CostComponent::ExileCraftArtifactMaterial => {
                 !craft_material_candidates(player, source, state, &[]).is_empty()
             }
+            CostComponent::RemoveNetCounterFromSelf => {
+                crate::standard_cards_v1::net_counters(state, source) > 0
+            }
             CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {
                 !chosen_creature_cost_candidates(
                     player,
@@ -4020,6 +4028,12 @@ fn pay_cost_components_with_x(
     }
     if components.iter().any(|component| {
         matches!(component, CostComponent::Loyalty(delta) if !crate::planeswalker_v1::loyalty(state, source).is_some_and(|loyalty| *delta >= 0 || loyalty >= u32::from(delta.unsigned_abs())))
+    }) {
+        return false;
+    }
+    if components.iter().any(|component| {
+        matches!(component, CostComponent::RemoveNetCounterFromSelf)
+            && crate::standard_cards_v1::net_counters(state, source) == 0
     }) {
         return false;
     }
@@ -4330,6 +4344,9 @@ fn pay_cost_components_with_x(
                 state,
                 ProposedEvent::zone_change(object_cost_chosen[0], Zone::Exile),
             ),
+            CostComponent::RemoveNetCounterFromSelf => {
+                crate::standard_cards_v1::remove_net_counter(state, source);
+            }
         }
     }
     true
@@ -6268,7 +6285,8 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
             if zone == Zone::Battlefield {
                 if let Some(granted) = equipped_granted_activated_ability(state, id) {
                     let granted_index = def.activated_abilities.len() as u8;
-                    if can_pay_activation_components(granted.cost, player, id, state)
+                    if !crate::standard_cards_v1::activations_locked(state, id)
+                        && can_pay_activation_components(granted.cost, player, id, state)
                         && activation_target_prefix_can_complete(id, &granted, &[], state)
                     {
                         out.push((id, granted_index));
@@ -11042,6 +11060,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 }
                 obj.summoning_sick = false;
             }
+            crate::standard_cards_v1::release_untapped_locks(state);
             state.players[0].draws_this_turn = 0;
             state.players[1].draws_this_turn = 0;
             state.players[0].spells_cast_this_turn = 0;

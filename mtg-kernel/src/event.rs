@@ -24,6 +24,8 @@ pub enum LibraryPlacement {
     Top,
     SecondFromTop,
     Bottom,
+    /// Appended for Braided Quipu.
+    ThirdFromTop,
 }
 
 /// Which observers learn the identity of a card inserted into a library at
@@ -1480,6 +1482,7 @@ fn commit_zone_change(
                 LibraryPlacement::Top => 0,
                 LibraryPlacement::SecondFromTop => 1.min(library_len),
                 LibraryPlacement::Bottom => library_len,
+                LibraryPlacement::ThirdFromTop => 2.min(library_len),
             };
             // The insertion position is public even when the inserted
             // identity is not. Preserve every still-valid older fact by

@@ -914,6 +914,9 @@ pub enum CostComponent {
     /// The exact object is staged through `Decision::ChooseCostTargets`
     /// before any payment commits. Appended for the Standard craft cards.
     ExileCraftArtifactMaterial,
+    /// "Remove a net counter from this" (Braided Net). The counters live in
+    /// `standard_cards_v1`'s per-incarnation state.
+    RemoveNetCounterFromSelf,
 }
 
 impl CostComponent {

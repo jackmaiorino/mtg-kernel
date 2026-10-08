@@ -2165,3 +2165,116 @@ fn crafting_is_sorcery_speed_and_can_exile_a_battlefield_artifact() {
     state.players[0].mana_pool[ManaColor::W.pool_index()] = 7;
     assert!(!activatable(&mut state).contains(&(bricks, 0)));
 }
+
+// ---- Craft: Braided Net // Braided Quipu ------------------------------
+
+/// Activates Braided Net's tap ability on `target` and resolves it.
+fn net(state: &mut GameState, braided: ObjectId, target: ObjectId) {
+    assert!(activatable(state).contains(&(braided, 0)));
+    act(state, Action::ActivateAbility(braided, 0));
+    drive(state, &[Target::Object(target)]);
+}
+
+/// Passes priority until `player`'s next main phase.
+fn to_main_of(state: &mut GameState, player: PlayerId) {
+    let turn = state.turn;
+    loop {
+        let decision = next(state);
+        if state.turn != turn && state.active_player == player && state.step == Step::Main1 {
+            return;
+        }
+        match decision {
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
+            Decision::DeclareAttackers { .. } => act(state, Action::DeclareAttackers(Vec::new())),
+            Decision::OrderTriggers { pending, .. } => {
+                act(state, Action::OrderTriggers((0..pending.len()).collect()))
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn braided_net_taps_and_locks_abilities_until_the_permanent_untaps() {
+    let mut state = game();
+    let braided = put(&mut state, P0, "Braided Net", Zone::Battlefield);
+    let convocation = put(&mut state, P0, "Lunar Convocation", Zone::Battlefield);
+    settle(&mut state);
+    state.players[0].mana_pool[ManaColor::B.pool_index()] = 2;
+    assert!(activatable(&mut state).contains(&(convocation, 0)));
+
+    // Net can't target itself or a land.
+    let island = put(&mut state, P0, "Island", Zone::Battlefield);
+    act(&mut state, Action::ActivateAbility(braided, 0));
+    match next(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert!(legal_targets.contains(&Target::Object(convocation)));
+            assert!(!legal_targets.contains(&Target::Object(braided)));
+            assert!(!legal_targets.contains(&Target::Object(island)));
+            act(
+                &mut state,
+                Action::ChooseTarget(Target::Object(convocation)),
+            );
+        }
+        other => panic!("unexpected decision: {other:?}"),
+    }
+    resolve_stack(&mut state);
+    assert!(state.objects.get(convocation).tapped);
+    // Lunar Convocation's draw ability has no {T}, but it is locked.
+    state.players[0].mana_pool[ManaColor::B.pool_index()] = 2;
+    assert!(!activatable(&mut state).contains(&(convocation, 0)));
+
+    // The lock ends when it untaps, and a later tap does not renew it.
+    to_main_of(&mut state, P1);
+    to_main_of(&mut state, P0);
+    assert!(!state.objects.get(convocation).tapped);
+    state.objects.get_mut(convocation).tapped = true;
+    state.players[0].mana_pool[ManaColor::B.pool_index()] = 2;
+    assert!(activatable(&mut state).contains(&(convocation, 0)));
+}
+
+#[test]
+fn braided_net_has_three_net_counters() {
+    let mut state = game();
+    let braided = put(&mut state, P0, "Braided Net", Zone::Battlefield);
+    let trail = put(&mut state, P1, "Candy Trail", Zone::Battlefield);
+    settle(&mut state);
+    for _ in 0..3 {
+        state.objects.get_mut(braided).tapped = false;
+        state.objects.get_mut(trail).tapped = false;
+        net(&mut state, braided, trail);
+        assert!(state.objects.get(trail).tapped);
+    }
+    state.objects.get_mut(braided).tapped = false;
+    state.objects.get_mut(trail).tapped = false;
+    assert!(!activatable(&mut state).contains(&(braided, 0)));
+}
+
+#[test]
+fn braided_quipu_draws_per_artifact_then_goes_third_from_top() {
+    let mut state = game();
+    let braided = put(&mut state, P0, "Braided Net", Zone::Battlefield);
+    let trail = put(&mut state, P0, "Candy Trail", Zone::Battlefield);
+    let bricks = put(&mut state, P0, "Clay-Fired Bricks", Zone::Battlefield);
+    settle(&mut state);
+    state.players[0].mana_pool[ManaColor::U.pool_index()] = 2;
+    assert!(activatable(&mut state).contains(&(braided, 1)));
+    act(&mut state, Action::ActivateAbility(braided, 1));
+    drive(&mut state, &[Target::Object(trail)]);
+    assert_eq!(state.objects.get(trail).zone, Zone::Exile);
+    assert_eq!(state.objects.get(braided).v4.face_index, 1);
+    // Braided Quipu has no net ability, only its draw.
+    state.players[0].mana_pool[ManaColor::U.pool_index()] = 4;
+    let offered = activatable(&mut state);
+    assert!(!offered.contains(&(braided, 0)));
+    assert!(offered.contains(&(braided, 2)));
+
+    let hand = state.players[0].hand.len();
+    act(&mut state, Action::ActivateAbility(braided, 2));
+    resolve_stack(&mut state);
+    // Two artifacts: Braided Quipu and Clay-Fired Bricks.
+    assert_eq!(state.players[0].hand.len(), hand + 2);
+    assert_eq!(state.objects.get(braided).zone, Zone::Library);
+    assert_eq!(state.players[0].library[2], braided);
+    assert_eq!(state.objects.get(bricks).zone, Zone::Battlefield);
+}

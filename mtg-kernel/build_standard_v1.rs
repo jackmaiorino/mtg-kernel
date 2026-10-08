@@ -8,7 +8,8 @@ use super::{
     AbilityCostRecipe, AbilityEffectRecipe, ActivatedAbilityRecipe, PermanentFilterRecipe, Special,
 };
 use AbilityCostRecipe::{
-    ExileCraftArtifactMaterial, ExileSelf, Loyalty, ManaCost, PayLife, SacrificeSelf, Tap,
+    ExileCraftArtifactMaterial, ExileSelf, Loyalty, ManaCost, PayLife, RemoveNetCounterFromSelf,
+    SacrificeSelf, Tap,
 };
 use AbilityEffectRecipe::AttachSourceToTarget;
 use AbilityEffectRecipe::{DrawCards, Program};
@@ -167,6 +168,25 @@ const CLAY_FIRED_BRICKS: [ActivatedAbilityRecipe; 1] = [craft_with_artifact(&[
     ExileCraftArtifactMaterial,
 ])];
 
+/// Braided Net's tap ability and craft, then Braided Quipu's draw.
+const BRAIDED_NET: [ActivatedAbilityRecipe; 3] = [
+    ActivatedAbilityRecipe {
+        cost: &[Tap, RemoveNetCounterFromSelf],
+        effect: Program("crate::standard_cards_v1::braided_net_tap"),
+        activation_zone: "Battlefield",
+        sorcery_speed_only: false,
+        target_spec:
+            "StandardV1(crate::standard_cards_v1::StandardTargetV1::AnotherNonlandPermanent)",
+        activation_target_filter: "TargetSpecOnly",
+        max_activations_per_turn: None,
+    },
+    craft_with_artifact(&[ManaCost("{1}{U}"), ExileSelf, ExileCraftArtifactMaterial]),
+    instant(
+        &[ManaCost("{3}{U}"), Tap],
+        Program("crate::standard_cards_v1::braided_quipu_draw"),
+    ),
+];
+
 /// "Equip {N}": attach to target creature you control, as a sorcery.
 const fn equip(cost: &'static [AbilityCostRecipe]) -> ActivatedAbilityRecipe {
     ActivatedAbilityRecipe {
@@ -270,6 +290,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Fable of the Mirror-Breaker" => &REFLECTION_OF_KIKI_JIKI,
         "Repurposing Bay" => &REPURPOSING_BAY,
         "Clay-Fired Bricks" => &CLAY_FIRED_BRICKS,
+        "Braided Net" => &BRAIDED_NET,
         "Polukranos Reborn" => &POLUKRANOS,
         "Ojer Axonil, Deepest Might" => &OJER,
         _ => &[],
@@ -278,8 +299,9 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
 
 /// The transforming-card face an activated ability is printed on (`None`
 /// for a single-faced card).
-pub(super) fn activated_ability_face_for(name: &str, _index: usize) -> Option<u8> {
+pub(super) fn activated_ability_face_for(name: &str, index: usize) -> Option<u8> {
     match name {
+        "Braided Net" => Some(u8::from(index == 2)),
         "Polukranos Reborn" | "Clay-Fired Bricks" => Some(0),
         "Ojer Axonil, Deepest Might" | "Fable of the Mirror-Breaker" => Some(1),
         _ => None,
@@ -294,6 +316,7 @@ pub(super) fn transform_face_for(name: &str) -> &'static str {
         "Polukranos Reborn" => "Some(TransformFaceDef { name: \"Polukranos, Engine of Ruin\", types: &[CardType::Creature], subtypes: &[Subtype::Phyrexian, Subtype::Hydra], colors: &[ManaColor::W, ManaColor::G], power: Some(6), toughness: Some(6), keywords: Keywords(Keywords::REACH.0 | Keywords::LIFELINK.0) })",
         "Ojer Axonil, Deepest Might" => "Some(TransformFaceDef { name: \"Temple of Power\", types: &[CardType::Land], subtypes: &[], colors: &[], power: None, toughness: None, keywords: Keywords::NONE })",
         "Fable of the Mirror-Breaker" => "Some(TransformFaceDef { name: \"Reflection of Kiki-Jiki\", types: &[CardType::Enchantment, CardType::Creature], subtypes: &[Subtype::Goblin, Subtype::Shaman], colors: &[ManaColor::R], power: Some(2), toughness: Some(2), keywords: Keywords::NONE })",
+        "Braided Net" => "Some(TransformFaceDef { name: \"Braided Quipu\", types: &[CardType::Artifact], subtypes: &[], colors: &[ManaColor::U], power: None, toughness: None, keywords: Keywords::NONE })",
         "Clay-Fired Bricks" => "Some(TransformFaceDef { name: \"Cosmium Kiln\", types: &[CardType::Artifact], subtypes: &[], colors: &[ManaColor::W], power: None, toughness: None, keywords: Keywords::NONE })",
         _ => "None",
     }
@@ -314,6 +337,7 @@ pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
         "Ojer Axonil, Deepest Might" => Some("Temple of Power"),
         "Fable of the Mirror-Breaker" => Some("Reflection of Kiki-Jiki"),
         "Clay-Fired Bricks" => Some("Cosmium Kiln"),
+        "Braided Net" => Some("Braided Quipu"),
         _ => None,
     }
 }
@@ -349,6 +373,7 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         }
         "Otter Prowess Token" => "prowess",
         "Fable Goblin Shaman Token" => "attacks:create_treasure_token:1",
+        "Braided Net" => "enters_with_3_net_counters;net_lock:activated_abilities_while_tapped",
         "Clay-Fired Bricks" => {
             "etb:search_basic_plains_to_hand_gain_2;back:etb:create_two_gnome_1_1_artifact_creatures;back:static:controlled_creatures_plus_1_1"
         }

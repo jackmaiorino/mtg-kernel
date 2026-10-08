@@ -208,6 +208,18 @@ consumer: the front face searches for a basic Plains and gains 2 life; the
 back face makes two 1/1 Gnome artifact creature tokens and gives creatures
 its controller controls +1/+1.
 
+Braided Net // Braided Quipu is the second. Its three net counters are
+the entering count minus the removals recorded per incarnation in
+`GameState::standard_v1`, paid by the appended
+`CostComponent::RemoveNetCounterFromSelf`. Its tap ability records the
+tapped target's incarnation; `standard_cards_v1::activations_locked` then
+refuses that permanent's activated and mana abilities while it stays
+tapped, and every untap path releases the lock
+(`release_untapped_locks`), so a later tap does not renew it. Braided
+Quipu draws a card per artifact its controller controls and then goes to
+its owner's library third from the top (the appended
+`LibraryPlacement::ThirdFromTop`).
+
 ## Known limits
 
 The stack and battlefield use the Room card's combined mana value and
@@ -220,6 +232,9 @@ lore or poison counters; no other card in its deck puts them.
 Reflection of Kiki-Jiki's delayed sacrifice trigger uses the token as its
 source rather than Reflection (603.7d), so it reads as the token's
 ability.
+Craft's material decision reuses `CostKind::ExileFromGraveyard` even when
+the candidate is a battlefield artifact, and net counters live in the
+Standard state rather than `Counters`, so observations do not show them.
 
 ## Catalog identity
 

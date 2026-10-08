@@ -65,6 +65,14 @@ pub struct StandardStateV1 {
     /// The Irencrag incarnations that became Everflame, Heroes' Legacy.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     everflames: Vec<(ObjectId, u32)>,
+    /// Net counters removed from each Braided Net incarnation, which enters
+    /// with three.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    net_counters_removed: Vec<(ObjectId, u32, u8)>,
+    /// Permanents Braided Net tapped whose activated abilities can't be
+    /// activated for as long as they remain tapped, per exact incarnation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    net_locks: Vec<(ObjectId, u32)>,
 }
 
 /// The doors of one Room permanent incarnation: bit 0 is the left door,
@@ -94,6 +102,8 @@ pub enum StandardTargetV1 {
     InstantOrSorceryCardInOwnGraveyard,
     /// Another nonlegendary creature the targeting controller controls.
     AnotherNonlegendaryControlledCreature,
+    /// Another nonland permanent (any controller).
+    AnotherNonlandPermanent,
 }
 
 impl StandardTargetV1 {
@@ -130,7 +140,11 @@ pub(crate) fn legal_targets(
         .into_iter()
         .filter(|&id| target_matches(target, controller, id, state))
         .filter(|&id| {
-            target != StandardTargetV1::AnotherNonlegendaryControlledCreature || Some(id) != source
+            !matches!(
+                target,
+                StandardTargetV1::AnotherNonlegendaryControlledCreature
+                    | StandardTargetV1::AnotherNonlandPermanent
+            ) || Some(id) != source
         })
         .map(Target::Object)
         .collect()
@@ -172,6 +186,7 @@ pub(crate) fn target_matches(
         StandardTargetV1::ControlledArtifact => {
             live.controller == controller && has(CardType::Artifact)
         }
+        StandardTargetV1::AnotherNonlandPermanent => !has(CardType::Land),
         StandardTargetV1::AnotherNonlegendaryControlledCreature => {
             live.controller == controller
                 && has(CardType::Creature)
@@ -314,6 +329,13 @@ pub enum StandardOpV1 {
     /// Craft (702.167a): the source, exiled to pay the ability's cost,
     /// returns to the battlefield transformed under its owner's control.
     ReturnExiledSourceTransformed,
+    /// Braided Net: tap target permanent; its activated abilities can't be
+    /// activated for as long as it remains tapped.
+    TapTargetAndLockActivations,
+    /// Braided Quipu: draw a card for each artifact the controller
+    /// controls, then put the source into its owner's library third from
+    /// the top.
+    DrawPerArtifactThenSourceThirdFromTop,
 }
 
 impl StandardOpV1 {
@@ -544,6 +566,7 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 && state.objects.get(ctx.source).v4.face_index == 0
             {
                 state.objects.get_mut(ctx.source).tapped = false;
+                release_untapped_locks(state);
                 transform_resolving_source(ctx, state);
             }
         }
@@ -633,6 +656,49 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 state,
                 ProposedEvent::transformed_battlefield_return(ctx.source, 1, owner),
             );
+        }
+        StandardOpV1::TapTargetAndLockActivations => {
+            let Some(Target::Object(object)) = ctx.targets.first().copied() else {
+                return;
+            };
+            if !ctx.target_incarnation_matches(0, state)
+                || !target_matches(
+                    StandardTargetV1::AnotherNonlandPermanent,
+                    ctx.controller,
+                    object,
+                    state,
+                )
+            {
+                return;
+            }
+            event::propose_and_commit(state, ProposedEvent::tap(object));
+            let live = state.objects.get(object);
+            if live.tapped && live.zone == Zone::Battlefield {
+                let incarnation = (object, live.zone_change_count);
+                let standard = state.standard_v1.get_or_insert_with(Default::default);
+                if !standard.net_locks.contains(&incarnation) {
+                    standard.net_locks.push(incarnation);
+                }
+            }
+        }
+        StandardOpV1::DrawPerArtifactThenSourceThirdFromTop => {
+            let artifacts = state.players[ctx.controller.index()]
+                .battlefield
+                .iter()
+                .filter(|&&id| crate::engine::object_has_type(state, id, CardType::Artifact))
+                .count();
+            for _ in 0..artifacts {
+                event::propose_and_commit(state, ProposedEvent::draw(ctx.controller));
+            }
+            if source_incarnation_live(ctx, state) {
+                event::propose_and_commit(
+                    state,
+                    ProposedEvent::public_library_insert(
+                        ctx.source,
+                        event::LibraryPlacement::ThirdFromTop,
+                    ),
+                );
+            }
         }
         StandardOpV1::AddLoyaltyToSource { amount } => {
             if source_incarnation_live(ctx, state) {
@@ -1241,6 +1307,9 @@ pub(crate) fn activation_allowed(
     def: &CardDef,
     ability_index: usize,
 ) -> bool {
+    if activations_locked(state, source) {
+        return false;
+    }
     if def.name == ROOM {
         // A door can be unlocked only while it is locked.
         return u8::try_from(ability_index)
@@ -1273,6 +1342,9 @@ pub(crate) fn activation_allowed(
 
 /// Whether `object`'s mana abilities exist on the face it shows.
 pub(crate) fn mana_abilities_active(state: &GameState, object: ObjectId, def: &CardDef) -> bool {
+    if activations_locked(state, object) {
+        return false;
+    }
     if def.name == THE_IRENCRAG {
         // Everflame loses all other abilities.
         return !is_everflame(state, object);
@@ -2652,3 +2724,103 @@ const CLAY_FIRED_BRICKS_TRIGGERS: [TriggeredAbilityDef; 2] = [
     trigger(TriggerCondition::Etb, clay_fired_bricks_entry),
     trigger(TriggerCondition::Etb, cosmium_kiln_entry),
 ];
+
+// ---- Craft: Braided Net // Braided Quipu ----------------------------------
+
+const BRAIDED_NET: &str = "Braided Net";
+const NET_COUNTERS_ON_ENTRY: u8 = 3;
+
+/// "{T}, Remove a net counter from Braided Net: Tap another target nonland
+/// permanent. Its activated abilities can't be activated for as long as it
+/// remains tapped."
+pub fn braided_net_tap() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::TapTargetAndLockActivations)
+}
+
+/// "{3}{U}, {T}: Draw a card for each artifact you control, then put
+/// Braided Quipu into its owner's library third from the top."
+pub fn braided_quipu_draw() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::DrawPerArtifactThenSourceThirdFromTop)
+}
+
+/// Net counters on `object`: a Braided Net battlefield incarnation enters
+/// with three (its front face's replacement) and keeps the rest.
+pub(crate) fn net_counters(state: &GameState, object: ObjectId) -> u8 {
+    let Some(live) = state.objects.try_get(object) else {
+        return 0;
+    };
+    if live.zone != Zone::Battlefield
+        || live.v4.face_index != 0
+        || CARD_DEFS[live.card_def as usize].name != BRAIDED_NET
+    {
+        return 0;
+    }
+    let removed = state.standard_v1.as_ref().map_or(0, |standard| {
+        standard
+            .net_counters_removed
+            .iter()
+            .find(|(id, zcc, _)| *id == object && *zcc == live.zone_change_count)
+            .map_or(0, |(_, _, removed)| *removed)
+    });
+    NET_COUNTERS_ON_ENTRY.saturating_sub(removed)
+}
+
+/// Pays "Remove a net counter from this".
+pub(crate) fn remove_net_counter(state: &mut GameState, object: ObjectId) {
+    if net_counters(state, object) == 0 {
+        return;
+    }
+    let zone_change_count = state.objects.get(object).zone_change_count;
+    let standard = state.standard_v1.get_or_insert_with(Default::default);
+    if let Some(entry) = standard
+        .net_counters_removed
+        .iter_mut()
+        .find(|(id, zcc, _)| *id == object && *zcc == zone_change_count)
+    {
+        entry.2 += 1;
+    } else {
+        standard
+            .net_counters_removed
+            .push((object, zone_change_count, 1));
+    }
+}
+
+/// Whether Braided Net stops `object`'s activated abilities: it is the
+/// incarnation Net tapped and it is still tapped.
+pub(crate) fn activations_locked(state: &GameState, object: ObjectId) -> bool {
+    let Some(standard) = state.standard_v1.as_ref() else {
+        return false;
+    };
+    state.objects.try_get(object).is_some_and(|live| {
+        live.tapped
+            && standard
+                .net_locks
+                .contains(&(object, live.zone_change_count))
+    })
+}
+
+/// Ends Braided Net's lock on every permanent that untapped or left; run
+/// after anything untaps a permanent.
+pub(crate) fn release_untapped_locks(state: &mut GameState) {
+    let Some(standard) = state.standard_v1.as_ref() else {
+        return;
+    };
+    if standard.net_locks.is_empty() {
+        return;
+    }
+    let held = standard
+        .net_locks
+        .iter()
+        .copied()
+        .filter(|&(object, zone_change_count)| {
+            state.objects.try_get(object).is_some_and(|live| {
+                live.tapped
+                    && live.zone == Zone::Battlefield
+                    && live.zone_change_count == zone_change_count
+            })
+        })
+        .collect();
+    if let Some(standard) = state.standard_v1.as_mut() {
+        standard.net_locks = held;
+    }
+}
