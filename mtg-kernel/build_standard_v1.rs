@@ -58,8 +58,29 @@ const POLUKRANOS: [ActivatedAbilityRecipe; 1] = [sorcery_transform(&[ManaCost("{
 /// `standard_cards_v1::activation_allowed`.
 const OJER: [ActivatedAbilityRecipe; 1] = [sorcery_transform(&[ManaCost("{2}{R}"), Tap])];
 
+/// A Room's unlock special actions, left door then right door, each at its
+/// half's mana cost and sorcery timing (709.5e). Each works only while its
+/// door is locked (`standard_cards_v1::activation_allowed`).
+const fn unlock(cost: &'static [AbilityCostRecipe], program: &'static str) -> ActivatedAbilityRecipe {
+    ActivatedAbilityRecipe {
+        cost,
+        effect: Program(program),
+        activation_zone: "Battlefield",
+        sorcery_speed_only: true,
+        target_spec: "None",
+        activation_target_filter: "TargetSpecOnly",
+        max_activations_per_turn: None,
+    }
+}
+
+const UNHOLY_ANNEX: [ActivatedAbilityRecipe; 2] = [
+    unlock(&[ManaCost("{2}{B}")], "crate::standard_cards_v1::unlock_left_door"),
+    unlock(&[ManaCost("{3}{B}{B}")], "crate::standard_cards_v1::unlock_right_door"),
+];
+
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
+        "Unholy Annex // Ritual Chamber" => &UNHOLY_ANNEX,
         "Teferi, Temporal Pilgrim" => &TEFERI,
         "Polukranos Reborn" => &POLUKRANOS,
         "Ojer Axonil, Deepest Might" => &OJER,
@@ -108,6 +129,9 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         }
         "Polukranos Reborn" => "back:this_or_another_nontoken_hydra_you_control_dies:two_phyrexian_hydras",
         "Ojer Axonil, Deepest Might" => "dies:return_tapped_transformed",
+        "Unholy Annex // Ritual Chamber" => {
+            "door0:controller_end_step:draw_then_drain_2_if_demon_else_lose_2;door1:unlock_this_door:create_demon_6_6_flying"
+        }
         _ => "none",
     }
 }
@@ -120,6 +144,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Polukranos Reborn" | "Phyrexian Hydra Reach Token" => &["Keywords::REACH"],
         "Ojer Axonil, Deepest Might" => &["Keywords::TRAMPLE"],
         "Phyrexian Hydra Lifelink Token" => &["Keywords::LIFELINK"],
+        "Demon Flying Token" => &["Keywords::FLYING"],
         _ => &[],
     }
 }
@@ -132,6 +157,7 @@ pub(super) fn object_name_for(name: &str) -> Option<&'static str> {
         "Phyrexian Hydra Reach Token" | "Phyrexian Hydra Lifelink Token" => {
             Some("Phyrexian Hydra")
         }
+        "Demon Flying Token" => Some("Demon"),
         _ => None,
     }
 }
@@ -143,10 +169,23 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::Creature",
             "crate::standard_cards_v1::blue_suns_twilight",
         ),
+        "Unholy Annex // Ritual Chamber" => (
+            "TargetSpec::None",
+            "crate::standard_cards_v1::room_enters_program",
+        ),
         _ => return None,
     };
     Some(Special::StandardProgram {
         target_spec,
         program,
     })
+}
+
+/// Alternative costs. A Room's right half is cast for its own mana cost,
+/// modeled as the card's alternative cost; the left half is the normal cost.
+pub(super) fn alt_cost_for(name: &str) -> &'static str {
+    match name {
+        "Unholy Annex // Ritual Chamber" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::B), Pip::Colored(ManaColor::B)], generic: 3, x_count: 0 })], condition: AltCostCondition::Always })",
+        _ => "None",
+    }
 }

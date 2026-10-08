@@ -23,6 +23,19 @@ pub struct StandardStateV1 {
     /// red sources they controlled (Temple of Power's activation condition).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     red_noncombat_damage: Option<(u32, [u32; 2])>,
+    /// Unlocked doors of Room permanents, per exact battlefield incarnation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    rooms: Vec<RoomDoorsV1>,
+}
+
+/// The doors of one Room permanent incarnation: bit 0 is the left door,
+/// bit 1 the right door. A Room absent from the list has both doors locked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RoomDoorsV1 {
+    object: ObjectId,
+    zone_change_count: u32,
+    unlocked: u8,
 }
 
 /// Effect leaves owned by this module. Appended to `EffectOp` as one variant
@@ -69,6 +82,12 @@ pub enum StandardOpV1 {
     /// Blue Sun's Twilight: gain control of target creature (mana value at
     /// most X); if X is 5 or more, create a token that's a copy of it.
     GainControlOfTargetCreatureCopyAtXFive,
+    /// A Room spell resolves: it enters the battlefield, and if it was cast,
+    /// the door of the half that was cast becomes unlocked (709.5).
+    RoomEnters,
+    /// Unlock `door` of the ability's source Room, if it is still the same
+    /// battlefield incarnation and that door is locked.
+    UnlockSourceDoor { door: u8 },
 }
 
 impl StandardOpV1 {
@@ -181,6 +200,12 @@ fn transform_resolving_source(ctx: &ExecCtx, state: &mut GameState) {
 pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
         StandardOpV1::TransformSource => transform_resolving_source(ctx, state),
+        StandardOpV1::RoomEnters => room_enters(ctx, state),
+        StandardOpV1::UnlockSourceDoor { door } => {
+            if source_incarnation_live(ctx, state) {
+                unlock_door(state, ctx.source, *door);
+            }
+        }
         StandardOpV1::BindCecilDarkness => {}
         StandardOpV1::CecilDarkness { amount } => {
             let amount = i32::try_from(*amount).unwrap_or(i32::MAX);
@@ -475,6 +500,11 @@ pub enum StandardTriggerV1 {
     /// "Whenever this or another nontoken Hydra you control dies", printed on
     /// the back face.
     ThisOrAnotherNontokenHydraYouControlDies,
+    /// "At the beginning of your end step", printed on a Room door, which
+    /// works only while that door is unlocked.
+    ControllerEndStepWhileDoorUnlocked { door: u8 },
+    /// "When you unlock this door."
+    YouUnlockThisDoor { door: u8 },
 }
 
 const POLUKRANOS_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
@@ -527,6 +557,22 @@ pub(crate) fn trigger_matches(
     state: &GameState,
 ) -> bool {
     match condition {
+        StandardTriggerV1::ControllerEndStepWhileDoorUnlocked { door } => {
+            let live = state.objects.get(source);
+            matches!(
+                events[index],
+                CommittedEvent::BeginningEndStep { active_player, .. }
+                    if active_player == live.controller
+            ) && live.zone == Zone::Battlefield
+                && door_unlocked(state, source, door)
+        }
+        StandardTriggerV1::YouUnlockThisDoor { door } => matches!(
+            events[index],
+            CommittedEvent::RoomDoorUnlockedV1 { object, zone_change_count, door: unlocked }
+                if object == source
+                    && unlocked == door
+                    && zone_change_count == state.objects.get(source).zone_change_count
+        ),
         StandardTriggerV1::ThisOrAnotherNontokenHydraYouControlDies => {
             let CommittedEvent::ZoneChange {
                 object,
@@ -631,6 +677,7 @@ pub(crate) fn replace_damage(state: &GameState, damage: &mut DamageProposed) {
 }
 
 /// Records noncombat damage dealt by red sources for Temple of Power.
+#[cfg(feature = "standard-magezero-fixtures")]
 pub(crate) fn after_damage(state: &mut GameState, source: ObjectId, amount: i32, is_combat: bool) {
     if is_combat || amount <= 0 {
         return;
@@ -672,6 +719,11 @@ pub(crate) fn activation_allowed(
     def: &CardDef,
     ability_index: usize,
 ) -> bool {
+    if def.name == ROOM {
+        // A door can be unlocked only while it is locked.
+        return u8::try_from(ability_index)
+            .is_ok_and(|door| door < 2 && !door_unlocked(state, source, door));
+    }
     if def.transform_face.is_none() {
         return true;
     }
@@ -700,6 +752,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         CECIL => &CECIL_TRIGGERS,
         POLUKRANOS => &POLUKRANOS_TRIGGERS,
         OJER => &OJER_TRIGGERS,
+        ROOM => &ROOM_TRIGGERS,
         _ => &[],
     }
 }
@@ -753,3 +806,169 @@ pub(crate) fn minimum_x(def: &CardDef, targets: &[Target], state: &GameState) ->
         _ => 0,
     }
 }
+
+// ---- Rooms: Unholy Annex // Ritual Chamber ---------------------------------
+
+const ROOM: &str = "Unholy Annex // Ritual Chamber";
+
+/// Whether `door` (0 left, 1 right) of this exact Room incarnation is
+/// unlocked.
+pub(crate) fn door_unlocked(state: &GameState, object: ObjectId, door: u8) -> bool {
+    let live = state.objects.get(object);
+    live.zone == Zone::Battlefield
+        && state.standard_v1.as_ref().is_some_and(|standard| {
+            standard.rooms.iter().any(|room| {
+                room.object == object
+                    && room.zone_change_count == live.zone_change_count
+                    && room.unlocked & (1 << door) != 0
+            })
+        })
+}
+
+/// Unlocks `door` of a battlefield Room and records the unlock event that
+/// "when you unlock this door" abilities trigger on. Unlocking an unlocked
+/// door does nothing.
+fn unlock_door(state: &mut GameState, object: ObjectId, door: u8) {
+    if door > 1 || door_unlocked(state, object, door) {
+        return;
+    }
+    let live = state.objects.get(object);
+    if live.zone != Zone::Battlefield {
+        return;
+    }
+    let zone_change_count = live.zone_change_count;
+    let standard = state.standard_v1.get_or_insert_with(Default::default);
+    // Forget Rooms that have since left the battlefield.
+    let objects = &state.objects;
+    standard.rooms.retain(|room| {
+        objects.try_get(room.object).is_some_and(|live| {
+            live.zone == Zone::Battlefield && live.zone_change_count == room.zone_change_count
+        })
+    });
+    match standard
+        .rooms
+        .iter_mut()
+        .find(|room| room.object == object && room.zone_change_count == zone_change_count)
+    {
+        Some(room) => room.unlocked |= 1 << door,
+        None => standard.rooms.push(RoomDoorsV1 {
+            object,
+            zone_change_count,
+            unlocked: 1 << door,
+        }),
+    }
+    state.engine.event_log.push(CommittedEvent::RoomDoorUnlockedV1 {
+        object,
+        zone_change_count,
+        door,
+    });
+}
+
+/// A resolving Room spell enters the battlefield. The half that was cast is
+/// the one whose door unlocks: the left half is the card's normal cost and
+/// the right half its alternative cost.
+fn room_enters(ctx: &ExecCtx, state: &mut GameState) {
+    let door = match state
+        .objects
+        .get(ctx.source)
+        .v4
+        .spell_cast_origin
+        .and_then(|origin| origin.finalized_method)
+    {
+        Some(crate::state::CastMethodV4::Normal) => Some(0),
+        Some(crate::state::CastMethodV4::Alternative) => Some(1),
+        _ => None,
+    };
+    crate::effect::execute(
+        &EffectOp::MoveObject {
+            object: crate::effect::ObjectRef::ThisSource,
+            to_zone: Zone::Battlefield,
+        },
+        ctx,
+        state,
+    );
+    if let Some(door) = door {
+        if state.objects.get(ctx.source).zone == Zone::Battlefield {
+            unlock_door(state, ctx.source, door);
+        }
+    }
+}
+
+pub fn room_enters_program() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::RoomEnters)
+}
+
+/// Unlocking a door is a special action (709.5e): it doesn't use the stack.
+pub fn unlock_left_door() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::UnlockSourceDoor { door: 0 })
+}
+
+pub fn unlock_right_door() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::UnlockSourceDoor { door: 1 })
+}
+
+/// Whether this activated ability is a special action that takes effect
+/// as soon as its cost is paid instead of using the stack.
+pub(crate) fn is_special_action(def: &CardDef, ability_index: u8) -> bool {
+    def.name == ROOM && ability_index < 2
+}
+
+/// Performs a paid special action of `source`.
+pub(crate) fn special_action(state: &mut GameState, source: ObjectId, ability_index: u8) {
+    unlock_door(state, source, ability_index);
+}
+
+/// Unholy Annex: "At the beginning of your end step, draw a card. If you
+/// control a Demon, each opponent loses 2 life and you gain 2 life.
+/// Otherwise, you lose 2 life."
+fn unholy_annex_end_step() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        },
+        EffectOp::Conditional {
+            cond: crate::effect::EffectCond::ControlsOtherSubtypeCount {
+                subtype: Subtype::Demon,
+                minimum_count: 1,
+            },
+            then: Box::new(EffectOp::Sequence(vec![
+                EffectOp::LoseLife {
+                    player: PlayerRef::Opponent,
+                    amount: 2,
+                },
+                EffectOp::GainLife {
+                    player: PlayerRef::Controller,
+                    amount: 2,
+                },
+            ])),
+            else_: Box::new(EffectOp::LoseLife {
+                player: PlayerRef::Controller,
+                amount: 2,
+            }),
+        },
+    ])
+}
+
+/// Ritual Chamber: "When you unlock this door, create a 6/6 black Demon
+/// creature token with flying."
+fn ritual_chamber_demon() -> EffectOp {
+    EffectOp::CreateToken {
+        token_def: crate::card_def::card_id_by_name("Demon Flying Token")
+            .expect("Demon Flying Token in CARD_DEFS"),
+        controller: PlayerRef::Controller,
+    }
+}
+
+const ROOM_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    trigger(
+        TriggerCondition::StandardV1(StandardTriggerV1::ControllerEndStepWhileDoorUnlocked {
+            door: 0,
+        }),
+        unholy_annex_end_step,
+    ),
+    trigger(
+        TriggerCondition::StandardV1(StandardTriggerV1::YouUnlockThisDoor { door: 1 }),
+        ritual_chamber_demon,
+    ),
+];

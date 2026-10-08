@@ -13,7 +13,17 @@ import limited_decks_v1 as limited
 STANDARD = REPO_ROOT / "data/standard/magezero_v1"
 # Each Standard card batch extends this list with the deck cards it supports.
 SUPPORTED_NONBASIC = {
-    "Burst Lightning", "Duress", "Llanowar Elves", "Spell Pierce", "Tolarian Terror",
+    "Blue Sun's Twilight",
+    "Burst Lightning",
+    "Cecil, Dark Knight",
+    "Duress",
+    "Llanowar Elves",
+    "Ojer Axonil, Deepest Might",
+    "Polukranos Reborn",
+    "Spell Pierce",
+    "Teferi, Temporal Pilgrim",
+    "Tolarian Terror",
+    "Unholy Annex // Ritual Chamber",
     "Voldaren Epicure",
 }
 

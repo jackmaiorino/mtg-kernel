@@ -594,7 +594,8 @@ pub(super) fn conflicts(
             | Transformed { object, .. } => s.raw(*object),
             PlusOneCountersAdded { object, .. }
             | PrintedAbilitiesRemovedBeforeZoneChange { object, .. }
-            | LeftBattlefieldFaceV1 { object, .. } => s.raw(*object),
+            | LeftBattlefieldFaceV1 { object, .. }
+            | RoomDoorUnlockedV1 { object, .. } => s.raw(*object),
             Draw { object, .. } => object.is_some_and(|id| s.raw(id)),
             SpellCast { spell, .. } => s.raw(*spell),
             Targeted { target, .. } => s.raw(*target),

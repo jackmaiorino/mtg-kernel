@@ -15198,6 +15198,16 @@ fn finalize_activation(state: &mut GameState) {
         ));
         return;
     }
+    let host = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
+    if crate::standard_cards_v1::is_special_action(host, pending.ability_index) {
+        // A special action (116.2): no stack object; the activator receives
+        // priority again (116.3c).
+        crate::standard_cards_v1::special_action(state, pending.source, pending.ability_index);
+        collect_and_queue_triggers(state);
+        state.engine.priority_passes = [false, false];
+        state.priority_player = pending.controller;
+        return;
+    }
     push_paid_activation(state, pending, discarded);
 }
 

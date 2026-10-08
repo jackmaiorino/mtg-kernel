@@ -3074,6 +3074,11 @@ fn standard_program_function(name: &str) -> String {
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '_' })
         .collect::<String>();
+    let slug = slug
+        .split('_')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("_");
     format!("spell_effect_standard_{slug}")
 }
 
@@ -3776,7 +3781,7 @@ fn alt_cost_for(name: &str) -> &'static str {
         "Fireblast" => "Some(AltCostDef { components: &[CostComponent::SacrificeLands(2)], condition: AltCostCondition::Always })",
         "Land Grant" => "Some(AltCostDef { components: &[CostComponent::RevealHandIfNoCardsWithType(CardType::Land)], condition: AltCostCondition::Always })",
         "Snuff Out" => "Some(AltCostDef { components: &[CostComponent::PayLife(4)], condition: AltCostCondition::ControlsPermanentWithSubtype(Subtype::Swamp) })",
-        _ => "None",
+        _ => build_standard_v1::alt_cost_for(name),
     }
 }
 

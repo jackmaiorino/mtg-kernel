@@ -617,3 +617,142 @@ fn blue_suns_twilight_needs_a_creature_it_can_afford() {
         other => panic!("unexpected decision: {other:?}"),
     }
 }
+
+// ---- Rooms: Unholy Annex // Ritual Chamber ---------------------------------
+
+const ROOM: &str = "Unholy Annex // Ritual Chamber";
+
+/// Casts the Room's left half (normal cost) or right half (alternative
+/// cost) from a pool of black mana and resolves it.
+fn cast_room(state: &mut GameState, right_half: bool) -> ObjectId {
+    let room = put(state, P0, ROOM, Zone::Hand);
+    state.players[0].mana_pool[ManaColor::B.pool_index()] = 5;
+    next(state);
+    act(state, Action::CastSpell(room));
+    loop {
+        match next(state) {
+            Decision::ChooseCastMode { options, .. } => {
+                let mode = if right_half {
+                    engine::CastMode::Alternative
+                } else {
+                    engine::CastMode::Normal
+                };
+                assert!(options.contains(&mode));
+                act(state, Action::ChooseCastMode(mode));
+            }
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => break,
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
+            Decision::OrderTriggers { pending, .. } => {
+                act(state, Action::OrderTriggers((0..pending.len()).collect()))
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    state.players[0].mana_pool = Default::default();
+    room
+}
+
+fn demons(state: &GameState) -> Vec<ObjectId> {
+    battlefield_named(state, P0, "Demon")
+}
+
+/// Passes to P0's end step and resolves whatever triggers there.
+fn through_end_step(state: &mut GameState) {
+    loop {
+        let decision = next(state);
+        if state.step == Step::End {
+            break;
+        }
+        match decision {
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
+            Decision::DeclareAttackers { .. } => act(state, Action::DeclareAttackers(Vec::new())),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    resolve_stack(state);
+}
+
+#[test]
+fn casting_unholy_annex_unlocks_only_its_door() {
+    let mut state = game();
+    let room = cast_room(&mut state, false);
+    assert_eq!(state.objects.get(room).zone, Zone::Battlefield);
+    assert!(demons(&state).is_empty());
+    let abilities = activatable(&mut state);
+    assert!(!abilities.contains(&(room, 0)), "the left door is already unlocked");
+    // Ritual Chamber's door costs {3}{B}{B}; nothing to pay it with yet.
+    assert!(!abilities.contains(&(room, 1)));
+
+    // No Demon: draw a card and lose 2 life.
+    let hand = state.players[0].hand.len();
+    through_end_step(&mut state);
+    assert_eq!(state.players[0].hand.len(), hand + 1);
+    assert_eq!(state.players[0].life, 18);
+    assert_eq!(state.players[1].life, 20);
+}
+
+#[test]
+fn casting_ritual_chamber_unlocks_its_door_and_makes_a_demon() {
+    let mut state = game();
+    let room = cast_room(&mut state, true);
+    let demon = demons(&state);
+    assert_eq!(demon.len(), 1);
+    let demon = demon[0];
+    assert_eq!(engine::effective_power(&state, demon), 6);
+    assert!(engine::has_effective_keyword(&state, demon, Keywords::FLYING));
+    // The Annex's door is still locked, so its end-step ability does nothing.
+    let hand = state.players[0].hand.len();
+    through_end_step(&mut state);
+    assert_eq!(state.players[0].hand.len(), hand);
+    assert_eq!(state.players[0].life, 20);
+    assert_eq!(state.objects.get(room).zone, Zone::Battlefield);
+}
+
+#[test]
+fn unlocking_ritual_chamber_is_a_special_action_that_triggers() {
+    let mut state = game();
+    let room = cast_room(&mut state, false);
+    state.players[0].mana_pool[ManaColor::B.pool_index()] = 5;
+    assert!(activatable(&mut state).contains(&(room, 1)));
+    act(&mut state, Action::ActivateAbility(room, 1));
+    // The door unlocks at once; only its triggered ability uses the stack.
+    loop {
+        match next(&mut state) {
+            Decision::CastSpellOrPass { .. } => break,
+            Decision::OrderTriggers { pending, .. } => {
+                act(&mut state, Action::OrderTriggers((0..pending.len()).collect()))
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    assert_eq!(state.stack.len(), 1);
+    assert!(state
+        .stack
+        .iter()
+        .all(|item| item.kind != mtg_kernel::state::StackItemKind::ActivatedAbility));
+    resolve_stack(&mut state);
+    assert_eq!(demons(&state).len(), 1);
+    let abilities = activatable(&mut state);
+    assert!(!abilities.contains(&(room, 0)) && !abilities.contains(&(room, 1)));
+
+    // With a Demon: draw, the opponent loses 2 and P0 gains 2.
+    let hand = state.players[0].hand.len();
+    through_end_step(&mut state);
+    assert_eq!(state.players[0].hand.len(), hand + 1);
+    assert_eq!(state.players[0].life, 22);
+    assert_eq!(state.players[1].life, 18);
+}
+
+#[test]
+fn a_room_put_onto_the_battlefield_has_both_doors_locked() {
+    let mut state = game();
+    let room = put(&mut state, P0, ROOM, Zone::Battlefield);
+    state.players[0].mana_pool[ManaColor::B.pool_index()] = 5;
+    let abilities = activatable(&mut state);
+    assert!(abilities.contains(&(room, 0)) && abilities.contains(&(room, 1)));
+    let hand = state.players[0].hand.len();
+    state.players[0].mana_pool = Default::default();
+    through_end_step(&mut state);
+    assert_eq!(state.players[0].hand.len(), hand);
+    assert_eq!(state.players[0].life, 20);
+}

@@ -326,6 +326,66 @@
         "token_copy"
       ],
       "java_file": "Mage.Sets/src/mage/cards/b/BlueSunsTwilight.java"
+    },
+    {
+      "name": "Unholy Annex // Ritual Chamber",
+      "engine_capability": "full",
+      "mana_cost": "{2}{B}",
+      "mana_value": 8,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [
+        "Room"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "room",
+        "end_step_trigger",
+        "unlock_trigger",
+        "token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/u/UnholyAnnexRitualChamber.java"
+    },
+    {
+      "name": "Demon Flying Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Demon"
+      ],
+      "supertypes": [],
+      "power": 6,
+      "toughness": 6,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/Demon66Token.java",
+      "is_token": true
     }
   ]
 }

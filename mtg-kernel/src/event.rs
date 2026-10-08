@@ -521,6 +521,14 @@ pub enum CommittedEvent {
         zone_change_count: u32,
         face_index: u8,
     },
+    /// A door of a Room permanent became unlocked (709.5), either as the
+    /// Room entered after its half was cast or by the unlock special action.
+    /// Only the Standard catalog's Rooms record it.
+    RoomDoorUnlockedV1 {
+        object: ObjectId,
+        zone_change_count: u32,
+        door: u8,
+    },
 }
 
 fn initialize_entry_counters(state: &mut GameState, object: ObjectId, kicked: bool) {
