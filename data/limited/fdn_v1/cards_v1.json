@@ -3416,6 +3416,305 @@
         "temporary_power_change"
       ],
       "java_file": "Mage.Sets/src/mage/cards/c/CracklingCyclops.java"
+    },
+    {
+      "name": "Elementalist Adept",
+      "engine_capability": "full",
+      "mana_cost": "{1}{U}",
+      "mana_value": 2,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Wizard"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_counters_threats.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flash",
+        "prowess"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/ElementalistAdept.java"
+    },
+    {
+      "name": "Crypt Feaster",
+      "engine_capability": "full",
+      "mana_cost": "{3}{B}",
+      "mana_value": 4,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Zombie"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_counters_threats.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "menace",
+        "attack_trigger",
+        "threshold",
+        "self_pump"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CryptFeaster.java"
+    },
+    {
+      "name": "Erudite Wizard",
+      "engine_capability": "full",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Wizard"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_counters_threats.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "draw_trigger",
+        "plus_one_counter"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EruditeWizard.java"
+    },
+    {
+      "name": "Phyrexian Arena",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_counters_threats.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "upkeep_trigger",
+        "draw",
+        "life_loss"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/p/PhyrexianArena.java"
+    },
+    {
+      "name": "Gleaming Barrier",
+      "engine_capability": "full",
+      "mana_cost": "{2}",
+      "mana_value": 2,
+      "colors": [],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Wall"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_counters_threats.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "defender",
+        "dies_trigger",
+        "treasure"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GleamingBarrier.java"
+    },
+    {
+      "name": "Angel of Finality",
+      "engine_capability": "full",
+      "mana_cost": "{3}{W}",
+      "mana_value": 4,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Angel"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_counters_threats.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying",
+        "etb_trigger",
+        "graveyard_exile"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AngelOfFinality.java"
+    },
+    {
+      "name": "Bigfin Bouncer",
+      "engine_capability": "full",
+      "mana_cost": "{3}{U}",
+      "mana_value": 4,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Shark",
+        "Pirate"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_counters_threats.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "etb_trigger",
+        "bounce"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BigfinBouncer.java"
+    },
+    {
+      "name": "Essence Scatter",
+      "engine_capability": "full",
+      "mana_cost": "{1}{U}",
+      "mana_value": 2,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_counters_threats.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "counterspell"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EssenceScatter.java"
+    },
+    {
+      "name": "Refute",
+      "engine_capability": "full",
+      "mana_cost": "{1}{U}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_counters_threats.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "counterspell",
+        "draw",
+        "discard"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/Refute.java"
+    },
+    {
+      "name": "Macabre Waltz",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_counters_threats.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "graveyard_return",
+        "discard"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MacabreWaltz.java"
     }
   ]
 }

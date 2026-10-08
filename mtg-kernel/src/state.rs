@@ -955,6 +955,7 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::ArtifactOrEnchantmentSpellOnStack
                 | TargetSpec::SorcerySpellOnStack
                 | TargetSpec::NoncreatureSpellOnStack
+                | TargetSpec::CreatureSpellOnStack
                 | TargetSpec::ArtifactSpellOnStack
                 | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. },
             0,

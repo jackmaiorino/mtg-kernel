@@ -2430,6 +2430,11 @@ enum Special {
     /// Counter target spell, with the target pool selected independently
     /// from the shared generated counter effect.
     CounterTarget(StackSpellFilter),
+    /// Counter target spell, then draw a card and discard a card (Refute).
+    CounterTargetThenLoot,
+    /// Return up to two target creature cards from your graveyard to your
+    /// hand, then discard a card (Macabre Waltz).
+    ReturnCreatureCardsThenDiscard,
     /// Counter a target spell unless its controller pays a fixed generic
     /// amount. Target eligibility remains definition data rather than a
     /// runtime card-name branch.
@@ -2717,6 +2722,7 @@ enum StackSpellFilter {
     Sorcery,
     Noncreature,
     Artifact,
+    Creature,
 }
 
 impl MillPlayer {
@@ -2737,6 +2743,7 @@ impl StackSpellFilter {
             StackSpellFilter::Sorcery => "sorcery",
             StackSpellFilter::Noncreature => "noncreature",
             StackSpellFilter::Artifact => "artifact",
+            StackSpellFilter::Creature => "creature",
         }
     }
 
@@ -2750,6 +2757,7 @@ impl StackSpellFilter {
             StackSpellFilter::Sorcery => "TargetSpec::SorcerySpellOnStack",
             StackSpellFilter::Noncreature => "TargetSpec::NoncreatureSpellOnStack",
             StackSpellFilter::Artifact => "TargetSpec::ArtifactSpellOnStack",
+            StackSpellFilter::Creature => "TargetSpec::CreatureSpellOnStack",
         }
     }
 }
@@ -2839,6 +2847,10 @@ impl Special {
             Special::SearingBlaze => "searing_blaze".to_string(),
             Special::CounterTarget(filter) => {
                 format!("counter_target:{}", filter.canonical_token())
+            }
+            Special::CounterTargetThenLoot => "counter_target_then_draw_discard:any:1:1".to_string(),
+            Special::ReturnCreatureCardsThenDiscard => {
+                "return_up_to_two_own_graveyard_creature_cards_to_hand_then_discard:1".to_string()
             }
             Special::CounterUnlessPaysGeneric { filter, generic } => format!(
                 "counter_unless_pays_generic:{}:{generic}",
@@ -3130,6 +3142,9 @@ fn special_for(name: &str) -> Special {
         "Dispel" => Special::CounterTarget(StackSpellFilter::Instant),
         "Annul" => Special::CounterTarget(StackSpellFilter::ArtifactOrEnchantment),
         "Envelop" => Special::CounterTarget(StackSpellFilter::Sorcery),
+        "Essence Scatter" => Special::CounterTarget(StackSpellFilter::Creature),
+        "Refute" => Special::CounterTargetThenLoot,
+        "Macabre Waltz" => Special::ReturnCreatureCardsThenDiscard,
         "Force Spike" => Special::CounterUnlessPaysGeneric {
             filter: StackSpellFilter::Any,
             generic: 1,
@@ -3439,6 +3454,8 @@ fn effect_recipe_for(card: &CardJson) -> String {
                 .target_spec()
                 .trim_start_matches("TargetSpec::")
         ),
+        Special::CounterTargetThenLoot => "target=AnySpellOnStack;spell=Sequence(CounterTarget,DrawCards(Controller,1),DiscardCards(Controller,1));mana=None".to_string(),
+        Special::ReturnCreatureCardsThenDiscard => "target=UpToTwoCreatureCardsInOwnGraveyard;spell=Sequence(MoveAllTargets(Hand),DiscardCards(Controller,1));mana=None".to_string(),
         Special::CounterUnlessPaysGeneric { filter, generic } => format!(
             "target={};spell=CounterTargetUnlessPaysGeneric({generic});mana=None",
             filter
@@ -3696,7 +3713,11 @@ fn keywords_for(card: &CardJson) -> String {
             keywords.push("Keywords::DEATHTOUCH");
             keywords.push("Keywords::LIFELINK");
         }
-        "Icewind Elemental" | "Insect Token" => keywords.push("Keywords::FLYING"),
+        "Icewind Elemental" | "Insect Token" | "Angel of Finality" => {
+            keywords.push("Keywords::FLYING")
+        }
+        "Elementalist Adept" => keywords.push("Keywords::FLASH"),
+        "Crypt Feaster" => keywords.push("Keywords::MENACE"),
         "Prideful Parent" => keywords.push("Keywords::VIGILANCE"),
         _ => {}
     }
@@ -5437,6 +5458,13 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Elfsworn Giant" => "controlled_land_enters:create_elf_warrior:1",
         "Eager Trufflesnout" => "source_combat_damage_to_player:create_food:1",
         "Rite of the Dragoncaller" => "cast_instant_or_sorcery:create_red_5_5_flying_dragon:1",
+        "Elementalist Adept" => "cast_noncreature:pump_bound_source:1:1:end_of_turn",
+        "Crypt Feaster" => "attacks_if_controller_graveyard_cards_at_least:7:recheck_threshold:pump_bound_source:2:0:end_of_turn",
+        "Erudite Wizard" => "controller_draws_nth_card_this_turn:2:counter_on_bound_source:1",
+        "Phyrexian Arena" => "beginning_controller_upkeep:draw:1:then_controller_loses_life:1",
+        "Gleaming Barrier" => "dies:create_treasure_token:1",
+        "Angel of Finality" => "etb:target_player:exile_graveyard",
+        "Bigfin Bouncer" => "etb:target_opponent_controlled_creature:return_to_owners_hand",
         "Dazzling Angel" => "other_controlled_creature_enters:gain_life:1",
         "Beast-Kin Ranger" => "other_controlled_creature_enters:pump_bound_source:1:0:end_of_turn",
         "Dwynen, Gilt-Leaf Daen" => "source_declared_attacker:gain_life_current_attacking_elf_count",
@@ -6958,6 +6986,35 @@ fn codegen(cards: &[CardJson]) -> String {
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
 
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::CounterTargetThenLoot))
+    {
+        writeln!(out, "fn spell_effect_counter_target_then_loot() -> Option<EffectOp> {{").unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+        writeln!(out, "        counter_target_spell_effect(),").unwrap();
+        writeln!(out, "        EffectOp::DrawCards {{ player: PlayerRef::Controller, count: 1 }},").unwrap();
+        writeln!(out, "        EffectOp::DiscardCards {{ player: PlayerRef::Controller, count: 1 }},").unwrap();
+        writeln!(out, "    ]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards.iter().any(|card| {
+        matches!(
+            special_for(&card.name),
+            Special::ReturnCreatureCardsThenDiscard
+        )
+    }) {
+        writeln!(out, "fn spell_effect_return_creature_cards_then_discard() -> Option<EffectOp> {{").unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+        writeln!(out, "        EffectOp::MoveAllTargets {{ to_zone: Zone::Hand }},").unwrap();
+        writeln!(out, "        EffectOp::DiscardCards {{ player: PlayerRef::Controller, count: 1 }},").unwrap();
+        writeln!(out, "    ]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
     let mut counter_unless_generics = cards
         .iter()
         .filter_map(|card| match special_for(&card.name) {
@@ -7638,6 +7695,16 @@ fn codegen(cards: &[CardJson]) -> String {
                 format!("spell_effect_counter_target_unless_pays_generic_{generic}"),
                 "no_effect".to_string(),
             ),
+            Special::CounterTargetThenLoot => (
+                StackSpellFilter::Any.target_spec(),
+                "spell_effect_counter_target_then_loot".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::ReturnCreatureCardsThenDiscard => (
+                "TargetSpec::UpToTwoCreatureCardsInOwnGraveyard",
+                "spell_effect_return_creature_cards_then_discard".to_string(),
+                "no_effect".to_string(),
+            ),
             Special::ColorBlast {
                 checked_color,
                 filter_timing: BlastFilterTiming::Targeting,
@@ -8267,7 +8334,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v57\n"
+            "kernel_carddb/v58\n"
         } else {
             "kernel_carddb/v34\n"
         },
@@ -8627,6 +8694,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Golem" => "Subtype::Golem",
         "Boar" => "Subtype::Boar",
         "Cyclops" => "Subtype::Cyclops",
+        "Shark" => "Subtype::Shark",
         "Pirate" => "Subtype::Pirate",
         "Plains" => "Subtype::Plains",
         "ROGUE" => "Subtype::RogueAllCaps",

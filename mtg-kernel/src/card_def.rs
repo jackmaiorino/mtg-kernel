@@ -266,6 +266,8 @@ pub enum Subtype {
     Boar,
     /// Appended for Crackling Cyclops; existing ids remain fixed.
     Cyclops,
+    /// Appended for Bigfin Bouncer; existing ids remain fixed.
+    Shark,
 }
 
 impl Subtype {
@@ -371,6 +373,7 @@ impl Subtype {
         Subtype::Boar,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Cyclops,
+        Subtype::Shark,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -501,6 +504,7 @@ impl Subtype {
                 | Subtype::Archer
                 | Subtype::Lizard
                 | Subtype::Golem
+                | Subtype::Shark
         )
     }
 }
@@ -660,6 +664,8 @@ pub enum TargetSpec {
     ArtifactEnchantmentOrCreaturePowerAtLeastFour,
     /// One nonland permanent an opponent controls (Meteor Golem).
     OpponentNonlandPermanent,
+    /// A creature spell on the stack (Essence Scatter).
+    CreatureSpellOnStack,
 }
 
 impl TargetSpec {
@@ -714,6 +720,7 @@ impl TargetSpec {
             TargetSpec::ArtifactEnchantmentOrFlyingCreature => 43,
             TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour => 44,
             TargetSpec::OpponentNonlandPermanent => 45,
+            TargetSpec::CreatureSpellOnStack => 46,
         }
     }
 }
@@ -1855,11 +1862,11 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 306 (removal, damage and combat tricks).
+        // batches append through id 316 (counterspells, threats and simple trigger cards).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                307
+                317
             } else {
                 192
             }
@@ -1926,6 +1933,7 @@ mod tests {
                 44,
             ),
             (TargetSpec::OpponentNonlandPermanent, 45),
+            (TargetSpec::CreatureSpellOnStack, 46),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);

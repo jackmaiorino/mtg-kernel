@@ -1445,6 +1445,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::ArtifactOrEnchantmentSpellOnStack
         | TargetSpec::SorcerySpellOnStack
         | TargetSpec::NoncreatureSpellOnStack
+        | TargetSpec::CreatureSpellOnStack
         | TargetSpec::ArtifactSpellOnStack
         | TargetSpec::ArtifactPermanent
         | TargetSpec::CreatureOrLandCardInGraveyard
@@ -2632,6 +2633,7 @@ fn legal_targets_for_controller_from_source(
         TargetSpec::NoncreatureSpellOnStack => {
             spell_targets_without_type(state, CardType::Creature)
         }
+        TargetSpec::CreatureSpellOnStack => spell_targets_with_any_type(state, &[CardType::Creature]),
         TargetSpec::ArtifactSpellOnStack => {
             spell_targets_with_any_type(state, &[CardType::Artifact])
         }
