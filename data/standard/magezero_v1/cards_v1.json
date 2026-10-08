@@ -444,6 +444,42 @@
       ],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/IncubatorToken.java",
       "is_token": true
+    },
+    {
+      "name": "Brutal Cathar",
+      "engine_capability": "full",
+      "mana_cost": "{2}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Soldier",
+        "Werewolf"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "daybound",
+        "nightbound",
+        "transform",
+        "exile_until_leaves",
+        "first_strike_back_face",
+        "ward_pay_life_back_face"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BrutalCathar.java"
     }
   ]
 }

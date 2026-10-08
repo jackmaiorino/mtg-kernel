@@ -12,6 +12,12 @@
 //! to it or observe the difference, and it keeps speed free of a source
 //! object. "Max speed" abilities read `speed == 4`.
 //!
+//! Day and night (726): the designation starts when a daybound permanent
+//! appears and changes as each turn begins. Daybound/nightbound permanents
+//! are brought in line with it at the state-check point (`sync_day_night`)
+//! rather than at the instant the designation changes; a daybound card
+//! entering at night enters transformed (`enters_transformed_at_night`).
+//!
 //! Crimes (Outlaws of Thunder Junction, 700.13) are logged as
 //! `CommittedEvent::CrimeCommitted` when a spell, activated ability or
 //! triggered ability finishes targeting (`engine::log_final_targeting_events`).
@@ -19,7 +25,7 @@
 use crate::card_def::{Keywords, CARD_DEFS};
 use crate::event::CommittedEvent;
 use crate::ids::{ObjectId, PlayerId};
-use crate::state::{CreatureDeathTurnV1, GameState, SpeedV1, StackItem, Target, Zone};
+use crate::state::{CreatureDeathTurnV1, DayNightV1, GameState, SpeedV1, StackItem, Target, Zone};
 
 /// Definitions with "Start your engines!".
 fn has_start_your_engines(card_def: u16) -> bool {
@@ -171,4 +177,53 @@ pub(crate) fn evidence_plan(
     }
     let chosen = best.into_iter().skip(minimum).flatten().next()?;
     Some(chosen.into_iter().map(|index| cards[index].0).collect())
+}
+
+/// Daybound (front face) / nightbound (back face) transforming cards.
+fn is_daybound(card_def: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(card_def))
+        .is_some_and(|def| def.name == "Brutal Cathar")
+}
+
+/// 726.2: as a turn begins, day becomes night if the previous turn's active
+/// player cast no spells that turn, and night becomes day if they cast two
+/// or more. Called before the untap step resets spell counts.
+pub(crate) fn advance_day_night(state: &mut GameState, previous_active: PlayerId) {
+    let cast = state.players[previous_active.index()].spells_cast_this_turn;
+    state.day_night_v1 = match state.day_night_v1 {
+        Some(DayNightV1::Day) if cast == 0 => Some(DayNightV1::Night),
+        Some(DayNightV1::Night) if cast >= 2 => Some(DayNightV1::Day),
+        other => other,
+    };
+}
+
+/// 726.2/702.145: it becomes day if a daybound permanent is on the
+/// battlefield and it's neither; then daybound permanents show their front
+/// face by day and their back face by night.
+pub(crate) fn sync_day_night(state: &mut GameState) {
+    let daybound: Vec<ObjectId> = state
+        .objects
+        .iter()
+        .filter(|(_, object)| object.zone == Zone::Battlefield && is_daybound(object.card_def))
+        .map(|(id, _)| id)
+        .collect();
+    if daybound.is_empty() {
+        return;
+    }
+    let designation = *state.day_night_v1.get_or_insert(DayNightV1::Day);
+    let face = u8::from(designation == DayNightV1::Night);
+    for id in daybound {
+        if state.objects.get(id).v4.face_index != face {
+            crate::event::propose_and_commit(
+                state,
+                crate::event::ProposedEvent::transform_in_place(id, face),
+            );
+        }
+    }
+}
+
+/// A daybound card entering the battlefield at night enters transformed.
+pub(crate) fn enters_transformed_at_night(state: &GameState, card_def: u16) -> bool {
+    state.day_night_v1 == Some(DayNightV1::Night) && is_daybound(card_def)
 }

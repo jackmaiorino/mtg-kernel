@@ -82,6 +82,7 @@ impl Scan<'_> {
             | DestroyObject { .. }
             | CounterUnlessPaysGeneric { .. }
             | CounterUnlessCollectsEvidence { .. }
+            | CounterUnlessPaysLife { .. }
             | DamageEachCreatureWithoutSubtype { .. }
             | CounterTargetUnlessPaysGeneric { .. }
             | GainLifeDynamic { .. }

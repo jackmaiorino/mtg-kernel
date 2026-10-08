@@ -135,6 +135,9 @@ fn family_d_cards_are_fully_supported() {
         "Forsaken Miner",
         "Axebane Ferox",
         "Hopeful Initiate",
+        "Chrome Host Seedshark",
+        "Incubator Token",
+        "Brutal Cathar",
     ] {
         let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} missing"));
         assert_eq!(
@@ -837,4 +840,128 @@ fn chrome_host_seedshark_incubates_noncreature_spells_mana_value() {
     assert!(
         matches!(next(&mut state), Decision::CastSpellOrPass { activatable_abilities, .. } if !activatable_abilities.contains(&(incubator, 0)))
     );
+}
+
+#[test]
+fn brutal_cathar_exiles_until_it_leaves_and_makes_it_day() {
+    use mtg_kernel::state::DayNightV1;
+    let mut state = ready();
+    let victim = put(
+        &mut state,
+        PlayerId::P1,
+        "Emberheart Challenger",
+        Zone::Battlefield,
+    );
+    let cathar = put(&mut state, PlayerId::P0, "Brutal Cathar", Zone::Hand);
+    assert_eq!(state.day_night_v1, None);
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::W], 2);
+    cast(&mut state, cathar, &[]);
+    let Some(Decision::ChooseTargets { legal_targets, .. }) = settle(&mut state) else {
+        panic!("expected the enters trigger's target");
+    };
+    assert_eq!(legal_targets, vec![Target::Object(victim)]);
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(victim))).unwrap();
+    settled(&mut state);
+    assert_eq!(state.day_night_v1, Some(DayNightV1::Day));
+    assert_eq!(state.objects.get(victim).zone, Zone::Exile);
+
+    // Burning it away returns the exiled creature.
+    burn(&mut state, PlayerId::P0, Target::Object(cathar));
+    let victim_now = state.players[1]
+        .battlefield
+        .iter()
+        .copied()
+        .find(|&id| state.objects.get(id).name == "Emberheart Challenger");
+    assert_eq!(state.objects.get(cathar).zone, Zone::Graveyard);
+    assert!(victim_now.is_some(), "the exiled creature came back");
+}
+
+#[test]
+fn brutal_cathar_becomes_moonrage_brute_at_night_and_back_by_day() {
+    use mtg_kernel::state::DayNightV1;
+    let mut state = ready();
+    let cathar = put(&mut state, PlayerId::P0, "Brutal Cathar", Zone::Battlefield);
+    mtg_kernel::trigger::sba_fixed_point(&mut state);
+    assert_eq!(state.day_night_v1, Some(DayNightV1::Day));
+
+    // P0 casts nothing this turn, so it becomes night as P1's turn begins.
+    pass_until(&mut state, |s| {
+        s.active_player == PlayerId::P1 && s.step == Step::Main1
+    });
+    assert_eq!(state.day_night_v1, Some(DayNightV1::Night));
+    assert_eq!(state.objects.get(cathar).v4.face_index, 1);
+    assert_eq!(state.objects.get(cathar).name, "Moonrage Brute");
+    assert_eq!(power_toughness(&state, cathar), (3, 3));
+    assert!(engine::has_effective_keyword(
+        &state,
+        cathar,
+        Keywords::FIRST_STRIKE
+    ));
+
+    // Ward—pay 3 life: P1 pays and the spell resolves.
+    burn(&mut state, PlayerId::P1, Target::Object(cathar));
+    assert_eq!(state.players[1].life, 17);
+    assert_eq!(state.objects.get(cathar).damage, 2);
+
+    // At 3 life P1 can't pay without dying, so the spell is countered.
+    state.players[1].life = 3;
+    burn(&mut state, PlayerId::P1, Target::Object(cathar));
+    assert_eq!(state.players[1].life, 3);
+    assert_eq!(state.objects.get(cathar).damage, 2);
+
+    // P1 cast two spells, so it becomes day as P0's turn begins; the
+    // transform back into Brutal Cathar exiles a creature again.
+    let victim = put(
+        &mut state,
+        PlayerId::P1,
+        "Emberheart Challenger",
+        Zone::Battlefield,
+    );
+    let mut state_after = state.clone();
+    for _ in 0..200 {
+        match next(&mut state_after) {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert_eq!(legal_targets, vec![Target::Object(victim)]);
+                engine::step(
+                    &mut state_after,
+                    Action::ChooseTarget(Target::Object(victim)),
+                )
+                .unwrap();
+                break;
+            }
+            Decision::CastSpellOrPass { .. } => {
+                engine::step(&mut state_after, Action::Pass).unwrap()
+            }
+            Decision::DeclareAttackers { .. } => {
+                engine::step(&mut state_after, Action::DeclareAttackers(vec![])).unwrap()
+            }
+            Decision::DeclareBlockers { .. } => {
+                engine::step(&mut state_after, Action::DeclareBlockers(vec![])).unwrap()
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    settled(&mut state_after);
+    assert_eq!(state_after.active_player, PlayerId::P0);
+    assert_eq!(state_after.day_night_v1, Some(DayNightV1::Day));
+    assert_eq!(state_after.objects.get(cathar).v4.face_index, 0);
+    assert_eq!(state_after.objects.get(victim).zone, Zone::Exile);
+}
+
+#[test]
+fn brutal_cathar_enters_transformed_at_night() {
+    use mtg_kernel::state::DayNightV1;
+    let mut state = ready();
+    state.day_night_v1 = Some(DayNightV1::Night);
+    put(
+        &mut state,
+        PlayerId::P1,
+        "Emberheart Challenger",
+        Zone::Battlefield,
+    );
+    let cathar = put(&mut state, PlayerId::P0, "Brutal Cathar", Zone::Hand);
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::W], 2);
+    cast(&mut state, cathar, &[]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(cathar).name, "Moonrage Brute");
 }

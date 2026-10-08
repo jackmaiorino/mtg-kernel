@@ -3652,6 +3652,7 @@ fn transform_face_for(name: &str) -> &'static str {
     match name {
         "The Modern Age" => "Some(TransformFaceDef { name: \"Vector Glider\", types: &[CardType::Enchantment, CardType::Creature], subtypes: &[Subtype::Spirit], colors: &[ManaColor::U], power: Some(2), toughness: Some(3), keywords: Keywords::FLYING })",
         "Delver of Secrets" => "Some(TransformFaceDef { name: \"Insectile Aberration\", types: &[CardType::Creature], subtypes: &[Subtype::Human, Subtype::Insect], colors: &[ManaColor::U], power: Some(3), toughness: Some(2), keywords: Keywords::FLYING })",
+        "Brutal Cathar" => "Some(TransformFaceDef { name: \"Moonrage Brute\", types: &[CardType::Creature], subtypes: &[Subtype::Werewolf], colors: &[ManaColor::R], power: Some(3), toughness: Some(3), keywords: Keywords::FIRST_STRIKE })",
         "Incubator Token" => "Some(TransformFaceDef { name: \"Phyrexian Token\", types: &[CardType::Artifact, CardType::Creature], subtypes: &[Subtype::Phyrexian], colors: &[], power: Some(0), toughness: Some(0), keywords: Keywords::NONE })",
         _ => "None",
     }
@@ -3667,6 +3668,7 @@ fn transform_face_name_for(name: &str) -> Option<&'static str> {
         "The Modern Age" => Some("Vector Glider"),
         "Delver of Secrets" => Some("Insectile Aberration"),
         "Incubator Token" => Some("Phyrexian Token"),
+        "Brutal Cathar" => Some("Moonrage Brute"),
         _ => None,
     }
 }
@@ -5232,6 +5234,7 @@ fn ward_cost_for(name: &str) -> &'static str {
         "Tolarian Terror" | "Cackling Prowler" => "Some(WardCostDef::Generic(2))",
         "Koma, World-Eater" => "Some(WardCostDef::Generic(4))",
         "Axebane Ferox" => "Some(WardCostDef::CollectEvidence(4))",
+        "Brutal Cathar" => "Some(WardCostDef::BackFacePayLife(3))",
         _ => "None",
     }
 }
@@ -5399,6 +5402,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Aloe Alchemist" => "becomes_plotted:target_creature:pump:3:2:trample",
         "Hopeful Initiate" => "training",
         "Chrome Host Seedshark" => "cast_noncreature_spell:incubate_spell_mana_value",
+        "Brutal Cathar" => "etb_or_transforms_into_front:target_opponent_creature:exile_until_source_leaves;daybound;back_face_nightbound_first_strike_ward_pay_life:3",
         "Forsaken Miner" => "cant_block;graveyard:controller_commits_crime:may_pay:B:return_source_to_battlefield",
         "Iridescent Vinelasher" | "Iridescent Vinelasher Offspring Token" => "etb_if_offspring_paid:create_one_one_token_copy;landfall:target_opponent:damage:1",
         _ => "none",
@@ -8484,6 +8488,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Mouse" => "Subtype::Mouse",
         "Assassin" => "Subtype::Assassin",
         "Shark" => "Subtype::Shark",
+        "Werewolf" => "Subtype::Werewolf",
         "Incubator" => "Subtype::Incubator",
         "Pirate" => "Subtype::Pirate",
         "Plains" => "Subtype::Plains",

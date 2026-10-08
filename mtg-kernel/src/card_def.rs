@@ -268,6 +268,7 @@ pub enum Subtype {
     Shark,
     /// Artifact type of the Incubator token.
     Incubator,
+    Werewolf,
 }
 
 impl Subtype {
@@ -375,6 +376,8 @@ impl Subtype {
         Subtype::Assassin,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Shark,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Werewolf,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -508,6 +511,7 @@ impl Subtype {
                 | Subtype::Mouse
                 | Subtype::Assassin
                 | Subtype::Shark
+                | Subtype::Werewolf
         )
     }
 }
@@ -1209,6 +1213,9 @@ pub enum WardCostDef {
     Generic(u8),
     /// Ward—Collect evidence N (MageZero Standard, Axebane Ferox).
     CollectEvidence(u16),
+    /// Ward—Pay N life, printed on the transform back face only
+    /// (MageZero Standard, Moonrage Brute).
+    BackFacePayLife(u8),
 }
 
 /// Alternate battlefield characteristics for a transforming permanent's
@@ -2094,6 +2101,9 @@ mod tests {
             match def.ward_cost.unwrap() {
                 WardCostDef::Generic(amount) => assert_ne!(amount, 0, "{} has Ward 0", def.name),
                 WardCostDef::CollectEvidence(amount) => {
+                    assert_ne!(amount, 0, "{} has Ward 0", def.name)
+                }
+                WardCostDef::BackFacePayLife(amount) => {
                     assert_ne!(amount, 0, "{} has Ward 0", def.name)
                 }
             }

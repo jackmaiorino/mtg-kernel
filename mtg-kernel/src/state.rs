@@ -263,7 +263,11 @@ impl ObjectStateV4 {
             ward_generic: match def.ward_cost {
                 Some(crate::card_def::WardCostDef::Generic(amount)) => u16::from(amount),
                 // Observations carry only generic Ward amounts.
-                Some(crate::card_def::WardCostDef::CollectEvidence(_)) | None => 0,
+                Some(
+                    crate::card_def::WardCostDef::CollectEvidence(_)
+                    | crate::card_def::WardCostDef::BackFacePayLife(_),
+                )
+                | None => 0,
             },
             minimum_blockers_override: None,
             landwalk_mask: 0,
@@ -1332,6 +1336,14 @@ impl SpeedV1 {
     pub const MAX: u8 = 4;
 }
 
+/// 726: the game's day/night designation once a daybound or nightbound
+/// permanent has appeared (absent before then).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DayNightV1 {
+    Day,
+    Night,
+}
+
 /// `Hash` is manual (see the `impl Hash for GameState` block below this
 /// struct): it must reproduce the exact pre-existing field-hash sequence for
 /// a legacy P0-first state, the same discipline `starting_player`'s serde
@@ -1411,6 +1423,9 @@ pub struct GameState {
     /// keeps its bytes and hashes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speed_v1: Option<SpeedV1>,
+    /// Absent until a daybound permanent first appears.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub day_night_v1: Option<DayNightV1>,
 }
 
 /// Reproduces exactly the field-hash sequence `#[derive(Hash)]` produced
@@ -1466,6 +1481,10 @@ impl Hash for GameState {
         if let Some(speed) = &self.speed_v1 {
             "speed-v1".hash(state);
             speed.hash(state);
+        }
+        if let Some(day_night) = &self.day_night_v1 {
+            "day-night-v1".hash(state);
+            day_night.hash(state);
         }
     }
 }
@@ -1612,6 +1631,7 @@ impl GameState {
             creature_death_turn_v1: None,
             london_mulligans_v1: None,
             speed_v1: None,
+            day_night_v1: None,
         }
     }
 

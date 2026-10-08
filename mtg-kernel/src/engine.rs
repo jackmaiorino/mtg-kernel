@@ -9808,6 +9808,15 @@ fn triggered_stack_item_expected_target_spec(
                     targeting_stack_item,
                     crate::card_def::WardCostDef::CollectEvidence(*minimum_mana_value),
                 )),
+                EffectOp::CounterUnlessPaysLife {
+                    ward_target,
+                    targeting_stack_item,
+                    life,
+                } => Some((
+                    ward_target,
+                    targeting_stack_item,
+                    crate::card_def::WardCostDef::BackFacePayLife(*life),
+                )),
                 _ => None,
             };
             match ward {
@@ -10822,6 +10831,8 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             }
             state.players[0].draws_this_turn = 0;
             state.players[1].draws_this_turn = 0;
+            #[cfg(feature = "standard-magezero-fixtures")]
+            crate::standard_keywords_v1::advance_day_night(state, p.opponent());
             state.players[0].spells_cast_this_turn = 0;
             state.players[1].spells_cast_this_turn = 0;
             for (_, object) in state.objects.iter_mut() {

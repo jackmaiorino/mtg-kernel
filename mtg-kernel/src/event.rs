@@ -1016,6 +1016,30 @@ fn commit_with_ability_lki(
                 controller: t.controller,
             }
         }
+        ProposedEvent::Transform(t) if t.face_index == 0 => {
+            // Back to the front face (a nightbound permanent as it becomes
+            // day): the definition's own characteristics.
+            let obj = state.objects.get_mut(t.object);
+            let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
+            assert!(
+                obj.v4.face_index == 1 && def.transform_face.is_some(),
+                "transform_in_place to the front face needs a transformed permanent"
+            );
+            obj.v4.face_index = 0;
+            obj.v4.effective_color_mask = crate::card_def::mana_colors_mask(def.colors);
+            obj.v4.effective_subtype_ids = def
+                .subtypes
+                .iter()
+                .map(|subtype| subtype.stable_id())
+                .collect();
+            obj.v4.effective_subtype_ids.sort_unstable();
+            obj.v4.effective_subtype_ids.dedup();
+            obj.name = def.object_name.to_string();
+            CommittedEvent::Transformed {
+                object: t.object,
+                face_index: 0,
+            }
+        }
         ProposedEvent::Transform(t) => {
             let obj = state.objects.get_mut(t.object);
             let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
@@ -1375,6 +1399,15 @@ fn commit_zone_change(
     battlefield_face_index: Option<u8>,
     battlefield_controller: Option<PlayerId>,
 ) {
+    #[cfg(feature = "standard-magezero-fixtures")]
+    let battlefield_face_index = battlefield_face_index.or_else(|| {
+        (to_zone == Zone::Battlefield
+            && crate::standard_keywords_v1::enters_transformed_at_night(
+                state,
+                state.objects.get(id).card_def,
+            ))
+        .then_some(1)
+    });
     let owner = state.objects.get(id).owner;
     let from_zone = state.objects.get(id).zone;
     refresh_paid_creature_power_lki(state, id, from_zone);

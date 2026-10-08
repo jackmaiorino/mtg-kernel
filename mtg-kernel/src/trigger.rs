@@ -149,6 +149,9 @@ pub enum TriggerCondition {
     /// with greater power (`CommittedEvent::DeclaredAttacker`, read against
     /// the full declared attacker set).
     AttacksWithGreaterPowerAttacker,
+    /// "...or transforms into [this front face]" (`CommittedEvent::
+    /// Transformed` to face zero).
+    TransformsIntoFrontFace,
 }
 
 pub struct TriggeredAbilityDef {
@@ -966,6 +969,22 @@ const WARP_EXILE_TRIGGER: TriggeredAbilityDef = TriggeredAbilityDef {
 fn warp_exile_effect() -> EffectOp {
     EffectOp::BindWarpExileToTriggerSource
 }
+
+/// When it enters or transforms into Brutal Cathar, exile target creature an
+/// opponent controls until it leaves the battlefield (Journey to Nowhere's
+/// linked exile). Daybound; Moonrage Brute is its nightbound back face.
+const BRUTAL_CATHAR_TRIGGERS: [TriggeredAbilityDef; 3] = [
+    etb_trigger(journey_to_nowhere_etb_effect),
+    TriggeredAbilityDef {
+        condition: TriggerCondition::TransformsIntoFrontFace,
+        ..etb_trigger(journey_to_nowhere_etb_effect)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::LeftBattlefield,
+        home_zone: Zone::Graveyard,
+        ..etb_trigger(journey_to_nowhere_ltb_effect)
+    },
+];
 
 fn chrome_host_seedshark_effect() -> EffectOp {
     EffectOp::BindIncubateToTriggerSpell
@@ -1961,6 +1980,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Forsaken Miner" => &FORSAKEN_MINER_TRIGGERS,
         "Hopeful Initiate" => &HOPEFUL_INITIATE_TRIGGERS,
         "Chrome Host Seedshark" => &CHROME_HOST_SEEDSHARK_TRIGGERS,
+        "Brutal Cathar" => &BRUTAL_CATHAR_TRIGGERS,
         _ => &[],
     }
 }
@@ -2005,6 +2025,11 @@ fn standard_trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetS
                 TargetSpec::None
             })
         }
+        "Brutal Cathar" => Some(if *effect == journey_to_nowhere_etb_effect() {
+            TargetSpec::OpponentControlledCreature
+        } else {
+            TargetSpec::None
+        }),
         _ => None,
     }
 }
@@ -2310,7 +2335,10 @@ fn sba_fixed_point_with_protected_triggers(
             return;
         }
         #[cfg(feature = "standard-magezero-fixtures")]
-        crate::standard_keywords_v1::start_your_engines(state);
+        {
+            crate::standard_keywords_v1::start_your_engines(state);
+            crate::standard_keywords_v1::sync_day_night(state);
+        }
         let mut changed = false;
 
         // 704.5g: a creature with toughness 0 or less is put into its
@@ -2804,7 +2832,14 @@ fn triggers_from_events(
         if obj.zone == Zone::Battlefield
             && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
         {
-            if let Some(ward_cost) = card.ward_cost {
+            let ward_cost = card.ward_cost.filter(|cost| {
+                obj.v4.face_index
+                    == u8::from(matches!(
+                        cost,
+                        crate::card_def::WardCostDef::BackFacePayLife(_)
+                    ))
+            });
+            if let Some(ward_cost) = ward_cost {
                 for event in events {
                     let CommittedEvent::Targeted {
                         target,
@@ -2842,6 +2877,13 @@ fn triggers_from_events(
                                     ward_target,
                                     targeting_stack_item: *targeting_stack_item,
                                     minimum_mana_value,
+                                }
+                            }
+                            crate::card_def::WardCostDef::BackFacePayLife(life) => {
+                                EffectOp::CounterUnlessPaysLife {
+                                    ward_target,
+                                    targeting_stack_item: *targeting_stack_item,
+                                    life,
                                 }
                             }
                         },
@@ -3324,6 +3366,13 @@ fn trigger_matches(
             TriggerCondition::ControllerCommitsCrime,
             CommittedEvent::CrimeCommitted { player, .. },
         ) => *player == controller,
+        (
+            TriggerCondition::TransformsIntoFrontFace,
+            CommittedEvent::Transformed {
+                object,
+                face_index: 0,
+            },
+        ) => *object == source,
         (
             TriggerCondition::AttacksWithGreaterPowerAttacker,
             CommittedEvent::DeclaredAttacker {

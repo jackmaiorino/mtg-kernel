@@ -635,6 +635,16 @@ pub enum EffectOp {
         targeting_stack_item: StackItemId,
         minimum_mana_value: u16,
     },
+    /// Ward—Pay N life: counters the exact stack incarnation that targeted
+    /// the bound Ward permanent unless its controller pays `life`. Like
+    /// `CounterUnlessCollectsEvidence` it never asks: the payer pays
+    /// whenever they have more life than the cost, so paying never ends
+    /// the game.
+    CounterUnlessPaysLife {
+        ward_target: StackTargetContractV4,
+        targeting_stack_item: StackItemId,
+        life: u8,
+    },
     /// Deals one simultaneous damage batch to every creature without the
     /// excluded subtype. Breath Weapon is the first consumer.
     DamageEachCreatureWithoutSubtype {
@@ -11261,6 +11271,32 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         }
         EffectOp::BindIncubateToTriggerSpell => {
             panic!("unmaterialized incubate");
+        }
+        EffectOp::CounterUnlessPaysLife {
+            targeting_stack_item,
+            life,
+            ..
+        } => {
+            let Some(payer) = state
+                .stack
+                .iter()
+                .find(|item| item.v4.stack_item_id == *targeting_stack_item)
+                .map(|item| item.controller)
+            else {
+                return;
+            };
+            if state.players[payer.index()].life > i32::from(*life) {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::life_loss(payer, i32::from(*life)),
+                );
+            } else if crate::engine::counter_stack_item_by_id(state, *targeting_stack_item).is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
         }
         EffectOp::Incubate { amount } => {
             let Some(incubator) = crate::card_def::card_id_by_name("Incubator Token") else {
