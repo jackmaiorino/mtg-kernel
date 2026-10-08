@@ -11,12 +11,23 @@ Contrasts (paired over roots, 95% bootstrap over roots):
 - turn-long vs T1 follow-up: X|improved:turn - X|t1, for X in t1, alt
 - game-long vs turn-long: X|improved:game - X|improved:turn
 
+The long arm is whatever the rows' third cell names (`improved:game` by
+default, `improved:turn+G` under HORIZON_LONG); the cap-hit rate of every
+cell is reported (a capped arm is "long", not "game", when its cap binds).
+
 Every logged deviation (a focal decision where improved play chose another
 action than T1's sample) is classified by keywords into mana allocation,
 creature preservation, attacks, Gate targets or colours, prevention, card
 selection or other. Each deviation inherits the paired playout result: success
 when the improved playout scored above the T1-follow-up playout from the same
 initial action and determinization, failure when below, neutral otherwise.
+That inherited label is not a counterfactual. When rows carry deviation
+counterfactuals (DEVIATION_EVAL), a class's cost is instead the mean
+difference, chosen minus sampled, over its counterfactual-evaluated
+deviations (natural-win share primary, mean score alongside); a positive cost
+means the model's sampled action did worse than the improved choice, and a
+harmful deviation (the improved choice scored lower) counts as a search
+failure.
 
 Usage: analyze_cross.py CROSS.jsonl [MORE.jsonl ...] [--boot 2000] [--seed 7] [--examples 3] [--json OUT]
 """
@@ -92,6 +103,61 @@ def classify(dev):
     return "other"
 
 
+def long_arm(cells):
+    """The long arm's follow-up label: the third follow-up of the T1 row."""
+    follows = [c.split("|", 1)[1] for c in cells if c.startswith("t1|")]
+    longs = [f for f in follows if f not in (T1, TURN)]
+    return longs[0] if longs else GAME
+
+
+def cap_rates(rows, cells):
+    """{cell: cap hits, playouts, rate} when the rows record cap hits."""
+    if not any("cap_hits" in j for r in rows for j in r["eval"]["jobs"]):
+        return {}
+    out = {}
+    for i, c in enumerate(cells):
+        hits = sum(r["eval"]["jobs"][i].get("cap_hits", 0) for r in rows)
+        n = sum(len(r["eval"]["jobs"][i]["scores"]) for r in rows)
+        out[c] = {"cap_hits": hits, "playouts": n, "rate": hits / n if n else float("nan")}
+    return out
+
+
+def counterfactual_costs(rows, cells):
+    """Per-class cost of deviations from their fresh counterfactuals."""
+    classes = {cls: {"evaluated": 0, "helpful": 0, "harmful": 0, "neutral": 0, "win": [], "score": []}
+               for cls in CLASSES}
+    logged = evaluated = transitions = 0
+    for r in rows:
+        for i, c in enumerate(cells):
+            if c.split("|", 1)[1] == T1:
+                continue
+            for dev in r["eval"]["jobs"][i]["deviations"]:
+                logged += 1
+                cf = dev.get("counterfactual")
+                if not cf:
+                    continue
+                transitions += cf.get("transitions", 0)
+                n = cf.get("playouts", 0)
+                if not n:
+                    continue
+                evaluated += 1
+                e = classes[classify(dev)]
+                e["evaluated"] += 1
+                e["win"].append((cf["chosen_natural_wins"] - cf["sampled_natural_wins"]) / n)
+                d = cf["chosen_mean"] - cf["sampled_mean"]
+                e["score"].append(d)
+                if cf.get("harmful"):
+                    e["harmful"] += 1
+                elif d > 0:
+                    e["helpful"] += 1
+                else:
+                    e["neutral"] += 1
+    for e in classes.values():
+        e["cost_win"] = mean(e.pop("win"))
+        e["cost_score"] = mean(e.pop("score"))
+    return {"logged": logged, "evaluated": evaluated, "transitions": transitions, "classes": classes}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("cross", nargs="+", help="one or more cross output files (rows deduplicated by root_id)")
@@ -119,6 +185,7 @@ def main():
         return
     out = {"errors": len(errors), "roots": len(rows)}
     cells = rows[0]["cells"]
+    long_follow = long_arm(cells)
     per = []
     print(f"\n{'root':<12}{'tag':<22}{'alt forced':>11}" + "".join(f"{c:>20}" for c in cells))
     for r in rows:
@@ -133,8 +200,9 @@ def main():
     contrasts = [("initial correction only", f"alt|{T1}", f"t1|{T1}")]
     for x in ("t1", "alt"):
         contrasts.append((f"turn-long vs T1 follow-up ({x})", f"{x}|{TURN}", f"{x}|{T1}"))
+    long_name = "game-long" if long_follow == GAME else f"long ({long_follow.split(':', 1)[-1]})"
     for x in ("t1", "alt"):
-        contrasts.append((f"game-long vs turn-long ({x})", f"{x}|{GAME}", f"{x}|{TURN}"))
+        contrasts.append((f"{long_name} vs turn-long ({x})", f"{x}|{long_follow}", f"{x}|{TURN}"))
     print("\ncontrasts (pp, 95% bootstrap over roots):")
     out["contrasts"] = {}
     for name, p, q in contrasts:
@@ -142,6 +210,14 @@ def main():
         lo, hi = boot_ci(d, a.boot, rng)
         out["contrasts"][name] = {"diff": mean(d), "lo": lo, "hi": hi}
         print(f"  {name:<36} {fmt(mean(d))}  [{fmt(lo)}, {fmt(hi)}]")
+
+    caps = cap_rates(rows, cells)
+    if caps:
+        out["cap_hit"] = caps
+        print("\ncap hit rate per cell (a focal multi-action decision after the capped window closed):")
+        for c in cells:
+            e = caps[c]
+            print(f"  {c:<28} {e['cap_hits']:>5} of {e['playouts']:>5}  {fmt(e['rate'])}%")
 
     # Deviations, labelled by the paired playout result.
     counts = defaultdict(Counter)
@@ -184,6 +260,18 @@ def main():
             print(f"  [{cls}] {ex['root']} {ex['cell']} t{ex['turn']} {ex['phase']} own={ex['own_turn']} "
                   f"{ex['result']} means={[round(m, 2) for m in ex['means'] or []]}\n"
                   f"      T1:       {str(ex['t1'])[:200]}\n      improved: {str(ex['improved'])[:200]}")
+    cf = counterfactual_costs(rows, cells)
+    if cf["evaluated"]:
+        out["counterfactual"] = cf
+        print(f"\ndeviation counterfactuals: {cf['evaluated']} of {cf['logged']} logged deviations evaluated "
+              f"({cf['transitions']} transitions, counted apart from the playouts)")
+        print("cost = mean(chosen - sampled) over evaluated deviations; harmful = improved choice scored lower "
+              "(a search failure)")
+        print(f"{'class':<24}{'evaluated':>10}{'cost win pp':>12}{'cost score':>11}{'helpful':>9}{'harmful':>9}{'neutral':>9}")
+        for cls in CLASSES:
+            e = cf["classes"][cls]
+            print(f"{cls:<24}{e['evaluated']:>10}{fmt(e['cost_win']):>12}{fmt(e['cost_score']):>11}"
+                  f"{e['helpful']:>9}{e['harmful']:>9}{e['neutral']:>9}")
     out["deviations"] = {cls: dict(counts[cls]) for cls in CLASSES}
     out["deviations_per_cell"] = dict(per_cell)
     out["examples"] = {cls: examples[cls] for cls in CLASSES}
