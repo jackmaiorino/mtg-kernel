@@ -137,6 +137,8 @@ pub enum StandardTargetV1 {
     UpToTwoAnyTargets,
     /// "Up to one target creature."
     UpToOneCreature,
+    /// A card in any graveyard.
+    CardInAGraveyard,
 }
 
 impl StandardTargetV1 {
@@ -152,7 +154,10 @@ impl StandardTargetV1 {
 
 impl StandardTargetV1 {
     fn in_graveyard(self) -> bool {
-        matches!(self, Self::InstantOrSorceryCardInOwnGraveyard)
+        matches!(
+            self,
+            Self::InstantOrSorceryCardInOwnGraveyard | Self::CardInAGraveyard
+        )
     }
 }
 
@@ -191,7 +196,12 @@ pub(crate) fn legal_targets(
             .filter(|candidate| !prefix.contains(candidate))
             .collect();
     }
-    let candidates: Vec<ObjectId> = if target.in_graveyard() {
+    let candidates: Vec<ObjectId> = if target == StandardTargetV1::CardInAGraveyard {
+        [PlayerId::P0, PlayerId::P1]
+            .iter()
+            .flat_map(|player| state.players[player.index()].graveyard.iter().copied())
+            .collect()
+    } else if target.in_graveyard() {
         state.players[controller.index()].graveyard.clone()
     } else {
         [PlayerId::P0, PlayerId::P1]
@@ -223,6 +233,9 @@ pub(crate) fn target_matches(
     let Some(live) = state.objects.try_get(object) else {
         return false;
     };
+    if target == StandardTargetV1::CardInAGraveyard {
+        return live.zone == Zone::Graveyard && !live.v4.is_token;
+    }
     if target.in_graveyard() {
         let def = &CARD_DEFS[live.card_def as usize];
         return live.zone == Zone::Graveyard
@@ -254,6 +267,7 @@ pub(crate) fn target_matches(
             has(CardType::Creature) || has(CardType::Planeswalker)
         }
         StandardTargetV1::UpToOneCreature => has(CardType::Creature),
+        StandardTargetV1::CardInAGraveyard => false,
         StandardTargetV1::AnotherNonlegendaryControlledCreature => {
             live.controller == controller
                 && has(CardType::Creature)
@@ -422,6 +436,9 @@ pub enum StandardOpV1 {
         copy: crate::ids::StackItemId,
         target: Target,
     },
+    /// Exile the targeted graveyard card with this ability's source
+    /// (Agatha's Soul Cauldron), linking it to that source incarnation.
+    ExileTargetCardWithSource,
 }
 
 impl StandardOpV1 {
@@ -814,6 +831,7 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         StandardOpV1::BindCopyCastSpell => {}
+        StandardOpV1::ExileTargetCardWithSource => exile_card_with_source(ctx, state),
         StandardOpV1::AddLoyaltyToSource { amount } => {
             if source_incarnation_live(ctx, state) {
                 crate::planeswalker_v1::change_loyalty(state, ctx.source, i32::from(*amount));
@@ -1146,6 +1164,8 @@ pub enum StandardTriggerV1 {
     /// "Whenever you cast an instant or sorcery spell, ... This ability
     /// triggers only once each turn" (`trigger_limit_per_turn`).
     YouCastInstantOrSorceryOncePerTurn,
+    /// "When a creature card is exiled this way" (Agatha's Soul Cauldron).
+    CreatureCardExiledWithThis,
 }
 
 /// How many times each turn a trigger condition may trigger, if limited.
@@ -1218,6 +1238,27 @@ pub(crate) fn trigger_matches(
                     if active_player == live.controller
             ) && live.zone == Zone::Battlefield
                 && crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+        }
+        StandardTriggerV1::CreatureCardExiledWithThis => {
+            let CommittedEvent::ZoneChange {
+                object,
+                to: Zone::Exile,
+                ..
+            } = events[index]
+            else {
+                return false;
+            };
+            let live = state.objects.get(source);
+            let exiled = state.objects.get(object);
+            live.zone == Zone::Battlefield
+                && exiled.zone == Zone::Exile
+                && !exiled.v4.is_token
+                && exiled.v4.exiled_by
+                    == Some(crate::state::ObjectLinkV4 {
+                        object: source,
+                        zone_change_count: live.zone_change_count,
+                    })
+                && CARD_DEFS[exiled.card_def as usize].has_type(CardType::Creature)
         }
         StandardTriggerV1::ClassBecomesLevel { level } => matches!(
             events[index],
@@ -1521,6 +1562,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         THE_IRENCRAG => &THE_IRENCRAG_TRIGGERS,
         CLAY_FIRED_BRICKS => &CLAY_FIRED_BRICKS_TRIGGERS,
         CHANDRA => &CHANDRA_TRIGGERS,
+        AGATHAS_SOUL_CAULDRON => &CAULDRON_TRIGGERS,
         "Otter Prowess Token" => &PROWESS_TRIGGERS,
         SEAM_RIP
         | DUSK_ROSE_RELIQUARY
@@ -1789,6 +1831,9 @@ pub(crate) fn trigger_target_spec(
     use crate::card_def::TargetSpec;
     if name == CASE_OF_THE_GATEWAY_EXPRESS && *effect == gateway_express_damage() {
         return Some(TargetSpec::OpponentControlledCreature);
+    }
+    if name == AGATHAS_SOUL_CAULDRON && *effect == cauldron_counter() {
+        return Some(TargetSpec::ControlledCreature);
     }
     if name == INNKEEPERS_TALENT && *effect == innkeeper_counter() {
         return Some(TargetSpec::ControlledCreature);
@@ -3300,4 +3345,195 @@ pub(crate) fn end_aegis_copies_before_departure(state: &mut GameState, object: O
     }) {
         end_aegis_copy(state, index);
     }
+}
+
+// ---- Agatha's Soul Cauldron --------------------------------------------------
+
+const AGATHAS_SOUL_CAULDRON: &str = "Agatha's Soul Cauldron";
+
+/// Granted activated abilities take indices past the host's printed ones
+/// and the Equipment-granted slot: `printed + 1 + card * STRIDE + ability`,
+/// so the exiled card's own ability index survives onto the stack.
+const CAULDRON_GRANT_STRIDE: usize = 8;
+
+/// "{T}: Exile target card from a graveyard."
+pub fn cauldron_exile() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::ExileTargetCardWithSource)
+}
+
+fn cauldron_counter() -> EffectOp {
+    EffectOp::PutPlusOnePlusOneCounter {
+        object: crate::effect::ObjectRef::Target(0),
+    }
+}
+
+/// "When a creature card is exiled this way, put a +1/+1 counter on target
+/// creature you control."
+const CAULDRON_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
+    TriggerCondition::StandardV1(StandardTriggerV1::CreatureCardExiledWithThis),
+    cauldron_counter,
+)];
+
+fn exile_card_with_source(ctx: &ExecCtx, state: &mut GameState) {
+    let Some(Target::Object(card)) = ctx.targets.first().copied() else {
+        return;
+    };
+    if !ctx.target_incarnation_matches(0, state) || state.objects.get(card).zone != Zone::Graveyard
+    {
+        return;
+    }
+    event::propose_and_commit(state, ProposedEvent::zone_change(card, Zone::Exile));
+    let Some(source) = ctx.ability_source_contract else {
+        return;
+    };
+    if state.objects.get(card).zone == Zone::Exile {
+        state.objects.get_mut(card).v4.exiled_by = Some(crate::state::ObjectLinkV4 {
+            object: source.source,
+            zone_change_count: source.zone_change_count,
+        });
+    }
+}
+
+/// The creature cards exiled with the Agatha's Soul Cauldron `player`
+/// controls, in object order.
+fn cauldron_exiled_creature_cards(state: &GameState, player: PlayerId) -> Vec<ObjectId> {
+    let cauldrons = controlled_cauldrons(state, player);
+    if cauldrons.is_empty() {
+        return Vec::new();
+    }
+    state
+        .exile
+        .iter()
+        .copied()
+        .filter(|&id| {
+            let live = state.objects.get(id);
+            !live.v4.is_token
+                && live
+                    .v4
+                    .exiled_by
+                    .is_some_and(|link| cauldrons.contains(&link))
+                && CARD_DEFS[live.card_def as usize].has_type(CardType::Creature)
+        })
+        .collect()
+}
+
+/// The ability of `card_def` a granted index names, given the host's
+/// printed ability count; only front-face battlefield abilities are
+/// granted.
+pub(crate) fn cauldron_ability_of(
+    card_def: u16,
+    printed: usize,
+    index: u8,
+) -> Option<crate::card_def::ActivatedAbilityDef> {
+    let slot = usize::from(index).checked_sub(printed + 1)?;
+    let ability = *CARD_DEFS
+        .get(card_def as usize)?
+        .activated_abilities
+        .get(slot % CAULDRON_GRANT_STRIDE)?;
+    (ability.activation_zone == Zone::Battlefield
+        && ability.face.is_none_or(|face| face == 0)
+        && !ability.is_loyalty_ability())
+    .then_some(ability)
+}
+
+/// "Creatures you control with +1/+1 counters on them have all activated
+/// abilities of all creature cards exiled with Agatha's Soul Cauldron":
+/// each granted ability of `host` with its index and the exiled card.
+pub(crate) fn cauldron_granted_abilities(
+    state: &GameState,
+    host: ObjectId,
+) -> Vec<(u8, ObjectId, crate::card_def::ActivatedAbilityDef)> {
+    let live = state.objects.get(host);
+    if live.zone != Zone::Battlefield
+        || live.counters.plus1_plus1 <= 0
+        || !crate::engine::object_has_type(state, host, CardType::Creature)
+    {
+        return Vec::new();
+    }
+    let printed = CARD_DEFS[live.card_def as usize].activated_abilities.len();
+    let mut granted = Vec::new();
+    for (position, card) in cauldron_exiled_creature_cards(state, live.controller)
+        .into_iter()
+        .enumerate()
+    {
+        let card_def = state.objects.get(card).card_def;
+        for local in 0..CARD_DEFS[card_def as usize].activated_abilities.len() {
+            let Ok(index) = u8::try_from(printed + 1 + position * CAULDRON_GRANT_STRIDE + local)
+            else {
+                break;
+            };
+            if local >= CAULDRON_GRANT_STRIDE {
+                break;
+            }
+            if let Some(ability) = cauldron_ability_of(card_def, printed, index) {
+                granted.push((index, card, ability));
+            }
+        }
+    }
+    granted
+}
+
+/// "You may spend mana as though it were mana of any color to activate
+/// abilities of creatures you control": with an Agatha's Soul Cauldron, a
+/// creature's activation cost asks for generic mana in place of its colored
+/// and hybrid symbols. Costs with Phyrexian symbols are left as printed.
+pub(crate) fn spend_as_any_color(
+    state: &GameState,
+    player: PlayerId,
+    source: ObjectId,
+    cost: crate::mana::Cost,
+) -> crate::mana::Cost {
+    if cost.pips.is_empty()
+        || cost
+            .pips
+            .iter()
+            .any(|pip| matches!(pip, crate::mana::Pip::Phyrexian(_)))
+        || !controls_cauldron(state, player)
+    {
+        return cost;
+    }
+    let live = state.objects.get(source);
+    if live.zone != Zone::Battlefield
+        || live.controller != player
+        || !crate::engine::object_has_type(state, source, CardType::Creature)
+    {
+        return cost;
+    }
+    crate::mana::Cost {
+        pips: &[],
+        generic: cost
+            .generic
+            .saturating_add(u8::try_from(cost.pips.len()).unwrap_or(u8::MAX)),
+        x_count: cost.x_count,
+    }
+}
+
+fn cauldron_card_def() -> Option<u16> {
+    static CAULDRON: std::sync::OnceLock<Option<u16>> = std::sync::OnceLock::new();
+    *CAULDRON.get_or_init(|| crate::card_def::card_id_by_name(AGATHAS_SOUL_CAULDRON))
+}
+
+/// The Agatha's Soul Cauldron incarnations `player` controls with their
+/// abilities.
+fn controlled_cauldrons(state: &GameState, player: PlayerId) -> Vec<crate::state::ObjectLinkV4> {
+    let Some(cauldron) = cauldron_card_def() else {
+        return Vec::new();
+    };
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .filter_map(|&id| {
+            let live = state.objects.get(id);
+            (live.card_def == cauldron
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, id))
+            .then_some(crate::state::ObjectLinkV4 {
+                object: id,
+                zone_change_count: live.zone_change_count,
+            })
+        })
+        .collect()
+}
+
+fn controls_cauldron(state: &GameState, player: PlayerId) -> bool {
+    cauldron_card_def().is_some() && !controlled_cauldrons(state, player).is_empty()
 }

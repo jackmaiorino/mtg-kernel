@@ -324,6 +324,17 @@ const BASILISK_COLLAR: [ActivatedAbilityRecipe; 1] = [equip(&[ManaCost("{2}")])]
 /// has become Everflame (`standard_cards_v1::activation_allowed`).
 const THE_IRENCRAG: [ActivatedAbilityRecipe; 1] = [equip(&[ManaCost("{3}")])];
 
+/// Agatha's Soul Cauldron: "{T}: Exile target card from a graveyard."
+const AGATHAS_SOUL_CAULDRON: [ActivatedAbilityRecipe; 1] = [ActivatedAbilityRecipe {
+    cost: &[Tap],
+    effect: Program("crate::standard_cards_v1::cauldron_exile"),
+    activation_zone: "Battlefield",
+    sorcery_speed_only: false,
+    target_spec: "StandardV1(crate::standard_cards_v1::StandardTargetV1::CardInAGraveyard)",
+    activation_target_filter: "TargetSpecOnly",
+    max_activations_per_turn: None,
+}];
+
 /// Assimilation Aegis's equip {2}.
 const ASSIMILATION_AEGIS: [ActivatedAbilityRecipe; 1] = [equip(&[ManaCost("{2}")])];
 
@@ -406,6 +417,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Basilisk Collar" => &BASILISK_COLLAR,
         "The Irencrag" => &THE_IRENCRAG,
         "Assimilation Aegis" => &ASSIMILATION_AEGIS,
+        "Agatha's Soul Cauldron" => &AGATHAS_SOUL_CAULDRON,
         "Unholy Annex // Ritual Chamber" => &UNHOLY_ANNEX,
         "Teferi, Temporal Pilgrim" => &TEFERI,
         "Liliana of the Veil" => &LILIANA_OF_THE_VEIL,
@@ -479,6 +491,9 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Ojer Axonil, Deepest Might" => "dies:return_tapped_transformed",
         "Seam Rip" | "Dusk Rose Reliquary" | "Sheltered by Ghosts" | "Hardlight Containment" => {
             "etb:exile_target_until_source_leaves;ltb:return_exiled_by_source"
+        }
+        "Agatha's Soul Cauldron" => {
+            "static:spend_mana_as_any_color_for_creature_abilities;static:countered_creatures_have_abilities_of_exiled_creature_cards;creature_card_exiled_with_this:plus_one_counter_on_target_controlled_creature"
         }
         "Assimilation Aegis" => {
             "etb:exile_up_to_one_target_creature_until_source_leaves;ltb:return_exiled_by_source;attached:creature_is_copy_of_exiled_creature_card"

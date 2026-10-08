@@ -1230,6 +1230,36 @@
         "copy"
       ],
       "java_file": "Mage.Sets/src/mage/cards/a/AssimilationAegis.java"
+    },
+    {
+      "name": "Agatha's Soul Cauldron",
+      "engine_capability": "full",
+      "mana_cost": "{2}",
+      "mana_value": 2,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "activated_ability",
+        "graveyard_hate",
+        "ability_granting",
+        "mana_any_color"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AgathasSoulCauldron.java"
     }
   ]
 }

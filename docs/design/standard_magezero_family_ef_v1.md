@@ -263,6 +263,25 @@ definition they were created with (113.7a): the Standard state lists
 every definition each incarnation had through a copy, and ability source
 contracts accept any of them.
 
+## Agatha's Soul Cauldron
+
+The Cauldron's tap ability targets a card in any graveyard (the appended
+`StandardTargetV1::CardInAGraveyard`) and exiles it with the Cauldron
+incarnation through `ObjectStateV4::exiled_by`; a creature card exiled
+this way triggers `StandardTriggerV1::CreatureCardExiledWithThis`, which
+puts a +1/+1 counter on target creature its controller controls.
+Creatures the Cauldron's controller controls with +1/+1 counters have the
+front-face battlefield activated abilities of those exiled creature cards.
+A granted ability is offered as an ordinary `(source, ability_index)` past
+the host's printed abilities and the Equipment-granted slot, at
+`printed + 1 + card * 8 + ability`, so the card's own ability index
+survives onto the stack; `push_paid_activation` freezes the exiled card as
+the ability's `granted_by`, and resolution reads the ability from that
+card. "Spend mana as though it were mana of any color" turns the colored
+and hybrid symbols of a controlled creature's activation cost into generic
+mana while its controller has a Cauldron (`spend_as_any_color`); colorless
+mana pays them too.
+
 ## Known limits
 
 The stack and battlefield use the Room card's combined mana value and
@@ -282,6 +301,10 @@ Assimilation Aegis's copy starts during the next state-based action pass
 rather than from a triggered ability on the stack, and a copied
 creature's leaves-the-battlefield abilities are its own card's rather than
 the copied card's.
+Agatha's Soul Cauldron does not grant mana abilities or more than eight
+abilities per exiled card, and an activation cost with Phyrexian symbols
+keeps its colors. Name-keyed Standard activation restrictions apply to a
+creature's own abilities only.
 
 ## Catalog identity
 

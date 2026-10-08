@@ -3560,6 +3560,18 @@ fn activation_mana_cost(components: &[CostComponent]) -> Option<&Cost> {
     })
 }
 
+/// The mana `player` pays for `source`'s activation cost, after Agatha's
+/// Soul Cauldron's "spend mana as though it were mana of any color".
+fn activation_mana_payment(
+    components: &[CostComponent],
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+) -> Option<Cost> {
+    activation_mana_cost(components)
+        .map(|cost| crate::standard_cards_v1::spend_as_any_color(state, player, source, *cost))
+}
+
 fn payable_activation_cost_object_candidates(
     player: PlayerId,
     source: ObjectId,
@@ -3572,8 +3584,8 @@ fn payable_activation_cost_object_candidates(
     activation_cost_object_candidates(player, source, subtype, state, &[])
         .into_iter()
         .filter(|candidate| {
-            activation_mana_cost(components).is_none_or(|cost| {
-                mana::can_pay_excluding_sources(cost, 0, player, state, &[source, *candidate])
+            activation_mana_payment(components, player, source, state).is_none_or(|cost| {
+                mana::can_pay_excluding_sources(&cost, 0, player, state, &[source, *candidate])
                     .is_some()
             })
         })
@@ -3810,14 +3822,14 @@ fn can_pay_activation_components_with_x(
     if has_unblocked_attacker_return_cost(components) {
         return !unblocked_attacker_return_candidates(player, state, &[]).is_empty();
     }
-    if let Some(cost) = activation_mana_cost(components) {
+    if let Some(cost) = activation_mana_payment(components, player, source, state) {
         let plan = if components
             .iter()
             .any(|component| matches!(component, CostComponent::Tap))
         {
-            mana::can_pay_excluding_source(cost, x_value, player, state, source)
+            mana::can_pay_excluding_source(&cost, x_value, player, state, source)
         } else {
-            mana::can_pay(cost, x_value, player, state)
+            mana::can_pay(&cost, x_value, player, state)
         };
         if plan.is_none() {
             return false;
@@ -3964,7 +3976,13 @@ fn can_pay_components(
             CostComponent::ReturnControlledUnblockedAttackerToOwnersHand => {
                 !unblocked_attacker_return_candidates(player, state, &[]).is_empty()
             }
-            CostComponent::Mana(cost) => mana::can_pay(cost, 0, player, state).is_some(),
+            CostComponent::Mana(cost) => mana::can_pay(
+                &crate::standard_cards_v1::spend_as_any_color(state, player, source, *cost),
+                0,
+                player,
+                state,
+            )
+            .is_some(),
             CostComponent::PayLife(amount) => {
                 state.players[player.index()].life >= i32::from(*amount)
             }
@@ -4225,7 +4243,7 @@ fn pay_cost_components_with_x(
     // Derive the sole mana plan before applying any state-changing component.
     // This keeps a restored or forward-generated unaffordable shape from
     // partially paying life/discard-adjacent components before failing.
-    let mana_cost = activation_mana_cost(components);
+    let mana_cost = activation_mana_payment(components, player, source, state);
     let mut reserved = Vec::new();
     if components
         .iter()
@@ -4241,9 +4259,9 @@ fn pay_cost_components_with_x(
     }
     let mana_plan = mana_cost.map(|cost| {
         if reserved.is_empty() {
-            mana::can_pay(cost, x_value, player, state)
+            mana::can_pay(&cost, x_value, player, state)
         } else {
-            mana::can_pay_excluding_sources(cost, x_value, player, state, &reserved)
+            mana::can_pay_excluding_sources(&cost, x_value, player, state, &reserved)
         }
     });
     if mana_plan.as_ref().is_some_and(Option::is_none) {
@@ -6312,6 +6330,26 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
                         && activation_target_prefix_can_complete(id, &granted, &[], state)
                     {
                         out.push((id, granted_index));
+                    }
+                }
+                // Agatha's Soul Cauldron's granted abilities follow
+                // (`standard_cards_v1::cauldron_granted_abilities`).
+                for (index, _, granted) in
+                    crate::standard_cards_v1::cauldron_granted_abilities(state, id)
+                {
+                    if crate::standard_cards_v1::activations_locked(state, id)
+                        || (granted.sorcery_speed_only && !sorcery_speed_timing_ok(player, state))
+                        || granted.max_activations_per_turn.is_some_and(|limit| {
+                            activated_ability_use_count(state, id, u16::from(index))
+                                >= u16::from(limit)
+                        })
+                    {
+                        continue;
+                    }
+                    if can_pay_activation_components(granted.cost, player, id, state)
+                        && activation_target_prefix_can_complete(id, &granted, &[], state)
+                    {
+                        out.push((id, index));
                     }
                 }
             }
@@ -11892,7 +11930,10 @@ fn resolved_activated_ability(
         return Some(*ability);
     }
     if ability_index as usize != def.activated_abilities.len() {
-        return None;
+        return crate::standard_cards_v1::cauldron_granted_abilities(state, source)
+            .into_iter()
+            .find(|&(index, _, _)| index == ability_index)
+            .map(|(_, _, ability)| ability);
     }
     equipped_granted_activated_ability(state, source)
 }
@@ -11936,8 +11977,18 @@ fn resolved_stack_activated_ability(
         }
         return Ok(*ability);
     }
-    if ability_index as usize != def.activated_abilities.len() {
-        return Err("activated stack item carries an out-of-range ability index".to_string());
+    if ability_index as usize > def.activated_abilities.len() {
+        let card = granted_by.ok_or("granted activated ability lost its exiled-card provenance")?;
+        validate_historical_ability_source_contract(state, card)?;
+        if card.zone != Zone::Exile || host_contract.zone != Zone::Battlefield {
+            return Err("Cauldron-granted ability provenance is inconsistent".to_string());
+        }
+        return crate::standard_cards_v1::cauldron_ability_of(
+            card.card_def,
+            def.activated_abilities.len(),
+            ability_index,
+        )
+        .ok_or_else(|| "activated stack item carries an out-of-range ability index".to_string());
     }
     let equipment = granted_by.ok_or("granted activated ability lost its equipment provenance")?;
     validate_historical_ability_source_contract(state, equipment)?;
@@ -15729,7 +15780,7 @@ fn push_paid_activation(
                 [pending.ability_index as usize],
             None,
         )
-    } else {
+    } else if pending.ability_index as usize == printed_len {
         let (equipment_id, ability) =
             equipped_granted_activated_ability_with_equipment(state, pending.source).expect(
                 "callers validate this ability index resolves before pushing the activation",
@@ -15738,6 +15789,17 @@ fn push_paid_activation(
             ability,
             Some(AbilitySourceContractV4::capture(state, equipment_id)),
         )
+    } else {
+        // An Agatha's Soul Cauldron grant freezes the exiled card it comes
+        // from.
+        let (_, card, ability) =
+            crate::standard_cards_v1::cauldron_granted_abilities(state, pending.source)
+                .into_iter()
+                .find(|&(index, _, _)| index == pending.ability_index)
+                .expect(
+                    "callers validate this ability index resolves before pushing the activation",
+                );
+        (ability, Some(AbilitySourceContractV4::capture(state, card)))
     };
     let ability = &ability;
     let source = state.objects.get(pending.source);

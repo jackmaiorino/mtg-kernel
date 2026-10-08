@@ -2640,3 +2640,65 @@ fn an_aegis_copys_trigger_still_resolves_after_the_copy_ends() {
     assert_eq!(state.players[0].life, 18);
     assert_eq!(state.objects.get(cecil).zone, Zone::Battlefield);
 }
+
+// ---- Agatha's Soul Cauldron --------------------------------------------------
+
+#[test]
+fn agathas_soul_cauldron_grants_an_exiled_creatures_ability_to_countered_creatures() {
+    let mut state = game();
+    let cauldron = put(&mut state, P0, "Agatha's Soul Cauldron", Zone::Battlefield);
+    let terror = put(&mut state, P0, "Tolarian Terror", Zone::Battlefield);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let strix = to_graveyard(&mut state, P1, "Harrier Strix");
+    assert!(!activatable(&mut state)
+        .iter()
+        .any(|&(source, _)| source == terror));
+
+    // {T}: exile Harrier Strix; its creature card triggers the counter.
+    act(&mut state, Action::ActivateAbility(cauldron, 0));
+    drive(&mut state, &[Target::Object(strix), Target::Object(terror)]);
+    assert_eq!(state.objects.get(strix).zone, Zone::Exile);
+    assert_eq!(state.objects.get(terror).counters.plus1_plus1, 1);
+    assert_eq!(state.objects.get(elves).counters.plus1_plus1, 0);
+
+    // "{2}{U}: Draw a card, then discard a card", paid with green mana as
+    // though it were blue.
+    state.players[0].mana_pool[ManaColor::G.pool_index()] = 3;
+    let offered = activatable(&mut state);
+    assert!(offered.contains(&(terror, 1)), "{offered:?}");
+    assert!(!offered.iter().any(|&(source, _)| source == elves));
+    let library = state.players[0].library.len();
+    act(&mut state, Action::ActivateAbility(terror, 1));
+    loop {
+        match next(&mut state) {
+            Decision::Discard { choices, .. } => act(&mut state, Action::Discard(vec![choices[0]])),
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => break,
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    assert_eq!(state.players[0].library.len(), library - 1);
+    assert_eq!(state.players[0].mana_pool[ManaColor::G.pool_index()], 0);
+
+    // Without the Cauldron the grant ends.
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(cauldron, Zone::Graveyard),
+    );
+    state.players[0].mana_pool[ManaColor::U.pool_index()] = 4;
+    assert!(!activatable(&mut state)
+        .iter()
+        .any(|&(source, _)| source == terror));
+}
+
+#[test]
+fn agathas_soul_cauldron_exiling_a_noncreature_card_adds_no_counter() {
+    let mut state = game();
+    let cauldron = put(&mut state, P0, "Agatha's Soul Cauldron", Zone::Battlefield);
+    let terror = put(&mut state, P0, "Tolarian Terror", Zone::Battlefield);
+    let bolt = to_graveyard(&mut state, P1, "Lightning Bolt");
+    act(&mut state, Action::ActivateAbility(cauldron, 0));
+    drive(&mut state, &[Target::Object(bolt)]);
+    assert_eq!(state.objects.get(bolt).zone, Zone::Exile);
+    assert_eq!(state.objects.get(terror).counters.plus1_plus1, 0);
+}

@@ -13,6 +13,7 @@ import limited_decks_v1 as limited
 STANDARD = REPO_ROOT / "data/standard/magezero_v1"
 # Each Standard card batch extends this list with the deck cards it supports.
 SUPPORTED_NONBASIC = {
+    "Agatha's Soul Cauldron",
     "Assimilation Aegis",
     "Basilisk Collar",
     "Blue Sun's Twilight",

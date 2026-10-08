@@ -14,7 +14,7 @@ use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 
 /// Appended after the 192 Pauper definitions, in registry order.
-const STANDARD_APPENDED: [&str; 39] = [
+const STANDARD_APPENDED: [&str; 40] = [
     "Plains",
     "Burst Lightning",
     "Teferi, Temporal Pilgrim",
@@ -54,11 +54,13 @@ const STANDARD_APPENDED: [&str; 39] = [
     "Braided Net",
     "Chandra, Hope's Beacon",
     "Assimilation Aegis",
+    "Agatha's Soul Cauldron",
 ];
 
 /// Every distinct nonbasic card in the 16 decks that this build fully
 /// supports. Each Standard card batch extends this list.
-const SUPPORTED_NONBASIC: [&str; 34] = [
+const SUPPORTED_NONBASIC: [&str; 35] = [
+    "Agatha's Soul Cauldron",
     "Assimilation Aegis",
     "Basilisk Collar",
     "Blue Sun's Twilight",
@@ -154,7 +156,7 @@ fn standard_registry_appends_to_the_pauper_prefix_without_fdn() {
 
 #[test]
 fn standard_catalog_identity_is_frozen() {
-    const EXPECTED_STANDARD_V1: u64 = 0xec24_9eec_a806_10a6;
+    const EXPECTED_STANDARD_V1: u64 = 0x28f6_a3c6_984b_ccc8;
     assert_eq!(
         KERNEL_CARDDB_HASH, EXPECTED_STANDARD_V1,
         "Standard catalog hash {KERNEL_CARDDB_HASH:#018x}"
