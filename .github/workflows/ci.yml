@@ -168,14 +168,17 @@ jobs:
           - saved-input
           - limited-store
         include:
+          # Linux groups use GitHub's hosted runners, which are free for
+          # this public repository: the WSL runners can't be pinned to
+          # cores, so they pause for any host reservation.
           - os: ubuntu-24.04
-            runner: '["self-hosted", "mtg-ci-linux"]'
+            runner: '"ubuntu-24.04"'
           - os: windows-2025
             runner: '["self-hosted", "mtg-ci-windows"]'
-    # Self-hosted runners (the primary desktop, the compute host) keep a per-group cargo target
-    # directory between runs, so most builds are incremental, and they avoid
-    # GitHub's hosted-runner queue. Pull requests from forks never run on the
-    # self-hosted runners.
+    # Windows groups run on self-hosted runners (the primary desktop, the
+    # compute host), which keep a per-group cargo target directory between
+    # runs, so most builds are incremental. Pull requests from forks never
+    # run on the self-hosted runners.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.runner) || matrix.os }}
     steps:
       # Windows can resolve `bash` to the WSL launcher in System32 first;
