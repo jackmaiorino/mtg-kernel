@@ -25,7 +25,11 @@
 //!   follow-up, completing the root-choice x continuation 2x2.
 //! - `DEVIATION_EVAL=E`, `DEVIATION_SAMPLE=P` (`cross`): for a seeded sample
 //!   of logged deviations, E paired fresh redeterminizations of the sampled
-//!   and the improved action, each followed by plain play.
+//!   and the improved action, each followed by plain play. Their compute is
+//!   recorded apart from the playout's own: transitions in
+//!   `deviation_cf_transitions` and wall time per playout in `cf_wall` (the
+//!   playout's `wall` excludes it). A counterfactual is `harmful` when the
+//!   improved choice won fewer natural wins than the sampled action.
 //!
 //! The search logic names no card or deck. Card names appear only in
 //! labelling: the `roots` mechanism tags (`root_tags`) and the Spy choice
@@ -1029,7 +1033,8 @@ struct Outcome {
     natural: bool,
     /// The playout's own transitions (deviation counterfactuals excluded).
     transitions: u64,
-    /// Elapsed time, deviation counterfactuals included (see `cf_wall`).
+    /// The playout's own elapsed time (deviation counterfactuals excluded,
+    /// see `cf_wall`).
     wall: f64,
     inner_failures: u32,
     /// Focal multi-action decisions searched by the improved continuation.
@@ -1142,7 +1147,9 @@ fn deviation_sampled(dec_seed: u64, p: f64) -> bool {
 /// sampled action and the improved choice are each followed by plain play
 /// (`f`, the focal model, against `o`, the playout's opponent model) to the
 /// end. A determinization on which either action fails is dropped for both.
-/// Returns the record and its transitions (counted apart from the playout).
+/// `harmful` is decided on natural wins (the improved choice won fewer than
+/// the sampled action), the statistic its cost is measured in. Returns the
+/// record and its transitions (counted apart from the playout).
 #[allow(
     clippy::too_many_arguments,
     reason = "explicit policy roles keep the sampling streams separate"
@@ -1198,7 +1205,7 @@ fn deviation_counterfactual(
         "sampled_mean":sampled_mean,"chosen_mean":chosen_mean,
         "sampled_natural_wins":wins[0],"chosen_natural_wins":wins[1],
         "sampled_non_natural":non_natural[0],"chosen_non_natural":non_natural[1],
-        "harmful":playouts > 0 && chosen_mean < sampled_mean,"transitions":transitions});
+        "harmful":playouts > 0 && wins[1] < wins[0],"transitions":transitions});
     (record, transitions)
 }
 
@@ -1336,7 +1343,7 @@ impl SearchWorkerV1 {
             out.failed = Some(e);
             out.score = f64::NAN;
         }
-        out.wall = started.elapsed().as_secs_f64();
+        out.wall = (started.elapsed().as_secs_f64() - out.cf_wall).max(0.0);
         out
     }
 
@@ -1775,6 +1782,7 @@ impl SearchWorkerV1 {
                     job["spy"] = counts.json();
                 }
                 if opts.dev.e > 0 {
+                    job["cf_wall"] = json!(outs.iter().map(|o| o.cf_wall).collect::<Vec<_>>());
                     job["deviation_cf_transitions"] =
                         json!(outs.iter().map(|o| o.cf_transitions).sum::<u64>());
                     job["deviation_cf_evaluated"] = json!(outs
@@ -2429,10 +2437,17 @@ mod tests {
             let with_cf = play(follow, dev);
             same(&base, &with_cf);
             assert_eq!(base.cf_transitions, 0);
+            assert_eq!(base.cf_wall, 0.0);
+            assert!(with_cf.cf_wall >= 0.0 && with_cf.wall >= 0.0);
             for d in &with_cf.deviations {
                 let cf = &d["counterfactual"];
                 assert_eq!(cf["e"], json!(1));
-                assert!(cf["harmful"].is_boolean() && cf["transitions"].as_u64().unwrap() > 0);
+                assert!(cf["transitions"].as_u64().unwrap() > 0);
+                let wins = |k: &str| cf[k].as_u64().unwrap();
+                assert_eq!(
+                    cf["harmful"],
+                    json!(wins("chosen_natural_wins") < wins("sampled_natural_wins"))
+                );
             }
             assert_eq!(with_cf.cf_transitions > 0, !with_cf.deviations.is_empty());
         }

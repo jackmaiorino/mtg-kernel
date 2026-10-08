@@ -9,16 +9,42 @@ score (draws and non-natural endings as 0.5) is reported alongside.
 The natural-win share is the primary statistic; non-natural endings are
 counted and reported next to it.
 
-Reports, for the representative set (overall and per stratum) and for the
-mechanism set (per tag):
+Reports, for the representative set (overall and per stratum) and for each
+mechanism set (the whole set, on which the primary D-A at the top budget is
+computed, then per sub-tag or decision type when it has more than one):
 - win rate per condition and budget level, and the T1 reference, with
   non-natural counts;
 - paired differences B-A, C-A, D-A, D-B, D-C with a 95% bootstrap clustered
   by corpus game (several roots can come from one game; one set of cluster
   draws is shared by every contrast of a summary);
-- at the top budget, Holm-adjusted bootstrap p-values for the family B-A,
-  C-A, D-B, D-C, and the interaction (D-C)-(B-A); everything else is
-  descriptive;
+- a disposition for every contrast (design v3, "Stage 2: statistic,
+  contrasts and dispositions"), with delta = 5pp:
+  helps = 95% lower bound above 0, Holm-adjusted for the four confirmatory
+  components B-A, C-A, D-B, D-C at the top budget (step-down: the component
+  ranked i by bootstrap p-value uses the 1 - 0.05/(4 - i) interval and helps
+  only if every better-ranked component was rejected) and the plain 95%
+  interval for every other contrast; evidence against = 95% upper bound below
+  delta and adequacy met; inconclusive otherwise. For Spy-focal summaries
+  whose search never sampled the line (adequacy 5), the only outcomes are
+  helps and "inconclusive: the search never sampled the line". Evidence
+  against requires every applicable adequacy criterion, for every contrast;
+- "only D helps" at the top budget: D-A helps, neither B-A nor C-A helps
+  (Holm), and the interaction (D-C)-(B-A) has a 95% lower bound above 0;
+- the adequacy criteria for C and D, each reported individually whatever the
+  disposition, with top = the top budget (64,000 in the design), mid = top/2
+  and low = top/4: (1) at least 75% of roots complete 8 or more C rounds and
+  8 or more D rounds at top; (2) D's choice is the same at mid and top at 80%
+  or more of the roots whose D candidate means at top separate (are not all
+  equal), and fails if fewer than 20 roots separate; (3) the 95% interval of
+  (D-A at top) - (D-A at low) lies inside +-delta; (4) the continuation check
+  (model's action, improved) - (model's action, plain) is at least 0 as a
+  point estimate (needs EVAL_CROSS=1); (5) Spy-focal summaries only (every
+  row has `spy_labels`): among roots where either labelled option is offered
+  in any D selection playout at top, the joint chosen sequence appears in at
+  least one D selection playout at 50% or more of them (from the per-level,
+  per-candidate Spy label counts);
+- Holm-adjusted bootstrap p-values for the four components (descriptive;
+  the disposition uses the step-down bounds above);
 - the share of roots where B is A by construction (coverage_differs false,
   which includes k <= K) and the coverage contrasts on coverage-differs roots;
 - with EVAL_CROSS rows, the root-choice x continuation 2x2 per improved
@@ -29,12 +55,29 @@ mechanism set (per tag):
   cap hits and the improved-continuation cost multiplier;
 - Spy choice labels when the rows carry them.
 
+Every interval is a percentile bootstrap clustered by corpus game (roots
+nested in games, each root's evaluation games kept together).
+
+Representative sets are drawn half won and half lost per stratum; with
+`--freeze FREEZE_MANIFEST.json` (the `freeze_roots.py` manifest, which records
+each stratum's won/lost corpus counts in `strata_outcomes`) every
+representative estimate and interval reweights each stratum's won, lost (and
+other) roots to that stratum's corpus frequencies. Without it the
+representative summaries are unweighted and say so.
+
 `--expect MANIFEST.json` rejects rows whose recorded `config` differs from
 the manifest's `config` object (or the whole manifest when it has none) on
 any key the manifest lists, and rows without a recorded config.
 
+EVAL_CROSS and failures: with EVAL_CROSS=1 every evaluation determinization
+also runs the extra 2x2 jobs, and a determinization on which any job fails
+is discarded for every job and replaced. When failures occur, the extra jobs
+can therefore change which determinizations are kept, so the existing jobs'
+scores can differ from a run without EVAL_CROSS; pairing across all jobs of
+a root is preserved either way.
+
 Usage: analyze_search.py COND.jsonl [MORE.jsonl ...] [--boot 2000] [--seed 7]
-       [--expect MANIFEST.json] [--json OUT]
+       [--expect MANIFEST.json] [--freeze FREEZE_MANIFEST.json] [--json OUT]
 """
 
 import argparse
@@ -47,6 +90,13 @@ CONDS = ["A", "B", "C", "D"]
 CONTRASTS = [("B", "A"), ("C", "A"), ("D", "A"), ("D", "B"), ("D", "C")]
 HOLM_FAMILY = [("B", "A"), ("C", "A"), ("D", "B"), ("D", "C")]
 IMPROVED = ["C", "D"]
+DELTA = 0.05
+ALPHA = 0.05
+HELPS = "helps"
+AGAINST = "evidence against"
+INCONCLUSIVE = "inconclusive"
+NOT_SAMPLED = "inconclusive: the search never sampled the line"
+OUTCOME_BUCKETS = ("won", "lost", "other")
 
 
 def mean(xs):
@@ -93,32 +143,49 @@ def check_manifest(rows, manifest):
 
 class ClusterBoot:
     """Percentile bootstrap that resamples corpus games (clusters of roots)
-    with replacement. One set of draws serves every statistic of a summary."""
+    with replacement. One set of draws serves every statistic of a summary.
+    `weights` (per root, default 1) make every estimate a weighted mean."""
 
-    def __init__(self, rows, n_boot, rng):
+    def __init__(self, rows, n_boot, rng, weights=None):
         games = [r.get("game", i) for i, r in enumerate(rows)]
         order = sorted(set(games), key=str)
         index = {g: i for i, g in enumerate(order)}
         self.members = [[] for _ in order]
         for i, g in enumerate(games):
             self.members[index[g]].append(i)
+        self.weights = list(weights) if weights is not None else [1.0] * len(rows)
         k = len(order)
         self.draws = [[rng.randrange(k) for _ in range(k)] for _ in range(n_boot)] if k else []
 
+    def point(self, vals):
+        """(Weighted) mean of per-root values (None = root not in the contrast)."""
+        num = den = 0.0
+        for v, w in zip(vals, self.weights, strict=True):
+            if v is not None:
+                num += w * v
+                den += w
+        return num / den if den > 0 else float("nan")
+
     def stats(self, vals):
-        """Bootstrap means of per-root values (None = root not in the contrast)."""
+        """Bootstrap (weighted) means of per-root values."""
         out = []
         for draw in self.draws:
-            xs = [vals[i] for c in draw for i in self.members[c] if vals[i] is not None]
-            if xs:
-                out.append(sum(xs) / len(xs))
+            num = den = 0.0
+            for c in draw:
+                for i in self.members[c]:
+                    if vals[i] is not None:
+                        num += self.weights[i] * vals[i]
+                        den += self.weights[i]
+            if den > 0:
+                out.append(num / den)
         return out
 
-    def ci(self, vals):
+    def ci(self, vals, alpha=ALPHA):
+        """Two-sided 1 - alpha percentile interval."""
         st = sorted(self.stats(vals))
         if not st:
             return (float("nan"), float("nan"))
-        return (st[int(0.025 * len(st))], st[min(len(st) - 1, int(0.975 * len(st)))])
+        return (st[int(alpha / 2 * len(st))], st[min(len(st) - 1, int((1 - alpha / 2) * len(st)))])
 
     def pvalue(self, vals):
         """Two-sided bootstrap p-value for a zero mean."""
@@ -142,6 +209,39 @@ def holm(pvals):
         running = max(running, min(1.0, (m - i) * p))
         out[label] = running
     return out
+
+
+def holm_bounds(boot, family, alpha=ALPHA):
+    """Holm step-down over a family {label: per-root values}: labels ranked
+    by two-sided bootstrap p-value; rank i (0-based) uses the two-sided
+    1 - alpha/(m - i) interval and is rejected only if its interval excludes
+    0 and every better-ranked label was rejected. `helps` = rejected with the
+    adjusted lower bound above 0."""
+    m = len(family)
+    p = {k: boot.pvalue(v) for k, v in family.items()}
+    order = sorted(family, key=lambda k: (p[k] != p[k], p[k], k))
+    out, stepping = {}, True
+    for i, k in enumerate(order):
+        level = alpha / (m - i)
+        lo, hi = boot.ci(family[k], level)
+        rejected = stepping and (lo > 0 or hi < 0)
+        stepping = rejected
+        out[k] = {"rank": i, "alpha": level, "lo_holm": lo, "hi_holm": hi, "rejected": rejected,
+                  "helps": rejected and lo > 0}
+    return out
+
+
+def disposition(helps, hi, adequate, delta=DELTA, line_sampled=True):
+    """Design v3 disposition of one contrast. `helps` is decided by the
+    caller (plain or Holm-adjusted lower bound above 0); `hi` is the plain
+    95% upper bound."""
+    if helps:
+        return HELPS
+    if not line_sampled:
+        return NOT_SAMPLED
+    if hi < delta and adequate:
+        return AGAINST
+    return INCONCLUSIVE
 
 
 def fmt(x, pct=True):
@@ -174,13 +274,20 @@ def interaction(vals, b, keep=None):
     return out
 
 
-def contrast_entry(boot, d):
+def contrast_entry(boot, d, adequacy=None):
+    """Point estimate, plain 95% interval, n and bootstrap p of per-root
+    differences; with `adequacy` (from `adequacy_criteria`) also the plain
+    disposition."""
     xs = [x for x in d if x is not None]
     lo, hi = boot.ci(d)
-    return {"diff": mean(xs), "lo": lo, "hi": hi, "n": len(xs), "p": boot.pvalue(d)}
+    e = {"diff": boot.point(d), "lo": lo, "hi": hi, "n": len(xs), "p": boot.pvalue(d)}
+    if adequacy is not None:
+        e["disposition"] = disposition(lo > 0, hi, adequacy["met"], adequacy["delta"],
+                                       adequacy["line_sampled"])
+    return e
 
 
-def two_by_two(vals, boot, budgets):
+def two_by_two(vals, boot, budgets, adequacy=None):
     """Root choice (model or search) x continuation (plain or improved) per
     improved condition and level, from the EVAL_CROSS labels."""
     out = {}
@@ -190,7 +297,8 @@ def two_by_two(vals, boot, budgets):
             keys = ["ref", "ref_improved", kp, kx]
             if not any(all(k in v for k in keys) for v in vals):
                 continue
-            cell = {k: mean(v[k][0] for v in vals if all(k2 in v for k2 in keys)) for k in keys}
+            cell = {k: boot.point([v[k][0] if all(k2 in v for k2 in keys) else None for v in vals])
+                    for k in keys}
             parts = {
                 "continuation_model_action": diff_vals(vals, "ref_improved", "ref"),
                 "continuation_search_action": diff_vals(vals, kx, kp),
@@ -199,54 +307,219 @@ def two_by_two(vals, boot, budgets):
             }
             parts["interaction"] = [
                 None if x is None or y is None else x - y
-                for x, y in zip(parts["continuation_search_action"], parts["continuation_model_action"])
+                for x, y in zip(parts["continuation_search_action"], parts["continuation_model_action"], strict=True)
             ]
-            out[f"{c}@{b}"] = {"cells": cell, "contrasts": {k: contrast_entry(boot, d) for k, d in parts.items()}}
+            out[f"{c}@{b}"] = {"cells": cell,
+                               "contrasts": {k: contrast_entry(boot, d, adequacy) for k, d in parts.items()}}
     return out
 
 
-def summarize(name, rows, budgets, n_boot, seed, out, k_max=4):
+def level_at(row, cond, budget):
+    """The selection level of `cond` at `budget`, or None."""
+    for lv in row["selection"][cond]["levels"]:
+        if lv["budget"] == budget:
+            return lv
+    return None
+
+
+def criterion(passed, **fields):
+    return dict(fields, passed=bool(passed))
+
+
+def adequacy_criteria(rows, vals, boot, budgets, delta=DELTA, min_rounds=8, rounds_share=0.75,
+                      stable_share=0.80, min_separating=20, line_share=0.50):
+    """Design v3 adequacy for the C and D conditions, each criterion
+    reported individually. top = the top budget, mid = top/2, low = top/4.
+    `met` = every applicable criterion passed (criterion 5 applies to
+    Spy-focal summaries only); `line_sampled` is False only when criterion 5
+    applies and fails."""
+    top = budgets[-1]
+    mid, low = top // 2, top // 4
+    out = {"delta": delta, "top": top, "mid": mid, "low": low}
+
+    # (1) C and D complete >= 8 rounds at top at >= 75% of roots.
+    ok = []
+    for r in rows:
+        c, d = level_at(r, "C", top), level_at(r, "D", top)
+        ok.append(c is not None and d is not None and c["rounds"] >= min_rounds and d["rounds"] >= min_rounds)
+    share = mean(1.0 if x else 0.0 for x in ok)
+    out["1_rounds"] = criterion(bool(rows) and share >= rounds_share, share=share, roots=sum(ok), of=len(rows),
+                                threshold=rounds_share, min_rounds=min_rounds)
+
+    # (2) D's choice the same at mid and top, over roots whose D means separate at top.
+    if mid not in budgets:
+        out["2_stable_choice"] = criterion(False, note=f"no level at {mid}")
+    else:
+        sep = same = 0
+        for r in rows:
+            t, m = level_at(r, "D", top), level_at(r, "D", mid)
+            means = t.get("means") if t else None
+            if not means or len(set(means)) < 2:
+                continue
+            sep += 1
+            same += int(m is not None and m.get("chosen") == t.get("chosen"))
+        share = same / sep if sep else float("nan")
+        out["2_stable_choice"] = criterion(sep >= min_separating and share >= stable_share, share=share,
+                                           same=same, separating=sep, of=len(rows), threshold=stable_share,
+                                           min_separating=min_separating)
+
+    # (3) (D-A at top) - (D-A at low) has a 95% interval inside +-delta.
+    if low not in budgets:
+        out["3_no_growth"] = criterion(False, note=f"no level at {low}")
+    else:
+        ks = [f"D@{top}", f"A@{top}", f"D@{low}", f"A@{low}"]
+        d = [(v[ks[0]][0] - v[ks[1]][0]) - (v[ks[2]][0] - v[ks[3]][0]) if all(k in v for k in ks) else None
+             for v in vals]
+        lo, hi = boot.ci(d)
+        out["3_no_growth"] = criterion(-delta < lo and hi < delta, diff=boot.point(d), lo=lo, hi=hi,
+                                       n=sum(x is not None for x in d))
+
+    # (4) Continuation check (model's action, improved) - (model's action, plain) >= 0.
+    d = diff_vals(vals, "ref_improved", "ref")
+    n = sum(x is not None for x in d)
+    est = boot.point(d)
+    out["4_continuation"] = criterion(n > 0 and est >= 0, diff=est, n=n,
+                                      **({} if n else {"note": "no ref_improved label (needs EVAL_CROSS=1)"}))
+
+    # (5) Spy only: the joint chosen sequence appears in a D selection playout at top.
+    spy = bool(rows) and all(r.get("spy_labels") for r in rows)
+    out["spy"] = spy
+    if spy:
+        offered = joint = missing = 0
+        for r in rows:
+            lv = level_at(r, "D", top)
+            counts = (lv or {}).get("spy")
+            if counts is None:
+                missing += 1
+                continue
+            if sum(counts["self_offered"]) + sum(counts["dr_offered"]) > 0:
+                offered += 1
+                joint += int(sum(counts["both_chosen"]) > 0)
+        share = joint / offered if offered else float("nan")
+        fields = {"share": share, "joint": joint, "offered": offered, "of": len(rows), "threshold": line_share}
+        if missing:
+            fields["note"] = f"{missing} roots lack the D level's Spy label counts"
+        out["5_line_sampled"] = criterion(offered > 0 and share >= line_share and not missing, **fields)
+    keys = [k for k in out if k[:1].isdigit()]
+    out["met"] = all(out[k]["passed"] for k in keys)
+    out["line_sampled"] = out["5_line_sampled"]["passed"] if spy else True
+    return out
+
+
+def outcome_bucket(score):
+    return "won" if score == 1.0 else "lost" if score == 0.0 else "other"
+
+
+def representative_weights(rows, strata_outcomes):
+    """Per-root weights that reweight each stratum's sampled won, lost and
+    other roots to the stratum's corpus frequencies (`strata_outcomes` from
+    the freeze manifest: {stratum: {"won": n, "lost": n, "other": n}}).
+    Buckets with no sampled root are left out of the stratum's corpus total;
+    the weights of a stratum sum to its number of sampled roots."""
+    n = defaultdict(int)
+    ns = defaultdict(int)
+    for r in rows:
+        n[(r["stratum"], outcome_bucket(r["focal_score"]))] += 1
+        ns[r["stratum"]] += 1
+    weights = []
+    for r in rows:
+        s, b = r["stratum"], outcome_bucket(r["focal_score"])
+        if s not in strata_outcomes:
+            raise SystemExit(f"freeze manifest has no corpus outcome counts for stratum {s!r}")
+        corpus = strata_outcomes[s]
+        total = sum(corpus.get(bb, 0) for bb in OUTCOME_BUCKETS if n[(s, bb)] > 0)
+        if total == 0:
+            raise SystemExit(f"stratum {s!r}: no corpus rows in the sampled outcome buckets")
+        weights.append(corpus.get(b, 0) / total * ns[s] / n[(s, b)])
+    return weights
+
+
+def print_contrast(label, e, extra=""):
+    disp = f"  {e['disposition']}" if "disposition" in e else ""
+    print(f"  {label:<14} {fmt(e['diff'])}  [{fmt(e['lo'])}, {fmt(e['hi'])}]  n {e['n']}{extra}{disp}")
+
+
+def print_adequacy(adequacy):
+    print(f"adequacy for C and D (top {adequacy['top']}, mid {adequacy['mid']}, low {adequacy['low']}, "
+          f"delta {100 * adequacy['delta']:.0f}pp): {'met' if adequacy['met'] else 'NOT met'}")
+    for k, c in adequacy.items():
+        if not k[:1].isdigit():
+            continue
+        fields = ", ".join(f"{f} {round(v, 4) if isinstance(v, float) else v}" for f, v in c.items() if f != "passed")
+        print(f"  {k:<18} {'pass' if c['passed'] else 'FAIL'}  ({fields})")
+    if adequacy["spy"] and not adequacy["line_sampled"]:
+        print(f"  Spy: the search never sampled the line; outcomes are limited to '{HELPS}' or '{NOT_SAMPLED}'")
+
+
+def summarize(name, rows, budgets, n_boot, seed, out, k_max=4, weights=None, delta=DELTA):
     vals = [per_root(r) for r in rows]
-    boot = ClusterBoot(rows, n_boot, random.Random(seed))
+    boot = ClusterBoot(rows, n_boot, random.Random(seed), weights)
     games = len({r.get("game") for r in rows})
     print(f"\n== {name}: {len(rows)} roots from {games} corpus games ==")
+    if weights is not None:
+        print("estimates reweighted to corpus win/loss frequencies per stratum")
     header = "             " + "".join(f"{c + '@' + str(b):>12}" for b in budgets for c in CONDS) + "         ref"
     print(header)
     line = "win%        "
     nn_line = "non-natural "
-    entry = {"roots": len(rows), "games": games, "win": {}, "mean_score": {}, "non_natural": {},
-             "playouts": {}, "contrasts": {}}
+    entry = {"roots": len(rows), "games": games, "weighted": weights is not None, "win": {}, "mean_score": {},
+             "non_natural": {}, "playouts": {}, "contrasts": {}}
     labels = [f"{c}@{b}" for b in budgets for c in CONDS] + ["ref"]
     for k in labels:
         have = [v[k] for v in vals if k in v]
-        entry["win"][k] = mean(x[0] for x in have)
-        entry["mean_score"][k] = mean(x[1] for x in have)
+        entry["win"][k] = boot.point([v[k][0] if k in v else None for v in vals])
+        entry["mean_score"][k] = boot.point([v[k][1] if k in v else None for v in vals])
         entry["non_natural"][k] = sum(x[3] for x in have)
         entry["playouts"][k] = sum(x[2] for x in have)
         line += f"{fmt(entry['win'][k]):>12}"
         nn_line += f"{entry['non_natural'][k]:>12}"
     print(line)
     print(nn_line + f"   (of {entry['playouts']['ref']} playouts per label)")
-    print("paired differences (pp, 95% bootstrap clustered by corpus game):")
+    adequacy = adequacy_criteria(rows, vals, boot, budgets, delta)
+    entry["adequacy"] = adequacy
+    top = budgets[-1]
+    family = {f"{x}-{y}@{top}": diff_vals(vals, f"{x}@{top}", f"{y}@{top}") for x, y in HOLM_FAMILY}
+    hb = holm_bounds(boot, family)
+    print("paired differences (pp, 95% bootstrap clustered by corpus game) and dispositions "
+          f"(delta {100 * delta:.0f}pp; Holm step-down for {', '.join(family)}):")
     for b in budgets:
         for x, y in CONTRASTS + [("A", "ref")]:
             kx = f"{x}@{b}"
             ky = "ref" if y == "ref" else f"{y}@{b}"
             label = f"{x}-{y}@{b}"
-            e = contrast_entry(boot, diff_vals(vals, kx, ky))
+            e = contrast_entry(boot, diff_vals(vals, kx, ky), adequacy)
+            if label in hb:
+                e.update(hb[label])
+                e["disposition"] = disposition(hb[label]["helps"], e["hi"], adequacy["met"], delta,
+                                               adequacy["line_sampled"])
             entry["contrasts"][label] = e
-            print(f"  {label:<12} {fmt(e['diff'])}  [{fmt(e['lo'])}, {fmt(e['hi'])}]")
-    top = budgets[-1]
-    pv = {f"{x}-{y}@{top}": entry["contrasts"][f"{x}-{y}@{top}"]["p"] for x, y in HOLM_FAMILY}
+            extra = f"  Holm [{fmt(e['lo_holm'])}, {fmt(e['hi_holm'])}]" if label in hb else ""
+            print_contrast(label, e, extra)
+    pv = {k: entry["contrasts"][k]["p"] for k in family}
     adj = holm(pv)
-    inter = contrast_entry(boot, interaction(vals, top))
-    entry["holm"] = {k: {"p": pv[k], "p_holm": adj[k], "reject_05": adj[k] <= 0.05} for k in pv}
-    entry["interaction"] = {f"(D-C)-(B-A)@{top}": inter}
-    print(f"confirmatory family at the top budget {top} (Holm over bootstrap p-values; the rest is descriptive):")
+    entry["holm"] = {k: {"p": pv[k], "p_holm": adj[k], "lo_holm": hb[k]["lo_holm"], "hi_holm": hb[k]["hi_holm"],
+                         "helps": hb[k]["helps"], "disposition": entry["contrasts"][k]["disposition"]} for k in pv}
+    inter = contrast_entry(boot, interaction(vals, top), adequacy)
+    ikey = f"(D-C)-(B-A)@{top}"
+    entry["interaction"] = {ikey: inter}
+    print(f"confirmatory components at the top budget {top} (Holm-adjusted bootstrap p-values, descriptive):")
     for k in pv:
         h = entry["holm"][k]
-        print(f"  {k:<12} p {h['p']:.4f}  Holm {h['p_holm']:.4f}  {'reject' if h['reject_05'] else 'keep'} at 0.05")
-    print(f"  interaction (D-C)-(B-A)@{top} {fmt(inter['diff'])}  [{fmt(inter['lo'])}, {fmt(inter['hi'])}]  p {inter['p']:.4f}")
+        print(f"  {k:<12} p {h['p']:.4f}  Holm p {h['p_holm']:.4f}  {h['disposition']}")
+    print_contrast(f"interaction {ikey}", inter)
+    d_a = entry["contrasts"][f"D-A@{top}"]
+    only_d = {
+        "D-A helps": d_a["disposition"] == HELPS,
+        "B-A helps": hb[f"B-A@{top}"]["helps"],
+        "C-A helps": hb[f"C-A@{top}"]["helps"],
+        "interaction lower bound above 0": inter["lo"] > 0,
+    }
+    only_d["holds"] = (only_d["D-A helps"] and not only_d["B-A helps"] and not only_d["C-A helps"]
+                       and only_d["interaction lower bound above 0"])
+    entry["only_d_helps"] = only_d
+    print(f"only D helps at {top}: {'yes' if only_d['holds'] else 'no'} "
+          f"({', '.join(f'{k}: {v}' for k, v in only_d.items() if k != 'holds')})")
+    print_adequacy(adequacy)
     same = [not r.get("coverage_differs", True) for r in rows]
     small = [r.get("k", k_max + 1) <= k_max for r in rows]
     entry["b_equals_a"] = {"roots": sum(same), "share": mean(1.0 if s else 0.0 for s in same),
@@ -259,13 +532,13 @@ def summarize(name, rows, budgets, n_boot, seed, out, k_max=4):
     for b in budgets:
         for x, y in (("B", "A"), ("D", "C")):
             label = f"{x}-{y}@{b}"
-            e = contrast_entry(boot, diff_vals(vals, f"{x}@{b}", f"{y}@{b}", keep))
+            e = contrast_entry(boot, diff_vals(vals, f"{x}@{b}", f"{y}@{b}", keep), adequacy)
             entry["coverage_differs_contrasts"][label] = e
-            print(f"  {label:<12} {fmt(e['diff'])}  [{fmt(e['lo'])}, {fmt(e['hi'])}]  n {e['n']}")
-        e = contrast_entry(boot, interaction(vals, b, keep))
+            print_contrast(label, e)
+        e = contrast_entry(boot, interaction(vals, b, keep), adequacy)
         entry["coverage_differs_contrasts"][f"(D-C)-(B-A)@{b}"] = e
-        print(f"  {'(D-C)-(B-A)@' + str(b):<12} {fmt(e['diff'])}  [{fmt(e['lo'])}, {fmt(e['hi'])}]  n {e['n']}")
-    tbt = two_by_two(vals, boot, budgets)
+        print_contrast(f"(D-C)-(B-A)@{b}", e)
+    tbt = two_by_two(vals, boot, budgets, adequacy)
     if tbt:
         entry["two_by_two"] = tbt
         print("root choice x continuation 2x2 (EVAL_CROSS; continuation check = ref_improved - ref):")
@@ -274,7 +547,7 @@ def summarize(name, rows, budgets, n_boot, seed, out, k_max=4):
             print(f"  {key}: model/plain {fmt(c['ref'])}  model/improved {fmt(c['ref_improved'])}  "
                   f"search/plain {fmt(c[key + '/plain'])}  search/improved {fmt(c[key])}")
             for k, e in t["contrasts"].items():
-                print(f"    {k:<28} {fmt(e['diff'])}  [{fmt(e['lo'])}, {fmt(e['hi'])}]")
+                print_contrast(k, e)
     out[name] = entry
 
 
@@ -480,6 +753,8 @@ def main():
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--json")
     ap.add_argument("--expect", help="manifest whose config every row must match")
+    ap.add_argument("--freeze", help="freeze_roots.py manifest with per-stratum won/lost corpus counts "
+                    "(reweights representative estimates)")
     ap.add_argument("--project", default="600,100,16", help="representative,mechanism,E for the cost projection")
     a = ap.parse_args()
     rows, errors = load(a.cond)
@@ -511,12 +786,32 @@ def main():
     rep = [r for r in rows if r.get("set") == "representative"]
     mech = [r for r in rows if str(r.get("set", "")).startswith("mechanism")]
     if rep:
-        summarize("representative/all", rep, budgets, a.boot, a.seed, out, k_max)
+        weights = None
+        if a.freeze:
+            with open(a.freeze) as f:
+                freeze = json.load(f)
+            if "strata_outcomes" not in freeze:
+                raise SystemExit(f"{a.freeze} has no strata_outcomes (refreeze with the current freeze_roots.py)")
+            weights = representative_weights(rep, freeze["strata_outcomes"])
+        else:
+            print("\nWARNING: no --freeze manifest; representative estimates are NOT reweighted to corpus "
+                  "win/loss frequencies")
+        out["representative_weighted"] = weights is not None
+        summarize("representative/all", rep, budgets, a.boot, a.seed, out, k_max, weights)
         for s in sorted({r["stratum"] for r in rep}):
-            summarize(f"representative/{s}", [r for r in rep if r["stratum"] == s], budgets, a.boot, a.seed, out, k_max)
-    for tag in sorted({r.get("mechanism_tag") or r["set"] for r in mech}):
-        summarize(f"mechanism/{tag}", [r for r in mech if (r.get("mechanism_tag") or r["set"]) == tag],
-                  budgets, a.boot, a.seed, out, k_max)
+            idx = [i for i, r in enumerate(rep) if r["stratum"] == s]
+            summarize(f"representative/{s}", [rep[i] for i in idx], budgets, a.boot, a.seed, out, k_max,
+                      None if weights is None else [weights[i] for i in idx])
+    # Each mechanism set as a whole (the primary is computed on a whole set),
+    # then per sub-tag or decision type when a set has more than one.
+    for set_name in sorted({r["set"] for r in mech}):
+        members = [r for r in mech if r["set"] == set_name]
+        summarize(set_name.replace(":", "/", 1), members, budgets, a.boot, a.seed, out, k_max)
+        tags = sorted({r.get("mechanism_tag") or set_name for r in members})
+        if len(tags) > 1:
+            for tag in tags:
+                summarize(f"mechanism/{tag}", [r for r in members if (r.get("mechanism_tag") or set_name) == tag],
+                          budgets, a.boot, a.seed, out, k_max)
     other = [r for r in rows if r not in rep and r not in mech]
     if other:
         summarize("unlabelled", other, budgets, a.boot, a.seed, out, k_max)

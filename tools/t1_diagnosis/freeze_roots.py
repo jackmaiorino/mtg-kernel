@@ -8,7 +8,11 @@ the draw rotates over focal decks and avoids reusing a game.
 
 `--deck NAME` restricts the representative set to that focal deck, and
 `--strata a,b,...` uses that declared stratum list (in that order) instead of
-the most populous ones; a declared stratum with no rows yields none.
+the most populous ones; a declared stratum with no rows yields none. The
+manifest records every stratum's corpus row count (`strata_counts`) and its
+won/lost/other split (`strata_outcomes`, focal score 1 / 0 / anything else,
+over the same deck-filtered rows), which `analyze_search.py --freeze` uses
+to reweight representative estimates to corpus win/loss frequencies.
 
 Mechanism set (separate from the representative estimate): for each
 `prefix:count[:deck]` quota, rows carrying a tag with that prefix (and, if
@@ -16,20 +20,36 @@ given, that focal deck), split evenly over the sub-tags present, half wins and
 half losses where available. A sub-tag whose pool has fewer than `--mech-min`
 roots (default 10) is reported, and its quota is redistributed evenly over the
 other sub-tags of the same prefix (it is not padded from other positions); the
-reallocation is written to the manifest. With `--spy-types`, the `spy` quota
-is split by decision type instead (cast Balustrade Spy, Balustrade Spy target,
-Dread Return target, other `spy`-tagged decisions), evenly over the types
-present. Menus that only order a forced selection (every candidate is a choice
+reallocation is written to the manifest. `--mech-min 0` turns the
+redistribution off and reproduces the earlier script's even split (and its
+draws) exactly. With `--spy-types`, the `spy` quota is split by decision type
+instead (cast Balustrade Spy, Balustrade Spy target, Dread Return target,
+other `spy`-tagged decisions), evenly over the types present. Menus that only order a forced selection (every candidate is a choice
 from one effect and all remaining candidates must be chosen) are skipped for
 the mechanism set.
 
-Writes roots.jsonl, mechanism.jsonl, mechanism_<prefix>.jsonl and
+Priority fill: a quota `[name=]first>fallback[>...]:count[:deck]` uses the
+first prefix in the chain whose pool has at least `--mech-min` roots, and
+only that prefix; when none reaches the minimum it uses the last one. The
+chain, every pool size and the prefix used are written to the manifest
+(`priority`), with `first_not_probed` set when the first prefix was not
+used. The group (`set` = `mechanism:<name>`, output
+`mechanism_<name>.jsonl`) is named by `name=`, or by the first prefix when
+it is omitted. The design's Strands rule (opponent-combat rows; own-turn
+castable rows instead only if fewer than 10 opponent-combat rows exist) is
+
+  strands=cawgates_strands_opp_combat>cawgates_strands_castable_own_turn:50:CawGates
+
+with the default `--mech-min 10`.
+
+Writes roots.jsonl, mechanism.jsonl, mechanism_<name>.jsonl and
 freeze_manifest.json into --out-dir and prints each file's SHA-256.
 
 Usage:
   freeze_roots.py ROOT_ROWS.jsonl --out-dir DIR [--seed 20261007]
       [--per-stratum 8] [--max-strata 6] [--strata a,b,...] [--deck NAME]
       [--mech spy:8:Spy,cawgates:8:CawGates] [--mech-min 10] [--spy-types]
+  --mech entries: prefix:count[:deck] or [name=]first>fallback:count[:deck]
 """
 
 import argparse
@@ -174,6 +194,19 @@ def outcome_split(pool, n, rng, used_games, spread_key):
     return got
 
 
+def mech_pool(rows, prefix, deck, taken):
+    """Mechanism candidates: untaken rows with a tag starting with `prefix`
+    (and the focal deck `deck`, if given) that are not forced selections."""
+    return [
+        r
+        for r in rows
+        if root_id(r) not in taken
+        and any(t.startswith(prefix) for t in r["tags"])
+        and (deck is None or r["deck"] == deck)
+        and not forced_selection(r)
+    ]
+
+
 def parser():
     ap = argparse.ArgumentParser()
     ap.add_argument("rows")
@@ -185,7 +218,8 @@ def parser():
     ap.add_argument("--deck", help="restrict the representative set to this focal deck")
     ap.add_argument("--mech", default="spy:8:Spy,cawgates:8:CawGates")
     ap.add_argument("--mech-min", type=int, default=10,
-                    help="sub-tags with a smaller pool give their quota to the other sub-tags")
+                    help="sub-tags with a smaller pool give their quota to the other sub-tags, and a "
+                         "priority chain skips prefixes with a smaller pool (0 = the earlier even split)")
     ap.add_argument("--spy-types", action="store_true",
                     help="split the spy quota by decision type instead of by tag")
     return ap
@@ -218,16 +252,21 @@ def freeze(rows, a):
     mech_groups = {}
     for spec in a.mech.split(","):
         parts = spec.split(":")
-        prefix, count = parts[0], int(parts[1])
+        name, count = parts[0], int(parts[1])
         deck = parts[2] if len(parts) > 2 else None
-        pool = [
-            r
-            for r in rows
-            if root_id(r) not in taken
-            and any(t.startswith(prefix) for t in r["tags"])
-            and (deck is None or r["deck"] == deck)
-            and not forced_selection(r)
-        ]
+        group_name, _, chain_text = name.rpartition("=")
+        chain = chain_text.split(">")
+        priority = None
+        if len(chain) > 1:
+            sizes = {p: len(mech_pool(rows, p, deck, taken)) for p in chain}
+            prefix = next((p for p in chain if sizes[p] >= a.mech_min), chain[-1])
+            priority = {"chain": chain, "pools": sizes, "minimum": a.mech_min, "used": prefix,
+                        "first_not_probed": prefix != chain[0],
+                        "none_reached_minimum": all(sizes[p] < a.mech_min for p in chain)}
+        else:
+            prefix = chain[0]
+        group_name = group_name or chain[0]
+        pool = mech_pool(rows, prefix, deck, taken)
         by_type = a.spy_types and prefix == "spy"
         if by_type:
             sub_of = {root_id(r): spy_decision_type(r) for r in pool}
@@ -250,8 +289,8 @@ def freeze(rows, a):
             got = outcome_split(sub, quota[st], rng, group_games, "opp_deck")
             for r in got:
                 taken.add(root_id(r))
-                group.append(dict(r, set=f"mechanism:{prefix}", mechanism_tag=st, root_id=root_id(r)))
-        mech_groups[prefix] = {
+                group.append(dict(r, set=f"mechanism:{group_name}", mechanism_tag=st, root_id=root_id(r)))
+        mech_groups[group_name] = {
             "requested": count,
             "deck": deck,
             "pool": len(pool),
@@ -259,15 +298,25 @@ def freeze(rows, a):
             "selected": len(group),
         }
         if allocation is not None:
-            mech_groups[prefix]["allocation"] = allocation
-            mech_groups[prefix]["selected_by_subtag"] = {
+            mech_groups[group_name]["allocation"] = allocation
+            mech_groups[group_name]["selected_by_subtag"] = {
                 st: sum(1 for r in group if r["mechanism_tag"] == st) for st in subtags
             }
         if by_type:
-            mech_groups[prefix]["split_by"] = "decision_type"
+            mech_groups[group_name]["split_by"] = "decision_type"
+        if priority is not None:
+            mech_groups[group_name]["priority"] = priority
         mech += group
     fields = {
         "strata_counts": {s: len(by_stratum[s]) for s in sorted(by_stratum, key=lambda s: -len(by_stratum[s]))},
+        "strata_outcomes": {
+            s: {
+                "won": sum(1 for r in by_stratum[s] if r["focal_score"] == 1.0),
+                "lost": sum(1 for r in by_stratum[s] if r["focal_score"] == 0.0),
+                "other": sum(1 for r in by_stratum[s] if r["focal_score"] not in (0.0, 1.0)),
+            }
+            for s in sorted(by_stratum)
+        },
         "strata_selected": strata,
         "representative_outcomes": {
             s: [r["focal_score"] for r in rep if r["stratum"] == s] for s in strata
@@ -300,8 +349,8 @@ def main():
 
     write("roots.jsonl", rep)
     write("mechanism.jsonl", mech)
-    for prefix in mech_groups:
-        write(f"mechanism_{prefix}.jsonl", [r for r in mech if r["set"] == f"mechanism:{prefix}"])
+    for name in mech_groups:
+        write(f"mechanism_{name}.jsonl", [r for r in mech if r["set"] == f"mechanism:{name}"])
 
     manifest = {
         "input": a.rows,
