@@ -131,7 +131,12 @@ fn teferi_enters_with_four_loyalty_and_draws_add_loyalty() {
 #[test]
 fn teferi_minus_two_makes_a_spirit_that_grows_on_draws() {
     let mut state = game();
-    let teferi = put(&mut state, P0, "Teferi, Temporal Pilgrim", Zone::Battlefield);
+    let teferi = put(
+        &mut state,
+        P0,
+        "Teferi, Temporal Pilgrim",
+        Zone::Battlefield,
+    );
     assert_eq!(loyalty(&state, teferi), Some(4));
     let abilities = activatable(&mut state);
     assert!(abilities.contains(&(teferi, 1)));
@@ -140,7 +145,11 @@ fn teferi_minus_two_makes_a_spirit_that_grows_on_draws() {
     act(&mut state, Action::ActivateAbility(teferi, 1));
     next(&mut state);
     assert_eq!(state.stack.len(), 1);
-    assert_eq!(loyalty(&state, teferi), Some(2), "loyalty is paid on activation");
+    assert_eq!(
+        loyalty(&state, teferi),
+        Some(2),
+        "loyalty is paid on activation"
+    );
     resolve_stack(&mut state);
     let spirits = battlefield_named(&state, P0, "Spirit");
     assert_eq!(spirits.len(), 1);
@@ -149,7 +158,12 @@ fn teferi_minus_two_makes_a_spirit_that_grows_on_draws() {
 
     // A later turn's 0 ability draws: Teferi gains loyalty and the Spirit
     // gets a +1/+1 counter.
-    state.objects.get_mut(teferi).v4.ability_uses_this_turn.clear();
+    state
+        .objects
+        .get_mut(teferi)
+        .v4
+        .ability_uses_this_turn
+        .clear();
     act(&mut state, Action::ActivateAbility(teferi, 0));
     resolve_stack(&mut state);
     assert_eq!(loyalty(&state, teferi), Some(3));
@@ -160,7 +174,12 @@ fn teferi_minus_two_makes_a_spirit_that_grows_on_draws() {
 #[test]
 fn teferi_ultimate_bounces_one_and_shuffles_the_rest() {
     let mut state = game();
-    let teferi = put(&mut state, P0, "Teferi, Temporal Pilgrim", Zone::Battlefield);
+    let teferi = put(
+        &mut state,
+        P0,
+        "Teferi, Temporal Pilgrim",
+        Zone::Battlefield,
+    );
     change_loyalty(&mut state, teferi, 8);
     assert_eq!(loyalty(&state, teferi), Some(12));
     let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
@@ -184,7 +203,10 @@ fn teferi_ultimate_bounces_one_and_shuffles_the_rest() {
                 assert_eq!(player, P1, "the opponent chooses");
                 assert!(legal_targets.contains(&Target::Object(terror)));
                 assert!(legal_targets.contains(&Target::Object(land)));
-                act(&mut state, Action::ChooseEffectTarget(Target::Object(terror)));
+                act(
+                    &mut state,
+                    Action::ChooseEffectTarget(Target::Object(terror)),
+                );
             }
             other => panic!("unexpected decision: {other:?}"),
         }
@@ -214,7 +236,12 @@ fn attacking_game() -> (GameState, ObjectId, ObjectId) {
     let mut state = game();
     state.active_player = P1;
     state.priority_player = P1;
-    let teferi = put(&mut state, P0, "Teferi, Temporal Pilgrim", Zone::Battlefield);
+    let teferi = put(
+        &mut state,
+        P0,
+        "Teferi, Temporal Pilgrim",
+        Zone::Battlefield,
+    );
     let terror = put(&mut state, P1, "Tolarian Terror", Zone::Battlefield);
     assert_eq!(to_declare_attackers(&mut state), vec![terror]);
     act(&mut state, Action::DeclareAttackers(vec![terror]));
@@ -248,17 +275,17 @@ fn creatures_can_attack_a_planeswalker() {
         } => {
             assert_eq!(player, P1);
             assert_eq!(attacker, terror);
-            assert_eq!(
-                candidates,
-                vec![Target::Player(P0), Target::Object(teferi)]
-            );
+            assert_eq!(candidates, vec![Target::Player(P0), Target::Object(teferi)]);
         }
         other => panic!("unexpected decision: {other:?}"),
     }
     assert!(!state.engine.combat.attackers_declared);
     assert!(engine::step(&mut state, Action::Pass).is_err());
     assert!(engine::step(&mut state, Action::ChooseAttackTarget(Target::Player(P1))).is_err());
-    act(&mut state, Action::ChooseAttackTarget(Target::Object(teferi)));
+    act(
+        &mut state,
+        Action::ChooseAttackTarget(Target::Object(teferi)),
+    );
     assert!(state.engine.combat.attackers_declared);
     assert!(state.objects.get(terror).tapped);
     finish_combat(&mut state);
@@ -279,7 +306,10 @@ fn attacking_the_player_is_still_offered() {
 #[test]
 fn an_attacked_planeswalker_that_leaves_takes_no_damage_and_redirects_none() {
     let (mut state, teferi, _) = attacking_game();
-    act(&mut state, Action::ChooseAttackTarget(Target::Object(teferi)));
+    act(
+        &mut state,
+        Action::ChooseAttackTarget(Target::Object(teferi)),
+    );
     event::propose_and_commit(&mut state, ProposedEvent::zone_change(teferi, Zone::Hand));
     finish_combat(&mut state);
     assert_eq!(state.players[0].life, 20);
@@ -288,7 +318,12 @@ fn an_attacked_planeswalker_that_leaves_takes_no_damage_and_redirects_none() {
 #[test]
 fn burn_can_target_a_planeswalker() {
     let mut state = game();
-    let teferi = put(&mut state, P1, "Teferi, Temporal Pilgrim", Zone::Battlefield);
+    let teferi = put(
+        &mut state,
+        P1,
+        "Teferi, Temporal Pilgrim",
+        Zone::Battlefield,
+    );
     let burst = put(&mut state, P0, "Burst Lightning", Zone::Hand);
     state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
     next(&mut state);
@@ -321,15 +356,17 @@ fn attack_with(state: &mut GameState, attackers: Vec<ObjectId>) {
             Decision::DeclareAttackers { .. } => {
                 act(state, Action::DeclareAttackers(attackers.clone()))
             }
-            Decision::ChooseAttackTarget { player, .. } => {
-                act(state, Action::ChooseAttackTarget(Target::Player(player.opponent())))
-            }
+            Decision::ChooseAttackTarget { player, .. } => act(
+                state,
+                Action::ChooseAttackTarget(Target::Player(player.opponent())),
+            ),
             Decision::DeclareBlockers { .. } => act(state, Action::DeclareBlockers(Vec::new())),
             Decision::OrderTriggers { pending, .. } => {
                 act(state, Action::OrderTriggers((0..pending.len()).collect()))
             }
             Decision::CastSpellOrPass { .. }
-                if matches!(state.step, Step::EndCombat | Step::Main2) && state.stack.is_empty() =>
+                if matches!(state.step, Step::EndCombat | Step::Main2)
+                    && state.stack.is_empty() =>
             {
                 return
             }
@@ -343,13 +380,19 @@ fn attack_with(state: &mut GameState, attackers: Vec<ObjectId>) {
 fn cecil_loses_life_equal_to_the_damage_it_deals() {
     let mut state = game();
     let cecil = put(&mut state, P0, "Cecil, Dark Knight", Zone::Battlefield);
-    assert!(engine::has_effective_keyword(&state, cecil, Keywords::DEATHTOUCH));
+    assert!(engine::has_effective_keyword(
+        &state,
+        cecil,
+        Keywords::DEATHTOUCH
+    ));
     attack_with(&mut state, vec![cecil]);
     assert_eq!(state.players[1].life, 18);
-    assert_eq!(state.players[0].life, 18, "Darkness: you lose that much life");
+    assert_eq!(
+        state.players[0].life, 18,
+        "Darkness: you lose that much life"
+    );
     assert_eq!(state.objects.get(cecil).v4.face_index, 0);
     assert!(state.objects.get(cecil).tapped);
-
 }
 
 #[test]
@@ -364,8 +407,16 @@ fn cecil_untaps_and_transforms_at_half_life() {
     assert_eq!(paladin.name, "Cecil, Redeemed Paladin");
     assert!(!paladin.tapped, "Cecil untaps as it transforms");
     assert_eq!(engine::effective_power(&state, cecil), 4);
-    assert!(engine::has_effective_keyword(&state, cecil, Keywords::LIFELINK));
-    assert!(!engine::has_effective_keyword(&state, cecil, Keywords::DEATHTOUCH));
+    assert!(engine::has_effective_keyword(
+        &state,
+        cecil,
+        Keywords::LIFELINK
+    ));
+    assert!(!engine::has_effective_keyword(
+        &state,
+        cecil,
+        Keywords::DEATHTOUCH
+    ));
 }
 
 #[test]
@@ -389,8 +440,16 @@ fn cecil_redeemed_paladin_protects_other_attackers() {
             other => panic!("unexpected decision: {other:?}"),
         }
     }
-    assert!(engine::has_effective_keyword(&state, elves, Keywords::INDESTRUCTIBLE));
-    assert!(!engine::has_effective_keyword(&state, cecil, Keywords::INDESTRUCTIBLE));
+    assert!(engine::has_effective_keyword(
+        &state,
+        elves,
+        Keywords::INDESTRUCTIBLE
+    ));
+    assert!(!engine::has_effective_keyword(
+        &state,
+        cecil,
+        Keywords::INDESTRUCTIBLE
+    ));
     // Lifelink on the back face: four damage gains four life.
     attack_with(&mut state, Vec::new());
     assert_eq!(state.players[0].life, 24);
@@ -411,7 +470,11 @@ fn polukranos_transforms_at_sorcery_speed_with_phyrexian_mana() {
     assert_eq!(engine_of_ruin.v4.face_index, 1);
     assert_eq!(engine_of_ruin.name, "Polukranos, Engine of Ruin");
     assert_eq!(engine::effective_power(&state, polukranos), 6);
-    assert!(engine::has_effective_keyword(&state, polukranos, Keywords::LIFELINK));
+    assert!(engine::has_effective_keyword(
+        &state,
+        polukranos,
+        Keywords::LIFELINK
+    ));
     // The front face's transform ability is gone.
     state.players[0].mana_pool[ManaColor::W.pool_index()] = 7;
     assert!(!activatable(&mut state).contains(&(polukranos, 0)));
@@ -428,18 +491,35 @@ fn polukranos_engine_of_ruin_makes_hydras_when_hydras_die() {
     let other = put(&mut state, P0, "Polukranos Reborn", Zone::Battlefield);
     event::propose_and_commit(&mut state, ProposedEvent::transform_in_place(polukranos, 1));
     // Another nontoken Hydra dies (the legend rule is not exercised here).
-    event::propose_and_commit(&mut state, ProposedEvent::zone_change(other, Zone::Graveyard));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(other, Zone::Graveyard),
+    );
     resolve_stack(&mut state);
     let tokens = hydra_tokens(&state);
     assert_eq!(tokens.len(), 2);
-    assert!(engine::has_effective_keyword(&state, tokens[0], Keywords::REACH));
-    assert!(engine::has_effective_keyword(&state, tokens[1], Keywords::LIFELINK));
+    assert!(engine::has_effective_keyword(
+        &state,
+        tokens[0],
+        Keywords::REACH
+    ));
+    assert!(engine::has_effective_keyword(
+        &state,
+        tokens[1],
+        Keywords::LIFELINK
+    ));
     // A token Hydra dying does not trigger it.
-    event::propose_and_commit(&mut state, ProposedEvent::zone_change(tokens[0], Zone::Graveyard));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(tokens[0], Zone::Graveyard),
+    );
     resolve_stack(&mut state);
     assert_eq!(hydra_tokens(&state).len(), 1);
     // Polukranos itself dying does, from the back face it left on.
-    event::propose_and_commit(&mut state, ProposedEvent::zone_change(polukranos, Zone::Graveyard));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(polukranos, Zone::Graveyard),
+    );
     resolve_stack(&mut state);
     assert_eq!(hydra_tokens(&state).len(), 3);
 }
@@ -448,7 +528,10 @@ fn polukranos_engine_of_ruin_makes_hydras_when_hydras_die() {
 fn polukranos_reborn_front_face_dying_makes_nothing() {
     let mut state = game();
     let polukranos = put(&mut state, P0, "Polukranos Reborn", Zone::Battlefield);
-    event::propose_and_commit(&mut state, ProposedEvent::zone_change(polukranos, Zone::Graveyard));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(polukranos, Zone::Graveyard),
+    );
     resolve_stack(&mut state);
     assert!(hydra_tokens(&state).is_empty());
 }
@@ -475,7 +558,12 @@ fn cast_burst_at_opponent(state: &mut GameState) {
 #[test]
 fn ojer_axonil_raises_red_noncombat_damage_to_its_power() {
     let mut state = game();
-    put(&mut state, P0, "Ojer Axonil, Deepest Might", Zone::Battlefield);
+    put(
+        &mut state,
+        P0,
+        "Ojer Axonil, Deepest Might",
+        Zone::Battlefield,
+    );
     cast_burst_at_opponent(&mut state);
     assert_eq!(state.players[1].life, 16, "two damage became four");
 }
@@ -483,10 +571,20 @@ fn ojer_axonil_raises_red_noncombat_damage_to_its_power() {
 #[test]
 fn ojer_axonil_returns_as_temple_of_power_and_transforms_back() {
     let mut state = game();
-    let ojer = put(&mut state, P0, "Ojer Axonil, Deepest Might", Zone::Battlefield);
+    let ojer = put(
+        &mut state,
+        P0,
+        "Ojer Axonil, Deepest Might",
+        Zone::Battlefield,
+    );
     // A creature, so its {T}: Add {R} is not on this face.
-    assert!(!matches!(next(&mut state), Decision::CastSpellOrPass { ref mana_abilities, .. } if mana_abilities.contains(&ojer)));
-    event::propose_and_commit(&mut state, ProposedEvent::zone_change(ojer, Zone::Graveyard));
+    assert!(
+        !matches!(next(&mut state), Decision::CastSpellOrPass { ref mana_abilities, .. } if mana_abilities.contains(&ojer))
+    );
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(ojer, Zone::Graveyard),
+    );
     resolve_stack(&mut state);
     let temple = state.objects.get(ojer);
     assert_eq!(temple.zone, Zone::Battlefield);
@@ -506,7 +604,10 @@ fn ojer_axonil_returns_as_temple_of_power_and_transforms_back() {
     state.players[0].mana_pool[ManaColor::R.pool_index()] = 3;
     assert!(!activatable(&mut state).contains(&(ojer, 0)));
     cast_burst_at_opponent(&mut state);
-    assert_eq!(state.players[1].life, 18, "no Ojer on the battlefield to raise it");
+    assert_eq!(
+        state.players[1].life, 18,
+        "no Ojer on the battlefield to raise it"
+    );
     assert!(!activatable(&mut state).contains(&(ojer, 0)));
     cast_burst_at_opponent(&mut state);
     assert!(activatable(&mut state).contains(&(ojer, 0)));
@@ -522,7 +623,12 @@ fn ojer_axonil_returns_as_temple_of_power_and_transforms_back() {
 #[test]
 fn temple_of_power_cannot_attack() {
     let mut state = game();
-    let ojer = put(&mut state, P0, "Ojer Axonil, Deepest Might", Zone::Battlefield);
+    let ojer = put(
+        &mut state,
+        P0,
+        "Ojer Axonil, Deepest Might",
+        Zone::Battlefield,
+    );
     event::propose_and_commit(&mut state, ProposedEvent::transform_in_place(ojer, 1));
     loop {
         match next(&mut state) {
@@ -577,7 +683,10 @@ fn blue_suns_twilight_steals_a_creature_with_mana_value_up_to_x() {
     assert!(state.players[0].battlefield.contains(&elves));
     assert!(!state.players[1].battlefield.contains(&elves));
     assert!(stolen.summoning_sick);
-    assert!(battlefield_named(&state, P0, "Llanowar Elves").len() == 1, "X below 5 makes no copy");
+    assert!(
+        battlefield_named(&state, P0, "Llanowar Elves").len() == 1,
+        "X below 5 makes no copy"
+    );
 }
 
 #[test]
@@ -592,7 +701,10 @@ fn blue_suns_twilight_copies_at_x_five_or_more() {
     let copy = *all_elves.iter().find(|&&id| id != elves).unwrap();
     assert!(state.objects.get(copy).v4.is_token);
     // The copy is a token: leaving the battlefield, it ceases to exist.
-    event::propose_and_commit(&mut state, ProposedEvent::zone_change(copy, Zone::Graveyard));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(copy, Zone::Graveyard),
+    );
     resolve_stack(&mut state);
     assert!(!state.players[0].graveyard.contains(&copy));
 }
@@ -682,7 +794,10 @@ fn casting_unholy_annex_unlocks_only_its_door() {
     assert_eq!(state.objects.get(room).zone, Zone::Battlefield);
     assert!(demons(&state).is_empty());
     let abilities = activatable(&mut state);
-    assert!(!abilities.contains(&(room, 0)), "the left door is already unlocked");
+    assert!(
+        !abilities.contains(&(room, 0)),
+        "the left door is already unlocked"
+    );
     // Ritual Chamber's door costs {3}{B}{B}; nothing to pay it with yet.
     assert!(!abilities.contains(&(room, 1)));
 
@@ -702,7 +817,11 @@ fn casting_ritual_chamber_unlocks_its_door_and_makes_a_demon() {
     assert_eq!(demon.len(), 1);
     let demon = demon[0];
     assert_eq!(engine::effective_power(&state, demon), 6);
-    assert!(engine::has_effective_keyword(&state, demon, Keywords::FLYING));
+    assert!(engine::has_effective_keyword(
+        &state,
+        demon,
+        Keywords::FLYING
+    ));
     // The Annex's door is still locked, so its end-step ability does nothing.
     let hand = state.players[0].hand.len();
     through_end_step(&mut state);
@@ -722,9 +841,10 @@ fn unlocking_ritual_chamber_is_a_special_action_that_triggers() {
     loop {
         match next(&mut state) {
             Decision::CastSpellOrPass { .. } => break,
-            Decision::OrderTriggers { pending, .. } => {
-                act(&mut state, Action::OrderTriggers((0..pending.len()).collect()))
-            }
+            Decision::OrderTriggers { pending, .. } => act(
+                &mut state,
+                Action::OrderTriggers((0..pending.len()).collect()),
+            ),
             other => panic!("unexpected decision: {other:?}"),
         }
     }
@@ -770,7 +890,10 @@ fn drive(state: &mut GameState, picks: &[Target]) {
         match next(state) {
             Decision::ChooseTargets { legal_targets, .. } => {
                 let pick = picks.next().expect("a target to choose");
-                assert!(legal_targets.contains(&pick), "{pick:?} not in {legal_targets:?}");
+                assert!(
+                    legal_targets.contains(&pick),
+                    "{pick:?} not in {legal_targets:?}"
+                );
                 act(state, Action::ChooseTarget(pick));
             }
             Decision::ChooseCostTargets { candidates, .. } => {
@@ -802,7 +925,12 @@ fn cast(state: &mut GameState, name: &str, white: u8, picks: &[Target]) -> Objec
 
 /// The legal targets offered for the first target of `name`'s ETB trigger
 /// once it is cast, without choosing one.
-fn etb_trigger_targets(state: &mut GameState, name: &str, white: u8, picks: &[Target]) -> Vec<Target> {
+fn etb_trigger_targets(
+    state: &mut GameState,
+    name: &str,
+    white: u8,
+    picks: &[Target],
+) -> Vec<Target> {
     let card = put(state, P0, name, Zone::Hand);
     state.players[0].mana_pool[ManaColor::W.pool_index()] = white;
     next(state);
@@ -810,12 +938,20 @@ fn etb_trigger_targets(state: &mut GameState, name: &str, white: u8, picks: &[Ta
     let mut picks = picks.iter().copied();
     loop {
         match next(state) {
-            Decision::ChooseTargets { spell, legal_targets, .. } if spell == card && state.objects.get(card).zone == Zone::Battlefield => {
+            Decision::ChooseTargets {
+                spell,
+                legal_targets,
+                ..
+            } if spell == card && state.objects.get(card).zone == Zone::Battlefield => {
                 return legal_targets
             }
-            Decision::ChooseTargets { .. } => act(state, Action::ChooseTarget(picks.next().unwrap())),
+            Decision::ChooseTargets { .. } => {
+                act(state, Action::ChooseTarget(picks.next().unwrap()))
+            }
             Decision::ChooseCostTargets { .. } => {
-                let Some(Target::Object(pick)) = picks.next() else { panic!() };
+                let Some(Target::Object(pick)) = picks.next() else {
+                    panic!()
+                };
                 act(state, Action::ChooseCostTarget(pick));
             }
             Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
@@ -839,7 +975,10 @@ fn seam_rip_exiles_a_cheap_nonland_permanent_until_it_leaves() {
 
     let seam_rip = cast(&mut state, "Seam Rip", 1, &[Target::Object(elves)]);
     assert_eq!(state.objects.get(elves).zone, Zone::Exile);
-    event::propose_and_commit(&mut state, ProposedEvent::zone_change(seam_rip, Zone::Graveyard));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(seam_rip, Zone::Graveyard),
+    );
     drive(&mut state, &[]);
     assert_eq!(state.objects.get(elves).zone, Zone::Battlefield);
     assert_eq!(state.objects.get(elves).controller, P1);
@@ -878,10 +1017,22 @@ fn sheltered_by_ghosts_enchants_your_creature_and_exiles_until_it_leaves() {
         2,
         &[Target::Object(host), Target::Object(epicure)],
     );
-    assert_eq!(state.objects.get(aura).v4.attached_to.map(|link| link.object), Some(host));
+    assert_eq!(
+        state
+            .objects
+            .get(aura)
+            .v4
+            .attached_to
+            .map(|link| link.object),
+        Some(host)
+    );
     assert_eq!(state.objects.get(epicure).zone, Zone::Exile);
     assert_eq!(engine::effective_power(&state, host), 2);
-    assert!(engine::has_effective_keyword(&state, host, Keywords::LIFELINK));
+    assert!(engine::has_effective_keyword(
+        &state,
+        host,
+        Keywords::LIFELINK
+    ));
 
     // Ward {2}: an opponent's spell targeting the creature is countered
     // unless they pay {2}.
@@ -893,7 +1044,9 @@ fn sheltered_by_ghosts_enchants_your_creature_and_exiles_until_it_leaves() {
     act(&mut state, Action::CastSpell(burst));
     loop {
         match next(&mut state) {
-            Decision::ChooseTargets { .. } => act(&mut state, Action::ChooseTarget(Target::Object(host))),
+            Decision::ChooseTargets { .. } => {
+                act(&mut state, Action::ChooseTarget(Target::Object(host)))
+            }
             Decision::ChooseKicker { .. } => act(&mut state, Action::ChooseKicker(false)),
             Decision::CastSpellOrPass { .. } if state.stack.is_empty() => break,
             Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
@@ -905,7 +1058,10 @@ fn sheltered_by_ghosts_enchants_your_creature_and_exiles_until_it_leaves() {
 
     // The creature leaves; the Aura goes to the graveyard and the Epicure
     // returns.
-    event::propose_and_commit(&mut state, ProposedEvent::zone_change(host, Zone::Graveyard));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(host, Zone::Graveyard),
+    );
     drive(&mut state, &[]);
     assert_eq!(state.objects.get(aura).zone, Zone::Graveyard);
     assert_eq!(state.objects.get(epicure).zone, Zone::Battlefield);
@@ -941,10 +1097,21 @@ fn hardlight_containment_enchants_your_artifact_and_exiles_a_creature() {
         1,
         &[Target::Object(collar), Target::Object(terror)],
     );
-    assert_eq!(state.objects.get(aura).v4.attached_to.map(|link| link.object), Some(collar));
+    assert_eq!(
+        state
+            .objects
+            .get(aura)
+            .v4
+            .attached_to
+            .map(|link| link.object),
+        Some(collar)
+    );
     assert_eq!(state.objects.get(terror).zone, Zone::Exile);
     // The artifact leaves; the Aura follows and the Terror returns.
-    event::propose_and_commit(&mut state, ProposedEvent::zone_change(collar, Zone::Graveyard));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(collar, Zone::Graveyard),
+    );
     drive(&mut state, &[]);
     assert_eq!(state.objects.get(aura).zone, Zone::Graveyard);
     assert_eq!(state.objects.get(terror).zone, Zone::Battlefield);
@@ -959,9 +1126,25 @@ fn basilisk_collar_equips_for_two_and_grants_deathtouch_and_lifelink() {
     assert!(activatable(&mut state).contains(&(collar, 0)));
     act(&mut state, Action::ActivateAbility(collar, 0));
     drive(&mut state, &[Target::Object(elves)]);
-    assert_eq!(state.objects.get(collar).v4.attached_to.map(|link| link.object), Some(elves));
-    assert!(engine::has_effective_keyword(&state, elves, Keywords::DEATHTOUCH));
-    assert!(engine::has_effective_keyword(&state, elves, Keywords::LIFELINK));
+    assert_eq!(
+        state
+            .objects
+            .get(collar)
+            .v4
+            .attached_to
+            .map(|link| link.object),
+        Some(elves)
+    );
+    assert!(engine::has_effective_keyword(
+        &state,
+        elves,
+        Keywords::DEATHTOUCH
+    ));
+    assert!(engine::has_effective_keyword(
+        &state,
+        elves,
+        Keywords::LIFELINK
+    ));
 }
 
 // ---- Candy Trail, Warleader's Call, Lunar Convocation, Simulacrum, Cases ----
@@ -1014,7 +1197,10 @@ fn candy_trail_scries_then_sacrifices_for_life_and_a_card() {
     assert_eq!(state.objects.get(trail).zone, Zone::Battlefield);
 
     // {2}, {T}, Sacrifice: gain 3 life and draw a card.
-    assert!(!activatable(&mut state).contains(&(trail, 0)), "needs {{2}}");
+    assert!(
+        !activatable(&mut state).contains(&(trail, 0)),
+        "needs {{2}}"
+    );
     state.players[0].mana_pool[ManaColor::U.pool_index()] = 2;
     assert!(activatable(&mut state).contains(&(trail, 0)));
     let hand = state.players[0].hand.len();
@@ -1032,13 +1218,22 @@ fn warleaders_call_pumps_your_creatures_and_pings_on_entry() {
     let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
     let theirs = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
     settle(&mut state);
-    assert_eq!(state.players[1].life, 19, "only your creature entering pings");
     assert_eq!(
-        (engine::effective_power(&state, elves), engine::effective_toughness(&state, elves)),
+        state.players[1].life, 19,
+        "only your creature entering pings"
+    );
+    assert_eq!(
+        (
+            engine::effective_power(&state, elves),
+            engine::effective_toughness(&state, elves)
+        ),
         (2, 2)
     );
     assert_eq!(
-        (engine::effective_power(&state, theirs), engine::effective_toughness(&state, theirs)),
+        (
+            engine::effective_power(&state, theirs),
+            engine::effective_toughness(&state, theirs)
+        ),
         (1, 1)
     );
 }
@@ -1075,7 +1270,11 @@ fn lunar_convocation_makes_a_bat_after_you_gain_and_lose_life() {
     assert_eq!(state.players[1].life, 19);
     let bats = battlefield_named(&state, P0, "Bat");
     assert_eq!(bats.len(), 1);
-    assert!(engine::has_effective_keyword(&state, bats[0], Keywords::FLYING));
+    assert!(engine::has_effective_keyword(
+        &state,
+        bats[0],
+        Keywords::FLYING
+    ));
     assert_eq!(engine::effective_power(&state, bats[0]), 1);
 }
 
@@ -1156,7 +1355,12 @@ fn case_of_the_gateway_express_stays_unsolved_after_two_attackers() {
         put(&mut state, P0, "Llanowar Elves", Zone::Battlefield),
         put(&mut state, P0, "Llanowar Elves", Zone::Battlefield),
     ];
-    let case = put(&mut state, P0, "Case of the Gateway Express", Zone::Battlefield);
+    let case = put(
+        &mut state,
+        P0,
+        "Case of the Gateway Express",
+        Zone::Battlefield,
+    );
     settle_case_trigger(&mut state, case);
     attack_with(&mut state, mine.to_vec());
     to_end_step(&mut state);
@@ -1207,11 +1411,17 @@ fn innkeepers_talent_levels_in_order_and_grants_ward_to_countered_permanents() {
     assert!(abilities.contains(&(class, 0)));
     assert!(!abilities.contains(&(class, 1)));
     level_up(&mut state, class, 0, ManaColor::G, 1);
-    assert!(!activatable(&mut state).contains(&(class, 0)), "already level 2");
+    assert!(
+        !activatable(&mut state).contains(&(class, 0)),
+        "already level 2"
+    );
 
     // Level 1: a +1/+1 counter on target creature you control at the
     // beginning of combat on your turn.
-    assert_eq!(begin_combat_targets(&mut state), vec![Target::Object(elves)]);
+    assert_eq!(
+        begin_combat_targets(&mut state),
+        vec![Target::Object(elves)]
+    );
     act(&mut state, Action::ChooseTarget(Target::Object(elves)));
     settle(&mut state);
     assert_eq!(state.objects.get(elves).counters.plus1_plus1, 1);
@@ -1225,7 +1435,9 @@ fn innkeepers_talent_levels_in_order_and_grants_ward_to_countered_permanents() {
     act(&mut state, Action::CastSpell(burst));
     loop {
         match next(&mut state) {
-            Decision::ChooseTargets { .. } => act(&mut state, Action::ChooseTarget(Target::Object(elves))),
+            Decision::ChooseTargets { .. } => {
+                act(&mut state, Action::ChooseTarget(Target::Object(elves)))
+            }
             Decision::ChooseKicker { .. } => act(&mut state, Action::ChooseKicker(false)),
             Decision::CastSpellOrPass { .. } if state.stack.is_empty() => break,
             Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
@@ -1242,7 +1454,9 @@ fn innkeepers_talent_level_three_doubles_your_counters() {
     let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
     level_up(&mut state, class, 0, ManaColor::G, 1);
     level_up(&mut state, class, 1, ManaColor::G, 4);
-    assert!(activatable(&mut state).iter().all(|&(source, _)| source != class));
+    assert!(activatable(&mut state)
+        .iter()
+        .all(|&(source, _)| source != class));
     begin_combat_targets(&mut state);
     act(&mut state, Action::ChooseTarget(Target::Object(elves)));
     settle(&mut state);
@@ -1263,7 +1477,10 @@ fn stormchasers_talent_makes_otters_and_regrows_a_spell_at_level_two() {
     assert_eq!(engine::effective_power(&state, otter), 1);
 
     let burst = put(&mut state, P0, "Burst Lightning", Zone::Hand);
-    event::propose_and_commit(&mut state, ProposedEvent::zone_change(burst, Zone::Graveyard));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(burst, Zone::Graveyard),
+    );
     state.players[0].mana_pool[ManaColor::U.pool_index()] = 4;
     act(&mut state, Action::ActivateAbility(class, 0));
     drive(&mut state, &[Target::Object(burst)]);
@@ -1304,7 +1521,12 @@ fn to_next_own_main(state: &mut GameState) {
 #[test]
 fn case_of_the_uneaten_feast_gains_life_solves_and_lets_creatures_be_cast_from_the_graveyard() {
     let mut state = game();
-    let case = put(&mut state, P0, "Case of the Uneaten Feast", Zone::Battlefield);
+    let case = put(
+        &mut state,
+        P0,
+        "Case of the Uneaten Feast",
+        Zone::Battlefield,
+    );
     for _ in 0..4 {
         put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
     }
@@ -1325,20 +1547,152 @@ fn case_of_the_uneaten_feast_gains_life_solves_and_lets_creatures_be_cast_from_t
     assert!(activatable(&mut state).contains(&(case, 0)), "solved");
 
     let elves = put(&mut state, P0, "Llanowar Elves", Zone::Hand);
-    event::propose_and_commit(&mut state, ProposedEvent::zone_change(elves, Zone::Graveyard));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(elves, Zone::Graveyard),
+    );
     state.players[0].mana_pool[ManaColor::G.pool_index()] = 1;
     match next(&mut state) {
-        Decision::CastSpellOrPass { castable_spells, .. } => assert!(!castable_spells.contains(&elves)),
+        Decision::CastSpellOrPass {
+            castable_spells, ..
+        } => assert!(!castable_spells.contains(&elves)),
         other => panic!("unexpected decision: {other:?}"),
     }
     act(&mut state, Action::ActivateAbility(case, 0));
     settle(&mut state);
     assert_eq!(state.objects.get(case).zone, Zone::Graveyard);
     match next(&mut state) {
-        Decision::CastSpellOrPass { castable_spells, .. } => assert!(castable_spells.contains(&elves)),
+        Decision::CastSpellOrPass {
+            castable_spells, ..
+        } => assert!(castable_spells.contains(&elves)),
         other => panic!("unexpected decision: {other:?}"),
     }
     act(&mut state, Action::CastSpell(elves));
     settle(&mut state);
     assert_eq!(state.objects.get(elves).zone, Zone::Battlefield);
+}
+
+// ---- Liliana of the Veil -----------------------------------------------
+
+#[test]
+fn liliana_plus_one_makes_each_player_discard_a_card() {
+    let mut state = game();
+    let liliana = put(&mut state, P0, "Liliana of the Veil", Zone::Battlefield);
+    assert_eq!(loyalty(&state, liliana), Some(3));
+    let kept = put(&mut state, P0, "Llanowar Elves", Zone::Hand);
+    let pitched = put(&mut state, P0, "Forest", Zone::Hand);
+    let theirs = put(&mut state, P1, "Tolarian Terror", Zone::Hand);
+    let their_other = put(&mut state, P1, "Forest", Zone::Hand);
+    act(&mut state, Action::ActivateAbility(liliana, 0));
+    let mut discarders = Vec::new();
+    loop {
+        match next(&mut state) {
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => break,
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            Decision::Discard {
+                player, choices, ..
+            } => {
+                discarders.push(player);
+                let card = if player == P0 { pitched } else { theirs };
+                assert!(choices.contains(&card));
+                act(&mut state, Action::Discard(vec![card]));
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    assert_eq!(discarders, vec![P0, P1]);
+    assert_eq!(loyalty(&state, liliana), Some(4));
+    assert_eq!(state.objects.get(pitched).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(theirs).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(kept).zone, Zone::Hand);
+    assert_eq!(state.objects.get(their_other).zone, Zone::Hand);
+}
+
+#[test]
+fn liliana_minus_two_makes_target_player_sacrifice_a_creature() {
+    let mut state = game();
+    let liliana = put(&mut state, P0, "Liliana of the Veil", Zone::Battlefield);
+    let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let terror = put(&mut state, P1, "Tolarian Terror", Zone::Battlefield);
+    act(&mut state, Action::ActivateAbility(liliana, 1));
+    loop {
+        match next(&mut state) {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert!(legal_targets.contains(&Target::Player(P0)));
+                act(&mut state, Action::ChooseTarget(Target::Player(P1)))
+            }
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => break,
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            Decision::ChooseEffectTargets { player, .. } => {
+                assert_eq!(player, P1, "the targeted player chooses");
+                act(
+                    &mut state,
+                    Action::ChooseEffectTarget(Target::Object(elves)),
+                );
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    assert_eq!(loyalty(&state, liliana), Some(1));
+    assert_eq!(state.objects.get(elves).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(terror).zone, Zone::Battlefield);
+}
+
+#[test]
+fn liliana_minus_six_separates_piles_and_the_target_sacrifices_one() {
+    let mut state = game();
+    let liliana = put(&mut state, P0, "Liliana of the Veil", Zone::Battlefield);
+    change_loyalty(&mut state, liliana, 3);
+    let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let terror = put(&mut state, P1, "Tolarian Terror", Zone::Battlefield);
+    let forest = put(&mut state, P1, "Forest", Zone::Battlefield);
+    let mine = put(&mut state, P0, "Forest", Zone::Battlefield);
+    assert!(activatable(&mut state).contains(&(liliana, 2)));
+    act(&mut state, Action::ActivateAbility(liliana, 2));
+    let mut separated = false;
+    loop {
+        match next(&mut state) {
+            Decision::ChooseTargets { .. } => {
+                act(&mut state, Action::ChooseTarget(Target::Player(P1)))
+            }
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => break,
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            Decision::ChooseEffectTargets {
+                player,
+                legal_targets,
+                can_finish,
+                ..
+            } => {
+                assert_eq!(player, P0, "Liliana's controller separates");
+                assert!(can_finish);
+                assert!(!legal_targets.contains(&Target::Object(mine)));
+                if legal_targets.contains(&Target::Object(elves)) {
+                    act(
+                        &mut state,
+                        Action::ChooseEffectTarget(Target::Object(elves)),
+                    );
+                } else if legal_targets.contains(&Target::Object(forest)) {
+                    act(
+                        &mut state,
+                        Action::ChooseEffectTarget(Target::Object(forest)),
+                    );
+                } else {
+                    separated = true;
+                    act(&mut state, Action::FinishEffectSelection);
+                }
+            }
+            Decision::ChooseEffectBoolean { player, .. } => {
+                assert_eq!(player, P1, "the target chooses the pile");
+                // false: the second pile, Tolarian Terror alone.
+                act(&mut state, Action::ChooseEffectBoolean(false));
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    assert!(separated);
+    assert_eq!(state.objects.get(liliana).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(terror).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(elves).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(forest).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(mine).zone, Zone::Battlefield);
 }

@@ -24,6 +24,7 @@ SUPPORTED_NONBASIC = {
     "Dusk Rose Reliquary",
     "Hardlight Containment",
     "Innkeeper's Talent",
+    "Liliana of the Veil",
     "Llanowar Elves",
     "Lunar Convocation",
     "Ojer Axonil, Deepest Might",

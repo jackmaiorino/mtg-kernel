@@ -14,7 +14,7 @@ use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 
 /// Appended after the 192 Pauper definitions, in registry order.
-const STANDARD_APPENDED: [&str; 28] = [
+const STANDARD_APPENDED: [&str; 29] = [
     "Plains",
     "Burst Lightning",
     "Teferi, Temporal Pilgrim",
@@ -43,11 +43,12 @@ const STANDARD_APPENDED: [&str; 28] = [
     "Stormchaser's Talent",
     "Otter Prowess Token",
     "Case of the Uneaten Feast",
+    "Liliana of the Veil",
 ];
 
 /// Every distinct nonbasic card in the 16 decks that this build fully
 /// supports. Each Standard card batch extends this list.
-const SUPPORTED_NONBASIC: [&str; 25] = [
+const SUPPORTED_NONBASIC: [&str; 26] = [
     "Basilisk Collar",
     "Blue Sun's Twilight",
     "Burst Lightning",
@@ -59,6 +60,7 @@ const SUPPORTED_NONBASIC: [&str; 25] = [
     "Dusk Rose Reliquary",
     "Hardlight Containment",
     "Innkeeper's Talent",
+    "Liliana of the Veil",
     "Llanowar Elves",
     "Lunar Convocation",
     "Ojer Axonil, Deepest Might",
@@ -134,7 +136,7 @@ fn standard_registry_appends_to_the_pauper_prefix_without_fdn() {
 
 #[test]
 fn standard_catalog_identity_is_frozen() {
-    const EXPECTED_STANDARD_V1: u64 = 0x01ad_44f6_dc8e_aca3;
+    const EXPECTED_STANDARD_V1: u64 = 0xef7b_203d_802e_09e8;
     assert_eq!(
         KERNEL_CARDDB_HASH, EXPECTED_STANDARD_V1,
         "Standard catalog hash {KERNEL_CARDDB_HASH:#018x}"

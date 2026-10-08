@@ -40,6 +40,26 @@ const TEFERI: [ActivatedAbilityRecipe; 3] = [
     ),
 ];
 
+/// Liliana of the Veil: each player discards; target player sacrifices a
+/// creature; the -6 pile split is resumable.
+const LILIANA_OF_THE_VEIL: [ActivatedAbilityRecipe; 3] = [
+    loyalty(
+        &[Loyalty(1)],
+        Program("crate::standard_cards_v1::each_player_discards_one"),
+        "None",
+    ),
+    loyalty(
+        &[Loyalty(-2)],
+        Program("crate::standard_cards_v1::target_player_sacrifices_creature"),
+        "AnyPlayer",
+    ),
+    loyalty(
+        &[Loyalty(-6)],
+        Program("crate::standard_cards_v1::liliana_piles"),
+        "AnyPlayer",
+    ),
+];
+
 /// "Transform this. Activate only as a sorcery."
 const fn sorcery_transform(cost: &'static [AbilityCostRecipe]) -> ActivatedAbilityRecipe {
     ActivatedAbilityRecipe {
@@ -62,7 +82,10 @@ const OJER: [ActivatedAbilityRecipe; 1] = [sorcery_transform(&[ManaCost("{2}{R}"
 /// A Room's unlock special actions, left door then right door, each at its
 /// half's mana cost and sorcery timing (709.5e). Each works only while its
 /// door is locked (`standard_cards_v1::activation_allowed`).
-const fn unlock(cost: &'static [AbilityCostRecipe], program: &'static str) -> ActivatedAbilityRecipe {
+const fn unlock(
+    cost: &'static [AbilityCostRecipe],
+    program: &'static str,
+) -> ActivatedAbilityRecipe {
     ActivatedAbilityRecipe {
         cost,
         effect: Program(program),
@@ -75,8 +98,14 @@ const fn unlock(cost: &'static [AbilityCostRecipe], program: &'static str) -> Ac
 }
 
 const UNHOLY_ANNEX: [ActivatedAbilityRecipe; 2] = [
-    unlock(&[ManaCost("{2}{B}")], "crate::standard_cards_v1::unlock_left_door"),
-    unlock(&[ManaCost("{3}{B}{B}")], "crate::standard_cards_v1::unlock_right_door"),
+    unlock(
+        &[ManaCost("{2}{B}")],
+        "crate::standard_cards_v1::unlock_left_door",
+    ),
+    unlock(
+        &[ManaCost("{3}{B}{B}")],
+        "crate::standard_cards_v1::unlock_right_door",
+    ),
 ];
 
 /// "Equip {N}": attach to target creature you control, as a sorcery.
@@ -95,7 +124,10 @@ const fn equip(cost: &'static [AbilityCostRecipe]) -> ActivatedAbilityRecipe {
 const BASILISK_COLLAR: [ActivatedAbilityRecipe; 1] = [equip(&[ManaCost("{2}")])];
 
 /// An instant-speed activated ability from the battlefield.
-const fn instant(cost: &'static [AbilityCostRecipe], effect: AbilityEffectRecipe) -> ActivatedAbilityRecipe {
+const fn instant(
+    cost: &'static [AbilityCostRecipe],
+    effect: AbilityEffectRecipe,
+) -> ActivatedAbilityRecipe {
     ActivatedAbilityRecipe {
         cost,
         effect,
@@ -123,7 +155,10 @@ const LUNAR_CONVOCATION: [ActivatedAbilityRecipe; 1] =
 /// A Class's level-up abilities, level 2 then level 3, each at sorcery
 /// timing and only at the level before it (`standard_cards_v1::
 /// activation_allowed`).
-const fn level(cost: &'static [AbilityCostRecipe], program: &'static str) -> ActivatedAbilityRecipe {
+const fn level(
+    cost: &'static [AbilityCostRecipe],
+    program: &'static str,
+) -> ActivatedAbilityRecipe {
     ActivatedAbilityRecipe {
         cost,
         effect: Program(program),
@@ -136,13 +171,25 @@ const fn level(cost: &'static [AbilityCostRecipe], program: &'static str) -> Act
 }
 
 const INNKEEPERS_TALENT: [ActivatedAbilityRecipe; 2] = [
-    level(&[ManaCost("{G}")], "crate::standard_cards_v1::gain_level_two"),
-    level(&[ManaCost("{3}{G}")], "crate::standard_cards_v1::gain_level_three"),
+    level(
+        &[ManaCost("{G}")],
+        "crate::standard_cards_v1::gain_level_two",
+    ),
+    level(
+        &[ManaCost("{3}{G}")],
+        "crate::standard_cards_v1::gain_level_three",
+    ),
 ];
 
 const STORMCHASERS_TALENT: [ActivatedAbilityRecipe; 2] = [
-    level(&[ManaCost("{3}{U}")], "crate::standard_cards_v1::gain_level_two"),
-    level(&[ManaCost("{5}{U}")], "crate::standard_cards_v1::gain_level_three"),
+    level(
+        &[ManaCost("{3}{U}")],
+        "crate::standard_cards_v1::gain_level_two",
+    ),
+    level(
+        &[ManaCost("{5}{U}")],
+        "crate::standard_cards_v1::gain_level_three",
+    ),
 ];
 
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
@@ -155,6 +202,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Basilisk Collar" => &BASILISK_COLLAR,
         "Unholy Annex // Ritual Chamber" => &UNHOLY_ANNEX,
         "Teferi, Temporal Pilgrim" => &TEFERI,
+        "Liliana of the Veil" => &LILIANA_OF_THE_VEIL,
         "Polukranos Reborn" => &POLUKRANOS,
         "Ojer Axonil, Deepest Might" => &OJER,
         _ => &[],
@@ -255,9 +303,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
 pub(super) fn object_name_for(name: &str) -> Option<&'static str> {
     match name {
         "Teferi Spirit Token" => Some("Spirit"),
-        "Phyrexian Hydra Reach Token" | "Phyrexian Hydra Lifelink Token" => {
-            Some("Phyrexian Hydra")
-        }
+        "Phyrexian Hydra Reach Token" | "Phyrexian Hydra Lifelink Token" => Some("Phyrexian Hydra"),
         "Demon Flying Token" => Some("Demon"),
         "Bat Flying Token" => Some("Bat"),
         "Karn Construct Token" => Some("Construct"),

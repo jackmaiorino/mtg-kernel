@@ -538,7 +538,9 @@ pub enum CommittedEvent {
     },
     /// The beginning of combat step began (507.1). Only the Standard
     /// catalog records it, for "at the beginning of combat on your turn".
-    BeginningCombatV1 { active_player: PlayerId },
+    BeginningCombatV1 {
+        active_player: PlayerId,
+    },
 }
 
 fn initialize_entry_counters(state: &mut GameState, object: ObjectId, kicked: bool) {

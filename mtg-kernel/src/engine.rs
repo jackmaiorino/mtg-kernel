@@ -1742,7 +1742,10 @@ fn validate_physical_spell_cast_origin(
             origin.origin_zone == Zone::Graveyard
                 && source.owner == item.controller
                 && holder == item.controller
-                && matches!(cast_method, CastMethodV4::Normal | CastMethodV4::Alternative)
+                && matches!(
+                    cast_method,
+                    CastMethodV4::Normal | CastMethodV4::Alternative
+                )
                 && crate::standard_cards_v1::graveyard_cast_granted(
                     state,
                     item.source,
@@ -5035,7 +5038,12 @@ fn completable_next_cast_targets(
         candidates
             .into_iter()
             .filter(|&target| {
-                crate::standard_cards_v1::cast_target_allowed(def, pending.controller, target, state)
+                crate::standard_cards_v1::cast_target_allowed(
+                    def,
+                    pending.controller,
+                    target,
+                    state,
+                )
             })
             .collect()
     } else {
@@ -5584,14 +5592,14 @@ fn castable_spells(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
     }
     for &id in &state.players[player.index()].graveyard {
         let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
-        if unambiguous_graveyard_cast_method(def)
-            .is_some_and(|method| is_castable_now(player, id, method, state))
-        {
-            out.push(id);
-        } else if unambiguous_graveyard_cast_method(def).is_none()
-            && graveyard_permission_zone_change_count(player, id, state).is_some()
-            && is_castable_now(player, id, CastMethodV4::Normal, state)
-        {
+        let castable = match unambiguous_graveyard_cast_method(def) {
+            Some(method) => is_castable_now(player, id, method, state),
+            None => {
+                graveyard_permission_zone_change_count(player, id, state).is_some()
+                    && is_castable_now(player, id, CastMethodV4::Normal, state)
+            }
+        };
+        if castable {
             out.push(id);
         }
     }
@@ -7040,6 +7048,10 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
     match pending_discard.resume {
         DiscardResume::None => collect_and_queue_triggers(state),
         DiscardResume::FinishAbilityResolution { stack_item_id } => {
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if crate::standard_cards_v1::stage_queued_discard(state, stack_item_id) {
+                return;
+            }
             // The ability's resolution is over only now (608.2).
             state
                 .stack
@@ -12416,7 +12428,9 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
     if crate::attack_target_v1::has_pending(state) {
         return match action {
             Action::ChooseAttackTarget(target) => crate::attack_target_v1::answer(state, target),
-            _ => Err("only an attack target answer may be taken while attackers are declared".into()),
+            _ => {
+                Err("only an attack target answer may be taken while attackers are declared".into())
+            }
         };
     }
     if crate::combat_damage_v1::has_pending_assignment(state) {

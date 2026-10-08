@@ -6707,6 +6707,9 @@ fn pending_effect_semantic_v4(
                             }
                             | crate::effect::EffectTargetSelectionPurpose::StandardChoosePermanentV1 {
                                 ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::StandardSeparatePilesV1 {
+                                ..
                             } => TargetSelectionPurposeV4::PermanentSelection,
                         },
                     })
@@ -6738,6 +6741,9 @@ fn pending_effect_semantic_v4(
                             ..
                         }
                         | crate::effect::EffectBooleanChoicePurpose::LookAtTopMayRevealThen {
+                            ..
+                        }
+                        | crate::effect::EffectBooleanChoicePurpose::StandardSacrificePileV1 {
                             ..
                         } => BooleanChoicePurposeV4::OptionalEffect,
                     },

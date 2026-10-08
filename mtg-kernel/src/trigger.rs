@@ -1913,7 +1913,8 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
             TargetSpec::TargetOpponent
         } else if card.name == "Journey to Nowhere" && *effect == journey_to_nowhere_etb_effect() {
             TargetSpec::CreatureOtherThanSource
-        } else if let Some(spec) = crate::standard_cards_v1::trigger_target_spec(card.name, effect) {
+        } else if let Some(spec) = crate::standard_cards_v1::trigger_target_spec(card.name, effect)
+        {
             spec
         } else if card.name == "Avenging Hunter" {
             match effect {
@@ -2442,8 +2443,7 @@ fn triggers_from_events(
             }
             for (i, ev) in events.iter().enumerate() {
                 if let TriggerCondition::StandardV1(condition) = def.condition {
-                    if !crate::standard_cards_v1::trigger_matches(condition, events, i, id, state)
-                    {
+                    if !crate::standard_cards_v1::trigger_matches(condition, events, i, id, state) {
                         continue;
                     }
                 } else if uses_leave_lki
@@ -2605,7 +2605,9 @@ fn triggers_from_events(
         if obj.zone == Zone::Battlefield
             && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
         {
-            let printed_ward = card.ward_cost.map(|crate::card_def::WardCostDef::Generic(generic)| generic);
+            let printed_ward = card
+                .ward_cost
+                .map(|crate::card_def::WardCostDef::Generic(generic)| generic);
             for generic in printed_ward
                 .into_iter()
                 .chain(crate::standard_cards_v1::granted_wards(state, id))

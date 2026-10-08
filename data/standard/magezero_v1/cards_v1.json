@@ -876,6 +876,41 @@
         "cast_from_graveyard"
       ],
       "java_file": "Mage.Sets/src/mage/cards/c/CaseOfTheUneatenFeast.java"
+    },
+    {
+      "name": "Liliana of the Veil",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Planeswalker"
+      ],
+      "subtypes": [
+        "Liliana"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "loyalty_abilities",
+        "discard",
+        "edict",
+        "piles"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LilianaOfTheVeil.java",
+      "starting_loyalty": 3
     }
   ]
 }

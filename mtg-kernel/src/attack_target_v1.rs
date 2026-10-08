@@ -191,7 +191,9 @@ pub(crate) fn damage_recipient(
 /// 506.4: an attacker removed from combat no longer attacks anything.
 pub(crate) fn remove_from_combat(targets: &mut Option<AttackTargetsV1>, id: ObjectId) {
     if let Some(state) = targets {
-        state.planeswalker_attacks.retain(|(attacker, _)| *attacker != id);
+        state
+            .planeswalker_attacks
+            .retain(|(attacker, _)| *attacker != id);
         if state.planeswalker_attacks.is_empty() && state.pending.is_none() {
             *targets = None;
         }

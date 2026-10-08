@@ -231,8 +231,8 @@ fn build_wave(state: &GameState, phase: DamagePhaseV1, first: &[ObjectLinkV4]) -
         // that planeswalker has left (506.4c, 702.19e). A trampler without an
         // excess recipient divides its damage like any blocked creature.
         let excess = crate::attack_target_v1::damage_recipient(state, attacker);
-        let trample = engine::has_effective_keyword(state, attacker, Keywords::TRAMPLE)
-            && excess.is_some();
+        let trample =
+            engine::has_effective_keyword(state, attacker, Keywords::TRAMPLE) && excess.is_some();
         let mut recipients = Vec::new();
         if let Some((_, blockers)) = state
             .engine

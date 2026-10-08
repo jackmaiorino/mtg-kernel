@@ -128,6 +128,18 @@ there this turn. The grant names each card's exact graveyard incarnation
 and turn, and such a cast uses the appended `GraveyardPermissionV1` cast
 route, paying the card's normal costs.
 
+## Liliana of the Veil
+
+Liliana of the Veil's +1 has each player discard a card: the controller
+chooses first, then the opponent's discard is staged once the first one
+finishes, so the ability stays on the stack until both are done. Its -2
+reuses the edict sacrifice for target player. Its -6 is resumable: the
+controller selects the first pile from every permanent the target player
+controls (the rest form the second pile), then that player chooses a pile
+and sacrifices it as one batch. Both answers carry guards naming the exact
+incarnations in each pile, and each prompt is checked against the
+definition's operation at its structural path.
+
 ## Known limits
 
 The stack and battlefield use the Room card's combined mana value and

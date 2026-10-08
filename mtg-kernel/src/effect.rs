@@ -1618,6 +1618,16 @@ pub enum EffectTargetSelectionPurpose {
         original_candidates: Vec<EffectObjectBinding>,
         canonical_path: Vec<u16>,
     },
+    /// Public choice of the first of two piles from every permanent
+    /// `player` controls, made by `separator`
+    /// (`StandardOpV1::SeparatePilesThenSacrifice`); the unselected
+    /// permanents form the second pile.
+    StandardSeparatePilesV1 {
+        separator: PlayerId,
+        player: PlayerId,
+        original_candidates: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1709,6 +1719,15 @@ pub enum EffectBooleanChoicePurpose {
         top: EffectObjectBinding,
         predicate: CardTypePredicate,
         then: Box<EffectOp>,
+    },
+    /// `player` chooses which separated pile to sacrifice: `true` is the
+    /// first pile, `false` the second.
+    StandardSacrificePileV1 {
+        player: PlayerId,
+        pile_a: Vec<EffectObjectBinding>,
+        pile_b: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
     },
 }
 
@@ -1876,6 +1895,21 @@ pub enum EffectAnsweredChoiceGuard {
         player: PlayerId,
         chosen: EffectObjectBinding,
         action: crate::standard_cards_v1::StandardChosenActionV1,
+        canonical_path: Vec<u16>,
+        remaining_frames: Vec<EffectFrame>,
+    },
+    /// Answered pile separation whose pile choice has not been staged yet.
+    StandardPilesSeparatedV1 {
+        player: PlayerId,
+        pile_a: Vec<EffectObjectBinding>,
+        pile_b: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+        remaining_frames: Vec<EffectFrame>,
+    },
+    /// Answered pile choice whose sacrifice has not run yet.
+    StandardPileChosenV1 {
+        player: PlayerId,
+        pile: Vec<EffectObjectBinding>,
         canonical_path: Vec<u16>,
         remaining_frames: Vec<EffectFrame>,
     },
@@ -2771,6 +2805,43 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
                         }
                     }
                 }
+                EffectBooleanChoicePurpose::StandardSacrificePileV1 {
+                    player: pile_player,
+                    pile_a,
+                    pile_b,
+                    canonical_path,
+                    expected_remaining_frames,
+                } => {
+                    if player != pile_player || continuation.frames != expected_remaining_frames {
+                        continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                            player,
+                            path: canonical_path.clone(),
+                            default,
+                            purpose: EffectBooleanChoicePurpose::StandardSacrificePileV1 {
+                                player: pile_player,
+                                pile_a,
+                                pile_b,
+                                canonical_path,
+                                expected_remaining_frames,
+                            },
+                        });
+                        return Err("pile choice player or continuation changed".to_string());
+                    }
+                    let pile = if value { pile_a } else { pile_b };
+                    continuation.answered_choice_guard =
+                        Some(EffectAnsweredChoiceGuard::StandardPileChosenV1 {
+                            player,
+                            pile: pile.clone(),
+                            canonical_path: canonical_path.clone(),
+                            remaining_frames: continuation.frames.clone(),
+                        });
+                    continuation.frames.push(EffectFrame::Program {
+                        op: EffectOp::StandardV1(
+                            crate::standard_cards_v1::StandardOpV1::SacrificePile { player, pile },
+                        ),
+                        path: canonical_path,
+                    });
+                }
                 EffectBooleanChoicePurpose::LookAtTopMayRevealThen {
                     player: reveal_player,
                     top,
@@ -2850,6 +2921,48 @@ fn complete_resumable_target_selection(
         })
         .collect::<Result<Vec<_>, String>>()?;
     match purpose {
+        EffectTargetSelectionPurpose::StandardSeparatePilesV1 {
+            player,
+            original_candidates,
+            canonical_path,
+            ..
+        } => {
+            if path != canonical_path
+                || objects
+                    .iter()
+                    .any(|object| !original_candidates.contains(object))
+            {
+                return Err("pile separation changed path or candidate".to_string());
+            }
+            let pile_a = original_candidates
+                .iter()
+                .copied()
+                .filter(|binding| objects.contains(binding))
+                .collect::<Vec<_>>();
+            let pile_b = original_candidates
+                .iter()
+                .copied()
+                .filter(|binding| !objects.contains(binding))
+                .collect::<Vec<_>>();
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::StandardPilesSeparatedV1 {
+                    player,
+                    pile_a: pile_a.clone(),
+                    pile_b: pile_b.clone(),
+                    canonical_path: canonical_path.clone(),
+                    remaining_frames: continuation.frames.clone(),
+                });
+            continuation.frames.push(EffectFrame::Program {
+                op: EffectOp::StandardV1(
+                    crate::standard_cards_v1::StandardOpV1::ChooseSacrificePile {
+                        player,
+                        pile_a,
+                        pile_b,
+                    },
+                ),
+                path: canonical_path,
+            });
+        }
         EffectTargetSelectionPurpose::StandardChoosePermanentV1 {
             player,
             action,
@@ -5133,9 +5246,15 @@ fn validate_answered_choice_guard(
             } else if matches!(op, EffectOp::StandardV1(inner) if inner.is_bound_continuation()) {
                 if !matches!(
                     pending.answered_choice_guard,
-                    Some(EffectAnsweredChoiceGuard::StandardChosenPermanentV1 { .. })
+                    Some(
+                        EffectAnsweredChoiceGuard::StandardChosenPermanentV1 { .. }
+                            | EffectAnsweredChoiceGuard::StandardPilesSeparatedV1 { .. }
+                            | EffectAnsweredChoiceGuard::StandardPileChosenV1 { .. }
+                    )
                 ) {
-                    return Err("bound chosen-permanent action has no answered choice guard".to_string());
+                    return Err(
+                        "bound chosen-permanent action has no answered choice guard".to_string()
+                    );
                 }
             } else {
                 validate_resumable_program(op)?;
@@ -5433,6 +5552,103 @@ fn validate_answered_choice_guard(
                 return Err("answered chosen permanent changed".to_string());
             }
         }
+        Some(EffectAnsweredChoiceGuard::StandardPilesSeparatedV1 {
+            player,
+            pile_a,
+            pile_b,
+            canonical_path,
+            remaining_frames,
+        }) => {
+            let mut expected = remaining_frames.clone();
+            expected.push(EffectFrame::Program {
+                op: EffectOp::StandardV1(
+                    crate::standard_cards_v1::StandardOpV1::ChooseSacrificePile {
+                        player: *player,
+                        pile_a: pile_a.clone(),
+                        pile_b: pile_b.clone(),
+                    },
+                ),
+                path: canonical_path.clone(),
+            });
+            if pending.choice.is_some() || pending.frames != expected {
+                return Err("answered pile separation continuation changed".to_string());
+            }
+            validate_standard_piles(state, pending, *player, pile_a, pile_b, canonical_path)?;
+        }
+        Some(EffectAnsweredChoiceGuard::StandardPileChosenV1 {
+            player,
+            pile,
+            canonical_path,
+            remaining_frames,
+        }) => {
+            let mut expected = remaining_frames.clone();
+            expected.push(EffectFrame::Program {
+                op: EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SacrificePile {
+                    player: *player,
+                    pile: pile.clone(),
+                }),
+                path: canonical_path.clone(),
+            });
+            if pending.choice.is_some() || pending.frames != expected {
+                return Err("answered pile choice continuation changed".to_string());
+            }
+            validate_standard_piles_origin(state, pending, *player, canonical_path)?;
+            let candidates = crate::standard_cards_v1::pile_candidates(state, *player);
+            if pile.iter().any(|binding| !candidates.contains(binding)) {
+                return Err("answered pile changed".to_string());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Authenticates a pile prompt or answer against the definition-owned
+/// operation at its structural path.
+fn validate_standard_piles_origin(
+    state: &GameState,
+    pending: &EffectContinuation,
+    player: PlayerId,
+    path: &[u16],
+) -> Result<(), String> {
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    let Some(EffectOp::StandardV1(
+        crate::standard_cards_v1::StandardOpV1::SeparatePilesThenSacrifice {
+            player: original_player,
+        },
+    )) = effect_op_at_structural_path(&root, path)
+    else {
+        return Err("pile choice lost its originating operation".to_string());
+    };
+    if pending.ctx.resolve_player(*original_player, state) != player {
+        return Err("pile player changed".to_string());
+    }
+    Ok(())
+}
+
+/// Two piles must exactly partition the player's current permanents, in
+/// battlefield order.
+fn validate_standard_piles(
+    state: &GameState,
+    pending: &EffectContinuation,
+    player: PlayerId,
+    pile_a: &[EffectObjectBinding],
+    pile_b: &[EffectObjectBinding],
+    path: &[u16],
+) -> Result<(), String> {
+    validate_standard_piles_origin(state, pending, player, path)?;
+    let candidates = crate::standard_cards_v1::pile_candidates(state, player);
+    let expected_a = candidates
+        .iter()
+        .copied()
+        .filter(|binding| pile_a.contains(binding))
+        .collect::<Vec<_>>();
+    let expected_b = candidates
+        .iter()
+        .copied()
+        .filter(|binding| !pile_a.contains(binding))
+        .collect::<Vec<_>>();
+    if expected_a != pile_a || expected_b != pile_b {
+        return Err("separated piles no longer partition the player's permanents".to_string());
     }
     Ok(())
 }
@@ -5457,8 +5673,7 @@ fn validate_standard_choose_permanent_origin(
     else {
         return Err("chosen-permanent choice lost its originating operation".to_string());
     };
-    if pending.ctx.resolve_player(*original_player, state) != player || *original_action != action
-    {
+    if pending.ctx.resolve_player(*original_player, state) != player || *original_action != action {
         return Err("chosen-permanent player or action changed".to_string());
     }
     Ok(*filter)
@@ -5512,6 +5727,47 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 validate_effect_target_candidate(state, candidate)?;
             }
             match purpose {
+                EffectTargetSelectionPurpose::StandardSeparatePilesV1 {
+                    separator,
+                    player,
+                    original_candidates,
+                    canonical_path,
+                } => {
+                    if chooser != separator
+                        || *separator != pending.ctx.controller
+                        || path != canonical_path
+                        || *min_targets != 0
+                        || usize::from(*max_targets) != original_candidates.len()
+                        || *ordered
+                        || original_candidates.is_empty()
+                    {
+                        return Err("pile separation prompt has a noncanonical shape".to_string());
+                    }
+                    validate_standard_piles_origin(state, pending, *player, canonical_path)?;
+                    let as_candidate = |binding: &EffectObjectBinding| EffectTargetCandidate {
+                        target: Target::Object(binding.object),
+                        expected_object: Some(*binding),
+                    };
+                    let chosen = selected
+                        .iter()
+                        .map(|candidate| candidate.expected_object)
+                        .collect::<Option<Vec<_>>>()
+                        .ok_or("pile separation selection lacks bindings")?;
+                    if crate::standard_cards_v1::pile_candidates(state, *player)
+                        != *original_candidates
+                        || chosen
+                            .iter()
+                            .any(|binding| !original_candidates.contains(binding))
+                        || legal
+                            != &original_candidates
+                                .iter()
+                                .filter(|binding| !chosen.contains(binding))
+                                .map(as_candidate)
+                                .collect::<Vec<_>>()
+                    {
+                        return Err("pile separation candidates changed".to_string());
+                    }
+                }
                 EffectTargetSelectionPurpose::StandardChoosePermanentV1 {
                     player,
                     filter,
@@ -6630,6 +6886,21 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 }
                 validate_resumable_program(then)?;
             }
+            EffectBooleanChoicePurpose::StandardSacrificePileV1 {
+                player: pile_player,
+                pile_a,
+                pile_b,
+                canonical_path,
+                expected_remaining_frames,
+            } => {
+                if player != pile_player
+                    || path != canonical_path
+                    || pending.frames != *expected_remaining_frames
+                {
+                    return Err("pile choice metadata is inconsistent".to_string());
+                }
+                validate_standard_piles(state, pending, *player, pile_a, pile_b, canonical_path)?;
+            }
         },
         PendingEffectChoice::ChooseOption {
             player,
@@ -6908,7 +7179,9 @@ fn validate_resumable_program(op: &EffectOp) -> Result<(), String> {
             return Err("generated programs cannot contain bound Undercity operations".to_string());
         }
         EffectOp::StandardV1(op) if op.is_bound_continuation() => {
-            return Err("generated programs cannot contain a bound chosen-permanent action".to_string());
+            return Err(
+                "generated programs cannot contain a bound chosen-permanent action".to_string(),
+            );
         }
         _ => {}
     }
@@ -8238,8 +8511,9 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 },
             ) => {
                 let player = continuation.ctx.resolve_player(player, state);
-                let candidates =
-                    crate::standard_cards_v1::controlled_permanent_candidates(state, player, filter);
+                let candidates = crate::standard_cards_v1::controlled_permanent_candidates(
+                    state, player, filter,
+                );
                 match candidates.as_slice() {
                     [] => {}
                     [chosen] => {
@@ -8273,6 +8547,102 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         return Ok(ResumableProgress::Suspended);
                     }
                 }
+            }
+            EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::SeparatePilesThenSacrifice { player },
+            ) => {
+                let player = continuation.ctx.resolve_player(player, state);
+                let candidates = crate::standard_cards_v1::pile_candidates(state, player);
+                if candidates.is_empty() {
+                    continue;
+                }
+                let separator = continuation.ctx.controller;
+                continuation.choice = Some(PendingEffectChoice::SelectTargets {
+                    player: separator,
+                    path: path.clone(),
+                    selected: vec![],
+                    legal: candidates
+                        .iter()
+                        .copied()
+                        .map(|binding| EffectTargetCandidate {
+                            target: Target::Object(binding.object),
+                            expected_object: Some(binding),
+                        })
+                        .collect(),
+                    min_targets: 0,
+                    max_targets: u16::try_from(candidates.len()).unwrap_or(u16::MAX),
+                    ordered: false,
+                    purpose: EffectTargetSelectionPurpose::StandardSeparatePilesV1 {
+                        separator,
+                        player,
+                        original_candidates: candidates,
+                        canonical_path: path,
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::ChooseSacrificePile {
+                player,
+                pile_a,
+                pile_b,
+            }) => {
+                let Some(EffectAnsweredChoiceGuard::StandardPilesSeparatedV1 {
+                    player: expected_player,
+                    pile_a: expected_a,
+                    pile_b: expected_b,
+                    canonical_path,
+                    remaining_frames,
+                }) = continuation.answered_choice_guard.as_ref()
+                else {
+                    return Err("pile choice lost its answered separation".to_string());
+                };
+                if player != *expected_player
+                    || pile_a != *expected_a
+                    || pile_b != *expected_b
+                    || path != *canonical_path
+                    || continuation.frames != *remaining_frames
+                {
+                    return Err("pile separation answer changed".to_string());
+                }
+                continuation.answered_choice_guard = None;
+                continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                    player,
+                    path: path.clone(),
+                    default: None,
+                    purpose: EffectBooleanChoicePurpose::StandardSacrificePileV1 {
+                        player,
+                        pile_a,
+                        pile_b,
+                        canonical_path: path,
+                        expected_remaining_frames: continuation.frames.clone(),
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SacrificePile {
+                player,
+                pile,
+            }) => {
+                let Some(EffectAnsweredChoiceGuard::StandardPileChosenV1 {
+                    player: expected_player,
+                    pile: expected_pile,
+                    canonical_path,
+                    remaining_frames,
+                }) = continuation.answered_choice_guard.as_ref()
+                else {
+                    return Err("pile sacrifice lost its answered choice".to_string());
+                };
+                if player != *expected_player
+                    || pile != *expected_pile
+                    || path != *canonical_path
+                    || continuation.frames != *remaining_frames
+                {
+                    return Err("pile choice answer changed".to_string());
+                }
+                continuation.answered_choice_guard = None;
+                crate::standard_cards_v1::sacrifice_pile(state, player, &pile);
             }
             EffectOp::StandardV1(
                 crate::standard_cards_v1::StandardOpV1::ApplyChosenPermanent { chosen, action },

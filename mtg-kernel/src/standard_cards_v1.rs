@@ -45,6 +45,10 @@ pub struct StandardStateV1 {
     /// grant ends with.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     graveyard_casts: Vec<(ObjectId, u32, PlayerId, u32)>,
+    /// Discards still owed by a resolving ability after its current
+    /// discard lands: the ability, the player and the count.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    queued_discards: Vec<(crate::ids::StackItemId, PlayerId, u32)>,
 }
 
 /// The doors of one Room permanent incarnation: bit 0 is the left door,
@@ -223,26 +227,59 @@ pub enum StandardOpV1 {
     /// Case of the Uneaten Feast: creature cards now in your graveyard gain
     /// "You may cast this card from your graveyard" until end of turn.
     GraveyardCreaturesCastableThisTurn,
+    /// Liliana of the Veil's +1: each player discards `count` cards, the
+    /// controller first. Like `EffectOp::DiscardCards`, it must be the last
+    /// leaf of its program.
+    EachPlayerDiscards { count: u32 },
+    /// Liliana of the Veil's -6: the controller separates all permanents
+    /// `player` controls into two piles, and `player` sacrifices all
+    /// permanents in the pile of their choice.
+    SeparatePilesThenSacrifice { player: PlayerRef },
+    /// The separated piles, waiting for `player` to choose one:
+    /// interpreter owned.
+    ChooseSacrificePile {
+        player: PlayerId,
+        pile_a: Vec<EffectObjectBinding>,
+        pile_b: Vec<EffectObjectBinding>,
+    },
+    /// `player` sacrifices the chosen pile's still-present permanents:
+    /// interpreter owned.
+    SacrificePile {
+        player: PlayerId,
+        pile: Vec<EffectObjectBinding>,
+    },
 }
 
 impl StandardOpV1 {
     /// Whether this leaf can yield a player decision, so its program must use
     /// the resumable interpreter.
     pub(crate) fn contains_player_choice(&self) -> bool {
-        matches!(self, Self::PlayerChoosesControlledPermanent { .. })
+        matches!(
+            self,
+            Self::PlayerChoosesControlledPermanent { .. } | Self::SeparatePilesThenSacrifice { .. }
+        )
     }
 
-    /// The exact object incarnation this leaf is bound to, if any.
-    pub(crate) fn bound_object(&self) -> Option<EffectObjectBinding> {
+    /// The exact object incarnations this leaf is bound to.
+    pub(crate) fn bound_objects(&self) -> Vec<EffectObjectBinding> {
         match self {
-            Self::ApplyChosenPermanent { chosen, .. } => Some(*chosen),
-            _ => None,
+            Self::ApplyChosenPermanent { chosen, .. } => vec![*chosen],
+            Self::ChooseSacrificePile { pile_a, pile_b, .. } => {
+                pile_a.iter().chain(pile_b).copied().collect()
+            }
+            Self::SacrificePile { pile, .. } => pile.clone(),
+            _ => Vec::new(),
         }
     }
 
     /// Interpreter-owned leaves that a generated program may never contain.
     pub(crate) fn is_bound_continuation(&self) -> bool {
-        matches!(self, Self::ApplyChosenPermanent { .. })
+        matches!(
+            self,
+            Self::ApplyChosenPermanent { .. }
+                | Self::ChooseSacrificePile { .. }
+                | Self::SacrificePile { .. }
+        )
     }
 }
 
@@ -296,10 +333,9 @@ pub(crate) fn apply_chosen_permanent(
         return;
     }
     match action {
-        StandardChosenActionV1::ReturnToOwnersHand => event::propose_and_commit(
-            state,
-            ProposedEvent::zone_change(chosen.object, Zone::Hand),
-        ),
+        StandardChosenActionV1::ReturnToOwnersHand => {
+            event::propose_and_commit(state, ProposedEvent::zone_change(chosen.object, Zone::Hand))
+        }
     }
 }
 
@@ -392,7 +428,14 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 .filter(|&id| {
                     CARD_DEFS[state.objects.get(id).card_def as usize].has_type(CardType::Creature)
                 })
-                .map(|id| (id, state.objects.get(id).zone_change_count, ctx.controller, turn))
+                .map(|id| {
+                    (
+                        id,
+                        state.objects.get(id).zone_change_count,
+                        ctx.controller,
+                        turn,
+                    )
+                })
                 .collect::<Vec<_>>();
             let standard = state.standard_v1.get_or_insert_with(Default::default);
             standard.graveyard_casts.retain(|grant| grant.3 == turn);
@@ -532,8 +575,26 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 }
             }
         }
+        StandardOpV1::EachPlayerDiscards { count } => {
+            // The controller discards now; the opponent's discard is queued
+            // until it lands (`stage_queued_discard`).
+            state.engine.pending_discard = Some(crate::engine::PendingDiscard {
+                player: ctx.controller,
+                count: *count,
+                resume: crate::engine::DiscardResume::None,
+            });
+            if let Some(stack_item_id) = ctx.stack_item_id {
+                let standard = state.standard_v1.get_or_insert_with(Default::default);
+                standard
+                    .queued_discards
+                    .push((stack_item_id, ctx.controller.opponent(), *count));
+            }
+        }
         StandardOpV1::PlayerChoosesControlledPermanent { .. }
-        | StandardOpV1::ApplyChosenPermanent { .. } => {
+        | StandardOpV1::ApplyChosenPermanent { .. }
+        | StandardOpV1::SeparatePilesThenSacrifice { .. }
+        | StandardOpV1::ChooseSacrificePile { .. }
+        | StandardOpV1::SacrificePile { .. } => {
             panic!("choice-bearing effects must use the resumable interpreter")
         }
     }
@@ -600,8 +661,10 @@ fn teferi_draw_loyalty() -> EffectOp {
     EffectOp::StandardV1(StandardOpV1::AddLoyaltyToSource { amount: 1 })
 }
 
-const TEFERI_TRIGGERS: [TriggeredAbilityDef; 1] =
-    [trigger(TriggerCondition::ControllerDraws, teferi_draw_loyalty)];
+const TEFERI_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
+    TriggerCondition::ControllerDraws,
+    teferi_draw_loyalty,
+)];
 
 /// "-2: Create a 2/2 blue Spirit creature token with vigilance and 'Whenever
 /// you draw a card, put a +1/+1 counter on this creature.'"
@@ -633,8 +696,10 @@ fn spirit_draw_counter() -> EffectOp {
     EffectOp::BindPlusOnePlusOneCounterToTriggerSource
 }
 
-const TEFERI_SPIRIT_TRIGGERS: [TriggeredAbilityDef; 1] =
-    [trigger(TriggerCondition::ControllerDraws, spirit_draw_counter)];
+const TEFERI_SPIRIT_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
+    TriggerCondition::ControllerDraws,
+    spirit_draw_counter,
+)];
 
 // ---- Cecil, Dark Knight // Cecil, Redeemed Paladin ----------------------
 
@@ -737,7 +802,11 @@ const POLUKRANOS_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
 
 /// The face `object` showed when the zone change at `events[index]` took
 /// it off the battlefield, or `None` when that event is not its departure.
-pub(crate) fn departure_face(events: &[CommittedEvent], index: usize, object: ObjectId) -> Option<u8> {
+pub(crate) fn departure_face(
+    events: &[CommittedEvent],
+    index: usize,
+    object: ObjectId,
+) -> Option<u8> {
     let CommittedEvent::ZoneChange {
         object: moved,
         from: Zone::Battlefield,
@@ -867,7 +936,13 @@ pub(crate) fn trigger_matches(
                 && crate::continuous_characteristics_v1::printed_abilities_active(state, source))
                 || events.iter().enumerate().any(|(i, _)| {
                     departure_face(events, i, source) == Some(1)
-                        && matches!(events[i], CommittedEvent::ZoneChange { to: Zone::Graveyard, .. })
+                        && matches!(
+                            events[i],
+                            CommittedEvent::ZoneChange {
+                                to: Zone::Graveyard,
+                                ..
+                            }
+                        )
                 });
             let source_controller = if source_live.zone == Zone::Battlefield {
                 source_live.controller
@@ -906,8 +981,10 @@ fn ojer_returns() -> EffectOp {
     EffectOp::StandardV1(StandardOpV1::ReturnSourceTappedAndTransformed)
 }
 
-const OJER_TRIGGERS: [TriggeredAbilityDef; 1] =
-    [trigger(TriggerCondition::LeftBattlefieldToGraveyard, ojer_returns)];
+const OJER_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
+    TriggerCondition::LeftBattlefieldToGraveyard,
+    ojer_returns,
+)];
 
 /// "If a red source you control would deal an amount of noncombat damage
 /// less than Ojer Axonil's power to an opponent, that source deals damage
@@ -1020,9 +1097,7 @@ pub(crate) fn activation_allowed(
 
 /// Whether `object`'s mana abilities exist on the face it shows.
 pub(crate) fn mana_abilities_active(state: &GameState, object: ObjectId, def: &CardDef) -> bool {
-    def.transform_face.is_none()
-        || def.name != OJER
-        || state.objects.get(object).v4.face_index == 1
+    def.transform_face.is_none() || def.name != OJER || state.objects.get(object).v4.face_index == 1
 }
 
 /// Triggered abilities of this module's cards, by registry name.
@@ -1150,11 +1225,14 @@ fn unlock_door(state: &mut GameState, object: ObjectId, door: u8) {
             unlocked: 1 << door,
         }),
     }
-    state.engine.event_log.push(CommittedEvent::RoomDoorUnlockedV1 {
-        object,
-        zone_change_count,
-        door,
-    });
+    state
+        .engine
+        .event_log
+        .push(CommittedEvent::RoomDoorUnlockedV1 {
+            object,
+            zone_change_count,
+            door,
+        });
 }
 
 /// A resolving Room spell enters the battlefield. The half that was cast is
@@ -1298,7 +1376,10 @@ const EXILE_UNTIL_LEAVES_TRIGGERS: [TriggeredAbilityDef; 2] = [
 
 /// The target of a triggered ability of this module's cards, by printed
 /// name and the trigger's effect; `None` when the module doesn't own it.
-pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<crate::card_def::TargetSpec> {
+pub(crate) fn trigger_target_spec(
+    name: &str,
+    effect: &EffectOp,
+) -> Option<crate::card_def::TargetSpec> {
     use crate::card_def::TargetSpec;
     if name == CASE_OF_THE_GATEWAY_EXPRESS && *effect == gateway_express_damage() {
         return Some(TargetSpec::OpponentControlledCreature);
@@ -1315,9 +1396,9 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<crate
         return None;
     }
     Some(match name {
-        SEAM_RIP => TargetSpec::StandardV1(
-            StandardTargetV1::OpponentNonlandPermanentManaValueAtMost(2),
-        ),
+        SEAM_RIP => {
+            TargetSpec::StandardV1(StandardTargetV1::OpponentNonlandPermanentManaValueAtMost(2))
+        }
         DUSK_ROSE_RELIQUARY => TargetSpec::StandardV1(StandardTargetV1::OpponentArtifactOrCreature),
         SHELTERED_BY_GHOSTS => TargetSpec::StandardV1(StandardTargetV1::OpponentNonlandPermanent),
         HARDLIGHT_CONTAINMENT => TargetSpec::OpponentControlledCreature,
@@ -1369,7 +1450,10 @@ fn aura_enters_battlefield(ctx: &ExecCtx, state: &mut GameState) {
         ));
         return;
     }
-    event::propose_and_commit(state, ProposedEvent::zone_change(ctx.source, Zone::Battlefield));
+    event::propose_and_commit(
+        state,
+        ProposedEvent::zone_change(ctx.source, Zone::Battlefield),
+    );
     let aura = state.objects.get(ctx.source);
     if aura.zone != Zone::Battlefield {
         return;
@@ -1444,7 +1528,10 @@ pub(crate) fn record_life(state: &mut GameState, player: PlayerId, gained: i32, 
     }
     let turn = state.turn;
     let standard = state.standard_v1.get_or_insert_with(Default::default);
-    let (recorded_turn, gains, losses) = standard.life_this_turn.get_or_insert((turn, [0, 0], [0, 0]));
+    let (recorded_turn, gains, losses) =
+        standard
+            .life_this_turn
+            .get_or_insert((turn, [0, 0], [0, 0]));
     if *recorded_turn != turn {
         *recorded_turn = turn;
         *gains = [0, 0];
@@ -1655,11 +1742,10 @@ const CASE_OF_THE_GATEWAY_EXPRESS: &str = "Case of the Gateway Express";
 /// Whether `object`'s current battlefield incarnation is a solved Case.
 pub(crate) fn case_solved(state: &GameState, object: ObjectId) -> bool {
     let zone_change_count = state.objects.get(object).zone_change_count;
-    state.standard_v1.as_ref().is_some_and(|standard| {
-        standard
-            .solved_cases
-            .contains(&(object, zone_change_count))
-    })
+    state
+        .standard_v1
+        .as_ref()
+        .is_some_and(|standard| standard.solved_cases.contains(&(object, zone_change_count)))
 }
 
 /// A Case's "to solve" condition.
@@ -1734,7 +1820,10 @@ fn set_class_level(state: &mut GameState, object: ObjectId, level: u8) {
         .unwrap_or_default();
     levels.retain(|entry| live(entry) && entry.0 != object);
     levels.push((object, zone_change_count, level));
-    state.standard_v1.get_or_insert_with(Default::default).class_levels = levels;
+    state
+        .standard_v1
+        .get_or_insert_with(Default::default)
+        .class_levels = levels;
     let committed = CommittedEvent::ClassLevelGainedV1 {
         object,
         zone_change_count,
@@ -1853,8 +1942,10 @@ fn prowess_boost() -> EffectOp {
 
 /// Prowess (702.108): "Whenever you cast a noncreature spell, this creature
 /// gets +1/+1 until end of turn."
-const PROWESS_TRIGGERS: [TriggeredAbilityDef; 1] =
-    [trigger(TriggerCondition::CastNoncreatureSpell, prowess_boost)];
+const PROWESS_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
+    TriggerCondition::CastNoncreatureSpell,
+    prowess_boost,
+)];
 
 // ---- Case of the Uneaten Feast ----------------------------------------------
 
@@ -1901,3 +1992,87 @@ const UNEATEN_FEAST_TRIGGERS: [TriggeredAbilityDef; 2] = [
         solve_source_case,
     ),
 ];
+
+// ---- Liliana of the Veil -------------------------------------------------------
+
+/// After a resolving ability's discard lands, stages the next discard that
+/// ability still owes, keeping it on the stack. Returns whether one was
+/// staged.
+#[cfg(feature = "standard-magezero-fixtures")]
+pub(crate) fn stage_queued_discard(
+    state: &mut GameState,
+    stack_item_id: crate::ids::StackItemId,
+) -> bool {
+    let Some(standard) = state.standard_v1.as_mut() else {
+        return false;
+    };
+    let Some(index) = standard
+        .queued_discards
+        .iter()
+        .position(|(item, _, _)| *item == stack_item_id)
+    else {
+        return false;
+    };
+    let (_, player, count) = standard.queued_discards.remove(index);
+    state.engine.pending_discard = Some(crate::engine::PendingDiscard {
+        player,
+        count,
+        resume: crate::engine::DiscardResume::FinishAbilityResolution { stack_item_id },
+    });
+    true
+}
+
+pub fn each_player_discards_one() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::EachPlayerDiscards { count: 1 })
+}
+
+pub fn target_player_sacrifices_creature() -> EffectOp {
+    EffectOp::SacrificeCreature {
+        player: PlayerRef::Target(0),
+        filter: crate::effect::CreatureSacrificeFilter::Any,
+    }
+}
+
+pub fn liliana_piles() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::SeparatePilesThenSacrifice {
+        player: PlayerRef::Target(0),
+    })
+}
+
+/// Every permanent `player` controls, as exact incarnations, in battlefield
+/// order.
+pub(crate) fn pile_candidates(state: &GameState, player: PlayerId) -> Vec<EffectObjectBinding> {
+    controlled_permanent_candidates(state, player, StandardPermanentFilterV1::Any)
+}
+
+/// `player` sacrifices every permanent of `pile` that is still the same
+/// incarnation under their control, simultaneously.
+pub(crate) fn sacrifice_pile(
+    state: &mut GameState,
+    player: PlayerId,
+    pile: &[EffectObjectBinding],
+) {
+    let present = pile
+        .iter()
+        .filter(|binding| {
+            let live = state.objects.get(binding.object);
+            live.zone == Zone::Battlefield
+                && live.zone_change_count == binding.expected_zone_change_count
+                && live.controller == player
+        })
+        .map(|binding| binding.object)
+        .collect::<Vec<_>>();
+    if present.is_empty() {
+        return;
+    }
+    for &object in &present {
+        event::log_sacrifice(state, object);
+    }
+    event::propose_and_commit_batch(
+        state,
+        present
+            .into_iter()
+            .map(|object| ProposedEvent::zone_change(object, Zone::Graveyard))
+            .collect(),
+    );
+}

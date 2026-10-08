@@ -21,13 +21,13 @@
 //! environment, proc-macro, generated, or every dependency byte consumed by
 //! compilation.
 
+mod build_standard_v1;
 #[allow(dead_code)]
 #[path = "../build_support/native_store_build_capture_v1.rs"]
 mod native_store_build_capture_v1;
 #[allow(dead_code)]
 #[path = "src/strict_source_tree_attestation_v1.rs"]
 mod strict_source_tree_attestation_v1;
-mod build_standard_v1;
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -3074,7 +3074,13 @@ struct ActivatedAbilityRecipe {
 fn standard_program_function(name: &str) -> String {
     let slug = name
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '_' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
         .collect::<String>();
     let slug = slug
         .split('_')
@@ -8488,6 +8494,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Case" => "Subtype::Case",
         "Class" => "Subtype::Class",
         "Otter" => "Subtype::Otter",
+        "Liliana" => "Subtype::Liliana",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

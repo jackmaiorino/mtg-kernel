@@ -47,7 +47,7 @@ impl Scan<'_> {
             | EnterUndercityRoom { binding, .. }
             | ResolveUndercityThrone { binding } => self.a(&binding.source),
             ResolveMonarchTrigger { binding } => self.a(&binding.source),
-            StandardV1(op) => op.bound_object().is_some_and(|chosen| self.b(&chosen)),
+            StandardV1(op) => op.bound_objects().iter().any(|chosen| self.b(chosen)),
             // Other current leaf programs carry symbolic refs, not physical bindings.
             DealDamage { .. }
             | ReturnTargetPermanentToBattlefield { .. }
@@ -396,6 +396,10 @@ impl Scan<'_> {
                 original_candidates,
                 ..
             }
+            | StandardSeparatePilesV1 {
+                original_candidates,
+                ..
+            }
             | UntapLands {
                 original_candidates,
                 ..
@@ -486,6 +490,12 @@ impl Scan<'_> {
                         ..
                     } => self.bs(original_graveyard) || self.bs(candidates) || self.op(then),
                     LookAtTopMayRevealThen { top, then, .. } => self.b(top) || self.op(then),
+                    StandardSacrificePileV1 {
+                        pile_a,
+                        pile_b,
+                        expected_remaining_frames,
+                        ..
+                    } => self.bs(pile_a) || self.bs(pile_b) || self.fs(expected_remaining_frames),
                 }
             }
         }
@@ -575,6 +585,17 @@ pub(super) fn conflicts(
                     remaining_frames,
                     ..
                 } => s.b(chosen) || s.fs(remaining_frames),
+                StandardPilesSeparatedV1 {
+                    pile_a,
+                    pile_b,
+                    remaining_frames,
+                    ..
+                } => s.bs(pile_a) || s.bs(pile_b) || s.fs(remaining_frames),
+                StandardPileChosenV1 {
+                    pile,
+                    remaining_frames,
+                    ..
+                } => s.bs(pile) || s.fs(remaining_frames),
             };
             if guard_conflicts {
                 return true;

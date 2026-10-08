@@ -273,6 +273,7 @@ pub enum Subtype {
     Case,
     Class,
     Otter,
+    Liliana,
 }
 
 impl Subtype {
