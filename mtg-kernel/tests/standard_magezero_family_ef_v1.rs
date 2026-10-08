@@ -2456,3 +2456,136 @@ fn chandra_copies_the_first_instant_each_turn_with_a_new_target() {
     chandra_drive(&mut state, Target::Player(P1), None, &[]);
     assert_eq!(state.players[1].life, 16);
 }
+
+// ---- Assimilation Aegis ----------------------------------------------------
+
+/// Resolves everything, choosing `picks` for targets in order and stopping
+/// a variable-count target choice once `picks` runs out.
+fn drive_up_to(state: &mut GameState, picks: &[Target]) {
+    let mut picks = picks.iter().copied();
+    loop {
+        match next(state) {
+            Decision::ChooseTargets {
+                legal_targets,
+                can_finish,
+                ..
+            } => match picks.next() {
+                Some(pick) => {
+                    assert!(
+                        legal_targets.contains(&pick),
+                        "{pick:?} not in {legal_targets:?}"
+                    );
+                    act(state, Action::ChooseTarget(pick));
+                }
+                None => {
+                    assert!(can_finish);
+                    act(state, Action::FinishEffectSelection);
+                }
+            },
+            Decision::OrderTriggers { pending, .. } => {
+                act(state, Action::OrderTriggers((0..pending.len()).collect()))
+            }
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => return,
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+}
+
+fn cast_aegis(state: &mut GameState, picks: &[Target]) -> ObjectId {
+    let aegis = put(state, P0, "Assimilation Aegis", Zone::Hand);
+    state.players[0].mana_pool[ManaColor::W.pool_index()] = 1;
+    state.players[0].mana_pool[ManaColor::U.pool_index()] = 2;
+    next(state);
+    act(state, Action::CastSpell(aegis));
+    drive_up_to(state, picks);
+    state.players[0].mana_pool = Default::default();
+    aegis
+}
+
+fn equip_aegis(state: &mut GameState, aegis: ObjectId, creature: ObjectId) {
+    state.players[0].mana_pool[ManaColor::W.pool_index()] = 2;
+    assert!(activatable(state).contains(&(aegis, 0)));
+    act(state, Action::ActivateAbility(aegis, 0));
+    drive_up_to(state, &[Target::Object(creature)]);
+}
+
+#[test]
+fn assimilation_aegis_makes_the_equipped_creature_a_copy_of_the_exiled_card() {
+    let mut state = game();
+    let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let terror = put(&mut state, P0, "Tolarian Terror", Zone::Battlefield);
+    let aegis = cast_aegis(&mut state, &[Target::Object(elves)]);
+    assert_eq!(state.objects.get(elves).zone, Zone::Exile);
+
+    equip_aegis(&mut state, aegis, terror);
+    let live = state.objects.get(terror);
+    assert_eq!(live.name, "Llanowar Elves");
+    assert_eq!(live.card_def, state.objects.get(elves).card_def);
+    assert_eq!(engine::effective_power(&state, terror), 1);
+    assert_eq!(engine::effective_toughness(&state, terror), 1);
+    match next(&mut state) {
+        Decision::CastSpellOrPass { mana_abilities, .. } => {
+            assert!(mana_abilities.contains(&terror))
+        }
+        other => panic!("unexpected decision: {other:?}"),
+    }
+
+    // The Aegis leaving ends the copy and returns the exiled card.
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(aegis, Zone::Graveyard),
+    );
+    resolve_stack(&mut state);
+    assert_eq!(state.objects.get(terror).name, "Tolarian Terror");
+    assert_eq!(engine::effective_power(&state, terror), 5);
+    assert_eq!(state.objects.get(elves).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(elves).controller, P1);
+}
+
+#[test]
+fn assimilation_aegis_copy_ends_when_it_moves_to_another_creature() {
+    let mut state = game();
+    let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let terror = put(&mut state, P0, "Tolarian Terror", Zone::Battlefield);
+    let aegis = cast_aegis(&mut state, &[Target::Object(elves)]);
+    equip_aegis(&mut state, aegis, terror);
+    let second = put(&mut state, P0, "Tolarian Terror", Zone::Battlefield);
+    equip_aegis(&mut state, aegis, second);
+    assert_eq!(state.objects.get(terror).name, "Tolarian Terror");
+    assert_eq!(engine::effective_toughness(&state, terror), 5);
+    assert_eq!(state.objects.get(second).name, "Llanowar Elves");
+}
+
+#[test]
+fn assimilation_aegis_may_exile_nothing_and_then_copies_nothing() {
+    let mut state = game();
+    put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let terror = put(&mut state, P0, "Tolarian Terror", Zone::Battlefield);
+    let aegis = cast_aegis(&mut state, &[]);
+    assert!(state.players[1].battlefield.len() == 1);
+    equip_aegis(&mut state, aegis, terror);
+    assert_eq!(state.objects.get(terror).name, "Tolarian Terror");
+}
+
+#[test]
+fn an_aegis_copy_that_dies_reaches_the_graveyard_as_its_own_card() {
+    let mut state = game();
+    let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let terror = put(&mut state, P0, "Tolarian Terror", Zone::Battlefield);
+    let terror_def = state.objects.get(terror).card_def;
+    let aegis = cast_aegis(&mut state, &[Target::Object(elves)]);
+    equip_aegis(&mut state, aegis, terror);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::damage(aegis, Target::Object(terror), 1),
+    );
+    resolve_stack(&mut state);
+    let live = state.objects.get(terror);
+    assert_eq!(live.zone, Zone::Graveyard);
+    assert_eq!(
+        (live.card_def, live.name.as_str()),
+        (terror_def, "Tolarian Terror")
+    );
+    assert_eq!(state.objects.get(aegis).v4.attached_to, None);
+}

@@ -78,6 +78,25 @@ pub struct StandardStateV1 {
     /// them was cast.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     exile_cast_groups: Vec<(Vec<(ObjectId, u32)>, bool)>,
+    /// Creatures that are copies of a card exiled with Assimilation Aegis
+    /// while that Aegis stays attached, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    aegis_copies: Vec<AegisCopyV1>,
+}
+
+/// One Assimilation Aegis copy effect: the Aegis and the creature, per exact
+/// battlefield incarnation, and the creature's values from before it.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AegisCopyV1 {
+    aegis: (ObjectId, u32),
+    host: (ObjectId, u32),
+    card_def: u16,
+    name: String,
+    face_index: u8,
+    color_mask: u8,
+    subtype_ids: Vec<u16>,
+    ward_generic: u16,
 }
 
 /// The doors of one Room permanent incarnation: bit 0 is the left door,
@@ -111,6 +130,8 @@ pub enum StandardTargetV1 {
     AnotherNonlandPermanent,
     /// "Each of up to two targets": two distinct any-targets (115.4).
     UpToTwoAnyTargets,
+    /// "Up to one target creature."
+    UpToOneCreature,
 }
 
 impl StandardTargetV1 {
@@ -118,6 +139,7 @@ impl StandardTargetV1 {
     pub(crate) fn counts(self) -> (u8, u8) {
         match self {
             Self::UpToTwoAnyTargets => (2, 0),
+            Self::UpToOneCreature => (1, 0),
             _ => (1, 1),
         }
     }
@@ -226,6 +248,7 @@ pub(crate) fn target_matches(
         StandardTargetV1::UpToTwoAnyTargets => {
             has(CardType::Creature) || has(CardType::Planeswalker)
         }
+        StandardTargetV1::UpToOneCreature => has(CardType::Creature),
         StandardTargetV1::AnotherNonlegendaryControlledCreature => {
             live.controller == controller
                 && has(CardType::Creature)
@@ -1494,9 +1517,11 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         CLAY_FIRED_BRICKS => &CLAY_FIRED_BRICKS_TRIGGERS,
         CHANDRA => &CHANDRA_TRIGGERS,
         "Otter Prowess Token" => &PROWESS_TRIGGERS,
-        SEAM_RIP | DUSK_ROSE_RELIQUARY | SHELTERED_BY_GHOSTS | HARDLIGHT_CONTAINMENT => {
-            &EXILE_UNTIL_LEAVES_TRIGGERS
-        }
+        SEAM_RIP
+        | DUSK_ROSE_RELIQUARY
+        | SHELTERED_BY_GHOSTS
+        | HARDLIGHT_CONTAINMENT
+        | ASSIMILATION_AEGIS => &EXILE_UNTIL_LEAVES_TRIGGERS,
         _ => &[],
     }
 }
@@ -1778,6 +1803,7 @@ pub(crate) fn trigger_target_spec(
         DUSK_ROSE_RELIQUARY => TargetSpec::StandardV1(StandardTargetV1::OpponentArtifactOrCreature),
         SHELTERED_BY_GHOSTS => TargetSpec::StandardV1(StandardTargetV1::OpponentNonlandPermanent),
         HARDLIGHT_CONTAINMENT => TargetSpec::OpponentControlledCreature,
+        ASSIMILATION_AEGIS => TargetSpec::StandardV1(StandardTargetV1::UpToOneCreature),
         _ => return None,
     })
 }
@@ -3095,5 +3121,160 @@ pub(crate) fn note_spell_cast(state: &mut GameState, spell: ObjectId) {
         if members.contains(&(spell, exiled)) {
             *spent = true;
         }
+    }
+}
+
+// ---- Assimilation Aegis ------------------------------------------------------
+
+const ASSIMILATION_AEGIS: &str = "Assimilation Aegis";
+
+#[cfg(feature = "standard-magezero-fixtures")]
+fn aegis_card_def() -> Option<u16> {
+    static AEGIS: std::sync::OnceLock<Option<u16>> = std::sync::OnceLock::new();
+    *AEGIS.get_or_init(|| crate::card_def::card_id_by_name(ASSIMILATION_AEGIS))
+}
+
+/// "Whenever Assimilation Aegis becomes attached to a creature, for as long
+/// as Assimilation Aegis remains attached to it, that creature becomes a
+/// copy of a creature card exiled with Assimilation Aegis." Applied before
+/// each state-based action pass: copies whose Aegis left that creature end,
+/// and a newly attached Aegis with an exiled creature card starts one. The
+/// copy takes the card's front face (707.2, 707.8) and keeps the
+/// creature's counters, damage, attachments and status.
+#[cfg(feature = "standard-magezero-fixtures")]
+pub(crate) fn refresh_aegis_copies(state: &mut GameState) {
+    let Some(aegis_def) = aegis_card_def() else {
+        return;
+    };
+    let attached = |state: &GameState, aegis: (ObjectId, u32), host: (ObjectId, u32)| {
+        state.objects.try_get(aegis.0).is_some_and(|live| {
+            live.zone == Zone::Battlefield
+                && live.zone_change_count == aegis.1
+                && live.v4.attached_to
+                    == Some(crate::state::ObjectLinkV4 {
+                        object: host.0,
+                        zone_change_count: host.1,
+                    })
+        })
+    };
+    while let Some(index) = state.standard_v1.as_ref().and_then(|standard| {
+        standard
+            .aegis_copies
+            .iter()
+            .position(|copy| !attached(state, copy.aegis, copy.host))
+    }) {
+        end_aegis_copy(state, index);
+    }
+    let aegises: Vec<(ObjectId, u32, crate::state::ObjectLinkV4)> = [PlayerId::P0, PlayerId::P1]
+        .iter()
+        .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
+        .filter_map(|id| {
+            let live = state.objects.get(id);
+            (live.card_def == aegis_def)
+                .then_some(live.v4.attached_to)
+                .flatten()
+                .map(|host| (id, live.zone_change_count, host))
+        })
+        .collect();
+    for (aegis, aegis_zcc, host) in aegises {
+        let known = state.standard_v1.as_ref().is_some_and(|standard| {
+            standard.aegis_copies.iter().any(|copy| {
+                copy.aegis == (aegis, aegis_zcc)
+                    && copy.host == (host.object, host.zone_change_count)
+            })
+        });
+        let host_live = state.objects.try_get(host.object).is_some_and(|live| {
+            live.zone == Zone::Battlefield && live.zone_change_count == host.zone_change_count
+        });
+        if known || !host_live {
+            continue;
+        }
+        let link = crate::state::ObjectLinkV4 {
+            object: aegis,
+            zone_change_count: aegis_zcc,
+        };
+        let Some(copied) = state.objects.iter().find_map(|(_, exiled)| {
+            (exiled.zone == Zone::Exile
+                && exiled.v4.exiled_by == Some(link)
+                && !exiled.v4.is_token
+                && CARD_DEFS[exiled.card_def as usize].has_type(CardType::Creature))
+            .then_some(exiled.card_def)
+        }) else {
+            continue;
+        };
+        let live = state.objects.get_mut(host.object);
+        let record = AegisCopyV1 {
+            aegis: (aegis, aegis_zcc),
+            host: (host.object, host.zone_change_count),
+            card_def: live.card_def,
+            name: std::mem::take(&mut live.name),
+            face_index: live.v4.face_index,
+            color_mask: live.v4.effective_color_mask,
+            subtype_ids: std::mem::take(&mut live.v4.effective_subtype_ids),
+            ward_generic: live.v4.ward_generic,
+        };
+        let base = crate::state::ObjectStateV4::from_card_def(copied);
+        live.card_def = copied;
+        live.name = CARD_DEFS[copied as usize].object_name.into();
+        live.v4.face_index = 0;
+        live.v4.effective_color_mask = base.effective_color_mask;
+        live.v4.effective_subtype_ids = base.effective_subtype_ids;
+        live.v4.ward_generic = base.ward_generic;
+        state
+            .standard_v1
+            .get_or_insert_with(Default::default)
+            .aegis_copies
+            .push(record);
+    }
+}
+
+/// Ends the copy at `index`: a later copy of the same creature inherits the
+/// values it saved; otherwise the creature gets them back.
+#[cfg(feature = "standard-magezero-fixtures")]
+fn end_aegis_copy(state: &mut GameState, index: usize) {
+    let Some(standard) = state.standard_v1.as_mut() else {
+        return;
+    };
+    let record = standard.aegis_copies.remove(index);
+    if let Some(later) = standard.aegis_copies[index..]
+        .iter_mut()
+        .find(|copy| copy.host == record.host)
+    {
+        later.card_def = record.card_def;
+        later.name = record.name;
+        later.face_index = record.face_index;
+        later.color_mask = record.color_mask;
+        later.subtype_ids = record.subtype_ids;
+        later.ward_generic = record.ward_generic;
+        return;
+    }
+    if state
+        .objects
+        .try_get(record.host.0)
+        .is_none_or(|live| live.zone_change_count != record.host.1)
+    {
+        return;
+    }
+    let live = state.objects.get_mut(record.host.0);
+    live.card_def = record.card_def;
+    live.name = record.name;
+    live.v4.face_index = record.face_index;
+    live.v4.effective_color_mask = record.color_mask;
+    live.v4.effective_subtype_ids = record.subtype_ids;
+    live.v4.ward_generic = record.ward_generic;
+}
+
+/// A copied creature leaving the battlefield stops being a copy first, so
+/// it arrives in its new zone as its own card.
+#[cfg(feature = "standard-magezero-fixtures")]
+pub(crate) fn end_aegis_copies_before_departure(state: &mut GameState, object: ObjectId) {
+    let zone_change_count = state.objects.get(object).zone_change_count;
+    while let Some(index) = state.standard_v1.as_ref().and_then(|standard| {
+        standard
+            .aegis_copies
+            .iter()
+            .rposition(|copy| copy.host == (object, zone_change_count))
+    }) {
+        end_aegis_copy(state, index);
     }
 }

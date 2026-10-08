@@ -915,6 +915,10 @@ fn commit_with_ability_lki(
         }
         ProposedEvent::ZoneChange(z) => {
             let from = state.objects.get(z.object).zone;
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if from == Zone::Battlefield {
+                crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
+            }
             let controller_before = state.objects.get(z.object).controller;
             if from == Zone::Battlefield {
                 let live = state.objects.get(z.object);

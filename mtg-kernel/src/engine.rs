@@ -12690,7 +12690,14 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
                 < usize::from(target_count(pending_trigger.target_spec))
         {
             validate_pending_trigger(state, pending_trigger)?;
-            if !matches!(&action, Action::ChooseTarget(_)) {
+            let may_finish = pending_trigger.targets.len()
+                >= usize::from(target_min_count(pending_trigger.target_spec));
+            let answers = match &action {
+                Action::ChooseTarget(_) => true,
+                Action::FinishEffectSelection => may_finish,
+                _ => false,
+            };
+            if !answers {
                 return Err(
                     "only ChooseTarget may answer a pending triggered ability target".to_string(),
                 );
@@ -12898,6 +12905,11 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
                 finish_optional_cast_or_collect_evidence(state)
             } else if state.engine.pending_activation.is_some() {
                 finish_optional_activation_targets(state)
+            } else if state.engine.pending_triggers.first().is_some_and(|pending| {
+                pending.placement_ordered
+                    && pending.targets.len() < usize::from(target_count(pending.target_spec))
+            }) {
+                finish_optional_trigger_targets(state)
             } else {
                 effect::finish_resumable_target_selection(state)
             }
@@ -13257,6 +13269,27 @@ fn apply_choose_optional_activation_target(
     live.targets_chosen.push(target);
     live.target_contracts.push(contract);
     Ok(())
+}
+
+/// Puts the first pending triggered ability on the stack with fewer than
+/// its maximum number of "up to" targets (Assimilation Aegis).
+fn finish_optional_trigger_targets(state: &mut GameState) -> Result<(), String> {
+    let pending = state
+        .engine
+        .pending_triggers
+        .first()
+        .cloned()
+        .ok_or("no triggered ability is selecting optional targets")?;
+    validate_pending_trigger(state, &pending)?;
+    if target_min_count(pending.target_spec) >= target_count(pending.target_spec)
+        || !target_cardinality_is_complete(pending.target_spec, pending.targets.len())
+        || pending_trigger_modes(state, &pending).is_some()
+    {
+        return Err("the pending trigger target selection cannot finish".to_string());
+    }
+    validate_pending_trigger_for_stack(state, &pending)?;
+    let pending = state.engine.pending_triggers.remove(0);
+    push_trigger_onto_stack(state, pending)
 }
 
 fn finish_optional_activation_targets(state: &mut GameState) -> Result<(), String> {

@@ -13761,7 +13761,6 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ObjectRef::Target(index) => Some(usize::from(index)),
                 ObjectRef::ThisSource => None,
             };
-            let object = ctx.resolve_object(*object);
             let Some(target_index) = target_index else {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -13769,6 +13768,11 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ));
                 return;
             };
+            // "Up to one target" (Assimilation Aegis) may have chosen none.
+            if target_index >= ctx.targets.len() {
+                return;
+            }
+            let object = ctx.resolve_object(*object);
             if !ctx.target_incarnation_matches(target_index, state)
                 || state.objects.get(object).zone != Zone::Battlefield
             {
@@ -13787,12 +13791,14 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     && source.zone == Zone::Battlefield
                     && source.zone_change_count == source_contract.zone_change_count
             });
-            let target_card_def = state.objects.get(object).card_def;
             let target_owner = state.objects.get(object).owner;
             event::propose_and_commit(
                 state,
                 event::ProposedEvent::zone_change(object, Zone::Exile),
             );
+            // Read after the move: a creature that was a copy (Assimilation
+            // Aegis) arrives in exile as its own card.
+            let target_card_def = state.objects.get(object).card_def;
             if source_is_live {
                 let exiled_zone_change_count = state.objects.get(object).zone_change_count;
                 let source = ObjectLinkV4 {

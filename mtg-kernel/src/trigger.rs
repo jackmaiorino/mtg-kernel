@@ -2079,6 +2079,8 @@ fn sba_fixed_point_with_protected_triggers(
     protected_triggers: &[PendingTrigger],
 ) {
     loop {
+        #[cfg(feature = "standard-magezero-fixtures")]
+        crate::standard_cards_v1::refresh_aegis_copies(state);
         if crate::legend_rule_v1::stage(state, protected_triggers) {
             return;
         }

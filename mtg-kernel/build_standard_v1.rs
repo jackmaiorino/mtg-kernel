@@ -324,6 +324,9 @@ const BASILISK_COLLAR: [ActivatedAbilityRecipe; 1] = [equip(&[ManaCost("{2}")])]
 /// has become Everflame (`standard_cards_v1::activation_allowed`).
 const THE_IRENCRAG: [ActivatedAbilityRecipe; 1] = [equip(&[ManaCost("{3}")])];
 
+/// Assimilation Aegis's equip {2}.
+const ASSIMILATION_AEGIS: [ActivatedAbilityRecipe; 1] = [equip(&[ManaCost("{2}")])];
+
 /// An instant-speed activated ability from the battlefield.
 const fn instant(
     cost: &'static [AbilityCostRecipe],
@@ -402,6 +405,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Case of the Uneaten Feast" => &CASE_OF_THE_UNEATEN_FEAST,
         "Basilisk Collar" => &BASILISK_COLLAR,
         "The Irencrag" => &THE_IRENCRAG,
+        "Assimilation Aegis" => &ASSIMILATION_AEGIS,
         "Unholy Annex // Ritual Chamber" => &UNHOLY_ANNEX,
         "Teferi, Temporal Pilgrim" => &TEFERI,
         "Liliana of the Veil" => &LILIANA_OF_THE_VEIL,
@@ -475,6 +479,9 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Ojer Axonil, Deepest Might" => "dies:return_tapped_transformed",
         "Seam Rip" | "Dusk Rose Reliquary" | "Sheltered by Ghosts" | "Hardlight Containment" => {
             "etb:exile_target_until_source_leaves;ltb:return_exiled_by_source"
+        }
+        "Assimilation Aegis" => {
+            "etb:exile_up_to_one_target_creature_until_source_leaves;ltb:return_exiled_by_source;attached:creature_is_copy_of_exiled_creature_card"
         }
         "Unholy Annex // Ritual Chamber" => {
             "door0:controller_end_step:draw_then_drain_2_if_demon_else_lose_2;door1:unlock_this_door:create_demon_6_6_flying"
@@ -601,6 +608,7 @@ pub(super) fn equipment_for(name: &str) -> &'static str {
         "Basilisk Collar" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords(Keywords::DEATHTOUCH.0 | Keywords::LIFELINK.0), other_turn_keywords: Keywords(Keywords::DEATHTOUCH.0 | Keywords::LIFELINK.0), noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
         "The Irencrag" => "Some(EquipmentDef { power_delta: 3, toughness_delta: 3, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
         "Sheltered by Ghosts" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::LIFELINK, other_turn_keywords: Keywords::LIFELINK, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
+        "Assimilation Aegis" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
         _ => "None",
     }
 }

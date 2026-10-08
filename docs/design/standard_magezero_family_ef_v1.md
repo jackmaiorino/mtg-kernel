@@ -240,6 +240,26 @@ target is one of the options. A copy of a spell with more than one target
 keeps its targets. The trigger's program is filled in from the cast event,
 so root validation also accepts it through `template_matches`.
 
+## Assimilation Aegis
+
+Assimilation Aegis reuses the exile-until-this-leaves triggers with the
+appended `StandardTargetV1::UpToOneCreature` (one target, none required).
+Triggered abilities with "up to" targets can now stop early:
+`Action::FinishEffectSelection` answers the trigger's `ChooseTargets` once
+its minimum is met and puts it on the stack with the targets chosen so far.
+Its copy effect (707.2) is applied before each state-based action pass
+(`standard_cards_v1::refresh_aegis_copies`): when the Aegis is attached to
+a creature and a creature card is exiled with it, that creature takes the
+card's definition, name, front face, colors, subtypes and ward until the
+Aegis stops being attached to it; the creature's counters, damage,
+attachments, tapped and sick status stay. The values it had are saved in
+`GameState::standard_v1` and restored when the copy ends, and a creature
+leaving the battlefield stops being a copy first, so it reaches its new
+zone as its own card. As in XMage, the copied card is locked in when the
+copy starts. The linked-exile record now reads the exiled card's
+definition after the move, so a copy exiled until something leaves comes
+back as its own card.
+
 ## Known limits
 
 The stack and battlefield use the Room card's combined mana value and
@@ -255,6 +275,11 @@ ability.
 Craft's material decision reuses `CostKind::ExileFromGraveyard` even when
 the candidate is a battlefield artifact, and net counters live in the
 Standard state rather than `Counters`, so observations do not show them.
+Assimilation Aegis's copy starts during the next state-based action pass
+rather than from a triggered ability on the stack. While a creature is a
+copy, abilities it put on the stack before or after the change see a
+different definition and do nothing, and its leaves-the-battlefield
+abilities are its own card's rather than the copied card's.
 
 ## Catalog identity
 

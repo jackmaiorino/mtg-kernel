@@ -1197,6 +1197,39 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/c/ChandraHopesBeacon.java",
       "starting_loyalty": 5
+    },
+    {
+      "name": "Assimilation Aegis",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}{U}",
+      "mana_value": 3,
+      "colors": [
+        "W",
+        "U"
+      ],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Equipment"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "equipment",
+        "etb_trigger",
+        "exile_until_leaves",
+        "copy"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AssimilationAegis.java"
     }
   ]
 }
