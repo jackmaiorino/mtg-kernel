@@ -3871,7 +3871,7 @@ fn can_pay_components(
                 // control since the turn began. Irrelevant to every
                 // tap-cost ability in this pool (Blood is an artifact),
                 // kept for correctness if a future card needs it.
-                !(obj.tapped || (def.has_type(CardType::Creature) && obj.summoning_sick))
+                !(obj.tapped || creature_summoning_sick(state, source, def))
             }
             CostComponent::SacrificeSelf | CostComponent::ExileSelf => true,
             CostComponent::DiscardSelf => {
@@ -5645,6 +5645,19 @@ fn available_mana_abilities(player: PlayerId, state: &GameState) -> Vec<ObjectId
         .collect()
 }
 
+/// 302.6: summoning sickness restricts the tap symbol only while the
+/// permanent is a creature on the face it shows.
+pub(crate) fn creature_summoning_sick(
+    state: &GameState,
+    object: ObjectId,
+    def: &card_def::CardDef,
+) -> bool {
+    def.has_type(CardType::Creature)
+        && state.objects.get(object).summoning_sick
+        && (state.objects.get(object).v4.face_index == 0
+            || object_has_type(state, object, CardType::Creature))
+}
+
 fn rich_mana_ability_is_payable(
     player: PlayerId,
     source: ObjectId,
@@ -5667,7 +5680,7 @@ fn rich_mana_ability_is_payable(
     }
     match rich.cost {
         ManaAbilityCostDef::TapSelf | ManaAbilityCostDef::TapAndSacrificeSelf => {
-            !(object.tapped || def.has_type(CardType::Creature) && object.summoning_sick)
+            !(object.tapped || creature_summoning_sick(state, source, def))
         }
         ManaAbilityCostDef::SacrificeSelf
         | ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf
@@ -5677,7 +5690,7 @@ fn rich_mana_ability_is_payable(
             // cheap checks: the flat-encode zero-allocation contract counts
             // on the short-circuit (tests/flat_action_allocation.rs).
             !(object.tapped
-                || def.has_type(CardType::Creature) && object.summoning_sick
+                || creature_summoning_sick(state, source, def)
                 || mana_ability_cost_targets(player, source, state).is_empty())
         }
     }
@@ -5708,6 +5721,7 @@ pub(crate) fn available_mana_ability_choices_into(
     };
     if !def.has_mana_ability()
         || !crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+        || !crate::standard_cards_v1::mana_abilities_active(state, source, def)
     {
         return;
     }
@@ -5717,7 +5731,7 @@ pub(crate) fn available_mana_ability_choices_into(
     let primary_payable = if let Some(rich) = def.mana_ability_def {
         rich_mana_ability_is_payable(player, source, 0, rich, None, state)
     } else {
-        !(object.tapped || def.has_type(CardType::Creature) && object.summoning_sick)
+        !(object.tapped || creature_summoning_sick(state, source, def))
     };
     if primary_payable {
         for &color in primary.as_slice() {
@@ -6072,6 +6086,7 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
             for (i, ability) in def.activated_abilities.iter().enumerate() {
                 if ability.activation_zone != zone
                     || !activated_ability_face_active(state, id, ability)
+                    || !crate::standard_cards_v1::activation_allowed(state, id, def, i)
                     || (ability.is_loyalty_ability()
                         && (!sorcery_speed_timing_ok(player, state)
                             || loyalty_ability_activated_this_turn(state, id)))
@@ -6146,6 +6161,8 @@ fn can_attack(state: &GameState, id: ObjectId) -> bool {
     let def = &card_def::CARD_DEFS[obj.card_def as usize];
     def.is_executable()
         && def.has_type(CardType::Creature)
+        // A back face that is not a creature (Temple of Power) cannot attack.
+        && (obj.v4.face_index == 0 || object_has_type(state, id, CardType::Creature))
         && !obj.tapped
         && !has_effective_keyword(state, id, Keywords::DEFENDER)
         && (!obj.summoning_sick || has_effective_keyword(state, id, Keywords::HASTE))

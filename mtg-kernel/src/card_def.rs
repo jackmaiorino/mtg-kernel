@@ -265,6 +265,9 @@ pub enum Subtype {
     /// Appended for the MageZero Standard permanents and planeswalkers.
     /// Existing stable ids remain fixed. Teferi is a planeswalker type.
     Teferi,
+    God,
+    Demon,
+    Room,
 }
 
 impl Subtype {

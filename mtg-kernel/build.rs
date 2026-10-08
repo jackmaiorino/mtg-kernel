@@ -3628,7 +3628,7 @@ fn transform_face_for(name: &str) -> &'static str {
     match name {
         "The Modern Age" => "Some(TransformFaceDef { name: \"Vector Glider\", types: &[CardType::Enchantment, CardType::Creature], subtypes: &[Subtype::Spirit], colors: &[ManaColor::U], power: Some(2), toughness: Some(3), keywords: Keywords::FLYING })",
         "Delver of Secrets" => "Some(TransformFaceDef { name: \"Insectile Aberration\", types: &[CardType::Creature], subtypes: &[Subtype::Human, Subtype::Insect], colors: &[ManaColor::U], power: Some(3), toughness: Some(2), keywords: Keywords::FLYING })",
-        _ => "None",
+        _ => build_standard_v1::transform_face_for(name),
     }
 }
 
@@ -3641,7 +3641,7 @@ fn transform_face_name_for(name: &str) -> Option<&'static str> {
     match name {
         "The Modern Age" => Some("Vector Glider"),
         "Delver of Secrets" => Some("Insectile Aberration"),
-        _ => None,
+        _ => build_standard_v1::transform_face_name_for(name),
     }
 }
 
@@ -8428,6 +8428,9 @@ fn subtype_variant(t: &str) -> &'static str {
         "Mine" => "Subtype::Mine",
         "Desert" => "Subtype::Desert",
         "Teferi" => "Subtype::Teferi",
+        "God" => "Subtype::God",
+        "Demon" => "Subtype::Demon",
+        "Room" => "Subtype::Room",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

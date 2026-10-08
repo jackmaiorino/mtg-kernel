@@ -512,6 +512,15 @@ pub enum CommittedEvent {
         object: ObjectId,
         zone_change_count: u32,
     },
+    /// Precedes a transforming permanent's departure from the battlefield
+    /// while it showed a face other than its front, so leave triggers see
+    /// the face that left. Only the Standard catalog's transforming cards
+    /// record it.
+    LeftBattlefieldFaceV1 {
+        object: ObjectId,
+        zone_change_count: u32,
+        face_index: u8,
+    },
 }
 
 fn initialize_entry_counters(state: &mut GameState, object: ObjectId, kicked: bool) {
@@ -581,6 +590,9 @@ pub fn apply_replacements(
                 crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
             )
         });
+    if let ProposedEvent::Damage(damage) = &mut proposed {
+        crate::standard_cards_v1::replace_damage(state, damage);
+    }
     if let ProposedEvent::Damage(damage) = &proposed {
         if !damage_cannot_be_prevented
             && crate::engine::damage_is_prevented_by_protection(state, damage.source, damage.target)
@@ -862,6 +874,8 @@ fn commit_with_ability_lki(
                     state.players[p.index()].life -= d.amount;
                 }
             }
+            #[cfg(feature = "standard-magezero-fixtures")]
+            crate::standard_cards_v1::after_damage(state, d.source, d.amount, d.is_combat);
             CommittedEvent::Damage {
                 source: d.source,
                 target: d.target,
@@ -871,6 +885,22 @@ fn commit_with_ability_lki(
         ProposedEvent::ZoneChange(z) => {
             let from = state.objects.get(z.object).zone;
             let controller_before = state.objects.get(z.object).controller;
+            if from == Zone::Battlefield {
+                let live = state.objects.get(z.object);
+                if live.v4.face_index != 0
+                    && crate::standard_cards_v1::records_departure_face(
+                        &crate::card_def::CARD_DEFS[live.card_def as usize],
+                    )
+                {
+                    let marker = CommittedEvent::LeftBattlefieldFaceV1 {
+                        object: z.object,
+                        zone_change_count: live.zone_change_count,
+                        face_index: live.v4.face_index,
+                    };
+                    state.engine.event_log.push(marker.clone());
+                    state.engine.event_history.push(marker);
+                }
+            }
             if from == Zone::Battlefield
                 && abilities_removed_before.unwrap_or_else(|| {
                     !crate::continuous_characteristics_v1::printed_abilities_active(state, z.object)
@@ -1005,6 +1035,24 @@ fn commit_with_ability_lki(
                 object,
                 token_def: t.token_def,
                 controller: t.controller,
+            }
+        }
+        ProposedEvent::Transform(t) if t.face_index == 0 => {
+            // 712.3: transforming back shows the front face's printed
+            // characteristics again.
+            let obj = state.objects.get_mut(t.object);
+            let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
+            if def.transform_face.is_none() {
+                panic!("transform_in_place requested an undefined face");
+            }
+            let front = crate::state::ObjectStateV4::from_card_def(obj.card_def);
+            obj.v4.face_index = 0;
+            obj.v4.effective_color_mask = front.effective_color_mask;
+            obj.v4.effective_subtype_ids = front.effective_subtype_ids;
+            obj.name = def.object_name.to_string();
+            CommittedEvent::Transformed {
+                object: t.object,
+                face_index: 0,
             }
         }
         ProposedEvent::Transform(t) => {

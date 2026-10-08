@@ -402,7 +402,8 @@ pub fn gather_sources(player: PlayerId, state: &GameState) -> Vec<ManaSource> {
         // source also obeys summoning sickness for the tap symbol in its
         // activation cost.
         if def.is_automatic_payment_mana_source()
-            && !(def.has_type(crate::card_def::CardType::Creature) && obj.summoning_sick)
+            && !crate::engine::creature_summoning_sick(state, id, def)
+            && crate::standard_cards_v1::mana_abilities_active(state, id, def)
         {
             sources.push(ManaSource {
                 id,

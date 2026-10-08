@@ -47,18 +47,7 @@ impl Scan<'_> {
             | EnterUndercityRoom { binding, .. }
             | ResolveUndercityThrone { binding } => self.a(&binding.source),
             ResolveMonarchTrigger { binding } => self.a(&binding.source),
-            StandardV1(op) => match op {
-                crate::standard_cards_v1::StandardOpV1::ApplyChosenPermanent { chosen, .. } => {
-                    self.b(chosen)
-                }
-                crate::standard_cards_v1::StandardOpV1::AddLoyaltyToSource { .. }
-                | crate::standard_cards_v1::StandardOpV1::PlayerChoosesControlledPermanent {
-                    ..
-                }
-                | crate::standard_cards_v1::StandardOpV1::ShuffleNonlandPermanentsIntoLibraries {
-                    ..
-                } => false,
-            },
+            StandardV1(op) => op.bound_object().is_some_and(|chosen| self.b(&chosen)),
             // Other current leaf programs carry symbolic refs, not physical bindings.
             DealDamage { .. }
             | ReturnTargetPermanentToBattlefield { .. }
@@ -604,7 +593,8 @@ pub(super) fn conflicts(
             | Sacrificed { object, .. }
             | Transformed { object, .. } => s.raw(*object),
             PlusOneCountersAdded { object, .. }
-            | PrintedAbilitiesRemovedBeforeZoneChange { object, .. } => s.raw(*object),
+            | PrintedAbilitiesRemovedBeforeZoneChange { object, .. }
+            | LeftBattlefieldFaceV1 { object, .. } => s.raw(*object),
             Draw { object, .. } => object.is_some_and(|id| s.raw(id)),
             SpellCast { spell, .. } => s.raw(*spell),
             Targeted { target, .. } => s.raw(*target),

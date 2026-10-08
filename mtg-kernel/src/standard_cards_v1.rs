@@ -5,13 +5,25 @@
 //! catalogs without these names never reach it. Behavior was read from each
 //! card's XMage source (`magefree/mage` master).
 
-use crate::card_def::CardType;
+use crate::card_def::{CardDef, CardType, Keywords, Subtype, CARD_DEFS};
 use crate::effect::{EffectObjectBinding, EffectOp, ExecCtx, PlayerRef};
-use crate::event::{self, ProposedEvent};
-use crate::ids::PlayerId;
-use crate::state::{GameState, Zone};
+use crate::event::{self, CommittedEvent, DamageProposed, ProposedEvent};
+use crate::ids::{ObjectId, PlayerId};
+use crate::mana::ManaColor;
+use crate::state::{GameState, Target, Zone};
 use crate::trigger::{TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
+
+/// Per-game state for this module's cards. Absent until one of them needs
+/// it, so other catalogs keep their snapshots and hashes.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StandardStateV1 {
+    /// Turn number and, per player, the noncombat damage dealt that turn by
+    /// red sources they controlled (Temple of Power's activation condition).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    red_noncombat_damage: Option<(u32, [u32; 2])>,
+}
 
 /// Effect leaves owned by this module. Appended to `EffectOp` as one variant
 /// so earlier serialized programs keep their shapes.
@@ -37,6 +49,23 @@ pub enum StandardOpV1 {
     /// Each nonland permanent `player` controls goes into its owner's
     /// library, then every affected library is shuffled.
     ShuffleNonlandPermanentsIntoLibraries { player: PlayerRef },
+    /// Transform the resolving ability's source to its other face, if it is
+    /// still the same battlefield incarnation.
+    TransformSource,
+    /// Trigger-time template for "you lose that much life": materialized to
+    /// `CecilDarkness` with the damage event's amount.
+    BindCecilDarkness,
+    /// Cecil, Dark Knight: its controller loses `amount` life. Then if their
+    /// life total is at most half their starting life total, untap the
+    /// source and transform it.
+    CecilDarkness { amount: u32 },
+    /// Other attacking creatures the controller controls gain `keywords`
+    /// until end of turn.
+    OtherAttackersGainUntilEndOfTurn { keywords: Keywords },
+    /// The source, put into a graveyard from the battlefield by the event
+    /// that triggered this ability, returns to the battlefield tapped and
+    /// transformed under its owner's control.
+    ReturnSourceTappedAndTransformed,
 }
 
 impl StandardOpV1 {
@@ -44,6 +73,14 @@ impl StandardOpV1 {
     /// the resumable interpreter.
     pub(crate) fn contains_player_choice(&self) -> bool {
         matches!(self, Self::PlayerChoosesControlledPermanent { .. })
+    }
+
+    /// The exact object incarnation this leaf is bound to, if any.
+    pub(crate) fn bound_object(&self) -> Option<EffectObjectBinding> {
+        match self {
+            Self::ApplyChosenPermanent { chosen, .. } => Some(*chosen),
+            _ => None,
+        }
     }
 
     /// Interpreter-owned leaves that a generated program may never contain.
@@ -122,8 +159,89 @@ fn source_incarnation_live(ctx: &ExecCtx, state: &GameState) -> bool {
     })
 }
 
+/// True iff the ability source is the same battlefield incarnation with a
+/// second face.
+fn transformable_source(ctx: &ExecCtx, state: &GameState) -> bool {
+    source_incarnation_live(ctx, state)
+        && CARD_DEFS[state.objects.get(ctx.source).card_def as usize]
+            .transform_face
+            .is_some()
+}
+
+fn transform_resolving_source(ctx: &ExecCtx, state: &mut GameState) {
+    if transformable_source(ctx, state) {
+        let face = 1 - state.objects.get(ctx.source).v4.face_index.min(1);
+        event::propose_and_commit(state, ProposedEvent::transform_in_place(ctx.source, face));
+    }
+}
+
 pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        StandardOpV1::TransformSource => transform_resolving_source(ctx, state),
+        StandardOpV1::BindCecilDarkness => {}
+        StandardOpV1::CecilDarkness { amount } => {
+            let amount = i32::try_from(*amount).unwrap_or(i32::MAX);
+            if amount > 0 {
+                event::propose_and_commit(state, ProposedEvent::life_loss(ctx.controller, amount));
+            }
+            if state.players[ctx.controller.index()].life <= crate::state::STARTING_LIFE / 2
+                && source_incarnation_live(ctx, state)
+                && state.objects.get(ctx.source).v4.face_index == 0
+            {
+                state.objects.get_mut(ctx.source).tapped = false;
+                transform_resolving_source(ctx, state);
+            }
+        }
+        StandardOpV1::OtherAttackersGainUntilEndOfTurn { keywords } => {
+            let attackers = state
+                .engine
+                .combat
+                .attackers
+                .iter()
+                .copied()
+                .filter(|&id| {
+                    let live = state.objects.get(id);
+                    id != ctx.source
+                        && live.zone == Zone::Battlefield
+                        && live.controller == ctx.controller
+                })
+                .collect::<Vec<_>>();
+            for object_id in attackers {
+                let timestamp = crate::engine::next_timestamp(state);
+                state.engine.until_end_of_turn.push(
+                    crate::engine::UntilEndOfTurnEffect::ResolvedObjectKeywordEffect {
+                        object_id,
+                        object_zone_change_count: state.objects.get(object_id).zone_change_count,
+                        layer: crate::engine::Layers::ABILITY_ADDING,
+                        timestamp,
+                        duration: crate::engine::EffectDuration::EndOfTurn,
+                        keywords: *keywords,
+                    },
+                );
+            }
+        }
+        StandardOpV1::ReturnSourceTappedAndTransformed => {
+            let Some(contract) = ctx.ability_source_contract else {
+                return;
+            };
+            let Some(card) = state.objects.try_get(ctx.source) else {
+                return;
+            };
+            // Only the card the dying permanent became, still in the
+            // graveyard it went to (400.7).
+            if card.card_def != contract.card_def
+                || card.zone != Zone::Graveyard
+                || card.zone_change_count != contract.zone_change_count + 1
+            {
+                return;
+            }
+            let owner = card.owner;
+            let mut entry = ProposedEvent::transformed_battlefield_return(ctx.source, 1, owner);
+            if let ProposedEvent::ZoneChange(change) = &mut entry {
+                change.force_battlefield_tapped = true;
+            }
+            event::propose_and_commit(state, entry);
+        }
         StandardOpV1::AddLoyaltyToSource { amount } => {
             if source_incarnation_live(ctx, state) {
                 crate::planeswalker_v1::change_loyalty(state, ctx.source, i32::from(*amount));
@@ -222,17 +340,311 @@ fn spirit_draw_counter() -> EffectOp {
 const TEFERI_SPIRIT_TRIGGERS: [TriggeredAbilityDef; 1] =
     [trigger(TriggerCondition::ControllerDraws, spirit_draw_counter)];
 
+// ---- Cecil, Dark Knight // Cecil, Redeemed Paladin ----------------------
+
+fn cecil_darkness() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::BindCecilDarkness)
+}
+
+fn cecil_protect() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::OtherAttackersGainUntilEndOfTurn {
+        keywords: Keywords::INDESTRUCTIBLE,
+    })
+}
+
+const CECIL_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    trigger(TriggerCondition::DealsDamage, cecil_darkness),
+    trigger(TriggerCondition::Attacks, cecil_protect),
+];
+
+/// Replaces a trigger-time template with the event's data, if `effect` is
+/// one of this module's templates.
+pub(crate) fn materialize_event(effect: &EffectOp, event: &CommittedEvent) -> Option<EffectOp> {
+    match (effect, event) {
+        (
+            EffectOp::StandardV1(StandardOpV1::BindCecilDarkness),
+            CommittedEvent::Damage { amount, .. },
+        ) => Some(EffectOp::StandardV1(StandardOpV1::CecilDarkness {
+            amount: u32::try_from(*amount).unwrap_or(0),
+        })),
+        _ => None,
+    }
+}
+
+/// Whether `effect` is a trigger-time materialization of `template`.
+pub(crate) fn template_matches(template: &EffectOp, effect: &EffectOp) -> bool {
+    matches!(
+        (template, effect),
+        (
+            EffectOp::StandardV1(StandardOpV1::BindCecilDarkness),
+            EffectOp::StandardV1(StandardOpV1::CecilDarkness { .. }),
+        )
+    )
+}
+
+// ---- Polukranos Reborn // Polukranos, Engine of Ruin ----------------------
+
+/// "{6}{W/P}: Transform Polukranos Reborn. Activate only as a sorcery." and
+/// Temple of Power's transform ability.
+pub fn transform_source() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::TransformSource)
+}
+
+fn polukranos_hydras() -> EffectOp {
+    let token = |name| crate::card_def::card_id_by_name(name).expect("Phyrexian Hydra token");
+    EffectOp::Sequence(vec![
+        EffectOp::CreateToken {
+            token_def: token("Phyrexian Hydra Reach Token"),
+            controller: PlayerRef::Controller,
+        },
+        EffectOp::CreateToken {
+            token_def: token("Phyrexian Hydra Lifelink Token"),
+            controller: PlayerRef::Controller,
+        },
+    ])
+}
+
+/// Trigger conditions owned by this module. Appended to `TriggerCondition`
+/// as one variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StandardTriggerV1 {
+    /// "Whenever this or another nontoken Hydra you control dies", printed on
+    /// the back face.
+    ThisOrAnotherNontokenHydraYouControlDies,
+}
+
+const POLUKRANOS_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
+    TriggerCondition::StandardV1(StandardTriggerV1::ThisOrAnotherNontokenHydraYouControlDies),
+    polukranos_hydras,
+)];
+
+/// The face `object` showed when the zone change at `events[index]` took
+/// it off the battlefield, or `None` when that event is not its departure.
+pub(crate) fn departure_face(events: &[CommittedEvent], index: usize, object: ObjectId) -> Option<u8> {
+    let CommittedEvent::ZoneChange {
+        object: moved,
+        from: Zone::Battlefield,
+        ..
+    } = events.get(index)?
+    else {
+        return None;
+    };
+    if *moved != object {
+        return None;
+    }
+    Some(
+        events[..index]
+            .iter()
+            .rev()
+            .take(2)
+            .find_map(|event| match event {
+                CommittedEvent::LeftBattlefieldFaceV1 {
+                    object: departed,
+                    face_index,
+                    ..
+                } if *departed == object => Some(*face_index),
+                _ => None,
+            })
+            .unwrap_or(0),
+    )
+}
+
+/// Whether a departure from the battlefield records its face, so leave
+/// triggers printed on one face see the face that left.
+pub(crate) fn records_departure_face(def: &CardDef) -> bool {
+    def.transform_face.is_some() && matches!(def.name, POLUKRANOS | OJER | CECIL)
+}
+
+pub(crate) fn trigger_matches(
+    condition: StandardTriggerV1,
+    events: &[CommittedEvent],
+    index: usize,
+    source: ObjectId,
+    state: &GameState,
+) -> bool {
+    match condition {
+        StandardTriggerV1::ThisOrAnotherNontokenHydraYouControlDies => {
+            let CommittedEvent::ZoneChange {
+                object,
+                from: Zone::Battlefield,
+                to: Zone::Graveyard,
+                controller_before,
+            } = &events[index]
+            else {
+                return false;
+            };
+            if *object == source {
+                return departure_face(events, index, source) == Some(1);
+            }
+            // The source sees another Hydra die while it is on the
+            // battlefield showing this face, or as it leaves alongside it.
+            let source_live = state.objects.get(source);
+            let watching = (source_live.zone == Zone::Battlefield
+                && source_live.v4.face_index == 1
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, source))
+                || events.iter().enumerate().any(|(i, _)| {
+                    departure_face(events, i, source) == Some(1)
+                        && matches!(events[i], CommittedEvent::ZoneChange { to: Zone::Graveyard, .. })
+                });
+            let source_controller = if source_live.zone == Zone::Battlefield {
+                source_live.controller
+            } else {
+                events
+                    .iter()
+                    .find_map(|event| match event {
+                        CommittedEvent::ZoneChange {
+                            object,
+                            from: Zone::Battlefield,
+                            controller_before,
+                            ..
+                        } if *object == source => Some(*controller_before),
+                        _ => None,
+                    })
+                    .unwrap_or(source_live.controller)
+            };
+            let died = state.objects.get(*object);
+            let def = &CARD_DEFS[died.card_def as usize];
+            watching
+                && *controller_before == source_controller
+                && !died.v4.is_token
+                && def.has_type(CardType::Creature)
+                && def.subtypes.contains(&Subtype::Hydra)
+        }
+    }
+}
+
+// ---- Ojer Axonil, Deepest Might // Temple of Power -------------------------
+
+const CECIL: &str = "Cecil, Dark Knight";
+const POLUKRANOS: &str = "Polukranos Reborn";
+const OJER: &str = "Ojer Axonil, Deepest Might";
+
+fn ojer_returns() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::ReturnSourceTappedAndTransformed)
+}
+
+const OJER_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [trigger(TriggerCondition::LeftBattlefieldToGraveyard, ojer_returns)];
+
+/// "If a red source you control would deal an amount of noncombat damage
+/// less than Ojer Axonil's power to an opponent, that source deals damage
+/// equal to Ojer Axonil's power instead."
+pub(crate) fn replace_damage(state: &GameState, damage: &mut DamageProposed) {
+    if damage.is_combat || damage.amount <= 0 {
+        return;
+    }
+    let Target::Player(damaged) = damage.target else {
+        return;
+    };
+    let Some(source) = state.objects.try_get(damage.source) else {
+        return;
+    };
+    let controller = source.controller;
+    if damaged != controller.opponent()
+        || crate::engine::object_color_mask(state, damage.source)
+            & crate::card_def::mana_colors_mask(&[ManaColor::R])
+            == 0
+    {
+        return;
+    }
+    let power = state.players[controller.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|&id| {
+            let live = state.objects.get(id);
+            live.v4.face_index == 0
+                && CARD_DEFS[live.card_def as usize].name == OJER
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+        })
+        .map(|id| crate::engine::effective_power(state, id))
+        .max();
+    if let Some(power) = power {
+        if damage.amount < power {
+            damage.amount = power;
+        }
+    }
+}
+
+/// Records noncombat damage dealt by red sources for Temple of Power.
+pub(crate) fn after_damage(state: &mut GameState, source: ObjectId, amount: i32, is_combat: bool) {
+    if is_combat || amount <= 0 {
+        return;
+    }
+    let Some(live) = state.objects.try_get(source) else {
+        return;
+    };
+    if crate::engine::object_color_mask(state, source)
+        & crate::card_def::mana_colors_mask(&[ManaColor::R])
+        == 0
+    {
+        return;
+    }
+    let controller = live.controller;
+    let turn = state.turn;
+    let standard = state.standard_v1.get_or_insert_with(Default::default);
+    let (recorded_turn, totals) = standard.red_noncombat_damage.get_or_insert((turn, [0, 0]));
+    if *recorded_turn != turn {
+        *recorded_turn = turn;
+        *totals = [0, 0];
+    }
+    let total = &mut totals[controller.index()];
+    *total = total.saturating_add(amount.unsigned_abs());
+}
+
+fn red_noncombat_damage_this_turn(state: &GameState, player: PlayerId) -> u32 {
+    state
+        .standard_v1
+        .as_ref()
+        .and_then(|standard| standard.red_noncombat_damage)
+        .filter(|(turn, _)| *turn == state.turn)
+        .map_or(0, |(_, totals)| totals[player.index()])
+}
+
+/// Extra activation restrictions printed on this module's abilities.
+pub(crate) fn activation_allowed(
+    state: &GameState,
+    source: ObjectId,
+    def: &CardDef,
+    ability_index: usize,
+) -> bool {
+    if def.transform_face.is_none() {
+        return true;
+    }
+    match (def.name, ability_index) {
+        // "Activate only if red sources you controlled dealt 4 or more
+        // noncombat damage this turn."
+        (OJER, 0) => {
+            red_noncombat_damage_this_turn(state, state.objects.get(source).controller) >= 4
+        }
+        _ => true,
+    }
+}
+
+/// Whether `object`'s mana abilities exist on the face it shows.
+pub(crate) fn mana_abilities_active(state: &GameState, object: ObjectId, def: &CardDef) -> bool {
+    def.transform_face.is_none()
+        || def.name != OJER
+        || state.objects.get(object).v4.face_index == 1
+}
+
 /// Triggered abilities of this module's cards, by registry name.
 pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         "Teferi, Temporal Pilgrim" => &TEFERI_TRIGGERS,
         "Teferi Spirit Token" => &TEFERI_SPIRIT_TRIGGERS,
+        CECIL => &CECIL_TRIGGERS,
+        POLUKRANOS => &POLUKRANOS_TRIGGERS,
+        OJER => &OJER_TRIGGERS,
         _ => &[],
     }
 }
 
 /// The transforming-card face each triggered ability is printed on. Abilities
 /// of single-faced cards report face 0.
-pub(crate) fn trigger_face(_name: &str, _ability_index: usize) -> u8 {
-    0
+pub(crate) fn trigger_face(name: &str, ability_index: usize) -> u8 {
+    match (name, ability_index) {
+        (CECIL, 1) | (POLUKRANOS, 0) => 1,
+        _ => 0,
+    }
 }

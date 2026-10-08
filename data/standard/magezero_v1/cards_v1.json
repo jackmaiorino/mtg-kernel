@@ -128,6 +128,175 @@
       ],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/SpiritTeferiToken.java",
       "is_token": true
+    },
+    {
+      "name": "Cecil, Dark Knight",
+      "engine_capability": "full",
+      "mana_cost": "{B}",
+      "mana_value": 1,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Knight"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 2,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "deathtouch",
+        "transform",
+        "damage_trigger",
+        "lifelink",
+        "attack_trigger"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CecilDarkKnight.java"
+    },
+    {
+      "name": "Polukranos Reborn",
+      "engine_capability": "full",
+      "mana_cost": "{G}{G}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Hydra"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 4,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "reach",
+        "transform",
+        "phyrexian_mana",
+        "lifelink",
+        "dies_trigger",
+        "token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/p/PolukranosReborn.java"
+    },
+    {
+      "name": "Phyrexian Hydra Reach Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "G",
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Phyrexian",
+        "Hydra"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "reach"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/PhyrexianHydraWithReachToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Phyrexian Hydra Lifelink Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "G",
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Phyrexian",
+        "Hydra"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "lifelink"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/PhyrexianHydraWithLifelinkToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Ojer Axonil, Deepest Might",
+      "engine_capability": "full",
+      "mana_cost": "{2}{R}{R}",
+      "mana_value": 4,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "God"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 4,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [
+        "R"
+      ],
+      "decks": [
+        "Standard-MonoR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "trample",
+        "damage_replacement",
+        "dies_trigger",
+        "transform",
+        "mana_ability"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/o/OjerAxonilDeepestMight.java"
     }
   ]
 }

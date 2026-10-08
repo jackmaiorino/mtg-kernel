@@ -5,7 +5,7 @@
 //! identity.
 
 use super::{AbilityCostRecipe, AbilityEffectRecipe, ActivatedAbilityRecipe};
-use AbilityCostRecipe::Loyalty;
+use AbilityCostRecipe::{Loyalty, ManaCost, Tap};
 use AbilityEffectRecipe::{DrawCards, Program};
 
 /// A planeswalker loyalty ability: sorcery-speed, from the battlefield.
@@ -39,17 +39,62 @@ const TEFERI: [ActivatedAbilityRecipe; 3] = [
     ),
 ];
 
+/// "Transform this. Activate only as a sorcery."
+const fn sorcery_transform(cost: &'static [AbilityCostRecipe]) -> ActivatedAbilityRecipe {
+    ActivatedAbilityRecipe {
+        cost,
+        effect: Program("crate::standard_cards_v1::transform_source"),
+        activation_zone: "Battlefield",
+        sorcery_speed_only: true,
+        target_spec: "None",
+        activation_target_filter: "TargetSpecOnly",
+        max_activations_per_turn: None,
+    }
+}
+
+const POLUKRANOS: [ActivatedAbilityRecipe; 1] = [sorcery_transform(&[ManaCost("{6}{W/P}")])];
+
+/// Temple of Power's "{2}{R}, {T}: Transform"; its red-damage condition is
+/// `standard_cards_v1::activation_allowed`.
+const OJER: [ActivatedAbilityRecipe; 1] = [sorcery_transform(&[ManaCost("{2}{R}"), Tap])];
+
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
         "Teferi, Temporal Pilgrim" => &TEFERI,
+        "Polukranos Reborn" => &POLUKRANOS,
+        "Ojer Axonil, Deepest Might" => &OJER,
         _ => &[],
     }
 }
 
 /// The transforming-card face an activated ability is printed on (`None`
 /// for a single-faced card).
-pub(super) fn activated_ability_face_for(_name: &str, _index: usize) -> Option<u8> {
-    None
+pub(super) fn activated_ability_face_for(name: &str, _index: usize) -> Option<u8> {
+    match name {
+        "Polukranos Reborn" => Some(0),
+        "Ojer Axonil, Deepest Might" => Some(1),
+        _ => None,
+    }
+}
+
+/// Back faces of this module's transforming cards. Each face keeps the
+/// card's supertypes.
+pub(super) fn transform_face_for(name: &str) -> &'static str {
+    match name {
+        "Cecil, Dark Knight" => "Some(TransformFaceDef { name: \"Cecil, Redeemed Paladin\", types: &[CardType::Creature], subtypes: &[Subtype::Human, Subtype::Knight], colors: &[ManaColor::W], power: Some(4), toughness: Some(4), keywords: Keywords::LIFELINK })",
+        "Polukranos Reborn" => "Some(TransformFaceDef { name: \"Polukranos, Engine of Ruin\", types: &[CardType::Creature], subtypes: &[Subtype::Phyrexian, Subtype::Hydra], colors: &[ManaColor::W, ManaColor::G], power: Some(6), toughness: Some(6), keywords: Keywords(Keywords::REACH.0 | Keywords::LIFELINK.0) })",
+        "Ojer Axonil, Deepest Might" => "Some(TransformFaceDef { name: \"Temple of Power\", types: &[CardType::Land], subtypes: &[], colors: &[], power: None, toughness: None, keywords: Keywords::NONE })",
+        _ => "None",
+    }
+}
+
+pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
+    match name {
+        "Cecil, Dark Knight" => Some("Cecil, Redeemed Paladin"),
+        "Polukranos Reborn" => Some("Polukranos, Engine of Ruin"),
+        "Ojer Axonil, Deepest Might" => Some("Temple of Power"),
+        _ => None,
+    }
 }
 
 /// Card-database tokens for the triggered abilities in
@@ -58,6 +103,11 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
         "Teferi, Temporal Pilgrim" => "controller_draws:add_loyalty_to_bound_source:1",
         "Teferi Spirit Token" => "controller_draws:plus_one_counter_on_bound_source:1",
+        "Cecil, Dark Knight" => {
+            "deals_damage:lose_that_much_life_then_untap_transform_at_half_life;back:attacks:other_attackers_gain_indestructible"
+        }
+        "Polukranos Reborn" => "back:this_or_another_nontoken_hydra_you_control_dies:two_phyrexian_hydras",
+        "Ojer Axonil, Deepest Might" => "dies:return_tapped_transformed",
         _ => "none",
     }
 }
@@ -66,6 +116,10 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
 pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
     match name {
         "Teferi Spirit Token" => &["Keywords::VIGILANCE"],
+        "Cecil, Dark Knight" => &["Keywords::DEATHTOUCH"],
+        "Polukranos Reborn" | "Phyrexian Hydra Reach Token" => &["Keywords::REACH"],
+        "Ojer Axonil, Deepest Might" => &["Keywords::TRAMPLE"],
+        "Phyrexian Hydra Lifelink Token" => &["Keywords::LIFELINK"],
         _ => &[],
     }
 }
@@ -75,6 +129,9 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
 pub(super) fn object_name_for(name: &str) -> Option<&'static str> {
     match name {
         "Teferi Spirit Token" => Some("Spirit"),
+        "Phyrexian Hydra Reach Token" | "Phyrexian Hydra Lifelink Token" => {
+            Some("Phyrexian Hydra")
+        }
         _ => None,
     }
 }

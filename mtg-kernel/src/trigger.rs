@@ -124,6 +124,8 @@ pub enum TriggerCondition {
     /// player (Goldvein Pick). The committed marker's source incarnation
     /// must be the Equipment's exact current host.
     EquippedCreatureDealsCombatDamageToPlayer,
+    /// Conditions owned by the Standard catalog's card module.
+    StandardV1(crate::standard_cards_v1::StandardTriggerV1),
 }
 
 pub struct TriggeredAbilityDef {
@@ -222,6 +224,9 @@ fn materialize_trigger_event_effect(
     state: &GameState,
     event: &CommittedEvent,
 ) -> EffectOp {
+    if let Some(effect) = crate::standard_cards_v1::materialize_event(&(trigger.effect)(), event) {
+        return effect;
+    }
     if matches!(
         (trigger.effect)(),
         EffectOp::BindPlusOnePlusOneCounterToTriggerEventObject
@@ -1831,7 +1836,7 @@ fn source_bound_trigger_program_matches(template: &EffectOp, effect: &EffectOp) 
             EffectOp::BindDoublePlusOneCountersToTriggerSource,
             EffectOp::DoublePlusOneCountersOnBoundObject { .. },
         ) => true,
-        _ => false,
+        _ => crate::standard_cards_v1::template_matches(template, effect),
     }
 }
 
@@ -2386,7 +2391,9 @@ fn triggers_from_events(
         for (ability_index, def) in triggers_for(obj.card_def).iter().enumerate() {
             let uses_leave_lki = matches!(
                 def.condition,
-                TriggerCondition::LeftBattlefieldToGraveyard | TriggerCondition::LeftBattlefield
+                TriggerCondition::LeftBattlefieldToGraveyard
+                    | TriggerCondition::LeftBattlefield
+                    | TriggerCondition::StandardV1(_)
             );
             if !uses_leave_lki
                 && (obj.zone != def.home_zone
@@ -2404,11 +2411,24 @@ fn triggers_from_events(
             // exclusion the Saga chapter/completion paths already apply
             // unconditionally (`obj.v4.face_index != 0` at this file's own
             // SBA and chapter-matching sites).
-            if obj.v4.face_index != crate::standard_cards_v1::trigger_face(card.name, ability_index)
-            {
+            // Leave triggers check the face that left (per event, below).
+            let printed_face = crate::standard_cards_v1::trigger_face(card.name, ability_index);
+            if !uses_leave_lki && obj.v4.face_index != printed_face {
                 continue;
             }
             for (i, ev) in events.iter().enumerate() {
+                if let TriggerCondition::StandardV1(condition) = def.condition {
+                    if !crate::standard_cards_v1::trigger_matches(condition, events, i, id, state)
+                    {
+                        continue;
+                    }
+                } else if uses_leave_lki
+                    && crate::standard_cards_v1::departure_face(events, i, id)
+                        .unwrap_or(obj.v4.face_index)
+                        != printed_face
+                {
+                    continue;
+                }
                 if uses_leave_lki && i.checked_sub(1).and_then(|index| events.get(index)).is_some_and(|event| matches!(event, CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange { object, .. } if *object == id)) {
                     continue;
                 }
@@ -3053,6 +3073,8 @@ fn trigger_matches(
             TriggerCondition::BeginningOfUpkeep { controller_only },
             CommittedEvent::UpkeepBegan { player },
         ) => !controller_only || *player == controller,
+        // Matched against the whole event batch before this is called.
+        (TriggerCondition::StandardV1(_), _) => true,
         _ => false,
     }
 }

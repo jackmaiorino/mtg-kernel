@@ -1381,6 +1381,9 @@ pub struct GameState {
     /// Opt-in pregame state. Absent in every historical reset mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub london_mulligans_v1: Option<crate::london_mulligan_v1::LondonMulligansV1>,
+    /// Card state for the MageZero Standard catalog's own cards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standard_v1: Option<crate::standard_cards_v1::StandardStateV1>,
 }
 
 /// Reproduces exactly the field-hash sequence `#[derive(Hash)]` produced
@@ -1432,6 +1435,10 @@ impl Hash for GameState {
         if let Some(pregame) = &self.london_mulligans_v1 {
             "london-mulligans-v1".hash(state);
             pregame.hash(state);
+        }
+        if let Some(standard) = &self.standard_v1 {
+            "standard-v1".hash(state);
+            standard.hash(state);
         }
     }
 }
@@ -1577,6 +1584,7 @@ impl GameState {
             trigger_uses_v1: None,
             creature_death_turn_v1: None,
             london_mulligans_v1: None,
+            standard_v1: None,
         }
     }
 
