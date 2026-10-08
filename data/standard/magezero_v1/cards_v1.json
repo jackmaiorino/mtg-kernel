@@ -386,6 +386,158 @@
       ],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/Demon66Token.java",
       "is_token": true
+    },
+    {
+      "name": "Seam Rip",
+      "engine_capability": "full",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "etb_trigger",
+        "exile_until_leaves"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SeamRip.java"
+    },
+    {
+      "name": "Dusk Rose Reliquary",
+      "engine_capability": "full",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "additional_cost_sacrifice",
+        "ward",
+        "etb_trigger",
+        "exile_until_leaves"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DuskRoseReliquary.java"
+    },
+    {
+      "name": "Sheltered by Ghosts",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [
+        "Aura"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "aura",
+        "etb_trigger",
+        "exile_until_leaves",
+        "lifelink",
+        "ward"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/ShelteredByGhosts.java"
+    },
+    {
+      "name": "Hardlight Containment",
+      "engine_capability": "full",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [
+        "Aura"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "aura",
+        "etb_trigger",
+        "exile_until_leaves",
+        "ward"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HardlightContainment.java"
+    },
+    {
+      "name": "Basilisk Collar",
+      "engine_capability": "full",
+      "mana_cost": "{1}",
+      "mana_value": 1,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Equipment"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "equipment",
+        "deathtouch",
+        "lifelink"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BasiliskCollar.java"
     }
   ]
 }

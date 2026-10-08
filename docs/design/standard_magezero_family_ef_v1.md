@@ -59,6 +59,25 @@ entry. Abilities printed on a locked door do not function. A Room put onto
 the battlefield without being cast has both doors locked. Door state lives
 in `GameState::standard_v1` per exact incarnation.
 
+## Exile until this leaves, Auras and Equipment
+
+Seam Rip, Dusk Rose Reliquary, Sheltered by Ghosts and Hardlight
+Containment reuse Journey to Nowhere's linked exile: an entering trigger
+exiles its target until the source leaves, and a leave trigger returns it.
+Their targets use `TargetSpec::StandardV1`, a one-object battlefield filter
+owned by the Standard module (opponent's nonland permanent with mana value
+at most 2, opponent's nonland permanent, opponent's artifact or creature,
+artifact you control); its stable id 44 follows the Standard lands' 42
+and 43. Sheltered by Ghosts ("enchant creature you control") and Hardlight
+Containment ("enchant artifact you control") enter attached to their
+target; their enchant restriction, control included, is checked as a
+state-based action (704.5m). Sheltered by Ghosts' +1/+0 and lifelink use
+the static attachment profile Equipment uses, and both Auras grant ward
+to the enchanted permanent through the existing ward trigger. Dusk Rose
+Reliquary sacrifices an artifact or creature as an additional cost and has
+ward {2}. Basilisk Collar is Equipment with equip {2} granting deathtouch
+and lifelink.
+
 ## Known limits
 
 The stack and battlefield use the Room card's combined mana value and

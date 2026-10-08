@@ -6,6 +6,7 @@
 
 use super::{AbilityCostRecipe, AbilityEffectRecipe, ActivatedAbilityRecipe, Special};
 use AbilityCostRecipe::{Loyalty, ManaCost, Tap};
+use AbilityEffectRecipe::AttachSourceToTarget;
 use AbilityEffectRecipe::{DrawCards, Program};
 
 /// A planeswalker loyalty ability: sorcery-speed, from the battlefield.
@@ -78,8 +79,24 @@ const UNHOLY_ANNEX: [ActivatedAbilityRecipe; 2] = [
     unlock(&[ManaCost("{3}{B}{B}")], "crate::standard_cards_v1::unlock_right_door"),
 ];
 
+/// "Equip {N}": attach to target creature you control, as a sorcery.
+const fn equip(cost: &'static [AbilityCostRecipe]) -> ActivatedAbilityRecipe {
+    ActivatedAbilityRecipe {
+        cost,
+        effect: AttachSourceToTarget,
+        activation_zone: "Battlefield",
+        sorcery_speed_only: true,
+        target_spec: "ControlledCreature",
+        activation_target_filter: "TargetSpecOnly",
+        max_activations_per_turn: None,
+    }
+}
+
+const BASILISK_COLLAR: [ActivatedAbilityRecipe; 1] = [equip(&[ManaCost("{2}")])];
+
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
+        "Basilisk Collar" => &BASILISK_COLLAR,
         "Unholy Annex // Ritual Chamber" => &UNHOLY_ANNEX,
         "Teferi, Temporal Pilgrim" => &TEFERI,
         "Polukranos Reborn" => &POLUKRANOS,
@@ -129,6 +146,9 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         }
         "Polukranos Reborn" => "back:this_or_another_nontoken_hydra_you_control_dies:two_phyrexian_hydras",
         "Ojer Axonil, Deepest Might" => "dies:return_tapped_transformed",
+        "Seam Rip" | "Dusk Rose Reliquary" | "Sheltered by Ghosts" | "Hardlight Containment" => {
+            "etb:exile_target_until_source_leaves;ltb:return_exiled_by_source"
+        }
         "Unholy Annex // Ritual Chamber" => {
             "door0:controller_end_step:draw_then_drain_2_if_demon_else_lose_2;door1:unlock_this_door:create_demon_6_6_flying"
         }
@@ -169,6 +189,14 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::Creature",
             "crate::standard_cards_v1::blue_suns_twilight",
         ),
+        "Sheltered by Ghosts" => (
+            "TargetSpec::ControlledCreature",
+            "crate::standard_cards_v1::aura_enters",
+        ),
+        "Hardlight Containment" => (
+            "TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::ControlledArtifact)",
+            "crate::standard_cards_v1::aura_enters",
+        ),
         "Unholy Annex // Ritual Chamber" => (
             "TargetSpec::None",
             "crate::standard_cards_v1::room_enters_program",
@@ -186,6 +214,35 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
 pub(super) fn alt_cost_for(name: &str) -> &'static str {
     match name {
         "Unholy Annex // Ritual Chamber" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::B), Pip::Colored(ManaColor::B)], generic: 3, x_count: 0 })], condition: AltCostCondition::Always })",
+        _ => "None",
+    }
+}
+
+/// Printed ward. Sheltered by Ghosts and Hardlight Containment grant ward
+/// to the permanent they enchant (`standard_cards_v1::granted_wards`).
+pub(super) fn ward_cost_for(name: &str) -> &'static str {
+    match name {
+        "Dusk Rose Reliquary" => "Some(WardCostDef::Generic(2))",
+        _ => "None",
+    }
+}
+
+/// Static grants of an attached permanent: Equipment, and Sheltered by
+/// Ghosts' "+1/+0 and lifelink" (its ward is granted separately).
+pub(super) fn equipment_for(name: &str) -> &'static str {
+    match name {
+        "Basilisk Collar" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords(Keywords::DEATHTOUCH.0 | Keywords::LIFELINK.0), other_turn_keywords: Keywords(Keywords::DEATHTOUCH.0 | Keywords::LIFELINK.0), noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
+        "Sheltered by Ghosts" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::LIFELINK, other_turn_keywords: Keywords::LIFELINK, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
+        _ => "None",
+    }
+}
+
+/// Mandatory additional costs.
+pub(super) fn additional_cost_for(name: &str) -> &'static str {
+    match name {
+        "Dusk Rose Reliquary" => {
+            "Some(&[CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::ArtifactOrCreature }])"
+        }
         _ => "None",
     }
 }

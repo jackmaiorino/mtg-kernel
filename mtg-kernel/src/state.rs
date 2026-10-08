@@ -908,7 +908,8 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::Land
                 | TargetSpec::OpponentArtifactOrEnchantmentPermanent
                 | TargetSpec::ArtifactOrEnchantmentPermanent
-                | TargetSpec::AttackingOrBlockingCreature,
+                | TargetSpec::AttackingOrBlockingCreature
+                | TargetSpec::StandardV1(_),
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Battlefield,

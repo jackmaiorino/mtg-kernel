@@ -756,3 +756,207 @@ fn a_room_put_onto_the_battlefield_has_both_doors_locked() {
     assert_eq!(state.players[0].hand.len(), hand);
     assert_eq!(state.players[0].life, 20);
 }
+
+// ---- Exile until this leaves, Auras and Equipment (GW) ----------------------
+
+/// Answers decisions until the stack is empty and the active player has
+/// priority, taking targets and cost choices from `picks` in order.
+fn drive(state: &mut GameState, picks: &[Target]) {
+    let mut picks = picks.iter().copied();
+    loop {
+        match next(state) {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                let pick = picks.next().expect("a target to choose");
+                assert!(legal_targets.contains(&pick), "{pick:?} not in {legal_targets:?}");
+                act(state, Action::ChooseTarget(pick));
+            }
+            Decision::ChooseCostTargets { candidates, .. } => {
+                let Some(Target::Object(pick)) = picks.next() else {
+                    panic!("a cost object to choose")
+                };
+                assert!(candidates.contains(&pick));
+                act(state, Action::ChooseCostTarget(pick));
+            }
+            Decision::OrderTriggers { pending, .. } => {
+                act(state, Action::OrderTriggers((0..pending.len()).collect()))
+            }
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => return,
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+}
+
+fn cast(state: &mut GameState, name: &str, white: u8, picks: &[Target]) -> ObjectId {
+    let card = put(state, P0, name, Zone::Hand);
+    state.players[0].mana_pool[ManaColor::W.pool_index()] = white;
+    next(state);
+    act(state, Action::CastSpell(card));
+    drive(state, picks);
+    state.players[0].mana_pool = Default::default();
+    card
+}
+
+/// The legal targets offered for the first target of `name`'s ETB trigger
+/// once it is cast, without choosing one.
+fn etb_trigger_targets(state: &mut GameState, name: &str, white: u8, picks: &[Target]) -> Vec<Target> {
+    let card = put(state, P0, name, Zone::Hand);
+    state.players[0].mana_pool[ManaColor::W.pool_index()] = white;
+    next(state);
+    act(state, Action::CastSpell(card));
+    let mut picks = picks.iter().copied();
+    loop {
+        match next(state) {
+            Decision::ChooseTargets { spell, legal_targets, .. } if spell == card && state.objects.get(card).zone == Zone::Battlefield => {
+                return legal_targets
+            }
+            Decision::ChooseTargets { .. } => act(state, Action::ChooseTarget(picks.next().unwrap())),
+            Decision::ChooseCostTargets { .. } => {
+                let Some(Target::Object(pick)) = picks.next() else { panic!() };
+                act(state, Action::ChooseCostTarget(pick));
+            }
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn seam_rip_exiles_a_cheap_nonland_permanent_until_it_leaves() {
+    let mut state = game();
+    let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let terror = put(&mut state, P1, "Tolarian Terror", Zone::Battlefield);
+    let island = put(&mut state, P1, "Island", Zone::Battlefield);
+    let mine = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let legal = etb_trigger_targets(&mut state.clone(), "Seam Rip", 1, &[]);
+    assert!(legal.contains(&Target::Object(elves)));
+    for excluded in [terror, island, mine] {
+        assert!(!legal.contains(&Target::Object(excluded)), "{excluded:?}");
+    }
+
+    let seam_rip = cast(&mut state, "Seam Rip", 1, &[Target::Object(elves)]);
+    assert_eq!(state.objects.get(elves).zone, Zone::Exile);
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(seam_rip, Zone::Graveyard));
+    drive(&mut state, &[]);
+    assert_eq!(state.objects.get(elves).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(elves).controller, P1);
+}
+
+#[test]
+fn dusk_rose_reliquary_sacrifices_for_its_cost_and_exiles_an_artifact_or_creature() {
+    let mut state = game();
+    let fodder = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let terror = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let reliquary = cast(
+        &mut state,
+        "Dusk Rose Reliquary",
+        1,
+        // The only artifact or creature P0 controls pays the sacrifice
+        // without a choice.
+        &[Target::Object(terror)],
+    );
+    assert_eq!(state.objects.get(fodder).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(reliquary).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(terror).zone, Zone::Exile);
+    assert_eq!(
+        CARD_DEFS[state.objects.get(reliquary).card_def as usize].ward_cost,
+        Some(mtg_kernel::card_def::WardCostDef::Generic(2))
+    );
+}
+
+#[test]
+fn sheltered_by_ghosts_enchants_your_creature_and_exiles_until_it_leaves() {
+    let mut state = game();
+    let host = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let epicure = put(&mut state, P1, "Basilisk Collar", Zone::Battlefield);
+    let aura = cast(
+        &mut state,
+        "Sheltered by Ghosts",
+        2,
+        &[Target::Object(host), Target::Object(epicure)],
+    );
+    assert_eq!(state.objects.get(aura).v4.attached_to.map(|link| link.object), Some(host));
+    assert_eq!(state.objects.get(epicure).zone, Zone::Exile);
+    assert_eq!(engine::effective_power(&state, host), 2);
+    assert!(engine::has_effective_keyword(&state, host, Keywords::LIFELINK));
+
+    // Ward {2}: an opponent's spell targeting the creature is countered
+    // unless they pay {2}.
+    state.active_player = P1;
+    state.priority_player = P1;
+    let burst = put(&mut state, P1, "Burst Lightning", Zone::Hand);
+    state.players[1].mana_pool[ManaColor::R.pool_index()] = 1;
+    next(&mut state);
+    act(&mut state, Action::CastSpell(burst));
+    loop {
+        match next(&mut state) {
+            Decision::ChooseTargets { .. } => act(&mut state, Action::ChooseTarget(Target::Object(host))),
+            Decision::ChooseKicker { .. } => act(&mut state, Action::ChooseKicker(false)),
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => break,
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    assert_eq!(state.objects.get(host).damage, 0, "countered by ward");
+    assert_eq!(state.objects.get(host).zone, Zone::Battlefield);
+
+    // The creature leaves; the Aura goes to the graveyard and the Epicure
+    // returns.
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(host, Zone::Graveyard));
+    drive(&mut state, &[]);
+    assert_eq!(state.objects.get(aura).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(epicure).zone, Zone::Battlefield);
+}
+
+#[test]
+fn sheltered_by_ghosts_cannot_enchant_an_opponents_creature() {
+    let mut state = game();
+    let theirs = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let mine = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let aura = put(&mut state, P0, "Sheltered by Ghosts", Zone::Hand);
+    state.players[0].mana_pool[ManaColor::W.pool_index()] = 2;
+    next(&mut state);
+    act(&mut state, Action::CastSpell(aura));
+    match next(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert!(legal_targets.contains(&Target::Object(mine)));
+            assert!(!legal_targets.contains(&Target::Object(theirs)));
+        }
+        other => panic!("unexpected decision: {other:?}"),
+    }
+}
+
+#[test]
+fn hardlight_containment_enchants_your_artifact_and_exiles_a_creature() {
+    let mut state = game();
+    let collar = put(&mut state, P0, "Basilisk Collar", Zone::Battlefield);
+    // Not Tolarian Terror: its own ward would counter the trigger.
+    let terror = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let aura = cast(
+        &mut state,
+        "Hardlight Containment",
+        1,
+        &[Target::Object(collar), Target::Object(terror)],
+    );
+    assert_eq!(state.objects.get(aura).v4.attached_to.map(|link| link.object), Some(collar));
+    assert_eq!(state.objects.get(terror).zone, Zone::Exile);
+    // The artifact leaves; the Aura follows and the Terror returns.
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(collar, Zone::Graveyard));
+    drive(&mut state, &[]);
+    assert_eq!(state.objects.get(aura).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(terror).zone, Zone::Battlefield);
+}
+
+#[test]
+fn basilisk_collar_equips_for_two_and_grants_deathtouch_and_lifelink() {
+    let mut state = game();
+    let collar = put(&mut state, P0, "Basilisk Collar", Zone::Battlefield);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    state.players[0].mana_pool[ManaColor::W.pool_index()] = 2;
+    assert!(activatable(&mut state).contains(&(collar, 0)));
+    act(&mut state, Action::ActivateAbility(collar, 0));
+    drive(&mut state, &[Target::Object(elves)]);
+    assert_eq!(state.objects.get(collar).v4.attached_to.map(|link| link.object), Some(elves));
+    assert!(engine::has_effective_keyword(&state, elves, Keywords::DEATHTOUCH));
+    assert!(engine::has_effective_keyword(&state, elves, Keywords::LIFELINK));
+}

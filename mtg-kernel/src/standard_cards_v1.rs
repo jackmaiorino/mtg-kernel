@@ -38,6 +38,53 @@ struct RoomDoorsV1 {
     unlocked: u8,
 }
 
+/// One-object battlefield target filters owned by this module
+/// (`TargetSpec::StandardV1`). "Opponent" is relative to the targeting
+/// controller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum StandardTargetV1 {
+    /// A nonland permanent an opponent controls with mana value at most N.
+    OpponentNonlandPermanentManaValueAtMost(u8),
+    /// A nonland permanent an opponent controls.
+    OpponentNonlandPermanent,
+    /// An artifact or creature an opponent controls.
+    OpponentArtifactOrCreature,
+    /// An artifact the targeting controller controls.
+    ControlledArtifact,
+}
+
+/// Whether `object` satisfies `target` for `controller`.
+pub(crate) fn target_matches(
+    target: StandardTargetV1,
+    controller: PlayerId,
+    object: ObjectId,
+    state: &GameState,
+) -> bool {
+    let Some(live) = state.objects.try_get(object) else {
+        return false;
+    };
+    if live.zone != Zone::Battlefield {
+        return false;
+    }
+    let has = |card_type| crate::engine::object_has_type(state, object, card_type);
+    match target {
+        StandardTargetV1::OpponentNonlandPermanentManaValueAtMost(maximum) => {
+            live.controller != controller
+                && !has(CardType::Land)
+                && mana_value(state, object) <= u16::from(maximum)
+        }
+        StandardTargetV1::OpponentNonlandPermanent => {
+            live.controller != controller && !has(CardType::Land)
+        }
+        StandardTargetV1::OpponentArtifactOrCreature => {
+            live.controller != controller && (has(CardType::Artifact) || has(CardType::Creature))
+        }
+        StandardTargetV1::ControlledArtifact => {
+            live.controller == controller && has(CardType::Artifact)
+        }
+    }
+}
+
 /// Effect leaves owned by this module. Appended to `EffectOp` as one variant
 /// so earlier serialized programs keep their shapes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -88,6 +135,10 @@ pub enum StandardOpV1 {
     /// Unlock `door` of the ability's source Room, if it is still the same
     /// battlefield incarnation and that door is locked.
     UnlockSourceDoor { door: u8 },
+    /// A resolving Aura spell enters the battlefield attached to its target
+    /// (303.4f), for this module's Auras whose enchant restriction is not
+    /// "enchant creature".
+    AuraEnters,
 }
 
 impl StandardOpV1 {
@@ -201,6 +252,7 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
         StandardOpV1::TransformSource => transform_resolving_source(ctx, state),
         StandardOpV1::RoomEnters => room_enters(ctx, state),
+        StandardOpV1::AuraEnters => aura_enters_battlefield(ctx, state),
         StandardOpV1::UnlockSourceDoor { door } => {
             if source_incarnation_live(ctx, state) {
                 unlock_door(state, ctx.source, *door);
@@ -753,6 +805,9 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         POLUKRANOS => &POLUKRANOS_TRIGGERS,
         OJER => &OJER_TRIGGERS,
         ROOM => &ROOM_TRIGGERS,
+        SEAM_RIP | DUSK_ROSE_RELIQUARY | SHELTERED_BY_GHOSTS | HARDLIGHT_CONTAINMENT => {
+            &EXILE_UNTIL_LEAVES_TRIGGERS
+        }
         _ => &[],
     }
 }
@@ -972,3 +1027,152 @@ const ROOM_TRIGGERS: [TriggeredAbilityDef; 2] = [
         ritual_chamber_demon,
     ),
 ];
+
+// ---- Exile until this leaves, and Auras -------------------------------------
+
+const SEAM_RIP: &str = "Seam Rip";
+const DUSK_ROSE_RELIQUARY: &str = "Dusk Rose Reliquary";
+const SHELTERED_BY_GHOSTS: &str = "Sheltered by Ghosts";
+const HARDLIGHT_CONTAINMENT: &str = "Hardlight Containment";
+
+fn exile_target_until_source_leaves() -> EffectOp {
+    EffectOp::ExileTargetLinkedToSource {
+        object: crate::effect::ObjectRef::Target(0),
+    }
+}
+
+fn return_exiled_by_source() -> EffectOp {
+    EffectOp::ReturnObjectsExiledBySource
+}
+
+/// "When this enters, exile target ... until this leaves the battlefield."
+const EXILE_UNTIL_LEAVES_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    trigger(TriggerCondition::Etb, exile_target_until_source_leaves),
+    TriggeredAbilityDef {
+        condition: TriggerCondition::LeftBattlefield,
+        // Leave triggers use the departed battlefield incarnation.
+        home_zone: Zone::Graveyard,
+        intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
+        effect: return_exiled_by_source,
+    },
+];
+
+/// The target of a triggered ability of this module's cards, by printed
+/// name and the trigger's effect; `None` when the module doesn't own it.
+pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<crate::card_def::TargetSpec> {
+    use crate::card_def::TargetSpec;
+    if *effect != exile_target_until_source_leaves() {
+        return None;
+    }
+    Some(match name {
+        SEAM_RIP => TargetSpec::StandardV1(
+            StandardTargetV1::OpponentNonlandPermanentManaValueAtMost(2),
+        ),
+        DUSK_ROSE_RELIQUARY => TargetSpec::StandardV1(StandardTargetV1::OpponentArtifactOrCreature),
+        SHELTERED_BY_GHOSTS => TargetSpec::StandardV1(StandardTargetV1::OpponentNonlandPermanent),
+        HARDLIGHT_CONTAINMENT => TargetSpec::OpponentControlledCreature,
+        _ => return None,
+    })
+}
+
+pub fn aura_enters() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::AuraEnters)
+}
+
+/// Whether `def` is one of this module's Auras.
+pub(crate) fn is_aura(def: &CardDef) -> bool {
+    matches!(def.name, SHELTERED_BY_GHOSTS | HARDLIGHT_CONTAINMENT)
+}
+
+/// Whether this module's Aura `def`, controlled by `controller`, may
+/// enchant `host`: Sheltered by Ghosts "enchant creature you control",
+/// Hardlight Containment "enchant artifact you control". `None` for every
+/// other definition.
+pub(crate) fn aura_host_legal(
+    def: &CardDef,
+    controller: PlayerId,
+    host: ObjectId,
+    state: &GameState,
+) -> Option<bool> {
+    let live = state.objects.get(host);
+    let type_ok = |card_type| crate::engine::object_has_type(state, host, card_type);
+    let card_type = match def.name {
+        SHELTERED_BY_GHOSTS => CardType::Creature,
+        HARDLIGHT_CONTAINMENT => CardType::Artifact,
+        _ => return None,
+    };
+    Some(live.zone == Zone::Battlefield && live.controller == controller && type_ok(card_type))
+}
+
+fn aura_enters_battlefield(ctx: &ExecCtx, state: &mut GameState) {
+    let Some(Target::Object(host)) = ctx.targets.first().copied() else {
+        return;
+    };
+    let def = &CARD_DEFS[state.objects.get(ctx.source).card_def as usize];
+    let legal = state.objects.get(ctx.source).zone == Zone::Stack
+        && ctx.target_incarnation_matches(0, state)
+        && aura_host_legal(def, ctx.controller, host, state) == Some(true);
+    if !legal {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
+    event::propose_and_commit(state, ProposedEvent::zone_change(ctx.source, Zone::Battlefield));
+    let aura = state.objects.get(ctx.source);
+    if aura.zone != Zone::Battlefield {
+        return;
+    }
+    let aura_generation = aura.zone_change_count;
+    let host_generation = state.objects.get(host).zone_change_count;
+    if state
+        .attach_object_exact(ctx.source, aura_generation, host, host_generation)
+        .is_err()
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+    }
+}
+
+/// Ward amounts `host` gains from this module's Auras attached to it
+/// ("Enchanted permanent has ward {N}").
+pub(crate) fn granted_wards(state: &GameState, host: ObjectId) -> Vec<u8> {
+    let Some(host_live) = state.objects.try_get(host) else {
+        return Vec::new();
+    };
+    let link = crate::state::ObjectLinkV4 {
+        object: host,
+        zone_change_count: host_live.zone_change_count,
+    };
+    host_live
+        .attachments
+        .iter()
+        .filter_map(|&attached| {
+            let aura = state.objects.try_get(attached)?;
+            if aura.zone != Zone::Battlefield || aura.v4.attached_to != Some(link) {
+                return None;
+            }
+            granted_ward_of(CARD_DEFS[aura.card_def as usize].name)
+        })
+        .collect()
+}
+
+fn granted_ward_of(name: &str) -> Option<u8> {
+    match name {
+        SHELTERED_BY_GHOSTS => Some(2),
+        HARDLIGHT_CONTAINMENT => Some(1),
+        _ => None,
+    }
+}
+
+/// Whether some definition in this catalog grants ward `generic`, so a
+/// ward trigger restored after its Aura left can still be recognized.
+pub(crate) fn ward_grant_exists(generic: u8) -> bool {
+    CARD_DEFS
+        .iter()
+        .any(|def| granted_ward_of(def.name) == Some(generic))
+}

@@ -649,6 +649,9 @@ pub enum TargetSpec {
     ControlledCreatureThenOpponentCreatureOrPlaneswalker,
     AttackingOrBlockingCreature,
     NonlandPermanentCardInOwnGraveyardManaValueAtMost(u16),
+    /// A single-object target filter owned by the Standard catalog's card
+    /// module. Stable id 44 follows the Standard lands' 42 and 43.
+    StandardV1(crate::standard_cards_v1::StandardTargetV1),
 }
 
 impl TargetSpec {
@@ -699,6 +702,7 @@ impl TargetSpec {
             TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker => 39,
             TargetSpec::AttackingOrBlockingCreature => 40,
             TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_) => 41,
+            TargetSpec::StandardV1(_) => 44,
         }
     }
 }
@@ -2098,9 +2102,12 @@ mod tests {
     fn ward_costs_fail_closed_outside_the_static_generic_creature_shape() {
         for def in CARD_DEFS.iter().filter(|def| def.ward_cost.is_some()) {
             assert!(def.is_castable(), "{} is not executable", def.name);
+            // Dusk Rose Reliquary (Standard catalog) is the one warded
+            // artifact; ward on a noncreature permanent uses the same
+            // targeted-permanent trigger.
             assert!(
-                def.has_type(CardType::Creature),
-                "{} is not a creature",
+                def.has_type(CardType::Creature) || def.has_type(CardType::Artifact),
+                "{} is not a creature or artifact",
                 def.name
             );
             match def.ward_cost.unwrap() {

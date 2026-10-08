@@ -1913,6 +1913,8 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
             TargetSpec::TargetOpponent
         } else if card.name == "Journey to Nowhere" && *effect == journey_to_nowhere_etb_effect() {
             TargetSpec::CreatureOtherThanSource
+        } else if let Some(spec) = crate::standard_cards_v1::trigger_target_spec(card.name, effect) {
+            spec
         } else if card.name == "Avenging Hunter" {
             match effect {
                 EffectOp::ResolveInitiativeTrigger { binding } => match binding.kind {
@@ -2125,6 +2127,22 @@ fn sba_fixed_point_with_protected_triggers(
                     return None;
                 }
                 let definition = &crate::card_def::CARD_DEFS[aura.card_def as usize];
+                if crate::standard_cards_v1::is_aura(definition) {
+                    // This module's Auras: the enchant restriction includes
+                    // control ("enchant creature you control").
+                    let valid = aura.v4.attached_to.is_some_and(|link| {
+                        state.objects.try_get(link.object).is_some_and(|host| {
+                            host.zone_change_count == link.zone_change_count
+                                && host.attachments.contains(&id)
+                        }) && crate::standard_cards_v1::aura_host_legal(
+                            definition,
+                            aura.controller,
+                            link.object,
+                            state,
+                        ) == Some(true)
+                    });
+                    return (!valid).then_some(id);
+                }
                 if !definition
                     .attachment
                     .is_some_and(crate::card_def::AttachmentDef::is_creature_aura)
@@ -2337,7 +2355,10 @@ fn triggers_from_events(
         // Most objects (lands, vanilla creatures, every library card of a
         // definition with no triggered ability) can never match; skip them
         // without touching their large `CardDef` entry.
-        if !may_trigger[obj.card_def as usize] {
+        if !may_trigger[obj.card_def as usize]
+            && (obj.attachments.is_empty()
+                || crate::standard_cards_v1::granted_wards(state, id).is_empty())
+        {
             continue;
         }
         let card = &crate::card_def::CARD_DEFS[obj.card_def as usize];
@@ -2584,7 +2605,11 @@ fn triggers_from_events(
         if obj.zone == Zone::Battlefield
             && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
         {
-            if let Some(crate::card_def::WardCostDef::Generic(generic)) = card.ward_cost {
+            let printed_ward = card.ward_cost.map(|crate::card_def::WardCostDef::Generic(generic)| generic);
+            for generic in printed_ward
+                .into_iter()
+                .chain(crate::standard_cards_v1::granted_wards(state, id))
+            {
                 for event in events {
                     let CommittedEvent::Targeted {
                         target,

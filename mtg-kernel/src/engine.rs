@@ -1483,7 +1483,8 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::CreatureOtherThanSource
         | TargetSpec::NonblackCreature
         | TargetSpec::ArtifactOrEnchantmentPermanent
-        | TargetSpec::AttackingOrBlockingCreature => 1,
+        | TargetSpec::AttackingOrBlockingCreature
+        | TargetSpec::StandardV1(_) => 1,
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
@@ -2756,6 +2757,10 @@ fn legal_targets_for_controller_from_source(
                 .map(Target::Object)
                 .collect()
         }
+        TargetSpec::StandardV1(filter) => battlefield_objects(state)
+            .filter(|&id| crate::standard_cards_v1::target_matches(filter, controller, id, state))
+            .map(Target::Object)
+            .collect(),
         TargetSpec::AttackingOrBlockingCreature => battlefield_objects(state)
             .filter(|&id| {
                 object_has_type(state, id, CardType::Creature)
@@ -9844,7 +9849,8 @@ fn triggered_stack_item_expected_target_spec(
                             && (source.zone_change_count != zone_change_count
                                 || source.zone == Zone::Battlefield)
                     );
-                    source_def.ward_cost == Some(crate::card_def::WardCostDef::Generic(*generic))
+                    (source_def.ward_cost == Some(crate::card_def::WardCostDef::Generic(*generic))
+                        || crate::standard_cards_v1::ward_grant_exists(*generic))
                         && *targeting_stack_item != StackItemId::default()
                         && source_contract_is_consistent
                 }

@@ -3800,7 +3800,7 @@ fn additional_cost_for(name: &str) -> &'static str {
         "Raze" => {
             "Some(&[CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::Land }])"
         }
-        _ => "None",
+        _ => build_standard_v1::additional_cost_for(name),
     }
 }
 
@@ -5200,7 +5200,7 @@ fn ward_cost_for(name: &str) -> &'static str {
     match name {
         "Tolarian Terror" | "Cackling Prowler" => "Some(WardCostDef::Generic(2))",
         "Koma, World-Eater" => "Some(WardCostDef::Generic(4))",
-        _ => "None",
+        _ => build_standard_v1::ward_cost_for(name),
     }
 }
 
@@ -5230,7 +5230,7 @@ fn equipment_for(name: &str) -> &'static str {
         "Quick-Draw Katana" => "Some(EquipmentDef { power_delta: 2, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::FIRST_STRIKE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: true })",
         "Swiftfoot Boots" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords(Keywords::HEXPROOF.0 | Keywords::HASTE.0), other_turn_keywords: Keywords(Keywords::HEXPROOF.0 | Keywords::HASTE.0), noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
         "Viridian Longbow" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: Some(GrantedActivatedAbilityDef { cost: &[CostComponent::Tap], target_spec: TargetSpec::AnyTarget, effect: longbow_ping }) })",
-        _ => "None",
+        _ => build_standard_v1::equipment_for(name),
     }
 }
 
