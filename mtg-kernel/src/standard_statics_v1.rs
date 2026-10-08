@@ -69,3 +69,12 @@ pub(crate) fn self_counter_boost(state: &GameState, id: ObjectId) -> (i32, i32) 
         _ => (0, 0),
     }
 }
+
+/// Definitions whose leave-the-battlefield abilities read the counters the
+/// permanent had (`GameState::counter_lki_v1`).
+pub(crate) fn reads_counter_lki(card_def: u16) -> bool {
+    matches!(
+        CARD_DEFS.get(card_def as usize).map(|def| def.name),
+        Some("Quirion Beastcaller" | "Unstoppable Slasher")
+    )
+}

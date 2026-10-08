@@ -75,6 +75,20 @@ const CARDS: &[(&str, &[Subtype], (i16, i16), Keywords, usize)] = &[
         Keywords::NONE,
         1,
     ),
+    (
+        "Quirion Beastcaller",
+        &[Subtype::Dryad, Subtype::Warrior],
+        (2, 2),
+        Keywords::NONE,
+        2,
+    ),
+    (
+        "Unstoppable Slasher",
+        &[Subtype::Zombie, Subtype::Assassin],
+        (2, 3),
+        Keywords::DEATHTOUCH,
+        2,
+    ),
 ];
 
 fn ready_with_library(step: Step, library: &[&str]) -> GameState {
@@ -679,4 +693,179 @@ fn evolving_adaptive_enters_with_oil_and_grows_from_bigger_creatures() {
     settled(&mut state);
     assert_eq!(state.objects.get(adaptive).counters.oil, 2);
     assert_eq!(engine::effective_power(&state, adaptive), 2);
+}
+
+#[test]
+fn quirion_beastcaller_grows_from_creature_spells_only() {
+    let mut state = ready(Step::Main1);
+    let beastcaller = put(
+        &mut state,
+        PlayerId::P0,
+        "Quirion Beastcaller",
+        Zone::Battlefield,
+    );
+    cast_creature(&mut state, "Cenote Scout");
+    settled(&mut state);
+    assert_eq!(state.objects.get(beastcaller).counters.plus1_plus1, 1);
+    // A noncreature spell does nothing.
+    let bolt = put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
+    state.players[0].mana_pool = pool(&[(ManaColor::R, 1)], 0);
+    cast(&mut state, bolt, &[Target::Player(PlayerId::P1)]);
+    settled(&mut state);
+    assert_eq!(state.players[1].life, 17);
+    assert_eq!(state.objects.get(beastcaller).counters.plus1_plus1, 1);
+}
+
+#[test]
+fn quirion_beastcaller_distributes_its_counters_when_it_dies() {
+    let mut state = ready(Step::Main1);
+    let beastcaller = put(
+        &mut state,
+        PlayerId::P0,
+        "Quirion Beastcaller",
+        Zone::Battlefield,
+    );
+    let first = put(
+        &mut state,
+        PlayerId::P0,
+        "Gatekeeper of Malakir",
+        Zone::Battlefield,
+    );
+    let second = put(&mut state, PlayerId::P0, "Cenote Scout", Zone::Battlefield);
+    let theirs = put(&mut state, PlayerId::P1, "Cenote Scout", Zone::Battlefield);
+    state.objects.get_mut(beastcaller).counters.plus1_plus1 = 3;
+    move_to(&mut state, beastcaller, Zone::Graveyard);
+    // Three counters, each placed on one of the two creatures P0 controls.
+    for option in [1, 1, 0] {
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectOption {
+                player,
+                option_count,
+                ..
+            }) => {
+                assert_eq!((player, option_count), (PlayerId::P0, 2));
+                engine::step(&mut state, Action::ChooseEffectOption(option)).unwrap();
+            }
+            other => panic!("expected a counter placement, got {other:?}"),
+        }
+    }
+    settled(&mut state);
+    assert_eq!(state.objects.get(first).counters.plus1_plus1, 1);
+    assert_eq!(state.objects.get(second).counters.plus1_plus1, 2);
+    assert_eq!(state.objects.get(theirs).counters.plus1_plus1, 0);
+}
+
+#[test]
+fn quirion_beastcaller_without_counters_distributes_nothing() {
+    let mut state = ready(Step::Main1);
+    let beastcaller = put(
+        &mut state,
+        PlayerId::P0,
+        "Quirion Beastcaller",
+        Zone::Battlefield,
+    );
+    let other = put(&mut state, PlayerId::P0, "Cenote Scout", Zone::Battlefield);
+    move_to(&mut state, beastcaller, Zone::Graveyard);
+    settled(&mut state);
+    assert_eq!(state.objects.get(other).counters.plus1_plus1, 0);
+}
+
+#[test]
+fn quirion_beastcaller_with_one_other_creature_needs_no_choice() {
+    let mut state = ready(Step::Main1);
+    let beastcaller = put(
+        &mut state,
+        PlayerId::P0,
+        "Quirion Beastcaller",
+        Zone::Battlefield,
+    );
+    let other = put(&mut state, PlayerId::P0, "Cenote Scout", Zone::Battlefield);
+    state.objects.get_mut(beastcaller).counters.plus1_plus1 = 2;
+    move_to(&mut state, beastcaller, Zone::Graveyard);
+    settled(&mut state);
+    assert_eq!(state.objects.get(other).counters.plus1_plus1, 2);
+}
+
+#[test]
+fn unstoppable_slasher_halves_the_damaged_players_life() {
+    let mut state = ready(Step::DeclareAttackers);
+    let slasher = put(
+        &mut state,
+        PlayerId::P0,
+        "Unstoppable Slasher",
+        Zone::Battlefield,
+    );
+    state.players[1].life = 21;
+    assert!(matches!(
+        next(&mut state),
+        Decision::DeclareAttackers { .. }
+    ));
+    engine::step(&mut state, Action::DeclareAttackers(vec![slasher])).unwrap();
+    pass_until_blocks(&mut state);
+    engine::step(&mut state, Action::DeclareBlockers(Vec::new())).unwrap();
+    while state.step != Step::Main2 {
+        match next(&mut state) {
+            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+            Decision::OrderTriggers { pending, .. } => engine::step(
+                &mut state,
+                Action::OrderTriggers((0..pending.len()).collect()),
+            )
+            .unwrap(),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    // 21 - 2 combat damage = 19, then half of 19 rounded up is 10.
+    assert_eq!(state.players[1].life, 9);
+}
+
+#[test]
+fn unstoppable_slasher_returns_once_then_stays_dead() {
+    let mut state = ready(Step::Main1);
+    let slasher = put(
+        &mut state,
+        PlayerId::P0,
+        "Unstoppable Slasher",
+        Zone::Battlefield,
+    );
+    move_to(&mut state, slasher, Zone::Graveyard);
+    settled(&mut state);
+    let returned = state.objects.get(slasher);
+    assert_eq!(returned.zone, Zone::Battlefield);
+    assert_eq!(returned.controller, PlayerId::P0);
+    assert!(returned.tapped);
+    assert_eq!(returned.counters.stun, 2);
+
+    // It died with stun counters on it, so it stays in the graveyard.
+    move_to(&mut state, slasher, Zone::Graveyard);
+    settled(&mut state);
+    assert_eq!(state.objects.get(slasher).zone, Zone::Graveyard);
+}
+
+#[test]
+fn unstoppable_slasher_with_a_counter_or_exiled_first_does_not_return() {
+    let mut state = ready(Step::Main1);
+    let slasher = put(
+        &mut state,
+        PlayerId::P0,
+        "Unstoppable Slasher",
+        Zone::Battlefield,
+    );
+    state.objects.get_mut(slasher).counters.plus1_plus1 = 1;
+    move_to(&mut state, slasher, Zone::Graveyard);
+    settled(&mut state);
+    assert_eq!(state.objects.get(slasher).zone, Zone::Graveyard);
+
+    // A counterless Slasher whose card leaves the graveyard before its
+    // trigger resolves stays where it went.
+    let other = put(
+        &mut state,
+        PlayerId::P0,
+        "Unstoppable Slasher",
+        Zone::Battlefield,
+    );
+    move_to(&mut state, other, Zone::Graveyard);
+    assert_eq!(state.engine.pending_triggers.len(), 1);
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(other, Zone::Exile));
+    settled(&mut state);
+    assert_eq!(state.objects.get(other).zone, Zone::Exile);
 }

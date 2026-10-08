@@ -3530,6 +3530,7 @@ fn keywords_for(card: &CardJson) -> String {
             keywords.push("Keywords::FLYING");
             keywords.push("Keywords::LIFELINK");
         }
+        "Unstoppable Slasher" => keywords.push("Keywords::DEATHTOUCH"),
         _ => {}
     }
     if card.name == "Treetop Snarespinner" {
@@ -5324,6 +5325,9 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         }
         "Evolving Adaptive" => {
             "another_controlled_creature_enters_if_greater_power_or_toughness:oil_counter_on_source:1"
+        }
+        "Unstoppable Slasher" => {
+            "combat_damage_player:that_player_loses_half_life_rounded_up;dies_if_no_counters:return_source_tapped_with_stun:2"
         }
         _ => "none",
     }

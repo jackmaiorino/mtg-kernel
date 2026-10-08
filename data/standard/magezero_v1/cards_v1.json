@@ -355,6 +355,74 @@
         "creature_enters_trigger"
       ],
       "java_file": "Mage.Sets/src/mage/cards/e/EvolvingAdaptive.java"
+    },
+    {
+      "name": "Quirion Beastcaller",
+      "engine_capability": "full",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dryad",
+        "Warrior"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "cast_trigger",
+        "plus_one_counters",
+        "dies_trigger",
+        "distribute_counters"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/q/QuirionBeastcaller.java"
+    },
+    {
+      "name": "Unstoppable Slasher",
+      "engine_capability": "full",
+      "mana_cost": "{2}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Zombie",
+        "Assassin"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "deathtouch",
+        "combat_damage_trigger",
+        "half_life_loss",
+        "dies_trigger",
+        "return_from_graveyard",
+        "stun_counters"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/u/UnstoppableSlasher.java"
     }
   ]
 }

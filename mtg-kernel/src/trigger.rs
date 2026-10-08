@@ -138,6 +138,11 @@ pub enum TriggerCondition {
     /// Each successful draw by the source controller's opponent (Razorkin
     /// Needlehead: "whenever an opponent draws a card").
     OpponentDraws,
+    /// The source dies, and the battlefield incarnation that died had no
+    /// counters of any kind (Unstoppable Slasher's intervening if). Reads
+    /// `GameState::counter_lki_for`, which only `standard-magezero-fixtures`
+    /// builds record.
+    DiesWithoutCounters,
     /// The creature this Equipment is attached to deals combat damage to a
     /// player (Goldvein Pick). The committed marker's source incarnation
     /// must be the Equipment's exact current host.
@@ -1833,6 +1838,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Sharp-Eyed Rookie" => &standard_family_g_v1::SHARP_EYED_ROOKIE_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Evolving Adaptive" => &standard_family_g_v1::EVOLVING_ADAPTIVE_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Unstoppable Slasher" => &standard_family_g_v1::UNSTOPPABLE_SLASHER_TRIGGERS,
         _ => &[],
     }
 }
@@ -1961,6 +1968,12 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
         && [false, true].into_iter().any(|entered| {
             moon_circuit_hacker_combat_effect_for_entered_this_turn(entered) == *effect
         })
+    {
+        return true;
+    }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if card.name == "Quirion Beastcaller"
+        && standard_family_g_v1::is_quirion_beastcaller_dies_effect(effect)
     {
         return true;
     }
@@ -2497,7 +2510,9 @@ fn triggers_from_events(
         for (ability_index, def) in triggers_for(obj.card_def).iter().enumerate() {
             let uses_leave_lki = matches!(
                 def.condition,
-                TriggerCondition::LeftBattlefieldToGraveyard | TriggerCondition::LeftBattlefield
+                TriggerCondition::LeftBattlefieldToGraveyard
+                    | TriggerCondition::LeftBattlefield
+                    | TriggerCondition::DiesWithoutCounters
             );
             if !uses_leave_lki
                 && (obj.zone != def.home_zone
@@ -2563,6 +2578,19 @@ fn triggers_from_events(
                             obj.v4.entered_battlefield_turn == Some(state.turn),
                         )
                     } else {
+                        #[cfg(feature = "standard-magezero-fixtures")]
+                        if card.name == "Quirion Beastcaller"
+                            && matches!(def.condition, TriggerCondition::LeftBattlefieldToGraveyard)
+                        {
+                            standard_family_g_v1::quirion_beastcaller_dies_effect(
+                                state,
+                                id,
+                                event_controller,
+                            )
+                        } else {
+                            materialize_trigger_event_effect(def, id, state, ev)
+                        }
+                        #[cfg(not(feature = "standard-magezero-fixtures"))]
                         materialize_trigger_event_effect(def, id, state, ev)
                     };
                     let required_optional_cost =
@@ -3189,6 +3217,23 @@ fn trigger_matches(
                 ..
             },
         ) => *object == source,
+        (
+            TriggerCondition::DiesWithoutCounters,
+            CommittedEvent::ZoneChange {
+                object,
+                from: Zone::Battlefield,
+                to: Zone::Graveyard,
+                ..
+            },
+        ) => {
+            *object == source
+                && state
+                    .objects
+                    .get(source)
+                    .zone_change_count
+                    .checked_sub(1)
+                    .is_some_and(|departed| state.counter_lki_for(source, departed).is_none())
+        }
         (
             TriggerCondition::SacrificeAnotherWithSubtype(subtype),
             CommittedEvent::Sacrificed {

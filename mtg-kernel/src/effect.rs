@@ -1113,6 +1113,18 @@ pub enum EffectOp {
     PutOilCounterOnBoundObject {
         object: EffectObjectBinding,
     },
+    /// The player loses half their life, rounded up (Unstoppable Slasher).
+    /// A player at 0 or less life loses nothing.
+    LoseHalfLifeRoundedUp {
+        player: PlayerRef,
+    },
+    /// Return this dies trigger's source card from its owner's graveyard to
+    /// the battlefield tapped under its owner's control with `stun` stun
+    /// counters (Unstoppable Slasher). Only the graveyard incarnation the
+    /// death created qualifies; if the card has moved on, nothing happens.
+    ReturnSourceFromGraveyardTappedWithStunCounters {
+        stun: i16,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -11369,6 +11381,33 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                         > crate::engine::effective_toughness(state, source.object))
             {
                 execute(then, ctx, state);
+            }
+        }
+        EffectOp::LoseHalfLifeRoundedUp { player } => {
+            let player = ctx.resolve_player(*player, state);
+            let life = state.players[player.index()].life;
+            if life > 0 {
+                let amount = life - life / 2;
+                event::propose_and_commit(state, event::ProposedEvent::life_loss(player, amount));
+            }
+        }
+        EffectOp::ReturnSourceFromGraveyardTappedWithStunCounters { stun } => {
+            let Some(contract) = ctx.ability_source_contract else {
+                return;
+            };
+            let live = state.objects.get(contract.source);
+            if live.zone != Zone::Graveyard
+                || Some(live.zone_change_count) != contract.zone_change_count.checked_add(1)
+            {
+                return;
+            }
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change_to_battlefield_tapped(contract.source),
+            );
+            let returned = state.objects.get_mut(contract.source);
+            if returned.zone == Zone::Battlefield {
+                returned.counters.stun = returned.counters.stun.saturating_add(*stun);
             }
         }
         EffectOp::PutOilCounterOnBoundObject { object } => {

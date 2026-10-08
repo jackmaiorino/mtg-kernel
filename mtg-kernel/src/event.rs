@@ -514,6 +514,37 @@ pub enum CommittedEvent {
     },
 }
 
+/// Remembers the counters of a departing permanent whose own leave ability
+/// reads them. Entries for incarnations that have since moved again are
+/// dropped, so the list only holds objects still where they went.
+#[cfg(feature = "standard-magezero-fixtures")]
+fn record_counter_lki(state: &mut GameState, object: ObjectId) {
+    let live = state.objects.get(object);
+    if !crate::standard_statics_v1::reads_counter_lki(live.card_def) {
+        return;
+    }
+    let mut entries = state.counter_lki_v1.take().unwrap_or_default();
+    entries.retain(|entry| {
+        state
+            .objects
+            .try_get(entry.source.object)
+            .is_some_and(|candidate| {
+                candidate.zone_change_count == entry.source.zone_change_count + 1
+                    && entry.source.object != object
+            })
+    });
+    if live.counters.any() {
+        entries.push(crate::state::CounterLkiV1 {
+            source: crate::state::ObjectLinkV4 {
+                object,
+                zone_change_count: live.zone_change_count,
+            },
+            counters: live.counters,
+        });
+    }
+    state.counter_lki_v1 = (!entries.is_empty()).then_some(entries);
+}
+
 fn initialize_entry_counters(state: &mut GameState, object: ObjectId, kicked: bool) {
     let live = state.objects.get(object);
     let definition = &crate::card_def::CARD_DEFS[live.card_def as usize];
@@ -873,6 +904,10 @@ fn commit_with_ability_lki(
         ProposedEvent::ZoneChange(z) => {
             let from = state.objects.get(z.object).zone;
             let controller_before = state.objects.get(z.object).controller;
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if from == Zone::Battlefield {
+                record_counter_lki(state, z.object);
+            }
             if from == Zone::Battlefield
                 && abilities_removed_before.unwrap_or_else(|| {
                     !crate::continuous_characteristics_v1::printed_abilities_active(state, z.object)

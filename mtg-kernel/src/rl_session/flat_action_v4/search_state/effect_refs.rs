@@ -130,6 +130,8 @@ impl Scan<'_> {
             | SearchLibraryToBattlefieldTapped { .. }
             | RevealTargetHandChooseNoncreatureNonlandDiscard { .. }
             | ShuffleTriggerSourceIntoOwnersLibrary
+            | LoseHalfLifeRoundedUp { .. }
+            | ReturnSourceFromGraveyardTappedWithStunCounters { .. }
             | MaterializeStormCopies
             | CreateStormCopies { .. }
             | DamageCannotBePreventedThisTurn

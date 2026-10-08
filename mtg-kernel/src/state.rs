@@ -1405,6 +1405,30 @@ pub struct GameState {
     /// Opt-in pregame state. Absent in every historical reset mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub london_mulligans_v1: Option<crate::london_mulligan_v1::LondonMulligansV1>,
+    /// Last-known counters of permanents whose leave-the-battlefield
+    /// abilities read them (Quirion Beastcaller, Unstoppable Slasher). Only
+    /// `standard-magezero-fixtures` builds record entries, so it stays absent
+    /// everywhere else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counter_lki_v1: Option<Vec<CounterLkiV1>>,
+}
+
+/// The counters one exact battlefield incarnation had as it left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CounterLkiV1 {
+    pub source: ObjectLinkV4,
+    pub counters: Counters,
+}
+
+impl GameState {
+    /// Counters `object`'s battlefield incarnation `zone_change_count` had
+    /// when it left, or `None` if it had none (or was never recorded).
+    pub fn counter_lki_for(&self, object: ObjectId, zone_change_count: u32) -> Option<Counters> {
+        self.counter_lki_v1.as_ref()?.iter().find_map(|entry| {
+            (entry.source.object == object && entry.source.zone_change_count == zone_change_count)
+                .then_some(entry.counters)
+        })
+    }
 }
 
 /// Reproduces exactly the field-hash sequence `#[derive(Hash)]` produced
@@ -1456,6 +1480,10 @@ impl Hash for GameState {
         if let Some(pregame) = &self.london_mulligans_v1 {
             "london-mulligans-v1".hash(state);
             pregame.hash(state);
+        }
+        if let Some(lki) = &self.counter_lki_v1 {
+            "counter-lki-v1".hash(state);
+            lki.hash(state);
         }
     }
 }
@@ -1601,6 +1629,7 @@ impl GameState {
             trigger_uses_v1: None,
             creature_death_turn_v1: None,
             london_mulligans_v1: None,
+            counter_lki_v1: None,
         }
     }
 

@@ -3,8 +3,12 @@
 //! the `triggers_for` and target-spec tables.
 
 use super::{etb_trigger, TriggerCondition, TriggeredAbilityDef};
-use crate::effect::{CreatureSacrificeFilter, EffectOp, ObjectRef, PlayerRef, TargetRef};
-use crate::state::Zone;
+use crate::card_def::CardType;
+use crate::effect::{
+    CreatureSacrificeFilter, EffectObjectBinding, EffectOp, ObjectRef, PlayerRef, TargetRef,
+};
+use crate::ids::{ObjectId, PlayerId};
+use crate::state::{GameState, Zone};
 
 fn create_named_token(name: &str) -> EffectOp {
     EffectOp::CreateToken {
@@ -110,12 +114,122 @@ fn adaptive_oil_counter_effect() -> EffectOp {
     }
 }
 
+/// The distribution with nothing to distribute. It is also the definition's
+/// stand-in: the real program depends on the dying incarnation's counters,
+/// so it is built by `quirion_beastcaller_dies_effect` when the trigger is
+/// created.
+fn empty_distribution_effect() -> EffectOp {
+    EffectOp::Sequence(Vec::new())
+}
+
 /// Quirion Beastcaller: "Whenever you cast a creature spell, put a +1/+1
-/// counter on this creature."
-pub(super) const QUIRION_BEASTCALLER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
-    condition: TriggerCondition::CastCreatureSpell,
-    ..etb_trigger(counter_on_source_effect)
-}];
+/// counter on this creature. When this creature dies, distribute X +1/+1
+/// counters among any number of target creatures you control, where X is
+/// the number of +1/+1 counters on this creature."
+pub(super) const QUIRION_BEASTCALLER_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::CastCreatureSpell,
+        ..etb_trigger(counter_on_source_effect)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::LeftBattlefieldToGraveyard,
+        ..etb_trigger(empty_distribution_effect)
+    },
+];
+
+/// Quirion Beastcaller's dies program: X counters read from the dying
+/// incarnation's last-known counters, each one a choice among the creatures
+/// `controller` controls as the trigger is created. Deviation: the printed
+/// ability targets and divides as it goes on the stack; here the creatures
+/// are fixed at trigger time and each counter is placed during resolution,
+/// so a creature that has left by then simply receives nothing.
+pub(super) fn quirion_beastcaller_dies_effect(
+    state: &GameState,
+    source: ObjectId,
+    controller: PlayerId,
+) -> EffectOp {
+    let counters = state
+        .objects
+        .get(source)
+        .zone_change_count
+        .checked_sub(1)
+        .and_then(|departed| state.counter_lki_for(source, departed))
+        .map_or(0, |counters| counters.plus1_plus1.max(0));
+    let options: Vec<EffectOp> = state.players[controller.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|&creature| crate::engine::object_has_type(state, creature, CardType::Creature))
+        .map(|creature| EffectOp::PutPlusOnePlusOneCounterOnBoundObject {
+            object: EffectObjectBinding {
+                object: creature,
+                expected_zone: Zone::Battlefield,
+                expected_zone_change_count: state.objects.get(creature).zone_change_count,
+            },
+        })
+        .collect();
+    if options.is_empty() {
+        return empty_distribution_effect();
+    }
+    let step = EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options,
+    };
+    EffectOp::Sequence(vec![step; counters as usize])
+}
+
+/// Whether `effect` has the shape `quirion_beastcaller_dies_effect` builds:
+/// identical counter placements among distinct battlefield incarnations.
+pub(super) fn is_quirion_beastcaller_dies_effect(effect: &EffectOp) -> bool {
+    let EffectOp::Sequence(steps) = effect else {
+        return false;
+    };
+    let Some(first) = steps.first() else {
+        return true;
+    };
+    let EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options,
+    } = first
+    else {
+        return false;
+    };
+    !options.is_empty()
+        && steps.iter().all(|step| step == first)
+        && options.iter().enumerate().all(|(index, option)| {
+            matches!(
+                option,
+                EffectOp::PutPlusOnePlusOneCounterOnBoundObject { object }
+                    if object.expected_zone == Zone::Battlefield
+            ) && !options[..index].contains(option)
+        })
+}
+
+fn that_player_loses_half_life_effect() -> EffectOp {
+    EffectOp::LoseHalfLifeRoundedUp {
+        player: PlayerRef::Opponent,
+    }
+}
+
+fn return_tapped_with_two_stun_effect() -> EffectOp {
+    EffectOp::ReturnSourceFromGraveyardTappedWithStunCounters { stun: 2 }
+}
+
+/// Unstoppable Slasher: "Whenever this creature deals combat damage to a
+/// player, they lose half their life, rounded up. When this creature dies,
+/// if it had no counters on it, return it to the battlefield tapped under
+/// its owner's control with two stun counters on it." In a two-player game
+/// the damaged player is always the controller's opponent.
+pub(super) const UNSTOPPABLE_SLASHER_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::DealsCombatDamageToPlayer,
+        ..etb_trigger(that_player_loses_half_life_effect)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::DiesWithoutCounters,
+        ..etb_trigger(return_tapped_with_two_stun_effect)
+    },
+];
 
 /// Ascendant Packleader: "Whenever you cast a spell with mana value 4 or
 /// greater, put a +1/+1 counter on this creature." Its conditional entry
