@@ -299,6 +299,10 @@ pub enum StandardOpV1 {
     /// The delayed trigger: its controller sacrifices the source, if it is
     /// still the same battlefield incarnation under their control.
     SacrificeSourceAtEndStep,
+    /// Repurposing Bay: search your library for an artifact card with mana
+    /// value one more than the sacrificed artifact's, put it onto the
+    /// battlefield, then shuffle.
+    SearchArtifactWithManaValueOneMoreThanSacrificed,
 }
 
 impl StandardOpV1 {
@@ -311,6 +315,7 @@ impl StandardOpV1 {
                 | Self::SeparatePilesThenSacrifice { .. }
                 | Self::PutCreatureOrPlaneswalkerFromEachGraveyard
                 | Self::MayDiscardUpToThenDraw { .. }
+                | Self::SearchArtifactWithManaValueOneMoreThanSacrificed
         )
     }
 
@@ -701,7 +706,8 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
         | StandardOpV1::PutCreatureOrPlaneswalkerFromEachGraveyard
         | StandardOpV1::PutChosenCardsOntoBattlefield { .. }
         | StandardOpV1::MayDiscardUpToThenDraw { .. }
-        | StandardOpV1::DiscardChosenThenDraw { .. } => {
+        | StandardOpV1::DiscardChosenThenDraw { .. }
+        | StandardOpV1::SearchArtifactWithManaValueOneMoreThanSacrificed => {
             panic!("choice-bearing effects must use the resumable interpreter")
         }
     }
@@ -2296,6 +2302,25 @@ pub(crate) fn end_step_delayed_triggers(
             }
         })
         .collect()
+}
+
+// ---- Repurposing Bay -------------------------------------------------------
+
+pub fn repurposing_bay_search() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::SearchArtifactWithManaValueOneMoreThanSacrificed)
+}
+
+/// The search filter for Repurposing Bay's ability: an artifact card with
+/// mana value one more than the artifact sacrificed to pay its cost, from
+/// the payment's frozen last-known card (`None` without exactly one).
+pub(crate) fn repurposing_bay_filter(ctx: &ExecCtx) -> Option<crate::effect::LibraryCardFilter> {
+    let [sacrificed] = ctx.paid_cost_refs.as_slice() else {
+        return None;
+    };
+    let mana_value = CARD_DEFS.get(sacrificed.card_def as usize)?.mana_value;
+    Some(crate::effect::LibraryCardFilter::ArtifactWithManaValue(
+        mana_value.checked_add(1)?,
+    ))
 }
 
 // ---- Breach the Multiverse ------------------------------------------------

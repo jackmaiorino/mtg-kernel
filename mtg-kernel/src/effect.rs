@@ -117,6 +117,9 @@ pub enum LibraryCardFilter {
     /// is the only filter whose result is not publicly revealed. Appended
     /// for the FDN library-search batch.
     AnyCard,
+    /// An artifact card with exactly this mana value (Repurposing Bay).
+    /// Appended for the MageZero Standard catalog.
+    ArtifactWithManaValue(u16),
 }
 
 impl LibraryCardFilter {
@@ -4758,8 +4761,29 @@ fn validate_search_library_to_battlefield_origin(
         {
             Ok(())
         }
+        Some(EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SearchArtifactWithManaValueOneMoreThanSacrificed))
+            if player == pending.ctx.controller
+                && Some(filter)
+                    == crate::standard_cards_v1::repurposing_bay_filter(&pending.ctx) =>
+        {
+            Ok(())
+        }
         _ => Err("battlefield-search lost its definition-owned origin".to_string()),
     }
+}
+
+/// Whether a search-to-battlefield's origin puts the card onto the
+/// battlefield untapped (Repurposing Bay) rather than tapped.
+fn search_to_battlefield_untapped(
+    state: &GameState,
+    pending: &EffectContinuation,
+    canonical_path: &[u16],
+) -> Result<bool, String> {
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    Ok(matches!(
+        effect_op_at_path(root.as_ref(), canonical_path),
+        Some(EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SearchArtifactWithManaValueOneMoreThanSacrificed))
+    ))
 }
 
 fn validate_duress_origin(
@@ -8275,13 +8299,21 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                                 .to_string(),
                         );
                     }
+                    let untapped =
+                        search_to_battlefield_untapped(state, &continuation, &canonical_path)?;
                     let shuffle_token = state
                         .preflight_library_shuffle(player)
                         .map_err(|error| error.to_string())?;
                     if let Some(binding) = selected {
                         event::propose_and_commit(
                             state,
-                            event::ProposedEvent::zone_change_to_battlefield_tapped(binding.object),
+                            if untapped {
+                                event::ProposedEvent::zone_change(binding.object, Zone::Battlefield)
+                            } else {
+                                event::ProposedEvent::zone_change_to_battlefield_tapped(
+                                    binding.object,
+                                )
+                            },
                         );
                     }
                     state
@@ -9984,6 +10016,28 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
             }
+            EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SearchArtifactWithManaValueOneMoreThanSacrificed) => {
+                let player = continuation.ctx.controller;
+                let Some(filter) =
+                    crate::standard_cards_v1::repurposing_bay_filter(&continuation.ctx)
+                else {
+                    return Err("Repurposing Bay lost its sacrificed artifact".to_string());
+                };
+                let original_library = bind_library_exact(state, player);
+                validate_library_search_live_metadata(state, player, filter, &original_library)?;
+                let candidates =
+                    library_search_candidates(state, player, filter, &original_library)?;
+                stage_library_search_to_battlefield_choice(
+                    &mut continuation,
+                    player,
+                    filter,
+                    original_library,
+                    candidates,
+                    path,
+                );
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
             EffectOp::SearchLibraryToBattlefieldTapped { player, filter } => {
                 let player = continuation.ctx.resolve_player(player, state);
                 let original_library = bind_library_exact(state, player);
@@ -11064,6 +11118,9 @@ fn library_filter_matches(
         }
         LibraryCardFilter::AnyLand => def.has_type(CardType::Land),
         LibraryCardFilter::AnyCard => true,
+        LibraryCardFilter::ArtifactWithManaValue(mana_value) => {
+            def.has_type(CardType::Artifact) && def.mana_value == mana_value
+        }
     })
 }
 
@@ -11089,6 +11146,9 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
             }),
         LibraryCardFilter::AnyLand => fnv1a_u64(0xcbf2_9ce4_8422_2325, 5),
         LibraryCardFilter::AnyCard => fnv1a_u64(0xcbf2_9ce4_8422_2325, 6),
+        LibraryCardFilter::ArtifactWithManaValue(mana_value) => {
+            fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 7), u64::from(mana_value))
+        }
     }
 }
 

@@ -31,6 +31,7 @@ SUPPORTED_NONBASIC = {
     "Lunar Convocation",
     "Ojer Axonil, Deepest Might",
     "Polukranos Reborn",
+    "Repurposing Bay",
     "Seam Rip",
     "Sheltered by Ghosts",
     "Simulacrum Synthesizer",

@@ -4,7 +4,9 @@
 //! names them, so they are part of the generated definitions and catalog
 //! identity.
 
-use super::{AbilityCostRecipe, AbilityEffectRecipe, ActivatedAbilityRecipe, Special};
+use super::{
+    AbilityCostRecipe, AbilityEffectRecipe, ActivatedAbilityRecipe, PermanentFilterRecipe, Special,
+};
 use AbilityCostRecipe::{Loyalty, ManaCost, PayLife, SacrificeSelf, Tap};
 use AbilityEffectRecipe::AttachSourceToTarget;
 use AbilityEffectRecipe::{DrawCards, Program};
@@ -69,6 +71,27 @@ const REFLECTION_OF_KIKI_JIKI: [ActivatedAbilityRecipe; 1] = [ActivatedAbilityRe
     activation_zone: "Battlefield",
     sorcery_speed_only: false,
     target_spec: "StandardV1(crate::standard_cards_v1::StandardTargetV1::AnotherNonlegendaryControlledCreature)",
+    activation_target_filter: "TargetSpecOnly",
+    max_activations_per_turn: None,
+}];
+
+/// Repurposing Bay: "{2}, {T}, Sacrifice another artifact: Search your
+/// library for an artifact card with mana value equal to 1 plus the
+/// sacrificed artifact's mana value, put that card onto the battlefield,
+/// then shuffle. Activate only as a sorcery."
+const REPURPOSING_BAY: [ActivatedAbilityRecipe; 1] = [ActivatedAbilityRecipe {
+    cost: &[
+        ManaCost("{2}"),
+        Tap,
+        AbilityCostRecipe::SacrificeControlled {
+            count: 1,
+            filter: PermanentFilterRecipe::AnotherArtifact,
+        },
+    ],
+    effect: Program("crate::standard_cards_v1::repurposing_bay_search"),
+    activation_zone: "Battlefield",
+    sorcery_speed_only: true,
+    target_spec: "None",
     activation_target_filter: "TargetSpecOnly",
     max_activations_per_turn: None,
 }];
@@ -217,6 +240,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Teferi, Temporal Pilgrim" => &TEFERI,
         "Liliana of the Veil" => &LILIANA_OF_THE_VEIL,
         "Fable of the Mirror-Breaker" => &REFLECTION_OF_KIKI_JIKI,
+        "Repurposing Bay" => &REPURPOSING_BAY,
         "Polukranos Reborn" => &POLUKRANOS,
         "Ojer Axonil, Deepest Might" => &OJER,
         _ => &[],

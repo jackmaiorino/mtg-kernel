@@ -1909,3 +1909,62 @@ fn reflection_of_kiki_jiki_copies_with_haste_and_sacrifices_at_end_step() {
     to_end_step(&mut state);
     assert_eq!(battlefield_named(&state, P0, "Llanowar Elves"), vec![elves]);
 }
+
+// ---- Repurposing Bay ---------------------------------------------------
+
+fn to_library(state: &mut GameState, player: PlayerId, name: &str) -> ObjectId {
+    let card = put(state, player, name, Zone::Hand);
+    event::propose_and_commit(state, ProposedEvent::zone_change(card, Zone::Library));
+    card
+}
+
+#[test]
+fn repurposing_bay_trades_an_artifact_for_one_with_one_more_mana_value() {
+    let mut state = game();
+    let bay = put(&mut state, P0, "Repurposing Bay", Zone::Battlefield);
+    state.players[0].mana_pool[ManaColor::U.pool_index()] = 2;
+    // "Another artifact": the Bay cannot pay with itself.
+    assert!(!activatable(&mut state).contains(&(bay, 0)));
+
+    let wellspring = to_library(&mut state, P0, "Ichor Wellspring");
+    let spellbomb = to_library(&mut state, P0, "Nihil Spellbomb");
+    let trail = put(&mut state, P0, "Candy Trail", Zone::Battlefield);
+    settle(&mut state);
+    assert!(activatable(&mut state).contains(&(bay, 0)));
+    act(&mut state, Action::ActivateAbility(bay, 0));
+    let mut searched = false;
+    loop {
+        match next(&mut state) {
+            Decision::ChooseCostTargets { candidates, .. } => {
+                assert_eq!(candidates, vec![trail]);
+                act(&mut state, Action::ChooseCostTarget(trail));
+            }
+            Decision::ChooseEffectTargets {
+                player,
+                legal_targets,
+                ..
+            } => {
+                assert_eq!(player, P0);
+                assert_eq!(legal_targets, vec![Target::Object(wellspring)]);
+                searched = true;
+                act(
+                    &mut state,
+                    Action::ChooseEffectTarget(Target::Object(wellspring)),
+                );
+            }
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => break,
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            Decision::OrderTriggers { pending, .. } => act(
+                &mut state,
+                Action::OrderTriggers((0..pending.len()).collect()),
+            ),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    assert!(searched);
+    assert_eq!(state.objects.get(trail).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(wellspring).zone, Zone::Battlefield);
+    assert!(!state.objects.get(wellspring).tapped);
+    assert_eq!(state.objects.get(spellbomb).zone, Zone::Library);
+    assert!(state.objects.get(bay).tapped);
+}

@@ -3916,7 +3916,10 @@ fn can_pay_components(
             }
             CostComponent::SacrificeLands(n) => count_controlled_lands(player, state) >= *n as u32,
             CostComponent::SacrificeControlled { count, filter } => {
-                sacrificeable_controlled_permanents(player, *filter, state, &[]).len()
+                sacrificeable_controlled_permanents(player, *filter, state, &[])
+                    .into_iter()
+                    .filter(|&id| *filter != PermanentFilter::AnotherArtifact || id != source)
+                    .count()
                     >= usize::from(*count)
             }
             CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
@@ -4073,14 +4076,15 @@ fn pay_cost_components_with_x(
                 })
         });
         let aliases_source_departure = object_cost_chosen.contains(&source)
-            && components.iter().any(|component| {
-                matches!(
-                    component,
-                    CostComponent::SacrificeSelf
-                        | CostComponent::ExileSelf
-                        | CostComponent::DiscardSelf
-                )
-            });
+            && (filter == PermanentFilter::AnotherArtifact
+                || components.iter().any(|component| {
+                    matches!(
+                        component,
+                        CostComponent::SacrificeSelf
+                            | CostComponent::ExileSelf
+                            | CostComponent::DiscardSelf
+                    )
+                }));
         if object_cost_chosen.len() != needed || duplicate || invalid || aliases_source_departure {
             return false;
         }
@@ -4670,7 +4674,9 @@ pub(crate) fn permanent_matches_filter(def: &card_def::CardDef, filter: Permanen
         PermanentFilter::ArtifactOrCreature => {
             def.has_type(CardType::Artifact) || def.has_type(CardType::Creature)
         }
-        PermanentFilter::Artifact => def.has_type(CardType::Artifact),
+        PermanentFilter::Artifact | PermanentFilter::AnotherArtifact => {
+            def.has_type(CardType::Artifact)
+        }
         PermanentFilter::Creature => def.has_type(CardType::Creature),
         PermanentFilter::Land => def.is_land,
     }
@@ -4707,6 +4713,7 @@ fn sacrificeable_controlled_permanents(
 fn activation_sacrifice_cost_candidates(
     player: PlayerId,
     filter: PermanentFilter,
+    source: ObjectId,
     state: &GameState,
     already_chosen: &[EffectObjectBinding],
 ) -> Vec<EffectObjectBinding> {
@@ -4716,6 +4723,7 @@ fn activation_sacrifice_cost_candidates(
         .collect::<Vec<_>>();
     sacrificeable_controlled_permanents(player, filter, state, &already_chosen_ids)
         .into_iter()
+        .filter(|&object| filter != PermanentFilter::AnotherArtifact || object != source)
         .map(|object| {
             let live = state.objects.get(object);
             EffectObjectBinding {
@@ -4762,7 +4770,9 @@ fn activation_permanent_sacrifice_needed(
 
 fn cost_kind_for_permanent_filter(filter: PermanentFilter) -> CostKind {
     match filter {
-        PermanentFilter::Artifact => CostKind::SacrificeArtifacts,
+        PermanentFilter::Artifact | PermanentFilter::AnotherArtifact => {
+            CostKind::SacrificeArtifacts
+        }
         PermanentFilter::ArtifactOrCreature | PermanentFilter::Creature => {
             CostKind::SacrificePermanents
         }
@@ -8409,7 +8419,9 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 source: pending.spell,
                 cost_kind: match filter {
                     PermanentFilter::Creature => CostKind::SacrificeCreatures,
-                    PermanentFilter::Artifact => CostKind::SacrificeArtifacts,
+                    PermanentFilter::Artifact | PermanentFilter::AnotherArtifact => {
+                        CostKind::SacrificeArtifacts
+                    }
                     PermanentFilter::ArtifactOrCreature => CostKind::SacrificePermanents,
                     PermanentFilter::Land => CostKind::SacrificeLands,
                 },
@@ -8812,6 +8824,7 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
             let candidates = activation_sacrifice_cost_candidates(
                 pending.controller,
                 filter,
+                pending.source,
                 state,
                 &pending.object_cost_chosen,
             );
@@ -9084,12 +9097,14 @@ pub(crate) fn validate_pending_activation(
                             filter,
                         )
                 })
+                || (filter == PermanentFilter::AnotherArtifact && binding.object == pending.source)
         }) {
             return Err("pending activation carries an illegal object-cost selection".to_string());
         }
         let remaining = activation_sacrifice_cost_candidates(
             pending.controller,
             filter,
+            pending.source,
             state,
             &pending.object_cost_chosen,
         );
@@ -13372,6 +13387,7 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                 let candidates = activation_sacrifice_cost_candidates(
                     pending.controller,
                     filter,
+                    pending.source,
                     state,
                     &pending.object_cost_chosen,
                 );

@@ -3039,6 +3039,7 @@ enum AbilityEffectRecipe {
 enum PermanentFilterRecipe {
     Artifact,
     ArtifactOrCreature,
+    AnotherArtifact,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4698,6 +4699,7 @@ fn permanent_filter_src(filter: PermanentFilterRecipe) -> &'static str {
     match filter {
         PermanentFilterRecipe::Artifact => "PermanentFilter::Artifact",
         PermanentFilterRecipe::ArtifactOrCreature => "PermanentFilter::ArtifactOrCreature",
+        PermanentFilterRecipe::AnotherArtifact => "PermanentFilter::AnotherArtifact",
     }
 }
 
@@ -4705,6 +4707,7 @@ fn permanent_filter_token(filter: PermanentFilterRecipe) -> &'static str {
     match filter {
         PermanentFilterRecipe::Artifact => "artifact",
         PermanentFilterRecipe::ArtifactOrCreature => "artifact_or_creature",
+        PermanentFilterRecipe::AnotherArtifact => "another_artifact",
     }
 }
 

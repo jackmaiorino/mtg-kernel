@@ -825,6 +825,9 @@ pub enum PermanentFilter {
     /// can be embedded in `effect::EffectOp::PumpAllUntilEndOfTurn`, which
     /// (like every other `EffectOp` variant) must derive those traits.
     Land,
+    /// A controlled artifact other than the ability's own source
+    /// (Repurposing Bay's "Sacrifice another artifact"). Appended.
+    AnotherArtifact,
 }
 
 /// One component of a composite cost. Composable (a real cost is `&'static

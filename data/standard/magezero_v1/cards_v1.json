@@ -1004,6 +1004,35 @@
       ],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/FableOfTheMirrorBreakerToken.java",
       "is_token": true
+    },
+    {
+      "name": "Repurposing Bay",
+      "engine_capability": "full",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "sacrifice_cost",
+        "library_search",
+        "paid_cost_mana_value"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RepurposingBay.java"
     }
   ]
 }

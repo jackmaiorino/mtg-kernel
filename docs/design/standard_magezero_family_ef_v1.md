@@ -168,6 +168,18 @@ read by the keyword query, and a delayed "sacrifice it at the beginning of
 the next end step" trigger (603.7) fires from the next `BeginningEndStep`.
 The stack accepts that trigger only for a token Reflection created.
 
+## Repurposing Bay
+
+Repurposing Bay's sorcery-speed ability costs {2}, {T} and sacrificing
+another artifact. The appended `PermanentFilter::AnotherArtifact` matches
+artifacts like `Artifact` but excludes the ability's source from the cost
+candidates, the affordability check and payment validation. At
+resolution the search filter is an artifact card with mana value one more
+than the sacrificed artifact's, read from the payment's frozen
+`PaidCostRefV4`, and the search reuses the existing search-to-battlefield
+prompt and shuffle; this origin puts the card onto the battlefield
+untapped.
+
 ## Known limits
 
 The stack and battlefield use the Room card's combined mana value and
