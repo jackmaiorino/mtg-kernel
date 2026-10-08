@@ -168,6 +168,9 @@ pub enum TriggerCondition {
     /// (`CommittedEvent::SpellCast`, read against the caster's
     /// `spells_cast_this_turn` immediately after the cast).
     ControllerCastsSecondSpellEachTurn,
+    /// Impending: "At the beginning of your end step, remove a time counter
+    /// from it", collected only while it has one.
+    BeginningControllerEndStepWithTimeCounter,
 }
 
 pub struct TriggeredAbilityDef {
@@ -1333,6 +1336,39 @@ const GRAVEYARD_TRESPASSER_TRIGGERS: [TriggeredAbilityDef; 4] = [
     },
 ];
 
+fn overlord_of_the_mistmoors_effect() -> EffectOp {
+    let insect = crate::card_def::card_id_by_name("White Insect Token")
+        .expect("White Insect Token in CARD_DEFS");
+    EffectOp::Sequence(vec![
+        EffectOp::CreateToken {
+            token_def: insect,
+            controller: PlayerRef::Controller,
+        },
+        EffectOp::CreateToken {
+            token_def: insect,
+            controller: PlayerRef::Controller,
+        },
+    ])
+}
+
+fn remove_time_counter_effect() -> EffectOp {
+    EffectOp::RemoveTimeCounterFromSource
+}
+
+/// Impending 4—{2}{W}{W}. Whenever it enters or attacks, create two 2/1
+/// white Insect creature tokens with flying.
+const OVERLORD_OF_THE_MISTMOORS_TRIGGERS: [TriggeredAbilityDef; 3] = [
+    etb_trigger(overlord_of_the_mistmoors_effect),
+    TriggeredAbilityDef {
+        condition: TriggerCondition::Attacks,
+        ..etb_trigger(overlord_of_the_mistmoors_effect)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::BeginningControllerEndStepWithTimeCounter,
+        ..etb_trigger(remove_time_counter_effect)
+    },
+];
+
 fn chrome_host_seedshark_effect() -> EffectOp {
     EffectOp::BindIncubateToTriggerSpell
 }
@@ -2391,6 +2427,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Yotian Frontliner" => &YOTIAN_FRONTLINER_TRIGGERS,
         "Cori-Steel Cutter" => &CORI_STEEL_CUTTER_TRIGGERS,
         "Graveyard Trespasser" => &GRAVEYARD_TRESPASSER_TRIGGERS,
+        "Overlord of the Mistmoors" => &OVERLORD_OF_THE_MISTMOORS_TRIGGERS,
         "Monk Token" => &MONASTERY_SWIFTSPEAR_TRIGGERS,
         _ => &[],
     }
@@ -3858,6 +3895,10 @@ fn trigger_matches(
                 controller: caster, ..
             },
         ) => *caster == controller && state.players[caster.index()].spells_cast_this_turn == 2,
+        (
+            TriggerCondition::BeginningControllerEndStepWithTimeCounter,
+            CommittedEvent::BeginningEndStep { active_player, .. },
+        ) => *active_player == controller && state.objects.get(source).v4.time_counters_v1 > 0,
         (
             TriggerCondition::BeginningOfControllerCombat,
             CommittedEvent::BeginningOfCombat { active_player },

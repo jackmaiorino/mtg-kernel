@@ -4643,7 +4643,8 @@ fn alt_cost_condition_met(
 ) -> bool {
     match condition {
         card_def::AltCostCondition::Always => true,
-        card_def::AltCostCondition::WarpFromHand => origin_zone == Zone::Hand,
+        card_def::AltCostCondition::WarpFromHand
+        | card_def::AltCostCondition::ImpendingFromHand { .. } => origin_zone == Zone::Hand,
         card_def::AltCostCondition::ControlsPermanentWithSubtype(subtype) => {
             let subtype_id = subtype.stable_id();
             state.players[player.index()].battlefield.iter().any(|&id| {
@@ -6231,6 +6232,7 @@ fn can_attack(state: &GameState, id: ObjectId) -> bool {
         && !obj.tapped
         && !has_effective_keyword(state, id, Keywords::DEFENDER)
         && (!obj.summoning_sick || has_effective_keyword(state, id, Keywords::HASTE))
+        && obj.v4.time_counters_v1 == 0
 }
 
 fn eligible_attackers(state: &GameState) -> Vec<ObjectId> {
@@ -10667,6 +10669,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     {
         state.objects.get_mut(item.source).v4.warped_v1 = true;
     }
+    // Impending: it enters with its time counters.
+    if item.v4.cast_method == Some(CastMethodV4::Alternative)
+        && state.objects.get(item.source).zone == Zone::Battlefield
+    {
+        if let Some(card_def::AltCostCondition::ImpendingFromHand { time_counters }) =
+            def.alt_cost.map(|alt| alt.condition)
+        {
+            state.objects.get_mut(item.source).v4.time_counters_v1 = time_counters;
+        }
+    }
 
     if state
         .engine
@@ -11258,6 +11270,15 @@ fn bestow_host_counter_bonus(state: &GameState, host: ObjectId) -> i32 {
 /// Effective card-type query for one live object face. Nonbattlefield cards
 /// are always front-face objects because every zone change resets the face.
 pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> bool {
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if card_type == CardType::Creature
+        && state
+            .objects
+            .try_get(id)
+            .is_some_and(|object| object.v4.time_counters_v1 > 0)
+    {
+        return false;
+    }
     if crate::continuous_characteristics_v1::creature_override(state, id).is_some() {
         return card_type == CardType::Creature;
     }

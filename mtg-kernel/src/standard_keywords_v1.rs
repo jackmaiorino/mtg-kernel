@@ -133,10 +133,12 @@ pub(crate) fn targets_commit_crime(state: &GameState, item: &StackItem) -> bool 
 
 /// Printed "This creature can't block."
 pub(crate) fn cant_block(state: &GameState, id: ObjectId) -> bool {
-    CARD_DEFS
-        .get(usize::from(state.objects.get(id).card_def))
-        .is_some_and(|def| def.name == "Forsaken Miner")
-        && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+    // An impending permanent with time counters isn't a creature.
+    state.objects.get(id).v4.time_counters_v1 > 0
+        || CARD_DEFS
+            .get(usize::from(state.objects.get(id).card_def))
+            .is_some_and(|def| def.name == "Forsaken Miner")
+            && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
 }
 
 /// The graveyard cards a player exiles to collect evidence `minimum`, or

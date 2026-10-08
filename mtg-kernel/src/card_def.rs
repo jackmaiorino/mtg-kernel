@@ -271,6 +271,7 @@ pub enum Subtype {
     Werewolf,
     Bat,
     Rabbit,
+    Avatar,
 }
 
 impl Subtype {
@@ -384,6 +385,8 @@ impl Subtype {
         Subtype::Bat,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Rabbit,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Avatar,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -520,6 +523,7 @@ impl Subtype {
                 | Subtype::Werewolf
                 | Subtype::Bat
                 | Subtype::Rabbit
+                | Subtype::Avatar
         )
     }
 }
@@ -994,6 +998,10 @@ pub enum AltCostCondition {
     /// next end step and may be cast from exile on a later turn
     /// (`standard_keywords_v1`).
     WarpFromHand,
+    /// Impending N: cast from hand for this cost, the permanent enters with
+    /// N time counters and isn't a creature while it has any
+    /// (`ObjectStateV4::time_counters_v1`, `standard_keywords_v1`).
+    ImpendingFromHand { time_counters: u8 },
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback

@@ -131,6 +131,7 @@ impl Scan<'_> {
             | PutPlusOnePlusOneCounterOnTargetOtherThan { .. }
             | ReturnSourceFromGraveyardUnearthed
             | ExileGraveyardTargetsDrainPerCreature { .. }
+            | RemoveTimeCounterFromSource
             | BackupTarget { .. }
             | PutSourceOntoBattlefieldTappedAndAttacking
             | UntapUpToLands { .. }

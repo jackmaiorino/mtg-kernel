@@ -1023,6 +1023,68 @@
         "transform"
       ],
       "java_file": "Mage.Sets/src/mage/cards/g/GraveyardTrespasser.java"
+    },
+    {
+      "name": "Overlord of the Mistmoors",
+      "engine_capability": "full",
+      "mana_cost": "{5}{W}{W}",
+      "mana_value": 7,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Enchantment",
+        "Creature"
+      ],
+      "subtypes": [
+        "Avatar",
+        "Horror"
+      ],
+      "supertypes": [],
+      "power": 6,
+      "toughness": 6,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "impending",
+        "time_counters",
+        "etb_or_attacks",
+        "token_maker"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/o/OverlordOfTheMistmoors.java"
+    },
+    {
+      "name": "White Insect Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Insect"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/InsectWhiteToken.java",
+      "is_token": true
     }
   ]
 }

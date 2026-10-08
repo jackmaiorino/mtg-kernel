@@ -1193,6 +1193,9 @@ pub enum EffectOp {
     ExileGraveyardTargetsDrainPerCreature {
         max_targets: u8,
     },
+    /// Impending's end-step upkeep: remove a time counter from this exact
+    /// source incarnation if it still has one.
+    RemoveTimeCounterFromSource,
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -11411,6 +11414,17 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     state,
                     event::ProposedEvent::life_gain(ctx.controller, creatures),
                 );
+            }
+        }
+        EffectOp::RemoveTimeCounterFromSource => {
+            let still_there = ctx.ability_source_contract.is_some_and(|contract| {
+                let object = state.objects.get(contract.source);
+                object.zone == Zone::Battlefield
+                    && object.zone_change_count == contract.zone_change_count
+            });
+            if still_there {
+                let counters = &mut state.objects.get_mut(ctx.source).v4.time_counters_v1;
+                *counters = counters.saturating_sub(1);
             }
         }
         EffectOp::ReturnSourceFromGraveyardUnearthed => {

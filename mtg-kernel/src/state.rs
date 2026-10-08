@@ -207,6 +207,11 @@ pub struct ObjectStateV4 {
     /// clears it.
     #[serde(default, skip_serializing_if = "bool_is_false")]
     pub unearthed_v1: bool,
+    /// Impending's time counters. While any remain the permanent isn't a
+    /// creature; its controller removes one at the beginning of each of
+    /// their end steps. Every zone change clears them.
+    #[serde(default, skip_serializing_if = "u8_is_zero")]
+    pub time_counters_v1: u8,
 }
 
 impl Hash for ObjectStateV4 {
@@ -247,6 +252,10 @@ impl Hash for ObjectStateV4 {
         }
         if self.unearthed_v1 {
             "unearthed/v1".hash(state);
+        }
+        if self.time_counters_v1 != 0 {
+            "time-counters/v1".hash(state);
+            self.time_counters_v1.hash(state);
         }
     }
 }
@@ -302,6 +311,7 @@ impl ObjectStateV4 {
             warped_v1: false,
             convoked_creatures_v1: 0,
             unearthed_v1: false,
+            time_counters_v1: 0,
         }
     }
 

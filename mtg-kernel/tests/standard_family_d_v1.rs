@@ -155,6 +155,8 @@ fn family_d_cards_are_fully_supported() {
         "Cori-Steel Cutter",
         "Monk Token",
         "Graveyard Trespasser",
+        "Overlord of the Mistmoors",
+        "White Insect Token",
     ] {
         let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} missing"));
         assert_eq!(
@@ -1720,4 +1722,119 @@ fn graveyard_trespasser_enters_as_glutton_at_night_and_exiles_two() {
     assert_eq!(state.objects.get(first).zone, Zone::Exile);
     assert_eq!(state.objects.get(second).zone, Zone::Exile);
     assert_eq!((state.players[0].life, state.players[1].life), (22, 18));
+}
+
+#[test]
+fn overlord_of_the_mistmoors_impends_then_becomes_a_creature() {
+    let mut state = ready();
+    let overlord = put(
+        &mut state,
+        PlayerId::P0,
+        "Overlord of the Mistmoors",
+        Zone::Hand,
+    );
+    // Only the impending cost is affordable.
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::W, ManaColor::W], 2);
+    cast(&mut state, overlord, &[]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(overlord).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(overlord).v4.time_counters_v1, 4);
+    assert_eq!(tokens_named(&state, PlayerId::P0, "White Insect Token"), 2);
+    assert!(!engine::object_has_type(
+        &state,
+        overlord,
+        mtg_kernel::card_def::CardType::Creature
+    ));
+    assert!(engine::object_has_type(
+        &state,
+        overlord,
+        mtg_kernel::card_def::CardType::Enchantment
+    ));
+
+    // It can't attack yet; one counter comes off at each of our end steps.
+    state.objects.get_mut(overlord).summoning_sick = false;
+    pass_until(&mut state, |s| s.step == Step::BeginCombat);
+    match next(&mut state) {
+        Decision::DeclareAttackers { .. } | Decision::CastSpellOrPass { .. } => {}
+        other => panic!("{other:?}"),
+    }
+    let turn = state.turn;
+    pass_until(&mut state, |s| {
+        s.turn > turn && s.active_player == PlayerId::P0 && s.step == Step::Main1
+    });
+    assert_eq!(state.objects.get(overlord).v4.time_counters_v1, 3);
+    for _ in 0..3 {
+        let turn = state.turn;
+        pass_until(&mut state, |s| {
+            s.turn > turn && s.active_player == PlayerId::P0 && s.step == Step::Main1
+        });
+    }
+    assert_eq!(state.objects.get(overlord).v4.time_counters_v1, 0);
+    assert!(engine::object_has_type(
+        &state,
+        overlord,
+        mtg_kernel::card_def::CardType::Creature
+    ));
+    assert_eq!(power_toughness(&state, overlord), (6, 6));
+
+    // Now a 6/6, its attack makes two more Insects.
+    attack_with(&mut state, vec![overlord]);
+    settled(&mut state);
+    assert_eq!(tokens_named(&state, PlayerId::P0, "White Insect Token"), 4);
+}
+
+#[test]
+fn impending_overlord_cannot_attack_or_block() {
+    let mut state = ready();
+    let overlord = put(
+        &mut state,
+        PlayerId::P0,
+        "Overlord of the Mistmoors",
+        Zone::Battlefield,
+    );
+    let mouse = put(
+        &mut state,
+        PlayerId::P0,
+        "Manifold Mouse",
+        Zone::Battlefield,
+    );
+    state.objects.get_mut(overlord).v4.time_counters_v1 = 2;
+    loop {
+        match next(&mut state) {
+            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+            Decision::ChooseTargets { .. } => {
+                engine::step(&mut state, Action::ChooseTarget(Target::Object(mouse))).unwrap()
+            }
+            Decision::ChooseEffectOption { .. } => {
+                engine::step(&mut state, Action::ChooseEffectOption(0)).unwrap()
+            }
+            Decision::DeclareAttackers { eligible, .. } => {
+                assert_eq!(eligible, vec![mouse]);
+                break;
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+
+    // On the opponent's turn it can't block either.
+    let mut state = ready();
+    let overlord = put(
+        &mut state,
+        PlayerId::P0,
+        "Overlord of the Mistmoors",
+        Zone::Battlefield,
+    );
+    state.objects.get_mut(overlord).v4.time_counters_v1 = 2;
+    let attacker = put(
+        &mut state,
+        PlayerId::P1,
+        "Monastery Swiftspear",
+        Zone::Battlefield,
+    );
+    pass_until(&mut state, |s| {
+        s.active_player == PlayerId::P1 && s.step == Step::Main1
+    });
+    pass_until_blocks(&mut state, attacker, |blockers| {
+        assert!(!blockers.contains(&overlord))
+    });
 }
