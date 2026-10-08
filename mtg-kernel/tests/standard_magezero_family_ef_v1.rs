@@ -1762,3 +1762,150 @@ fn breach_the_multiverse_mills_and_takes_a_card_from_each_graveyard() {
     assert!(!engine::has_effective_subtype(&state, teferi, phyrexian));
     assert!(engine::effective_subtype_ids(&state, mine).contains(&phyrexian.stable_id()));
 }
+
+// ---- Fable of the Mirror-Breaker -----------------------------------------
+
+/// Resolves the stack, answering a chapter II discard with `discard`.
+fn resolve_with_discards(state: &mut GameState, discard: &[ObjectId]) {
+    loop {
+        match next(state) {
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => return,
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
+            Decision::ChooseEffectTargets {
+                player,
+                legal_targets,
+                can_finish,
+                ..
+            } => {
+                assert_eq!(player, P0);
+                assert!(can_finish, "discarding is optional");
+                match discard
+                    .iter()
+                    .map(|&card| Target::Object(card))
+                    .find(|target| legal_targets.contains(target))
+                {
+                    Some(card) => act(state, Action::ChooseEffectTarget(card)),
+                    None => act(state, Action::FinishEffectSelection),
+                }
+            }
+            Decision::OrderTriggers { pending, .. } => {
+                act(state, Action::OrderTriggers((0..pending.len()).collect()))
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn fable_of_the_mirror_breaker_makes_a_goblin_rummages_and_transforms() {
+    let mut state = game();
+    let fable = put(&mut state, P0, "Fable of the Mirror-Breaker", Zone::Hand);
+    state.players[0].mana_pool[ManaColor::R.pool_index()] = 3;
+    next(&mut state);
+    act(&mut state, Action::CastSpell(fable));
+    resolve_with_discards(&mut state, &[]);
+    assert_eq!(battlefield_named(&state, P0, "Goblin Shaman").len(), 1);
+
+    // Chapter II: discard two, draw two.
+    let first = put(&mut state, P0, "Forest", Zone::Hand);
+    let second = put(&mut state, P0, "Llanowar Elves", Zone::Hand);
+    to_next_own_main(&mut state);
+    let hand = state.players[0].hand.len();
+    resolve_with_discards(&mut state, &[first, second]);
+    assert_eq!(state.objects.get(first).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(second).zone, Zone::Graveyard);
+    assert_eq!(state.players[0].hand.len(), hand);
+
+    // Chapter III: exiled and returned as Reflection of Kiki-Jiki.
+    to_next_own_main(&mut state);
+    resolve_with_discards(&mut state, &[]);
+    let reflection = state.objects.get(fable);
+    assert_eq!(reflection.zone, Zone::Battlefield);
+    assert_eq!(reflection.v4.face_index, 1);
+    assert!(engine::object_has_type(&state, fable, CardType::Creature));
+}
+
+#[test]
+fn fable_chapter_two_may_discard_nothing() {
+    let mut state = game();
+    let fable = put(&mut state, P0, "Fable of the Mirror-Breaker", Zone::Hand);
+    state.players[0].mana_pool[ManaColor::R.pool_index()] = 3;
+    next(&mut state);
+    act(&mut state, Action::CastSpell(fable));
+    resolve_with_discards(&mut state, &[]);
+    let kept = put(&mut state, P0, "Forest", Zone::Hand);
+    to_next_own_main(&mut state);
+    let hand = state.players[0].hand.len();
+    resolve_with_discards(&mut state, &[]);
+    assert_eq!(state.objects.get(kept).zone, Zone::Hand);
+    assert_eq!(state.players[0].hand.len(), hand);
+}
+
+#[test]
+fn fable_goblin_shaman_makes_a_treasure_when_it_attacks() {
+    let mut state = game();
+    let goblin = put(
+        &mut state,
+        P0,
+        "Fable Goblin Shaman Token",
+        Zone::Battlefield,
+    );
+    attack_with(&mut state, vec![goblin]);
+    let treasure = card_id_by_name("Treasure Token").unwrap();
+    assert_eq!(
+        state.players[0]
+            .battlefield
+            .iter()
+            .filter(|&&id| state.objects.get(id).card_def == treasure)
+            .count(),
+        1
+    );
+    assert_eq!(state.players[1].life, 18);
+}
+
+#[test]
+fn reflection_of_kiki_jiki_copies_with_haste_and_sacrifices_at_end_step() {
+    let mut state = game();
+    let fable = put(
+        &mut state,
+        P0,
+        "Fable of the Mirror-Breaker",
+        Zone::Battlefield,
+    );
+    resolve_with_discards(&mut state, &[]);
+    event::propose_and_commit(&mut state, ProposedEvent::transform_in_place(fable, 1));
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let cecil = put(&mut state, P0, "Cecil, Dark Knight", Zone::Battlefield);
+    state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+    assert!(activatable(&mut state).contains(&(fable, 0)));
+    act(&mut state, Action::ActivateAbility(fable, 0));
+    loop {
+        match next(&mut state) {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert!(legal_targets.contains(&Target::Object(elves)));
+                assert!(!legal_targets.contains(&Target::Object(fable)), "another");
+                assert!(
+                    !legal_targets.contains(&Target::Object(cecil)),
+                    "nonlegendary"
+                );
+                act(&mut state, Action::ChooseTarget(Target::Object(elves)));
+            }
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => break,
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    let copies = battlefield_named(&state, P0, "Llanowar Elves");
+    assert_eq!(copies.len(), 2);
+    let copy = copies.into_iter().find(|&id| id != elves).unwrap();
+    assert!(state.objects.get(copy).v4.is_token);
+    assert!(engine::has_effective_keyword(&state, copy, Keywords::HASTE));
+    assert!(!engine::has_effective_keyword(
+        &state,
+        elves,
+        Keywords::HASTE
+    ));
+
+    to_end_step(&mut state);
+    assert_eq!(battlefield_named(&state, P0, "Llanowar Elves"), vec![elves]);
+}

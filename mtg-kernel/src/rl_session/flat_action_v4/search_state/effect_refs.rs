@@ -410,6 +410,10 @@ impl Scan<'_> {
                 original_candidates,
                 ..
             }
+            | StandardDiscardToDrawV1 {
+                original_candidates,
+                ..
+            }
             | UntapLands {
                 original_candidates,
                 ..
@@ -607,6 +611,11 @@ pub(super) fn conflicts(
                     ..
                 } => s.bs(pile) || s.fs(remaining_frames),
                 StandardBreachChosenV1 {
+                    cards,
+                    remaining_frames,
+                    ..
+                }
+                | StandardDiscardChosenV1 {
                     cards,
                     remaining_frames,
                     ..

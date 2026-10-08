@@ -940,6 +940,70 @@
         "type_change"
       ],
       "java_file": "Mage.Sets/src/mage/cards/b/BreachTheMultiverse.java"
+    },
+    {
+      "name": "Fable of the Mirror-Breaker",
+      "engine_capability": "full",
+      "mana_cost": "{2}{R}",
+      "mana_value": 3,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [
+        "Saga"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "saga",
+        "token",
+        "rummage",
+        "transform",
+        "token_copy",
+        "delayed_trigger"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FableOfTheMirrorBreaker.java"
+    },
+    {
+      "name": "Fable Goblin Shaman Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Goblin",
+        "Shaman"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "attack_trigger",
+        "treasure"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/FableOfTheMirrorBreakerToken.java",
+      "is_token": true
     }
   ]
 }

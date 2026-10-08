@@ -60,6 +60,19 @@ const LILIANA_OF_THE_VEIL: [ActivatedAbilityRecipe; 3] = [
     ),
 ];
 
+/// Reflection of Kiki-Jiki's "{1}, {T}: Create a token that's a copy of
+/// another target nonlegendary creature you control, except it has haste.
+/// Sacrifice it at the beginning of the next end step."
+const REFLECTION_OF_KIKI_JIKI: [ActivatedAbilityRecipe; 1] = [ActivatedAbilityRecipe {
+    cost: &[ManaCost("{1}"), Tap],
+    effect: Program("crate::standard_cards_v1::reflection_of_kiki_jiki_copy"),
+    activation_zone: "Battlefield",
+    sorcery_speed_only: false,
+    target_spec: "StandardV1(crate::standard_cards_v1::StandardTargetV1::AnotherNonlegendaryControlledCreature)",
+    activation_target_filter: "TargetSpecOnly",
+    max_activations_per_turn: None,
+}];
+
 /// "Transform this. Activate only as a sorcery."
 const fn sorcery_transform(cost: &'static [AbilityCostRecipe]) -> ActivatedAbilityRecipe {
     ActivatedAbilityRecipe {
@@ -203,6 +216,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Unholy Annex // Ritual Chamber" => &UNHOLY_ANNEX,
         "Teferi, Temporal Pilgrim" => &TEFERI,
         "Liliana of the Veil" => &LILIANA_OF_THE_VEIL,
+        "Fable of the Mirror-Breaker" => &REFLECTION_OF_KIKI_JIKI,
         "Polukranos Reborn" => &POLUKRANOS,
         "Ojer Axonil, Deepest Might" => &OJER,
         _ => &[],
@@ -214,7 +228,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
 pub(super) fn activated_ability_face_for(name: &str, _index: usize) -> Option<u8> {
     match name {
         "Polukranos Reborn" => Some(0),
-        "Ojer Axonil, Deepest Might" => Some(1),
+        "Ojer Axonil, Deepest Might" | "Fable of the Mirror-Breaker" => Some(1),
         _ => None,
     }
 }
@@ -226,6 +240,15 @@ pub(super) fn transform_face_for(name: &str) -> &'static str {
         "Cecil, Dark Knight" => "Some(TransformFaceDef { name: \"Cecil, Redeemed Paladin\", types: &[CardType::Creature], subtypes: &[Subtype::Human, Subtype::Knight], colors: &[ManaColor::W], power: Some(4), toughness: Some(4), keywords: Keywords::LIFELINK })",
         "Polukranos Reborn" => "Some(TransformFaceDef { name: \"Polukranos, Engine of Ruin\", types: &[CardType::Creature], subtypes: &[Subtype::Phyrexian, Subtype::Hydra], colors: &[ManaColor::W, ManaColor::G], power: Some(6), toughness: Some(6), keywords: Keywords(Keywords::REACH.0 | Keywords::LIFELINK.0) })",
         "Ojer Axonil, Deepest Might" => "Some(TransformFaceDef { name: \"Temple of Power\", types: &[CardType::Land], subtypes: &[], colors: &[], power: None, toughness: None, keywords: Keywords::NONE })",
+        "Fable of the Mirror-Breaker" => "Some(TransformFaceDef { name: \"Reflection of Kiki-Jiki\", types: &[CardType::Enchantment, CardType::Creature], subtypes: &[Subtype::Goblin, Subtype::Shaman], colors: &[ManaColor::R], power: Some(2), toughness: Some(2), keywords: Keywords::NONE })",
+        _ => "None",
+    }
+}
+
+/// Saga chapter programs, in chapter order.
+pub(super) fn saga_for(name: &str) -> &'static str {
+    match name {
+        "Fable of the Mirror-Breaker" => "Some(SagaDef { chapter_effects: &[crate::standard_cards_v1::fable_chapter_one, crate::standard_cards_v1::fable_chapter_two, crate::standard_cards_v1::fable_chapter_three] })",
         _ => "None",
     }
 }
@@ -235,6 +258,7 @@ pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
         "Cecil, Dark Knight" => Some("Cecil, Redeemed Paladin"),
         "Polukranos Reborn" => Some("Polukranos, Engine of Ruin"),
         "Ojer Axonil, Deepest Might" => Some("Temple of Power"),
+        "Fable of the Mirror-Breaker" => Some("Reflection of Kiki-Jiki"),
         _ => None,
     }
 }
@@ -269,6 +293,7 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
             "level1:etb:create_otter_prowess;level2:becomes_level_2:return_target_instant_or_sorcery_from_your_graveyard;level3:you_cast_instant_or_sorcery:create_otter_prowess"
         }
         "Otter Prowess Token" => "prowess",
+        "Fable Goblin Shaman Token" => "attacks:create_treasure_token:1",
         "Case of the Uneaten Feast" => {
             "controlled_creature_enters:gain_1;controller_end_step_solve:gained_5_life;solved_activated:creature_cards_in_graveyard_castable_this_turn"
         }
@@ -308,6 +333,7 @@ pub(super) fn object_name_for(name: &str) -> Option<&'static str> {
         "Bat Flying Token" => Some("Bat"),
         "Karn Construct Token" => Some("Construct"),
         "Otter Prowess Token" => Some("Otter"),
+        "Fable Goblin Shaman Token" => Some("Goblin Shaman"),
         _ => None,
     }
 }

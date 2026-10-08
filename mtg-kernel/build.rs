@@ -3684,7 +3684,7 @@ fn transform_face_name_for(name: &str) -> Option<&'static str> {
 fn saga_for(name: &str) -> &'static str {
     match name {
         "The Modern Age" => "Some(SagaDef { chapter_effects: &[saga_chapter_modern_age_loot, saga_chapter_modern_age_loot, saga_chapter_modern_age_transform] })",
-        _ => "None",
+        _ => build_standard_v1::saga_for(name),
     }
 }
 

@@ -23,6 +23,7 @@ SUPPORTED_NONBASIC = {
     "Cecil, Dark Knight",
     "Duress",
     "Dusk Rose Reliquary",
+    "Fable of the Mirror-Breaker",
     "Hardlight Containment",
     "Innkeeper's Talent",
     "Liliana of the Veil",

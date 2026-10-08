@@ -2776,9 +2776,12 @@ fn legal_targets_for_controller_from_source(
                 .map(Target::Object)
                 .collect()
         }
-        TargetSpec::StandardV1(filter) => {
-            crate::standard_cards_v1::legal_targets(filter, controller, state)
-        }
+        TargetSpec::StandardV1(filter) => crate::standard_cards_v1::legal_targets(
+            filter,
+            controller,
+            source.map(|source| source.object),
+            state,
+        ),
         TargetSpec::AttackingOrBlockingCreature => battlefield_objects(state)
             .filter(|&id| {
                 object_has_type(state, id, CardType::Creature)
@@ -9833,6 +9836,15 @@ fn triggered_stack_item_expected_target_spec(
             return Err("bound-source trigger changed its exact source binding".to_string());
         }
     }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if matches!(
+        inline_effect,
+        EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SacrificeSourceAtEndStep)
+    ) && !ability_source_contract.is_some_and(|contract| {
+        crate::standard_cards_v1::is_hasty_copy_incarnation(state, contract)
+    }) {
+        return Err("delayed sacrifice trigger lost its token copy".to_string());
+    }
     if let EffectOp::ResolveInitiativeTrigger { binding } = inline_effect {
         let Some(source_contract) = ability_source_contract else {
             return Err("Initiative trigger lost its historical designation source".to_string());
@@ -11449,6 +11461,10 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
         return true;
     }
     if printed_active && def.keywords_for_face(obj.v4.face_index).has(kw) {
+        return true;
+    }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if kw == Keywords::HASTE && crate::standard_cards_v1::has_copied_haste(state, id) {
         return true;
     }
     if obj.zone == Zone::Battlefield

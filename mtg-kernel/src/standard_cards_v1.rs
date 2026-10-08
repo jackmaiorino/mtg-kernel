@@ -53,6 +53,15 @@ pub struct StandardStateV1 {
     /// (Breach the Multiverse), per exact battlefield incarnation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     phyrexians: Vec<(ObjectId, u32)>,
+    /// Token copies that have haste as part of their copy effect
+    /// (Reflection of Kiki-Jiki), per exact battlefield incarnation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    hasty_copies: Vec<(ObjectId, u32)>,
+    /// "Sacrifice it at the beginning of the next end step" delayed
+    /// triggers: the permanent's exact incarnation and the player who
+    /// controls the delayed trigger.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    end_step_sacrifices: Vec<(ObjectId, u32, PlayerId)>,
 }
 
 /// The doors of one Room permanent incarnation: bit 0 is the left door,
@@ -80,6 +89,8 @@ pub enum StandardTargetV1 {
     ControlledArtifact,
     /// An instant or sorcery card in the targeting controller's graveyard.
     InstantOrSorceryCardInOwnGraveyard,
+    /// Another nonlegendary creature the targeting controller controls.
+    AnotherNonlegendaryControlledCreature,
 }
 
 impl StandardTargetV1 {
@@ -101,6 +112,7 @@ pub(crate) fn target_zone(target: StandardTargetV1) -> Zone {
 pub(crate) fn legal_targets(
     target: StandardTargetV1,
     controller: PlayerId,
+    source: Option<ObjectId>,
     state: &GameState,
 ) -> Vec<Target> {
     let candidates: Vec<ObjectId> = if target.in_graveyard() {
@@ -114,6 +126,9 @@ pub(crate) fn legal_targets(
     candidates
         .into_iter()
         .filter(|&id| target_matches(target, controller, id, state))
+        .filter(|&id| {
+            target != StandardTargetV1::AnotherNonlegendaryControlledCreature || Some(id) != source
+        })
         .map(Target::Object)
         .collect()
 }
@@ -153,6 +168,13 @@ pub(crate) fn target_matches(
         }
         StandardTargetV1::ControlledArtifact => {
             live.controller == controller && has(CardType::Artifact)
+        }
+        StandardTargetV1::AnotherNonlegendaryControlledCreature => {
+            live.controller == controller
+                && has(CardType::Creature)
+                && !CARD_DEFS[live.card_def as usize]
+                    .supertypes
+                    .contains(&crate::card_def::Supertype::Legendary)
         }
         StandardTargetV1::InstantOrSorceryCardInOwnGraveyard => false,
     }
@@ -263,6 +285,20 @@ pub enum StandardOpV1 {
     /// addition to its other types, for as long as it stays on the
     /// battlefield.
     ControlledCreaturesBecomePhyrexian,
+    /// Fable of the Mirror-Breaker chapter II: `player` may discard up to
+    /// `count` cards, then draws as many as they discarded.
+    MayDiscardUpToThenDraw { player: PlayerRef, count: u8 },
+    /// The chosen hand cards: interpreter owned.
+    DiscardChosenThenDraw {
+        player: PlayerId,
+        cards: Vec<EffectObjectBinding>,
+    },
+    /// Reflection of Kiki-Jiki: create a token copy of the target, except
+    /// it has haste, and sacrifice it at the beginning of the next end step.
+    CopyTargetWithHasteSacrificeAtEndStep,
+    /// The delayed trigger: its controller sacrifices the source, if it is
+    /// still the same battlefield incarnation under their control.
+    SacrificeSourceAtEndStep,
 }
 
 impl StandardOpV1 {
@@ -274,6 +310,7 @@ impl StandardOpV1 {
             Self::PlayerChoosesControlledPermanent { .. }
                 | Self::SeparatePilesThenSacrifice { .. }
                 | Self::PutCreatureOrPlaneswalkerFromEachGraveyard
+                | Self::MayDiscardUpToThenDraw { .. }
         )
     }
 
@@ -285,7 +322,8 @@ impl StandardOpV1 {
                 pile_a.iter().chain(pile_b).copied().collect()
             }
             Self::SacrificePile { pile, .. } => pile.clone(),
-            Self::PutChosenCardsOntoBattlefield { cards } => cards.clone(),
+            Self::PutChosenCardsOntoBattlefield { cards }
+            | Self::DiscardChosenThenDraw { cards, .. } => cards.clone(),
             _ => Vec::new(),
         }
     }
@@ -298,6 +336,7 @@ impl StandardOpV1 {
                 | Self::ChooseSacrificePile { .. }
                 | Self::SacrificePile { .. }
                 | Self::PutChosenCardsOntoBattlefield { .. }
+                | Self::DiscardChosenThenDraw { .. }
         )
     }
 }
@@ -612,13 +651,57 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
         StandardOpV1::ControlledCreaturesBecomePhyrexian => {
             become_phyrexian(state, ctx.controller);
         }
+        StandardOpV1::CopyTargetWithHasteSacrificeAtEndStep => {
+            let Some(Target::Object(object)) = ctx.targets.first().copied() else {
+                return;
+            };
+            if !ctx.target_incarnation_matches(0, state)
+                || !target_matches(
+                    StandardTargetV1::AnotherNonlegendaryControlledCreature,
+                    ctx.controller,
+                    object,
+                    state,
+                )
+                || object == ctx.source
+            {
+                return;
+            }
+            if let Some(token) = create_token_copy(state, object, ctx.controller) {
+                let incarnation = (token, state.objects.get(token).zone_change_count);
+                let standard = state.standard_v1.get_or_insert_with(Default::default);
+                standard.hasty_copies.push(incarnation);
+                standard
+                    .end_step_sacrifices
+                    .push((incarnation.0, incarnation.1, ctx.controller));
+            }
+        }
+        StandardOpV1::SacrificeSourceAtEndStep => {
+            let Some(contract) = ctx.ability_source_contract else {
+                return;
+            };
+            let Some(live) = state.objects.try_get(ctx.source) else {
+                return;
+            };
+            if live.zone == Zone::Battlefield
+                && live.zone_change_count == contract.zone_change_count
+                && live.controller == ctx.controller
+            {
+                event::log_sacrifice(state, ctx.source);
+                event::propose_and_commit(
+                    state,
+                    ProposedEvent::zone_change(ctx.source, Zone::Graveyard),
+                );
+            }
+        }
         StandardOpV1::PlayerChoosesControlledPermanent { .. }
         | StandardOpV1::ApplyChosenPermanent { .. }
         | StandardOpV1::SeparatePilesThenSacrifice { .. }
         | StandardOpV1::ChooseSacrificePile { .. }
         | StandardOpV1::SacrificePile { .. }
         | StandardOpV1::PutCreatureOrPlaneswalkerFromEachGraveyard
-        | StandardOpV1::PutChosenCardsOntoBattlefield { .. } => {
+        | StandardOpV1::PutChosenCardsOntoBattlefield { .. }
+        | StandardOpV1::MayDiscardUpToThenDraw { .. }
+        | StandardOpV1::DiscardChosenThenDraw { .. } => {
             panic!("choice-bearing effects must use the resumable interpreter")
         }
     }
@@ -650,7 +733,11 @@ pub(crate) fn gain_control(state: &mut GameState, object: ObjectId, player: Play
 
 /// Creates a token that's a copy of `original` (707.2): the same card
 /// definition and shown face, without counters, damage or other state.
-pub(crate) fn create_token_copy(state: &mut GameState, original: ObjectId, controller: PlayerId) {
+pub(crate) fn create_token_copy(
+    state: &mut GameState,
+    original: ObjectId,
+    controller: PlayerId,
+) -> Option<ObjectId> {
     let live = state.objects.get(original);
     let (card_def, face) = (live.card_def, live.v4.face_index);
     let start = state.engine.event_log.len();
@@ -667,6 +754,7 @@ pub(crate) fn create_token_copy(state: &mut GameState, original: ObjectId, contr
             event::propose_and_commit(state, ProposedEvent::transform_in_place(token, face));
         }
     }
+    created
 }
 
 const fn trigger(condition: TriggerCondition, effect: fn() -> EffectOp) -> TriggeredAbilityDef {
@@ -1141,6 +1229,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         CASE_OF_THE_UNEATEN_FEAST => &UNEATEN_FEAST_TRIGGERS,
         INNKEEPERS_TALENT => &INNKEEPERS_TALENT_TRIGGERS,
         STORMCHASERS_TALENT => &STORMCHASERS_TALENT_TRIGGERS,
+        FABLE_GOBLIN_SHAMAN_TOKEN => &FABLE_GOBLIN_SHAMAN_TRIGGERS,
         "Otter Prowess Token" => &PROWESS_TRIGGERS,
         SEAM_RIP | DUSK_ROSE_RELIQUARY | SHELTERED_BY_GHOSTS | HARDLIGHT_CONTAINMENT => {
             &EXILE_UNTIL_LEAVES_TRIGGERS
@@ -2055,6 +2144,158 @@ pub fn target_player_sacrifices_creature() -> EffectOp {
         player: PlayerRef::Target(0),
         filter: crate::effect::CreatureSacrificeFilter::Any,
     }
+}
+
+// ---- Fable of the Mirror-Breaker // Reflection of Kiki-Jiki ---------------
+
+const FABLE_GOBLIN_SHAMAN_TOKEN: &str = "Fable Goblin Shaman Token";
+
+/// Chapter I: a 2/2 red Goblin Shaman with "Whenever this creature
+/// attacks, create a Treasure token."
+pub fn fable_chapter_one() -> EffectOp {
+    EffectOp::CreateToken {
+        token_def: crate::card_def::card_id_by_name(FABLE_GOBLIN_SHAMAN_TOKEN)
+            .expect("Fable Goblin Shaman Token in CARD_DEFS"),
+        controller: PlayerRef::Controller,
+    }
+}
+
+/// Chapter II: "You may discard up to two cards. If you do, draw that many
+/// cards."
+pub fn fable_chapter_two() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::MayDiscardUpToThenDraw {
+        player: PlayerRef::Controller,
+        count: 2,
+    })
+}
+
+/// Chapter III: exile the Saga, then return it transformed.
+pub fn fable_chapter_three() -> EffectOp {
+    EffectOp::TransformSagaSource
+}
+
+fn goblin_shaman_treasure() -> EffectOp {
+    EffectOp::CreateToken {
+        token_def: crate::card_def::card_id_by_name("Treasure Token")
+            .expect("Treasure Token in CARD_DEFS"),
+        controller: PlayerRef::Controller,
+    }
+}
+
+const FABLE_GOBLIN_SHAMAN_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [trigger(TriggerCondition::Attacks, goblin_shaman_treasure)];
+
+pub fn reflection_of_kiki_jiki_copy() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::CopyTargetWithHasteSacrificeAtEndStep)
+}
+
+/// The exact cards in `player`'s hand, in hand order.
+pub(crate) fn hand_candidates(state: &GameState, player: PlayerId) -> Vec<EffectObjectBinding> {
+    state.players[player.index()]
+        .hand
+        .iter()
+        .map(|&card| EffectObjectBinding {
+            object: card,
+            expected_zone: Zone::Hand,
+            expected_zone_change_count: state.objects.get(card).zone_change_count,
+        })
+        .collect()
+}
+
+/// `player` discards the chosen cards still in their hand together, then
+/// draws that many.
+pub(crate) fn discard_chosen_then_draw(
+    state: &mut GameState,
+    player: PlayerId,
+    cards: &[EffectObjectBinding],
+) {
+    let present = hand_candidates(state, player)
+        .into_iter()
+        .filter(|binding| cards.contains(binding))
+        .map(|binding| ProposedEvent::zone_change(binding.object, Zone::Graveyard))
+        .collect::<Vec<_>>();
+    let count = present.len();
+    if count == 0 {
+        return;
+    }
+    event::propose_and_commit_batch(state, present);
+    for _ in 0..count {
+        event::propose_and_commit(state, ProposedEvent::draw(player));
+    }
+}
+
+/// Whether `object` is a token copy that has haste from its copy effect.
+#[cfg(feature = "standard-magezero-fixtures")]
+pub(crate) fn has_copied_haste(state: &GameState, object: ObjectId) -> bool {
+    let Some(standard) = state.standard_v1.as_ref() else {
+        return false;
+    };
+    state.objects.try_get(object).is_some_and(|live| {
+        live.zone == Zone::Battlefield
+            && standard
+                .hasty_copies
+                .contains(&(object, live.zone_change_count))
+    })
+}
+
+/// Whether `contract` names a battlefield incarnation that Reflection of
+/// Kiki-Jiki created, the only source of its delayed sacrifice trigger.
+#[cfg(feature = "standard-magezero-fixtures")]
+pub(crate) fn is_hasty_copy_incarnation(
+    state: &GameState,
+    contract: crate::state::AbilitySourceContractV4,
+) -> bool {
+    contract.zone == Zone::Battlefield
+        && state.standard_v1.as_ref().is_some_and(|standard| {
+            standard
+                .hasty_copies
+                .contains(&(contract.source, contract.zone_change_count))
+        })
+}
+
+/// The "sacrifice it at the beginning of the next end step" delayed
+/// triggers that the beginning of an end step sets off (603.7). Each fires
+/// once; one whose permanent already left the battlefield is dropped.
+#[cfg(feature = "standard-magezero-fixtures")]
+pub(crate) fn end_step_delayed_triggers(
+    state: &mut GameState,
+    events: &[CommittedEvent],
+) -> Vec<crate::trigger::PendingTrigger> {
+    if !events
+        .iter()
+        .any(|event| matches!(event, CommittedEvent::BeginningEndStep { .. }))
+    {
+        return Vec::new();
+    }
+    let Some(standard) = state.standard_v1.as_mut() else {
+        return Vec::new();
+    };
+    let due = std::mem::take(&mut standard.end_step_sacrifices);
+    due.into_iter()
+        .filter(|&(object, zone_change_count, _)| {
+            let live = state.objects.get(object);
+            live.zone == Zone::Battlefield && live.zone_change_count == zone_change_count
+        })
+        .map(|(object, _, controller)| {
+            let mut source_contract = crate::state::AbilitySourceContractV4::capture(state, object);
+            source_contract.controller = controller;
+            crate::trigger::PendingTrigger {
+                controller,
+                source: object,
+                effect: EffectOp::StandardV1(StandardOpV1::SacrificeSourceAtEndStep),
+                is_madness_offer: false,
+                kicked: false,
+                target_spec: crate::card_def::TargetSpec::None,
+                targets: Vec::new(),
+                target_contracts: Vec::new(),
+                placement_ordered: false,
+                source_contract: Some(source_contract),
+                granted_by: None,
+                optional_additional_cost_paid: None,
+                paid_cost_refs: Vec::new(),
+            }
+        })
+        .collect()
 }
 
 // ---- Breach the Multiverse ------------------------------------------------

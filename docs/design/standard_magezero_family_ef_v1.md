@@ -151,6 +151,23 @@ becomes a Phyrexian in addition to its other types; the affected set is
 fixed at resolution (611.2c) and recorded per exact incarnation in
 `GameState::standard_v1`, and the effective subtype queries read it.
 
+## Fable of the Mirror-Breaker
+
+Fable is a Saga on the existing lore-counter path (714.3b) whose chapters
+come from the Standard module. Chapter I makes a 2/2 red Goblin Shaman
+token whose attack trigger makes a Treasure. Chapter II lets its
+controller choose up to two cards in hand through the resumable
+interpreter, discard them together and draw as many. Chapter III reuses
+The Modern Age's exile-and-return-transformed operation. Saga chapter
+programs now count as definition-owned triggers when a resumable choice
+is validated (714.2b). Reflection of Kiki-Jiki's {1}, {T} ability targets
+another nonlegendary creature you control; the module's target filters
+now receive the targeting source so "another" can exclude it. The token
+copy has haste as part of the copy, recorded per exact incarnation and
+read by the keyword query, and a delayed "sacrifice it at the beginning of
+the next end step" trigger (603.7) fires from the next `BeginningEndStep`.
+The stack accepts that trigger only for a token Reflection created.
+
 ## Known limits
 
 The stack and battlefield use the Room card's combined mana value and
@@ -160,6 +177,9 @@ Temple of Power as legendary. Ninjutsu attackers attack the player. The
 attack count adds each declaration, so a creature attacking in two combats
 in one turn counts twice. Innkeeper's Talent does not double loyalty,
 lore or poison counters; no other card in its deck puts them.
+Reflection of Kiki-Jiki's delayed sacrifice trigger uses the token as its
+source rather than Reflection (603.7d), so it reads as the token's
+ability.
 
 ## Catalog identity
 

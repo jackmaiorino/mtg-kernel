@@ -1896,6 +1896,15 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
     if matches!(effect, EffectOp::ResolveMonarchTrigger { .. }) {
         return Some(TargetSpec::None);
     }
+    // Reflection of Kiki-Jiki's delayed "sacrifice it" trigger belongs to
+    // whatever token it copied; `engine` checks that exact incarnation.
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if matches!(
+        effect,
+        EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::SacrificeSourceAtEndStep)
+    ) {
+        return Some(TargetSpec::None);
+    }
     if !trigger_effect_matches(card_def, effect) {
         return None;
     }
@@ -2768,6 +2777,11 @@ fn triggers_from_events(
             paid_cost_refs: Vec::new(),
         });
     }
+
+    #[cfg(feature = "standard-magezero-fixtures")]
+    new_triggers.extend(crate::standard_cards_v1::end_step_delayed_triggers(
+        state, events,
+    ));
 
     uses.sort_by_key(|entry| (entry.source.object, entry.ability_index));
     state.trigger_uses_v1 = (!uses.is_empty()).then_some(uses);

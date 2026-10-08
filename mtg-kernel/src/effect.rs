@@ -1640,6 +1640,14 @@ pub enum EffectTargetSelectionPurpose {
         later: Option<(PlayerId, Vec<EffectObjectBinding>)>,
         canonical_path: Vec<u16>,
     },
+    /// `player` chooses up to `max_targets` cards from their own hand to
+    /// discard, then draws that many
+    /// (`StandardOpV1::MayDiscardUpToThenDraw`).
+    StandardDiscardToDrawV1 {
+        player: PlayerId,
+        original_candidates: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1928,6 +1936,14 @@ pub enum EffectAnsweredChoiceGuard {
     /// Answered Breach the Multiverse picks, one per graveyard stage, whose
     /// move onto the battlefield has not run yet.
     StandardBreachChosenV1 {
+        cards: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+        remaining_frames: Vec<EffectFrame>,
+    },
+    /// Answered hand cards to discard whose discard and draw have not run
+    /// yet.
+    StandardDiscardChosenV1 {
+        player: PlayerId,
         cards: Vec<EffectObjectBinding>,
         canonical_path: Vec<u16>,
         remaining_frames: Vec<EffectFrame>,
@@ -2940,6 +2956,40 @@ fn complete_resumable_target_selection(
         })
         .collect::<Result<Vec<_>, String>>()?;
     match purpose {
+        EffectTargetSelectionPurpose::StandardDiscardToDrawV1 {
+            player,
+            original_candidates,
+            canonical_path,
+        } => {
+            if path != canonical_path
+                || objects
+                    .iter()
+                    .any(|object| !original_candidates.contains(object))
+            {
+                return Err("discard choice changed path or candidate".to_string());
+            }
+            if objects.is_empty() {
+                return Ok(());
+            }
+            let cards = original_candidates
+                .iter()
+                .copied()
+                .filter(|binding| objects.contains(binding))
+                .collect::<Vec<_>>();
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::StandardDiscardChosenV1 {
+                    player,
+                    cards: cards.clone(),
+                    canonical_path: canonical_path.clone(),
+                    remaining_frames: continuation.frames.clone(),
+                });
+            continuation.frames.push(EffectFrame::Program {
+                op: EffectOp::StandardV1(
+                    crate::standard_cards_v1::StandardOpV1::DiscardChosenThenDraw { player, cards },
+                ),
+                path: canonical_path,
+            });
+        }
         EffectTargetSelectionPurpose::StandardBreachChoiceV1 {
             chooser,
             mut chosen,
@@ -4273,15 +4323,26 @@ fn validated_definition_owned_root_effect(
             .try_get(pending.resolving_item.source)
             .ok_or("answered trigger frame lost its source object")?
             .card_def;
-        if !crate::trigger::triggers_for(card_def)
-            .iter()
-            .any(|trigger| {
-                crate::trigger::materialize_trigger_effect(
-                    trigger,
-                    pending.resolving_item.source,
-                    state,
-                ) == *root
-            })
+        // A Saga's chapter abilities are definition-owned triggers too
+        // (714.2b).
+        let is_saga_chapter = crate::card_def::CARD_DEFS[card_def as usize]
+            .saga
+            .as_ref()
+            .is_some_and(|saga| {
+                saga.chapter_effects
+                    .iter()
+                    .any(|chapter| chapter() == *root)
+            });
+        if !is_saga_chapter
+            && !crate::trigger::triggers_for(card_def)
+                .iter()
+                .any(|trigger| {
+                    crate::trigger::materialize_trigger_effect(
+                        trigger,
+                        pending.resolving_item.source,
+                        state,
+                    ) == *root
+                })
         {
             return Err(
                 "answered trigger effect no longer matches its card definition".to_string(),
@@ -5327,6 +5388,7 @@ fn validate_answered_choice_guard(
                             | EffectAnsweredChoiceGuard::StandardPilesSeparatedV1 { .. }
                             | EffectAnsweredChoiceGuard::StandardPileChosenV1 { .. }
                             | EffectAnsweredChoiceGuard::StandardBreachChosenV1 { .. }
+                            | EffectAnsweredChoiceGuard::StandardDiscardChosenV1 { .. }
                     )
                 ) {
                     return Err(
@@ -5652,6 +5714,34 @@ fn validate_answered_choice_guard(
             }
             validate_standard_piles(state, pending, *player, pile_a, pile_b, canonical_path)?;
         }
+        Some(EffectAnsweredChoiceGuard::StandardDiscardChosenV1 {
+            player,
+            cards,
+            canonical_path,
+            remaining_frames,
+        }) => {
+            let mut expected = remaining_frames.clone();
+            expected.push(EffectFrame::Program {
+                op: EffectOp::StandardV1(
+                    crate::standard_cards_v1::StandardOpV1::DiscardChosenThenDraw {
+                        player: *player,
+                        cards: cards.clone(),
+                    },
+                ),
+                path: canonical_path.clone(),
+            });
+            if pending.choice.is_some() || pending.frames != expected {
+                return Err("answered discard continuation changed".to_string());
+            }
+            let count = validate_standard_discard_origin(state, pending, *player, canonical_path)?;
+            let hand = crate::standard_cards_v1::hand_candidates(state, *player);
+            if cards.is_empty()
+                || cards.len() > usize::from(count)
+                || cards.iter().any(|card| !hand.contains(card))
+            {
+                return Err("answered discard cards changed".to_string());
+            }
+        }
         Some(EffectAnsweredChoiceGuard::StandardBreachChosenV1 {
             cards,
             canonical_path,
@@ -5699,6 +5789,30 @@ fn validate_answered_choice_guard(
         }
     }
     Ok(())
+}
+
+/// Authenticates a discard-then-draw prompt or answer against the
+/// definition-owned operation at its structural path.
+fn validate_standard_discard_origin(
+    state: &GameState,
+    pending: &EffectContinuation,
+    player: PlayerId,
+    path: &[u16],
+) -> Result<u8, String> {
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    let Some(EffectOp::StandardV1(
+        crate::standard_cards_v1::StandardOpV1::MayDiscardUpToThenDraw {
+            player: original_player,
+            count,
+        },
+    )) = effect_op_at_structural_path(&root, path)
+    else {
+        return Err("discard choice lost its originating operation".to_string());
+    };
+    if pending.ctx.resolve_player(*original_player, state) != player {
+        return Err("discard player changed".to_string());
+    }
+    Ok(*count)
 }
 
 /// Authenticates a Breach the Multiverse prompt or answer against the
@@ -5856,6 +5970,49 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 validate_effect_target_candidate(state, candidate)?;
             }
             match purpose {
+                EffectTargetSelectionPurpose::StandardDiscardToDrawV1 {
+                    player,
+                    original_candidates,
+                    canonical_path,
+                } => {
+                    if chooser != player
+                        || path != canonical_path
+                        || *min_targets != 0
+                        || *ordered
+                        || original_candidates.is_empty()
+                    {
+                        return Err("discard prompt has a noncanonical shape".to_string());
+                    }
+                    let count =
+                        validate_standard_discard_origin(state, pending, *player, canonical_path)?;
+                    if usize::from(*max_targets)
+                        != usize::from(count).min(original_candidates.len())
+                    {
+                        return Err("discard prompt has a noncanonical size".to_string());
+                    }
+                    let chosen = selected
+                        .iter()
+                        .map(|candidate| candidate.expected_object)
+                        .collect::<Option<Vec<_>>>()
+                        .ok_or("discard selection lacks bindings")?;
+                    if crate::standard_cards_v1::hand_candidates(state, *player)
+                        != *original_candidates
+                        || chosen
+                            .iter()
+                            .any(|binding| !original_candidates.contains(binding))
+                        || legal
+                            != &original_candidates
+                                .iter()
+                                .filter(|binding| !chosen.contains(binding))
+                                .map(|binding| EffectTargetCandidate {
+                                    target: Target::Object(binding.object),
+                                    expected_object: Some(*binding),
+                                })
+                                .collect::<Vec<_>>()
+                    {
+                        return Err("discard prompt candidates changed".to_string());
+                    }
+                }
                 EffectTargetSelectionPurpose::StandardBreachChoiceV1 {
                     chooser: breach_chooser,
                     from,
@@ -8710,6 +8867,61 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         return Ok(ResumableProgress::Suspended);
                     }
                 }
+            }
+            EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::MayDiscardUpToThenDraw { player, count },
+            ) => {
+                let player = continuation.ctx.resolve_player(player, state);
+                let candidates = crate::standard_cards_v1::hand_candidates(state, player);
+                if candidates.is_empty() || count == 0 {
+                    continue;
+                }
+                continuation.choice = Some(PendingEffectChoice::SelectTargets {
+                    player,
+                    path: path.clone(),
+                    selected: vec![],
+                    legal: candidates
+                        .iter()
+                        .copied()
+                        .map(|binding| EffectTargetCandidate {
+                            target: Target::Object(binding.object),
+                            expected_object: Some(binding),
+                        })
+                        .collect(),
+                    min_targets: 0,
+                    max_targets: u16::from(count)
+                        .min(u16::try_from(candidates.len()).unwrap_or(u16::MAX)),
+                    ordered: false,
+                    purpose: EffectTargetSelectionPurpose::StandardDiscardToDrawV1 {
+                        player,
+                        original_candidates: candidates,
+                        canonical_path: path,
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::DiscardChosenThenDraw { player, cards },
+            ) => {
+                let Some(EffectAnsweredChoiceGuard::StandardDiscardChosenV1 {
+                    player: expected_player,
+                    cards: expected_cards,
+                    canonical_path,
+                    remaining_frames,
+                }) = continuation.answered_choice_guard.as_ref()
+                else {
+                    return Err("discard lost its answered choice".to_string());
+                };
+                if player != *expected_player
+                    || cards != *expected_cards
+                    || path != *canonical_path
+                    || continuation.frames != *remaining_frames
+                {
+                    return Err("discard choice changed".to_string());
+                }
+                continuation.answered_choice_guard = None;
+                crate::standard_cards_v1::discard_chosen_then_draw(state, player, &cards);
             }
             EffectOp::StandardV1(
                 crate::standard_cards_v1::StandardOpV1::PutCreatureOrPlaneswalkerFromEachGraveyard,
