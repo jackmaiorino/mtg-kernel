@@ -3,7 +3,7 @@
 //! the `triggers_for` and target-spec tables.
 
 use super::{etb_trigger, TriggerCondition, TriggeredAbilityDef};
-use crate::card_def::CardType;
+use crate::card_def::{CardType, Subtype};
 use crate::effect::{
     CreatureSacrificeFilter, EffectObjectBinding, EffectOp, ObjectRef, PlayerRef, TargetRef,
 };
@@ -274,3 +274,18 @@ pub(super) const ADELINE_RESPLENDENT_CATHAR_TRIGGERS: [TriggeredAbilityDef; 1] =
         condition: TriggerCondition::ControllerAttacks,
         ..etb_trigger(create_attacking_human_effect)
     }];
+
+fn damage_target_opponent_one_effect() -> EffectOp {
+    EffectOp::DealDamage {
+        target: TargetRef::Target(0),
+        amount: 1,
+    }
+}
+
+/// Hired Claw: "Whenever you attack with one or more Lizards, this creature
+/// deals 1 damage to target opponent." Its once-a-turn counter ability is
+/// gated in `standard_statics_v1::activation_condition_met`.
+pub(super) const HIRED_CLAW_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControllerAttacksWithSubtype(Subtype::Lizard),
+    ..etb_trigger(damage_target_opponent_one_effect)
+}];

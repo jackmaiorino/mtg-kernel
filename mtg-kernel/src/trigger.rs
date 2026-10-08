@@ -115,8 +115,12 @@ pub enum TriggerCondition {
     /// does not satisfy this event.
     Attacks,
     /// The source's controller declares one or more attackers ("whenever
-    /// you attack", Adeline, Resplendent Cathar; Hired Claw).
+    /// you attack", Adeline, Resplendent Cathar).
     ControllerAttacks,
+    /// The source's controller declares attackers including at least one
+    /// with this subtype ("whenever you attack with one or more Lizards",
+    /// Hired Claw).
+    ControllerAttacksWithSubtype(Subtype),
     ControlledLandEnters,
     ControllerGainsLife,
     ControllerAddedPlusOneCountersToSelf {
@@ -1845,6 +1849,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Unstoppable Slasher" => &standard_family_g_v1::UNSTOPPABLE_SLASHER_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Adeline, Resplendent Cathar" => &standard_family_g_v1::ADELINE_RESPLENDENT_CATHAR_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Hired Claw" => &standard_family_g_v1::HIRED_CLAW_TRIGGERS,
         _ => &[],
     }
 }
@@ -1874,7 +1880,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         #[cfg(feature = "standard-magezero-fixtures")]
         "Gatekeeper of Malakir" => TargetSpec::AnyPlayer,
         #[cfg(feature = "standard-magezero-fixtures")]
-        "Deep-Cavern Bat" => TargetSpec::TargetOpponent,
+        "Deep-Cavern Bat" | "Hired Claw" => TargetSpec::TargetOpponent,
         _ => TargetSpec::None,
     }
 }
@@ -3177,6 +3183,22 @@ fn trigger_matches(
             *event_source == source
                 && *event_controller == controller
                 && state.objects.get(source).zone_change_count == *source_zone_change_count
+        }
+        (
+            TriggerCondition::ControllerAttacksWithSubtype(subtype),
+            CommittedEvent::ControllerAttacked {
+                source: event_source,
+                source_zone_change_count,
+                controller: event_controller,
+            },
+        ) => {
+            *event_source == source
+                && *event_controller == controller
+                && state.objects.get(source).zone_change_count == *source_zone_change_count
+                && state.engine.combat.attackers.iter().any(|&attacker| {
+                    state.objects.get(attacker).controller == controller
+                        && crate::engine::has_effective_subtype(state, attacker, subtype)
+                })
         }
         (
             TriggerCondition::BeginningControllerEndStepIfCreatureDied,

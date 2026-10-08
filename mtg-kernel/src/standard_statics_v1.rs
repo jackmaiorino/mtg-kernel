@@ -206,3 +206,20 @@ pub(crate) fn spell_cost_generic_modifiers(
     }
     (increase, reduction)
 }
+
+/// Printed "activate only if" conditions beyond timing and per-turn limits.
+pub(crate) fn activation_condition_met(
+    state: &GameState,
+    source: ObjectId,
+    ability_index: usize,
+) -> bool {
+    match (battlefield_definition_name(state, source), ability_index) {
+        // "Activate only if an opponent has lost life this turn and only
+        // once each turn."
+        (Some("Hired Claw"), 0) => {
+            let controller = state.objects.get(source).controller;
+            state.player_lost_life_this_turn_v1(controller.opponent())
+        }
+        _ => true,
+    }
+}

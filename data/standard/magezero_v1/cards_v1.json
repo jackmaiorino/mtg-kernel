@@ -614,6 +614,38 @@
         "cost_reduction"
       ],
       "java_file": "Mage.Sets/src/mage/cards/h/HaughtyDjinn.java"
+    },
+    {
+      "name": "Hired Claw",
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Lizard",
+        "Mercenary"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "attack_trigger",
+        "activated_ability",
+        "plus_one_counters"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HiredClaw.java"
     }
   ]
 }

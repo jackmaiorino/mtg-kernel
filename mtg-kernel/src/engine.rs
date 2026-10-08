@@ -6113,6 +6113,10 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
                 {
                     continue;
                 }
+                #[cfg(feature = "standard-magezero-fixtures")]
+                if !crate::standard_statics_v1::activation_condition_met(state, id, i) {
+                    continue;
+                }
                 if can_pay_activation_components(ability.cost, player, id, state)
                     && activation_target_prefix_can_complete(id, ability, &[], state)
                 {
@@ -14153,10 +14157,13 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
         let attacker = state.active_player;
         for source in state.players[attacker.index()].battlefield.clone() {
             let object = state.objects.get(source);
-            if trigger::triggers_for(object.card_def)
-                .iter()
-                .any(|def| matches!(def.condition, trigger::TriggerCondition::ControllerAttacks))
-            {
+            if trigger::triggers_for(object.card_def).iter().any(|def| {
+                matches!(
+                    def.condition,
+                    trigger::TriggerCondition::ControllerAttacks
+                        | trigger::TriggerCondition::ControllerAttacksWithSubtype(_)
+                )
+            }) {
                 let event = CommittedEvent::ControllerAttacked {
                     source,
                     source_zone_change_count: object.zone_change_count,

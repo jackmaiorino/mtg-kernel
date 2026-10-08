@@ -132,6 +132,7 @@ impl Scan<'_> {
             | ShuffleTriggerSourceIntoOwnersLibrary
             | LoseHalfLifeRoundedUp { .. }
             | CreateTokenTappedAndAttacking { .. }
+            | AddPlusOneCounterToAbilitySource
             | ReturnSourceFromGraveyardTappedWithStunCounters { .. }
             | MaterializeStormCopies
             | CreateStormCopies { .. }

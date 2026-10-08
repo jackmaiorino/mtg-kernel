@@ -1120,6 +1120,10 @@ pub enum EffectOp {
     CreateTokenTappedAndAttacking {
         token_def: u16,
     },
+    /// Put one +1/+1 counter on this activated or triggered ability's source
+    /// while it is still the battlefield incarnation the ability came from
+    /// (Hired Claw, Warden of the Inner Sky). Otherwise nothing happens.
+    AddPlusOneCounterToAbilitySource,
     /// The player loses half their life, rounded up (Unstoppable Slasher).
     /// A player at 0 or less life loses nothing.
     LoseHalfLifeRoundedUp {
@@ -11427,6 +11431,24 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 && !combat.attackers.contains(&object)
             {
                 combat.attackers.push(object);
+            }
+        }
+        EffectOp::AddPlusOneCounterToAbilitySource => {
+            let Some(contract) = ctx.ability_source_contract else {
+                return;
+            };
+            let live = state.objects.get(contract.source);
+            if live.zone != Zone::Battlefield
+                || live.zone_change_count != contract.zone_change_count
+                || !crate::engine::object_has_type(state, contract.source, CardType::Creature)
+            {
+                return;
+            }
+            if event::add_plus_one_counters(state, contract.source, ctx.controller, 1).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
             }
         }
         EffectOp::LoseHalfLifeRoundedUp { player } => {

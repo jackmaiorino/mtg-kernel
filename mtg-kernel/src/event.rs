@@ -915,6 +915,10 @@ fn commit_with_ability_lki(
                     let lost = d.amount;
                     #[cfg(feature = "standard-magezero-fixtures")]
                     let lost = crate::standard_statics_v1::modified_life_loss(state, p, lost);
+                    #[cfg(feature = "standard-magezero-fixtures")]
+                    if lost > 0 {
+                        state.record_life_loss_v1(p);
+                    }
                     state.players[p.index()].life -= lost;
                 }
             }
@@ -984,6 +988,10 @@ fn commit_with_ability_lki(
             } else {
                 crate::standard_statics_v1::modified_life_loss(state, l.player, amount)
             };
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if amount > 0 {
+                state.record_life_loss_v1(l.player);
+            }
             state.players[l.player.index()].life -= amount;
             CommittedEvent::LifeLoss {
                 player: l.player,

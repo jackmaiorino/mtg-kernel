@@ -1411,6 +1411,20 @@ pub struct GameState {
     /// everywhere else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub counter_lki_v1: Option<Vec<CounterLkiV1>>,
+    /// Players who lost life this turn. Only `standard-magezero-fixtures`
+    /// builds record it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub life_loss_turn_v1: Option<LifeLossTurnV1>,
+}
+
+/// Which players lost life during one turn (Hired Claw: "only if an
+/// opponent has lost life this turn"). Stale once the turn moves on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LifeLossTurnV1 {
+    pub turn: u32,
+    pub active_player: PlayerId,
+    pub players: [bool; 2],
 }
 
 /// The counters one exact battlefield incarnation had as it left.
@@ -1485,6 +1499,10 @@ impl Hash for GameState {
             "counter-lki-v1".hash(state);
             lki.hash(state);
         }
+        if let Some(loss) = &self.life_loss_turn_v1 {
+            "life-loss-turn-v1".hash(state);
+            loss.hash(state);
+        }
     }
 }
 
@@ -1537,6 +1555,32 @@ impl PaidCostRefV4 {
 }
 
 impl GameState {
+    pub fn player_lost_life_this_turn_v1(&self, player: PlayerId) -> bool {
+        self.life_loss_turn_v1.is_some_and(|loss| {
+            loss.turn == self.turn
+                && loss.active_player == self.active_player
+                && loss.players[player.index()]
+        })
+    }
+
+    /// Records that `player` lost life now.
+    #[cfg(feature = "standard-magezero-fixtures")]
+    pub(crate) fn record_life_loss_v1(&mut self, player: PlayerId) {
+        let mut players = if self.player_lost_life_this_turn_v1(player.opponent()) {
+            let mut players = [false; 2];
+            players[player.opponent().index()] = true;
+            players
+        } else {
+            [false; 2]
+        };
+        players[player.index()] = true;
+        self.life_loss_turn_v1 = Some(LifeLossTurnV1 {
+            turn: self.turn,
+            active_player: self.active_player,
+            players,
+        });
+    }
+
     pub fn creature_died_this_turn_v1(&self) -> bool {
         self.creature_death_turn_v1.is_some_and(|death| {
             death.turn == self.turn && death.active_player == self.active_player
@@ -1630,6 +1674,7 @@ impl GameState {
             creature_death_turn_v1: None,
             london_mulligans_v1: None,
             counter_lki_v1: None,
+            life_loss_turn_v1: None,
         }
     }
 

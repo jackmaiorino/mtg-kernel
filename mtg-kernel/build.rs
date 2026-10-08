@@ -3014,6 +3014,9 @@ enum AbilityEffectRecipe {
     /// numeric definition id at runtime via a generated `card_id_by_name`
     /// call.
     EachPlayerControllingNamedPermanentDrawsCard(&'static str),
+    /// One +1/+1 counter on the ability's own source while it remains the
+    /// same battlefield incarnation (Hired Claw).
+    PutPlusOneCounterOnSource,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4582,6 +4585,16 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
                 max_activations_per_turn: None,
             },
         ],
+        // MageZero Standard family G.
+        "Hired Claw" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ManaCost("{1}{R}")],
+            effect: AbilityEffectRecipe::PutPlusOneCounterOnSource,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: Some(1),
+        }],
         _ => &[],
     }
 }
@@ -4737,6 +4750,9 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::AddMinusOneMinusOneCounter => {
             "add_minus_one_minus_one_counter".to_string()
         }
+        AbilityEffectRecipe::PutPlusOneCounterOnSource => {
+            "put_plus_one_counter_on_source".to_string()
+        }
         AbilityEffectRecipe::AddPlusOnePlusOneCounters(count) => format!("add_plus_one_plus_one_counters:{count}"),
         AbilityEffectRecipe::SearchLibraryToBattlefieldTapped { filter } => format!(
             "search_library_to_battlefield_tapped:{}",
@@ -4890,6 +4906,9 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
         }
         AbilityEffectRecipe::AddMinusOneMinusOneCounter => {
             "ability_effect_add_minus_one_minus_one_counter".to_string()
+        }
+        AbilityEffectRecipe::PutPlusOneCounterOnSource => {
+            "ability_effect_put_plus_one_counter_on_source".to_string()
         }
         AbilityEffectRecipe::AddPlusOnePlusOneCounters(count) => {
             format!("ability_effect_add_plus_one_plus_one_counters_{count}")
@@ -5333,6 +5352,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
             "combat_damage_player:that_player_loses_half_life_rounded_up;dies_if_no_counters:return_source_tapped_with_stun:2"
         }
         "Adeline, Resplendent Cathar" => "controller_attacks:create_token_tapped_attacking:Human Token:1",
+        "Hired Claw" => "controller_attacks_with_subtype:Lizard:target_opponent:damage:1",
         _ => "none",
     }
 }
@@ -5351,6 +5371,7 @@ fn standard_static_recipe_for(name: &str) -> &'static str {
         "Adeline, Resplendent Cathar" => "cda_power:controlled_creatures",
         "Bloodletter of Aclazotz" => "opponent_life_loss_doubled_during_controller_turn",
         "Thalia, Guardian of Thraben" => "noncreature_spells_cost_generic_more:1",
+        "Hired Claw" => "activation_0_only_if_opponent_lost_life_this_turn",
         "Haughty Djinn" => {
             "cda_power:controller_graveyard_instant_sorcery_cards;controller_instant_sorcery_spells_cost_generic_less:1"
         }
@@ -5976,6 +5997,9 @@ fn codegen(cards: &[CardJson]) -> String {
                     "    EffectOp::AddMinusOneMinusOneCounter {{ object: ObjectRef::Target(0) }}"
                 )
                 .unwrap();
+            }
+            AbilityEffectRecipe::PutPlusOneCounterOnSource => {
+                writeln!(out, "    EffectOp::AddPlusOneCounterToAbilitySource").unwrap();
             }
             AbilityEffectRecipe::SearchLibraryToBattlefieldTapped { filter } => {
                 let filter = library_search_filter_src(filter);

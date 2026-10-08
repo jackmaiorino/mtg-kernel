@@ -119,6 +119,13 @@ const CARDS: &[(&str, &[Subtype], (i16, i16), Keywords, usize)] = &[
         0,
     ),
     (
+        "Hired Claw",
+        &[Subtype::Lizard, Subtype::Mercenary],
+        (1, 2),
+        Keywords::NONE,
+        1,
+    ),
+    (
         "Unstoppable Slasher",
         &[Subtype::Zombie, Subtype::Assassin],
         (2, 3),
@@ -1282,4 +1289,64 @@ fn thalia_and_haughty_djinn_cancel_out() {
     cast(&mut state, snap, &[Target::Object(theirs)]);
     next(&mut state);
     assert_eq!(state.players[0].mana_pool, [0; 6]);
+}
+
+fn activatable(state: &mut GameState) -> Vec<(ObjectId, u8)> {
+    match next(state) {
+        Decision::CastSpellOrPass {
+            activatable_abilities,
+            ..
+        } => activatable_abilities,
+        other => panic!("expected priority, got {other:?}"),
+    }
+}
+
+#[test]
+fn hired_claw_pings_when_lizards_attack() {
+    let mut state = ready(Step::DeclareAttackers);
+    put(&mut state, PlayerId::P0, "Hired Claw", Zone::Battlefield);
+    let scout = put(&mut state, PlayerId::P0, "Cenote Scout", Zone::Battlefield);
+    // A non-Lizard attacking alone does not trigger it.
+    attack_unblocked(&mut state, vec![scout]);
+    assert_eq!(state.players[1].life, 19);
+
+    let mut state = ready(Step::DeclareAttackers);
+    let claw = put(&mut state, PlayerId::P0, "Hired Claw", Zone::Battlefield);
+    assert!(matches!(
+        next(&mut state),
+        Decision::DeclareAttackers { .. }
+    ));
+    engine::step(&mut state, Action::DeclareAttackers(vec![claw])).unwrap();
+    // The trigger targets the only opponent.
+    loop {
+        match next(&mut state) {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert_eq!(legal_targets, vec![Target::Player(PlayerId::P1)]);
+                engine::step(&mut state, Action::ChooseTarget(legal_targets[0])).unwrap();
+            }
+            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+            Decision::DeclareBlockers { .. } => break,
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    assert_eq!(state.players[1].life, 19);
+}
+
+#[test]
+fn hired_claw_grows_once_a_turn_after_an_opponent_lost_life() {
+    let mut state = ready(Step::Main1);
+    let claw = put(&mut state, PlayerId::P0, "Hired Claw", Zone::Battlefield);
+    state.players[0].mana_pool = pool(&[(ManaColor::R, 2)], 2);
+    assert!(!activatable(&mut state).contains(&(claw, 0)));
+
+    // P0 losing life does not count.
+    event::propose_and_commit(&mut state, ProposedEvent::life_loss(PlayerId::P0, 1));
+    assert!(!activatable(&mut state).contains(&(claw, 0)));
+
+    event::propose_and_commit(&mut state, ProposedEvent::life_loss(PlayerId::P1, 1));
+    assert!(activatable(&mut state).contains(&(claw, 0)));
+    engine::step(&mut state, Action::ActivateAbility(claw, 0)).unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(claw).counters.plus1_plus1, 1);
+    assert!(!activatable(&mut state).contains(&(claw, 0)));
 }
