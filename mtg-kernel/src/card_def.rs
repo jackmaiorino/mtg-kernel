@@ -262,6 +262,16 @@ pub enum Subtype {
     Lizard,
     /// Appended for the FDN equipment and library-search batch.
     Golem,
+    /// Appended for the MageZero Standard family G creatures; existing ids
+    /// remain fixed.
+    Scout,
+    Bat,
+    Demon,
+    Mercenary,
+    Assassin,
+    Wolf,
+    Kraken,
+    Djinn,
 }
 
 impl Subtype {
@@ -363,6 +373,22 @@ impl Subtype {
         Subtype::Lizard,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Golem,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Scout,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Bat,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Demon,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Mercenary,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Assassin,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Wolf,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Kraken,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Djinn,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -493,6 +519,14 @@ impl Subtype {
                 | Subtype::Archer
                 | Subtype::Lizard
                 | Subtype::Golem
+                | Subtype::Scout
+                | Subtype::Bat
+                | Subtype::Demon
+                | Subtype::Mercenary
+                | Subtype::Assassin
+                | Subtype::Wolf
+                | Subtype::Kraken
+                | Subtype::Djinn
         )
     }
 }

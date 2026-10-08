@@ -3521,6 +3521,11 @@ fn keywords_for(card: &CardJson) -> String {
         "Prideful Parent" => keywords.push("Keywords::VIGILANCE"),
         _ => {}
     }
+    // MageZero Standard family G, in printed keyword order.
+    match card.name.as_str() {
+        "Sentinel of the Nameless City" => keywords.push("Keywords::VIGILANCE"),
+        _ => {}
+    }
     if card.name == "Treetop Snarespinner" {
         keywords.push("Keywords::REACH");
         keywords.push("Keywords::DEATHTOUCH");
@@ -5294,6 +5299,10 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Delver of Secrets" => {
             "upkeep_controller:look_top_may_reveal_instant_or_sorcery:transform_source_in_place"
         }
+        // MageZero Standard family G.
+        "Novice Inspector" => "etb:investigate:1",
+        "Sentinel of the Nameless City" => "etb_and_attacks:create_map_token:1",
+        "Cenote Scout" => "etb:source_explores",
         _ => "none",
     }
 }
@@ -8350,6 +8359,14 @@ fn subtype_variant(t: &str) -> &'static str {
         "Archer" => "Subtype::Archer",
         "Lizard" => "Subtype::Lizard",
         "Golem" => "Subtype::Golem",
+        "Scout" => "Subtype::Scout",
+        "Bat" => "Subtype::Bat",
+        "Demon" => "Subtype::Demon",
+        "Mercenary" => "Subtype::Mercenary",
+        "Assassin" => "Subtype::Assassin",
+        "Wolf" => "Subtype::Wolf",
+        "Kraken" => "Subtype::Kraken",
+        "Djinn" => "Subtype::Djinn",
         "Pirate" => "Subtype::Pirate",
         "Plains" => "Subtype::Plains",
         "ROGUE" => "Subtype::RogueAllCaps",

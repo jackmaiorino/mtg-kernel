@@ -22,6 +22,9 @@ use crate::state::{
 };
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "standard-magezero-fixtures")]
+mod standard_family_g_v1;
+
 /// Trigger conditions this increment's kernel can match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TriggerCondition {
@@ -1744,6 +1747,14 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Avenging Hunter" => &AVENGING_HUNTER_TRIGGERS,
         "Azure Fleet Admiral" => &AZURE_FLEET_ADMIRAL_TRIGGERS,
         "Delver of Secrets" => &DELVER_OF_SECRETS_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Novice Inspector" => &standard_family_g_v1::NOVICE_INSPECTOR_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Sentinel of the Nameless City" => {
+            &standard_family_g_v1::SENTINEL_OF_THE_NAMELESS_CITY_TRIGGERS
+        }
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Cenote Scout" => &standard_family_g_v1::CENOTE_SCOUT_TRIGGERS,
         _ => &[],
     }
 }

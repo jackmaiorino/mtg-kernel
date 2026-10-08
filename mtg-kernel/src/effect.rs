@@ -9051,19 +9051,32 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
             }
             EffectOp::ExploreTarget { object } => {
                 let target = continuation.ctx.resolve_object(object);
-                let target_index = match object {
-                    ObjectRef::Target(index) => usize::from(index),
+                // A self-exploring trigger (Cenote Scout) still reveals when
+                // its source has left; only the +1/+1 counter needs the
+                // exact battlefield incarnation (701.44b).
+                let explorer_on_battlefield = match object {
+                    ObjectRef::Target(index) => {
+                        if !continuation
+                            .ctx
+                            .target_incarnation_matches(usize::from(index), state)
+                            || state.objects.get(target).zone != Zone::Battlefield
+                        {
+                            return Err("Explore target incarnation is no longer valid".to_string());
+                        }
+                        true
+                    }
                     ObjectRef::ThisSource => {
-                        return Err("Explore requires an announced creature target".to_string())
+                        let contract = continuation
+                            .ctx
+                            .ability_source_contract
+                            .as_ref()
+                            .ok_or("a self-exploring ability needs its source contract")?;
+                        let live = state.objects.get(target);
+                        contract.zone == Zone::Battlefield
+                            && live.zone == Zone::Battlefield
+                            && live.zone_change_count == contract.zone_change_count
                     }
                 };
-                if !continuation
-                    .ctx
-                    .target_incarnation_matches(target_index, state)
-                    || state.objects.get(target).zone != Zone::Battlefield
-                {
-                    return Err("Explore target incarnation is no longer valid".to_string());
-                }
                 let player = continuation.ctx.controller;
                 let Some(top) = bind_library_top(state, player, 1).into_iter().next() else {
                     continue;
@@ -9082,10 +9095,12 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     );
                     continue;
                 }
-                let counters = &mut state.objects.get_mut(target).counters.plus1_plus1;
-                *counters = counters
-                    .checked_add(1)
-                    .ok_or("Explore +1/+1 counter overflow")?;
+                if explorer_on_battlefield {
+                    let counters = &mut state.objects.get_mut(target).counters.plus1_plus1;
+                    *counters = counters
+                        .checked_add(1)
+                        .ok_or("Explore +1/+1 counter overflow")?;
+                }
                 let canonical_path = path.clone();
                 continuation.choice = Some(PendingEffectChoice::ChooseOption {
                     player,

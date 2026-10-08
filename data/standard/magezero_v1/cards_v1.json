@@ -65,6 +65,105 @@
         "burn"
       ],
       "java_file": "Mage.Sets/src/mage/cards/b/BurstLightning.java"
+    },
+    {
+      "name": "Novice Inspector",
+      "engine_capability": "full",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Detective"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoW.dck",
+        "Standard16-RW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "etb_trigger",
+        "investigate"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/n/NoviceInspector.java"
+    },
+    {
+      "name": "Sentinel of the Nameless City",
+      "engine_capability": "full",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Merfolk",
+        "Warrior",
+        "Scout"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoG.dck",
+        "Standard16-GB.dck",
+        "Standard16-UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "vigilance",
+        "etb_trigger",
+        "attack_trigger",
+        "map_token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SentinelOfTheNamelessCity.java"
+    },
+    {
+      "name": "Cenote Scout",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Merfolk",
+        "Scout"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "etb_trigger",
+        "explore"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CenoteScout.java"
     }
   ]
 }
