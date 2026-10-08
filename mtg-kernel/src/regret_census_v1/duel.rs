@@ -2,7 +2,9 @@
 //! `cfg.pilot_deck` against the reference policy (REF_SOURCE) on each other
 //! deck, both seats and both starting players. Game seeds depend only on the
 //! game index, so runs with different candidates are paired. Logs the
-//! outcome and how the pilot used chosen cards.
+//! outcome and how the pilot used chosen cards, including the two Spy combo
+//! targets (forced ones too) under `combo|...` keys. Logging never changes
+//! play.
 
 use super::{mix, named, seat_index, MAX_PHYSICAL};
 use crate::ids::PlayerId;
@@ -81,6 +83,16 @@ pub(super) fn run_duel_game(
                 } else {
                     reference.select_fast_session_v1(&session)?
                 };
+                if actor == pilot && d.legal_action_count == 1 {
+                    // A forced combo target still counts as reached.
+                    let sem = session
+                        .diagnostic_current_action_semantics()
+                        .ok_or("semantics")?;
+                    let v = named(serde_json::to_value(&sem[a as usize]).unwrap_or_default());
+                    if let Some(key) = combo_target(&v, pilot) {
+                        bump(format!("{key}|forced"));
+                    }
+                }
                 if actor == pilot && d.legal_action_count >= 2 {
                     pilot_decisions += 1;
                     let st = session.game_state();
@@ -88,6 +100,9 @@ pub(super) fn run_duel_game(
                         .diagnostic_current_action_semantics()
                         .ok_or("semantics")?;
                     let v = named(serde_json::to_value(&sem[a as usize]).unwrap_or_default());
+                    if let Some(key) = combo_target(&v, pilot) {
+                        bump(key);
+                    }
                     let src = v["source"].as_str().unwrap_or("");
                     let kind = v["action_kind"].as_str().unwrap_or("");
                     let side = if st.active_player.0 as usize == pilot {
@@ -131,4 +146,28 @@ pub(super) fn run_duel_game(
     let mut f = sink.lock().map_err(|_| "sink poisoned")?;
     writeln!(f, "{row}").map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Key for a chosen Spy combo target: Balustrade Spy aimed at its controller
+/// (`self`) or the opponent, and Dread Return's target card by name.
+fn combo_target(v: &serde_json::Value, pilot: usize) -> Option<String> {
+    if v["action_kind"] != "choose_target" {
+        return None;
+    }
+    let target = &v["target"];
+    match v["source"].as_str()? {
+        "Balustrade Spy" => {
+            let side = if target["player"] == format!("p{pilot}") {
+                "self"
+            } else {
+                "opp"
+            };
+            Some(format!("combo|spy_target|{side}"))
+        }
+        "Dread Return" => Some(format!(
+            "combo|dread_return_target|{}",
+            target["object"].as_str().unwrap_or("?")
+        )),
+        _ => None,
+    }
 }
