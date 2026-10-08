@@ -66,6 +66,9 @@ pub enum StandardOpV1 {
     /// that triggered this ability, returns to the battlefield tapped and
     /// transformed under its owner's control.
     ReturnSourceTappedAndTransformed,
+    /// Blue Sun's Twilight: gain control of target creature (mana value at
+    /// most X); if X is 5 or more, create a token that's a copy of it.
+    GainControlOfTargetCreatureCopyAtXFive,
 }
 
 impl StandardOpV1 {
@@ -220,6 +223,22 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 );
             }
         }
+        StandardOpV1::GainControlOfTargetCreatureCopyAtXFive => {
+            let Some(Target::Object(object)) = ctx.targets.first().copied() else {
+                return;
+            };
+            let live = state.objects.get(object);
+            if live.zone != Zone::Battlefield
+                || !crate::engine::object_has_type(state, object, CardType::Creature)
+                || mana_value(state, object) > ctx.x_value
+            {
+                return;
+            }
+            gain_control(state, object, ctx.controller);
+            if ctx.x_value >= 5 {
+                create_token_copy(state, object, ctx.controller);
+            }
+        }
         StandardOpV1::ReturnSourceTappedAndTransformed => {
             let Some(contract) = ctx.ability_source_contract else {
                 return;
@@ -284,6 +303,51 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
         StandardOpV1::PlayerChoosesControlledPermanent { .. }
         | StandardOpV1::ApplyChosenPermanent { .. } => {
             panic!("choice-bearing effects must use the resumable interpreter")
+        }
+    }
+}
+
+/// A permanent's mana value (202.3), from its card's mana cost.
+fn mana_value(state: &GameState, object: ObjectId) -> u16 {
+    CARD_DEFS[state.objects.get(object).card_def as usize].mana_value
+}
+
+/// `player` gains control of `object` indefinitely (until it leaves the
+/// battlefield). It is summoning sick for its new controller, and leaves
+/// combat (506.4).
+pub(crate) fn gain_control(state: &mut GameState, object: ObjectId, player: PlayerId) {
+    let live = state.objects.get(object);
+    if live.zone != Zone::Battlefield || live.controller == player {
+        return;
+    }
+    let previous = live.controller;
+    state.players[previous.index()]
+        .battlefield
+        .retain(|&id| id != object);
+    state.players[player.index()].battlefield.push(object);
+    let live = state.objects.get_mut(object);
+    live.controller = player;
+    live.summoning_sick = true;
+    state.engine.combat.remove_from_combat(object);
+}
+
+/// Creates a token that's a copy of `original` (707.2): the same card
+/// definition and shown face, without counters, damage or other state.
+pub(crate) fn create_token_copy(state: &mut GameState, original: ObjectId, controller: PlayerId) {
+    let live = state.objects.get(original);
+    let (card_def, face) = (live.card_def, live.v4.face_index);
+    let start = state.engine.event_log.len();
+    event::propose_and_commit(state, ProposedEvent::create_token(card_def, controller));
+    let created = state.engine.event_log[start..]
+        .iter()
+        .find_map(|event| match event {
+            CommittedEvent::CreateToken { object, .. } => Some(*object),
+            _ => None,
+        });
+    if let Some(token) = created {
+        state.objects.get_mut(token).v4.is_token = true;
+        if face != 0 && CARD_DEFS[card_def as usize].transform_face.is_some() {
+            event::propose_and_commit(state, ProposedEvent::transform_in_place(token, face));
         }
     }
 }
@@ -645,6 +709,47 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
 pub(crate) fn trigger_face(name: &str, ability_index: usize) -> u8 {
     match (name, ability_index) {
         (CECIL, 1) | (POLUKRANOS, 0) => 1,
+        _ => 0,
+    }
+}
+
+// ---- Blue Sun's Twilight ---------------------------------------------------
+
+const BLUE_SUNS_TWILIGHT: &str = "Blue Sun's Twilight";
+
+pub fn blue_suns_twilight() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::GainControlOfTargetCreatureCopyAtXFive)
+}
+
+/// Whether this card's spell targets depend on more than its target spec.
+pub(crate) fn filters_cast_targets(def: &CardDef) -> bool {
+    def.cost.x_count != 0 && def.name == BLUE_SUNS_TWILIGHT
+}
+
+/// "Target creature with mana value X or less": the kernel announces X after
+/// targets, so a creature is a legal choice when some payable X reaches its
+/// mana value, and X is then at least that mana value (`minimum_x`).
+pub(crate) fn cast_target_allowed(
+    def: &CardDef,
+    controller: PlayerId,
+    target: Target,
+    state: &GameState,
+) -> bool {
+    match target {
+        Target::Object(object) if def.name == BLUE_SUNS_TWILIGHT => {
+            crate::engine::maximum_payable_x(&def.cost, controller, state)
+                .is_some_and(|maximum| mana_value(state, object) <= u16::from(maximum))
+        }
+        _ => true,
+    }
+}
+
+/// The least X this spell may announce with these targets.
+pub(crate) fn minimum_x(def: &CardDef, targets: &[Target], state: &GameState) -> u8 {
+    match (def.name, targets.first()) {
+        (BLUE_SUNS_TWILIGHT, Some(Target::Object(object))) if def.cost.x_count != 0 => {
+            u8::try_from(mana_value(state, *object)).unwrap_or(u8::MAX)
+        }
         _ => 0,
     }
 }

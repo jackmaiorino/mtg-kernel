@@ -4,7 +4,7 @@
 //! names them, so they are part of the generated definitions and catalog
 //! identity.
 
-use super::{AbilityCostRecipe, AbilityEffectRecipe, ActivatedAbilityRecipe};
+use super::{AbilityCostRecipe, AbilityEffectRecipe, ActivatedAbilityRecipe, Special};
 use AbilityCostRecipe::{Loyalty, ManaCost, Tap};
 use AbilityEffectRecipe::{DrawCards, Program};
 
@@ -134,4 +134,19 @@ pub(super) fn object_name_for(name: &str) -> Option<&'static str> {
         }
         _ => None,
     }
+}
+
+/// Spells whose program is one named function in `standard_cards_v1`.
+pub(super) fn special_for(name: &str) -> Option<Special> {
+    let (target_spec, program) = match name {
+        "Blue Sun's Twilight" => (
+            "TargetSpec::Creature",
+            "crate::standard_cards_v1::blue_suns_twilight",
+        ),
+        _ => return None,
+    };
+    Some(Special::StandardProgram {
+        target_spec,
+        program,
+    })
 }

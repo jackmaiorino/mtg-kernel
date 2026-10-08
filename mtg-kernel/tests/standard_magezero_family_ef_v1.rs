@@ -532,3 +532,88 @@ fn temple_of_power_cannot_attack() {
         }
     }
 }
+
+// ---- Blue Sun's Twilight -----------------------------------------------
+
+/// Casts Blue Sun's Twilight at `target`, announcing `x`.
+fn cast_twilight(state: &mut GameState, target: ObjectId, x: u8) {
+    let twilight = put(state, P0, "Blue Sun's Twilight", Zone::Hand);
+    next(state);
+    act(state, Action::CastSpell(twilight));
+    loop {
+        match next(state) {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert!(legal_targets.contains(&Target::Object(target)));
+                act(state, Action::ChooseTarget(Target::Object(target)));
+            }
+            Decision::ChooseEffectOption { option_count, .. } => {
+                // Options start at the target's mana value.
+                let minimum = CARD_DEFS[state.objects.get(target).card_def as usize].mana_value;
+                let option = u16::from(x) - minimum;
+                assert!(option < option_count);
+                act(state, Action::ChooseEffectOption(option));
+            }
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => return,
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
+            Decision::OrderTriggers { pending, .. } => {
+                act(state, Action::OrderTriggers((0..pending.len()).collect()))
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn blue_suns_twilight_steals_a_creature_with_mana_value_up_to_x() {
+    let mut state = game();
+    let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    state.players[0].mana_pool[ManaColor::U.pool_index()] = 4;
+    cast_twilight(&mut state, elves, 2);
+    let stolen = state.objects.get(elves);
+    assert_eq!(stolen.controller, P0);
+    assert!(state.players[0].battlefield.contains(&elves));
+    assert!(!state.players[1].battlefield.contains(&elves));
+    assert!(stolen.summoning_sick);
+    assert!(battlefield_named(&state, P0, "Llanowar Elves").len() == 1, "X below 5 makes no copy");
+}
+
+#[test]
+fn blue_suns_twilight_copies_at_x_five_or_more() {
+    let mut state = game();
+    let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    state.players[0].mana_pool[ManaColor::U.pool_index()] = 7;
+    cast_twilight(&mut state, elves, 5);
+    assert_eq!(state.objects.get(elves).controller, P0);
+    let all_elves = battlefield_named(&state, P0, "Llanowar Elves");
+    assert_eq!(all_elves.len(), 2);
+    let copy = *all_elves.iter().find(|&&id| id != elves).unwrap();
+    assert!(state.objects.get(copy).v4.is_token);
+    // The copy is a token: leaving the battlefield, it ceases to exist.
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(copy, Zone::Graveyard));
+    resolve_stack(&mut state);
+    assert!(!state.players[0].graveyard.contains(&copy));
+}
+
+#[test]
+fn blue_suns_twilight_needs_a_creature_it_can_afford() {
+    let mut state = game();
+    let terror = put(&mut state, P1, "Tolarian Terror", Zone::Battlefield);
+    let twilight = put(&mut state, P0, "Blue Sun's Twilight", Zone::Hand);
+    state.players[0].mana_pool[ManaColor::U.pool_index()] = 4;
+    match next(&mut state) {
+        Decision::CastSpellOrPass {
+            castable_spells, ..
+        } => assert!(!castable_spells.contains(&twilight)),
+        other => panic!("unexpected decision: {other:?}"),
+    }
+    let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    next(&mut state);
+    act(&mut state, Action::CastSpell(twilight));
+    match next(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert!(legal_targets.contains(&Target::Object(elves)));
+            assert!(!legal_targets.contains(&Target::Object(terror)));
+        }
+        other => panic!("unexpected decision: {other:?}"),
+    }
+}

@@ -2379,6 +2379,12 @@ fn parse_runtime_deck_hash(deck_id: &str, value: &str) -> u64 {
 #[derive(Clone, Copy)]
 enum Special {
     None,
+    /// A Standard-catalog spell whose whole program is a named runtime
+    /// function in `standard_cards_v1` (see `build_standard_v1`).
+    StandardProgram {
+        target_spec: &'static str,
+        program: &'static str,
+    },
     /// Great Furnace's explicit `{T}: Add {R}` program. Basic-land mana is
     /// not a name special: it is derived from Basic + Land + one
     /// `produces_mana` color in `codegen`.
@@ -2798,6 +2804,10 @@ impl Special {
     fn canonical_token(self) -> String {
         match self {
             Special::None => "none".to_string(),
+            Special::StandardProgram {
+                target_spec,
+                program,
+            } => format!("standard_program:{target_spec}:{program}"),
             Special::GreatFurnace => "great_furnace:add_r".to_string(),
             Special::DrawCards(count) => format!("draw_cards:{count}"),
             Special::PumpCreature { power, toughness } => {
@@ -3058,6 +3068,15 @@ struct ActivatedAbilityRecipe {
     max_activations_per_turn: Option<u8>,
 }
 
+/// The generated spell-effect function for a `Special::StandardProgram` card.
+fn standard_program_function(name: &str) -> String {
+    let slug = name
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '_' })
+        .collect::<String>();
+    format!("spell_effect_standard_{slug}")
+}
+
 fn special_for(name: &str) -> Special {
     match name {
         // Great Furnace is intentionally explicit: unlike a basic land, its
@@ -3209,7 +3228,7 @@ fn special_for(name: &str) -> Special {
             toughness: 3,
             keyword: "TRAMPLE",
         },
-        _ => Special::None,
+        _ => build_standard_v1::special_for(name).unwrap_or(Special::None),
     }
 }
 
@@ -3343,6 +3362,10 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::DestroyNonlegendaryCreature => {
             "target=NonlegendaryCreature;spell=DestroyObject(Target0);mana=None".to_string()
         }
+        Special::StandardProgram {
+            target_spec,
+            program,
+        } => format!("target={target_spec};spell=Program({program});mana=None"),
         Special::DestroyCreature => {
             "target=Creature;spell=DestroyObject(Target0);mana=None".to_string()
         }
@@ -5412,6 +5435,13 @@ fn codegen(cards: &[CardJson]) -> String {
 
     for card in cards {
         match special_for(&card.name) {
+            Special::StandardProgram { program, .. } => {
+                let function = standard_program_function(&card.name);
+                writeln!(out, "fn {function}() -> Option<EffectOp> {{").unwrap();
+                writeln!(out, "    Some({program}())").unwrap();
+                writeln!(out, "}}").unwrap();
+                writeln!(out).unwrap();
+            }
             Special::DrawThenCreateToken { draw, token } => {
                 let function = card.name.to_ascii_lowercase().replace([' ', '\''], "_");
                 writeln!(out, "fn spell_effect_{function}() -> Option<EffectOp> {{").unwrap();
@@ -7483,6 +7513,11 @@ fn codegen(cards: &[CardJson]) -> String {
             Special::DestroyNonlegendaryCreature => (
                 "TargetSpec::NonlegendaryCreature",
                 "spell_effect_destroy_nonlegendary_creature".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::StandardProgram { target_spec, .. } => (
+                target_spec,
+                standard_program_function(&c.name),
                 "no_effect".to_string(),
             ),
             Special::DestroyCreature => (

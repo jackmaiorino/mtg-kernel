@@ -5011,6 +5011,16 @@ fn completable_next_cast_targets(
         targeting_source_for_object(state, pending.spell),
         state,
     );
+    let candidates = if crate::standard_cards_v1::filters_cast_targets(def) {
+        candidates
+            .into_iter()
+            .filter(|&target| {
+                crate::standard_cards_v1::cast_target_allowed(def, pending.controller, target, state)
+            })
+            .collect()
+    } else {
+        candidates
+    };
     if !normal_cast_cost_depends_on_targets(def) {
         return candidates;
     }
@@ -5355,7 +5365,7 @@ fn pending_cast_selected_mana_cost(
     }
 }
 
-fn maximum_payable_x(cost: &Cost, player: PlayerId, state: &GameState) -> Option<u8> {
+pub(crate) fn maximum_payable_x(cost: &Cost, player: PlayerId, state: &GameState) -> Option<u8> {
     (0..=u8::MAX)
         .rev()
         .find(|&x| mana::can_pay(cost, x, player, state).is_some())
@@ -5415,6 +5425,20 @@ fn is_castable_now(
     // just didn't consult it for this card's type).
     let main_timing_ok = cast_form_timing_ok(def.types, def.keywords, player, state);
     if cast_method != CastMethodV4::Normal && !main_timing_ok {
+        return false;
+    }
+    if main_timing_ok
+        && crate::standard_cards_v1::filters_cast_targets(def)
+        && !completable_next_targets_for_controller_and_source(
+            def.target_spec,
+            &[],
+            player,
+            targeting_source_for_object(state, id),
+            state,
+        )
+        .into_iter()
+        .any(|target| crate::standard_cards_v1::cast_target_allowed(def, player, target, state))
+    {
         return false;
     }
 
@@ -8560,20 +8584,24 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             ));
             return None;
         };
-        let Some(maximum) = maximum_payable_x(&cost, pending.controller, state) else {
+        let minimum = crate::standard_cards_v1::minimum_x(def, &pending.targets_chosen, state);
+        let Some(maximum) = maximum_payable_x(&cost, pending.controller, state)
+            .filter(|&maximum| maximum >= minimum)
+        else {
             let cast_method = finalized_cast_method(&pending, staged_method, def);
             let pending = state.engine.pending_cast.take().unwrap();
             abort_cast(state, pending, cast_method);
             return None;
         };
-        if maximum == 0 {
-            state.engine.pending_cast.as_mut().unwrap().x_value = Some(0);
+        if maximum == minimum {
+            state.engine.pending_cast.as_mut().unwrap().x_value = Some(minimum);
             return drain_pending_cast_or_decide(state);
         }
+        // Option `i` announces X = `minimum + i`.
         return Some(Decision::ChooseEffectOption {
             player: pending.controller,
             source: pending.spell,
-            option_count: u16::from(maximum) + 1,
+            option_count: u16::from(maximum - minimum) + 1,
         });
     }
 
@@ -14324,9 +14352,12 @@ fn apply_pending_cast_effect_option(
                 .ok_or("pending X choice lost its selected spell form")?;
             let maximum = maximum_payable_x(&cost, pending.controller, state)
                 .ok_or("pending X choice has no payable value")?;
+            let minimum = crate::standard_cards_v1::minimum_x(def, &pending.targets_chosen, state);
             let x_value = u8::try_from(option_index)
-                .map_err(|_| "chosen X exceeds the supported u8 range".to_string())?;
-            if maximum == 0 || x_value > maximum {
+                .ok()
+                .and_then(|index| index.checked_add(minimum))
+                .ok_or_else(|| "chosen X exceeds the supported u8 range".to_string())?;
+            if maximum <= minimum || x_value > maximum {
                 return Err("chosen X is outside the currently payable range".to_string());
             }
             state

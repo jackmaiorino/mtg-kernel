@@ -266,8 +266,12 @@ impl ObjectStateV4 {
     }
 
     pub fn reset_for_zone_change(&mut self, card_def: u16, to_zone: Zone, turn: u32) {
+        // A token copy of a nontoken card stays a token in every zone, so
+        // the state-based action can make it cease to exist (111.7).
+        let was_token = self.is_token;
         let base = ObjectStateV4::from_card_def(card_def);
         *self = base;
+        self.is_token |= was_token;
         if to_zone == Zone::Battlefield {
             self.entered_battlefield_turn = Some(turn);
         }

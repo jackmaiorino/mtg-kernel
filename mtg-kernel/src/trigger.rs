@@ -2210,7 +2210,10 @@ fn sba_fixed_point_with_protected_triggers(
         let leaving: Vec<ObjectId> = state
             .objects
             .iter()
-            .filter(|(_, obj)| obj.zone != Zone::Battlefield && token_defs[obj.card_def as usize])
+            .filter(|(_, obj)| {
+                obj.zone != Zone::Battlefield
+                    && (token_defs[obj.card_def as usize] || obj.v4.is_token)
+            })
             .map(|(id, _)| id)
             .collect();
         for id in leaving {

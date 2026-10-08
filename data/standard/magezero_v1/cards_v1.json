@@ -297,6 +297,35 @@
         "mana_ability"
       ],
       "java_file": "Mage.Sets/src/mage/cards/o/OjerAxonilDeepestMight.java"
+    },
+    {
+      "name": "Blue Sun's Twilight",
+      "engine_capability": "full",
+      "mana_cost": "{X}{U}{U}",
+      "mana_value": 2,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoU.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "x_cost",
+        "gain_control",
+        "token_copy"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BlueSunsTwilight.java"
     }
   ]
 }
