@@ -256,6 +256,39 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/i/IridescentVinelasher.java",
       "is_token": true
+    },
+    {
+      "name": "Aloe Alchemist",
+      "engine_capability": "full",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Plant",
+        "Warlock"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "trample",
+        "plot",
+        "becomes_plotted_trigger",
+        "targeted_pump"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AloeAlchemist.java"
     }
   ]
 }

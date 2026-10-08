@@ -137,6 +137,12 @@ pub enum TriggerCondition {
     /// Warp permanents are cast at sorcery speed, so the next end step is
     /// always in the same turn.
     BeginningEndStepAfterWarp,
+    /// "When this card becomes plotted" (`home_zone: Exile`): the plot
+    /// special action's own move from hand to exile. `plot_spell` stamps
+    /// `plotted_turn` before collecting triggers, and nothing else moves a
+    /// card into exile with that stamp, so the move event plus the stamp
+    /// identifies the plotting.
+    BecomesPlotted,
 }
 
 pub struct TriggeredAbilityDef {
@@ -935,6 +941,28 @@ const WARP_EXILE_TRIGGER: TriggeredAbilityDef = TriggeredAbilityDef {
 fn warp_exile_effect() -> EffectOp {
     EffectOp::BindWarpExileToTriggerSource
 }
+
+fn aloe_alchemist_plotted_effect() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::PumpTargetUntilEndOfTurnDynamic {
+            target: TargetRef::Target(0),
+            power: DynamicValueDef::Fixed(3),
+            toughness: DynamicValueDef::Fixed(2),
+        },
+        EffectOp::GrantKeywordTargetUntilEndOfTurn {
+            object: ObjectRef::Target(0),
+            keyword: Keywords::TRAMPLE,
+        },
+    ])
+}
+
+/// When it becomes plotted, target creature gets +3/+2 and gains trample
+/// until end of turn. Plot {1}{G}.
+const ALOE_ALCHEMIST_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BecomesPlotted,
+    home_zone: Zone::Exile,
+    ..etb_trigger(aloe_alchemist_plotted_effect)
+}];
 
 fn iridescent_vinelasher_offspring_effect() -> EffectOp {
     let token_def = crate::card_def::card_id_by_name("Iridescent Vinelasher Offspring Token")
@@ -1853,6 +1881,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Iridescent Vinelasher" | "Iridescent Vinelasher Offspring Token" => {
             &IRIDESCENT_VINELASHER_TRIGGERS
         }
+        "Aloe Alchemist" => &ALOE_ALCHEMIST_TRIGGERS,
         _ => &[],
     }
 }
@@ -1870,7 +1899,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         "Harrier Strix" => TargetSpec::AnyPermanent,
         "Bojuka Bog" => TargetSpec::AnyPlayer,
         "Humbling Elder" | "Nova Hellkite" => TargetSpec::OpponentControlledCreature,
-        "Saiba Cryptomancer" => TargetSpec::Creature,
+        "Saiba Cryptomancer" | "Aloe Alchemist" => TargetSpec::Creature,
         "Spellstutter Sprite" => TargetSpec::SpellManaValueAtMostControlledSubtypes {
             first: Subtype::Faerie,
             second: Some(Subtype::FaerieAllCaps),
@@ -3203,6 +3232,15 @@ fn trigger_matches(
             TriggerCondition::BeginningOfUpkeep { controller_only },
             CommittedEvent::UpkeepBegan { player },
         ) => !controller_only || *player == controller,
+        (
+            TriggerCondition::BecomesPlotted,
+            CommittedEvent::ZoneChange {
+                object,
+                from: Zone::Hand,
+                to: Zone::Exile,
+                ..
+            },
+        ) => *object == source && state.objects.get(source).plotted_turn == Some(state.turn),
         (
             TriggerCondition::BecomesTargetOfControllerSpellOrAbilityFirstTimeEachTurn,
             CommittedEvent::Targeted {

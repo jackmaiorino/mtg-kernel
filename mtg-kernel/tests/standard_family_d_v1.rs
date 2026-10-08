@@ -459,3 +459,56 @@ fn iridescent_vinelasher_landfall_pings_target_opponent_from_each_copy() {
     settled(&mut state);
     assert_eq!(state.players[1].life, 18);
 }
+
+#[test]
+fn aloe_alchemist_pumps_target_creature_when_it_becomes_plotted() {
+    let mut state = ready();
+    let bashtronaut = put(
+        &mut state,
+        PlayerId::P0,
+        "Burnout Bashtronaut",
+        Zone::Battlefield,
+    );
+    let alchemist = put(&mut state, PlayerId::P0, "Aloe Alchemist", Zone::Hand);
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::G], 1);
+    assert!(
+        matches!(next(&mut state), Decision::CastSpellOrPass { plot_actions, .. } if plot_actions.contains(&alchemist))
+    );
+    engine::step(&mut state, Action::PlotSpell(alchemist)).unwrap();
+    assert_eq!(state.objects.get(alchemist).zone, Zone::Exile);
+    let Some(Decision::ChooseTargets { legal_targets, .. }) = settle(&mut state) else {
+        panic!("expected the plotted trigger's target");
+    };
+    assert_eq!(legal_targets, vec![Target::Object(bashtronaut)]);
+    engine::step(
+        &mut state,
+        Action::ChooseTarget(Target::Object(bashtronaut)),
+    )
+    .unwrap();
+    settled(&mut state);
+    assert_eq!(power_toughness(&state, bashtronaut), (4, 3));
+    assert!(engine::has_effective_keyword(
+        &state,
+        bashtronaut,
+        Keywords::TRAMPLE
+    ));
+
+    // Cast later for free from exile; entering doesn't trigger it again.
+    assert!(
+        !castable(&mut state, alchemist),
+        "not the turn it was plotted"
+    );
+    let plotted_turn = state.turn;
+    pass_until(&mut state, |s| {
+        s.turn > plotted_turn && s.active_player == PlayerId::P0 && s.step == Step::Main1
+    });
+    cast(&mut state, alchemist, &[]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(alchemist).zone, Zone::Battlefield);
+    assert!(engine::has_effective_keyword(
+        &state,
+        alchemist,
+        Keywords::TRAMPLE
+    ));
+    assert_eq!(power_toughness(&state, bashtronaut), (1, 1));
+}

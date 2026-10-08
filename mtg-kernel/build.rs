@@ -3562,6 +3562,7 @@ fn standard_keywords_for(name: &str) -> &'static [&'static str] {
         "Emberheart Challenger" => &["Keywords::HASTE"],
         "Burnout Bashtronaut" => &["Keywords::MENACE"],
         "Nova Hellkite" => &["Keywords::FLYING", "Keywords::HASTE"],
+        "Aloe Alchemist" => &["Keywords::TRAMPLE"],
         _ => &[],
     }
 }
@@ -5019,6 +5020,7 @@ fn plot_cost_for(name: &str) -> String {
     match name {
         "Highway Robbery" => cost_src("{1}{R}"),
         "Spinewoods Paladin" => cost_src("{3}{G}"),
+        "Aloe Alchemist" => cost_src("{1}{G}"),
         _ => "None".to_string(),
     }
 }
@@ -5351,6 +5353,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         }
         "Burnout Bashtronaut" => "start_your_engines;max_speed:double_strike",
         "Nova Hellkite" => "etb:target_opponent_creature:damage:1;warp_next_end_step:exile_cast_later_turn",
+        "Aloe Alchemist" => "becomes_plotted:target_creature:pump:3:2:trample",
         "Iridescent Vinelasher" | "Iridescent Vinelasher Offspring Token" => "etb_if_offspring_paid:create_one_one_token_copy;landfall:target_opponent:damage:1",
         _ => "none",
     }
