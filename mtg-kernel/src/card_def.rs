@@ -682,6 +682,8 @@ pub enum TargetSpec {
     ControlledCreatureThenOpponentCreatureOrPlaneswalker,
     AttackingOrBlockingCreature,
     NonlandPermanentCardInOwnGraveyardManaValueAtMost(u16),
+    // Stable ids 42-51 are held by in-flight FDN and Standard branches;
+    // the MageZero Standard family D specs below take 52-54.
     /// Exactly one creature the announcing player controls other than the
     /// targeting source, or other than the creature a trigger names
     /// ("target creature you control other than that creature").
@@ -741,9 +743,9 @@ impl TargetSpec {
             TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker => 39,
             TargetSpec::AttackingOrBlockingCreature => 40,
             TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_) => 41,
-            TargetSpec::AnotherControlledCreature => 42,
-            TargetSpec::ControlledCreatureWithSubtype(_) => 43,
-            TargetSpec::UpToOneCardInGraveyards => 44,
+            TargetSpec::AnotherControlledCreature => 52,
+            TargetSpec::ControlledCreatureWithSubtype(_) => 53,
+            TargetSpec::UpToOneCardInGraveyards => 54,
         }
     }
 }
@@ -1967,12 +1969,12 @@ mod tests {
                 39,
             ),
             (TargetSpec::AttackingOrBlockingCreature, 40),
-            (TargetSpec::AnotherControlledCreature, 42),
+            (TargetSpec::AnotherControlledCreature, 52),
             (
                 TargetSpec::ControlledCreatureWithSubtype(Subtype::Mouse),
-                43,
+                53,
             ),
-            (TargetSpec::UpToOneCardInGraveyards, 44),
+            (TargetSpec::UpToOneCardInGraveyards, 54),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);
