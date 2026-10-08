@@ -1152,6 +1152,35 @@
         "enduring"
       ],
       "java_file": "Mage.Sets/src/mage/cards/e/EnduringInnocence.java"
+    },
+    {
+      "name": "Make Disappear",
+      "engine_capability": "full",
+      "mana_cost": "{1}{U}",
+      "mana_value": 2,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "casualty",
+        "counter_unless_pay",
+        "spell_copy"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MakeDisappear.java"
     }
   ]
 }

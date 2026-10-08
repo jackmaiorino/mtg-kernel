@@ -159,6 +159,7 @@ fn family_d_cards_are_fully_supported() {
         "White Insect Token",
         "Enduring Curiosity",
         "Enduring Innocence",
+        "Make Disappear",
     ] {
         let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} missing"));
         assert_eq!(
@@ -1923,4 +1924,85 @@ fn enduring_curiosity_draws_for_each_creature_connecting() {
     pass_until(&mut state, |s| s.step == Step::Main2);
     assert_eq!(state.players[0].hand.len(), hand + 2);
     assert_eq!(state.players[1].life, 18);
+}
+
+/// P1 casts Burst Lightning at P0, then P0 answers with Make Disappear,
+/// paying casualty when `casualty` is set.
+fn make_disappear_a_burn(state: &mut GameState, casualty: bool) -> (ObjectId, ObjectId) {
+    let fodder = put(state, PlayerId::P0, "Yotian Frontliner", Zone::Battlefield);
+    let counter = put(state, PlayerId::P0, "Make Disappear", Zone::Hand);
+    state.priority_player = PlayerId::P1;
+    let burst = put(state, PlayerId::P1, "Burst Lightning", Zone::Hand);
+    add_mana(state, PlayerId::P1, &[ManaColor::R], 0);
+    cast(state, burst, &[Target::Player(PlayerId::P0)]);
+    assert!(matches!(
+        next(state),
+        Decision::CastSpellOrPass {
+            player: PlayerId::P1,
+            ..
+        }
+    ));
+    engine::step(state, Action::Pass).unwrap();
+    add_mana(state, PlayerId::P0, &[ManaColor::U], 1);
+    assert!(castable(state, counter));
+    engine::step(state, Action::CastSpell(counter)).unwrap();
+    for _ in 0..5 {
+        match next(state) {
+            Decision::ChooseEffectOption { .. } => {
+                engine::step(state, Action::ChooseEffectOption(u16::from(casualty))).unwrap()
+            }
+            Decision::ChooseTargets { .. } => {
+                engine::step(state, Action::ChooseTarget(Target::Object(burst))).unwrap()
+            }
+            Decision::CastSpellOrPass { .. } => break,
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    (fodder, burst)
+}
+
+#[test]
+fn make_disappear_with_casualty_copies_itself() {
+    let mut state = ready();
+    let (fodder, burst) = make_disappear_a_burn(&mut state, true);
+    assert_eq!(state.objects.get(fodder).zone, Zone::Graveyard);
+    assert_eq!(state.stack.len(), 3);
+    assert!(state.stack[2].is_copy);
+    assert_eq!(state.stack[2].targets, vec![Target::Object(burst)]);
+
+    // P1 pays {2} for the copy but can't pay again for the original.
+    add_mana(&mut state, PlayerId::P1, &[], 2);
+    for _ in 0..20 {
+        match next(&mut state) {
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => break,
+            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+            Decision::ChooseEffectBoolean { player, .. } => {
+                assert_eq!(player, PlayerId::P1);
+                engine::step(&mut state, Action::ChooseEffectBoolean(true)).unwrap()
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    assert_eq!(state.objects.get(burst).zone, Zone::Graveyard);
+    assert_eq!(state.players[0].life, 20);
+}
+
+#[test]
+fn make_disappear_without_casualty_is_a_single_counter() {
+    let mut state = ready();
+    let (fodder, _) = make_disappear_a_burn(&mut state, false);
+    assert_eq!(state.objects.get(fodder).zone, Zone::Battlefield);
+    assert_eq!(state.stack.len(), 2);
+    add_mana(&mut state, PlayerId::P1, &[], 2);
+    for _ in 0..20 {
+        match next(&mut state) {
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => break,
+            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+            Decision::ChooseEffectBoolean { .. } => {
+                engine::step(&mut state, Action::ChooseEffectBoolean(true)).unwrap()
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    assert_eq!(state.players[0].life, 18);
 }

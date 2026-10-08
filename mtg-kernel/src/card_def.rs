@@ -944,6 +944,10 @@ pub enum OptionalAdditionalCostDef {
     CollectEvidence { minimum_mana_value: u16 },
     /// Sacrifice one controlled artifact, enchantment, or token.
     Bargain,
+    /// Casualty N: sacrifice one controlled creature with power N or
+    /// greater; when the spell is cast this way it is copied
+    /// (MageZero Standard, Make Disappear).
+    Casualty(u8),
 }
 
 /// Static rules carried by a permanent while it is attached. The host link

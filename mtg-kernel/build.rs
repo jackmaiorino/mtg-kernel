@@ -3122,6 +3122,10 @@ fn special_for(name: &str) -> Special {
             filter: StackSpellFilter::Noncreature,
             generic: 2,
         },
+        "Make Disappear" => Special::CounterUnlessPaysGeneric {
+            filter: StackSpellFilter::Any,
+            generic: 2,
+        },
         "Steel Sabotage" => Special::SteelSabotage,
         "Piracy Charm" => Special::PiracyCharm,
         "Cast into the Fire" => Special::CastIntoTheFire,
@@ -5332,6 +5336,7 @@ fn optional_additional_cost_for(name: &str) -> &'static str {
             "Some(OptionalAdditionalCostDef::CollectEvidence { minimum_mana_value: 6 })"
         }
         "Troublemaker Ouphe" => "Some(OptionalAdditionalCostDef::Bargain)",
+        "Make Disappear" => "Some(OptionalAdditionalCostDef::Casualty(1))",
         _ => "None",
     }
 }

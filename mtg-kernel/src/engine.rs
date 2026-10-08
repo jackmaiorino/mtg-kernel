@@ -4446,7 +4446,10 @@ fn collect_evidence_candidates(
     Ok(candidates)
 }
 
+/// The permanents a sacrifice-shaped optional additional cost (Bargain,
+/// Casualty) may sacrifice.
 fn bargain_candidates(
+    kind: OptionalAdditionalCostDef,
     player: PlayerId,
     state: &GameState,
 ) -> Result<Vec<EffectObjectBinding>, String> {
@@ -4476,7 +4479,18 @@ fn bargain_candidates(
         if object.v4.is_token != def.is_token {
             return Err("Bargain token identity is inconsistent".to_string());
         }
-        if def.is_token || def.has_type(CardType::Artifact) || def.has_type(CardType::Enchantment) {
+        let eligible = match kind {
+            OptionalAdditionalCostDef::Casualty(minimum_power) => {
+                object_has_type(state, object_id, CardType::Creature)
+                    && effective_power(state, object_id) >= i32::from(minimum_power)
+            }
+            _ => {
+                def.is_token
+                    || def.has_type(CardType::Artifact)
+                    || def.has_type(CardType::Enchantment)
+            }
+        };
+        if eligible {
             candidates.push(EffectObjectBinding {
                 object: object_id,
                 expected_zone: Zone::Battlefield,
@@ -4538,7 +4552,9 @@ fn optional_additional_cost_is_payable(
             let candidates = collect_evidence_candidates(player, state)?;
             Ok(collect_evidence_mana_value(state, &candidates)? >= u32::from(minimum_mana_value))
         }
-        OptionalAdditionalCostDef::Bargain => Ok(!bargain_candidates(player, state)?.is_empty()),
+        OptionalAdditionalCostDef::Bargain | OptionalAdditionalCostDef::Casualty(_) => {
+            Ok(!bargain_candidates(kind, player, state)?.is_empty())
+        }
     }
 }
 
@@ -4557,9 +4573,10 @@ fn optional_additional_cost_selection_is_complete(
                 && collect_evidence_mana_value(state, &pending.optional_additional_cost_chosen)?
                     >= u32::from(minimum_mana_value))
         }
-        (Some(OptionalAdditionalCostDef::Bargain), Some(true)) => {
-            Ok(pending.optional_additional_cost_chosen.len() == 1)
-        }
+        (
+            Some(OptionalAdditionalCostDef::Bargain | OptionalAdditionalCostDef::Casualty(_)),
+            Some(true),
+        ) => Ok(pending.optional_additional_cost_chosen.len() == 1),
         (Some(_), None) => Ok(false),
         _ => Err("pending cast optional additional-cost state is noncanonical".to_string()),
     }
@@ -4621,6 +4638,23 @@ fn validate_optional_additional_paid_refs(
                     || def.has_type(CardType::Enchantment))
             {
                 return Err("Bargain paid provenance is not one eligible sacrifice".to_string());
+            }
+        }
+        OptionalAdditionalCostDef::Casualty(_) => {
+            let [paid] = refs else {
+                return Err(
+                    "Casualty paid provenance must contain exactly one creature".to_string()
+                );
+            };
+            let def = card_def::CARD_DEFS
+                .get(paid.card_def as usize)
+                .ok_or("Casualty paid creature definition is missing")?;
+            if paid.controller != controller
+                || paid.zone != Zone::Graveyard
+                || paid.visible_to_mask != 0b11
+                || !def.has_type(CardType::Creature)
+            {
+                return Err("Casualty paid provenance is not one eligible sacrifice".to_string());
             }
         }
     }
@@ -7745,8 +7779,14 @@ pub(crate) fn validate_pending_cast(
                 return Err("Collect Evidence finished below its minimum mana value".to_string());
             }
         }
-        (Some(OptionalAdditionalCostDef::Bargain), Some(true)) => {
-            let candidates = bargain_candidates(pending.controller, state)?;
+        (
+            Some(
+                kind
+                @ (OptionalAdditionalCostDef::Bargain | OptionalAdditionalCostDef::Casualty(_)),
+            ),
+            Some(true),
+        ) => {
+            let candidates = bargain_candidates(kind, pending.controller, state)?;
             if pending.optional_additional_cost_selection_finished
                 || pending.optional_additional_cost_chosen.len() > 1
                 || !selected_bindings_are_unique_subset(
@@ -8495,9 +8535,10 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                     });
                 }
             }
-            OptionalAdditionalCostDef::Bargain => {
+            kind
+            @ (OptionalAdditionalCostDef::Bargain | OptionalAdditionalCostDef::Casualty(_)) => {
                 if pending.optional_additional_cost_chosen.is_empty() {
-                    let candidates = match bargain_candidates(pending.controller, state) {
+                    let candidates = match bargain_candidates(kind, pending.controller, state) {
                         Ok(candidates) => candidates,
                         Err(_) => {
                             state.engine.halted = Some((
@@ -12319,7 +12360,7 @@ fn pending_cast_action_stage(
             {
                 return Ok(PendingCastActionStage::ChooseCollectEvidenceCard);
             }
-            OptionalAdditionalCostDef::Bargain
+            OptionalAdditionalCostDef::Bargain | OptionalAdditionalCostDef::Casualty(_)
                 if pending.optional_additional_cost_chosen.is_empty() =>
             {
                 return Ok(PendingCastActionStage::ChooseBargainPermanent);
@@ -13315,7 +13356,10 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
             }
         }
         if pending.optional_additional_cost_paid == Some(true)
-            && def.optional_additional_cost == Some(OptionalAdditionalCostDef::Bargain)
+            && matches!(
+                def.optional_additional_cost,
+                Some(OptionalAdditionalCostDef::Bargain | OptionalAdditionalCostDef::Casualty(_))
+            )
             && pending.optional_additional_cost_chosen.is_empty()
         {
             if pending_cast_action_stage(state, &pending)?
@@ -13323,7 +13367,10 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
             {
                 return Err("Bargain is not the active cast stage".to_string());
             }
-            let binding = bargain_candidates(pending.controller, state)?
+            let kind = def
+                .optional_additional_cost
+                .expect("matched a sacrifice-shaped optional cost above");
+            let binding = bargain_candidates(kind, pending.controller, state)?
                 .into_iter()
                 .find(|binding| binding.object == id)
                 .ok_or_else(|| format!("{id} is not a legal Bargain permanent"))?;
@@ -13783,6 +13830,79 @@ pub(crate) fn create_storm_spell_copies(
         validate_spell_stack_source(&staged, &copy)?;
         validated_stack_item_target_spec(&copy, &staged)?;
     }
+    *state = staged;
+    Ok(())
+}
+
+/// Casualty's "when you cast this spell, copy it": the copy goes on the stack
+/// at once, above its parent, with the parent's targets and modes. The
+/// copy keeps those targets (the optional retarget is not offered).
+fn copy_spell_keeping_targets(
+    state: &mut GameState,
+    parent_stack_item: StackItemId,
+) -> Result<(), String> {
+    let parent = state
+        .stack
+        .iter()
+        .find(|item| item.v4.stack_item_id == parent_stack_item)
+        .cloned()
+        .ok_or("casualty copy lost its parent spell")?;
+    let parent_contract = parent
+        .v4
+        .source_contract
+        .ok_or("casualty parent spell lost its source contract")?;
+    let mut staged = state.clone();
+    let copy_source = staged.objects.push(crate::state::GameObject {
+        card_def: parent_contract.card_def,
+        name: staged.objects.get(parent.source).name.clone(),
+        owner: parent_contract.owner,
+        controller: parent_contract.controller,
+        zone: Zone::Stack,
+        tapped: false,
+        summoning_sick: false,
+        damage: 0,
+        counters: Default::default(),
+        attachments: Vec::new(),
+        v4: ObjectStateV4::from_card_def(parent_contract.card_def),
+        spell_copy_origin: Some(SpellCopyOriginV4 {
+            parent: parent_contract.source,
+            parent_card_def: parent_contract.card_def,
+            parent_owner: parent_contract.owner,
+            parent_controller: parent_contract.controller,
+            parent_stack_zone_change_count: parent_contract.zone_change_count,
+            parent_was_copy: false,
+        }),
+        plotted_turn: None,
+        zone_change_count: 0,
+    });
+    let stack_item_id = next_stack_item_id(&mut staged);
+    let source_contract =
+        StackSourceContractV4::capture(&staged, copy_source, CastMethodV4::Normal);
+    let copy = StackItem {
+        kind: StackItemKind::Spell,
+        source: copy_source,
+        controller: parent.controller,
+        targets: parent.targets.clone(),
+        is_copy: true,
+        inline_effect: None,
+        discarded: Vec::new(),
+        is_flashback: false,
+        mode_chosen: parent.mode_chosen,
+        madness_offer: false,
+        kicked: false,
+        v4: StackStateV4 {
+            stack_item_id,
+            cast_method: Some(CastMethodV4::Normal),
+            source_contract: Some(source_contract),
+            target_spec: parent.v4.target_spec,
+            target_contracts: parent.v4.target_contracts.clone(),
+            ..StackStateV4::default()
+        },
+    };
+    staged.stack.push(copy.clone());
+    validate_spell_stack_source(&staged, &copy)?;
+    validated_stack_item_target_spec(&copy, &staged)?;
+    log_final_targeting_events(&mut staged, stack_item_id)?;
     *state = staged;
     Ok(())
 }
@@ -15027,7 +15147,9 @@ fn finalize_owned_cast(
             OptionalAdditionalCostDef::CollectEvidence { .. } => {
                 commit_graveyard_exile(state, &chosen)
             }
-            OptionalAdditionalCostDef::Bargain => commit_sacrifice(state, &chosen),
+            OptionalAdditionalCostDef::Bargain | OptionalAdditionalCostDef::Casualty(_) => {
+                commit_sacrifice(state, &chosen)
+            }
         }
         Some(kind)
     } else {
@@ -15142,6 +15264,12 @@ fn finalize_owned_cast(
     .saturating_add(1);
     log_final_targeting_events(state, stack_item_id)?;
     event::log_spell_cast(state, pending.spell, pending.controller);
+    if matches!(
+        paid_optional_additional_cost,
+        Some(OptionalAdditionalCostDef::Casualty(_))
+    ) {
+        copy_spell_keeping_targets(state, stack_item_id)?;
+    }
 
     // 601.2i/603.3: casting is complete the instant costs are paid --
     // triggered abilities that saw it happen (Guttersnipe) go on the stack
