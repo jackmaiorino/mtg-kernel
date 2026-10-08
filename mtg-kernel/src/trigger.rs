@@ -114,6 +114,9 @@ pub enum TriggerCondition {
     /// Declared as an attacker. Being put onto the battlefield attacking
     /// does not satisfy this event.
     Attacks,
+    /// The source's controller declares one or more attackers ("whenever
+    /// you attack", Adeline, Resplendent Cathar; Hired Claw).
+    ControllerAttacks,
     ControlledLandEnters,
     ControllerGainsLife,
     ControllerAddedPlusOneCountersToSelf {
@@ -1840,6 +1843,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Evolving Adaptive" => &standard_family_g_v1::EVOLVING_ADAPTIVE_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Unstoppable Slasher" => &standard_family_g_v1::UNSTOPPABLE_SLASHER_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Adeline, Resplendent Cathar" => &standard_family_g_v1::ADELINE_RESPLENDENT_CATHAR_TRIGGERS,
         _ => &[],
     }
 }
@@ -3152,6 +3157,18 @@ fn trigger_matches(
         (
             TriggerCondition::Attacks,
             CommittedEvent::DeclaredAttacker {
+                source: event_source,
+                source_zone_change_count,
+                controller: event_controller,
+            },
+        ) => {
+            *event_source == source
+                && *event_controller == controller
+                && state.objects.get(source).zone_change_count == *source_zone_change_count
+        }
+        (
+            TriggerCondition::ControllerAttacks,
+            CommittedEvent::ControllerAttacked {
                 source: event_source,
                 source_zone_change_count,
                 controller: event_controller,

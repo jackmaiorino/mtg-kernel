@@ -131,6 +131,7 @@ impl Scan<'_> {
             | RevealTargetHandChooseNoncreatureNonlandDiscard { .. }
             | ShuffleTriggerSourceIntoOwnersLibrary
             | LoseHalfLifeRoundedUp { .. }
+            | CreateTokenTappedAndAttacking { .. }
             | ReturnSourceFromGraveyardTappedWithStunCounters { .. }
             | MaterializeStormCopies
             | CreateStormCopies { .. }
@@ -599,7 +600,8 @@ pub(super) fn conflicts(
             Targeted { target, .. } => s.raw(*target),
             CombatDamageToPlayer { source, .. }
             | SagaChapter { source, .. }
-            | DeclaredAttacker { source, .. } => s.raw(*source),
+            | DeclaredAttacker { source, .. }
+            | ControllerAttacked { source, .. } => s.raw(*source),
             OptionalAdditionalCostPaid {
                 source,
                 paid_cost_refs,

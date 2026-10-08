@@ -512,6 +512,14 @@ pub enum CommittedEvent {
         object: ObjectId,
         zone_change_count: u32,
     },
+    /// Exact declaration-time source for a "whenever you attack" trigger:
+    /// `controller` declared one or more attackers while `source` was on the
+    /// battlefield. Emitted only for permanents with such a trigger.
+    ControllerAttacked {
+        source: ObjectId,
+        source_zone_change_count: u32,
+        controller: PlayerId,
+    },
 }
 
 /// Remembers the counters of a departing permanent whose own leave ability

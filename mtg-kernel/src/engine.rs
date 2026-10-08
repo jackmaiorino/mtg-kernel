@@ -11105,8 +11105,19 @@ pub fn effective_name(state: &GameState, id: ObjectId) -> &str {
 
 pub fn effective_base_power(state: &GameState, id: ObjectId) -> Option<i32> {
     let obj = state.objects.get(id);
+    let characteristic_power = || -> Option<i32> {
+        #[cfg(feature = "standard-magezero-fixtures")]
+        {
+            crate::standard_statics_v1::characteristic_defining_power(state, id)
+        }
+        #[cfg(not(feature = "standard-magezero-fixtures"))]
+        {
+            None
+        }
+    };
     crate::continuous_characteristics_v1::creature_override(state, id)
         .map(|(characteristics, _)| i32::from(characteristics.power))
+        .or_else(characteristic_power)
         .or_else(|| {
             card_def::CARD_DEFS[obj.card_def as usize]
                 .power_for_face(obj.v4.face_index)
@@ -14002,6 +14013,24 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
             };
             state.engine.event_log.push(event.clone());
             state.engine.event_history.push(event);
+        }
+    }
+    if !state.engine.combat.attackers.is_empty() {
+        let attacker = state.active_player;
+        for source in state.players[attacker.index()].battlefield.clone() {
+            let object = state.objects.get(source);
+            if trigger::triggers_for(object.card_def)
+                .iter()
+                .any(|def| matches!(def.condition, trigger::TriggerCondition::ControllerAttacks))
+            {
+                let event = CommittedEvent::ControllerAttacked {
+                    source,
+                    source_zone_change_count: object.zone_change_count,
+                    controller: attacker,
+                };
+                state.engine.event_log.push(event.clone());
+                state.engine.event_history.push(event);
+            }
         }
     }
     collect_and_queue_triggers(state);

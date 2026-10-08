@@ -454,6 +454,70 @@
         "granted_ward"
       ],
       "java_file": "Mage.Sets/src/mage/cards/c/CoppercoatVanguard.java"
+    },
+    {
+      "name": "Human Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "token_creation"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/HumanToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Adeline, Resplendent Cathar",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Knight"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 0,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoW.dck",
+        "Standard16-5C.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "vigilance",
+        "characteristic_defining_power",
+        "attack_trigger",
+        "token_creation"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AdelineResplendentCathar.java"
     }
   ]
 }

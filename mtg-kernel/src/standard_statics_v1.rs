@@ -113,3 +113,42 @@ pub(crate) fn may_have_granted_ward(card_def: u16, generic: u8) -> bool {
             def.has_type(CardType::Creature) && def.subtypes.contains(&Subtype::Human)
         })
 }
+
+/// A characteristic-defining ability setting the card's own power (604.3),
+/// applied in every zone. Effects that set power and toughness outright
+/// (`continuous_characteristics_v1::creature_override`) still win.
+pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> Option<i32> {
+    let object = state.objects.try_get(id)?;
+    let definition = CARD_DEFS.get(object.card_def as usize)?;
+    if !definition.is_executable()
+        || (object.zone == Zone::Battlefield
+            && !crate::continuous_characteristics_v1::printed_abilities_active(state, id))
+    {
+        return None;
+    }
+    let controller = object.controller;
+    let count = match definition.name {
+        // "Adeline's power is equal to the number of creatures you control."
+        "Adeline, Resplendent Cathar" => state.players[controller.index()]
+            .battlefield
+            .iter()
+            .filter(|&&creature| {
+                crate::engine::object_has_type(state, creature, CardType::Creature)
+            })
+            .count(),
+        // "Haughty Djinn's power is equal to the number of instant and
+        // sorcery cards in your graveyard."
+        "Haughty Djinn" => state.players[controller.index()]
+            .graveyard
+            .iter()
+            .filter(|&&card| {
+                let card = state.objects.get(card);
+                let def = &CARD_DEFS[card.card_def as usize];
+                card.spell_copy_origin.is_none()
+                    && (def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery))
+            })
+            .count(),
+        _ => return None,
+    };
+    Some(i32::try_from(count).unwrap_or(i32::MAX))
+}

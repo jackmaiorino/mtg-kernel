@@ -3531,6 +3531,7 @@ fn keywords_for(card: &CardJson) -> String {
             keywords.push("Keywords::LIFELINK");
         }
         "Unstoppable Slasher" => keywords.push("Keywords::DEATHTOUCH"),
+        "Adeline, Resplendent Cathar" => keywords.push("Keywords::VIGILANCE"),
         _ => {}
     }
     if card.name == "Treetop Snarespinner" {
@@ -5329,6 +5330,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Unstoppable Slasher" => {
             "combat_damage_player:that_player_loses_half_life_rounded_up;dies_if_no_counters:return_source_tapped_with_stun:2"
         }
+        "Adeline, Resplendent Cathar" => "controller_attacks:create_token_tapped_attacking:Human Token:1",
         _ => "none",
     }
 }
@@ -5344,6 +5346,7 @@ fn standard_static_recipe_for(name: &str) -> &'static str {
         }
         "Evolving Adaptive" => "enters_with_oil_counter:1;self_boost_per_oil_counter:1:1",
         "Coppercoat Vanguard" => "other_controlled_humans:boost:1:0;ward_generic:1",
+        "Adeline, Resplendent Cathar" => "cda_power:controlled_creatures",
         _ => "none",
     }
 }

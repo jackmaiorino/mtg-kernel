@@ -256,3 +256,21 @@ pub(super) const EVOLVING_ADAPTIVE_TRIGGERS: [TriggeredAbilityDef; 1] = [Trigger
     condition: TriggerCondition::ControlledCreatureEntersOutgrowingSource { another: true },
     ..etb_trigger(adaptive_oil_counter_effect)
 }];
+
+fn create_attacking_human_effect() -> EffectOp {
+    EffectOp::CreateTokenTappedAndAttacking {
+        token_def: crate::card_def::card_id_by_name("Human Token")
+            .unwrap_or_else(|| panic!("Human Token in CARD_DEFS")),
+    }
+}
+
+/// Adeline, Resplendent Cathar: "Whenever you attack, for each opponent,
+/// create a 1/1 white Human creature token that's tapped and attacking that
+/// player or a planeswalker they control." One opponent here, and no
+/// planeswalkers attack. Its power is a characteristic-defining ability in
+/// `standard_statics_v1`.
+pub(super) const ADELINE_RESPLENDENT_CATHAR_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [TriggeredAbilityDef {
+        condition: TriggerCondition::ControllerAttacks,
+        ..etb_trigger(create_attacking_human_effect)
+    }];

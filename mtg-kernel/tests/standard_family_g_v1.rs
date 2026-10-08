@@ -91,6 +91,13 @@ const CARDS: &[(&str, &[Subtype], (i16, i16), Keywords, usize)] = &[
         0,
     ),
     (
+        "Adeline, Resplendent Cathar",
+        &[Subtype::Human, Subtype::Knight],
+        (0, 4),
+        Keywords::VIGILANCE,
+        1,
+    ),
+    (
         "Unstoppable Slasher",
         &[Subtype::Zombie, Subtype::Assassin],
         (2, 3),
@@ -1020,4 +1027,93 @@ fn coppercoat_vanguard_gives_other_humans_ward_one() {
     let (_, offers) = opponent_bolts(&mut state, vanguard, 1, false);
     assert_eq!(offers, 0);
     assert_eq!(state.objects.get(vanguard).zone, Zone::Graveyard);
+}
+
+/// From the declare-attackers decision, attacks with `attackers`, lets the
+/// defender block nothing and passes until the second main phase.
+fn attack_unblocked(state: &mut GameState, attackers: Vec<ObjectId>) {
+    assert!(matches!(next(state), Decision::DeclareAttackers { .. }));
+    engine::step(state, Action::DeclareAttackers(attackers)).unwrap();
+    pass_until_blocks(state);
+    engine::step(state, Action::DeclareBlockers(Vec::new())).unwrap();
+    while state.step != Step::Main2 {
+        match next(state) {
+            Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+            Decision::OrderTriggers { pending, .. } => {
+                engine::step(state, Action::OrderTriggers((0..pending.len()).collect())).unwrap()
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn adeline_power_counts_the_creatures_you_control() {
+    let mut state = ready(Step::Main1);
+    let adeline = put(
+        &mut state,
+        PlayerId::P0,
+        "Adeline, Resplendent Cathar",
+        Zone::Battlefield,
+    );
+    assert_eq!(engine::effective_power(&state, adeline), 1);
+    put(&mut state, PlayerId::P0, "Cenote Scout", Zone::Battlefield);
+    put(&mut state, PlayerId::P0, "Forest", Zone::Battlefield);
+    put(&mut state, PlayerId::P1, "Cenote Scout", Zone::Battlefield);
+    assert_eq!(engine::effective_power(&state, adeline), 2);
+    assert_eq!(engine::effective_toughness(&state, adeline), 4);
+}
+
+#[test]
+fn adeline_makes_an_attacking_human_whenever_you_attack() {
+    let mut state = ready(Step::DeclareAttackers);
+    let adeline = put(
+        &mut state,
+        PlayerId::P0,
+        "Adeline, Resplendent Cathar",
+        Zone::Battlefield,
+    );
+    attack_unblocked(&mut state, vec![adeline]);
+    let humans = battlefield_tokens(&state, PlayerId::P0, "Human Token");
+    assert_eq!(humans.len(), 1);
+    assert!(state.objects.get(humans[0]).tapped);
+    assert!(!state.objects.get(adeline).tapped);
+    // Adeline (two creatures) and the Human both connect.
+    assert_eq!(state.players[1].life, 17);
+}
+
+#[test]
+fn adeline_triggers_when_only_another_creature_attacks() {
+    let mut state = ready(Step::DeclareAttackers);
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Adeline, Resplendent Cathar",
+        Zone::Battlefield,
+    );
+    let scout = put(&mut state, PlayerId::P0, "Cenote Scout", Zone::Battlefield);
+    attack_unblocked(&mut state, vec![scout]);
+    assert_eq!(
+        battlefield_tokens(&state, PlayerId::P0, "Human Token").len(),
+        1
+    );
+    assert_eq!(state.players[1].life, 18);
+}
+
+#[test]
+fn adeline_does_not_trigger_without_attackers() {
+    let mut state = ready(Step::DeclareAttackers);
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Adeline, Resplendent Cathar",
+        Zone::Battlefield,
+    );
+    assert!(matches!(
+        next(&mut state),
+        Decision::DeclareAttackers { .. }
+    ));
+    engine::step(&mut state, Action::DeclareAttackers(Vec::new())).unwrap();
+    settled(&mut state);
+    assert!(battlefield_tokens(&state, PlayerId::P0, "Human Token").is_empty());
 }

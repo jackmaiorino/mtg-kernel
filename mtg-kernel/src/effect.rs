@@ -1113,6 +1113,13 @@ pub enum EffectOp {
     PutOilCounterOnBoundObject {
         object: EffectObjectBinding,
     },
+    /// Create one `token_def` token under the controller's control, tapped
+    /// and attacking (Adeline, Resplendent Cathar). It was never declared
+    /// as an attacker, so attack triggers do not see it. Outside combat
+    /// the token is simply created tapped.
+    CreateTokenTappedAndAttacking {
+        token_def: u16,
+    },
     /// The player loses half their life, rounded up (Unstoppable Slasher).
     /// A player at 0 or less life loses nothing.
     LoseHalfLifeRoundedUp {
@@ -11381,6 +11388,45 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                         > crate::engine::effective_toughness(state, source.object))
             {
                 execute(then, ctx, state);
+            }
+        }
+        EffectOp::CreateTokenTappedAndAttacking { token_def } => {
+            let Some(token) = crate::card_def::CARD_DEFS.get(*token_def as usize) else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            if !token.is_token || !token.has_full_support() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::create_token(*token_def, ctx.controller),
+            );
+            let Some(crate::event::CommittedEvent::CreateToken { object, .. }) =
+                state.engine.event_log.last().cloned()
+            else {
+                return;
+            };
+            state.objects.get_mut(object).tapped = true;
+            let combat = &mut state.engine.combat;
+            if combat.attackers_declared
+                && state.active_player == ctx.controller
+                && matches!(
+                    state.step,
+                    crate::state::Step::DeclareAttackers
+                        | crate::state::Step::DeclareBlockers
+                        | crate::state::Step::CombatDamage
+                )
+                && !combat.attackers.contains(&object)
+            {
+                combat.attackers.push(object);
             }
         }
         EffectOp::LoseHalfLifeRoundedUp { player } => {
