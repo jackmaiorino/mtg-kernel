@@ -8842,7 +8842,7 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 let count = match count {
                     LibraryLookCount::Fixed(count) => count,
                     LibraryLookCount::ManaSpentToCast => {
-                        u8::try_from(continuation.resolving_item.v4.mana_spent).unwrap_or(u8::MAX)
+                        u8::try_from(continuation.resolving_item.v4.mana_spent.0).unwrap_or(u8::MAX)
                     }
                 };
                 if begin_library_partition(

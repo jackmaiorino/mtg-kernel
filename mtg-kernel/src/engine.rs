@@ -15025,7 +15025,7 @@ fn finalize_owned_cast(
     item.v4.optional_additional_cost_paid = paid_optional_additional_cost;
     item.v4.x_value = u16::from(x_value);
     if def.records_mana_spent {
-        item.v4.mana_spent = mana_spent;
+        item.v4.mana_spent = crate::state::ManaSpentV1(mana_spent);
     }
     item.v4.cast_method = Some(cast_method);
     item.v4.source_contract = Some(finalized_source_contract);

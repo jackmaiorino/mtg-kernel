@@ -437,7 +437,7 @@ fn memory_deluge_looks_at_the_mana_spent_and_flashes_back() {
     next(&mut state);
     engine::step(&mut state, Action::CastSpell(deluge)).unwrap();
     assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
-    assert_eq!(state.stack.last().unwrap().v4.mana_spent, 4);
+    assert_eq!(state.stack.last().unwrap().v4.mana_spent.0, 4);
     let mut first = |_: &mut GameState, decision: Decision| match decision {
         Decision::ChooseEffectTargets {
             min_targets: 2,
@@ -464,7 +464,7 @@ fn memory_deluge_looks_at_the_mana_spent_and_flashes_back() {
     next(&mut state);
     engine::step(&mut state, Action::CastSpell(deluge)).unwrap();
     assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
-    assert_eq!(state.stack.last().unwrap().v4.mana_spent, 7);
+    assert_eq!(state.stack.last().unwrap().v4.mana_spent.0, 7);
     let mut seen = 0;
     let mut second = |_: &mut GameState, decision: Decision| match decision {
         Decision::ChooseEffectTargets {

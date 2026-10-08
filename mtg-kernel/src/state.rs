@@ -1064,12 +1064,29 @@ pub struct StackStateV4 {
     /// definition with `CardDef::records_mana_spent` (Memory Deluge's "X is
     /// the amount of mana spent to cast this spell"). Zero, and absent from
     /// serialized state, for every other stack item.
-    #[serde(default, skip_serializing_if = "u16_is_zero")]
-    pub mana_spent: u16,
+    #[serde(default, skip_serializing_if = "ManaSpentV1::is_zero")]
+    pub mana_spent: ManaSpentV1,
 }
 
-fn u16_is_zero(value: &u16) -> bool {
-    *value == 0
+/// Mana spent to cast a spell. Zero contributes nothing to the in-process
+/// `Hash`, so stack items that never record it keep their prior
+/// `GameState::state_hash`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ManaSpentV1(pub u16);
+
+impl ManaSpentV1 {
+    pub fn is_zero(&self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl Hash for ManaSpentV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if self.0 != 0 {
+            self.0.hash(state);
+        }
+    }
 }
 
 impl StackStateV4 {
