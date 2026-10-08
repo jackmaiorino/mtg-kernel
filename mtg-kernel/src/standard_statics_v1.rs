@@ -3,7 +3,7 @@
 //! boosts in `engine`, and only exists in `standard-magezero-fixtures`
 //! builds.
 
-use crate::card_def::{Keywords, CARD_DEFS};
+use crate::card_def::{CardType, Keywords, Subtype, CARD_DEFS};
 use crate::ids::ObjectId;
 use crate::state::{GameState, Zone};
 
@@ -77,4 +77,39 @@ pub(crate) fn reads_counter_lki(card_def: u16) -> bool {
         CARD_DEFS.get(card_def as usize).map(|def| def.name),
         Some("Quirion Beastcaller" | "Unstoppable Slasher")
     )
+}
+
+/// Generic ward costs other permanents grant `id`, one entry per granting
+/// permanent: "Each other Human you control ... has ward {1}" (Coppercoat
+/// Vanguard).
+pub(crate) fn granted_ward_generics(state: &GameState, id: ObjectId) -> Vec<u8> {
+    let Some(object) = state.objects.try_get(id) else {
+        return Vec::new();
+    };
+    if object.zone != Zone::Battlefield
+        || !crate::engine::object_has_type(state, id, CardType::Creature)
+        || !crate::engine::has_effective_subtype(state, id, Subtype::Human)
+    {
+        return Vec::new();
+    }
+    state.players[object.controller.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|&source| {
+            source != id
+                && battlefield_definition_name(state, source) == Some("Coppercoat Vanguard")
+        })
+        .map(|_| 1)
+        .collect()
+}
+
+/// Whether a ward trigger costing `generic` on a permanent of `card_def` can
+/// come from a grant above. The grant may have ended by the time the trigger
+/// is validated on the stack, so this checks only the printed shape.
+pub(crate) fn may_have_granted_ward(card_def: u16, generic: u8) -> bool {
+    generic == 1
+        && CARD_DEFS.get(card_def as usize).is_some_and(|def| {
+            def.has_type(CardType::Creature) && def.subtypes.contains(&Subtype::Human)
+        })
 }

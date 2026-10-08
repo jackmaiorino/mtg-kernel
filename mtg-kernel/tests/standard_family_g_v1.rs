@@ -2,6 +2,7 @@
 //! abilities, built for the five mono-color decks first.
 #![cfg(feature = "standard-magezero-fixtures")]
 use mtg_kernel::card_def::{card_id_by_name, CardCapability, Keywords, Subtype, CARD_DEFS};
+use mtg_kernel::effect::EffectBooleanChoicePurpose;
 use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
@@ -81,6 +82,13 @@ const CARDS: &[(&str, &[Subtype], (i16, i16), Keywords, usize)] = &[
         (2, 2),
         Keywords::NONE,
         2,
+    ),
+    (
+        "Coppercoat Vanguard",
+        &[Subtype::Human, Subtype::Soldier],
+        (2, 2),
+        Keywords::NONE,
+        0,
     ),
     (
         "Unstoppable Slasher",
@@ -868,4 +876,148 @@ fn unstoppable_slasher_with_a_counter_or_exiled_first_does_not_return() {
     event::propose_and_commit(&mut state, ProposedEvent::zone_change(other, Zone::Exile));
     settled(&mut state);
     assert_eq!(state.objects.get(other).zone, Zone::Exile);
+}
+
+#[test]
+fn coppercoat_vanguard_boosts_only_other_humans_you_control() {
+    let mut state = ready(Step::Main1);
+    let vanguard = put(
+        &mut state,
+        PlayerId::P0,
+        "Coppercoat Vanguard",
+        Zone::Battlefield,
+    );
+    let human = put(
+        &mut state,
+        PlayerId::P0,
+        "Novice Inspector",
+        Zone::Battlefield,
+    );
+    let merfolk = put(&mut state, PlayerId::P0, "Cenote Scout", Zone::Battlefield);
+    let theirs = put(
+        &mut state,
+        PlayerId::P1,
+        "Novice Inspector",
+        Zone::Battlefield,
+    );
+    let power = |state: &GameState, id| {
+        (
+            engine::effective_power(state, id),
+            engine::effective_toughness(state, id),
+        )
+    };
+    assert_eq!(power(&state, vanguard), (2, 2));
+    assert_eq!(power(&state, human), (2, 2));
+    assert_eq!(power(&state, merfolk), (1, 1));
+    assert_eq!(power(&state, theirs), (1, 2));
+}
+
+/// P1 casts Lightning Bolt at `target` with `extra` colorless mana spare,
+/// answering any ward payment with `pay`. Returns the Bolt and how many
+/// ward payment choices P1 was offered.
+fn opponent_bolts(
+    state: &mut GameState,
+    target: ObjectId,
+    extra: u8,
+    pay: bool,
+) -> (ObjectId, usize) {
+    let bolt = put(state, PlayerId::P1, "Lightning Bolt", Zone::Hand);
+    state.players[1].mana_pool = pool(&[(ManaColor::R, 1)], extra);
+    if matches!(
+        next(state),
+        Decision::CastSpellOrPass {
+            player: PlayerId::P0,
+            ..
+        }
+    ) {
+        engine::step(state, Action::Pass).unwrap();
+    }
+    cast(state, bolt, &[Target::Object(target)]);
+    let mut offers = 0;
+    while let Some(decision) = settle(state) {
+        match decision {
+            Decision::ChooseEffectBoolean {
+                player: PlayerId::P1,
+                purpose: EffectBooleanChoicePurpose::CounterUnlessPaysGeneric { generic: 1, .. },
+                ..
+            } => {
+                offers += 1;
+                engine::step(state, Action::ChooseEffectBoolean(pay)).unwrap();
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    (bolt, offers)
+}
+
+#[test]
+fn coppercoat_vanguard_gives_other_humans_ward_one() {
+    // Declined: the Bolt is countered.
+    let mut state = ready(Step::Main1);
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Coppercoat Vanguard",
+        Zone::Battlefield,
+    );
+    let human = put(
+        &mut state,
+        PlayerId::P0,
+        "Novice Inspector",
+        Zone::Battlefield,
+    );
+    let (bolt, offers) = opponent_bolts(&mut state, human, 1, false);
+    assert_eq!(offers, 1);
+    assert_eq!(state.objects.get(bolt).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(human).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(human).damage, 0);
+
+    // Paid: the Bolt resolves.
+    let mut state = ready(Step::Main1);
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Coppercoat Vanguard",
+        Zone::Battlefield,
+    );
+    let human = put(
+        &mut state,
+        PlayerId::P0,
+        "Novice Inspector",
+        Zone::Battlefield,
+    );
+    let (_, offers) = opponent_bolts(&mut state, human, 1, true);
+    assert_eq!(offers, 1);
+    assert_eq!(state.objects.get(human).zone, Zone::Graveyard);
+
+    // Unpayable: countered without a choice.
+    let mut state = ready(Step::Main1);
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Coppercoat Vanguard",
+        Zone::Battlefield,
+    );
+    let human = put(
+        &mut state,
+        PlayerId::P0,
+        "Novice Inspector",
+        Zone::Battlefield,
+    );
+    let (bolt, offers) = opponent_bolts(&mut state, human, 0, true);
+    assert_eq!(offers, 0);
+    assert_eq!(state.objects.get(bolt).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(human).zone, Zone::Battlefield);
+
+    // The Vanguard itself has no ward.
+    let mut state = ready(Step::Main1);
+    let vanguard = put(
+        &mut state,
+        PlayerId::P0,
+        "Coppercoat Vanguard",
+        Zone::Battlefield,
+    );
+    let (_, offers) = opponent_bolts(&mut state, vanguard, 1, false);
+    assert_eq!(offers, 0);
+    assert_eq!(state.objects.get(vanguard).zone, Zone::Graveyard);
 }

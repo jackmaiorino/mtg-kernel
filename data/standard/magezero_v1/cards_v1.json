@@ -423,6 +423,37 @@
         "stun_counters"
       ],
       "java_file": "Mage.Sets/src/mage/cards/u/UnstoppableSlasher.java"
+    },
+    {
+      "name": "Coppercoat Vanguard",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "lord",
+        "granted_ward"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CoppercoatVanguard.java"
     }
   ]
 }

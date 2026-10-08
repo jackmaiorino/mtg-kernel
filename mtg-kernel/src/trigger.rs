@@ -2744,6 +2744,56 @@ fn triggers_from_events(
         }
     }
 
+    // Ward granted by another permanent (Coppercoat Vanguard) is the
+    // warded creature's own ability, one trigger per grant.
+    #[cfg(feature = "standard-magezero-fixtures")]
+    for event in events {
+        let CommittedEvent::Targeted {
+            target,
+            target_zone_change_count,
+            targeting_stack_item,
+            targeting_controller,
+        } = event
+        else {
+            continue;
+        };
+        let Some(live) = state.objects.try_get(*target) else {
+            continue;
+        };
+        if live.zone != Zone::Battlefield
+            || live.zone_change_count != *target_zone_change_count
+            || *targeting_controller == live.controller
+        {
+            continue;
+        }
+        let controller = live.controller;
+        for generic in crate::standard_statics_v1::granted_ward_generics(state, *target) {
+            let ward_target = crate::state::StackTargetContractV4::capture(
+                state,
+                crate::state::Target::Object(*target),
+            );
+            new_triggers.push(PendingTrigger {
+                controller,
+                source: *target,
+                granted_by: None,
+                effect: EffectOp::CounterUnlessPaysGeneric {
+                    ward_target,
+                    targeting_stack_item: *targeting_stack_item,
+                    generic,
+                },
+                is_madness_offer: false,
+                kicked: false,
+                target_spec: TargetSpec::None,
+                targets: Vec::new(),
+                target_contracts: Vec::new(),
+                placement_ordered: false,
+                source_contract: Some(AbilitySourceContractV4::capture(state, *target)),
+                optional_additional_cost_paid: None,
+                paid_cost_refs: Vec::new(),
+            });
+        }
+    }
+
     // Attachment-granted abilities belong to the equipped creature. Each
     // Equipment grants a separate trigger, and its exact incarnation is
     // carried independently as provenance.

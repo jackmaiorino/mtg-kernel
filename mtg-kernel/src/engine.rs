@@ -9720,7 +9720,15 @@ fn triggered_stack_item_expected_target_spec(
                             && (source.zone_change_count != zone_change_count
                                 || source.zone == Zone::Battlefield)
                     );
-                    source_def.ward_cost == Some(crate::card_def::WardCostDef::Generic(*generic))
+                    let printed_or_granted = source_def.ward_cost
+                        == Some(crate::card_def::WardCostDef::Generic(*generic));
+                    #[cfg(feature = "standard-magezero-fixtures")]
+                    let printed_or_granted = printed_or_granted
+                        || crate::standard_statics_v1::may_have_granted_ward(
+                            source_contract.card_def,
+                            *generic,
+                        );
+                    printed_or_granted
                         && *targeting_stack_item != StackItemId::default()
                         && source_contract_is_consistent
                 }
@@ -10933,6 +10941,15 @@ pub(crate) fn static_controlled_subtype_boost_for(
             exclude_source: true,
             power: 1,
             toughness: 1,
+        }),
+        // "Each other Human you control gets +1/+0 and has ward {1}." The
+        // ward half is `standard_statics_v1::granted_ward_generics`.
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Coppercoat Vanguard" => Some(StaticControlledSubtypeBoostDef {
+            subtype: card_def::Subtype::Human,
+            exclude_source: true,
+            power: 1,
+            toughness: 0,
         }),
         _ => None,
     }

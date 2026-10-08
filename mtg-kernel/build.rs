@@ -5343,6 +5343,7 @@ fn standard_static_recipe_for(name: &str) -> &'static str {
             "enters_with_plus_one_counter_if_controls_permanent_mv_at_least_4"
         }
         "Evolving Adaptive" => "enters_with_oil_counter:1;self_boost_per_oil_counter:1:1",
+        "Coppercoat Vanguard" => "other_controlled_humans:boost:1:0;ward_generic:1",
         _ => "none",
     }
 }
