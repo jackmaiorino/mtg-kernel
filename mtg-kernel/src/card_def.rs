@@ -265,6 +265,9 @@ pub enum Subtype {
     /// Appended for MageZero Standard family D (new set keywords).
     Mouse,
     Assassin,
+    Shark,
+    /// Artifact type of the Incubator token.
+    Incubator,
 }
 
 impl Subtype {
@@ -370,6 +373,8 @@ impl Subtype {
         Subtype::Mouse,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Assassin,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Shark,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -502,6 +507,7 @@ impl Subtype {
                 | Subtype::Golem
                 | Subtype::Mouse
                 | Subtype::Assassin
+                | Subtype::Shark
         )
     }
 }

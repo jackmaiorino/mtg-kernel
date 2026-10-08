@@ -6075,7 +6075,13 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
             {
                 continue;
             }
+            // Printed activated abilities belong to the front face; no
+            // back face in the pool has its own.
+            let transformed = state.objects.get(id).v4.face_index != 0;
             for (i, ability) in def.activated_abilities.iter().enumerate() {
+                if transformed {
+                    break;
+                }
                 if ability.activation_zone != zone
                     || (ability.sorcery_speed_only && !sorcery_speed_timing_ok(player, state))
                     || ability.max_activations_per_turn.is_some_and(|limit| {

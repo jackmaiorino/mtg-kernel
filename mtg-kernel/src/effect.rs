@@ -1106,6 +1106,13 @@ pub enum EffectOp {
         power: i32,
         toughness: i32,
     },
+    /// Trigger collection binds this template to the triggering spell's
+    /// mana value (`Incubate`).
+    BindIncubateToTriggerSpell,
+    /// Incubate N: create an Incubator token with N +1/+1 counters.
+    Incubate {
+        amount: u16,
+    },
     /// Trigger collection binds this template to the warped source
     /// incarnation (`WarpExileBoundObject`).
     BindWarpExileToTriggerSource,
@@ -11251,6 +11258,45 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         }
         EffectOp::BindWarpExileToTriggerSource => {
             panic!("unmaterialized warp exile");
+        }
+        EffectOp::BindIncubateToTriggerSpell => {
+            panic!("unmaterialized incubate");
+        }
+        EffectOp::Incubate { amount } => {
+            let Some(incubator) = crate::card_def::card_id_by_name("Incubator Token") else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::create_token(incubator, ctx.controller),
+            );
+            let created = state
+                .engine
+                .event_log
+                .iter()
+                .rev()
+                .find_map(|event| match event {
+                    event::CommittedEvent::CreateToken { object, .. }
+                        if state.objects.get(*object).card_def == incubator =>
+                    {
+                        Some(*object)
+                    }
+                    _ => None,
+                });
+            if let Some(token) = created.filter(|_| *amount > 0) {
+                if event::add_plus_one_counters(state, token, ctx.controller, i32::from(*amount))
+                    .is_err()
+                {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                }
+            }
         }
         EffectOp::CounterUnlessCollectsEvidence {
             targeting_stack_item,

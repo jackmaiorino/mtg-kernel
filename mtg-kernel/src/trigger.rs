@@ -271,7 +271,26 @@ fn materialize_trigger_event_effect(
             };
         }
     }
+    if matches!((trigger.effect)(), EffectOp::BindIncubateToTriggerSpell) {
+        if let CommittedEvent::SpellCast { spell, .. } = event {
+            return EffectOp::Incubate {
+                amount: spell_mana_value_on_stack(state, *spell),
+            };
+        }
+    }
     materialize_trigger_effect(trigger, source, state)
+}
+
+/// A spell's mana value on the stack, including its announced X.
+fn spell_mana_value_on_stack(state: &GameState, spell: ObjectId) -> u16 {
+    let def = &crate::card_def::CARD_DEFS[state.objects.get(spell).card_def as usize];
+    let x_value = state
+        .stack
+        .iter()
+        .find(|item| item.source == spell)
+        .map_or(0, |item| item.v4.x_value);
+    def.mana_value
+        .saturating_add(u16::from(def.cost.x_count).saturating_mul(x_value))
 }
 
 const fn etb_trigger(effect: fn() -> EffectOp) -> TriggeredAbilityDef {
@@ -947,6 +966,17 @@ const WARP_EXILE_TRIGGER: TriggeredAbilityDef = TriggeredAbilityDef {
 fn warp_exile_effect() -> EffectOp {
     EffectOp::BindWarpExileToTriggerSource
 }
+
+fn chrome_host_seedshark_effect() -> EffectOp {
+    EffectOp::BindIncubateToTriggerSpell
+}
+
+/// Flying. Whenever you cast a noncreature spell, incubate X, where X is
+/// that spell's mana value.
+const CHROME_HOST_SEEDSHARK_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastNoncreatureSpell,
+    ..etb_trigger(chrome_host_seedshark_effect)
+}];
 
 fn training_effect() -> EffectOp {
     EffectOp::PutPlusOnePlusOneCounter {
@@ -1930,6 +1960,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Aloe Alchemist" => &ALOE_ALCHEMIST_TRIGGERS,
         "Forsaken Miner" => &FORSAKEN_MINER_TRIGGERS,
         "Hopeful Initiate" => &HOPEFUL_INITIATE_TRIGGERS,
+        "Chrome Host Seedshark" => &CHROME_HOST_SEEDSHARK_TRIGGERS,
         _ => &[],
     }
 }
@@ -2035,7 +2066,8 @@ fn source_bound_trigger_program_matches(template: &EffectOp, effect: &EffectOp) 
             EffectOp::BindDoublePlusOneCountersToTriggerSource,
             EffectOp::DoublePlusOneCountersOnBoundObject { .. },
         )
-        | (EffectOp::BindWarpExileToTriggerSource, EffectOp::WarpExileBoundObject { .. }) => true,
+        | (EffectOp::BindWarpExileToTriggerSource, EffectOp::WarpExileBoundObject { .. })
+        | (EffectOp::BindIncubateToTriggerSpell, EffectOp::Incubate { .. }) => true,
         _ => false,
     }
 }

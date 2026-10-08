@@ -3026,6 +3026,8 @@ enum AbilityEffectRecipe {
         power: i32,
         toughness: i32,
     },
+    /// Transform this permanent (the Incubator token's `{2}`).
+    TransformSource,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3565,6 +3567,7 @@ fn standard_keywords_for(name: &str) -> &'static [&'static str] {
         "Nova Hellkite" => &["Keywords::FLYING", "Keywords::HASTE"],
         "Aloe Alchemist" => &["Keywords::TRAMPLE"],
         "Axebane Ferox" => &["Keywords::DEATHTOUCH", "Keywords::HASTE"],
+        "Chrome Host Seedshark" => &["Keywords::FLYING"],
         _ => &[],
     }
 }
@@ -3649,6 +3652,7 @@ fn transform_face_for(name: &str) -> &'static str {
     match name {
         "The Modern Age" => "Some(TransformFaceDef { name: \"Vector Glider\", types: &[CardType::Enchantment, CardType::Creature], subtypes: &[Subtype::Spirit], colors: &[ManaColor::U], power: Some(2), toughness: Some(3), keywords: Keywords::FLYING })",
         "Delver of Secrets" => "Some(TransformFaceDef { name: \"Insectile Aberration\", types: &[CardType::Creature], subtypes: &[Subtype::Human, Subtype::Insect], colors: &[ManaColor::U], power: Some(3), toughness: Some(2), keywords: Keywords::FLYING })",
+        "Incubator Token" => "Some(TransformFaceDef { name: \"Phyrexian Token\", types: &[CardType::Artifact, CardType::Creature], subtypes: &[Subtype::Phyrexian], colors: &[], power: Some(0), toughness: Some(0), keywords: Keywords::NONE })",
         _ => "None",
     }
 }
@@ -3662,6 +3666,7 @@ fn transform_face_name_for(name: &str) -> Option<&'static str> {
     match name {
         "The Modern Age" => Some("Vector Glider"),
         "Delver of Secrets" => Some("Insectile Aberration"),
+        "Incubator Token" => Some("Phyrexian Token"),
         _ => None,
     }
 }
@@ -3936,6 +3941,18 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
                 generic: 3,
             }],
             effect: AbilityEffectRecipe::DrawCards(1),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Incubator Token" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: None,
+                generic: 2,
+            }],
+            effect: AbilityEffectRecipe::TransformSource,
             activation_zone: "Battlefield",
             sorcery_speed_only: false,
             target_spec: "None",
@@ -4792,6 +4809,7 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::PumpSourceUntilEndOfTurn { power, toughness } => {
             format!("pump_source_until_end_of_turn:{power}:{toughness}")
         }
+        AbilityEffectRecipe::TransformSource => "transform_source".to_string(),
         AbilityEffectRecipe::AddPlusOnePlusOneCounters(count) => format!("add_plus_one_plus_one_counters:{count}"),
         AbilityEffectRecipe::SearchLibraryToBattlefieldTapped { filter } => format!(
             "search_library_to_battlefield_tapped:{}",
@@ -4946,6 +4964,7 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::AddMinusOneMinusOneCounter => {
             "ability_effect_add_minus_one_minus_one_counter".to_string()
         }
+        AbilityEffectRecipe::TransformSource => "ability_effect_transform_source".to_string(),
         AbilityEffectRecipe::PumpSourceUntilEndOfTurn { power, toughness } => format!(
             "ability_effect_pump_source_until_end_of_turn_{}_{}",
             power.to_string().replace('-', "minus_"),
@@ -5379,6 +5398,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Nova Hellkite" => "etb:target_opponent_creature:damage:1;warp_next_end_step:exile_cast_later_turn",
         "Aloe Alchemist" => "becomes_plotted:target_creature:pump:3:2:trample",
         "Hopeful Initiate" => "training",
+        "Chrome Host Seedshark" => "cast_noncreature_spell:incubate_spell_mana_value",
         "Forsaken Miner" => "cant_block;graveyard:controller_commits_crime:may_pay:B:return_source_to_battlefield",
         "Iridescent Vinelasher" | "Iridescent Vinelasher Offspring Token" => "etb_if_offspring_paid:create_one_one_token_copy;landfall:target_opponent:damage:1",
         _ => "none",
@@ -5986,6 +6006,9 @@ fn codegen(cards: &[CardJson]) -> String {
                     "    EffectOp::DestroyObject {{ object: ObjectRef::Target(0) }}"
                 )
                 .unwrap();
+            }
+            AbilityEffectRecipe::TransformSource => {
+                writeln!(out, "    EffectOp::TransformSourceInPlace").unwrap();
             }
             AbilityEffectRecipe::PumpSourceUntilEndOfTurn { power, toughness } => {
                 writeln!(out, "    EffectOp::PumpTargetUntilEndOfTurnDynamic {{ target: TargetRef::ThisSource, power: DynamicValueDef::Fixed({power}), toughness: DynamicValueDef::Fixed({toughness}) }}").unwrap();
@@ -8460,6 +8483,8 @@ fn subtype_variant(t: &str) -> &'static str {
         "Golem" => "Subtype::Golem",
         "Mouse" => "Subtype::Mouse",
         "Assassin" => "Subtype::Assassin",
+        "Shark" => "Subtype::Shark",
+        "Incubator" => "Subtype::Incubator",
         "Pirate" => "Subtype::Pirate",
         "Plains" => "Subtype::Plains",
         "ROGUE" => "Subtype::RogueAllCaps",

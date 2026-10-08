@@ -384,6 +384,66 @@
         "artifact_enchantment_removal"
       ],
       "java_file": "Mage.Sets/src/mage/cards/h/HopefulInitiate.java"
+    },
+    {
+      "name": "Chrome Host Seedshark",
+      "engine_capability": "full",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Phyrexian",
+        "Shark"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoU.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "flying",
+        "noncreature_cast_trigger",
+        "incubate"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/ChromeHostSeedshark.java"
+    },
+    {
+      "name": "Incubator Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Incubator"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "incubate",
+        "transform",
+        "activated_transform"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/IncubatorToken.java",
+      "is_token": true
     }
   ]
 }

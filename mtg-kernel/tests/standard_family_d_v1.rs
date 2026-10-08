@@ -774,3 +774,67 @@ fn hopeful_initiate_removes_two_counters_to_destroy_an_artifact() {
     assert_eq!(state.objects.get(challenger).counters.plus1_plus1, 1);
     assert_eq!(state.objects.get(initiate).counters.plus1_plus1, 0);
 }
+
+fn incubators(state: &GameState, player: PlayerId) -> Vec<ObjectId> {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|&id| state.objects.get(id).name == "Incubator Token")
+        .collect()
+}
+
+#[test]
+fn chrome_host_seedshark_incubates_noncreature_spells_mana_value() {
+    let mut state = ready();
+    let seedshark = put(
+        &mut state,
+        PlayerId::P0,
+        "Chrome Host Seedshark",
+        Zone::Battlefield,
+    );
+    assert!(engine::has_effective_keyword(
+        &state,
+        seedshark,
+        Keywords::FLYING
+    ));
+
+    // A creature spell doesn't trigger it.
+    let bashtronaut = put(&mut state, PlayerId::P0, "Burnout Bashtronaut", Zone::Hand);
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::R], 0);
+    cast(&mut state, bashtronaut, &[]);
+    settled(&mut state);
+    assert!(incubators(&state, PlayerId::P0).is_empty());
+
+    // Full Bore (mana value 1) makes an Incubator with one counter.
+    let full_bore = put(&mut state, PlayerId::P0, "Full Bore", Zone::Hand);
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::R], 0);
+    cast(&mut state, full_bore, &[Target::Object(seedshark)]);
+    settled(&mut state);
+    let [incubator] = incubators(&state, PlayerId::P0)[..] else {
+        panic!("expected one Incubator");
+    };
+    assert_eq!(state.objects.get(incubator).counters.plus1_plus1, 1);
+    assert!(!engine::object_has_type(
+        &state,
+        incubator,
+        mtg_kernel::card_def::CardType::Creature
+    ));
+
+    // {2}: it transforms into a 1/1 Phyrexian artifact creature, once.
+    add_mana(&mut state, PlayerId::P0, &[], 4);
+    assert!(
+        matches!(next(&mut state), Decision::CastSpellOrPass { activatable_abilities, .. } if activatable_abilities.contains(&(incubator, 0)))
+    );
+    engine::step(&mut state, Action::ActivateAbility(incubator, 0)).unwrap();
+    settled(&mut state);
+    assert!(engine::object_has_type(
+        &state,
+        incubator,
+        mtg_kernel::card_def::CardType::Creature
+    ));
+    assert_eq!(power_toughness(&state, incubator), (1, 1));
+    assert!(
+        matches!(next(&mut state), Decision::CastSpellOrPass { activatable_abilities, .. } if !activatable_abilities.contains(&(incubator, 0)))
+    );
+}

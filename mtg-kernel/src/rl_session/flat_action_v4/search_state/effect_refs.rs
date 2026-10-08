@@ -118,6 +118,8 @@ impl Scan<'_> {
             | TapAttachedCreatureAndDamageControllerByPower
             | BoostAttachedCreatureUntilEndOfTurn { .. }
             | BindWarpExileToTriggerSource
+            | BindIncubateToTriggerSpell
+            | Incubate { .. }
             | BackupTarget { .. }
             | PutSourceOntoBattlefieldTappedAndAttacking
             | UntapUpToLands { .. }
