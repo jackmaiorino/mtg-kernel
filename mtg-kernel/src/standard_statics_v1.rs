@@ -243,3 +243,46 @@ pub(crate) fn activation_condition_met(
         _ => true,
     }
 }
+
+fn link_is_live_on_battlefield(state: &GameState, link: crate::state::ObjectLinkV4) -> bool {
+    state.objects.try_get(link.object).is_some_and(|object| {
+        object.zone == Zone::Battlefield && object.zone_change_count == link.zone_change_count
+    })
+}
+
+fn restriction_active(
+    state: &GameState,
+    restriction: &crate::state::AttackBlockRestrictionV1,
+) -> bool {
+    link_is_live_on_battlefield(state, restriction.creature)
+        && link_is_live_on_battlefield(state, restriction.source)
+        && state.objects.get(restriction.source.object).controller == restriction.controller
+}
+
+/// Whether a recorded restriction stops `id` from attacking or blocking.
+pub(crate) fn cant_attack_or_block(state: &GameState, id: ObjectId) -> bool {
+    state
+        .attack_block_restrictions_v1
+        .as_ref()
+        .is_some_and(|restrictions| {
+            restrictions.iter().any(|restriction| {
+                restriction.creature.object == id && restriction_active(state, restriction)
+            })
+        })
+}
+
+/// Records a restriction, dropping any whose duration has already ended.
+pub(crate) fn record_attack_block_restriction(
+    state: &mut GameState,
+    restriction: crate::state::AttackBlockRestrictionV1,
+) {
+    let mut restrictions = state
+        .attack_block_restrictions_v1
+        .take()
+        .unwrap_or_default();
+    restrictions.retain(|existing| restriction_active(state, existing));
+    if restriction_active(state, &restriction) {
+        restrictions.push(restriction);
+    }
+    state.attack_block_restrictions_v1 = (!restrictions.is_empty()).then_some(restrictions);
+}

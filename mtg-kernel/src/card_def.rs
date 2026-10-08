@@ -677,6 +677,9 @@ pub enum TargetSpec {
     ControlledCreatureThenOpponentCreatureOrPlaneswalker,
     AttackingOrBlockingCreature,
     NonlandPermanentCardInOwnGraveyardManaValueAtMost(u16),
+    /// A creature card in the controller's own graveyard with at most this
+    /// printed mana value (Extraction Specialist).
+    CreatureCardInOwnGraveyardManaValueAtMost(u16),
 }
 
 impl TargetSpec {
@@ -727,6 +730,7 @@ impl TargetSpec {
             TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker => 39,
             TargetSpec::AttackingOrBlockingCreature => 40,
             TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_) => 41,
+            TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_) => 42,
         }
     }
 }

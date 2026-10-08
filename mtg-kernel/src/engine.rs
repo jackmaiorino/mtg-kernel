@@ -1452,6 +1452,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::EnchantmentPermanent
         | TargetSpec::CreatureCardInOwnGraveyard
         | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_)
+        | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_)
         | TargetSpec::TargetOpponent
         | TargetSpec::OpponentControlledCreature
         | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. }
@@ -2844,6 +2845,22 @@ fn legal_targets_for_controller_from_source(
             })
             .map(Target::Object)
             .collect(),
+        TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(maximum) => state.players
+            [controller.index()]
+        .graveyard
+        .iter()
+        .copied()
+        .filter(|&id| {
+            let object = state.objects.get(id);
+            let definition = &card_def::CARD_DEFS[object.card_def as usize];
+            object.owner == controller
+                && object.zone == Zone::Graveyard
+                && !object.v4.is_token
+                && definition.mana_value <= maximum
+                && definition.has_type(CardType::Creature)
+        })
+        .map(Target::Object)
+        .collect(),
         TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(maximum) => state.players
             [controller.index()]
         .graveyard
@@ -6237,6 +6254,10 @@ fn land_drop_candidates(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
 fn can_attack(state: &GameState, id: ObjectId) -> bool {
     let obj = state.objects.get(id);
     let def = &card_def::CARD_DEFS[obj.card_def as usize];
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if crate::standard_statics_v1::cant_attack_or_block(state, id) {
+        return false;
+    }
     def.is_executable()
         && def.has_type(CardType::Creature)
         && !obj.tapped
@@ -6335,6 +6356,10 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
             }
             let def = &card_def::CARD_DEFS[obj.card_def as usize];
             if !def.is_executable() || !object_has_type(state, id, CardType::Creature) {
+                return false;
+            }
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if crate::standard_statics_v1::cant_attack_or_block(state, id) {
                 return false;
             }
             if has_effective_keyword(state, attacker, Keywords::PROTECTION_FROM_MONOCOLORED)

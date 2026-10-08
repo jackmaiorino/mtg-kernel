@@ -289,3 +289,14 @@ pub(super) const HIRED_CLAW_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbili
     condition: TriggerCondition::ControllerAttacksWithSubtype(Subtype::Lizard),
     ..etb_trigger(damage_target_opponent_one_effect)
 }];
+
+fn return_restricted_creature_effect() -> EffectOp {
+    EffectOp::ReturnTargetCreatureCardRestrictedWhileSourceControlled { target_index: 0 }
+}
+
+/// Extraction Specialist: "When this creature enters, return target
+/// creature card with mana value 2 or less from your graveyard to the
+/// battlefield. That creature can't attack or block for as long as you
+/// control this creature."
+pub(super) const EXTRACTION_SPECIALIST_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(return_restricted_creature_effect)];

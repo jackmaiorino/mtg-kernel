@@ -947,7 +947,8 @@ pub fn stack_target_contract_is_structurally_valid(
         ) | (
             TargetSpec::CreatureOrLandCardInGraveyard
                 | TargetSpec::CreatureCardInOwnGraveyard
-                | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_),
+                | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_)
+                | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_),
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Graveyard,
@@ -1415,6 +1416,10 @@ pub struct GameState {
     /// builds record it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub life_loss_turn_v1: Option<LifeLossTurnV1>,
+    /// Creatures that can't attack or block while a source stays under
+    /// someone's control. Only `standard-magezero-fixtures` builds record it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attack_block_restrictions_v1: Option<Vec<AttackBlockRestrictionV1>>,
 }
 
 /// Which players lost life during one turn (Hired Claw: "only if an
@@ -1425,6 +1430,17 @@ pub struct LifeLossTurnV1 {
     pub turn: u32,
     pub active_player: PlayerId,
     pub players: [bool; 2],
+}
+
+/// "That creature can't attack or block for as long as you control
+/// [source]" (Extraction Specialist). Active while both exact incarnations
+/// are on the battlefield and `controller` still controls the source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttackBlockRestrictionV1 {
+    pub creature: ObjectLinkV4,
+    pub source: ObjectLinkV4,
+    pub controller: PlayerId,
 }
 
 /// The counters one exact battlefield incarnation had as it left.
@@ -1502,6 +1518,10 @@ impl Hash for GameState {
         if let Some(loss) = &self.life_loss_turn_v1 {
             "life-loss-turn-v1".hash(state);
             loss.hash(state);
+        }
+        if let Some(restrictions) = &self.attack_block_restrictions_v1 {
+            "attack-block-restrictions-v1".hash(state);
+            restrictions.hash(state);
         }
     }
 }
@@ -1675,6 +1695,7 @@ impl GameState {
             london_mulligans_v1: None,
             counter_lki_v1: None,
             life_loss_turn_v1: None,
+            attack_block_restrictions_v1: None,
         }
     }
 

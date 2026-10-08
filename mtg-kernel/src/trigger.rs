@@ -1851,6 +1851,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Adeline, Resplendent Cathar" => &standard_family_g_v1::ADELINE_RESPLENDENT_CATHAR_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Hired Claw" => &standard_family_g_v1::HIRED_CLAW_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Extraction Specialist" => &standard_family_g_v1::EXTRACTION_SPECIALIST_TRIGGERS,
         _ => &[],
     }
 }
@@ -1881,6 +1883,8 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         "Gatekeeper of Malakir" => TargetSpec::AnyPlayer,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Deep-Cavern Bat" | "Hired Claw" => TargetSpec::TargetOpponent,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Extraction Specialist" => TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(2),
         _ => TargetSpec::None,
     }
 }

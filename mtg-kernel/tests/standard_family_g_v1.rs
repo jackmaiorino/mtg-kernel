@@ -133,6 +133,13 @@ const CARDS: &[(&str, &[Subtype], (i16, i16), Keywords, usize)] = &[
         0,
     ),
     (
+        "Extraction Specialist",
+        &[Subtype::Human, Subtype::Rogue],
+        (3, 2),
+        Keywords::LIFELINK,
+        1,
+    ),
+    (
         "Unstoppable Slasher",
         &[Subtype::Zombie, Subtype::Assassin],
         (2, 3),
@@ -1440,4 +1447,132 @@ fn warden_taps_three_artifacts_or_creatures_to_grow_and_scry() {
     }
     assert!(!state.objects.get(spare).tapped);
     assert_eq!(state.objects.get(warden).counters.plus1_plus1, 1);
+}
+
+/// Casts Extraction Specialist, answers its target with `target` if asked,
+/// and settles every other trigger.
+fn cast_specialist(state: &mut GameState, target: ObjectId) -> ObjectId {
+    let specialist = cast_creature(state, "Extraction Specialist");
+    loop {
+        match settle(state) {
+            Some(Decision::ChooseTargets { legal_targets, .. }) => {
+                assert_eq!(legal_targets, vec![Target::Object(target)]);
+                engine::step(state, Action::ChooseTarget(Target::Object(target))).unwrap();
+            }
+            None => return specialist,
+            Some(other) => panic!("unexpected {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn extraction_specialist_returns_a_cheap_creature_that_cannot_fight() {
+    let mut state = ready(Step::Main1);
+    let inspector = put(
+        &mut state,
+        PlayerId::P0,
+        "Novice Inspector",
+        Zone::Graveyard,
+    );
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Troll of Khazad-dum",
+        Zone::Graveyard,
+    );
+    put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Graveyard);
+    put(&mut state, PlayerId::P1, "Cenote Scout", Zone::Graveyard);
+    let specialist = cast_specialist(&mut state, inspector);
+    assert_eq!(state.objects.get(inspector).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(inspector).controller, PlayerId::P0);
+    // The Inspector's own entry trigger still happened.
+    assert_eq!(
+        battlefield_tokens(&state, PlayerId::P0, "Clue Token").len(),
+        1
+    );
+
+    for id in [inspector, specialist] {
+        state.objects.get_mut(id).summoning_sick = false;
+    }
+    state.step = Step::DeclareAttackers;
+    match next(&mut state) {
+        Decision::DeclareAttackers { eligible, .. } => {
+            assert!(eligible.contains(&specialist));
+            assert!(!eligible.contains(&inspector));
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+
+    // Once P0 no longer controls the Specialist, the Inspector can attack.
+    move_to(&mut state, specialist, Zone::Graveyard);
+    match next(&mut state) {
+        Decision::DeclareAttackers { eligible, .. } => assert!(eligible.contains(&inspector)),
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[test]
+fn extraction_specialist_creature_cannot_block_either() {
+    let mut state = ready(Step::Main1);
+    let inspector = put(
+        &mut state,
+        PlayerId::P0,
+        "Novice Inspector",
+        Zone::Graveyard,
+    );
+    let specialist = cast_specialist(&mut state, inspector);
+
+    // P1 attacks: the Specialist may block, the returned Inspector may not.
+    state.active_player = PlayerId::P1;
+    state.priority_player = PlayerId::P1;
+    state.step = Step::DeclareAttackers;
+    let attacker = put(&mut state, PlayerId::P1, "Cenote Scout", Zone::Battlefield);
+    assert!(matches!(
+        next(&mut state),
+        Decision::DeclareAttackers { .. }
+    ));
+    engine::step(&mut state, Action::DeclareAttackers(vec![attacker])).unwrap();
+    loop {
+        match next(&mut state) {
+            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+            Decision::DeclareBlockers { legal_blockers, .. } => {
+                let blockers = &legal_blockers
+                    .iter()
+                    .find(|(id, _)| *id == attacker)
+                    .unwrap()
+                    .1;
+                assert!(blockers.contains(&specialist));
+                assert!(!blockers.contains(&inspector));
+                break;
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn extraction_specialist_gone_before_resolution_returns_unrestricted() {
+    let mut state = ready(Step::Main1);
+    let inspector = put(
+        &mut state,
+        PlayerId::P0,
+        "Novice Inspector",
+        Zone::Graveyard,
+    );
+    let specialist = cast_creature(&mut state, "Extraction Specialist");
+    // Resolve the creature spell, then answer the trigger's target.
+    loop {
+        match next(&mut state) {
+            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+            Decision::ChooseTargets { .. } => {
+                engine::step(&mut state, Action::ChooseTarget(Target::Object(inspector))).unwrap();
+                break;
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    move_to(&mut state, specialist, Zone::Graveyard);
+    settled(&mut state);
+    assert_eq!(state.objects.get(inspector).zone, Zone::Battlefield);
+    assert!(state.attack_block_restrictions_v1.is_none());
 }

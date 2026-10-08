@@ -133,6 +133,7 @@ impl Scan<'_> {
             | LoseHalfLifeRoundedUp { .. }
             | CreateTokenTappedAndAttacking { .. }
             | AddPlusOneCounterToAbilitySource
+            | ReturnTargetCreatureCardRestrictedWhileSourceControlled { .. }
             | ReturnSourceFromGraveyardTappedWithStunCounters { .. }
             | MaterializeStormCopies
             | CreateStormCopies { .. }

@@ -1124,6 +1124,15 @@ pub enum EffectOp {
     /// while it is still the battlefield incarnation the ability came from
     /// (Hired Claw, Warden of the Inner Sky). Otherwise nothing happens.
     AddPlusOneCounterToAbilitySource,
+    /// Return the targeted creature card from its owner's graveyard to the
+    /// battlefield (the target spec only offers the controller's own
+    /// graveyard, so its owner controls it); it can't attack or block for
+    /// as long as that player controls this ability's source (Extraction
+    /// Specialist). If the source has already left, the duration is over
+    /// and the creature returns unrestricted.
+    ReturnTargetCreatureCardRestrictedWhileSourceControlled {
+        target_index: u8,
+    },
     /// The player loses half their life, rounded up (Unstoppable Slasher).
     /// A player at 0 or less life loses nothing.
     LoseHalfLifeRoundedUp {
@@ -11449,6 +11458,40 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
                 ));
+            }
+        }
+        EffectOp::ReturnTargetCreatureCardRestrictedWhileSourceControlled { target_index } => {
+            let index = usize::from(*target_index);
+            let Some(Target::Object(object)) = ctx.targets.get(index).copied() else {
+                return;
+            };
+            if !ctx.target_incarnation_matches(index, state)
+                || state.objects.get(object).zone != Zone::Graveyard
+            {
+                return;
+            }
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change(object, Zone::Battlefield),
+            );
+            let returned = state.objects.get(object);
+            if returned.zone != Zone::Battlefield {
+                return;
+            }
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if let Some(source) = ctx.ability_source_contract {
+                let restriction = crate::state::AttackBlockRestrictionV1 {
+                    creature: crate::state::ObjectLinkV4 {
+                        object,
+                        zone_change_count: returned.zone_change_count,
+                    },
+                    source: crate::state::ObjectLinkV4 {
+                        object: source.source,
+                        zone_change_count: source.zone_change_count,
+                    },
+                    controller: ctx.controller,
+                };
+                crate::standard_statics_v1::record_attack_block_restriction(state, restriction);
             }
         }
         EffectOp::LoseHalfLifeRoundedUp { player } => {

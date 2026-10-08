@@ -681,6 +681,39 @@
         "scry"
       ],
       "java_file": "Mage.Sets/src/mage/cards/w/WardenOfTheInnerSky.java"
+    },
+    {
+      "name": "Extraction Specialist",
+      "engine_capability": "full",
+      "mana_cost": "{2}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Rogue"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "lifelink",
+        "etb_trigger",
+        "reanimation",
+        "attack_block_restriction"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/ExtractionSpecialist.java"
     }
   ]
 }

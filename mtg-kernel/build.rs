@@ -3541,6 +3541,7 @@ fn keywords_for(card: &CardJson) -> String {
             keywords.push("Keywords::LIFELINK");
         }
         "Unstoppable Slasher" => keywords.push("Keywords::DEATHTOUCH"),
+        "Extraction Specialist" => keywords.push("Keywords::LIFELINK"),
         "Adeline, Resplendent Cathar" => keywords.push("Keywords::VIGILANCE"),
         "Bloodletter of Aclazotz" | "Haughty Djinn" => keywords.push("Keywords::FLYING"),
         "Thalia, Guardian of Thraben" => keywords.push("Keywords::FIRST_STRIKE"),
@@ -5385,6 +5386,9 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         }
         "Adeline, Resplendent Cathar" => "controller_attacks:create_token_tapped_attacking:Human Token:1",
         "Hired Claw" => "controller_attacks_with_subtype:Lizard:target_opponent:damage:1",
+        "Extraction Specialist" => {
+            "etb:target_own_graveyard_creature_card_mv_at_most_2:return_to_battlefield:cant_attack_or_block_while_source_controlled"
+        }
         _ => "none",
     }
 }
