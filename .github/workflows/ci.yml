@@ -29,6 +29,7 @@ env:
 jobs:
   detect-changes:
     name: Detect changed paths
+    timeout-minutes: 10
     # A few seconds of git work. It stays on a hosted runner: the
     # self-hosted runners hold every job while their host is reserved for
     # other work, and the Python shards wait on this job.
@@ -89,6 +90,7 @@ jobs:
   rust-quality:
     name: Rust formatting and lint
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -144,6 +146,9 @@ jobs:
     name: Rust tests (${{ matrix.os }}, ${{ matrix.group }})
     needs: detect-changes
     if: needs.detect-changes.outputs.rust_relevant == 'true'
+    # The limit includes any wait in the self-hosted job-started hook; a
+    # cold Windows build has taken about 45 minutes.
+    timeout-minutes: 120
     defaults:
       run:
         shell: bash
@@ -309,6 +314,7 @@ jobs:
     name: Rust tests (${{ matrix.os }})
     needs: [detect-changes, rust-test-groups]
     if: always() && needs.detect-changes.outputs.rust_relevant == 'true'
+    timeout-minutes: 10
     strategy:
       matrix:
         os:
@@ -323,6 +329,7 @@ jobs:
     name: Python tests (${{ matrix.os }}, shard ${{ matrix.shard }})
     needs: detect-changes
     if: needs.detect-changes.outputs.python_relevant == 'true'
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
