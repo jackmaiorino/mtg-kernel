@@ -1133,6 +1133,18 @@ pub enum EffectOp {
         max_taken: u8,
         max_mana_value: u16,
     },
+    /// Trigger collection binds this template to the source's last-known
+    /// power as it left the battlefield (`DealDamage` to the opponent).
+    BindDamageOpponentEqualToSourceLastPower,
+    /// Battle cry: each other attacking creature gets +power/+toughness
+    /// until end of turn (the attacking set sampled at resolution).
+    PumpOtherAttackingCreaturesUntilEndOfTurn {
+        power: i32,
+        toughness: i32,
+    },
+    /// Reveal the top card of the controller's library and put it into
+    /// their hand; they lose life equal to its mana value.
+    RevealTopCardToHandLoseLifeEqualToManaValue,
     /// Trigger collection binds this template to the triggering spell's
     /// mana value (`Incubate`).
     BindIncubateToTriggerSpell,
@@ -11291,6 +11303,63 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         }
         EffectOp::BindConvokedCreatureCountToLookTop { .. } => {
             panic!("unmaterialized convoked look");
+        }
+        EffectOp::BindDamageOpponentEqualToSourceLastPower => {
+            panic!("unmaterialized last-power damage");
+        }
+        EffectOp::PumpOtherAttackingCreaturesUntilEndOfTurn { power, toughness } => {
+            let object_ids: Vec<ObjectId> = state
+                .engine
+                .combat
+                .attackers
+                .iter()
+                .copied()
+                .filter(|&id| {
+                    id != ctx.source
+                        && state.objects.get(id).zone == Zone::Battlefield
+                        && crate::engine::object_has_type(state, id, CardType::Creature)
+                })
+                .collect();
+            if !object_ids.is_empty() {
+                let timestamp = crate::engine::next_timestamp(state);
+                state.engine.until_end_of_turn.push(
+                    crate::engine::UntilEndOfTurnEffect::ResolvedSetEffect {
+                        object_ids,
+                        layer: crate::engine::Layers::POWER_TOUGHNESS,
+                        timestamp,
+                        duration: crate::engine::EffectDuration::EndOfTurn,
+                        power: *power,
+                        toughness: *toughness,
+                        grant_haste: false,
+                    },
+                );
+            }
+        }
+        EffectOp::RevealTopCardToHandLoseLifeEqualToManaValue => {
+            let player = ctx.controller;
+            let Some(&top) = state.players[player.index()].library.first() else {
+                return;
+            };
+            let mana_value =
+                crate::card_def::CARD_DEFS[state.objects.get(top).card_def as usize].mana_value;
+            event::propose_and_commit(state, event::ProposedEvent::zone_change(top, Zone::Hand));
+            if state.objects.get(top).zone == Zone::Hand {
+                for observer in [PlayerId::P0, PlayerId::P1] {
+                    if state.reveal_hand_card(observer, player, top).is_err() {
+                        state.engine.halted = Some((
+                            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            ctx.source,
+                        ));
+                        return;
+                    }
+                }
+            }
+            if mana_value > 0 {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::life_loss(player, i32::from(mana_value)),
+                );
+            }
         }
         EffectOp::LookTopTakeCreaturesManaValueAtMostThenShuffle {
             count,

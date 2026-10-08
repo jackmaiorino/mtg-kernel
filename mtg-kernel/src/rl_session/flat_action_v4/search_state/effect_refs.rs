@@ -120,6 +120,9 @@ impl Scan<'_> {
             | BoostAttachedCreatureUntilEndOfTurn { .. }
             | BindWarpExileToTriggerSource
             | BindIncubateToTriggerSpell
+            | BindDamageOpponentEqualToSourceLastPower
+            | PumpOtherAttackingCreaturesUntilEndOfTurn { .. }
+            | RevealTopCardToHandLoseLifeEqualToManaValue
             | BindConvokedCreatureCountToLookTop { .. }
             | LookTopTakeCreaturesManaValueAtMostThenShuffle { .. }
             | Incubate { .. }
@@ -610,6 +613,7 @@ pub(super) fn conflicts(
             | ManaAdded { .. }
             | UpkeepBegan { .. }
             | CrimeCommitted { .. }
+            | PowerBeforeLeavingBattlefield { .. }
             | BeginningEndStep { .. } => false,
         }
     })

@@ -281,6 +281,18 @@ fn materialize_trigger_event_effect(
             max_mana_value: u16::from(state.objects.get(source).v4.convoked_creatures_v1),
         };
     }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if matches!(
+        (trigger.effect)(),
+        EffectOp::BindDamageOpponentEqualToSourceLastPower
+    ) {
+        return EffectOp::DealDamage {
+            target: TargetRef::Opponent,
+            amount: crate::standard_keywords_v1::power_before_leaving(state, source)
+                .unwrap_or(0)
+                .max(0),
+        };
+    }
     if matches!((trigger.effect)(), EffectOp::BindIncubateToTriggerSpell) {
         if let CommittedEvent::SpellCast { spell, .. } = event {
             return EffectOp::Incubate {
@@ -1005,6 +1017,106 @@ fn knight_errant_of_eos_effect() -> EffectOp {
 /// it), put them into hand, then shuffle.
 const KNIGHT_ERRANT_OF_EOS_TRIGGERS: [TriggeredAbilityDef; 1] =
     [etb_trigger(knight_errant_of_eos_effect)];
+
+const MONASTERY_SWIFTSPEAR_TRIGGERS: [TriggeredAbilityDef; 1] = [PROWESS_TRIGGER];
+
+fn valiant_counter_effect() -> EffectOp {
+    EffectOp::BindPlusOnePlusOneCounterToTriggerSource
+}
+
+fn heartfire_hero_dies_effect() -> EffectOp {
+    EffectOp::BindDamageOpponentEqualToSourceLastPower
+}
+
+/// Valiant: a +1/+1 counter on it. When it dies, it deals damage equal to
+/// its power to each opponent.
+const HEARTFIRE_HERO_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::BecomesTargetOfControllerSpellOrAbilityFirstTimeEachTurn,
+        ..etb_trigger(valiant_counter_effect)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::LeftBattlefieldToGraveyard,
+        home_zone: Zone::Graveyard,
+        ..etb_trigger(heartfire_hero_dies_effect)
+    },
+];
+
+fn slickshot_show_off_effect() -> EffectOp {
+    EffectOp::BindTemporaryBoostToTriggerSource {
+        power: 2,
+        toughness: 0,
+    }
+}
+
+/// Flying, haste. Whenever you cast a noncreature spell, +2/+0 until end of
+/// turn. Plot {1}{R}.
+const SLICKSHOT_SHOW_OFF_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastNoncreatureSpell,
+    ..etb_trigger(slickshot_show_off_effect)
+}];
+
+fn battle_cry_effect() -> EffectOp {
+    EffectOp::PumpOtherAttackingCreaturesUntilEndOfTurn {
+        power: 1,
+        toughness: 0,
+    }
+}
+
+fn bat_token_effect() -> EffectOp {
+    EffectOp::CreateToken {
+        token_def: crate::card_def::card_id_by_name("Bat Token").expect("Bat Token in CARD_DEFS"),
+        controller: PlayerRef::Controller,
+    }
+}
+
+/// Battle cry. When it enters or dies, create a 1/1 black Bat creature
+/// token with flying.
+const SANGUINE_EVANGELIST_TRIGGERS: [TriggeredAbilityDef; 3] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::Attacks,
+        ..etb_trigger(battle_cry_effect)
+    },
+    etb_trigger(bat_token_effect),
+    TriggeredAbilityDef {
+        condition: TriggerCondition::LeftBattlefieldToGraveyard,
+        home_zone: Zone::Graveyard,
+        ..etb_trigger(bat_token_effect)
+    },
+];
+
+fn darkstar_augur_offspring_effect() -> EffectOp {
+    let token_def = crate::card_def::card_id_by_name("Darkstar Augur Offspring Token")
+        .expect("Darkstar Augur Offspring Token in CARD_DEFS");
+    EffectOp::Conditional {
+        cond: EffectCond::WasKicked,
+        then: Box::new(EffectOp::CreateToken {
+            token_def,
+            controller: PlayerRef::Controller,
+        }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    }
+}
+
+fn darkstar_augur_upkeep_effect() -> EffectOp {
+    EffectOp::RevealTopCardToHandLoseLifeEqualToManaValue
+}
+
+/// Offspring {B}, flying. At the beginning of your upkeep, reveal the top
+/// card of your library and put it into your hand; you lose life equal to
+/// its mana value.
+const DARKSTAR_AUGUR_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        intervening_if_kicked: true,
+        ..etb_trigger(darkstar_augur_offspring_effect)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::BeginningOfUpkeep {
+            controller_only: true,
+        },
+        ..etb_trigger(darkstar_augur_upkeep_effect)
+    },
+];
 
 fn chrome_host_seedshark_effect() -> EffectOp {
     EffectOp::BindIncubateToTriggerSpell
@@ -2002,6 +2114,11 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Chrome Host Seedshark" => &CHROME_HOST_SEEDSHARK_TRIGGERS,
         "Brutal Cathar" => &BRUTAL_CATHAR_TRIGGERS,
         "Knight-Errant of Eos" => &KNIGHT_ERRANT_OF_EOS_TRIGGERS,
+        "Monastery Swiftspear" => &MONASTERY_SWIFTSPEAR_TRIGGERS,
+        "Heartfire Hero" => &HEARTFIRE_HERO_TRIGGERS,
+        "Slickshot Show-Off" => &SLICKSHOT_SHOW_OFF_TRIGGERS,
+        "Sanguine Evangelist" => &SANGUINE_EVANGELIST_TRIGGERS,
+        "Darkstar Augur" | "Darkstar Augur Offspring Token" => &DARKSTAR_AUGUR_TRIGGERS,
         _ => &[],
     }
 }
@@ -2113,7 +2230,14 @@ fn source_bound_trigger_program_matches(template: &EffectOp, effect: &EffectOp) 
             EffectOp::DoublePlusOneCountersOnBoundObject { .. },
         )
         | (EffectOp::BindWarpExileToTriggerSource, EffectOp::WarpExileBoundObject { .. })
-        | (EffectOp::BindIncubateToTriggerSpell, EffectOp::Incubate { .. }) => true,
+        | (EffectOp::BindIncubateToTriggerSpell, EffectOp::Incubate { .. })
+        | (
+            EffectOp::BindDamageOpponentEqualToSourceLastPower,
+            EffectOp::DealDamage {
+                target: TargetRef::Opponent,
+                ..
+            },
+        ) => true,
         (
             EffectOp::BindConvokedCreatureCountToLookTop { count, max_taken },
             EffectOp::LookTopTakeCreaturesManaValueAtMostThenShuffle {

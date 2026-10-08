@@ -1350,6 +1350,15 @@ impl SpeedV1 {
     pub const MAX: u8 = 4;
 }
 
+/// 700.14: which players descended (had a permanent card put into their
+/// graveyard from anywhere) during `turn`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DescendedTurnV1 {
+    pub turn: CreatureDeathTurnV1,
+    pub players: [bool; 2],
+}
+
 /// 726: the game's day/night designation once a daybound or nightbound
 /// permanent has appeared (absent before then).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1440,6 +1449,9 @@ pub struct GameState {
     /// Absent until a daybound permanent first appears.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub day_night_v1: Option<DayNightV1>,
+    /// Absent until some player first descends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub descended_v1: Option<DescendedTurnV1>,
 }
 
 /// Reproduces exactly the field-hash sequence `#[derive(Hash)]` produced
@@ -1499,6 +1511,10 @@ impl Hash for GameState {
         if let Some(day_night) = &self.day_night_v1 {
             "day-night-v1".hash(state);
             day_night.hash(state);
+        }
+        if let Some(descended) = &self.descended_v1 {
+            "descended-v1".hash(state);
+            descended.hash(state);
         }
     }
 }
@@ -1646,6 +1662,7 @@ impl GameState {
             london_mulligans_v1: None,
             speed_v1: None,
             day_night_v1: None,
+            descended_v1: None,
         }
     }
 

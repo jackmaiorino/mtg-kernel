@@ -139,6 +139,13 @@ fn family_d_cards_are_fully_supported() {
         "Incubator Token",
         "Brutal Cathar",
         "Knight-Errant of Eos",
+        "Monastery Swiftspear",
+        "Heartfire Hero",
+        "Slickshot Show-Off",
+        "Sanguine Evangelist",
+        "Bat Token",
+        "Darkstar Augur",
+        "Darkstar Augur Offspring Token",
     ] {
         let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} missing"));
         assert_eq!(
@@ -1050,4 +1057,125 @@ fn knight_errant_of_eos_offers_convoke_or_mana_when_both_work() {
     settled(&mut state);
     assert_eq!(state.objects.get(knight).v4.convoked_creatures_v1, 0);
     assert_eq!(state.players[0].mana_pool, [0; 6]);
+}
+
+#[test]
+fn monastery_swiftspear_has_haste_and_prowess() {
+    let mut state = ready();
+    let swiftspear = put(
+        &mut state,
+        PlayerId::P0,
+        "Monastery Swiftspear",
+        Zone::Battlefield,
+    );
+    assert!(engine::has_effective_keyword(
+        &state,
+        swiftspear,
+        Keywords::HASTE
+    ));
+    burn(&mut state, PlayerId::P0, Target::Player(PlayerId::P1));
+    assert_eq!(power_toughness(&state, swiftspear), (2, 3));
+}
+
+#[test]
+fn heartfire_hero_grows_with_valiant_and_burns_for_its_power_on_death() {
+    let mut state = ready();
+    let hero = put(
+        &mut state,
+        PlayerId::P0,
+        "Heartfire Hero",
+        Zone::Battlefield,
+    );
+    let full_bore = put(&mut state, PlayerId::P0, "Full Bore", Zone::Hand);
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::R], 0);
+    cast(&mut state, full_bore, &[Target::Object(hero)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(hero).counters.plus1_plus1, 1);
+    assert_eq!(power_toughness(&state, hero), (5, 4));
+
+    // 5/4 now: two Burst Lightnings from the opponent kill it; it deals 5.
+    state.priority_player = PlayerId::P1;
+    for _ in 0..2 {
+        burn(&mut state, PlayerId::P1, Target::Object(hero));
+        state.priority_player = PlayerId::P1;
+    }
+    assert_eq!(state.objects.get(hero).zone, Zone::Graveyard);
+    assert_eq!(state.players[1].life, 15);
+}
+
+#[test]
+fn slickshot_show_off_pumps_on_noncreature_spells_and_can_be_plotted() {
+    let mut state = ready();
+    let show_off = put(
+        &mut state,
+        PlayerId::P0,
+        "Slickshot Show-Off",
+        Zone::Battlefield,
+    );
+    for keyword in [Keywords::FLYING, Keywords::HASTE] {
+        assert!(engine::has_effective_keyword(&state, show_off, keyword));
+    }
+    burn(&mut state, PlayerId::P0, Target::Player(PlayerId::P1));
+    assert_eq!(power_toughness(&state, show_off), (3, 2));
+    let second = put(&mut state, PlayerId::P0, "Slickshot Show-Off", Zone::Hand);
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::R], 1);
+    assert!(
+        matches!(next(&mut state), Decision::CastSpellOrPass { plot_actions, .. } if plot_actions.contains(&second))
+    );
+}
+
+fn tokens_named(state: &GameState, player: PlayerId, name: &str) -> usize {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .filter(|&&id| state.objects.get(id).name == name)
+        .count()
+}
+
+#[test]
+fn sanguine_evangelist_makes_bats_and_battle_cries() {
+    let mut state = ready();
+    let evangelist = put(&mut state, PlayerId::P0, "Sanguine Evangelist", Zone::Hand);
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::W], 2);
+    cast(&mut state, evangelist, &[]);
+    settled(&mut state);
+    assert_eq!(tokens_named(&state, PlayerId::P0, "Bat Token"), 1);
+    let swiftspear = put(
+        &mut state,
+        PlayerId::P0,
+        "Monastery Swiftspear",
+        Zone::Battlefield,
+    );
+    state.objects.get_mut(evangelist).summoning_sick = false;
+    attack_with(&mut state, vec![evangelist, swiftspear]);
+    settled(&mut state);
+    assert_eq!(power_toughness(&state, swiftspear), (2, 2));
+    assert_eq!(power_toughness(&state, evangelist), (2, 1));
+    // Dying makes another Bat.
+    let mut state = state.clone();
+    state.step = Step::Main1;
+    burn(&mut state, PlayerId::P0, Target::Object(evangelist));
+    assert_eq!(tokens_named(&state, PlayerId::P0, "Bat Token"), 2);
+}
+
+#[test]
+fn darkstar_augur_offspring_and_upkeep_reveal() {
+    let mut state = ready();
+    let augur = put(&mut state, PlayerId::P0, "Darkstar Augur", Zone::Hand);
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::B, ManaColor::B], 2);
+    engine::step(&mut state, Action::CastSpell(augur)).unwrap();
+    assert!(matches!(next(&mut state), Decision::ChooseKicker { .. }));
+    engine::step(&mut state, Action::ChooseKicker(true)).unwrap();
+    settled(&mut state);
+    assert_eq!(tokens_named(&state, PlayerId::P0, "Darkstar Augur"), 2);
+
+    // Next upkeep: both reveal a card (a Nova Hellkite, then a Mountain).
+    let top = stack_library(&mut state, PlayerId::P0, &["Nova Hellkite", "Mountain"]);
+    let turn = state.turn;
+    pass_until(&mut state, |s| {
+        s.turn > turn && s.active_player == PlayerId::P0 && s.step == Step::Main1
+    });
+    let hand = &state.players[0].hand;
+    assert!(hand.contains(&top[0]) && hand.contains(&top[1]));
+    assert_eq!(state.players[0].life, 15);
 }

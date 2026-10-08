@@ -269,6 +269,7 @@ pub enum Subtype {
     /// Artifact type of the Incubator token.
     Incubator,
     Werewolf,
+    Bat,
 }
 
 impl Subtype {
@@ -378,6 +379,8 @@ impl Subtype {
         Subtype::Shark,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Werewolf,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Bat,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -512,6 +515,7 @@ impl Subtype {
                 | Subtype::Assassin
                 | Subtype::Shark
                 | Subtype::Werewolf
+                | Subtype::Bat
         )
     }
 }

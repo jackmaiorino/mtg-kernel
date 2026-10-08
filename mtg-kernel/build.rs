@@ -3568,6 +3568,10 @@ fn standard_keywords_for(name: &str) -> &'static [&'static str] {
         "Aloe Alchemist" => &["Keywords::TRAMPLE"],
         "Axebane Ferox" => &["Keywords::DEATHTOUCH", "Keywords::HASTE"],
         "Chrome Host Seedshark" => &["Keywords::FLYING"],
+        "Monastery Swiftspear" => &["Keywords::HASTE"],
+        "Slickshot Show-Off" => &["Keywords::FLYING", "Keywords::HASTE"],
+        "Bat Token" => &["Keywords::FLYING"],
+        "Darkstar Augur" | "Darkstar Augur Offspring Token" => &["Keywords::FLYING"],
         _ => &[],
     }
 }
@@ -3642,6 +3646,7 @@ fn object_name_for(name: &str) -> &str {
         "Sacred Cat Embalmed Token" => "Sacred Cat",
         "Homunculus Horde Token" => "Homunculus Horde",
         "Iridescent Vinelasher Offspring Token" => "Iridescent Vinelasher",
+        "Darkstar Augur Offspring Token" => "Darkstar Augur",
         "Koma's Coil Token" => "Koma's Coil",
         "Scion of the Deep Token" => "Scion of the Deep",
         _ => name,
@@ -3750,6 +3755,7 @@ fn kicker_cost_for(name: &str) -> String {
         "Goblin Bushwhacker" => cost_src("{R}"),
         // Offspring {2} reuses kicker's optional additional cost.
         "Iridescent Vinelasher" => cost_src("{2}"),
+        "Darkstar Augur" => cost_src("{B}"),
         "Gnarlid Colony" => cost_src("{2}{G}"),
         "Sun-Blessed Healer" => cost_src("{1}{W}"),
         "Burst Lightning" => cost_src("{4}"),
@@ -5066,6 +5072,7 @@ fn plot_cost_for(name: &str) -> String {
         "Highway Robbery" => cost_src("{1}{R}"),
         "Spinewoods Paladin" => cost_src("{3}{G}"),
         "Aloe Alchemist" => cost_src("{1}{G}"),
+        "Slickshot Show-Off" => cost_src("{1}{R}"),
         _ => "None".to_string(),
     }
 }
@@ -5403,6 +5410,11 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Aloe Alchemist" => "becomes_plotted:target_creature:pump:3:2:trample",
         "Hopeful Initiate" => "training",
         "Chrome Host Seedshark" => "cast_noncreature_spell:incubate_spell_mana_value",
+        "Monastery Swiftspear" => "prowess",
+        "Heartfire Hero" => "valiant:plus_one_counter_on_source;dies:damage_opponent_equal_to_last_power",
+        "Slickshot Show-Off" => "cast_noncreature_spell:pump_source:2:0",
+        "Sanguine Evangelist" => "battle_cry;etb:create_bat_token;dies:create_bat_token",
+        "Darkstar Augur" | "Darkstar Augur Offspring Token" => "etb_if_offspring_paid:create_one_one_token_copy;controller_upkeep:reveal_top_to_hand_lose_life_mana_value",
         "Knight-Errant of Eos" => "convoke;etb:look_top:6:take_creatures_mana_value_at_most_convoked:2:shuffle",
         "Brutal Cathar" => "etb_or_transforms_into_front:target_opponent_creature:exile_until_source_leaves;daybound;back_face_nightbound_first_strike_ward_pay_life:3",
         "Forsaken Miner" => "cant_block;graveyard:controller_commits_crime:may_pay:B:return_source_to_battlefield",
@@ -8491,6 +8503,8 @@ fn subtype_variant(t: &str) -> &'static str {
         "Assassin" => "Subtype::Assassin",
         "Shark" => "Subtype::Shark",
         "Werewolf" => "Subtype::Werewolf",
+        "Bat" => "Subtype::Bat",
+        "Monk" => "Subtype::Monk",
         "Incubator" => "Subtype::Incubator",
         "Pirate" => "Subtype::Pirate",
         "Plains" => "Subtype::Plains",

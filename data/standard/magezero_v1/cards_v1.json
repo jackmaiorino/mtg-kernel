@@ -513,6 +513,227 @@
         "creature_selection_to_hand"
       ],
       "java_file": "Mage.Sets/src/mage/cards/k/KnightErrantOfEos.java"
+    },
+    {
+      "name": "Monastery Swiftspear",
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Monk"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RG.dck",
+        "Standard16-UR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "haste",
+        "prowess"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MonasterySwiftspear.java"
+    },
+    {
+      "name": "Heartfire Hero",
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Mouse",
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "valiant",
+        "plus_one_counters",
+        "dies_damage_last_power"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HeartfireHero.java"
+    },
+    {
+      "name": "Slickshot Show-Off",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bird",
+        "Wizard"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "flying",
+        "haste",
+        "noncreature_cast_pump",
+        "plot"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SlickshotShowOff.java"
+    },
+    {
+      "name": "Sanguine Evangelist",
+      "engine_capability": "full",
+      "mana_cost": "{2}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Vampire",
+        "Cleric"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-GW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "battle_cry",
+        "etb_token",
+        "dies_token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SanguineEvangelist.java"
+    },
+    {
+      "name": "Bat Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bat"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/BatToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Darkstar Augur",
+      "engine_capability": "full",
+      "mana_cost": "{2}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bat",
+        "Warlock"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-BW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "offspring",
+        "flying",
+        "upkeep_reveal_to_hand_life_loss"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DarkstarAugur.java"
+    },
+    {
+      "name": "Darkstar Augur Offspring Token",
+      "engine_capability": "full",
+      "mana_cost": "{2}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bat",
+        "Warlock"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "offspring",
+        "flying",
+        "upkeep_reveal_to_hand_life_loss",
+        "token_copy"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DarkstarAugur.java",
+      "is_token": true
     }
   ]
 }

@@ -22,11 +22,13 @@
 //! `CommittedEvent::CrimeCommitted` when a spell, activated ability or
 //! triggered ability finishes targeting (`engine::log_final_targeting_events`).
 
-use crate::card_def::{Keywords, CARD_DEFS};
+use crate::card_def::{CardType, Keywords, CARD_DEFS};
 use crate::event::CommittedEvent;
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::{Cost, PaymentPlan, Pip};
-use crate::state::{CreatureDeathTurnV1, DayNightV1, GameState, SpeedV1, StackItem, Target, Zone};
+use crate::state::{
+    CreatureDeathTurnV1, DayNightV1, DescendedTurnV1, GameState, SpeedV1, StackItem, Target, Zone,
+};
 
 /// Definitions with "Start your engines!".
 fn has_start_your_engines(card_def: u16) -> bool {
@@ -299,4 +301,83 @@ pub(crate) fn convoke_plan(
         }
     }
     None
+}
+
+/// Cards whose leave-the-battlefield triggers read their last-known power.
+fn needs_power_lki(card_def: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(card_def))
+        .is_some_and(|def| def.name == "Heartfire Hero")
+}
+
+/// Bookkeeping just before `object` changes zones: last-known power for
+/// leave triggers, and descend (700.14) for a permanent card going to its
+/// owner's graveyard.
+pub(crate) fn before_zone_change(state: &mut GameState, object: ObjectId, to: Zone) {
+    let live = state.objects.get(object);
+    if live.zone == Zone::Battlefield && needs_power_lki(live.card_def) {
+        let marker = CommittedEvent::PowerBeforeLeavingBattlefield {
+            object,
+            zone_change_count: live.zone_change_count,
+            power: crate::engine::effective_power(state, object),
+        };
+        state.engine.event_log.push(marker.clone());
+        state.engine.event_history.push(marker);
+    }
+    let live = state.objects.get(object);
+    let def = &CARD_DEFS[usize::from(live.card_def)];
+    let permanent_card = [
+        CardType::Artifact,
+        CardType::Creature,
+        CardType::Enchantment,
+        CardType::Land,
+        CardType::Planeswalker,
+    ]
+    .into_iter()
+    .any(|card_type| def.has_type(card_type));
+    if to == Zone::Graveyard && !def.is_token && permanent_card {
+        let owner = live.owner;
+        let stamp = CreatureDeathTurnV1 {
+            turn: state.turn,
+            active_player: state.active_player,
+        };
+        let mut descended = state
+            .descended_v1
+            .filter(|descended| descended.turn == stamp)
+            .unwrap_or(DescendedTurnV1 {
+                turn: stamp,
+                players: [false; 2],
+            });
+        descended.players[owner.index()] = true;
+        state.descended_v1 = Some(descended);
+    }
+}
+
+/// Whether `player` descended this turn.
+pub(crate) fn descended_this_turn(state: &GameState, player: PlayerId) -> bool {
+    state.descended_v1.is_some_and(|descended| {
+        descended.turn
+            == CreatureDeathTurnV1 {
+                turn: state.turn,
+                active_player: state.active_player,
+            }
+            && descended.players[player.index()]
+    })
+}
+
+/// The last-known power logged for `object` as it left the battlefield.
+pub(crate) fn power_before_leaving(state: &GameState, object: ObjectId) -> Option<i32> {
+    state
+        .engine
+        .event_history
+        .iter()
+        .rev()
+        .find_map(|event| match event {
+            CommittedEvent::PowerBeforeLeavingBattlefield {
+                object: logged,
+                power,
+                ..
+            } if *logged == object => Some(*power),
+            _ => None,
+        })
 }

@@ -511,6 +511,15 @@ pub enum CommittedEvent {
         player: PlayerId,
         targeting_stack_item: StackItemId,
     },
+    /// Last-known power of a permanent about to leave the battlefield,
+    /// logged just before its zone change for the Standard cards whose
+    /// leave triggers read it (Heartfire Hero). Only
+    /// `standard-magezero-fixtures` builds emit it.
+    PowerBeforeLeavingBattlefield {
+        object: ObjectId,
+        zone_change_count: u32,
+        power: i32,
+    },
     /// Morbid is captured when this step begins, before any later death.
     BeginningEndStep {
         active_player: PlayerId,
@@ -892,6 +901,8 @@ fn commit_with_ability_lki(
                 state.engine.event_log.push(marker.clone());
                 state.engine.event_history.push(marker);
             }
+            #[cfg(feature = "standard-magezero-fixtures")]
+            crate::standard_keywords_v1::before_zone_change(state, z.object, z.to_zone);
             #[cfg(feature = "limited-fdn-fixtures")]
             let creature_died = from == Zone::Battlefield
                 && z.to_zone == Zone::Graveyard
