@@ -2976,6 +2976,9 @@ enum AbilityCostRecipe {
     Loyalty(i8),
     /// "Pay N life" (`CostComponent::PayLife`).
     PayLife(u8),
+    /// Craft with artifact's material
+    /// (`CostComponent::ExileCraftArtifactMaterial`).
+    ExileCraftArtifactMaterial,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4658,6 +4661,9 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
         }
         AbilityCostRecipe::Loyalty(delta) => format!("CostComponent::Loyalty({delta})"),
         AbilityCostRecipe::PayLife(amount) => format!("CostComponent::PayLife({amount})"),
+        AbilityCostRecipe::ExileCraftArtifactMaterial => {
+            "CostComponent::ExileCraftArtifactMaterial".to_string()
+        }
     }
 }
 
@@ -4692,6 +4698,9 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::ManaCost(cost) => format!("mana_cost:{cost}"),
         AbilityCostRecipe::Loyalty(delta) => format!("loyalty:{delta}"),
         AbilityCostRecipe::PayLife(amount) => format!("pay_life:{amount}"),
+        AbilityCostRecipe::ExileCraftArtifactMaterial => {
+            "exile_craft_artifact_material".to_string()
+        }
     }
 }
 
@@ -8498,6 +8507,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Class" => "Subtype::Class",
         "Otter" => "Subtype::Otter",
         "Liliana" => "Subtype::Liliana",
+        "Gnome" => "Subtype::Gnome",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

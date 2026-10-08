@@ -192,6 +192,22 @@ ability and the trigger, and turns on the printed equip {3} with
 "Equipped creature gets +3/+3" as the card's equipment profile, which
 only an Everflame can be attached by.
 
+## Craft
+
+Craft with artifact (702.167a) is an activated ability, from the
+battlefield and at sorcery speed, whose cost is the craft mana, `ExileSelf`
+and the appended `CostComponent::ExileCraftArtifactMaterial`: one other
+artifact the activator controls or one artifact card in their own
+graveyard. The material is staged through `Decision::ChooseCostTargets`
+like the other activation object costs, bound to its exact incarnation
+(battlefield or graveyard), and reserved from the mana plan. The effect,
+`StandardOpV1::ReturnExiledSourceTransformed`, returns only the card the
+cost exiled, transformed under its owner's control, so the back face's
+own entry triggers fire. Clay-Fired Bricks // Cosmium Kiln is the first
+consumer: the front face searches for a basic Plains and gains 2 life; the
+back face makes two 1/1 Gnome artifact creature tokens and gives creatures
+its controller controls +1/+1.
+
 ## Known limits
 
 The stack and battlefield use the Room card's combined mana value and

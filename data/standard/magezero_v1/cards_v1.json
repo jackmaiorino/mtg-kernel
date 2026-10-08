@@ -1065,6 +1065,64 @@
         "equip"
       ],
       "java_file": "Mage.Sets/src/mage/cards/t/TheIrencrag.java"
+    },
+    {
+      "name": "Clay-Fired Bricks",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "etb_trigger",
+        "library_search",
+        "lifegain",
+        "craft",
+        "transform",
+        "token",
+        "anthem"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/ClayFiredBricks.java"
+    },
+    {
+      "name": "Cosmium Gnome Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Gnome"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/GnomeToken.java",
+      "is_token": true
     }
   ]
 }

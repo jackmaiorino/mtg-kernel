@@ -7,7 +7,9 @@
 use super::{
     AbilityCostRecipe, AbilityEffectRecipe, ActivatedAbilityRecipe, PermanentFilterRecipe, Special,
 };
-use AbilityCostRecipe::{Loyalty, ManaCost, PayLife, SacrificeSelf, Tap};
+use AbilityCostRecipe::{
+    ExileCraftArtifactMaterial, ExileSelf, Loyalty, ManaCost, PayLife, SacrificeSelf, Tap,
+};
 use AbilityEffectRecipe::AttachSourceToTarget;
 use AbilityEffectRecipe::{DrawCards, Program};
 
@@ -144,6 +146,27 @@ const UNHOLY_ANNEX: [ActivatedAbilityRecipe; 2] = [
     ),
 ];
 
+/// "Craft with artifact {N}" (702.167a): exile this and another artifact
+/// you control or an artifact card from your graveyard, then return this
+/// card transformed. Craft only as a sorcery.
+const fn craft_with_artifact(cost: &'static [AbilityCostRecipe]) -> ActivatedAbilityRecipe {
+    ActivatedAbilityRecipe {
+        cost,
+        effect: Program("crate::standard_cards_v1::craft_return_transformed"),
+        activation_zone: "Battlefield",
+        sorcery_speed_only: true,
+        target_spec: "None",
+        activation_target_filter: "TargetSpecOnly",
+        max_activations_per_turn: None,
+    }
+}
+
+const CLAY_FIRED_BRICKS: [ActivatedAbilityRecipe; 1] = [craft_with_artifact(&[
+    ManaCost("{5}{W}{W}"),
+    ExileSelf,
+    ExileCraftArtifactMaterial,
+])];
+
 /// "Equip {N}": attach to target creature you control, as a sorcery.
 const fn equip(cost: &'static [AbilityCostRecipe]) -> ActivatedAbilityRecipe {
     ActivatedAbilityRecipe {
@@ -246,6 +269,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Liliana of the Veil" => &LILIANA_OF_THE_VEIL,
         "Fable of the Mirror-Breaker" => &REFLECTION_OF_KIKI_JIKI,
         "Repurposing Bay" => &REPURPOSING_BAY,
+        "Clay-Fired Bricks" => &CLAY_FIRED_BRICKS,
         "Polukranos Reborn" => &POLUKRANOS,
         "Ojer Axonil, Deepest Might" => &OJER,
         _ => &[],
@@ -256,7 +280,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
 /// for a single-faced card).
 pub(super) fn activated_ability_face_for(name: &str, _index: usize) -> Option<u8> {
     match name {
-        "Polukranos Reborn" => Some(0),
+        "Polukranos Reborn" | "Clay-Fired Bricks" => Some(0),
         "Ojer Axonil, Deepest Might" | "Fable of the Mirror-Breaker" => Some(1),
         _ => None,
     }
@@ -270,6 +294,7 @@ pub(super) fn transform_face_for(name: &str) -> &'static str {
         "Polukranos Reborn" => "Some(TransformFaceDef { name: \"Polukranos, Engine of Ruin\", types: &[CardType::Creature], subtypes: &[Subtype::Phyrexian, Subtype::Hydra], colors: &[ManaColor::W, ManaColor::G], power: Some(6), toughness: Some(6), keywords: Keywords(Keywords::REACH.0 | Keywords::LIFELINK.0) })",
         "Ojer Axonil, Deepest Might" => "Some(TransformFaceDef { name: \"Temple of Power\", types: &[CardType::Land], subtypes: &[], colors: &[], power: None, toughness: None, keywords: Keywords::NONE })",
         "Fable of the Mirror-Breaker" => "Some(TransformFaceDef { name: \"Reflection of Kiki-Jiki\", types: &[CardType::Enchantment, CardType::Creature], subtypes: &[Subtype::Goblin, Subtype::Shaman], colors: &[ManaColor::R], power: Some(2), toughness: Some(2), keywords: Keywords::NONE })",
+        "Clay-Fired Bricks" => "Some(TransformFaceDef { name: \"Cosmium Kiln\", types: &[CardType::Artifact], subtypes: &[], colors: &[ManaColor::W], power: None, toughness: None, keywords: Keywords::NONE })",
         _ => "None",
     }
 }
@@ -288,6 +313,7 @@ pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
         "Polukranos Reborn" => Some("Polukranos, Engine of Ruin"),
         "Ojer Axonil, Deepest Might" => Some("Temple of Power"),
         "Fable of the Mirror-Breaker" => Some("Reflection of Kiki-Jiki"),
+        "Clay-Fired Bricks" => Some("Cosmium Kiln"),
         _ => None,
     }
 }
@@ -323,6 +349,9 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         }
         "Otter Prowess Token" => "prowess",
         "Fable Goblin Shaman Token" => "attacks:create_treasure_token:1",
+        "Clay-Fired Bricks" => {
+            "etb:search_basic_plains_to_hand_gain_2;back:etb:create_two_gnome_1_1_artifact_creatures;back:static:controlled_creatures_plus_1_1"
+        }
         "The Irencrag" => "controlled_legendary_creature_enters:may_become_everflame_equip_3_plus_3",
         "Case of the Uneaten Feast" => {
             "controlled_creature_enters:gain_1;controller_end_step_solve:gained_5_life;solved_activated:creature_cards_in_graveyard_castable_this_turn"
@@ -364,6 +393,7 @@ pub(super) fn object_name_for(name: &str) -> Option<&'static str> {
         "Karn Construct Token" => Some("Construct"),
         "Otter Prowess Token" => Some("Otter"),
         "Fable Goblin Shaman Token" => Some("Goblin Shaman"),
+        "Cosmium Gnome Token" => Some("Gnome"),
         _ => None,
     }
 }

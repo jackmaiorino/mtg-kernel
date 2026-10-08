@@ -2052,3 +2052,116 @@ fn the_irencrag_may_stay_a_mana_rock() {
     assert!(mana_sources(&mut state).contains(&irencrag));
     assert!(!activatable(&mut state).contains(&(irencrag, 0)));
 }
+
+// ---- Craft: Clay-Fired Bricks // Cosmium Kiln ---------------------------
+
+#[test]
+fn clay_fired_bricks_finds_a_basic_plains_and_gains_two() {
+    let mut state = game();
+    let plains = to_library(&mut state, P0, "Plains");
+    let bricks = put(&mut state, P0, "Clay-Fired Bricks", Zone::Hand);
+    state.players[0].mana_pool[ManaColor::W.pool_index()] = 2;
+    next(&mut state);
+    act(&mut state, Action::CastSpell(bricks));
+    let mut offered = Vec::new();
+    loop {
+        match next(&mut state) {
+            Decision::ChooseEffectTargets { legal_targets, .. } => {
+                offered = legal_targets;
+                act(
+                    &mut state,
+                    Action::ChooseEffectTarget(Target::Object(plains)),
+                );
+            }
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => break,
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    // Only the basic Plains, not the Islands.
+    assert_eq!(offered, vec![Target::Object(plains)]);
+    assert_eq!(state.objects.get(plains).zone, Zone::Hand);
+    assert_eq!(state.players[0].life, 22);
+    assert_eq!(state.objects.get(bricks).zone, Zone::Battlefield);
+}
+
+/// Activates Clay-Fired Bricks' craft ability with seven white mana,
+/// exiling `material`, and resolves it.
+fn craft_bricks(state: &mut GameState, bricks: ObjectId, material: ObjectId) -> Vec<ObjectId> {
+    state.players[0].mana_pool[ManaColor::W.pool_index()] = 7;
+    assert!(activatable(state).contains(&(bricks, 0)));
+    act(state, Action::ActivateAbility(bricks, 0));
+    let mut candidates = Vec::new();
+    loop {
+        match next(state) {
+            Decision::ChooseCostTargets {
+                candidates: offered,
+                ..
+            } => {
+                candidates = offered;
+                act(state, Action::ChooseCostTarget(material));
+            }
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => return candidates,
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
+            Decision::OrderTriggers { pending, .. } => {
+                act(state, Action::OrderTriggers((0..pending.len()).collect()))
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn crafting_clay_fired_bricks_exiles_an_artifact_and_returns_cosmium_kiln() {
+    let mut state = game();
+    let bricks = put(&mut state, P0, "Clay-Fired Bricks", Zone::Battlefield);
+    settle(&mut state);
+    state.players[0].mana_pool[ManaColor::W.pool_index()] = 7;
+    // Craft needs another artifact: Bricks cannot exile itself twice.
+    assert!(!activatable(&mut state).contains(&(bricks, 0)));
+
+    let trail = put(&mut state, P0, "Candy Trail", Zone::Battlefield);
+    settle(&mut state);
+    let wellspring = to_graveyard(&mut state, P0, "Ichor Wellspring");
+    let opponents = to_graveyard(&mut state, P1, "Nihil Spellbomb");
+    let life = state.players[0].life;
+    let candidates = craft_bricks(&mut state, bricks, wellspring);
+    // Another artifact you control or an artifact card in your graveyard.
+    assert_eq!(candidates, vec![trail, wellspring]);
+    assert!(!candidates.contains(&opponents));
+
+    assert_eq!(state.objects.get(wellspring).zone, Zone::Exile);
+    assert_eq!(state.objects.get(trail).zone, Zone::Battlefield);
+    let kiln = state.objects.get(bricks);
+    assert_eq!(kiln.zone, Zone::Battlefield);
+    assert_eq!(kiln.v4.face_index, 1);
+    // Cosmium Kiln's entry makes two Gnomes; its anthem makes them 2/2.
+    let gnomes = battlefield_named(&state, P0, "Gnome");
+    assert_eq!(gnomes.len(), 2);
+    for gnome in gnomes {
+        assert!(engine::object_has_type(&state, gnome, CardType::Artifact));
+        assert_eq!(engine::effective_power(&state, gnome), 2);
+        assert_eq!(engine::effective_toughness(&state, gnome), 2);
+    }
+    // The front face's entry trigger does not fire for the back face.
+    assert_eq!(state.players[0].life, life);
+}
+
+#[test]
+fn crafting_is_sorcery_speed_and_can_exile_a_battlefield_artifact() {
+    let mut state = game();
+    let bricks = put(&mut state, P0, "Clay-Fired Bricks", Zone::Battlefield);
+    let trail = put(&mut state, P0, "Candy Trail", Zone::Battlefield);
+    settle(&mut state);
+    state.step = Step::Upkeep;
+    state.players[0].mana_pool[ManaColor::W.pool_index()] = 7;
+    assert!(!activatable(&mut state).contains(&(bricks, 0)));
+    state.step = Step::Main1;
+    // The only material is chosen automatically.
+    assert!(craft_bricks(&mut state, bricks, trail).is_empty());
+    assert_eq!(state.objects.get(trail).zone, Zone::Exile);
+    assert_eq!(state.objects.get(bricks).v4.face_index, 1);
+    // Cosmium Kiln has no craft ability.
+    state.players[0].mana_pool[ManaColor::W.pool_index()] = 7;
+    assert!(!activatable(&mut state).contains(&(bricks, 0)));
+}

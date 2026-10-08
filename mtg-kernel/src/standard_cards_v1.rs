@@ -311,6 +311,9 @@ pub enum StandardOpV1 {
     MayBecomeEverflame,
     /// The accepted choice: interpreter owned.
     BecomeEverflame { source: EffectObjectBinding },
+    /// Craft (702.167a): the source, exiled to pay the ability's cost,
+    /// returns to the battlefield transformed under its owner's control.
+    ReturnExiledSourceTransformed,
 }
 
 impl StandardOpV1 {
@@ -609,6 +612,27 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 change.force_battlefield_tapped = true;
             }
             event::propose_and_commit(state, entry);
+        }
+        StandardOpV1::ReturnExiledSourceTransformed => {
+            let Some(contract) = ctx.ability_source_contract else {
+                return;
+            };
+            let Some(card) = state.objects.try_get(ctx.source) else {
+                return;
+            };
+            // Only the card the source became when the cost exiled it
+            // (400.7).
+            if card.card_def != contract.card_def
+                || card.zone != Zone::Exile
+                || card.zone_change_count != contract.zone_change_count + 1
+            {
+                return;
+            }
+            let owner = card.owner;
+            event::propose_and_commit(
+                state,
+                ProposedEvent::transformed_battlefield_return(ctx.source, 1, owner),
+            );
         }
         StandardOpV1::AddLoyaltyToSource { amount } => {
             if source_incarnation_live(ctx, state) {
@@ -1275,6 +1299,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         STORMCHASERS_TALENT => &STORMCHASERS_TALENT_TRIGGERS,
         FABLE_GOBLIN_SHAMAN_TOKEN => &FABLE_GOBLIN_SHAMAN_TRIGGERS,
         THE_IRENCRAG => &THE_IRENCRAG_TRIGGERS,
+        CLAY_FIRED_BRICKS => &CLAY_FIRED_BRICKS_TRIGGERS,
         "Otter Prowess Token" => &PROWESS_TRIGGERS,
         SEAM_RIP | DUSK_ROSE_RELIQUARY | SHELTERED_BY_GHOSTS | HARDLIGHT_CONTAINMENT => {
             &EXILE_UNTIL_LEAVES_TRIGGERS
@@ -1287,7 +1312,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
 /// of single-faced cards report face 0.
 pub(crate) fn trigger_face(name: &str, ability_index: usize) -> u8 {
     match (name, ability_index) {
-        (CECIL, 1) | (POLUKRANOS, 0) => 1,
+        (CECIL, 1) | (POLUKRANOS, 0) | (CLAY_FIRED_BRICKS, 1) => 1,
         _ => 0,
     }
 }
@@ -1781,12 +1806,20 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i32, i32
             artifacts += 1;
         }
         let name = CARD_DEFS[state.objects.get(id).card_def as usize].name;
-        if !matches!(name, WARLEADERS_CALL | CASE_OF_THE_GATEWAY_EXPRESS)
-            || !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+        if !matches!(
+            name,
+            WARLEADERS_CALL | CASE_OF_THE_GATEWAY_EXPRESS | CLAY_FIRED_BRICKS
+        ) || !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
         {
             continue;
         }
-        if name == WARLEADERS_CALL {
+        if name == CLAY_FIRED_BRICKS {
+            // Cosmium Kiln: "Creatures you control get +1/+1."
+            if state.objects.get(id).v4.face_index == 1 {
+                boost.0 += 1;
+                boost.1 += 1;
+            }
+        } else if name == WARLEADERS_CALL {
             boost.0 += 1;
             boost.1 += 1;
         } else if case_solved(state, id) {
@@ -2576,3 +2609,46 @@ pub(crate) fn sacrifice_pile(
             .collect(),
     );
 }
+
+// ---- Craft: Clay-Fired Bricks // Cosmium Kiln ------------------------------
+
+const CLAY_FIRED_BRICKS: &str = "Clay-Fired Bricks";
+const COSMIUM_GNOME_TOKEN: &str = "Cosmium Gnome Token";
+
+/// "Craft with artifact {N}: Exile this artifact and another artifact you
+/// control or an artifact card from your graveyard: Return this card
+/// transformed under its owner's control. Craft only as a sorcery."
+pub fn craft_return_transformed() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::ReturnExiledSourceTransformed)
+}
+
+/// "When Clay-Fired Bricks enters, search your library for a basic Plains
+/// card, reveal it, put it into your hand, then shuffle. You gain 2 life."
+fn clay_fired_bricks_entry() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::SearchLibraryToHand {
+            player: PlayerRef::Controller,
+            filter: crate::effect::LibraryCardFilter::BasicLandWithAnySubtype([Subtype::Plains; 3]),
+        },
+        EffectOp::GainLife {
+            player: PlayerRef::Controller,
+            amount: 2,
+        },
+    ])
+}
+
+/// "When Cosmium Kiln enters, create two 1/1 colorless Gnome artifact
+/// creature tokens."
+fn cosmium_kiln_entry() -> EffectOp {
+    let gnome = || EffectOp::CreateToken {
+        token_def: crate::card_def::card_id_by_name(COSMIUM_GNOME_TOKEN)
+            .expect("Gnome token in CARD_DEFS"),
+        controller: PlayerRef::Controller,
+    };
+    EffectOp::Sequence(vec![gnome(), gnome()])
+}
+
+const CLAY_FIRED_BRICKS_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    trigger(TriggerCondition::Etb, clay_fired_bricks_entry),
+    trigger(TriggerCondition::Etb, cosmium_kiln_entry),
+];

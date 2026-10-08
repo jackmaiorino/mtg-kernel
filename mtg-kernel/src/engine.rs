@@ -3625,6 +3625,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
     let mut reveal_hand_condition_count = 0;
     let mut chosen_creature_count = 0;
     let mut loyalty_count = 0;
+    let mut craft_material_count = 0;
 
     for component in components {
         match component {
@@ -3702,6 +3703,10 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
             CostComponent::Loyalty(_) => {
                 loyalty_count += 1;
             }
+            CostComponent::ExileCraftArtifactMaterial => {
+                craft_material_count += 1;
+                saw_source_changing_component = true;
+            }
         }
     }
 
@@ -3712,6 +3717,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
             + return_permanent_count
             + tap_other_permanent_count
             + tap_filtered_permanent_count
+            + craft_material_count
             > 1
         || pay_life_count > 1
         || tap_count > 1
@@ -3950,6 +3956,9 @@ fn can_pay_components(
             }
             CostComponent::Loyalty(delta) => crate::planeswalker_v1::loyalty(state, source)
                 .is_some_and(|loyalty| *delta >= 0 || loyalty >= u32::from(delta.unsigned_abs())),
+            CostComponent::ExileCraftArtifactMaterial => {
+                !craft_material_candidates(player, source, state, &[]).is_empty()
+            }
             CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {
                 !chosen_creature_cost_candidates(
                     player,
@@ -4156,6 +4165,15 @@ fn pay_cost_components_with_x(
             return false;
         }
     }
+    let craft_material = has_craft_material_cost(components);
+    if craft_material
+        && (object_cost_chosen.len() != 1
+            || !craft_material_candidates(player, source, state, &[])
+                .iter()
+                .any(|binding| binding.object == object_cost_chosen[0]))
+    {
+        return false;
+    }
     if sacrifice_needed.is_none()
         && sacrifice_controlled.is_none()
         && graveyard_exile_needed.is_none()
@@ -4163,6 +4181,7 @@ fn pay_cost_components_with_x(
         && !returns_unblocked_attacker
         && tap_other_subtype.is_none()
         && tap_filter.is_none()
+        && !craft_material
         && !object_cost_chosen.is_empty()
     {
         return false;
@@ -4182,7 +4201,7 @@ fn pay_cost_components_with_x(
     if tap_other_subtype.is_some() {
         reserved.extend(object_cost_chosen.iter().copied());
     }
-    if tap_filter.is_some() {
+    if tap_filter.is_some() || craft_material {
         reserved.extend(object_cost_chosen.iter().copied());
     }
     let mana_plan = mana_cost.map(|cost| {
@@ -4307,6 +4326,10 @@ fn pay_cost_components_with_x(
             CostComponent::Loyalty(delta) => {
                 crate::planeswalker_v1::change_loyalty(state, source, i32::from(*delta));
             }
+            CostComponent::ExileCraftArtifactMaterial => event::propose_and_commit(
+                state,
+                ProposedEvent::zone_change(object_cost_chosen[0], Zone::Exile),
+            ),
         }
     }
     true
@@ -4729,6 +4752,50 @@ fn activation_sacrifice_cost_candidates(
             EffectObjectBinding {
                 object,
                 expected_zone: Zone::Battlefield,
+                expected_zone_change_count: live.zone_change_count,
+            }
+        })
+        .collect()
+}
+
+fn has_craft_material_cost(components: &[CostComponent]) -> bool {
+    components
+        .iter()
+        .any(|component| matches!(component, CostComponent::ExileCraftArtifactMaterial))
+}
+
+/// Craft with artifact's material candidates (702.167a): the other
+/// artifacts `player` controls, then the artifact cards in their own
+/// graveyard, each bound to its current incarnation.
+fn craft_material_candidates(
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+    already_chosen: &[EffectObjectBinding],
+) -> Vec<EffectObjectBinding> {
+    let seat = &state.players[player.index()];
+    let permanents = seat.battlefield.iter().copied().filter(|&id| {
+        let object = state.objects.get(id);
+        id != source
+            && object.zone == Zone::Battlefield
+            && object.controller == player
+            && object_has_type(state, id, CardType::Artifact)
+    });
+    let cards = seat.graveyard.iter().copied().filter(|&id| {
+        let object = state.objects.get(id);
+        id != source
+            && object.zone == Zone::Graveyard
+            && object.owner == player
+            && card_def::CARD_DEFS[object.card_def as usize].has_type(CardType::Artifact)
+    });
+    permanents
+        .chain(cards)
+        .filter(|id| !already_chosen.iter().any(|binding| binding.object == *id))
+        .map(|object| {
+            let live = state.objects.get(object);
+            EffectObjectBinding {
+                object,
+                expected_zone: live.zone,
                 expected_zone_change_count: live.zone_change_count,
             }
         })
@@ -8852,6 +8919,45 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
         }
     }
 
+    if has_craft_material_cost(ability.cost) && pending.object_cost_chosen.is_empty() {
+        let candidates = craft_material_candidates(
+            pending.controller,
+            pending.source,
+            state,
+            &pending.object_cost_chosen,
+        );
+        if candidates.is_empty() {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                pending.source,
+            ));
+            return Some(Decision::Halted {
+                mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                source: pending.source,
+            });
+        }
+        if candidates.len() == 1 {
+            state
+                .engine
+                .pending_activation
+                .as_mut()
+                .expect("validated activation remains staged")
+                .object_cost_chosen
+                .push(candidates[0]);
+            return drain_pending_activation_or_decide(state);
+        }
+        return Some(Decision::ChooseCostTargets {
+            player: pending.controller,
+            source: pending.source,
+            cost_kind: CostKind::ExileFromGraveyard,
+            remaining: 1,
+            candidates: candidates
+                .into_iter()
+                .map(|binding| binding.object)
+                .collect(),
+        });
+    }
+
     if has_unblocked_attacker_return_cost(ability.cost) && pending.object_cost_chosen.is_empty() {
         let candidates = unblocked_attacker_return_candidates(
             pending.controller,
@@ -9015,10 +9121,12 @@ pub(crate) fn validate_pending_activation(
     let tap_cost_subtype = activation_tap_cost_subtype(ability.cost);
     let sacrifice_cost = activation_permanent_sacrifice_needed(ability.cost);
     let returns_unblocked_attacker = has_unblocked_attacker_return_cost(ability.cost);
+    let craft_material = has_craft_material_cost(ability.cost);
     let interactive_families = usize::from(return_filter.is_some())
         + usize::from(tap_cost_subtype.is_some())
         + usize::from(sacrifice_cost.is_some())
-        + usize::from(returns_unblocked_attacker);
+        + usize::from(returns_unblocked_attacker)
+        + usize::from(craft_material);
     if interactive_families > 1 {
         return Err("activation has multiple interactive object-cost families".to_string());
     }
@@ -9110,6 +9218,16 @@ pub(crate) fn validate_pending_activation(
         );
         if remaining.len() < usize::from(needed).saturating_sub(pending.object_cost_chosen.len()) {
             return Err("pending activation object cost can no longer complete".to_string());
+        }
+    } else if craft_material {
+        let candidates = craft_material_candidates(pending.controller, pending.source, state, &[]);
+        if pending.object_cost_chosen.len() > 1
+            || pending
+                .object_cost_chosen
+                .iter()
+                .any(|binding| !candidates.contains(binding))
+        {
+            return Err("pending activation carries an illegal craft material".to_string());
         }
     }
 
@@ -9209,7 +9327,8 @@ pub(crate) fn validate_pending_activation(
             || !target_cardinality_is_complete(pending.target_spec, pending.targets_chosen.len())
             || ((return_filter.is_some()
                 || tap_cost_subtype.is_some()
-                || returns_unblocked_attacker)
+                || returns_unblocked_attacker
+                || craft_material)
                 && pending.object_cost_chosen.len() != 1)
         {
             return Err("pending activation discard binding or stage changed".to_string());
@@ -12429,7 +12548,10 @@ fn pending_activation_action_stage(
         && pending.object_cost_chosen.is_empty();
     let unblocked_attacker_return_cost_incomplete =
         has_unblocked_attacker_return_cost(ability.cost) && pending.object_cost_chosen.is_empty();
+    let craft_material_incomplete =
+        has_craft_material_cost(ability.cost) && pending.object_cost_chosen.is_empty();
     if return_cost_incomplete
+        || craft_material_incomplete
         || sacrifice_cost_incomplete
         || tap_cost_incomplete
         || unblocked_attacker_return_cost_incomplete
@@ -13416,6 +13538,27 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                     .push(binding);
                 return Ok(());
             }
+        } else if has_craft_material_cost(ability.cost) {
+            if !pending.object_cost_chosen.is_empty() {
+                return Err("activation craft material has already been selected".to_string());
+            }
+            let binding = craft_material_candidates(
+                pending.controller,
+                pending.source,
+                state,
+                &pending.object_cost_chosen,
+            )
+            .into_iter()
+            .find(|binding| binding.object == id)
+            .ok_or_else(|| format!("{id} is not a legal craft material"))?;
+            state
+                .engine
+                .pending_activation
+                .as_mut()
+                .expect("validated activation remains staged")
+                .object_cost_chosen
+                .push(binding);
+            return Ok(());
         }
         if activation_tap_cost_subtype(ability.cost).is_some() {
             if !payable_activation_cost_object_candidates(

@@ -274,6 +274,7 @@ pub enum Subtype {
     Class,
     Otter,
     Liliana,
+    Gnome,
 }
 
 impl Subtype {
@@ -385,6 +386,8 @@ impl Subtype {
         Subtype::Construct,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Otter,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Gnome,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -906,6 +909,11 @@ pub enum CostComponent {
     /// one-loyalty-activation-per-turn limit (606.3). Appended for the
     /// Standard planeswalkers.
     Loyalty(i8),
+    /// Craft with artifact's material (702.167a): exile one other artifact
+    /// the payer controls or one artifact card from their own graveyard.
+    /// The exact object is staged through `Decision::ChooseCostTargets`
+    /// before any payment commits. Appended for the Standard craft cards.
+    ExileCraftArtifactMaterial,
 }
 
 impl CostComponent {
