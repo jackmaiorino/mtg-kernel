@@ -29,9 +29,10 @@ env:
 jobs:
   detect-changes:
     name: Detect changed paths
-    # A few seconds of git work: run it on the self-hosted Linux runner so
-    # the self-hosted test groups never wait in GitHub's hosted queue.
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted", "mtg-ci-linux"]') || 'ubuntu-24.04' }}
+    # A few seconds of git work. It stays on a hosted runner: the
+    # self-hosted runners hold every job while their host is reserved for
+    # other work, and the Python shards wait on this job.
+    runs-on: ubuntu-24.04
     outputs:
       python_relevant: ${{ steps.classify.outputs.python_relevant }}
       rust_relevant: ${{ steps.classify.outputs.rust_relevant }}
@@ -313,7 +314,7 @@ jobs:
         os:
           - ubuntu-24.04
           - windows-2025
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted", "mtg-ci-linux"]') || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     steps:
       - name: Require every Rust test group
         run: test "${{ needs.rust-test-groups.result }}" = success
@@ -325,17 +326,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-24.04
-          - windows-2025
-        shard:
-          - 0
-          - 1
+        # Windows runs the suite about twice as slowly, so it gets one more
+        # shard to finish alongside the Ubuntu shards.
         include:
-          - os: ubuntu-24.04
-            kernel_bin: target/release/kernel_rl_env
-          - os: windows-2025
-            kernel_bin: target/release/kernel_rl_env.exe
+          - {os: ubuntu-24.04, shard: 0, shard_count: 2, kernel_bin: target/release/kernel_rl_env}
+          - {os: ubuntu-24.04, shard: 1, shard_count: 2, kernel_bin: target/release/kernel_rl_env}
+          - {os: windows-2025, shard: 0, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe}
+          - {os: windows-2025, shard: 1, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe}
+          - {os: windows-2025, shard: 2, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe}
     runs-on: ${{ matrix.os }}
     env:
       MTG_KERNEL_RL_ENV_BIN: ${{ github.workspace }}/${{ matrix.kernel_bin }}
@@ -385,4 +383,4 @@ jobs:
         run: cargo build --release --locked --bin kernel_rl_env
 
       - name: Run Python test shard against the real Rust environment
-        run: uv run --no-sync python python/tools/run_python_test_shard.py --shard-index ${{ matrix.shard }} --shard-count 2
+        run: uv run --no-sync python python/tools/run_python_test_shard.py --shard-index ${{ matrix.shard }} --shard-count ${{ matrix.shard_count }}
