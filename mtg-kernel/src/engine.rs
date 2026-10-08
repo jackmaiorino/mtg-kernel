@@ -1453,6 +1453,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::CreatureCardInOwnGraveyard
         | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_)
         | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_)
+        | TargetSpec::SpellYouDontControl
         | TargetSpec::TargetOpponent
         | TargetSpec::OpponentControlledCreature
         | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. }
@@ -2845,6 +2846,19 @@ fn legal_targets_for_controller_from_source(
             })
             .map(Target::Object)
             .collect(),
+        TargetSpec::SpellYouDontControl => {
+            let announcing = state.engine.pending_cast.as_ref().map(|p| p.spell);
+            state
+                .stack
+                .iter()
+                .filter(|item| {
+                    item.kind == StackItemKind::Spell
+                        && item.controller != controller
+                        && Some(item.source) != announcing
+                })
+                .map(|item| Target::Object(item.source))
+                .collect()
+        }
         TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(maximum) => state.players
             [controller.index()]
         .graveyard

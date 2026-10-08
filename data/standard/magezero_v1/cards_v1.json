@@ -714,6 +714,40 @@
         "attack_block_restriction"
       ],
       "java_file": "Mage.Sets/src/mage/cards/e/ExtractionSpecialist.java"
+    },
+    {
+      "name": "Hullbreaker Horror",
+      "engine_capability": "full",
+      "mana_cost": "{5}{U}{U}",
+      "mana_value": 7,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Kraken",
+        "Horror"
+      ],
+      "supertypes": [],
+      "power": 7,
+      "toughness": 8,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoU.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "flash",
+        "cant_be_countered",
+        "cast_trigger",
+        "modal_trigger",
+        "bounce"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HullbreakerHorror.java"
     }
   ]
 }

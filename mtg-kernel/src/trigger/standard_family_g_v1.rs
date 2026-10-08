@@ -300,3 +300,50 @@ fn return_restricted_creature_effect() -> EffectOp {
 /// control this creature."
 pub(super) const EXTRACTION_SPECIALIST_TRIGGERS: [TriggeredAbilityDef; 1] =
     [etb_trigger(return_restricted_creature_effect)];
+
+/// Hullbreaker Horror: "Whenever you cast a spell, choose up to one -- •
+/// Return target spell you don't control to its owner's hand. • Return
+/// target nonland permanent to its owner's hand." The third mode is the
+/// "up to one" choice of neither.
+pub(super) const HULLBREAKER_HORROR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastSpell,
+    ..etb_trigger(hullbreaker_horror_effect)
+}];
+
+pub(super) fn hullbreaker_horror_modes() -> Vec<(crate::card_def::TargetSpec, EffectOp)> {
+    use crate::card_def::TargetSpec;
+    use crate::effect::EffectCond;
+    vec![
+        (
+            TargetSpec::SpellYouDontControl,
+            EffectOp::Conditional {
+                cond: EffectCond::TargetInZone(0, Zone::Stack),
+                then: Box::new(EffectOp::MoveObject {
+                    object: ObjectRef::Target(0),
+                    to_zone: Zone::Hand,
+                }),
+                else_: Box::new(EffectOp::Sequence(vec![])),
+            },
+        ),
+        (
+            TargetSpec::NonlandPermanent,
+            EffectOp::MoveObject {
+                object: ObjectRef::Target(0),
+                to_zone: Zone::Hand,
+            },
+        ),
+        (TargetSpec::None, EffectOp::Sequence(vec![])),
+    ]
+}
+
+/// The pending-trigger marker `trigger::unselected_trigger_modes` replaces
+/// with one of the modes above.
+pub(super) fn hullbreaker_horror_effect() -> EffectOp {
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: hullbreaker_horror_modes()
+            .into_iter()
+            .map(|(_, effect)| effect)
+            .collect(),
+    }
+}

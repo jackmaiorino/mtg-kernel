@@ -3545,6 +3545,7 @@ fn keywords_for(card: &CardJson) -> String {
         "Adeline, Resplendent Cathar" => keywords.push("Keywords::VIGILANCE"),
         "Bloodletter of Aclazotz" | "Haughty Djinn" => keywords.push("Keywords::FLYING"),
         "Thalia, Guardian of Thraben" => keywords.push("Keywords::FIRST_STRIKE"),
+        "Hullbreaker Horror" => keywords.push("Keywords::FLASH"),
         _ => {}
     }
     if card.name == "Treetop Snarespinner" {
@@ -5388,6 +5389,9 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Hired Claw" => "controller_attacks_with_subtype:Lizard:target_opponent:damage:1",
         "Extraction Specialist" => {
             "etb:target_own_graveyard_creature_card_mv_at_most_2:return_to_battlefield:cant_attack_or_block_while_source_controlled"
+        }
+        "Hullbreaker Horror" => {
+            "cast_spell:mode_before_targets:spell_you_dont_control_to_owners_hand|nonland_permanent_to_owners_hand|no_mode"
         }
         _ => "none",
     }

@@ -977,7 +977,8 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::SorcerySpellOnStack
                 | TargetSpec::NoncreatureSpellOnStack
                 | TargetSpec::ArtifactSpellOnStack
-                | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. },
+                | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. }
+                | TargetSpec::SpellYouDontControl,
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Stack,

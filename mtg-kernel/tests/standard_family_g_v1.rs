@@ -140,6 +140,13 @@ const CARDS: &[(&str, &[Subtype], (i16, i16), Keywords, usize)] = &[
         1,
     ),
     (
+        "Hullbreaker Horror",
+        &[Subtype::Kraken, Subtype::Horror],
+        (7, 8),
+        Keywords::FLASH,
+        1,
+    ),
+    (
         "Unstoppable Slasher",
         &[Subtype::Zombie, Subtype::Assassin],
         (2, 3),
@@ -1575,4 +1582,139 @@ fn extraction_specialist_gone_before_resolution_returns_unrestricted() {
     settled(&mut state);
     assert_eq!(state.objects.get(inspector).zone, Zone::Battlefield);
     assert!(state.attack_block_restrictions_v1.is_none());
+}
+
+/// P1 casts Lightning Bolt at P0 while P0 has priority to respond, leaving
+/// P0 with priority. Returns the Bolt.
+fn opponent_bolts_face(state: &mut GameState) -> ObjectId {
+    let bolt = put(state, PlayerId::P1, "Lightning Bolt", Zone::Hand);
+    state.players[1].mana_pool = pool(&[(ManaColor::R, 1)], 0);
+    engine::step(state, Action::Pass).unwrap();
+    cast(state, bolt, &[Target::Player(PlayerId::P0)]);
+    assert!(matches!(
+        next(state),
+        Decision::CastSpellOrPass {
+            player: PlayerId::P1,
+            ..
+        }
+    ));
+    engine::step(state, Action::Pass).unwrap();
+    bolt
+}
+
+/// P0 casts Lightning Bolt at P1 with Hullbreaker Horror out, and returns
+/// the Bolt and the trigger's legal modes.
+fn bolt_with_hullbreaker(state: &mut GameState) -> (ObjectId, Vec<u8>) {
+    let bolt = put(state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
+    state.players[0].mana_pool = pool(&[(ManaColor::R, 1)], 0);
+    cast(state, bolt, &[Target::Player(PlayerId::P1)]);
+    match settle(state) {
+        Some(Decision::ChooseTriggerMode {
+            player: PlayerId::P0,
+            mode_count: 3,
+            legal_modes,
+            ..
+        }) => (bolt, legal_modes),
+        other => panic!("expected a Hullbreaker mode choice, got {other:?}"),
+    }
+}
+
+fn choose_mode_and_target(state: &mut GameState, mode: u8, target: Target, legal: &[Target]) {
+    engine::step(state, Action::ChooseTriggerMode(mode)).unwrap();
+    match next(state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert_eq!(legal_targets, legal);
+            engine::step(state, Action::ChooseTarget(target)).unwrap();
+        }
+        other => panic!("expected a target choice, got {other:?}"),
+    }
+}
+
+#[test]
+fn hullbreaker_horror_has_flash_and_cannot_be_countered() {
+    let def = &CARD_DEFS[card_id_by_name("Hullbreaker Horror").unwrap() as usize];
+    assert!(def.spell_cannot_be_countered);
+
+    let mut state = ready(Step::Main1);
+    let their_bolt = opponent_bolts_face(&mut state);
+    // Flash: P0 casts it in response, with a spell already on the stack.
+    let horror = cast_creature(&mut state, "Hullbreaker Horror");
+    let counterspell = put(&mut state, PlayerId::P1, "Counterspell", Zone::Hand);
+    state.players[1].mana_pool = pool(&[(ManaColor::U, 2)], 0);
+    assert!(matches!(
+        next(&mut state),
+        Decision::CastSpellOrPass {
+            player: PlayerId::P0,
+            ..
+        }
+    ));
+    engine::step(&mut state, Action::Pass).unwrap();
+    cast(&mut state, counterspell, &[Target::Object(horror)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(horror).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(counterspell).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(their_bolt).zone, Zone::Graveyard);
+    assert_eq!(state.players[0].life, 17);
+}
+
+#[test]
+fn hullbreaker_horror_returns_an_opponents_spell_to_hand() {
+    let mut state = ready(Step::Main1);
+    let horror = put(
+        &mut state,
+        PlayerId::P0,
+        "Hullbreaker Horror",
+        Zone::Battlefield,
+    );
+    let their_bolt = opponent_bolts_face(&mut state);
+    let (my_bolt, legal_modes) = bolt_with_hullbreaker(&mut state);
+    assert_eq!(legal_modes, vec![0, 1, 2]);
+    // Only the opponent's spell is a legal target, not P0's own Bolt.
+    choose_mode_and_target(
+        &mut state,
+        0,
+        Target::Object(their_bolt),
+        &[Target::Object(their_bolt)],
+    );
+    settled(&mut state);
+    assert_eq!(state.objects.get(their_bolt).zone, Zone::Hand);
+    assert!(state.players[1].hand.contains(&their_bolt));
+    assert_eq!(state.objects.get(my_bolt).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(horror).zone, Zone::Battlefield);
+    assert_eq!(state.players[0].life, 20);
+    assert_eq!(state.players[1].life, 17);
+}
+
+#[test]
+fn hullbreaker_horror_returns_a_nonland_permanent_or_nothing() {
+    let mut state = ready(Step::Main1);
+    let horror = put(
+        &mut state,
+        PlayerId::P0,
+        "Hullbreaker Horror",
+        Zone::Battlefield,
+    );
+    let scout = put(&mut state, PlayerId::P1, "Cenote Scout", Zone::Battlefield);
+    put(&mut state, PlayerId::P1, "Forest", Zone::Battlefield);
+    // With no opponent spell on the stack, the spell mode is not legal.
+    let (_, legal_modes) = bolt_with_hullbreaker(&mut state);
+    assert_eq!(legal_modes, vec![1, 2]);
+    choose_mode_and_target(
+        &mut state,
+        1,
+        Target::Object(scout),
+        &[Target::Object(horror), Target::Object(scout)],
+    );
+    settled(&mut state);
+    assert_eq!(state.objects.get(scout).zone, Zone::Hand);
+    assert!(state.players[1].hand.contains(&scout));
+    assert_eq!(state.players[1].life, 17);
+
+    // "Up to one": the last mode does nothing.
+    let (_, legal_modes) = bolt_with_hullbreaker(&mut state);
+    assert_eq!(legal_modes, vec![1, 2]);
+    engine::step(&mut state, Action::ChooseTriggerMode(2)).unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(horror).zone, Zone::Battlefield);
+    assert_eq!(state.players[1].life, 14);
 }

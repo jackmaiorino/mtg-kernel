@@ -132,6 +132,8 @@ pub enum TriggerCondition {
     BeginningControllerEndStep,
     /// The controller casts a creature spell (Quirion Beastcaller).
     CastCreatureSpell,
+    /// The controller casts any spell (Hullbreaker Horror).
+    CastSpell,
     /// The controller casts a spell whose mana value on the stack is at
     /// least this (Ascendant Packleader).
     CastSpellManaValueAtLeast(u16),
@@ -518,6 +520,12 @@ pub fn unselected_trigger_modes(
     effect: &EffectOp,
 ) -> Option<Vec<(TargetSpec, EffectOp)>> {
     let card = crate::card_def::CARD_DEFS.get(card_def as usize)?;
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if card.name == "Hullbreaker Horror"
+        && *effect == standard_family_g_v1::hullbreaker_horror_effect()
+    {
+        return Some(standard_family_g_v1::hullbreaker_horror_modes());
+    }
     (card.name == "Sylvan Scavenging" && *effect == sylvan_scavenging_effect())
         .then(sylvan_scavenging_modes)
 }
@@ -1853,6 +1861,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Hired Claw" => &standard_family_g_v1::HIRED_CLAW_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Extraction Specialist" => &standard_family_g_v1::EXTRACTION_SPECIALIST_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Hullbreaker Horror" => &standard_family_g_v1::HULLBREAKER_HORROR_TRIGGERS,
         _ => &[],
     }
 }
@@ -1992,6 +2002,14 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     {
         return true;
     }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if card.name == "Hullbreaker Horror"
+        && standard_family_g_v1::hullbreaker_horror_modes()
+            .iter()
+            .any(|(_, branch)| branch == effect)
+    {
+        return true;
+    }
     if triggers_for(card_def)
         .iter()
         .any(|trigger| source_bound_trigger_program_matches(&(trigger.effect)(), effect))
@@ -2034,6 +2052,15 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
         return None;
     }
     let card = crate::card_def::CARD_DEFS.get(card_def as usize)?;
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if card.name == "Hullbreaker Horror" {
+        return Some(
+            standard_family_g_v1::hullbreaker_horror_modes()
+                .iter()
+                .find(|(_, branch)| branch == effect)
+                .map_or(TargetSpec::None, |(spec, _)| *spec),
+        );
+    }
     if card.name == "Sylvan Scavenging" {
         return Some(
             sylvan_scavenging_modes()
@@ -3056,6 +3083,12 @@ fn trigger_matches(
                 && selected_spell_types(state, *spell)
                     .contains(&crate::card_def::CardType::Creature)
         }
+        (
+            TriggerCondition::CastSpell,
+            CommittedEvent::SpellCast {
+                controller: caster, ..
+            },
+        ) => *caster == controller,
         (
             TriggerCondition::CastSpellManaValueAtLeast(minimum),
             CommittedEvent::SpellCast {

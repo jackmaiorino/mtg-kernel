@@ -680,6 +680,9 @@ pub enum TargetSpec {
     /// A creature card in the controller's own graveyard with at most this
     /// printed mana value (Extraction Specialist).
     CreatureCardInOwnGraveyardManaValueAtMost(u16),
+    /// Exactly 1 target: a spell on the stack controlled by someone other
+    /// than the targeting player (Hullbreaker Horror).
+    SpellYouDontControl,
 }
 
 impl TargetSpec {
@@ -731,6 +734,7 @@ impl TargetSpec {
             TargetSpec::AttackingOrBlockingCreature => 40,
             TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_) => 41,
             TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_) => 42,
+            TargetSpec::SpellYouDontControl => 43,
         }
     }
 }
