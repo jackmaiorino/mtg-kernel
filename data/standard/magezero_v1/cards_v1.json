@@ -646,6 +646,41 @@
         "plus_one_counters"
       ],
       "java_file": "Mage.Sets/src/mage/cards/h/HiredClaw.java"
+    },
+    {
+      "name": "Warden of the Inner Sky",
+      "engine_capability": "full",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoW.dck",
+        "Standard16-RW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "conditional_flying",
+        "conditional_vigilance",
+        "activated_ability",
+        "tap_permanents_cost",
+        "scry"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/w/WardenOfTheInnerSky.java"
     }
   ]
 }

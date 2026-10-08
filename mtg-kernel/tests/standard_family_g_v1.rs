@@ -3,7 +3,7 @@
 #![cfg(feature = "standard-magezero-fixtures")]
 use mtg_kernel::card_def::{card_id_by_name, CardCapability, Keywords, Subtype, CARD_DEFS};
 use mtg_kernel::effect::EffectBooleanChoicePurpose;
-use mtg_kernel::engine::{self, Action, Decision};
+use mtg_kernel::engine::{self, Action, CostKind, Decision};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::{ManaColor, Pip};
@@ -124,6 +124,13 @@ const CARDS: &[(&str, &[Subtype], (i16, i16), Keywords, usize)] = &[
         (1, 2),
         Keywords::NONE,
         1,
+    ),
+    (
+        "Warden of the Inner Sky",
+        &[Subtype::Human, Subtype::Soldier],
+        (1, 2),
+        Keywords::NONE,
+        0,
     ),
     (
         "Unstoppable Slasher",
@@ -1349,4 +1356,88 @@ fn hired_claw_grows_once_a_turn_after_an_opponent_lost_life() {
     settled(&mut state);
     assert_eq!(state.objects.get(claw).counters.plus1_plus1, 1);
     assert!(!activatable(&mut state).contains(&(claw, 0)));
+}
+
+#[test]
+fn warden_flies_and_has_vigilance_with_three_counters() {
+    let mut state = ready(Step::Main1);
+    let warden = put(
+        &mut state,
+        PlayerId::P0,
+        "Warden of the Inner Sky",
+        Zone::Battlefield,
+    );
+    state.objects.get_mut(warden).counters.plus1_plus1 = 2;
+    assert!(!engine::has_effective_keyword(
+        &state,
+        warden,
+        Keywords::FLYING
+    ));
+    state.objects.get_mut(warden).counters.stun = 1;
+    assert!(engine::has_effective_keyword(
+        &state,
+        warden,
+        Keywords::FLYING
+    ));
+    assert!(engine::has_effective_keyword(
+        &state,
+        warden,
+        Keywords::VIGILANCE
+    ));
+}
+
+#[test]
+fn warden_taps_three_artifacts_or_creatures_to_grow_and_scry() {
+    let mut state = ready(Step::Main1);
+    let warden = put(
+        &mut state,
+        PlayerId::P0,
+        "Warden of the Inner Sky",
+        Zone::Battlefield,
+    );
+    let scout = put(&mut state, PlayerId::P0, "Cenote Scout", Zone::Battlefield);
+    // Two creatures are not enough.
+    assert!(!activatable(&mut state).contains(&(warden, 0)));
+
+    // A summoning-sick creature can still be tapped for the cost.
+    let sick = put(
+        &mut state,
+        PlayerId::P0,
+        "Novice Inspector",
+        Zone::Battlefield,
+    );
+    state.objects.get_mut(sick).summoning_sick = true;
+    let spare = put(&mut state, PlayerId::P0, "Hired Claw", Zone::Battlefield);
+    assert!(activatable(&mut state).contains(&(warden, 0)));
+    engine::step(&mut state, Action::ActivateAbility(warden, 0)).unwrap();
+    for pick in [warden, sick, scout] {
+        match next(&mut state) {
+            Decision::ChooseCostTargets {
+                cost_kind: CostKind::TapPermanents,
+                candidates,
+                ..
+            } => {
+                assert!(candidates.contains(&pick) && candidates.contains(&spare));
+                engine::step(&mut state, Action::ChooseCostTarget(pick)).unwrap();
+            }
+            other => panic!("expected a tap-cost pick, got {other:?}"),
+        }
+    }
+    let mut scried = false;
+    while let Some(decision) = settle(&mut state) {
+        scried = true;
+        match decision {
+            // Scry 1: keep the card on top.
+            Decision::ChooseEffectTargets {
+                can_finish: true, ..
+            } => engine::step(&mut state, Action::FinishEffectSelection).unwrap(),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    assert!(scried);
+    for tapped in [warden, sick, scout] {
+        assert!(state.objects.get(tapped).tapped);
+    }
+    assert!(!state.objects.get(spare).tapped);
+    assert_eq!(state.objects.get(warden).counters.plus1_plus1, 1);
 }

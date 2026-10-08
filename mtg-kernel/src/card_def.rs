@@ -903,6 +903,13 @@ pub enum CostComponent {
     /// controls or one creature card in their hand. A hand choice is
     /// publicly revealed and the exact incarnation is frozen on the spell.
     ChooseControlledCreatureOrRevealCreatureCardFromHand,
+    /// Tap `count` untapped permanents the payer controls matching `filter`
+    /// (Warden of the Inner Sky: "Tap three untapped artifacts and/or
+    /// creatures you control"). The source itself qualifies, and creatures
+    /// tap regardless of summoning sickness because this is not {T}.
+    /// Activations only; staged one pick at a time like
+    /// `SacrificeControlled`.
+    TapControlled { count: u8, filter: PermanentFilter },
 }
 
 /// Optional additional costs chosen while announcing a spell. The selected

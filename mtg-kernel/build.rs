@@ -2956,6 +2956,10 @@ enum AbilityCostRecipe {
         count: u8,
         filter: PermanentFilterRecipe,
     },
+    TapControlled {
+        count: u8,
+        filter: PermanentFilterRecipe,
+    },
     ReturnControlledUnblockedAttacker,
     /// An arbitrary printed mana cost parsed by the same canonical cost
     /// grammar as spell costs. Twisted Landscape's Cycling is the first
@@ -3017,6 +3021,9 @@ enum AbilityEffectRecipe {
     /// One +1/+1 counter on the ability's own source while it remains the
     /// same battlefield incarnation (Hired Claw).
     PutPlusOneCounterOnSource,
+    /// The same counter, then the controller scries this many (Warden of
+    /// the Inner Sky).
+    PutPlusOneCounterOnSourceThenScry(u8),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4595,6 +4602,18 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: Some(1),
         }],
+        "Warden of the Inner Sky" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::TapControlled {
+                count: 3,
+                filter: PermanentFilterRecipe::ArtifactOrCreature,
+            }],
+            effect: AbilityEffectRecipe::PutPlusOneCounterOnSourceThenScry(1),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: true,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         _ => &[],
     }
 }
@@ -4628,6 +4647,10 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
         ),
         AbilityCostRecipe::SacrificeControlled { count, filter } => format!(
             "CostComponent::SacrificeControlled {{ count: {count}, filter: {} }}",
+            permanent_filter_src(filter)
+        ),
+        AbilityCostRecipe::TapControlled { count, filter } => format!(
+            "CostComponent::TapControlled {{ count: {count}, filter: {} }}",
             permanent_filter_src(filter)
         ),
         AbilityCostRecipe::ReturnControlledUnblockedAttacker => {
@@ -4667,6 +4690,9 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
                 "sacrifice_controlled:{count}:{}",
                 permanent_filter_token(filter)
             )
+        }
+        AbilityCostRecipe::TapControlled { count, filter } => {
+            format!("tap_controlled:{count}:{}", permanent_filter_token(filter))
         }
         AbilityCostRecipe::ReturnControlledUnblockedAttacker => {
             "return_controlled_unblocked_attacker".to_string()
@@ -4752,6 +4778,9 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
         }
         AbilityEffectRecipe::PutPlusOneCounterOnSource => {
             "put_plus_one_counter_on_source".to_string()
+        }
+        AbilityEffectRecipe::PutPlusOneCounterOnSourceThenScry(count) => {
+            format!("put_plus_one_counter_on_source_then_scry:{count}")
         }
         AbilityEffectRecipe::AddPlusOnePlusOneCounters(count) => format!("add_plus_one_plus_one_counters:{count}"),
         AbilityEffectRecipe::SearchLibraryToBattlefieldTapped { filter } => format!(
@@ -4909,6 +4938,9 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
         }
         AbilityEffectRecipe::PutPlusOneCounterOnSource => {
             "ability_effect_put_plus_one_counter_on_source".to_string()
+        }
+        AbilityEffectRecipe::PutPlusOneCounterOnSourceThenScry(count) => {
+            format!("ability_effect_put_plus_one_counter_on_source_then_scry_{count}")
         }
         AbilityEffectRecipe::AddPlusOnePlusOneCounters(count) => {
             format!("ability_effect_add_plus_one_plus_one_counters_{count}")
@@ -5372,6 +5404,7 @@ fn standard_static_recipe_for(name: &str) -> &'static str {
         "Bloodletter of Aclazotz" => "opponent_life_loss_doubled_during_controller_turn",
         "Thalia, Guardian of Thraben" => "noncreature_spells_cost_generic_more:1",
         "Hired Claw" => "activation_0_only_if_opponent_lost_life_this_turn",
+        "Warden of the Inner Sky" => "self_keywords:flying+vigilance:three_or_more_counters",
         "Haughty Djinn" => {
             "cda_power:controller_graveyard_instant_sorcery_cards;controller_instant_sorcery_spells_cost_generic_less:1"
         }
@@ -6000,6 +6033,16 @@ fn codegen(cards: &[CardJson]) -> String {
             }
             AbilityEffectRecipe::PutPlusOneCounterOnSource => {
                 writeln!(out, "    EffectOp::AddPlusOneCounterToAbilitySource").unwrap();
+            }
+            AbilityEffectRecipe::PutPlusOneCounterOnSourceThenScry(count) => {
+                writeln!(out, "    EffectOp::Sequence(vec![").unwrap();
+                writeln!(out, "        EffectOp::AddPlusOneCounterToAbilitySource,").unwrap();
+                writeln!(
+                    out,
+                    "        EffectOp::Scry {{ player: PlayerRef::Controller, count: {count} }},"
+                )
+                .unwrap();
+                writeln!(out, "    ])").unwrap();
             }
             AbilityEffectRecipe::SearchLibraryToBattlefieldTapped { filter } => {
                 let filter = library_search_filter_src(filter);

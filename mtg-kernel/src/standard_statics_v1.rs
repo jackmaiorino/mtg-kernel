@@ -16,6 +16,21 @@ fn battlefield_definition_name(state: &GameState, id: ObjectId) -> Option<&'stat
     .then_some(definition.name)
 }
 
+fn total_counters(state: &GameState, id: ObjectId) -> i64 {
+    let counters = state.objects.get(id).counters;
+    [
+        i64::from(counters.plus1_plus1),
+        i64::from(counters.minus1_minus1),
+        i64::from(counters.minus0_minus1),
+        i64::from(counters.stun),
+        i64::from(counters.lore),
+        i64::from(counters.oil),
+    ]
+    .into_iter()
+    .map(|count| count.max(0))
+    .sum()
+}
+
 /// Keywords a permanent grants itself while a printed condition holds.
 pub(crate) fn conditional_self_keywords(state: &GameState, id: ObjectId) -> Keywords {
     let Some(name) = battlefield_definition_name(state, id) else {
@@ -25,6 +40,11 @@ pub(crate) fn conditional_self_keywords(state: &GameState, id: ObjectId) -> Keyw
     match name {
         // "This creature has first strike during your turn."
         "Razorkin Needlehead" if state.active_player == controller => Keywords::FIRST_STRIKE,
+        // "As long as this creature has three or more counters on it, it has
+        // flying and vigilance."
+        "Warden of the Inner Sky" if total_counters(state, id) >= 3 => {
+            Keywords(Keywords::FLYING.0 | Keywords::VIGILANCE.0)
+        }
         _ => Keywords::NONE,
     }
 }

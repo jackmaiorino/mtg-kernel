@@ -3606,7 +3606,8 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 sacrifice_lands_count += 1;
                 saw_source_changing_component = true;
             }
-            CostComponent::SacrificeControlled { count, .. } => {
+            CostComponent::SacrificeControlled { count, .. }
+            | CostComponent::TapControlled { count, .. } => {
                 if *count == 0 {
                     return false;
                 }
@@ -3864,6 +3865,10 @@ fn can_pay_components(
                 sacrificeable_controlled_permanents(player, *filter, state, &[]).len()
                     >= usize::from(*count)
             }
+            CostComponent::TapControlled { count, filter } => {
+                tappable_controlled_permanents(player, *filter, state, &[]).len()
+                    >= usize::from(*count)
+            }
             CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
                 checked_graveyard_exile_candidates(player, source, state, &[])
                     .is_some_and(|candidates| candidates.len() >= usize::from(*n))
@@ -3994,6 +3999,23 @@ fn pay_cost_components_with_x(
         }
         _ => None,
     });
+    let tap_controlled = components.iter().find_map(|component| match component {
+        CostComponent::TapControlled { count, filter } => Some((usize::from(*count), *filter)),
+        _ => None,
+    });
+    if let Some((needed, filter)) = tap_controlled {
+        let duplicate = object_cost_chosen
+            .iter()
+            .enumerate()
+            .any(|(index, id)| object_cost_chosen[..index].contains(id));
+        let tappable = tappable_controlled_permanents(player, filter, state, &[]);
+        if object_cost_chosen.len() != needed
+            || duplicate
+            || object_cost_chosen.iter().any(|id| !tappable.contains(id))
+        {
+            return false;
+        }
+    }
     if let Some((needed, filter)) = sacrifice_controlled {
         let duplicate = object_cost_chosen
             .iter()
@@ -4092,6 +4114,7 @@ fn pay_cost_components_with_x(
     }
     if sacrifice_needed.is_none()
         && sacrifice_controlled.is_none()
+        && tap_controlled.is_none()
         && graveyard_exile_needed.is_none()
         && return_filter.is_none()
         && !returns_unblocked_attacker
@@ -4116,7 +4139,7 @@ fn pay_cost_components_with_x(
     if tap_other_subtype.is_some() {
         reserved.extend(object_cost_chosen.iter().copied());
     }
-    if tap_filter.is_some() {
+    if tap_filter.is_some() || tap_controlled.is_some() {
         reserved.extend(object_cost_chosen.iter().copied());
     }
     let mana_plan = mana_cost.map(|cost| {
@@ -4152,6 +4175,12 @@ fn pay_cost_components_with_x(
             CostComponent::SacrificeControlled { count, .. } => {
                 debug_assert_eq!(object_cost_chosen.len(), usize::from(*count));
                 commit_sacrifice(state, object_cost_chosen);
+            }
+            CostComponent::TapControlled { count, .. } => {
+                debug_assert_eq!(object_cost_chosen.len(), usize::from(*count));
+                for &object in object_cost_chosen {
+                    event::propose_and_commit(state, ProposedEvent::tap(object));
+                }
             }
             CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
                 debug_assert_eq!(
@@ -4639,9 +4668,10 @@ fn sacrificeable_controlled_permanents(
 /// staged activations. Cast staging retains its frozen `ObjectId` wire shape,
 /// while an activation must reject a selected permanent that left and later
 /// returned before payment.
-fn activation_sacrifice_cost_candidates(
+fn activation_controlled_cost_candidates(
     player: PlayerId,
     filter: PermanentFilter,
+    tap: bool,
     state: &GameState,
     already_chosen: &[EffectObjectBinding],
 ) -> Vec<EffectObjectBinding> {
@@ -4649,7 +4679,12 @@ fn activation_sacrifice_cost_candidates(
         .iter()
         .map(|binding| binding.object)
         .collect::<Vec<_>>();
-    sacrificeable_controlled_permanents(player, filter, state, &already_chosen_ids)
+    let candidates = if tap {
+        tappable_controlled_permanents(player, filter, state, &already_chosen_ids)
+    } else {
+        sacrificeable_controlled_permanents(player, filter, state, &already_chosen_ids)
+    };
+    candidates
         .into_iter()
         .map(|object| {
             let live = state.objects.get(object);
@@ -4686,13 +4721,36 @@ fn controlled_permanent_sacrifice_in(
     })
 }
 
+/// Activation object costs paid by choosing `count` controlled permanents
+/// one at a time: `SacrificeControlled` and `TapControlled`. The flag says
+/// whether the chosen permanents are tapped rather than sacrificed.
 fn activation_permanent_sacrifice_needed(
     components: &[CostComponent],
 ) -> Option<(u8, PermanentFilter)> {
+    activation_controlled_object_cost(components).map(|(count, filter, _)| (count, filter))
+}
+
+fn activation_controlled_object_cost(
+    components: &[CostComponent],
+) -> Option<(u8, PermanentFilter, bool)> {
     components.iter().find_map(|component| match component {
-        CostComponent::SacrificeControlled { count, filter } => Some((*count, *filter)),
+        CostComponent::SacrificeControlled { count, filter } => Some((*count, *filter, false)),
+        CostComponent::TapControlled { count, filter } => Some((*count, *filter, true)),
         _ => None,
     })
+}
+
+/// Untapped controlled candidates for a `TapControlled` cost.
+fn tappable_controlled_permanents(
+    player: PlayerId,
+    filter: PermanentFilter,
+    state: &GameState,
+    already_chosen: &[ObjectId],
+) -> Vec<ObjectId> {
+    sacrificeable_controlled_permanents(player, filter, state, already_chosen)
+        .into_iter()
+        .filter(|&id| !state.objects.get(id).tapped)
+        .collect()
 }
 
 fn cost_kind_for_permanent_filter(filter: PermanentFilter) -> CostKind {
@@ -8747,11 +8805,12 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
                     .collect(),
             });
         }
-    } else if let Some((needed, filter)) = activation_permanent_sacrifice_needed(ability.cost) {
+    } else if let Some((needed, filter, tap)) = activation_controlled_object_cost(ability.cost) {
         if pending.object_cost_chosen.len() < usize::from(needed) {
-            let candidates = activation_sacrifice_cost_candidates(
+            let candidates = activation_controlled_cost_candidates(
                 pending.controller,
                 filter,
+                tap,
                 state,
                 &pending.object_cost_chosen,
             );
@@ -8769,7 +8828,11 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
             return Some(Decision::ChooseCostTargets {
                 player: pending.controller,
                 source: pending.source,
-                cost_kind: cost_kind_for_permanent_filter(filter),
+                cost_kind: if tap {
+                    CostKind::TapPermanents
+                } else {
+                    cost_kind_for_permanent_filter(filter)
+                },
                 remaining,
                 candidates: candidates
                     .into_iter()
@@ -8940,7 +9003,7 @@ pub(crate) fn validate_pending_activation(
 
     let return_filter = return_permanent_filter_in(ability.cost);
     let tap_cost_subtype = activation_tap_cost_subtype(ability.cost);
-    let sacrifice_cost = activation_permanent_sacrifice_needed(ability.cost);
+    let sacrifice_cost = activation_controlled_object_cost(ability.cost);
     let returns_unblocked_attacker = has_unblocked_attacker_return_cost(ability.cost);
     let interactive_families = usize::from(return_filter.is_some())
         + usize::from(tap_cost_subtype.is_some())
@@ -8994,7 +9057,7 @@ pub(crate) fn validate_pending_activation(
                 );
             }
         }
-    } else if let Some((needed, filter)) = sacrifice_cost {
+    } else if let Some((needed, filter, tap)) = sacrifice_cost {
         if pending.object_cost_chosen.len() > usize::from(needed) {
             return Err("pending activation has too many object-cost selections".to_string());
         }
@@ -9023,13 +9086,15 @@ pub(crate) fn validate_pending_activation(
                             &card_def::CARD_DEFS[live.card_def as usize],
                             filter,
                         )
+                        || (tap && live.tapped)
                 })
         }) {
             return Err("pending activation carries an illegal object-cost selection".to_string());
         }
-        let remaining = activation_sacrifice_cost_candidates(
+        let remaining = activation_controlled_cost_candidates(
             pending.controller,
             filter,
+            tap,
             state,
             &pending.object_cost_chosen,
         );
@@ -13289,11 +13354,13 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                 .object_cost_chosen
                 .push(binding);
             return Ok(());
-        } else if let Some((needed, filter)) = activation_permanent_sacrifice_needed(ability.cost) {
+        } else if let Some((needed, filter, tap)) = activation_controlled_object_cost(ability.cost)
+        {
             if pending.object_cost_chosen.len() < usize::from(needed) {
-                let candidates = activation_sacrifice_cost_candidates(
+                let candidates = activation_controlled_cost_candidates(
                     pending.controller,
                     filter,
+                    tap,
                     state,
                     &pending.object_cost_chosen,
                 );
