@@ -167,6 +167,26 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "192 GiB"):
                 dispatch.validate_storage(storage)
 
+    def test_storage_walk_counts_a_file_deleted_mid_walk_as_freed(self):
+        # Another job sharing the accounting root removes its outputs between is_file and stat.
+        storage = self.request(2)["storage"]
+        doomed = self.root/"sibling/native/raced-episode.json"
+        doomed.parent.mkdir(parents=True)
+        doomed.write_bytes(b"x" * 4096)
+        is_file = Path.is_file
+
+        def racing_is_file(path, *args, **kwargs):
+            answer = is_file(path, *args, **kwargs)
+            if path.name == doomed.name and answer:  # the walk sees resolved paths
+                path.unlink()
+            return answer
+
+        with patch.object(dispatch.shutil, "disk_usage", return_value=type("Disk", (), {"free": 100*1024**3})()):
+            with patch.object(Path, "is_file", racing_is_file):
+                raced = dispatch.validate_storage(storage, 0)["logical_bytes"]
+            self.assertFalse(doomed.exists())
+            self.assertEqual(raced, dispatch.validate_storage(storage, 0)["logical_bytes"])
+
     def test_evaluation_serial_payload_has_no_parallel_field(self):
         config = {"mode": "collect_parallel", "workers": 4, "source": {},
                   "output_directory": str(self.root/"evaluation"),

@@ -149,7 +149,11 @@ def validate_storage(storage, extra=None):
             for path in root.rglob("*"):
                 require(not path.is_symlink() and not path.is_junction(), "accounting tree contains a link")
                 if path.is_file():
-                    logical += path.stat().st_size
+                    try:
+                        logical += path.stat().st_size
+                    except FileNotFoundError:
+                        # Jobs sharing this root delete their own outputs; a file gone mid-walk is freed space.
+                        pass
         anchor = root
         while not anchor.exists():
             anchor = anchor.parent
