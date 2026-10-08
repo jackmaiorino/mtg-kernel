@@ -49,6 +49,8 @@ The 5-color deck's legends (family H) wait until those land.
 
 ### D. New set keywords (2022-2025) (32 cards; 13 needed by a mono deck)
 
+Supported as of `kernel_carddb_standard/v4` except Monstrous Rage (waits on the FDN creature-Aura batch), Zoetic Glyph (waits on family E's artifact-becomes-creature primitive) and Collector's Cage (needs face-down exile). Flourishing Bloom-Kin is hard-cast only. See `docs/design/standard_family_d_keywords_v1.md`.
+
 - **Offspring**: Pawpatch Recruit, Darkstar Augur, Iridescent Vinelasher (mono), Manifold Mouse
 - **Valiant / prowess**: Emberheart Challenger (mono), Heartfire Hero, Monastery Swiftspear
 - **Plot**: Aloe Alchemist (mono), Slickshot Show-Off
