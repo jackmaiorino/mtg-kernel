@@ -2902,6 +2902,520 @@
       "mechanics": [],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/GoblinToken.java",
       "is_token": true
+    },
+    {
+      "name": "Sure Strike",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "temporary_power_change",
+        "grant_first_strike"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SureStrike.java"
+    },
+    {
+      "name": "Snakeskin Veil",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "plus_one_counter",
+        "grant_hexproof"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SnakeskinVeil.java"
+    },
+    {
+      "name": "Seismic Rupture",
+      "engine_capability": "full",
+      "mana_cost": "{2}{R}",
+      "mana_value": 3,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "damage_each_creature"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SeismicRupture.java"
+    },
+    {
+      "name": "Boltwave",
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "damage_each_opponent"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/Boltwave.java"
+    },
+    {
+      "name": "Day of Judgment",
+      "engine_capability": "full",
+      "mana_cost": "{2}{W}{W}",
+      "mana_value": 4,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "destroy_all_creatures"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DayOfJudgment.java"
+    },
+    {
+      "name": "Incinerating Blast",
+      "engine_capability": "full",
+      "mana_cost": "{4}{R}",
+      "mana_value": 5,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "damage_target_creature",
+        "may_discard_then_draw"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/i/IncineratingBlast.java"
+    },
+    {
+      "name": "Slagstorm",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}{R}",
+      "mana_value": 3,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "modal",
+        "damage_each_creature",
+        "damage_each_player"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/Slagstorm.java"
+    },
+    {
+      "name": "Abrade",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "modal",
+        "damage_target_creature",
+        "artifact_destruction"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/Abrade.java"
+    },
+    {
+      "name": "Preposterous Proportions",
+      "engine_capability": "full",
+      "mana_cost": "{5}{G}{G}",
+      "mana_value": 7,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "boost_controlled_creatures",
+        "grant_vigilance"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/p/PreposterousProportions.java"
+    },
+    {
+      "name": "Bake into a Pie",
+      "engine_capability": "full",
+      "mana_cost": "{2}{B}{B}",
+      "mana_value": 4,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "destroy_target_creature",
+        "create_food_token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BakeIntoAPie.java"
+    },
+    {
+      "name": "Hero's Downfall",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "destroy_target_creature_or_planeswalker"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HerosDownfall.java"
+    },
+    {
+      "name": "Broken Wings",
+      "engine_capability": "full",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "destroy_artifact_enchantment_or_flying_creature"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BrokenWings.java"
+    },
+    {
+      "name": "Make Your Move",
+      "engine_capability": "full",
+      "mana_cost": "{2}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "destroy_artifact_enchantment_or_power_four_creature"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MakeYourMove.java"
+    },
+    {
+      "name": "Meteor Golem",
+      "engine_capability": "full",
+      "mana_cost": "{7}",
+      "mana_value": 7,
+      "colors": [],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Golem"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "etb_trigger",
+        "destroy_opponent_nonland_permanent"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MeteorGolem.java"
+    },
+    {
+      "name": "Reclamation Sage",
+      "engine_capability": "full",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elf",
+        "Shaman"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "etb_trigger",
+        "may_destroy_artifact_enchantment"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/ReclamationSage.java"
+    },
+    {
+      "name": "Fanatical Firebrand",
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Goblin",
+        "Pirate"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "haste",
+        "activated_sacrifice_self",
+        "damage_any_target"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FanaticalFirebrand.java"
+    },
+    {
+      "name": "Dauntless Veteran",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "attack_trigger",
+        "boost_controlled_creatures"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DauntlessVeteran.java"
+    },
+    {
+      "name": "Crackling Cyclops",
+      "engine_capability": "full",
+      "mana_cost": "{2}{R}",
+      "mana_value": 3,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Cyclops",
+        "Wizard"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "cast_noncreature_trigger",
+        "temporary_power_change"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CracklingCyclops.java"
     }
   ]
 }

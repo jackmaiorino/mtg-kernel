@@ -20,9 +20,9 @@ additional fixture cards. After fixture batches A and B and the combat and
 legend-rule, targeted-spell, counter-creature, life-gain, draw, Horde, Koma, Kiora,
 Prowler, Rebuke, Voyage, Scavenging, Armor and Witness slices and the first
 milestone-5 keyword-creature, gainland/life-gain, trigger/trick,
-equipment/library-search and token/Aura batches, 90 reference names have full
-registry support, one reference planeswalker is partial and 195 remain
-missing. Both original decks resolve all 40
+equipment/library-search, token/Aura and removal/combat-trick batches, 108
+reference names have full registry support, one reference planeswalker is
+partial and 177 remain missing. Both original decks resolve all 40
 mainboard copies, covering all 39 unique fixture names. Dwynen includes its Elf bonuses, attack
 trigger and a real resumable legend-rule choice.
 Printed collector numbers are not a safe
@@ -34,7 +34,7 @@ unchanged 192-definition Pauper registry. The importer combines both files in
 that order and reports their separate SHA-256s. Build the gameplay binary with
 `cargo build --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_env`.
 Default builds retain the Pauper catalog and its v34 identity; the
-Limited feature selects the appended definitions and their v56 identity.
+Limited feature selects the appended definitions and their v57 identity.
 Earlier FDN catalog tuples remain readable and are rejected for mutation
 when they do not match the actual build.
 
@@ -99,6 +99,10 @@ resolves fully and is excluded from original-deck coverage counts. See
 
 `FDN_reference_tokens_auras.dck` covers seven token makers and two creature
 Auras; see `docs/design/fdn_tokens_auras_v1.md`.
+
+`FDN_reference_removal_tricks.dck` covers thirteen removal, damage and
+combat-trick spells and five creatures with matching triggers or abilities;
+see `docs/design/fdn_removal_tricks_v1.md`.
 
 `FDN_reference_planeswalker.dck` is a synthetic correctness fixture for
 Bite Down's planeswalker recipient. Ajani has entry loyalty and damage

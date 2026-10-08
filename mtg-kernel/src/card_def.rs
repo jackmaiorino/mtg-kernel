@@ -264,6 +264,8 @@ pub enum Subtype {
     Golem,
     /// Appended for Eager Trufflesnout; existing ids remain fixed.
     Boar,
+    /// Appended for Crackling Cyclops; existing ids remain fixed.
+    Cyclops,
 }
 
 impl Subtype {
@@ -367,6 +369,8 @@ impl Subtype {
         Subtype::Golem,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Boar,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Cyclops,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -647,6 +651,15 @@ pub enum TargetSpec {
     ControlledCreatureThenOpponentCreatureOrPlaneswalker,
     AttackingOrBlockingCreature,
     NonlandPermanentCardInOwnGraveyardManaValueAtMost(u16),
+    /// One creature or planeswalker on either battlefield (Hero's Downfall).
+    CreatureOrPlaneswalker,
+    /// One artifact, enchantment, or creature with flying (Broken Wings).
+    ArtifactEnchantmentOrFlyingCreature,
+    /// One artifact, enchantment, or creature with power 4 or greater
+    /// (Make Your Move).
+    ArtifactEnchantmentOrCreaturePowerAtLeastFour,
+    /// One nonland permanent an opponent controls (Meteor Golem).
+    OpponentNonlandPermanent,
 }
 
 impl TargetSpec {
@@ -697,6 +710,10 @@ impl TargetSpec {
             TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker => 39,
             TargetSpec::AttackingOrBlockingCreature => 40,
             TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_) => 41,
+            TargetSpec::CreatureOrPlaneswalker => 42,
+            TargetSpec::ArtifactEnchantmentOrFlyingCreature => 43,
+            TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour => 44,
+            TargetSpec::OpponentNonlandPermanent => 45,
         }
     }
 }
@@ -1838,11 +1855,11 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 288 (token makers and creature Auras).
+        // batches append through id 306 (removal, damage and combat tricks).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                289
+                307
             } else {
                 192
             }
@@ -1902,6 +1919,13 @@ mod tests {
                 39,
             ),
             (TargetSpec::AttackingOrBlockingCreature, 40),
+            (TargetSpec::CreatureOrPlaneswalker, 42),
+            (TargetSpec::ArtifactEnchantmentOrFlyingCreature, 43),
+            (
+                TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour,
+                44,
+            ),
+            (TargetSpec::OpponentNonlandPermanent, 45),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);
@@ -1930,8 +1954,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v56_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x280f_ffb0_3aa0_3e98;
+    fn card_db_hash_v57_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x8720_c2e3_31fc_b66b;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
