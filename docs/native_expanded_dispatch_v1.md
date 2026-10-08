@@ -153,7 +153,8 @@ The public and reservation-owned private entry both enforce these guards.
 Fresh output roots are mandatory; this launcher never silently retries formal
 native execution. Completion is a process result and durable receipt, not a
 claim of playing strength. Source-dependent endpoint validation and statistical
-analysis remain in the accepted research lane. No paid launch path is provided.
+analysis remain in the accepted research lane. No paid launch path is provided;
+a `runpod` placement only runs on an already leased pod under its guard (below).
 
 ## Host reservation on Linux
 
@@ -179,5 +180,54 @@ session keep the reservation held, but a descendant that called `setsid` itself
 is no longer seen once the supervisor is gone. Absence of the recorded
 processes is therefore weaker evidence for reclaim. Lock exclusion binds only
 processes that use this module, since `flock` is advisory where Windows share
-modes are enforced. This dispatcher's own CPU affinity, priority and memory
-sampling still use Win32 calls, so it does not yet run on Linux.
+modes are enforced.
+
+## Dispatch on Linux and the `runpod` placement
+
+Windows behavior and records are unchanged. On Linux the dispatcher binds the
+placement's CPUs with `sched_setaffinity`, starts the native child at nice 10
+(set before exec, so every native thread inherits it) and samples `/proc`.
+Telemetry keeps the Windows fields: `rss_bytes` is VmRSS (the resident set,
+the working-set counterpart; 0 once the child has exited), `cpu_seconds` is
+utime+stime of all threads. The busy pattern adds `^trainer$` and the pinned
+binary's file name (Linux image names have no `.exe`). Linux paths have no
+drive, so their `projected_volume_bytes` key is `""`.
+
+A Linux `runtime.json` adds `"platform": "linux-x86_64"` and `"libraries"`,
+`{path, sha256}` for `ld-linux-x86-64.so.2`, `libc.so.6`, `libm.so.6` and
+`libgcc_s.so.1` (`f32::tanh` goes through libm). Before launch every pin is
+verified and a non-empty `LD_*` or `GLIBC_TUNABLES` is refused; once the loader
+has mapped the four libraries, `/proc/<child>/maps` is read once and each must
+resolve (realpath) to its pinned file, else the child is killed. The runtime
+identity adds the platform and library SHA256s, so Linux and Windows
+qualifications never match; a Windows identity is exactly as before, and a
+runtime runs only on its own platform.
+
+`runpod` is eligible only on Linux with `RUNPOD_POD_ID` set and
+`MTG_LEASE_GUARD_DIR` naming the pod's guard state directory
+(`phase1_cloud/lease_guard.py --state`), where the operator also places the
+guard's exact lease as `lease.json` (it must pass `lease_guard.validate`).
+`guard.json` must name this pod and lease, be at most three poll intervals
+plus 30 s old (two provider timeouts), have no `latched`, `release_epoch` or
+`stop-request.json`, report `provider_ok` and `allow_new_dispatch`, and leave
+the work (`wall_seconds`, or a smaller `lease_work_seconds`) before
+`deadline_epoch - recovery_seconds`, when the guard latches `deadline`. The
+public entry and the reserved launch both check. desktop and computehost are
+refused on Linux, `runpod` on Windows. The dispatcher never rents compute and
+does not write `progress.json`; its caller keeps the guard fed.
+
+`nine_deck_campaign_v1.py` on `runpod` checks before every block attempt that
+the guard leaves 1.25x the longest block measured on runpod (else
+`lease_block_seconds`, else `wall_seconds`), plus 600 s for collection and
+retention, plus `recovery_seconds`, and passes the estimate as
+`lease_work_seconds`. Otherwise the run stops at that boundary with
+`stop_reason` `lease_time_exhausted` (or `lease_guard_refused: ...`) and the
+next lease resumes there; a running block is never stopped for this. The driver
+atomically rewrites `<guard>/progress.json` every min(15 s,
+`work_idle_seconds`/3) and after each block: `last_productive_epoch` is the
+last block completion (else driver start), `last_activity_epoch` advances while
+native CPU time grows or the driver itself dispatches, archives or finishes a
+block, `queued_work` equals `native_alive`, and the final record is
+`finished: true`, so the guard releases the pod after `recovery_seconds` (or
+after 90 s as `controller_lost` if the driver dies). Keep campaign state,
+checkpoints, cold and retained roots on the network volume.

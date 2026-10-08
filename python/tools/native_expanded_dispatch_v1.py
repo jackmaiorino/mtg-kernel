@@ -3,6 +3,8 @@
 Qualification runs one complete initial update, or at most 20 evaluation games.
 Production requires compatible measured serial/parallel receipts and the fastest
 eligible allocation. The runtime binding is independent of the launcher's commit.
+Runs on the two Windows hosts and, as the ``runpod`` placement, on a rented
+Linux pod with live lease-guard evidence (docs/native_expanded_dispatch_v1.md).
 """
 from __future__ import annotations
 
@@ -16,6 +18,7 @@ import math
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -27,7 +30,17 @@ SCHEMA = "native-expanded-cpu-dispatch/v1"
 CHOICE = "native-expanded-cpu-allocation/v1"
 # The compute host's machine name is site configuration, not a public constant.
 HOSTS = {"desktop": "DESKTOP-DJ1C40R", "computehost": os.environ.get("COMPUTE_HOST_NAME", "COMPUTEHOST").upper()}
+PLACEMENTS = ("desktop", "computehost", "runpod")
 CAP = 192 * 1024**3
+WINDOWS = os.name == "nt"
+# A Linux runtime also pins the system libraries its output bits depend on
+# (f32::tanh goes through libm): phase1_cloud/runtime_observation.LIBRARIES.
+PLATFORM = "linux-x86_64"
+LIBRARIES = ("ld-linux-x86-64.so.2", "libc.so.6", "libm.so.6", "libgcc_s.so.1")
+# runpod: the pod's resident guard state (phase1_cloud/lease_guard.py --state),
+# holding its guard.json and a copy of its lease as lease.json.
+LEASE_GUARD_ENV = "MTG_LEASE_GUARD_DIR"
+PROC = Path("/proc")
 
 
 @lru_cache(maxsize=16)
@@ -45,8 +58,12 @@ def inference_shape(source):
 
 
 def runtime_identity(runtime):
-    return {key: runtime[key] for key in ("engine_commit", "tracked_tree_sha256")} | {
+    identity = {key: runtime[key] for key in ("engine_commit", "tracked_tree_sha256")} | {
         "binary_sha256": runtime["binary"]["sha256"]}
+    if "platform" in runtime:  # Linux only, so never equal to a Windows identity
+        identity |= {"platform": runtime["platform"],
+                     "library_sha256": {name: item["sha256"] for name, item in runtime["libraries"].items()}}
+    return identity
 
 
 def artifact_reader(mappings):
@@ -172,18 +189,78 @@ def runtime_for(request, resolve=checked):
     runtime = read(resolve(request["runtime"]))
     require(len(runtime["engine_commit"]) == 40 and len(runtime["tracked_tree_sha256"]) == 64,
             "missing compiled runtime identity")
+    require("platform" not in runtime or runtime["platform"] == PLATFORM
+            and sorted(runtime["libraries"]) == sorted(LIBRARIES)
+            and all(item["path"].startswith("/") and len(item["sha256"]) == 64
+                    for item in runtime["libraries"].values()), "Linux runtime needs loader/libc/libm/libgcc_s pins")
     resolve(runtime["binary"])
     return runtime
+
+
+def host_runtime(runtime):
+    """A Linux runtime runs only on Linux with its pinned libraries; a Windows one only on Windows."""
+    require(runtime.get("platform") == (None if WINDOWS else PLATFORM), "runtime platform differs from this host")
+    if not WINDOWS:
+        require(sys.platform.startswith("linux") and platform.machine() == "x86_64",
+                "runtime platform differs from this host")
+        for item in runtime["libraries"].values():
+            checked(item)
+        # An interposed or redirected library would change native output bits unseen.
+        require(not any(value and (name.startswith("LD_") or name == "GLIBC_TUNABLES")
+                        for name, value in os.environ.items()), "dynamic loader environment override")
+
+
+def lease_guard():
+    """phase1_cloud/lease_guard.py (its modules import their siblings by bare name)."""
+    folder = str(Path(__file__).resolve().parent / "phase1_cloud")
+    if folder not in sys.path:
+        sys.path.append(folder)
+    import lease_guard
+    return lease_guard
+
+
+def runpod_lease(work_seconds, now=None):
+    """Lease evidence for a runpod placement: this Linux pod (RUNPOD_POD_ID), whose
+    resident guard in $MTG_LEASE_GUARD_DIR is fresh, unlatched, provider- and
+    funds-verified, has no stop request, and leaves work_seconds before the
+    lease deadline less recovery_seconds (when the guard latches 'deadline')."""
+    now = time.time() if now is None else now
+    pod, folder = os.environ.get("RUNPOD_POD_ID"), os.environ.get(LEASE_GUARD_ENV)
+    require(not WINDOWS and sys.platform.startswith("linux") and pod and folder,
+            "runpod placement needs this pod's lease guard")
+    folder = Path(folder)
+    lease, guard = read(folder/"lease.json"), read(folder/"guard.json")
+    lease_guard().validate(lease)
+    require(guard["pod_id"] == pod and guard["name"] == lease["name"], "lease guard belongs to another pod")
+    # The guard rewrites guard.json every poll, after up to two 15 s provider requests.
+    require(-5 <= now - guard["epoch"] <= 3 * lease["poll_seconds"] + 30, "lease guard is stale")
+    require(not guard["latched"] and guard["release_epoch"] is None and guard["provider_ok"] is True
+            and guard["allow_new_dispatch"] is True and not (folder/"stop-request.json").exists(),
+            "lease guard has stopped new work")
+    available = lease["deadline_epoch"] - lease["recovery_seconds"] - now
+    require(available >= positive(work_seconds, "lease work seconds"), "lease time exhausted")
+    return {"pod_id": pod, "lease": lease["name"], "available_seconds": available}
+
+
+def require_host(request):
+    """desktop/computehost only on that Windows machine; runpod only on its own leased pod."""
+    host = request["placement"]["host"]
+    require(host in PLACEMENTS, "no paid or unknown placement")
+    if host == "runpod":
+        wall = positive(request["wall_seconds"], "wall-time limit")
+        runpod_lease(min(positive(request.get("lease_work_seconds", wall), "lease work seconds"), wall))
+    else:
+        require(WINDOWS and HOSTS[host] == platform.node().upper(), "wrong target host")
 
 
 def validate_request(request, qualification):
     require(request["schema"] == SCHEMA, "unsupported request")
     require(request["kind"] in ("training", "evaluation"), "unsupported native workload")
     runtime = runtime_for(request)
+    host_runtime(runtime)
     config = read(checked(request["config"]))
     placement = request["placement"]
-    require(placement["host"] in HOSTS, "no paid or unknown placement")
-    require(HOSTS[placement["host"]] == platform.node().upper(), "wrong target host")
+    require_host(request)
     workers = placement["workers"]
     require(type(workers) is int and 1 <= workers <= 64, "invalid worker count")
     cpus = placement["cpu_affinity"]
@@ -345,7 +422,7 @@ def require_choice(path, request, verify_outputs=False):
         require(0 <= age <= 86400 and type(status["eligible"]) is bool and status["reason"],
                 "stale or incomplete placement inventory")
         if status["eligible"]:
-            require(host in HOSTS and status["cpu_affinity"], "paid/unknown or empty eligible placement")
+            require(host in PLACEMENTS and status["cpu_affinity"], "paid/unknown or empty eligible placement")
             eligible.add(host)
     candidates, worker_counts, fingerprints = [], {}, {}
     for entry in choice["qualifications"]:
@@ -431,6 +508,10 @@ def require_choice(path, request, verify_outputs=False):
 
 
 def set_affinity(cpus):
+    if not WINDOWS:  # inherited by the native child
+        os.sched_setaffinity(0, cpus)
+        require(os.sched_getaffinity(0) == set(cpus), "cannot bind eligible CPU affinity")
+        return
     import ctypes
     kernel = ctypes.windll.kernel32
     kernel.GetCurrentProcess.restype = ctypes.c_void_p
@@ -440,6 +521,14 @@ def set_affinity(cpus):
 
 
 def process_sample(child):
+    if not WINDOWS:
+        # VmRSS is the resident set (Windows: working set), absent once the child
+        # has exited; utime+stime sum every thread, as GetProcessTimes does.
+        status = (PROC/str(child.pid)/"status").read_text()
+        rss = next((int(line.split()[1]) * 1024 for line in status.splitlines() if line.startswith("VmRSS:")), 0)
+        fields = (PROC/str(child.pid)/"stat").read_text().rsplit(")", 1)[1].split()
+        return {"at_unix": time.time(), "pid": child.pid, "rss_bytes": rss,
+                "cpu_seconds": (int(fields[11]) + int(fields[12])) / os.sysconf("SC_CLK_TCK")}
     import ctypes
     from ctypes import wintypes
     handle = wintypes.HANDLE(int(child._handle))
@@ -455,6 +544,37 @@ def process_sample(child):
             "cannot read owned native CPU time")
     return {"at_unix": time.time(), "pid": child.pid, "rss_bytes": memory.rss,
             "cpu_seconds": sum((t.dwHighDateTime << 32) + t.dwLowDateTime for t in times[2:]) / 1e7}
+
+
+def require_mapped_libraries(child, runtime, timeout=30.0):
+    """One /proc/<pid>/maps observation, once the loader has mapped all four pinned
+    libraries: each mapping must resolve to its pinned file, else the launch fails."""
+    pinned = {name: os.path.realpath(item["path"]) for name, item in runtime["libraries"].items()}
+    names = {Path(real).name: name for name, real in pinned.items()} | {name: name for name in pinned}
+    deadline = time.monotonic() + timeout
+    while True:
+        mapped = {}
+        for line in (PROC/str(child.pid)/"maps").read_text().splitlines():
+            parts = line.split(maxsplit=5)
+            name = names.get(Path(parts[-1].removesuffix(" (deleted)")).name) if len(parts) == 6 else None
+            if name:
+                mapped.setdefault(name, set()).add(parts[-1])
+        if set(mapped) == set(pinned):
+            break
+        require(child.poll() is None and time.monotonic() < deadline, "pinned runtime libraries were not mapped")
+        time.sleep(0.01)
+    require(all({os.path.realpath(path) for path in paths} == {pinned[name]} for name, paths in mapped.items()),
+            "mapped runtime library differs from its pin")
+    return mapped
+
+
+def busy_pattern(binary=None):
+    """Image names that make the host busy. Linux image names carry no .exe, so
+    there the pinned binary's own file name joins the pattern."""
+    pattern = r"native_expanded_training|expanded_deck_training|cargo|rustc|trainer\.exe"
+    if WINDOWS:
+        return pattern
+    return pattern + r"|^trainer$" + ("|^" + re.escape(Path(binary).name) + "$" if binary else "")
 
 
 def execute(request_path, qualification):
@@ -480,12 +600,16 @@ def execute(request_path, qualification):
     failure = None
     with (root/"stdout.jsonl").open("x") as stdout, (root/"stderr.log").open("x") as stderr, \
             (root/"telemetry.jsonl").open("x") as telemetry:
-        child = subprocess.Popen(command, stdout=stdout, stderr=stderr,
-                                 creationflags=subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW)
+        # Linux: nice 10 before exec, so every native thread inherits it.
+        options = ({"creationflags": subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW}
+                   if WINDOWS else {"preexec_fn": lambda: os.nice(10)})
+        child = subprocess.Popen(command, stdout=stdout, stderr=stderr, **options)
         reservations.record_descendant(token, child.pid)
         write(root/"started.json", {"pid": child.pid, "started_unix": time.time(),
                                     "placement": request["placement"], "request": pin(request_path)})
         try:
+            if not WINDOWS:
+                require_mapped_libraries(child, runtime)
             while child.poll() is None:
                 remaining = request["wall_seconds"] - (time.monotonic() - started)
                 require(remaining > 0, "native wall-time limit exceeded")
@@ -564,7 +688,7 @@ def main():
               "selected": selected, "outputs_verified": True, "launcher": pin(__file__)})
         print(json.dumps(selected))
     else:
-        validate_request(request, qualification)
+        _, runtime = validate_request(request, qualification)
         if not qualification:
             require_choice(request["choice"], request)
         import host_reservation_v1 as reservations
@@ -574,7 +698,7 @@ def main():
             command=[sys.executable, "-B", str(Path(__file__).resolve()), "_" + args.action, str(args.request)]
                     + ["--compute-host-name", HOSTS["computehost"]],
             cwd=str(Path(__file__).resolve().parents[2]),
-            busy_pattern=r"native_expanded_training|expanded_deck_training|cargo|rustc|trainer\.exe")
+            busy_pattern=busy_pattern(runtime["binary"]["path"]))
         print(json.dumps(result))
 
 

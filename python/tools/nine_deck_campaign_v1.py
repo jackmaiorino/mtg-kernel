@@ -21,6 +21,15 @@ Design rules applied here (collab LANES/nine-deck-baseline-design-20261007/DESIG
   ``cold_keep_blocks`` blocks of each run. Every deletion is logged in the
   campaign's PRUNE manifest.
 
+On a rented pod (placement ``runpod``; RUNPOD_POD_ID and MTG_LEASE_GUARD_DIR
+set, see docs/native_expanded_dispatch_v1.md) a block starts only while the
+pod's lease guard leaves its estimated duration (1.25x the longest block
+measured on runpod, else ``lease_block_seconds``, else ``wall_seconds``) plus
+LEASE_MARGIN_SECONDS and the lease's recovery_seconds. Otherwise the run stops
+at that block boundary with ``stop_reason`` (``lease_time_exhausted``) and
+resumes there on the next lease. The driver keeps the guard's progress.json
+fresh and marks it finished when it exits.
+
 CLI:
   launch --campaign C.json --runs r1,r2   take the host reservation and start ``run``
   run    --campaign C.json --runs r1,r2   drive runs (inside a held reservation)
@@ -31,6 +40,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -41,6 +51,7 @@ import time
 from datetime import datetime, timezone
 
 import host_reservation_v1 as reservations
+import native_expanded_dispatch_v1 as native_dispatch
 import nine_deck_baseline_v1 as ndb
 import nine_deck_exposure_collector_v1 as collector
 
@@ -52,6 +63,9 @@ INVALIDITY_MARKERS = ("non-natural", "non_natural", "nonnatural", "not finite", 
 SMALL_RECORDS = ("complete.json", "update.json", "collection.json", "non-natural.json", "collect-command.json",
                  "update-command.json", "update-input.json", "restarts.log")
 LOCK = threading.Lock()
+HEARTBEAT_SECONDS = 15  # progress.json refresh, under the guard's 90 s controller-lost limit
+LEASE_MARGIN_SECONDS = 600  # exposure collection, retention and pruning after a block's native part
+ESTIMATE_FACTOR = 1.25  # block times vary with game lengths
 
 
 def now() -> str:
@@ -99,6 +113,7 @@ class Campaign:
         self.exposure = Path(roots["exposure"])
         self.prune_log = self.state / "PRUNE.jsonl"
         self.events = self.state / "events.jsonl"
+        self.lease = None  # LeaseProgress while ``run`` drives a runpod campaign
 
     def hot(self, run: str) -> Path:
         return Path(self.raw["roots"]["hot_by_run"].get(run, self.raw["roots"]["hot"]))
@@ -139,13 +154,109 @@ def block_config(campaign: Campaign, run: str, block: int, state: dict, native: 
     return ndb.block_config(spec)
 
 
-def request_for(campaign: Campaign, run: str, block: int, config_pin: dict, root: Path, cold: Path) -> dict:
+def request_for(campaign: Campaign, run: str, block: int, config_pin: dict, root: Path, cold: Path,
+                lease_seconds: float | None = None) -> dict:
     raw = campaign.raw
-    return {"schema": "native-expanded-cpu-dispatch/v1", "kind": "training", "lane": raw["lane"],
-            "runtime": raw["runtime"], "config": config_pin, "root": str(root), "cold_root": str(cold),
-            "placement": raw["placement"], "storage": raw["storage"], "wall_seconds": raw["wall_seconds"],
-            "schedule_family": "permuted-units-v1", "non_natural_tolerance": ndb.FROZEN["max_non_natural_episode_fraction"],
-            "choice": raw["choice"], "choice_verification": raw["choice_verification"]}
+    request = {"schema": "native-expanded-cpu-dispatch/v1", "kind": "training", "lane": raw["lane"],
+               "runtime": raw["runtime"], "config": config_pin, "root": str(root), "cold_root": str(cold),
+               "placement": raw["placement"], "storage": raw["storage"], "wall_seconds": raw["wall_seconds"],
+               "schedule_family": "permuted-units-v1", "non_natural_tolerance": ndb.FROZEN["max_non_natural_episode_fraction"],
+               "choice": raw["choice"], "choice_verification": raw["choice_verification"]}
+    if lease_seconds is not None:  # the work the dispatcher's lease check covers on runpod
+        request["lease_work_seconds"] = math.ceil(lease_seconds)
+    return request
+
+
+def block_estimate(campaign: Campaign) -> float:
+    """1.25x the longest block measured on runpod (dispatch to archived native
+    output), else the configured ``lease_block_seconds``, else ``wall_seconds``."""
+    measured = [attempt["seconds"] for name in ndb.RUNS for entry in campaign.run_state(name)["blocks"].values()
+                for attempt in entry["attempts"] if attempt.get("host") == "runpod" and attempt.get("seconds")]
+    if measured:
+        return ESTIMATE_FACTOR * max(measured)
+    return campaign.raw.get("lease_block_seconds", campaign.raw["wall_seconds"])
+
+
+def lease_stop(estimate: float) -> str | None:
+    """None while the pod's lease guard admits a block of ``estimate`` seconds plus margin."""
+    try:
+        native_dispatch.runpod_lease(estimate + LEASE_MARGIN_SECONDS)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        return "lease_time_exhausted" if str(error) == "lease time exhausted" else f"lease_guard_refused: {error}"
+    return None
+
+
+def native_ticks(root: Path) -> int | None:
+    """None outside a block's native part, else its native CPU clock ticks (-1 once unreadable)."""
+    if not (root / "started.json").exists() or (root / "execution.json").exists():
+        return None
+    try:
+        pid = json.loads((root / "started.json").read_text(encoding="utf-8"))["pid"]
+        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+        return -1 if fields[0] in ("Z", "X") else int(fields[11]) + int(fields[12])
+    except (OSError, ValueError, KeyError, IndexError):
+        return -1
+
+
+class LeaseProgress:
+    """progress.json for the pod's resident lease guard (phase1_cloud/lease_guard.py).
+
+    decision() latches controller_lost once the record is over 90 s old and
+    native_work_stalled_or_idle after work_idle_seconds without activity, so it is
+    rewritten every min(15 s, work_idle_seconds / 3). Activity is advancing native
+    CPU time, or the driver dispatching, archiving or finishing a block.
+    last_productive_epoch is the latest block completion (else this driver's
+    start, never before the lease). queued_work follows native_alive, so the gap
+    between blocks is not native_worker_lost. The last record says finished.
+    """
+
+    def __init__(self, campaign: Campaign):
+        folder, self.pod = os.environ.get(native_dispatch.LEASE_GUARD_ENV), os.environ.get("RUNPOD_POD_ID")
+        if not folder or not self.pod:
+            raise SystemExit(f"a runpod campaign needs RUNPOD_POD_ID and {native_dispatch.LEASE_GUARD_ENV}")
+        lease = json.loads((Path(folder) / "lease.json").read_text(encoding="utf-8"))
+        self.campaign, self.path = campaign, Path(folder) / "progress.json"
+        self.interval = min(HEARTBEAT_SECONDS, lease["work_idle_seconds"] / 3)
+        self.productive = self.activity = time.time()
+        self.active, self.ticks, self.lock, self.done = {}, {}, threading.Lock(), threading.Event()
+        self.thread = threading.Thread(target=self.loop, name="lease-progress", daemon=True)
+
+    def start(self) -> None:
+        self.beat()
+        self.thread.start()
+
+    def loop(self) -> None:
+        while not self.done.wait(self.interval):
+            try:
+                self.beat()
+            except OSError as error:  # the guard's controller-lost limit still bounds the lease
+                self.campaign.event(kind="lease-progress-error", error=str(error))
+
+    def completed(self) -> None:
+        self.productive = time.time()
+        self.beat()
+
+    def stop(self) -> None:
+        self.done.set()
+        self.thread.join()
+        self.beat(finished=True)
+
+    def beat(self, finished: bool = False) -> None:
+        with self.lock:
+            stamp, alive = time.time(), False
+            for entry in list(self.active.values()):
+                root = Path(entry["attempts"][-1]["root"]) if entry["attempts"] else None
+                ticks = native_ticks(root) if root else None
+                if ticks is None:
+                    self.activity = stamp
+                    continue
+                alive = alive or ticks >= 0
+                if ticks > self.ticks.get(str(root), -1):
+                    self.activity = stamp
+                self.ticks[str(root)] = ticks
+            write_json(self.path, {"pod_id": self.pod, "epoch": stamp, "last_productive_epoch": self.productive,
+                                   "last_activity_epoch": self.activity, "native_alive": alive,
+                                   "queued_work": alive, "finished": finished})
 
 
 def classify_failure(root: Path) -> str:
@@ -240,6 +351,8 @@ def prune_cold(campaign: Campaign, run: str, keep_from_block: int, state: dict) 
 
 def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
     entry = state["blocks"].setdefault(str(block), {"attempts": []})
+    if campaign.lease:
+        campaign.lease.active[run] = entry
     if entry["attempts"]:
         last = entry["attempts"][-1]
         if last.get("outcome") == "complete":
@@ -257,6 +370,15 @@ def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
                                                   "reason": "partial output of an interrupted attempt"})
             campaign.save_state(run, state)
     while len(entry["attempts"]) < MAX_ATTEMPTS:
+        estimate = None
+        if campaign.raw["placement"]["host"] == "runpod":
+            estimate = block_estimate(campaign)
+            reason = lease_stop(estimate)
+            if reason:  # at a block boundary only; the next lease resumes here
+                state["stop_reason"] = reason
+                campaign.save_state(run, state)
+                campaign.event(run=run, block=block, kind="lease-stop", reason=reason, estimate_seconds=estimate)
+                return "stopped"
         attempt = len(entry["attempts"]) + 1
         base = campaign.hot(run) / run / f"b{block:02d}-a{attempt}"
         native, root = base / "native", base / "dispatch"
@@ -266,12 +388,13 @@ def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
         config_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_text(json.dumps(config, separators=(",", ":")) + "\n", encoding="utf-8")
         request_pin = write_json(campaign.state / "requests" / f"{run}-b{block:02d}-a{attempt}.json",
-                                 request_for(campaign, run, block, pin(config_path), root, cold))
+                                 request_for(campaign, run, block, pin(config_path), root, cold, estimate))
         record = {"attempt": attempt, "root": str(root), "native": str(native), "cold": str(cold),
                   "request": request_pin, "started": now()}
         entry["attempts"].append(record)
         campaign.save_state(run, state)
         campaign.event(run=run, block=block, attempt=attempt, kind="dispatch")
+        started = time.monotonic()
         result = dispatch_block(Path(request_pin["path"]), campaign.raw.get("compute_host_name"))
         record["dispatch"] = result
         if result.get("state") != "dispatched":
@@ -283,6 +406,7 @@ def run_block(campaign: Campaign, run: str, block: int, state: dict) -> str:
         if outcome == "success":
             record["outcome"] = "complete"
             record["report"] = pin(root / "report.json")
+            record["seconds"], record["host"] = time.monotonic() - started, campaign.raw["placement"]["host"]
             campaign.save_state(run, state)
             return finish_block(campaign, run, block, state, entry, record)
         kind = classify_failure(root)
@@ -362,6 +486,7 @@ def finish_block(campaign: Campaign, run: str, block: int, state: dict, entry: d
 def drive(campaign: Campaign, run: str) -> None:
     state = campaign.run_state(run)
     state["status"] = "running"
+    state.pop("stop_reason", None)
     campaign.save_state(run, state)
     try:
         for block in range(1, ndb.BLOCKS + 1):
@@ -374,12 +499,16 @@ def drive(campaign: Campaign, run: str) -> None:
             if run_block(campaign, run, block, state) != "complete":
                 state["status"] = "stopped"
                 return
+            if campaign.lease:
+                campaign.lease.completed()
         state["status"] = "complete"
     except Exception as error:  # recorded, never retried automatically
         state["status"] = "error"
         state["error"] = f"{type(error).__name__}: {error}"
         raise
     finally:
+        if campaign.lease:
+            campaign.lease.active.pop(run, None)
         campaign.save_state(run, state)
         campaign.event(run=run, kind="run-" + state["status"])
 
@@ -388,11 +517,18 @@ def run(campaign: Campaign, runs: list[str]) -> int:
     token = os.environ.get(reservations.TOKEN_ENV)
     if not token or reservations.status(token).get("token_fate") != "holds":
         raise SystemExit("the campaign driver runs only inside a held host reservation")
+    if campaign.raw["placement"]["host"] == "runpod":
+        campaign.lease = LeaseProgress(campaign)
+        campaign.lease.start()
     threads = [threading.Thread(target=drive, args=(campaign, name), name=name) for name in runs]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+    finally:
+        if campaign.lease:
+            campaign.lease.stop()
     return 0 if all(campaign.run_state(name)["status"] == "complete" for name in runs) else 1
 
 
@@ -415,6 +551,13 @@ def declared_cores(campaign: Campaign) -> list[str]:
     return [sys.executable, "-B", str(tool), "timed", "--cores", str(slots["cores"]), "--"]
 
 
+def busy_pattern(campaign: Campaign) -> str:
+    """The dispatcher's busy pattern; on Linux it also names the pinned binary."""
+    binary = None if native_dispatch.WINDOWS else json.loads(
+        Path(campaign.raw["runtime"]["path"]).read_text(encoding="utf-8"))["binary"]["path"]
+    return native_dispatch.busy_pattern(binary)
+
+
 def launch(campaign_path: Path, runs: list[str]) -> dict:
     campaign = Campaign(campaign_path)
     return reservations.dispatch(
@@ -423,7 +566,7 @@ def launch(campaign_path: Path, runs: list[str]) -> dict:
         command=declared_cores(campaign) + [sys.executable, "-B", str(Path(__file__).resolve()), "run", "--campaign",
                                             str(Path(campaign_path).resolve()), "--runs", ",".join(runs)],
         cwd=str(TOOLS.parents[1]),
-        busy_pattern=r"native_expanded_training|expanded_deck_training|cargo|rustc|trainer\.exe")
+        busy_pattern=busy_pattern(campaign))
 
 
 def status_lines(campaign: Campaign) -> list[str]:
@@ -431,7 +574,8 @@ def status_lines(campaign: Campaign) -> list[str]:
     for run_name in ndb.RUNS:
         state = campaign.run_state(run_name)
         done = sorted(int(k) for k, v in state["blocks"].items() if v.get("done"))
-        lines.append(f"{run_name} {state['status']} blocks_done={len(done)} last={done[-1] if done else 0}")
+        lines.append(f"{run_name} {state['status']} blocks_done={len(done)} last={done[-1] if done else 0}"
+                     + (f" stop_reason={state['stop_reason']}" if state.get("stop_reason") else ""))
     return lines
 
 
