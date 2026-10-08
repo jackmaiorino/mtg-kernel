@@ -88,6 +88,15 @@ for index, match in enumerate(request["matches"]):
             self.assertFalse(panel.run_one(str(executable), request, "t"))
             panel.recover(str(executable), request)
         recovery = json.loads(request.with_suffix(".recovery.json").read_text())
+        # An interrupted recovery reruns: finished continuations are reused, a partial one is set aside.
+        first = Path(recovery["segments"][1]["output_directory"]); last = Path(recovery["segments"][-1]["output_directory"])
+        (last / "completion.json").unlink(missing_ok=True); (last / "failure.json").unlink(missing_ok=True)
+        with mock.patch.object(panel, "held_token", return_value="t"),                 mock.patch.object(panel.reservations, "record_descendant"):
+            self.assertEqual(json.loads(Path(panel.recover(str(executable), request)["path"]).read_text())["errors"],
+                             recovery["errors"])
+        self.assertTrue(first.exists())
+        self.assertEqual(len(list(last.parent.glob(last.name + ".partial-*"))), 1)
+        recovery = json.loads(request.with_suffix(".recovery.json").read_text())
         self.assertEqual([e["index"] for e in recovery["errors"]], [3, 4, len(item["cases"]) - 1])
         for other in plan["requests"][1:]:  # seat 1: plain completion
             other_request = Path(other["request"]["path"])

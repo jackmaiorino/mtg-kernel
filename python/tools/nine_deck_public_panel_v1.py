@@ -181,7 +181,11 @@ def recover(executable: str, request_path: Path) -> dict:
         k += 1
         current = request_path.with_name(f"{request_path.stem}-c{k}.json")
         write_json(current, dict(request, matches=matches[start:], output_directory=f"{base}-c{k}"))
-        run_one(executable, current, held_token())
+        output = Path(f"{base}-c{k}")  # an interrupted recovery: reuse a finished continuation, set aside a partial one
+        if output.exists() and not (output / "completion.json").exists() and not (output / "failure.json").exists():
+            output.rename(output.with_name(f"{output.name}.partial-{int(time.time())}"))
+        if not output.exists():
+            run_one(executable, current, held_token())
     return write_json(request_path.with_suffix(".recovery.json"),
                       {"request": pin(request_path), "segments": segments, "errors": errors})
 
