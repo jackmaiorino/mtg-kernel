@@ -32,7 +32,9 @@ import nine_deck_baseline_v1 as ndb
 
 TOOLS = Path(__file__).resolve().parent
 DISPATCH = TOOLS / "native_expanded_dispatch_v1.py"
-PANEL_DECKS = {"p1": tuple(range(ndb.DECKS)), "p3": (4, 7)}
+PANEL_DECKS = {"p1": tuple(range(ndb.DECKS)), "p3": (4, 7), "p1s0": tuple(range(ndb.DECKS)), "p1s1": tuple(range(ndb.DECKS))}
+# P1's 1,944 cases exceed the collector's 1,024-episode bound, so P1 runs as its two learner-seat halves.
+PANEL_SEAT = {"p1s0": 0, "p1s1": 1}
 SAMPLE_PERCENT = 2
 BUSY_RETRIES = 60
 BUSY_RETRY_SECONDS = 60
@@ -62,7 +64,8 @@ def kept_case(case_id: str) -> bool:
 def job_config(plan: dict, job: dict, native: Path) -> dict:
     decks = ndb.load_decks(Path(plan["decks"]))
     return ndb.panel_config(job["panel"], job["source"], plan["t1_source"], decks, str(native).replace("\\", "/"),
-                            plan["placement"]["workers"], own_decks=PANEL_DECKS[job["panel"]])
+                            plan["placement"]["workers"], own_decks=PANEL_DECKS[job["panel"]],
+                            seat=PANEL_SEAT.get(job["panel"]))
 
 
 def rows_from(collection_path: Path, job: dict) -> list[dict]:

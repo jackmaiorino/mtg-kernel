@@ -110,5 +110,15 @@ class ScheduleTests(unittest.TestCase):
             self.assertEqual(episode["opponent"], t1)
 
 
+    def test_panel_seat_halves_partition_p1(self):
+        decks = ndb.load_decks(DECKS)
+        source = {"checkpoint": {"path": "C:/x/c.json", "sha256": "c" * 64}}
+        whole = ndb.panel_config("p1", source, source, decks, "D:/o", 4)["episodes"]
+        halves = [ndb.panel_config(f"p1s{s}", source, source, decks, "D:/o", 4, seat=s)["episodes"] for s in (0, 1)]
+        self.assertEqual([len(h) for h in halves], [972, 972])
+        strip = lambda e: {k: v for k, v in e.items() if k != "id"}
+        self.assertEqual(sorted(map(str, map(strip, whole))), sorted(map(str, map(strip, halves[0] + halves[1]))))
+
+
 if __name__ == "__main__":
     unittest.main()
