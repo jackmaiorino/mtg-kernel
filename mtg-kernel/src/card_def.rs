@@ -262,6 +262,9 @@ pub enum Subtype {
     Lizard,
     /// Appended for the FDN equipment and library-search batch.
     Golem,
+    /// Appended for the MageZero Standard permanents and planeswalkers.
+    /// Existing stable ids remain fixed. Teferi is a planeswalker type.
+    Teferi,
 }
 
 impl Subtype {
@@ -869,6 +872,19 @@ pub enum CostComponent {
     /// controls or one creature card in their hand. A hand choice is
     /// publicly revealed and the exact incarnation is frozen on the spell.
     ChooseControlledCreatureOrRevealCreatureCardFromHand,
+    /// A planeswalker loyalty cost (606.4): a positive amount puts that many
+    /// loyalty counters on the source, a negative one removes that many and
+    /// requires at least as many. Any ability with this component is a
+    /// loyalty ability, so it is sorcery-speed and shares the source's
+    /// one-loyalty-activation-per-turn limit (606.3). Appended for the
+    /// Standard planeswalkers.
+    Loyalty(i8),
+}
+
+impl CostComponent {
+    pub const fn is_loyalty(self) -> bool {
+        matches!(self, Self::Loyalty(_))
+    }
 }
 
 /// Optional additional costs chosen while announcing a spell. The selected
@@ -995,6 +1011,26 @@ pub struct ActivatedAbilityDef {
     /// `None` means unrestricted. Appended for Quirion Ranger without
     /// changing any existing ability selector.
     pub max_activations_per_turn: Option<u8>,
+    /// Transforming-card face this ability is printed on. `None` means the
+    /// card's only face (every single-faced card); `Some(face)` limits the
+    /// ability to a battlefield permanent showing that face. Appended for the
+    /// Standard double-faced legends.
+    pub face: Option<u8>,
+}
+
+impl ActivatedAbilityDef {
+    /// True iff this is a planeswalker loyalty ability (606.3).
+    pub fn is_loyalty_ability(&self) -> bool {
+        self.cost.iter().any(|component| component.is_loyalty())
+    }
+
+    /// The loyalty counters this ability's cost adds (positive) or removes.
+    pub fn loyalty_delta(&self) -> Option<i8> {
+        self.cost.iter().find_map(|component| match component {
+            CostComponent::Loyalty(delta) => Some(*delta),
+            _ => None,
+        })
+    }
 }
 
 /// A source-relative restriction that applies while announcing a non-mana

@@ -1744,7 +1744,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Avenging Hunter" => &AVENGING_HUNTER_TRIGGERS,
         "Azure Fleet Admiral" => &AZURE_FLEET_ADMIRAL_TRIGGERS,
         "Delver of Secrets" => &DELVER_OF_SECRETS_TRIGGERS,
-        _ => &[],
+        name => crate::standard_cards_v1::triggers_for(name),
     }
 }
 
@@ -2404,7 +2404,8 @@ fn triggers_from_events(
             // exclusion the Saga chapter/completion paths already apply
             // unconditionally (`obj.v4.face_index != 0` at this file's own
             // SBA and chapter-matching sites).
-            if obj.v4.face_index != 0 {
+            if obj.v4.face_index != crate::standard_cards_v1::trigger_face(card.name, ability_index)
+            {
                 continue;
             }
             for (i, ev) in events.iter().enumerate() {

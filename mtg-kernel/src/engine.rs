@@ -3574,6 +3574,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
     let mut tap_filtered_permanent_count = 0;
     let mut reveal_hand_condition_count = 0;
     let mut chosen_creature_count = 0;
+    let mut loyalty_count = 0;
 
     for component in components {
         match component {
@@ -3648,6 +3649,9 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
             CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {
                 chosen_creature_count += 1;
             }
+            CostComponent::Loyalty(_) => {
+                loyalty_count += 1;
+            }
         }
     }
 
@@ -3666,6 +3670,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
         || tap_filtered_permanent_count > 1
         || reveal_hand_condition_count > 1
         || chosen_creature_count > 1
+        || loyalty_count > 1
     {
         return false;
     }
@@ -3890,6 +3895,8 @@ fn can_pay_components(
                         .has_type(*card_type)
                 })
             }
+            CostComponent::Loyalty(delta) => crate::planeswalker_v1::loyalty(state, source)
+                .is_some_and(|loyalty| *delta >= 0 || loyalty >= u32::from(delta.unsigned_abs())),
             CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {
                 !chosen_creature_cost_candidates(
                     player,
@@ -3946,6 +3953,11 @@ fn pay_cost_components_with_x(
     }
     if components.iter().any(|component| {
         matches!(component, CostComponent::PayLife(amount) if state.players[player.index()].life < i32::from(*amount))
+    }) {
+        return false;
+    }
+    if components.iter().any(|component| {
+        matches!(component, CostComponent::Loyalty(delta) if !crate::planeswalker_v1::loyalty(state, source).is_some_and(|loyalty| *delta >= 0 || loyalty >= u32::from(delta.unsigned_abs())))
     }) {
         return false;
     }
@@ -4238,6 +4250,9 @@ fn pay_cost_components_with_x(
                 }
             }
             CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {}
+            CostComponent::Loyalty(delta) => {
+                crate::planeswalker_v1::change_loyalty(state, source, i32::from(*delta));
+            }
         }
     }
     true
@@ -5748,6 +5763,33 @@ fn mana_ability_use_count(state: &GameState, source: ObjectId, ability_index: u1
         .map_or(0, |entry| entry.uses)
 }
 
+/// 606.3: a permanent's controller may activate one of its loyalty
+/// abilities only if none of that permanent's loyalty abilities has been
+/// activated this turn.
+fn loyalty_ability_activated_this_turn(state: &GameState, source: ObjectId) -> bool {
+    let object = state.objects.get(source);
+    let abilities = card_def::CARD_DEFS[object.card_def as usize].activated_abilities;
+    object.v4.ability_uses_this_turn.iter().any(|entry| {
+        entry.ability_kind == AbilityKindV4::Activated
+            && entry.uses > 0
+            && abilities
+                .get(usize::from(entry.ability_index))
+                .is_some_and(card_def::ActivatedAbilityDef::is_loyalty_ability)
+    })
+}
+
+/// A transforming card's ability printed on one face functions only while a
+/// battlefield permanent shows that face. Single-faced abilities always do.
+pub(crate) fn activated_ability_face_active(
+    state: &GameState,
+    source: ObjectId,
+    ability: &card_def::ActivatedAbilityDef,
+) -> bool {
+    ability
+        .face
+        .is_none_or(|face| state.objects.get(source).v4.face_index == face)
+}
+
 fn activated_ability_use_count(state: &GameState, source: ObjectId, ability_index: u16) -> u16 {
     state
         .objects
@@ -6005,6 +6047,10 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
             }
             for (i, ability) in def.activated_abilities.iter().enumerate() {
                 if ability.activation_zone != zone
+                    || !activated_ability_face_active(state, id, ability)
+                    || (ability.is_loyalty_ability()
+                        && (!sorcery_speed_timing_ok(player, state)
+                            || loyalty_ability_activated_this_turn(state, id)))
                     || (ability.sorcery_speed_only && !sorcery_speed_timing_ok(player, state))
                     || ability.max_activations_per_turn.is_some_and(|limit| {
                         activated_ability_use_count(state, id, i as u16) >= u16::from(limit)
@@ -11421,6 +11467,7 @@ fn synthesized_granted_activated_ability(
         sorcery_speed_only: false,
         activation_target_filter: card_def::ActivationTargetFilter::TargetSpecOnly,
         max_activations_per_turn: None,
+        face: None,
     }
 }
 

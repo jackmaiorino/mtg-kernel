@@ -65,6 +65,69 @@
         "burn"
       ],
       "java_file": "Mage.Sets/src/mage/cards/b/BurstLightning.java"
+    },
+    {
+      "name": "Teferi, Temporal Pilgrim",
+      "engine_capability": "full",
+      "mana_cost": "{3}{U}{U}",
+      "mana_value": 5,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Planeswalker"
+      ],
+      "subtypes": [
+        "Teferi"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoU.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "loyalty_abilities",
+        "draw_trigger",
+        "token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TeferiTemporalPilgrim.java",
+      "starting_loyalty": 4
+    },
+    {
+      "name": "Teferi Spirit Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Spirit"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "vigilance",
+        "draw_trigger"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/SpiritTeferiToken.java",
+      "is_token": true
     }
   ]
 }

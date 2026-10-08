@@ -1,5 +1,5 @@
-//! Loyalty state for the planeswalker recipient of a damage spell.
-//! Loyalty abilities and attacking a planeswalker remain unsupported.
+//! Loyalty state for battlefield planeswalkers: starting loyalty, damage,
+//! loyalty-ability costs and effects that add loyalty counters.
 
 use crate::card_def::{CardType, CARD_DEFS};
 use crate::engine;
@@ -70,15 +70,27 @@ pub(crate) fn after_zone_change(state: &mut GameState, object: ObjectId) {
 }
 
 pub(crate) fn damage(state: &mut GameState, object: ObjectId, amount: i32) {
+    change_loyalty(state, object, -amount.max(0));
+}
+
+/// Adds (positive) or removes (negative) loyalty counters on a battlefield
+/// planeswalker. Removal stops at zero; the state-based action then puts it
+/// into its owner's graveyard.
+pub(crate) fn change_loyalty(state: &mut GameState, object: ObjectId, delta: i32) {
     let Some(counters) = loyalty(state, object) else {
         return;
+    };
+    let counters = if delta >= 0 {
+        counters.saturating_add(delta as u32)
+    } else {
+        counters.saturating_sub(delta.unsigned_abs())
     };
     let entry = LoyaltyV1 {
         permanent: ObjectLinkV4 {
             object,
             zone_change_count: state.objects.get(object).zone_change_count,
         },
-        counters: counters.saturating_sub(amount.max(0) as u32),
+        counters,
     };
     state
         .planeswalkers_v1

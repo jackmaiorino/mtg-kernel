@@ -6677,6 +6677,9 @@ fn pending_effect_semantic_v4(
                             } => TargetSelectionPurposeV4::CardSelection,
                             crate::effect::EffectTargetSelectionPurpose::SacrificeCreature {
                                 ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::StandardChoosePermanentV1 {
+                                ..
                             } => TargetSelectionPurposeV4::PermanentSelection,
                         },
                     })

@@ -27,6 +27,7 @@ mod native_store_build_capture_v1;
 #[allow(dead_code)]
 #[path = "src/strict_source_tree_attestation_v1.rs"]
 mod strict_source_tree_attestation_v1;
+mod build_standard_v1;
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -2961,6 +2962,8 @@ enum AbilityCostRecipe {
     /// grammar as spell costs. Twisted Landscape's Cycling is the first
     /// multicolor consumer.
     ManaCost(&'static str),
+    /// A planeswalker loyalty cost (`CostComponent::Loyalty`).
+    Loyalty(i8),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3014,6 +3017,10 @@ enum AbilityEffectRecipe {
     /// numeric definition id at runtime via a generated `card_id_by_name`
     /// call.
     EachPlayerControllingNamedPermanentDrawsCard(&'static str),
+    /// A hand-written runtime program, named by its `crate::` path. Used for
+    /// card-specific abilities whose shape no structured recipe covers; the
+    /// path is part of the card-database token.
+    Program(&'static str),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3525,6 +3532,7 @@ fn keywords_for(card: &CardJson) -> String {
         keywords.push("Keywords::REACH");
         keywords.push("Keywords::DEATHTOUCH");
     }
+    keywords.extend(build_standard_v1::keywords_for(&card.name));
     if keywords.is_empty() {
         "Keywords::NONE".to_string()
     } else if keywords.len() == 1 {
@@ -4566,7 +4574,7 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
                 max_activations_per_turn: None,
             },
         ],
-        _ => &[],
+        _ => build_standard_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -4611,6 +4619,7 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
                 pips.join(", ")
             )
         }
+        AbilityCostRecipe::Loyalty(delta) => format!("CostComponent::Loyalty({delta})"),
     }
 }
 
@@ -4643,6 +4652,7 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
             "return_controlled_unblocked_attacker".to_string()
         }
         AbilityCostRecipe::ManaCost(cost) => format!("mana_cost:{cost}"),
+        AbilityCostRecipe::Loyalty(delta) => format!("loyalty:{delta}"),
     }
 }
 
@@ -4729,6 +4739,7 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::EachPlayerControllingNamedPermanentDrawsCard(name) => {
             format!("each_player_controlling_named_permanent_draws_card:{name}")
         }
+        AbilityEffectRecipe::Program(path) => format!("program:{path}"),
     }
 }
 
@@ -4896,7 +4907,15 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
                     .collect::<String>()
             )
         }
+        AbilityEffectRecipe::Program(path) => format!(
+            "ability_effect_program_{}",
+            path.trim_start_matches("crate::").replace("::", "_")
+        ),
     }
+}
+
+fn activated_ability_face_for(name: &str, index: usize) -> Option<u8> {
+    build_standard_v1::activated_ability_face_for(name, index)
 }
 
 fn activated_abilities_for(name: &str) -> String {
@@ -4906,7 +4925,8 @@ fn activated_abilities_for(name: &str) -> String {
     }
     let abilities = recipes
         .iter()
-        .map(|recipe| {
+        .enumerate()
+        .map(|(index, recipe)| {
             let costs = recipe
                 .cost
                 .iter()
@@ -4923,8 +4943,12 @@ fn activated_abilities_for(name: &str) -> String {
                 Some(limit) => format!("Some({limit})"),
                 None => "None".to_string(),
             };
+            let face = match activated_ability_face_for(name, index) {
+                Some(face) => format!("Some({face})"),
+                None => "None".to_string(),
+            };
             format!(
-                "ActivatedAbilityDef {{ cost: &[{costs}], target_spec: TargetSpec::{target_spec}, effect: {effect}, activation_zone: Zone::{zone}, sorcery_speed_only: {sorcery}, activation_target_filter: ActivationTargetFilter::{activation_target_filter}, max_activations_per_turn: {max_activations_per_turn} }}"
+                "ActivatedAbilityDef {{ cost: &[{costs}], target_spec: TargetSpec::{target_spec}, effect: {effect}, activation_zone: Zone::{zone}, sorcery_speed_only: {sorcery}, activation_target_filter: ActivationTargetFilter::{activation_target_filter}, max_activations_per_turn: {max_activations_per_turn}, face: {face} }}"
             )
         })
         .collect::<Vec<_>>()
@@ -4935,7 +4959,8 @@ fn activated_abilities_for(name: &str) -> String {
 fn activated_abilities_token(name: &str) -> String {
     activated_ability_recipes_for(name)
         .iter()
-        .map(|recipe| {
+        .enumerate()
+        .map(|(index, recipe)| {
             let costs = recipe
                 .cost
                 .iter()
@@ -4943,8 +4968,12 @@ fn activated_abilities_token(name: &str) -> String {
                 .map(ability_cost_token)
                 .collect::<Vec<_>>()
                 .join(",");
+            // Single-faced abilities omit the face so earlier catalogs keep
+            // their tokens byte for byte.
+            let face = activated_ability_face_for(name, index)
+                .map_or_else(String::new, |face| format!(";face={face}"));
             format!(
-                "zone={};sorcery={};target={};activation_filter={};max_per_turn={};cost=[{}];effect={}",
+                "zone={};sorcery={};target={};activation_filter={};max_per_turn={};cost=[{}];effect={}{face}",
                 recipe.activation_zone.to_ascii_lowercase(),
                 recipe.sorcery_speed_only,
                 recipe.target_spec.to_ascii_lowercase(),
@@ -5294,7 +5323,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Delver of Secrets" => {
             "upkeep_controller:look_top_may_reveal_instant_or_sorcery:transform_source_in_place"
         }
-        _ => "none",
+        _ => build_standard_v1::trigger_recipe_for(name),
     }
 }
 
@@ -5928,6 +5957,9 @@ fn codegen(cards: &[CardJson]) -> String {
                     "    EffectOp::EachPlayerControllingDefinitionDrawsCard {{ card_def: named }}"
                 )
                 .unwrap();
+            }
+            AbilityEffectRecipe::Program(path) => {
+                writeln!(out, "    {path}()").unwrap();
             }
         }
         writeln!(out, "}}").unwrap();
@@ -8395,6 +8427,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Power-Plant" => "Subtype::PowerPlant",
         "Mine" => "Subtype::Mine",
         "Desert" => "Subtype::Desert",
+        "Teferi" => "Subtype::Teferi",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

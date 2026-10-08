@@ -1089,6 +1089,9 @@ pub enum EffectOp {
         power: i32,
         toughness: i32,
     },
+    /// A MageZero Standard card leaf (`standard_cards_v1`). Appended so every
+    /// earlier variant keeps its serialized and hashed shape.
+    StandardV1(crate::standard_cards_v1::StandardOpV1),
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -1606,6 +1609,15 @@ pub enum EffectTargetSelectionPurpose {
         canonical_path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
     },
+    /// Public exact-one choice of a permanent the chooser controls
+    /// (`StandardOpV1::PlayerChoosesControlledPermanent`).
+    StandardChoosePermanentV1 {
+        player: PlayerId,
+        filter: crate::standard_cards_v1::StandardPermanentFilterV1,
+        action: crate::standard_cards_v1::StandardChosenActionV1,
+        original_candidates: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1858,6 +1870,15 @@ pub enum EffectAnsweredChoiceGuard {
     SurveilLibraryOne {
         frame: Box<EffectFrame>,
     },
+    /// An answered `StandardOpV1::PlayerChoosesControlledPermanent` whose
+    /// bound action frame has not run yet.
+    StandardChosenPermanentV1 {
+        player: PlayerId,
+        chosen: EffectObjectBinding,
+        action: crate::standard_cards_v1::StandardChosenActionV1,
+        canonical_path: Vec<u16>,
+        remaining_frames: Vec<EffectFrame>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2053,6 +2074,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::ResolveUndercityThrone { .. }
         | EffectOp::LookAtTopMayRevealThen { .. }
         | EffectOp::Surveil { .. } => true,
+        EffectOp::StandardV1(op) => op.contains_player_choice(),
         _ => false,
     }
 }
@@ -2828,6 +2850,35 @@ fn complete_resumable_target_selection(
         })
         .collect::<Result<Vec<_>, String>>()?;
     match purpose {
+        EffectTargetSelectionPurpose::StandardChoosePermanentV1 {
+            player,
+            action,
+            original_candidates,
+            canonical_path,
+            ..
+        } => {
+            if path != canonical_path
+                || objects.len() != 1
+                || !original_candidates.contains(&objects[0])
+            {
+                return Err("chosen-permanent answer changed path or candidate".to_string());
+            }
+            let chosen = objects[0];
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::StandardChosenPermanentV1 {
+                    player,
+                    chosen,
+                    action,
+                    canonical_path: canonical_path.clone(),
+                    remaining_frames: continuation.frames.clone(),
+                });
+            continuation.frames.push(EffectFrame::Program {
+                op: EffectOp::StandardV1(
+                    crate::standard_cards_v1::StandardOpV1::ApplyChosenPermanent { chosen, action },
+                ),
+                path: canonical_path,
+            });
+        }
         EffectTargetSelectionPurpose::AttachReturningAura {
             aura,
             original_candidates,
@@ -5079,6 +5130,13 @@ fn validate_answered_choice_guard(
                 ) {
                     return Err("bound Aura attachment has no answered choice guard".to_string());
                 }
+            } else if matches!(op, EffectOp::StandardV1(inner) if inner.is_bound_continuation()) {
+                if !matches!(
+                    pending.answered_choice_guard,
+                    Some(EffectAnsweredChoiceGuard::StandardChosenPermanentV1 { .. })
+                ) {
+                    return Err("bound chosen-permanent action has no answered choice guard".to_string());
+                }
             } else {
                 validate_resumable_program(op)?;
             }
@@ -5342,8 +5400,68 @@ fn validate_answered_choice_guard(
                 return Err("answered Aura attachment host changed".to_string());
             }
         }
+        Some(EffectAnsweredChoiceGuard::StandardChosenPermanentV1 {
+            player,
+            chosen,
+            action,
+            canonical_path,
+            remaining_frames,
+        }) => {
+            let mut expected = remaining_frames.clone();
+            expected.push(EffectFrame::Program {
+                op: EffectOp::StandardV1(
+                    crate::standard_cards_v1::StandardOpV1::ApplyChosenPermanent {
+                        chosen: *chosen,
+                        action: *action,
+                    },
+                ),
+                path: canonical_path.clone(),
+            });
+            if pending.choice.is_some() || pending.frames != expected {
+                return Err("answered chosen-permanent continuation changed".to_string());
+            }
+            let filter = validate_standard_choose_permanent_origin(
+                state,
+                pending,
+                *player,
+                *action,
+                canonical_path,
+            )?;
+            if !crate::standard_cards_v1::controlled_permanent_candidates(state, *player, filter)
+                .contains(chosen)
+            {
+                return Err("answered chosen permanent changed".to_string());
+            }
+        }
     }
     Ok(())
+}
+
+/// Authenticates a chosen-permanent prompt or answer against the
+/// definition-owned operation at its structural path, returning its filter.
+fn validate_standard_choose_permanent_origin(
+    state: &GameState,
+    pending: &EffectContinuation,
+    player: PlayerId,
+    action: crate::standard_cards_v1::StandardChosenActionV1,
+    path: &[u16],
+) -> Result<crate::standard_cards_v1::StandardPermanentFilterV1, String> {
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    let Some(EffectOp::StandardV1(
+        crate::standard_cards_v1::StandardOpV1::PlayerChoosesControlledPermanent {
+            player: original_player,
+            filter,
+            action: original_action,
+        },
+    )) = effect_op_at_structural_path(&root, path)
+    else {
+        return Err("chosen-permanent choice lost its originating operation".to_string());
+    };
+    if pending.ctx.resolve_player(*original_player, state) != player || *original_action != action
+    {
+        return Err("chosen-permanent player or action changed".to_string());
+    }
+    Ok(*filter)
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
@@ -5394,6 +5512,49 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 validate_effect_target_candidate(state, candidate)?;
             }
             match purpose {
+                EffectTargetSelectionPurpose::StandardChoosePermanentV1 {
+                    player,
+                    filter,
+                    action,
+                    original_candidates,
+                    canonical_path,
+                } => {
+                    if chooser != player
+                        || path != canonical_path
+                        || *min_targets != 1
+                        || *max_targets != 1
+                        || !*ordered
+                        || !selected.is_empty()
+                        || original_candidates.len() < 2
+                    {
+                        return Err("chosen-permanent prompt has a noncanonical shape".to_string());
+                    }
+                    if validate_standard_choose_permanent_origin(
+                        state,
+                        pending,
+                        *player,
+                        *action,
+                        canonical_path,
+                    )? != *filter
+                    {
+                        return Err("chosen-permanent filter changed".to_string());
+                    }
+                    if crate::standard_cards_v1::controlled_permanent_candidates(
+                        state, *player, *filter,
+                    ) != *original_candidates
+                        || legal
+                            != &original_candidates
+                                .iter()
+                                .copied()
+                                .map(|binding| EffectTargetCandidate {
+                                    target: Target::Object(binding.object),
+                                    expected_object: Some(binding),
+                                })
+                                .collect::<Vec<_>>()
+                    {
+                        return Err("chosen-permanent candidates changed".to_string());
+                    }
+                }
                 EffectTargetSelectionPurpose::AttachReturningAura {
                     aura,
                     original_candidates,
@@ -6746,6 +6907,9 @@ fn validate_resumable_program(op: &EffectOp) -> Result<(), String> {
         EffectOp::EnterUndercityRoom { .. } | EffectOp::ResolveUndercityThrone { .. } => {
             return Err("generated programs cannot contain bound Undercity operations".to_string());
         }
+        EffectOp::StandardV1(op) if op.is_bound_continuation() => {
+            return Err("generated programs cannot contain a bound chosen-permanent action".to_string());
+        }
         _ => {}
     }
     Ok(())
@@ -8066,6 +8230,73 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
             continue;
         };
         match op {
+            EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::PlayerChoosesControlledPermanent {
+                    player,
+                    filter,
+                    action,
+                },
+            ) => {
+                let player = continuation.ctx.resolve_player(player, state);
+                let candidates =
+                    crate::standard_cards_v1::controlled_permanent_candidates(state, player, filter);
+                match candidates.as_slice() {
+                    [] => {}
+                    [chosen] => {
+                        crate::standard_cards_v1::apply_chosen_permanent(state, *chosen, action)
+                    }
+                    _ => {
+                        continuation.choice = Some(PendingEffectChoice::SelectTargets {
+                            player,
+                            path: path.clone(),
+                            selected: vec![],
+                            legal: candidates
+                                .iter()
+                                .copied()
+                                .map(|binding| EffectTargetCandidate {
+                                    target: Target::Object(binding.object),
+                                    expected_object: Some(binding),
+                                })
+                                .collect(),
+                            min_targets: 1,
+                            max_targets: 1,
+                            ordered: true,
+                            purpose: EffectTargetSelectionPurpose::StandardChoosePermanentV1 {
+                                player,
+                                filter,
+                                action,
+                                original_candidates: candidates,
+                                canonical_path: path,
+                            },
+                        });
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
+                }
+            }
+            EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::ApplyChosenPermanent { chosen, action },
+            ) => {
+                let Some(EffectAnsweredChoiceGuard::StandardChosenPermanentV1 {
+                    chosen: expected_chosen,
+                    action: expected_action,
+                    canonical_path,
+                    remaining_frames,
+                    ..
+                }) = continuation.answered_choice_guard.as_ref()
+                else {
+                    return Err("chosen-permanent action lost its answered choice".to_string());
+                };
+                if chosen != *expected_chosen
+                    || action != *expected_action
+                    || path != *canonical_path
+                    || continuation.frames != *remaining_frames
+                {
+                    return Err("chosen-permanent answer changed".to_string());
+                }
+                continuation.answered_choice_guard = None;
+                crate::standard_cards_v1::apply_chosen_permanent(state, chosen, action);
+            }
             EffectOp::ReturnTargetPermanentToBattlefield { target_index } => {
                 let index = usize::from(target_index);
                 let Some(Target::Object(object)) = continuation.ctx.targets.get(index).copied()
@@ -9247,7 +9478,7 @@ impl ExecCtx {
         }
     }
 
-    fn resolve_object(&self, r: ObjectRef) -> ObjectId {
+    pub(crate) fn resolve_object(&self, r: ObjectRef) -> ObjectId {
         match r {
             ObjectRef::ThisSource => self.source,
             ObjectRef::Target(i) => match self.targets[i as usize] {
@@ -9257,7 +9488,7 @@ impl ExecCtx {
         }
     }
 
-    fn resolve_target(&self, r: TargetRef) -> Target {
+    pub(crate) fn resolve_target(&self, r: TargetRef) -> Target {
         match r {
             TargetRef::ThisSource => Target::Object(self.source),
             TargetRef::Target(i) => self.targets[i as usize],
@@ -9265,7 +9496,7 @@ impl ExecCtx {
         }
     }
 
-    fn target_incarnation_matches(&self, index: usize, state: &GameState) -> bool {
+    pub(crate) fn target_incarnation_matches(&self, index: usize, state: &GameState) -> bool {
         match (self.targets.get(index), self.target_contracts.get(index)) {
             (Some(Target::Player(player)), Some(StackTargetContractV4::Player(bound))) => {
                 player == bound
@@ -9291,7 +9522,7 @@ impl ExecCtx {
         }
     }
 
-    fn resolve_player(&self, r: PlayerRef, state: &GameState) -> PlayerId {
+    pub(crate) fn resolve_player(&self, r: PlayerRef, state: &GameState) -> PlayerId {
         match r {
             PlayerRef::Controller => self.controller,
             PlayerRef::Target(i) => match self.targets[i as usize] {
@@ -11223,6 +11454,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 );
             }
         }
+        EffectOp::StandardV1(op) => crate::standard_cards_v1::execute(op, ctx, state),
         EffectOp::BoostAttachedCreatureUntilEndOfTurn { power, toughness } => {
             let Some(source_contract) = ctx.ability_source_contract else {
                 return;
