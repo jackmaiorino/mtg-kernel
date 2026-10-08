@@ -35,14 +35,14 @@ end-to-end CI remains required.
 
 The full failed job log and exact snapshot source are sealed at
 `E:/mtg-fdn-fixtures/fdn-draw-ci-timing-failure-001`, with a verified independent
-mirror at `C:/Users/Jack/fdn-draw-ci-timing-failure-001-sealed`.
+mirror at `C:/Users/user/fdn-draw-ci-timing-failure-001-sealed`.
 Each copy is276505bytes, under its16MiB cap with60GiB reserves checked.
 Log SHA-256 is `f4e36ca083540062079d92ac1cd74ccfd634994d9230296e66d83b4d6a2baad6`.
 The original failed result is retained; the isolated timing result is pending.
 
 Strix Lookout, Mischievous Mystic and Faerie Token are implemented at
 `99171529`, with focused test corrections at `95b4a94a` and `84675f3b`.
-Matching committed HaleysPC source is
+Matching committed compute host source is
 `f32299b405e3ee80bcc2df87ee4bb7ef0e89e616`.
 See the [rules contract](../design/fdn_draw_creatures_v1.md).
 
@@ -74,13 +74,13 @@ Witness Protection. Mulligans, original-deck natural terminal gameplay,
 remaining rules comparisons and passing CI still belong to the full
 goal. This batch does not establish full FDN coverage or playing strength.
 
-Small manifest: CPU correctness checks on HaleysPC with two Cargo build
+Small manifest: CPU correctness checks on the compute host with two Cargo build
 jobs and incremental compilation disabled; GPU ordinal none. Rust/Cargo
 1.94.1, MSVC linker 14.50.35725.0; seed 123 for the new rules/session and
 external check. Other regression seeds are in the checked-in
-tests. Python 3.11 locally and 3.12.10 on HaleysPC. XMage uses Java
+tests. Python 3.11 locally and 3.12.10 on the compute host. XMage uses Java
 23.0.2, Maven 3.9.9, one reactor worker, two active processors and bounded
-heaps. Jack's PC reservations remain respected. No formal measurement,
+heaps. The primary desktop reservations remain respected. No formal measurement,
 training or paid compute was launched.
 
 | Input/output | SHA-256 |
@@ -100,7 +100,7 @@ training or paid compute was launched.
 | External transcript | `643df0672877140a7d5f530e77e04291983b9432669f47512583fc813b809a30` |
 | External result JSON | `acbfb25baf37cf23857e3174eae9b50ecf0032c3b25e3a6fcffecc6f3db8340d` |
 
-Logs stay outside Git under `C:/Users/haley/`:
+Logs stay outside Git under `C:/Users/hostuser/`:
 `fdn-draw-creatures-checks-005-{1,2,3}.log/.log.exit`,
 `fdn-draw-creatures-checks-006-{4,5,6,7}.log/.log.exit`,
 and `fdn-mage-draw-003.log/.exit` with its Surefire XML.
@@ -117,7 +117,7 @@ setup. The final checks above use the corrected source.
 
 Before the batch, uncited incremental cache files in the owned Cargo
 target were removed after confirming no compiler used them. The outside-Git
-manifest `C:/Users/haley/fdn-owned-incremental-prune-001.json` records
+manifest `C:/Users/hostuser/fdn-owned-incremental-prune-001.json` records
 17,593,594,204 regenerable bytes and the cache inventory hash
 `60d13497124ca26d6369a4e4bd4179e5242a7c150de66cd1626b0f22f55b7cd4`.
 Compiled binaries, cited evidence, source and failed logs were retained.

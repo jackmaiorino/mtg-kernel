@@ -47,7 +47,7 @@ def save(path, value):
 
 
 def structural(plan, host):
-    require(plan['schema'] == SCHEMA and host == 'jack', 'Build mode is Jack Windows only')
+    require(plan['schema'] == SCHEMA and host == 'desktop', 'Build mode is the maintainer Windows only')
     require(plan['jobs'] in (1, 2, 3, 4), 'Build jobs must be 1..4')
     require(plan['suite'] in SUITES, 'Only pinned panel/collector library tests allowed')
     require(30 <= plan['timeout_seconds'] <= 3600, 'Build timeout must be 30..3600 seconds')
@@ -146,7 +146,7 @@ def admission(plan, host):
     free = shutil.disk_usage('E:/').free
     require(free >= 60 * GIB + plan['additional_growth_bytes'], 'E reserve plus build growth unavailable')
     memory = available_memory()
-    require(memory >= 32 * GIB, 'Jack memory reserve unavailable')
+    require(memory >= 32 * GIB, 'desktop memory reserve unavailable')
     features = FEATURES if plan['suite'] == 'panel' else 'experimental-burn-net8-packed-cuda-v1'
     command = [str(cargo), 'test', '--config', "build.rustc='" + str(rustc) + "'", '--locked', '--offline', '-p', 'mtg-kernel', '--release',
                '--config', 'profile.release.lto=false',

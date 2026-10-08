@@ -29,7 +29,7 @@ class AllocationTests(unittest.TestCase):
         self.binary=self.put("native.exe","fixture executable")
         self.configs={job:self.put(f"{job}-config.json",dict(arm=job,gpu_ordinal=1,updates=[[{},{}]]*200)) for job in ["control","structured"]}
         self.jobs={job:dict(config_sha256=item["sha256"],updates=200) for job,item in self.configs.items()}
-        devices={"jack":[(0,"GPU-J0"),(1,"GPU-J1")],"haleyspc":[(0,"GPU-H0")],"runpod":[]}
+        devices={"desktop":[(0,"GPU-J0"),(1,"GPU-J1")],"computehost":[(0,"GPU-H0")],"runpod":[]}
         inventory={host:dict(checked_at=datetime.now(timezone.utc).isoformat(),eligible=bool(items),reason="test inventory",
                    evidence=self.put(f"{host}-inventory.json",dict(host=host)),
                    devices=[dict(ordinal=o,uuid=u,eligible=True,reason="test device") for o,u in items]) for host,items in devices.items()}
@@ -39,12 +39,12 @@ class AllocationTests(unittest.TestCase):
     def candidate(self,label,workers,remote,elapsed):
         jobs={}
         for job in self.jobs:
-            host="haleyspc" if remote and job=="structured" else "jack"
+            host="computehost" if remote and job=="structured" else "desktop"
             device=1 if job=="control" else 0
-            uuid="GPU-H0" if host=="haleyspc" else f"GPU-J{device}"
+            uuid="GPU-H0" if host=="computehost" else f"GPU-J{device}"
             placement=dict(host=host,gpu_ordinal=device,gpu_uuid=uuid,workers=workers)
             output=self.root/label/job/"outputs"
-            origin=f"C:/remote/{label}/{job}/outputs" if host=="haleyspc" else str(output)
+            origin=f"C:/remote/{label}/{job}/outputs" if host=="computehost" else str(output)
             request=self.put(f"{label}/{job}/request.json",dict(config=self.load(self.configs[job]),resume=None,stop_after=3,
                 output_directory=origin,execution_gpu_ordinal=device,collector_workers=workers))
             execution=self.put(f"{label}/{job}/execution.json",dict(placement=placement,observed_gpu_uuid=uuid,
@@ -78,7 +78,7 @@ class AllocationTests(unittest.TestCase):
 
     def test_selects_complete_remote_allocation(self):
         selected=self.check()
-        self.assertEqual(selected["placements"]["structured"]["host"],"haleyspc")
+        self.assertEqual(selected["placements"]["structured"]["host"],"computehost")
         self.assertEqual(selected["placements"]["structured"]["gpu_ordinal"],0)
 
     def test_wrong_observed_gpu_rejected(self):
@@ -107,7 +107,7 @@ class AllocationTests(unittest.TestCase):
             self.check()
 
     def test_unmeasured_eligible_device_rejected(self):
-        self.plan["inventory"]["jack"]["devices"].append(dict(ordinal=2,uuid="GPU-J2",eligible=True,reason="available"))
+        self.plan["inventory"]["desktop"]["devices"].append(dict(ordinal=2,uuid="GPU-J2",eligible=True,reason="available"))
         with self.assertRaisesRegex(ValueError,"lacks a measured"):
             self.check()
 
@@ -116,7 +116,7 @@ class AllocationTests(unittest.TestCase):
         with patch("public_training_dispatch_v2._dispatch_group",return_value="dispatched") as launch:
             self.assertEqual(dispatch_qualified(self.root/"run",self.binary,self.configs,choice["path"],1800),"dispatched")
             placements=launch.call_args.args[3]
-            self.assertEqual(placements["structured"],dict(host="haleyspc",gpu_ordinal=0,gpu_uuid="GPU-H0",workers=4))
+            self.assertEqual(placements["structured"],dict(host="computehost",gpu_ordinal=0,gpu_uuid="GPU-H0",workers=4))
 
     def test_invalid_choice_never_dispatches(self):
         self.plan["selected"]="baseline"

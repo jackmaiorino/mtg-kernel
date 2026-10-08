@@ -254,8 +254,16 @@ pub enum Subtype {
     Turtle,
     Gremlin,
     Dinosaur,
-    /// Appended for Meteor Golem; existing ids remain fixed.
+    /// Appended for Sanguine Syphoner; existing ids remain fixed.
+    Warlock,
+    /// Appended for Firebrand Archer and Spitfire Lagac; existing ids remain
+    /// fixed.
+    Archer,
+    Lizard,
+    /// Appended for the FDN equipment and library-search batch.
     Golem,
+    /// Appended for Eager Trufflesnout; existing ids remain fixed.
+    Boar,
     /// Appended for Crackling Cyclops; existing ids remain fixed.
     Cyclops,
 }
@@ -352,7 +360,15 @@ impl Subtype {
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Dinosaur,
         #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Warlock,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Archer,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Lizard,
+        #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Golem,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Boar,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Cyclops,
     ];
@@ -469,6 +485,22 @@ impl Subtype {
                 | Subtype::Fish
                 | Subtype::Beast
                 | Subtype::Cleric
+                | Subtype::Angel
+                | Subtype::Noble
+                | Subtype::Unicorn
+                | Subtype::Homunculus
+                | Subtype::Merfolk
+                | Subtype::Octopus
+                | Subtype::Hyena
+                | Subtype::Raccoon
+                | Subtype::Citizen
+                | Subtype::Turtle
+                | Subtype::Gremlin
+                | Subtype::Dinosaur
+                | Subtype::Warlock
+                | Subtype::Archer
+                | Subtype::Lizard
+                | Subtype::Golem
         )
     }
 }
@@ -877,17 +909,33 @@ pub enum OptionalAdditionalCostDef {
 /// definition describes what a valid attachment requires and grants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttachmentDef {
-    AuraCreature { prevents_untap: bool },
+    AuraCreature {
+        prevents_untap: bool,
+    },
     AuraCreatureOverride(CreatureCharacteristicsOverrideDef),
+    /// Enchanted creature gets a static power/toughness bonus and keywords.
+    AuraCreatureStatic(AuraCreatureStaticDef),
 }
 
 impl AttachmentDef {
     pub const fn is_creature_aura(self) -> bool {
         matches!(
             self,
-            Self::AuraCreature { .. } | Self::AuraCreatureOverride(_)
+            Self::AuraCreature { .. } | Self::AuraCreatureOverride(_) | Self::AuraCreatureStatic(_)
         )
     }
+}
+
+/// Layer 6 keywords and layer 7c power/toughness granted to the enchanted
+/// creature. With `per_controlled_subtype`, the bonus is multiplied by the
+/// number of permanents of that subtype the Aura's controller controls
+/// (Blanchwood Armor's Forests); otherwise it applies once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AuraCreatureStaticDef {
+    pub power: i16,
+    pub toughness: i16,
+    pub keywords: Keywords,
+    pub per_controlled_subtype: Option<Subtype>,
 }
 
 /// Layer 3 through 7b characteristics supplied by an attached creature Aura.
@@ -1240,6 +1288,11 @@ fn longbow_ping() -> EffectOp {
 pub struct EquipmentDef {
     pub power_delta: i16,
     pub toughness_delta: i16,
+    /// The power/toughness deltas apply only during the Equipment
+    /// controller's turn (Quick-Draw Katana: "During your turn, equipped
+    /// creature gets +2/+0"). Keyword grants already split by turn through
+    /// `controller_turn_keywords`/`other_turn_keywords`.
+    pub pt_controller_turn_only: bool,
     pub add_subtype: Option<Subtype>,
     pub controller_turn_keywords: Keywords,
     pub other_turn_keywords: Keywords,
@@ -1249,6 +1302,18 @@ pub struct EquipmentDef {
     /// Equipment is attached to it (Viridian Longbow). `None` for every
     /// other Equipment in the pool.
     pub granted_activated_ability: Option<GrantedActivatedAbilityDef>,
+}
+
+impl EquipmentDef {
+    /// The power and toughness deltas this Equipment currently grants,
+    /// given whether it is its controller's turn.
+    pub fn pt_deltas(&self, controller_turn: bool) -> (i16, i16) {
+        if self.pt_controller_turn_only && !controller_turn {
+            (0, 0)
+        } else {
+            (self.power_delta, self.toughness_delta)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1790,11 +1855,11 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 242 (keyword-only creatures).
+        // batches append through id 288 (token makers and creature Auras).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                243
+                289
             } else {
                 192
             }
@@ -1889,8 +1954,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v52_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x77a1_97d4_0460_bf5c;
+    fn card_db_hash_v56_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x280f_ffb0_3aa0_3e98;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

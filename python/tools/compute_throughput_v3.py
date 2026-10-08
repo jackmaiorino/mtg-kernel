@@ -32,7 +32,7 @@ def require_allocation(path, binary_sha256, job_configs):
     if plan["jobs"] != job_configs:
         raise ValueError("allocation jobs differ from the requested campaign")
     inventory = plan["inventory"]
-    if set(inventory) != {"jack", "haleyspc", "runpod"}:
+    if set(inventory) != {"desktop", "computehost", "runpod"}:
         raise ValueError("inspect all three placement options")
     eligible = set()
     now = datetime.now(timezone.utc)
@@ -116,7 +116,7 @@ def require_allocation(path, binary_sha256, job_configs):
             output_root = Path(report["local_output_directory"]).resolve()
             if request["output_directory"] != report["source_output_directory"]:
                 raise ValueError("recovery source differs from native request")
-            if placement["host"] == "jack":
+            if placement["host"] == "desktop":
                 if Path(request["output_directory"]).resolve() != output_root:
                     raise ValueError("local outputs cannot be relabeled")
             else:

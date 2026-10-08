@@ -75,7 +75,7 @@ def run(root, source):
         review=source_plan["review"], no_new_training=True)
     write(root/"plan.json",plan)
     hosts=[]
-    for host in ["jack", "haleyspc"]:
+    for host in ["desktop", "computehost"]:
         current=inventory(host)
         write(root/f"{host}-inventory.json",current)
         if not current["active"]: hosts.append(host)

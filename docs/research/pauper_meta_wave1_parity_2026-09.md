@@ -67,7 +67,7 @@ Branch worktree (`lead/pauper-meta-cards-v1`, this record's commit range):
 CARGO_TARGET_DIR=E:/cargo-target-pauper-meta cargo run --locked -p mtg-kernel --release --example rollout_record -- --matchup burn_mirror --games 4 --seed 5151 --out E:/pauper-meta-parity/branch_seed5151
 ```
 
-Base tree (`C:\Users\Jack\IdeaProjects\mtg-kernel`, `lead/cycle4-refresh-manifest-v1` at `75406ffe`, read-only):
+Base tree (`C:\Users\user\IdeaProjects\mtg-kernel`, `lead/cycle4-refresh-manifest-v1` at `75406ffe`, read-only):
 
 ```
 CARGO_TARGET_DIR=E:/cargo-target-pauper-meta-base cargo run --locked -p mtg-kernel --release --example rollout_record -- --matchup burn_mirror --games 4 --seed 5151 --out E:/pauper-meta-parity/base_seed5151

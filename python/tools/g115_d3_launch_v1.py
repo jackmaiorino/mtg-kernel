@@ -193,8 +193,8 @@ def validate_plan(manifest, host, now=None):
                 'Output binding changed')
     placement = manifest['placement']
     inventory = load(placement['inventory'])
-    require(set(inventory) == {'jack', 'haleyspc', 'runpod'}, 'Three-host inventory required')
-    require(0 <= now - inventory['jack']['checked_unix'] <= 1800, 'Refresh placement inventory')
+    require(set(inventory) == {'desktop', 'computehost', 'runpod'}, 'Three-host inventory required')
+    require(0 <= now - inventory['desktop']['checked_unix'] <= 1800, 'Refresh placement inventory')
     require(inventory[host]['complete'], 'Selected host unavailable')
     allocations = placement['hosts']
     for selected_host in allocations:
@@ -230,7 +230,7 @@ def validate_plan(manifest, host, now=None):
                     'Qualification rate differs from completed work/time')
         fastest = max(phases, key=lambda p: p['matches_per_second'])
         require(allocation['workers'] == fastest['workers'], 'Use fastest qualified worker count')
-        search_counts={r['id']:r['search_decisions'] for r in r8_bounds['hosts']['jack']['rows']}
+        search_counts={r['id']:r['search_decisions'] for r in r8_bounds['hosts']['desktop']['rows']}
         measured_cost=max(r['seconds']/search_counts[r['id']] for r in fastest['rows'] if r['arm']=='search')
         require(1.5*r8_bounds['archive_max_decisions']*max(r8_bounds['cost_anchor_seconds'],measured_cost)<=10800,
                 'New host timing exceeds the frozen R8 match allowance')
@@ -462,7 +462,7 @@ def launch(manifest, host, root):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--manifest', type=Path, required=True)
-    parser.add_argument('--host', choices=['jack', 'haleyspc', 'runpod'], required=True)
+    parser.add_argument('--host', choices=['desktop', 'computehost', 'runpod'], required=True)
     parser.add_argument('--root', type=Path)
     parser.add_argument('--check-only', action='store_true')
     args = parser.parse_args()

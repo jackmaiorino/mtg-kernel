@@ -62,7 +62,7 @@ def main():
         selection = require_allocation(a.allocation, a.binary_sha256,
             {a.job: {'config_sha256': sha(a.config), 'updates': len(updates)}})
         placement = selection['placements'][a.job]
-        if placement['host'] != 'jack' or placement['gpu_ordinal'] != gpu or placement['workers'] != workers:
+        if placement['host'] != 'desktop' or placement['gpu_ordinal'] != gpu or placement['workers'] != workers:
             raise ValueError('selected allocation needs another placement; local launcher will not substitute')
     if os.environ.get('CUDA_VISIBLE_DEVICES') or gpu != 1 or not 1 <= workers <= 64:
         raise ValueError('this local launcher requires original GPU1 mapping and valid collectors')

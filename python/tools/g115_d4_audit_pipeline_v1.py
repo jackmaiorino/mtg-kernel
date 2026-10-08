@@ -236,11 +236,11 @@ def signal_limits(plan, work, commands, host):
         require(signal['schema'] == 'g115-d4-learning-signal-command/v1'
                 and signal['trajectories'] == command['trajectories'], 'Signal/scorer trajectory order differs')
     if plan['mode'] == 'production':
-        expected = REMOTE_ENDPOINTS if host == 'haleyspc' else LOCAL_ENDPOINTS
+        expected = REMOTE_ENDPOINTS if host == 'computehost' else LOCAL_ENDPOINTS
         coverage = [(s['endpoint'], s['update']) for s in signals]
         require(len(coverage) == len(set(coverage)) and set(coverage) == {(e,u) for e in expected for u in range(200)},
                 'Missing, duplicate or foreign assigned update')
-        require(plan['cap_bytes'] <= (40_000_000_000 if host == 'haleyspc' else 60_000_000_000),
+        require(plan['cap_bytes'] <= (40_000_000_000 if host == 'computehost' else 60_000_000_000),
                 'Selected host cap exceeded')
         evidence = read(plan['throughput'])
         require(evidence['complete'] and evidence['signal_tool_sha256'] == plan['signal_tool']['sha256']
@@ -265,12 +265,12 @@ def signal_limits(plan, work, commands, host):
                 and parity['signal_tool_sha256'] == plan['signal_tool']['sha256']
                 and parity['binary_sha256'] == plan['binary']['sha256'],
                 'Cross-host signal parity not verified')
-        require(host != 'haleyspc' or bool(plan.get('retained_roots')), 'Transferred archive storage must be charged')
+        require(host != 'computehost' or bool(plan.get('retained_roots')), 'Transferred archive storage must be charged')
     return signals
 
 
 def admission(plan, host):
-    require(os.name == 'nt' and host in ('jack', 'haleyspc'), 'Windows archive qualification only')
+    require(os.name == 'nt' and host in ('desktop', 'computehost'), 'Windows archive qualification only')
     require(checked(plan['documents']['launcher']).resolve() == Path(__file__).resolve(), 'Wrong owner')
     checked(plan['transport']['dispatcher'])
     require(checked(plan['observer']).name == 'g115_d4_audit_observer_v1.py',
@@ -303,8 +303,8 @@ def admission(plan, host):
             require(len(matches) == 1 and matches[0]['files'].get(file['member']) == file['sha256'],
                     'Member is not bound by the archive index')
     root = Path(plan['worker_root'])
-    drive = 'e:' if host == 'jack' else 'c:'
-    reserve_memory = (32 if host == 'jack' else 8)*1024**3
+    drive = 'e:' if host == 'desktop' else 'c:'
+    reserve_memory = (32 if host == 'desktop' else 8)*1024**3
     require(root.is_absolute() and root.resolve().drive.lower() == drive and not root.exists(),
             'Fresh host-specific root required')
     retained = [Path(p).resolve(strict=True) for p in plan.get('retained_roots', [])]
@@ -314,11 +314,11 @@ def admission(plan, host):
                 for i,a in enumerate(retained) for b in retained[i+1:]), 'Retained trees overlap')
     prior = sum(physical_tree(p)['charged_bytes'] for p in retained)
     require(prior < plan['cap_bytes'], 'Retained footprint exhausts cap')
-    require(plan['cap_bytes'] <= (40_000_000_000 if host == 'haleyspc' else 60_000_000_000),
+    require(plan['cap_bytes'] <= (40_000_000_000 if host == 'computehost' else 60_000_000_000),
             'Selected host total cap exceeded')
     if plan['mode'] == 'qualification':
         qualification_capacity(plan, prior)
-    if plan['mode'] == 'production' and host == 'haleyspc':
+    if plan['mode'] == 'production' and host == 'computehost':
         require(all(any(Path(f['archive']['path']).resolve().is_relative_to(p) for p in retained)
                     for g in work['groups'] for f in g['files']), 'Uncharged transferred archive')
     live = inventory(root, reserve_memory, plan['cap_bytes']-prior)
@@ -327,9 +327,9 @@ def admission(plan, host):
 
 
 def execute(plan, work, commands, binary, compact, live, host):
-    storage = AuditStorage(plan['worker_root'], plan['cap_bytes'], drive='e:' if host == 'jack' else 'c:',
+    storage = AuditStorage(plan['worker_root'], plan['cap_bytes'], drive='e:' if host == 'desktop' else 'c:',
                            retained_roots=plan.get('retained_roots', []))
-    reserve_memory = (32 if host == 'jack' else 8)*1024**3
+    reserve_memory = (32 if host == 'desktop' else 8)*1024**3
     started = time.monotonic()
     stop = threading.Event()
     result = {'complete': False, 'phases': [], 'inventory': live, 'formal_measurement': False,

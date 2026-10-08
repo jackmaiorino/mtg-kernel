@@ -335,12 +335,22 @@ fn resolve_git_path(repo_root: &Path, name: &str) -> PathBuf {
     }
 }
 
+/// Cargo treats a rerun-if-changed path that does not exist as changed on
+/// every build, so a missing Git metadata file (a fresh `actions/checkout`
+/// has no packed-refs, and a packed branch has no loose ref) would rerun this
+/// script and rebuild the crate and every test binary on each cargo command.
+/// Skipping one is safe because every commit, checkout or reset that could
+/// create it also appends to logs/HEAD (the HEAD reflog), watched below.
+fn emit_git_path_rerun_input(repo_root: &Path, name: &str) {
+    let path = resolve_git_path(repo_root, name);
+    if path.exists() {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+}
+
 fn emit_commit_tree_rerun_inputs(repo_root: &Path) {
-    for name in ["HEAD", "index", "packed-refs"] {
-        println!(
-            "cargo:rerun-if-changed={}",
-            resolve_git_path(repo_root, name).display()
-        );
+    for name in ["HEAD", "logs/HEAD", "index", "packed-refs"] {
+        emit_git_path_rerun_input(repo_root, name);
     }
     let symbolic_ref = Command::new("git")
         .args(["symbolic-ref", "-q", "HEAD"])
@@ -351,10 +361,7 @@ fn emit_commit_tree_rerun_inputs(repo_root: &Path) {
         let reference = std::str::from_utf8(&symbolic_ref.stdout)
             .expect("git symbolic ref is UTF-8")
             .trim();
-        println!(
-            "cargo:rerun-if-changed={}",
-            resolve_git_path(repo_root, reference).display()
-        );
+        emit_git_path_rerun_input(repo_root, reference);
     }
     let tracked = git_output(
         repo_root,
@@ -399,7 +406,14 @@ fn configure_commit_tree_binding(repo_root: &Path) {
     }
     let status = git_output(
         repo_root,
-        &["status", "--porcelain=v1", "--untracked-files=all"],
+        // --no-optional-locks: refreshing the index here would change a
+        // watched file and rerun this script on the next cargo command.
+        &[
+            "--no-optional-locks",
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+        ],
         "build source status",
     );
     let clean = status.is_empty();
@@ -2356,6 +2370,12 @@ enum Special {
     /// keeping the generated recipe parameterized avoids a runtime card-name
     /// special while leaving room for later draw spells to share it.
     DrawCards(u8),
+    /// A targeted creature stat change until end of turn (Giant Growth,
+    /// Stab).
+    PumpCreature {
+        power: i32,
+        toughness: i32,
+    },
     /// A targeted creature stat change until end of turn followed by a draw.
     PumpCreatureThenDraw {
         power: i32,
@@ -2448,6 +2468,9 @@ enum Special {
     /// "Deals 2 damage to any target. Metalcraft -- 4 instead if you
     /// control three or more artifacts." (Galvanic Blast, Rally-only).
     GalvanicBlast,
+    /// "Kicker {4}. Burst Lightning deals 2 damage to any target. If this
+    /// spell was kicked, it deals 4 damage instead." (FDN Burst Lightning).
+    BurstLightning,
     /// "Create two 1/1 white Human Soldier creature tokens. Humans you
     /// control gain haste until end of turn." (Rally at the Hornburg,
     /// Rally-only -- the card the deck is named for).
@@ -2569,6 +2592,10 @@ enum Special {
     /// into hand, then shuffle. Land Grant's conditional hand-reveal
     /// alternative cost is modeled independently.
     SearchForestToHand,
+    /// "Search your library for a card, put that card into your hand, then
+    /// shuffle. You lose 3 life." (Grim Tutor). The found card is not
+    /// revealed.
+    GrimTutor,
     /// Put one +1/+1 counter and one lifelink keyword counter on target
     /// creature. Unexpected Fangs is the first consumer.
     AddPlusOnePlusOneAndLifelinkCounters,
@@ -2635,6 +2662,25 @@ enum Special {
         power: i32,
         toughness: i32,
         keyword: &'static str,
+    },
+    /// Creates `count` copies of `token`, then boosts every creature the
+    /// controller controls at that point (the new tokens included) until
+    /// end of turn. Heroic Reinforcements is the sole consumer.
+    CreateTokensThenBoostControlled {
+        token: &'static str,
+        count: u8,
+        power: i32,
+        toughness: i32,
+        keyword: &'static str,
+    },
+    /// Two printed modes: creatures you control get `power`/`toughness`
+    /// until end of turn, or create `count` copies of `token`. Goblin
+    /// Surprise is the sole consumer.
+    BoostControlledOrCreateTokens {
+        power: i32,
+        toughness: i32,
+        token: &'static str,
+        count: u8,
     },
     /// A spell program composed only from existing generic `EffectOp`s.
     /// `recipe` is the stable semantic token hashed into the card database;
@@ -2775,6 +2821,9 @@ impl Special {
             Special::None => "none".to_string(),
             Special::GreatFurnace => "great_furnace:add_r".to_string(),
             Special::DrawCards(count) => format!("draw_cards:{count}"),
+            Special::PumpCreature { power, toughness } => {
+                format!("pump_creature:{power}:{toughness}")
+            }
             Special::PumpCreatureThenDraw { power, toughness, draw } => {
                 format!("pump_creature_then_draw:{power}:{toughness}:{draw}")
             }
@@ -2814,6 +2863,7 @@ impl Special {
             ),
             Special::EndTheFestivities => "end_the_festivities".to_string(),
             Special::GalvanicBlast => "galvanic_blast".to_string(),
+            Special::BurstLightning => "burst_lightning".to_string(),
             Special::RallyAtTheHornburg => "rally_at_the_hornburg".to_string(),
             Special::RecklessImpulse => "reckless_impulse".to_string(),
             Special::WindingWay => "winding_way".to_string(),
@@ -2863,6 +2913,7 @@ impl Special {
                 "return_own_graveyard_creature_to_battlefield".to_string()
             }
             Special::SearchForestToHand => "search_forest_to_hand".to_string(),
+            Special::GrimTutor => "grim_tutor".to_string(),
             Special::AddPlusOnePlusOneAndLifelinkCounters => {
                 "add_plus_one_plus_one_and_lifelink_counters".to_string()
             }
@@ -2901,6 +2952,12 @@ impl Special {
             Special::JoustThrough => "joust_through:attacking_or_blocking_creature_damage_and_life".to_string(),
             Special::BoostControlledCreatures { power, toughness, keyword } => {
                 format!("boost_controlled_creatures:{power}:{toughness}:{keyword}:exact_incarnations")
+            }
+            Special::CreateTokensThenBoostControlled { token, count, power, toughness, keyword } => {
+                format!("create_tokens_then_boost_controlled:{token}:{count}:{power}:{toughness}:{keyword}:exact_incarnations")
+            }
+            Special::BoostControlledOrCreateTokens { power, toughness, token, count } => {
+                format!("boost_controlled_or_create_tokens:{power}:{toughness}:exact_incarnations|{token}:{count}")
             }
             Special::Program { recipe, mode2, .. } => match mode2 {
                 Some(mode) => format!("program:{recipe}:mode2:{}", mode.recipe),
@@ -3038,6 +3095,15 @@ fn special_for(name: &str) -> Special {
             draw: 1,
         },
         "Thoughtcast" => Special::DrawCards(2),
+        "Think Twice" => Special::DrawCards(1),
+        "Giant Growth" => Special::PumpCreature {
+            power: 3,
+            toughness: 3,
+        },
+        "Stab" => Special::PumpCreature {
+            power: -2,
+            toughness: -2,
+        },
         "Of One Mind" => Special::DrawCards(2),
         "Eviscerator's Insight" => Special::DrawCards(2),
         "Fanatical Offering" => Special::DrawThenCreateToken {
@@ -3095,6 +3161,7 @@ fn special_for(name: &str) -> Special {
         },
         "End the Festivities" => Special::EndTheFestivities,
         "Galvanic Blast" => Special::GalvanicBlast,
+        "Burst Lightning" => Special::BurstLightning,
         "Rally at the Hornburg" => Special::RallyAtTheHornburg,
         "Reckless Impulse" => Special::RecklessImpulse,
         "Winding Way" => Special::WindingWay,
@@ -3146,8 +3213,11 @@ fn special_for(name: &str) -> Special {
         },
         "Dread Return" => Special::ReturnOwnGraveyardCreatureToBattlefield,
         "Land Grant" => Special::SearchForestToHand,
+        "Grim Tutor" => Special::GrimTutor,
         "Unexpected Fangs" => Special::AddPlusOnePlusOneAndLifelinkCounters,
-        "Bind the Monster" | "Witness Protection" => Special::BindTheMonster,
+        "Bind the Monster" | "Witness Protection" | "Twinblade Blessing" | "Blanchwood Armor" => {
+            Special::BindTheMonster
+        }
         "Snap" => Special::Snap,
         "Flaring Pain" => Special::DamageCannotBePreventedThisTurn,
         "Prismatic Strands" => Special::PrismaticStrands,
@@ -3161,6 +3231,19 @@ fn special_for(name: &str) -> Special {
         "Fleeting Flight" => Special::FleetingFlight,
         "Joust Through" => Special::JoustThrough,
         "Nyxborn Hydra" => Special::NyxbornHydra,
+        "Heroic Reinforcements" => Special::CreateTokensThenBoostControlled {
+            token: "Soldier Token",
+            count: 2,
+            power: 1,
+            toughness: 1,
+            keyword: "HASTE",
+        },
+        "Goblin Surprise" => Special::BoostControlledOrCreateTokens {
+            power: 2,
+            toughness: 0,
+            token: "Goblin Token",
+            count: 2,
+        },
         "Overrun" => Special::BoostControlledCreatures {
             power: 3,
             toughness: 3,
@@ -3315,6 +3398,12 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::BoostControlledCreatures { power, toughness, keyword } => {
             format!("target=None;spell=BoostControlledCreatures({power},{toughness},{keyword},exact_incarnations);mana=None")
         }
+        Special::CreateTokensThenBoostControlled { token, count, power, toughness, keyword } => {
+            format!("target=None;spell=Sequence(CreateToken({token},{count}),BoostControlledCreatures({power},{toughness},{keyword},exact_incarnations));mana=None")
+        }
+        Special::BoostControlledOrCreateTokens { power, toughness, token, count } => {
+            format!("target=None;spell=BoostControlledCreatures({power},{toughness},NONE,exact_incarnations);mode2=CreateToken({token},{count});mana=None")
+        }
         Special::GreatFurnace => "target=None;spell=None;mana=AddMana(R)".to_string(),
         Special::DrawCards(count) => {
             format!("target=None;spell=DrawCards(Controller,{count});mana=None")
@@ -3322,6 +3411,9 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::BurnAnyTarget(amount) => {
             format!("target=AnyTarget;spell=DealDamage({amount});mana=None")
         }
+        Special::PumpCreature { power, toughness } => format!(
+            "target=Creature;spell=PumpTargetUntilEndOfTurn({power},{toughness});mana=None"
+        ),
         Special::PumpCreatureThenDraw { power, toughness, draw } => format!(
             "target=Creature;spell=Sequence(PumpTargetUntilEndOfTurn({power},{toughness}),DrawCards(Controller,{draw}));mana=None"
         ),
@@ -3380,6 +3472,7 @@ fn effect_recipe_for(card: &CardJson) -> String {
             "target=None;spell=DamageOpponentAndTheirCreatures(1);mana=None".to_string()
         }
         Special::GalvanicBlast => "target=AnyTarget;spell=GalvanicBlast;mana=None".to_string(),
+        Special::BurstLightning => "target=AnyTarget;spell=Conditional(WasKicked,DealDamage(4),DealDamage(2));mana=None".to_string(),
         Special::RallyAtTheHornburg => "target=None;spell=RallyAtTheHornburg;mana=None".to_string(),
         Special::RecklessImpulse => "target=None;spell=RecklessImpulse;mana=None".to_string(),
         Special::WindingWay => "target=None;spell=WindingWay;mana=None".to_string(),
@@ -3446,6 +3539,7 @@ fn effect_recipe_for(card: &CardJson) -> String {
         }
         Special::ReturnOwnGraveyardCreatureToBattlefield => "target=CreatureCardInOwnGraveyard;spell=MoveObject(Target0,Battlefield);mana=None".to_string(),
         Special::SearchForestToHand => "target=None;spell=SearchLibraryToHand(Controller,LandWithSubtype(Forest));mana=None".to_string(),
+        Special::GrimTutor => "target=None;spell=Sequence(SearchLibraryToHand(Controller,AnyCard,unrevealed),LoseLife(Controller,3));mana=None".to_string(),
         Special::AddPlusOnePlusOneAndLifelinkCounters => "target=Creature;spell=AddCounters(Target0,+1/+1=1,lifelink=1);mana=None".to_string(),
         Special::BindTheMonster => {
             "target=Creature;spell=PutSourceOntoBattlefieldAttachedToTarget(Target0);mana=None"
@@ -3552,6 +3646,10 @@ fn keywords_for(card: &CardJson) -> String {
         "Guardian of the Guildpact" => keywords.push("Keywords::PROTECTION_FROM_MONOCOLORED"),
         "Brazen Scourge" | "Fanatical Firebrand" => keywords.push("Keywords::HASTE"),
         "Samurai Token" => keywords.push("Keywords::VIGILANCE"),
+        "Dragon Token" | "Dragon 5/5 Token" => keywords.push("Keywords::FLYING"),
+        "Resolute Reinforcements" | "Twinblade Blessing" => keywords.push("Keywords::FLASH"),
+        "Elfsworn Giant" => keywords.push("Keywords::REACH"),
+        "Eager Trufflesnout" => keywords.push("Keywords::TRAMPLE"),
         _ => {}
     }
     if card.name == "Nyxborn Hydra" {
@@ -3598,6 +3696,8 @@ fn keywords_for(card: &CardJson) -> String {
             keywords.push("Keywords::DEATHTOUCH");
             keywords.push("Keywords::LIFELINK");
         }
+        "Icewind Elemental" | "Insect Token" => keywords.push("Keywords::FLYING"),
+        "Prideful Parent" => keywords.push("Keywords::VIGILANCE"),
         _ => {}
     }
     if card.name == "Treetop Snarespinner" {
@@ -3793,6 +3893,7 @@ fn kicker_cost_for(name: &str) -> String {
         "Goblin Bushwhacker" => cost_src("{R}"),
         "Gnarlid Colony" => cost_src("{2}{G}"),
         "Sun-Blessed Healer" => cost_src("{1}{W}"),
+        "Burst Lightning" => cost_src("{4}"),
         _ => "None".to_string(),
     }
 }
@@ -3880,6 +3981,13 @@ fn flashback_for(name: &str) -> String {
             let (pips, generic, x_count) = parse_cost("{1}{U}");
             format!(
                 "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }}), CostComponent::PayLife(3)] }})",
+                pips.join(", ")
+            )
+        }
+        "Think Twice" => {
+            let (pips, generic, x_count) = parse_cost("{2}{U}");
+            format!(
+                "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})] }})",
                 pips.join(", ")
             )
         }
@@ -4456,6 +4564,53 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_zone: "Battlefield",
             sorcery_speed_only: true,
             target_spec: "ControlledCreature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Adventuring Gear" | "Goldvein Pick" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: None,
+                generic: 1,
+            }],
+            effect: AbilityEffectRecipe::AttachSourceToTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: true,
+            target_spec: "ControlledCreature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Quick-Draw Katana" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: None,
+                generic: 2,
+            }],
+            effect: AbilityEffectRecipe::AttachSourceToTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: true,
+            target_spec: "ControlledCreature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Swiftfoot Boots" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: None,
+                generic: 1,
+            }],
+            effect: AbilityEffectRecipe::AttachSourceToTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: true,
+            target_spec: "ControlledCreature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Evolving Wilds" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Tap, AbilityCostRecipe::SacrificeSelf],
+            effect: AbilityEffectRecipe::SearchLibraryToBattlefieldTapped {
+                filter: LibrarySearchFilterRecipe::BasicLand,
+            },
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
@@ -5037,6 +5192,10 @@ fn mode2_for(name: &str) -> String {
         Special::PiracyCharm => "Some(ModeDef { target_spec: TargetSpec::Creature, effect: mode2_effect_piracy_charm_pump })".to_string(),
         Special::CastIntoTheFire => "Some(ModeDef { target_spec: TargetSpec::ArtifactPermanent, effect: mode2_effect_cast_into_the_fire_exile_artifact })".to_string(),
         Special::ThrabenCharm => "Some(ModeDef { target_spec: TargetSpec::EnchantmentPermanent, effect: mode2_effect_thraben_charm_destroy_enchantment })".to_string(),
+        Special::BoostControlledOrCreateTokens { .. } => format!(
+            "Some(ModeDef {{ target_spec: TargetSpec::None, effect: mode2_effect_create_tokens_{} }})",
+            name.to_ascii_lowercase().replace([' ', '\''], "_")
+        ),
         Special::Program { mode2: Some(mode), .. } => format!(
             "Some(ModeDef {{ target_spec: TargetSpec::{}, effect: mode2_effect_program_{} }})",
             mode.target,
@@ -5178,11 +5337,31 @@ fn ward_cost_for(name: &str) -> &'static str {
     }
 }
 
+/// Rust source for an `equipment_for` profile. Profiles written before
+/// `EquipmentDef::pt_controller_turn_only` existed omit the field, so their
+/// card-database canon (which hashes the `equipment_for` text) is unchanged;
+/// the omitted field defaults to `false` here.
+fn equipment_src(profile: &str) -> String {
+    if profile == "None" || profile.contains("pt_controller_turn_only") {
+        profile.to_string()
+    } else {
+        profile.replacen(
+            "granted_activated_ability:",
+            "pt_controller_turn_only: false, granted_activated_ability:",
+            1,
+        )
+    }
+}
+
 fn equipment_for(name: &str) -> &'static str {
     match name {
         "Celestial Armor" => "Some(EquipmentDef { power_delta: 2, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::FLYING, other_turn_keywords: Keywords::FLYING, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
         "Black Mage's Rod" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 0, add_subtype: Some(Subtype::Wizard), controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 1, job_select: true, granted_activated_ability: None })",
         "Hunter's Blowgun" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords::DEATHTOUCH, other_turn_keywords: Keywords::REACH, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
+        "Adventuring Gear" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
+        "Goldvein Pick" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
+        "Quick-Draw Katana" => "Some(EquipmentDef { power_delta: 2, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::FIRST_STRIKE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: true })",
+        "Swiftfoot Boots" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords(Keywords::HEXPROOF.0 | Keywords::HASTE.0), other_turn_keywords: Keywords(Keywords::HEXPROOF.0 | Keywords::HASTE.0), noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
         "Viridian Longbow" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: Some(GrantedActivatedAbilityDef { cost: &[CostComponent::Tap], target_spec: TargetSpec::AnyTarget, effect: longbow_ping }) })",
         _ => "None",
     }
@@ -5192,6 +5371,8 @@ fn attachment_for(name: &str) -> &'static str {
     match name {
         "Bind the Monster" => "Some(AttachmentDef::AuraCreature { prevents_untap: true })",
         "Witness Protection" => "Some(AttachmentDef::AuraCreatureOverride(CreatureCharacteristicsOverrideDef { name: \"Legitimate Businessperson\", subtype: Subtype::Citizen, colors: &[ManaColor::G, ManaColor::W], power: 1, toughness: 1, loses_abilities: true }))",
+        "Twinblade Blessing" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 0, toughness: 0, keywords: Keywords::DOUBLE_STRIKE, per_controlled_subtype: None }))",
+        "Blanchwood Armor" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 1, toughness: 1, keywords: Keywords::NONE, per_controlled_subtype: Some(Subtype::Forest) }))",
         _ => "None",
     }
 }
@@ -5230,7 +5411,32 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Sylvan Scavenging" => "beginning_controller_end_step:mode_before_targets:controlled_creature_plus_one_counter:1|resolution_controls_creature_power_at_least:4:create_green_3_3_raccoon_token:1",
         "Kiora, the Rising Tide" => "etb:draw:2:then_discard:2;attacks_if_controller_graveyard_cards_at_least:7:recheck_threshold:optional_create_legendary_blue_8_8_octopus_scion:1",
         "Sun-Blessed Healer" => "etb_if_kicked:recheck_kicked:return_own_graveyard_nonland_permanent_mana_value_at_most:2",
-        "Blossoming Sands" | "Thornwood Falls" => "etb:gain_life:1",
+        "Blossoming Sands"
+        | "Thornwood Falls"
+        | "Bloodfell Caves"
+        | "Dismal Backwater"
+        | "Jungle Hollow"
+        | "Rugged Highlands"
+        | "Scoured Barrens"
+        | "Swiftwater Cliffs"
+        | "Tranquil Cove"
+        | "Wind-Scarred Crag" => "etb:gain_life:1",
+        "Ajani's Pridemate" => "controller_gains_positive_life:counter_on_bound_source:1",
+        "Marauding Blight-Priest" => "controller_gains_positive_life:opponent_loses_life:1",
+        "Sanguine Syphoner" => "source_declared_attacker:opponent_loses_life:1:then_controller_gains_life:1",
+        "Helpful Hunter" => "etb:draw:1",
+        "Prideful Parent" => "etb:create_white_1_1_cat_token:1",
+        "Icewind Elemental" => "etb:draw:1:then_discard:1",
+        "Burglar Rat" => "etb:opponent_discards:1",
+        "Infestation Sage" => "dies:create_black_green_1_1_flying_insect_token:1",
+        "Wary Thespian" => "etb_and_dies:surveil:1",
+        "Firebrand Archer" => "cast_noncreature:damage_opponent:1",
+        "Spitfire Lagac" => "controlled_land_enters:damage_opponent:1",
+        "Dragon Trainer" => "etb:create_red_4_4_flying_dragon:1",
+        "Resolute Reinforcements" => "etb:create_white_1_1_soldier:1",
+        "Elfsworn Giant" => "controlled_land_enters:create_elf_warrior:1",
+        "Eager Trufflesnout" => "source_combat_damage_to_player:create_food:1",
+        "Rite of the Dragoncaller" => "cast_instant_or_sorcery:create_red_5_5_flying_dragon:1",
         "Dazzling Angel" => "other_controlled_creature_enters:gain_life:1",
         "Beast-Kin Ranger" => "other_controlled_creature_enters:pump_bound_source:1:0:end_of_turn",
         "Dwynen, Gilt-Leaf Daen" => "source_declared_attacker:gain_life_current_attacking_elf_count",
@@ -5259,6 +5465,9 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Faerie Miscreant" => "etb_if_another_same_definition:draw:1",
         "Faerie Seer" => "etb:scry:2",
         "Outlaw Medic" => "dies:draw:1",
+        "Solemn Simulacrum" => "etb:search_basic_land_to_battlefield_tapped;dies:may_draw:1",
+        "Adventuring Gear" => "controlled_land_enters:boost_attached_creature:2:2:end_of_turn",
+        "Goldvein Pick" => "equipped_creature_combat_damage_player:create_treasure_token:1",
         "Refurbished Familiar" => "etb:opponent_discard_else_draw",
         "Squadron Hawk" => "etb:search_up_to_three_same_definition_reveal_shuffle",
         "Bind the Monster" => "etb:tap_attached_then_attached_deals_power_to_aura_controller",
@@ -5491,6 +5700,19 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out, "    Some(EffectOp::AddCountersToTarget {{ target_index: 0, optional: false, plus1_plus1: 1, lifelink: 1, stun: 0 }})").unwrap();
         writeln!(out, "}}").unwrap();
         writeln!(out).unwrap();
+    }
+
+    for card in cards {
+        if let Special::PumpCreature { power, toughness } = special_for(&card.name) {
+            let function = card
+                .name
+                .to_ascii_lowercase()
+                .replace([' ', '\'', '-'], "_");
+            writeln!(out, "fn spell_effect_{function}() -> Option<EffectOp> {{").unwrap();
+            writeln!(out, "    Some(EffectOp::PumpTargetUntilEndOfTurnDynamic {{ target: TargetRef::Target(0), power: DynamicValueDef::Fixed({power}), toughness: DynamicValueDef::Fixed({toughness}) }})").unwrap();
+            writeln!(out, "}}").unwrap();
+            writeln!(out).unwrap();
+        }
     }
 
     for card in cards {
@@ -6009,6 +6231,25 @@ fn codegen(cards: &[CardJson]) -> String {
         .unwrap();
         writeln!(out, "    Some(EffectOp::Conditional {{").unwrap();
         writeln!(out, "        cond: EffectCond::ControlsArtifactCount(3),").unwrap();
+        writeln!(out, "        then: Box::new(EffectOp::DealDamage {{ target: TargetRef::Target(0), amount: 4 }}),").unwrap();
+        writeln!(out, "        else_: Box::new(EffectOp::DealDamage {{ target: TargetRef::Target(0), amount: 2 }}),").unwrap();
+        writeln!(out, "    }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|c| matches!(special_for(&c.name), Special::BurstLightning))
+    {
+        // Kicker {4} -- 4 damage instead of 2 if this spell was kicked.
+        writeln!(
+            out,
+            "fn spell_effect_burst_lightning() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::Conditional {{").unwrap();
+        writeln!(out, "        cond: EffectCond::WasKicked,").unwrap();
         writeln!(out, "        then: Box::new(EffectOp::DealDamage {{ target: TargetRef::Target(0), amount: 4 }}),").unwrap();
         writeln!(out, "        else_: Box::new(EffectOp::DealDamage {{ target: TargetRef::Target(0), amount: 2 }}),").unwrap();
         writeln!(out, "    }})").unwrap();
@@ -7014,6 +7255,23 @@ fn codegen(cards: &[CardJson]) -> String {
 
     if cards
         .iter()
+        .any(|card| matches!(special_for(&card.name), Special::GrimTutor))
+    {
+        writeln!(out, "fn spell_effect_grim_tutor() -> Option<EffectOp> {{").unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+        writeln!(out, "        EffectOp::SearchLibraryToHand {{ player: PlayerRef::Controller, filter: LibraryCardFilter::AnyCard }},").unwrap();
+        writeln!(
+            out,
+            "        EffectOp::LoseLife {{ player: PlayerRef::Controller, amount: 3 }},"
+        )
+        .unwrap();
+        writeln!(out, "    ]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
         .any(|card| matches!(special_for(&card.name), Special::SearchForestToHand))
     {
         writeln!(
@@ -7154,6 +7412,52 @@ fn codegen(cards: &[CardJson]) -> String {
     }
 
     for (card_index, card) in cards.iter().enumerate() {
+        match special_for(&card.name) {
+            Special::CreateTokensThenBoostControlled {
+                token,
+                count,
+                power,
+                toughness,
+                keyword,
+            } => {
+                // Tokens first, so the resolution-time snapshot of
+                // controlled creatures includes them.
+                writeln!(
+                    out,
+                    "fn spell_effect_controlled_boost_{card_index}() -> Option<EffectOp> {{"
+                )
+                .unwrap();
+                writeln!(out, "    let token = crate::card_def::card_id_by_name({token:?}).expect(\"{token} in CARD_DEFS\");").unwrap();
+                writeln!(out, "    let mut ops = vec![EffectOp::CreateToken {{ token_def: token, controller: PlayerRef::Controller }}; {count}];").unwrap();
+                writeln!(out, "    ops.push(EffectOp::BoostControlledCreaturesUntilEndOfTurn {{ power: {power}, toughness: {toughness}, keywords: Keywords::{keyword} }});").unwrap();
+                writeln!(out, "    Some(EffectOp::Sequence(ops))").unwrap();
+                writeln!(out, "}}").unwrap();
+            }
+            Special::BoostControlledOrCreateTokens {
+                power,
+                toughness,
+                token,
+                count,
+            } => {
+                let function = card.name.to_ascii_lowercase().replace([' ', '\''], "_");
+                writeln!(
+                    out,
+                    "fn spell_effect_controlled_boost_{card_index}() -> Option<EffectOp> {{"
+                )
+                .unwrap();
+                writeln!(out, "    Some(EffectOp::BoostControlledCreaturesUntilEndOfTurn {{ power: {power}, toughness: {toughness}, keywords: Keywords::NONE }})").unwrap();
+                writeln!(out, "}}").unwrap();
+                writeln!(
+                    out,
+                    "fn mode2_effect_create_tokens_{function}() -> EffectOp {{"
+                )
+                .unwrap();
+                writeln!(out, "    let token = crate::card_def::card_id_by_name({token:?}).expect(\"{token} in CARD_DEFS\");").unwrap();
+                writeln!(out, "    EffectOp::Sequence(vec![EffectOp::CreateToken {{ token_def: token, controller: PlayerRef::Controller }}; {count}])").unwrap();
+                writeln!(out, "}}").unwrap();
+            }
+            _ => {}
+        }
         if let Special::BoostControlledCreatures {
             power,
             toughness,
@@ -7251,7 +7555,7 @@ fn codegen(cards: &[CardJson]) -> String {
                 format!("spell_effect_draw_{count}"),
                 "no_effect".to_string(),
             ),
-            Special::PumpCreatureThenDraw { .. } => (
+            Special::PumpCreature { .. } | Special::PumpCreatureThenDraw { .. } => (
                 "TargetSpec::Creature",
                 format!(
                     "spell_effect_{}",
@@ -7358,6 +7662,11 @@ fn codegen(cards: &[CardJson]) -> String {
             Special::GalvanicBlast => (
                 "TargetSpec::AnyTarget",
                 "spell_effect_galvanic_blast".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::BurstLightning => (
+                "TargetSpec::AnyTarget",
+                "spell_effect_burst_lightning".to_string(),
                 "no_effect".to_string(),
             ),
             Special::RallyAtTheHornburg => (
@@ -7516,6 +7825,11 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_search_forest_to_hand".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::GrimTutor => (
+                "TargetSpec::None",
+                "spell_effect_grim_tutor".to_string(),
+                "no_effect".to_string(),
+            ),
             Special::AddPlusOnePlusOneAndLifelinkCounters => (
                 "TargetSpec::Creature",
                 "spell_effect_add_plus_one_plus_one_and_lifelink_counters".to_string(),
@@ -7586,7 +7900,9 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_joust_through".to_string(),
                 "no_effect".to_string(),
             ),
-            Special::BoostControlledCreatures { .. } => (
+            Special::BoostControlledCreatures { .. }
+            | Special::CreateTokensThenBoostControlled { .. }
+            | Special::BoostControlledOrCreateTokens { .. } => (
                 "TargetSpec::None",
                 format!("spell_effect_controlled_boost_{card_index}"),
                 "no_effect".to_string(),
@@ -7633,7 +7949,9 @@ fn codegen(cards: &[CardJson]) -> String {
         let has_spell_program = spell_effect_src != "no_effect";
         let has_mana_program = !mana_ability_colors.is_empty();
         if executable && !c.is_token {
-            if c.is_land && !has_mana_program {
+            // A land without a mana ability must still have printed rules
+            // text the kernel executes (Evolving Wilds' fetch ability).
+            if c.is_land && !has_mana_program && activated_ability_recipes_for(&c.name).is_empty() {
                 panic!(
                     "cards_v1.json: executable land {:?} has no generated mana program",
                     c.name
@@ -7679,7 +7997,12 @@ fn codegen(cards: &[CardJson]) -> String {
             spell_cannot_be_countered_for(c)
         )
         .unwrap();
-        writeln!(out, "        equipment: {},", equipment_for(&c.name)).unwrap();
+        writeln!(
+            out,
+            "        equipment: {},",
+            equipment_src(equipment_for(&c.name))
+        )
+        .unwrap();
         writeln!(out, "        types: &[{types_src}],").unwrap();
         writeln!(out, "        subtypes: &[{subtypes_src}],").unwrap();
         writeln!(out, "        supertypes: &[{supertypes_src}],").unwrap();
@@ -7944,7 +8267,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v52\n"
+            "kernel_carddb/v56\n"
         } else {
             "kernel_carddb/v34\n"
         },
@@ -8297,7 +8620,12 @@ fn subtype_variant(t: &str) -> &'static str {
         "Turtle" => "Subtype::Turtle",
         "Gremlin" => "Subtype::Gremlin",
         "Dinosaur" => "Subtype::Dinosaur",
+        "Warlock" => "Subtype::Warlock",
+        "Insect" => "Subtype::Insect",
+        "Archer" => "Subtype::Archer",
+        "Lizard" => "Subtype::Lizard",
         "Golem" => "Subtype::Golem",
+        "Boar" => "Subtype::Boar",
         "Cyclops" => "Subtype::Cyclops",
         "Pirate" => "Subtype::Pirate",
         "Plains" => "Subtype::Plains",

@@ -65,9 +65,9 @@ def run(root, hosts):
     split, mapping = split_jobs(jobs, 8)
     assert len(split) == 12
     root.mkdir()
-    snapshots = {host: inventory(host) for host in ['jack','haleyspc']}
+    snapshots = {host: inventory(host) for host in ['desktop','computehost']}
     stores = {}
-    for host, drive in [('jack','D'),('haleyspc','C')]:
+    for host, drive in [('desktop','D'),('computehost','C')]:
         write(root/f'{host}-inventory.json', snapshots[host])
         stores[host] = {k:v for k,v in storage(snapshots[host],drive).items() if k in ['drive','disk_serial','disk_name']}
     assert all(not snapshots[h]['active'] for h in hosts), 'preserve competing native owners'
@@ -81,7 +81,7 @@ def run(root, hosts):
         group_wall_seconds=600, original_chunk_matches=16, split_chunk_matches=8,
         cloud=dict(evidence=pin(cloud), checked_at=read(cloud)['checked_at'], reason='Authenticated HTTP403; no paid allocation.'),
         limitations='Six own-deck/seat combinations, eight opponents, two seeds each; tiny trained checkpoints. Exact split/replay check and preliminary worker scaling, not a final-checkpoint production allocation or strength evaluation.',
-        review='Fable known zero-read429 until September22 07:00EDT; no retry or endorsement. Bounded engineering under Jack research authority.'))
+        review='Fable known zero-read429 until September22 07:00EDT; no retry or endorsement. Bounded engineering under desktop research authority.'))
     remote = prepare_remote(root, list(assets.values()))
     started = time.monotonic()
     def execute(label, items, host, workers):
@@ -124,5 +124,5 @@ def run(root, hosts):
 if __name__ == '__main__':
     if not __debug__: raise RuntimeError('Qualification requires assertions')
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--root',type=Path,required=True)
-    p.add_argument('--host',choices=['jack','haleyspc','both'],default='both');a=p.parse_args()
-    run(a.root.resolve(),['jack','haleyspc'] if a.host=='both' else [a.host])
+    p.add_argument('--host',choices=['desktop','computehost','both'],default='both');a=p.parse_args()
+    run(a.root.resolve(),['desktop','computehost'] if a.host=='both' else [a.host])

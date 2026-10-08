@@ -43,8 +43,8 @@ def require_choice(path, binary_sha256, config_sha256, planned_updates):
     if plan.get("planned_updates") != planned_updates:
         raise ValueError("compute choice covers a different run length")
     inventory = plan["inventory"]
-    if set(inventory) != {"jack", "haleyspc", "runpod"}:
-        raise ValueError("inspect Jack's PC, HaleysPC and RunPod before placement")
+    if set(inventory) != {"desktop", "computehost", "runpod"}:
+        raise ValueError("inspect the primary desktop, the compute host and RunPod before placement")
     now = datetime.now(timezone.utc)
     for host, status in inventory.items():
         checked_at = datetime.fromisoformat(status["checked_at"])

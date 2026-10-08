@@ -238,6 +238,57 @@ mod tests {
     }
 
     #[test]
+    fn streamed_v3_canonical_json_matches_serde_value_bytes_over_real_games() {
+        use crate::ids::PlayerId;
+        use crate::native_flat_tensorizer_v2::canonical_v3_streamed_and_reference_bytes;
+        use crate::runtime_decks::RUNTIME_DECKS;
+
+        let mut compared = 0;
+        for (game, (left, right)) in [(7, 4), (4, 7), (0, 5), (8, 2), (3, 6), (1, 7)]
+            .into_iter()
+            .enumerate()
+        {
+            let decks = [&RUNTIME_DECKS[left], &RUNTIME_DECKS[right]];
+            let mut session =
+                FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
+                    game as u64 + 1,
+                    0x5713_EA4D ^ game as u64,
+                    4096,
+                    4096 * 128,
+                    [decks[0].id.to_owned(), decks[1].id.to_owned()],
+                    [decks[0].card_ids.to_vec(), decks[1].card_ids.to_vec()],
+                    PlayerId((game % 2) as u8),
+                )
+                .unwrap();
+            let mut random = 0x9E37_79B9_u64 ^ game as u64;
+            let mut owned = OwnedScoringV3::default();
+            for _ in 0..400 {
+                let FastActorResponseV1::Decision(expected) = session.current_response() else {
+                    break;
+                };
+                let decision = owned.encode(&session);
+                let (streamed, reference) =
+                    canonical_v3_streamed_and_reference_bytes(owned.view(&decision));
+                assert_eq!(
+                    String::from_utf8_lossy(&streamed),
+                    String::from_utf8_lossy(&reference),
+                    "game {game} step {}",
+                    expected.step
+                );
+                compared += 1;
+                random = random
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                let selected = ((random >> 33) % u64::from(expected.legal_action_count)) as u32;
+                session
+                    .step(expected.episode_id, expected.step, selected)
+                    .unwrap();
+            }
+        }
+        assert!(compared > 1_000, "compared {compared}");
+    }
+
+    #[test]
     fn reexiled_card_keeps_only_current_generation_permissions_in_v3_scoring() {
         use crate::engine::{PlayOrCast, PlayPermission, PlayPermissionExpiry};
         use crate::event::{self, ProposedEvent};

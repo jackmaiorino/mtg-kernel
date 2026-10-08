@@ -67,7 +67,7 @@ def prepare(root):
         jobs=jobs,gates=GATES,bootstrap_seed=fresh('bootstrap'),prior_seed_inputs=list(prior.values()),seed_namespace=namespace,
         training_games=6000,evaluation_bo3=4096,evaluation_unique_seeds=512,training_projection_cap_seconds=3600,
         native_training_wall_cap_seconds=1800,final_update=199,
-        review='Fable zero-read HTTP429 throughSeptember22 07:00EDT; bounded preparation under Jack research authority, no endorsement.',
+        review='Fable zero-read HTTP429 throughSeptember22 07:00EDT; bounded preparation under desktop research authority, no endorsement.',
         non_claim='One training seed stream and one development opponent. Pass means replicate, never promotion or human-level strength. CP7 excluded; no outcome-prefix selection.')
     write(root/'manifest.json',manifest)
     print(dict(prepared=str(root),training_games=6000,evaluation_bo3=4096,jobs=512,launched=False))

@@ -1,7 +1,7 @@
-"""Tests for the HaleysPC check-only path (python/tools/haley_check_only_v1.py, haley_check_only_runner_v1.py and
-haley_check_only_dispatch_v1.py).
+"""Tests for the compute host check-only path (python/tools/computehost_check_only_v1.py, computehost_check_only_runner_v1.py and
+computehost_check_only_dispatch_v1.py).
 
-Hermetic: no SSH, no HaleysPC, no WMI; git runs locally on temporary repositories and the reservation helper is
+Hermetic: no SSH, no the compute host, no WMI; git runs locally on temporary repositories and the reservation helper is
 a fake with the same entry points.
 """
 from __future__ import annotations
@@ -21,12 +21,12 @@ TOOLS = REPO_ROOT / "python" / "tools"
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
-import haley_check_only_dispatch_v1 as dispatcher  # noqa: E402
-import haley_check_only_runner_v1 as runner  # noqa: E402
-import haley_check_only_v1 as controller  # noqa: E402
+import computehost_check_only_dispatch_v1 as dispatcher  # noqa: E402
+import computehost_check_only_runner_v1 as runner  # noqa: E402
+import computehost_check_only_v1 as controller  # noqa: E402
 
 COMMIT = "34decc2779d566616752f64ec63ab4823fff293c"
-TC = "C:\\Users\\haley\\.rustup\\toolchains\\1.94.1-x86_64-pc-windows-msvc\\bin"
+TC = "C:\\Users\\hostuser\\.rustup\\toolchains\\1.94.1-x86_64-pc-windows-msvc\\bin"
 
 
 def plan(**overrides):
@@ -62,10 +62,10 @@ class RunnerTests(unittest.TestCase):
     def test_a_valid_plan_passes_and_each_rule_refuses(self):
         runner.check_plan(plan())
         self.refused(runner.check_plan, plan(schema="other/v1"))
-        self.refused(runner.check_plan, plan(host="jack"))
+        self.refused(runner.check_plan, plan(host="desktop"))
         self.refused(runner.check_plan, plan(commit=COMMIT[:8]))
-        self.refused(runner.check_plan, plan(source_root="C:/Users/haley/src"))
-        self.refused(runner.check_plan, plan(worker_root="C:/Users/haley/runs/x"))
+        self.refused(runner.check_plan, plan(source_root="C:/Users/hostuser/src"))
+        self.refused(runner.check_plan, plan(worker_root="C:/Users/hostuser/runs/x"))
         self.refused(runner.check_plan, plan(target_dir=controller.ROOT + "../target"))
         self.refused(runner.check_plan, plan(cargo_args=["run", "--bin", "anything"]))
         self.refused(runner.check_plan, plan(cargo_args=["test", "--target-dir", "C:/elsewhere"]))
@@ -86,7 +86,7 @@ class RunnerTests(unittest.TestCase):
 
     def test_overrides_are_removed_and_the_run_is_isolated(self):
         base = {"PATH": "C:\\Windows", "RUSTC": "C:\\x\\rustc.exe", "rustflags": "-C target-cpu=native",
-                "CARGO_TARGET_DIR": "C:\\shared", "RUSTC_WRAPPER": "sccache", "HOME": "C:\\Users\\haley",
+                "CARGO_TARGET_DIR": "C:\\shared", "RUSTC_WRAPPER": "sccache", "HOME": "C:\\Users\\hostuser",
                 "CARGO_PROFILE_RELEASE_LTO": "false", "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER": "lld-link",
                 "CARGO_HTTP_TIMEOUT": "60"}
         env = runner.build_environment(base, plan())
@@ -98,7 +98,7 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(env["CARGO_TARGET_DIR"], "C:\\mtg-line-a\\check-only\\target\\opus-panel-export")
         self.assertEqual(env["TEMP"], env["TMP"])
         self.assertEqual(env["CARGO_INCREMENTAL"], "0")
-        self.assertEqual(env["HOME"], "C:\\Users\\haley")
+        self.assertEqual(env["HOME"], "C:\\Users\\hostuser")
 
     def test_the_runner_runs_only_under_its_own_held_reservation(self):
         helper, _ = fake_helper()
@@ -146,7 +146,7 @@ class DispatchTests(unittest.TestCase):
         command = dispatcher.owner_command(value, controller.ROOT + "plans/panel-suite-001.json", "C:/py/python.exe")
         self.assertEqual(command, ["C:\\py\\python.exe", "-u", "C:\\mtg-line-a\\check-only\\tools\\%s\\launcher" % ("1" * 64),
                                    "--manifest", "C:\\mtg-line-a\\check-only\\plans\\panel-suite-001.json",
-                                   "--host", "haleyspc", "--root", "C:\\mtg-line-a\\check-only\\runs\\panel-suite-001"])
+                                   "--host", "computehost", "--root", "C:\\mtg-line-a\\check-only\\runs\\panel-suite-001"])
 
     def test_the_reservation_is_acquired_and_the_supervisor_created_in_one_call(self):
         helper, calls = fake_helper()
@@ -162,11 +162,11 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(kwargs["cwd"], "C:\\mtg-line-a\\check-only")
         self.assertEqual(kwargs["busy_pattern"], dispatcher.BUSY_PATTERN)
         self.assertEqual(kwargs["python"], "C:\\py\\python.exe")
-        self.assertEqual(kwargs["transport_record"]["kind"], "haley-check-only-v1")
+        self.assertEqual(kwargs["transport_record"]["kind"], "computehost-check-only-v1")
 
     def test_pins_outside_the_root_are_refused_before_hashing(self):
         value = plan()
-        value["files"]["helper"]["path"] = "C:/Users/haley/host_reservation_v1.py"
+        value["files"]["helper"]["path"] = "C:/Users/hostuser/host_reservation_v1.py"
         with self.assertRaises(SystemExit):
             dispatcher.check_pins(value, controller.ROOT + "plans/x.json", value["files"]["dispatch"]["path"])
 
@@ -225,9 +225,9 @@ class ControllerTests(unittest.TestCase):
             item = controller.entry(local, paths["plan"])
             self.assertEqual(item["bytes"], 2)
             staged = controller.staging_map([item], "a" * 40)
-            self.assertEqual((staged["schema"], staged["host"]), ("g115-line-a-staging-map/v1", "haleyspc"))
+            self.assertEqual((staged["schema"], staged["host"]), ("g115-line-a-staging-map/v1", "computehost"))
             with self.assertRaises(SystemExit):
-                controller.staging_map([dict(item, remote="C:/Users/haley/x.json")], "a" * 40)
+                controller.staging_map([dict(item, remote="C:/Users/hostuser/x.json")], "a" * 40)
 
     def test_the_plan_carries_its_roots_and_release_condition(self):
         value = plan()
@@ -270,7 +270,7 @@ class ReceiptTests(unittest.TestCase):
 
     def test_the_receipt_binds_the_remote_head_the_token_and_every_collected_file(self):
         receipt = self.receipt()
-        self.assertEqual((receipt['schema'], receipt['outcome']), ('haley-check-only-receipt/v1', 'ran'))
+        self.assertEqual((receipt['schema'], receipt['outcome']), ('computehost-check-only-receipt/v1', 'ran'))
         self.assertNotIn('placement', receipt)
         self.assertEqual(receipt['plan_sha256'], self.completion['plan_sha256'])
         self.assertEqual(receipt['log_sha256'], self.completion['log_sha256'])
@@ -340,7 +340,7 @@ class ReceiptTests(unittest.TestCase):
             (root / 'cargo.log').write_bytes(b'partial cargo output\n')
             raise subprocess.TimeoutExpired(['cargo'], 1)
 
-        args = ['runner', '--manifest', str(self.plan_path), '--host', 'haleyspc', '--root', str(worker)]
+        args = ['runner', '--manifest', str(self.plan_path), '--host', 'computehost', '--root', str(worker)]
         with patch.object(runner, 'check_plan'), patch.object(runner, 'run', side_effect=interrupted), \
                 patch.object(sys, 'argv', args), self.assertRaises(SystemExit) as caught:
             runner.main()

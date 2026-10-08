@@ -1,4 +1,4 @@
-"""Select completed Haley evidence while Jack's independent owner is active."""
+"""Select completed compute host evidence while the maintainer's independent owner is active."""
 import argparse
 from pathlib import Path
 from public_evaluation_dispatch_v1 import read, write, pin, checked, inventory
@@ -9,14 +9,14 @@ def run(root):
     plan = read(root / "plan.json")
     for key in ["runner", "analysis", "design"]: checked(plan[key])
     availability = {}
-    for host in ["jack", "haleyspc"]:
+    for host in ["desktop", "computehost"]:
         snapshot = inventory(host)
         write(root / f"{host}-launch-availability.json", snapshot)
-        assert bool(snapshot["active"]) == (host == "jack"), "availability changed; reassess before launch"
+        assert bool(snapshot["active"]) == (host == "desktop"), "availability changed; reassess before launch"
         availability[host] = dict(checked_at=snapshot["at"], evidence=pin(root / f"{host}-launch-availability.json"),
-            eligible=host == "haleyspc", reason=("Kimi native test/build owner is active; preserve its work and exclude this host until it finishes."
-                if host == "jack" else "Idle native inventory; full CPU evaluation within the existing local scope."))
-        if host == "haleyspc":
+            eligible=host == "computehost", reason=("Kimi native test/build owner is active; preserve its work and exclude this host until it finishes."
+                if host == "desktop" else "Idle native inventory; full CPU evaluation within the existing local scope."))
+        if host == "computehost":
             part = next(p for p in snapshot["partitions"] if p["DriveLetter"] == "C")
             disk = next(d for d in snapshot["disks"] if d["Number"] == part["DiskNumber"])
             storage = (host, "C", disk["SerialNumber"])
@@ -25,17 +25,17 @@ def run(root):
     availability["runpod"] = dict(checked_at=cloud["checked_at"], evidence=pin(cloud_path), eligible=False,
         reason="Latest authenticated inventory HTTP403; no paid allocation or verified available pod.")
     write(root / "availability-change.json", dict(plan=pin(root / "plan.json"), runner=pin(__file__),
-        reason="Kimi resumed local native work during the remote-only timing phase. The combined-PC preflight rejected overlap before spawning. Preserve all twelve complete allocations, exclude the currently owned workstation, and choose the fastest currently eligible Haley allocation.",
+        reason="Kimi resumed local native work during the remote-only timing phase. The combined-PC preflight rejected overlap before spawning. Preserve all twelve complete allocations, exclude the currently owned workstation, and choose the fastest currently eligible compute host allocation.",
         original_serial_recovery=pin(root / "preflight-recovery.json"),
         completed_historical_local_allocations=9, combined_allocations_unmeasured=2,
         scientific_inputs_and_analysis_unchanged=True, owners={h:a["evidence"] for h,a in availability.items()}))
     remote = read(root / "remote-staging.json")
     candidates, projections = [], {}
     references = {name: pin(checked(item))["sha256"] for name,item in plan["replay_reference"].items()}
-    for label in ["haley-w1-cap600", "haley-w8", "haley-w16"]:
+    for label in ["computehost-w1-cap600", "computehost-w8", "computehost-w16"]:
         report = pin(root / label / "result.json")
         result = read(checked(report))
-        assert set(result["allocation"]) == {"haleyspc"} and result["fingerprints"] == references
+        assert set(result["allocation"]) == {"computehost"} and result["fingerprints"] == references
         candidates.append(dict(id=label, report=report))
         projections[label] = remote["seconds"]+result["staging_seconds"]+(result["execution_seconds"]+result["recovery_seconds"])*3488/192
     choice = dict(schema="cpu-bo3-allocation/v1", plan=pin(root / "plan.json"), binary=plan["binary"],

@@ -7,9 +7,9 @@ from compute_throughput_v3 import queued_makespan
 
 class DeviceQueueTests(unittest.TestCase):
     def setUp(self):
-        self.placements = {'a':dict(host='jack',gpu_uuid='J'),
-                           'b':dict(host='haleyspc',gpu_uuid='H'),
-                           'c':dict(host='jack',gpu_uuid='J')}
+        self.placements = {'a':dict(host='desktop',gpu_uuid='J'),
+                           'b':dict(host='computehost',gpu_uuid='H'),
+                           'c':dict(host='desktop',gpu_uuid='J')}
         self.executions = {'a':dict(started_unix=1,finished_unix=3),
                            'b':dict(started_unix=1,finished_unix=5),
                            'c':dict(started_unix=3,finished_unix=6)}
@@ -23,6 +23,6 @@ class DeviceQueueTests(unittest.TestCase):
             queued_makespan(self.placements,self.executions,{'a':20,'b':40,'c':30})
 
     def test_single_job_per_device_is_parallel_makespan(self):
-        self.placements['c']=dict(host='jack',gpu_uuid='J2')
+        self.placements['c']=dict(host='desktop',gpu_uuid='J2')
         self.executions['c']['started_unix']=1
         self.assertEqual(queued_makespan(self.placements,self.executions,{'a':20,'b':40,'c':30}),40)

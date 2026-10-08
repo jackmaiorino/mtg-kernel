@@ -113,6 +113,21 @@ pub enum LibraryCardFilter {
     /// land such as Bojuka Bog is an equally legal find). Appended for
     /// pauper meta wave 2 Task 3; existing discriminants remain fixed.
     AnyLand,
+    /// Any card at all (Grim Tutor: "Search your library for a card").
+    /// The printed text has no reveal clause, so the library-search moves
+    /// leave a card found with this filter hidden in its owner's hand; it
+    /// is the only filter whose result is not publicly revealed. Appended
+    /// for the FDN library-search batch.
+    AnyCard,
+}
+
+impl LibraryCardFilter {
+    /// Whether a search-to-hand publicly reveals the card it finds. Every
+    /// filtered tutor in the pool says "reveal it"; an unrestricted "search
+    /// for a card" does not.
+    pub(crate) fn reveals_selected_card(self) -> bool {
+        !matches!(self, LibraryCardFilter::AnyCard)
+    }
 }
 
 /// How long an impulse-drawn card (`EffectOp::ImpulseDraw`) stays playable
@@ -1068,6 +1083,15 @@ pub enum EffectOp {
     /// Privately inspect one top card, then keep it or move it to the graveyard.
     SurveilOne {
         player: PlayerRef,
+    },
+    /// The creature this ability's source Equipment is attached to gets
+    /// +power/+toughness until end of turn (Adventuring Gear's landfall).
+    /// The host is read at resolution: the source's current attachment
+    /// while it is the same battlefield incarnation, otherwise its
+    /// last-known attachment. An unattached source does nothing.
+    BoostAttachedCreatureUntilEndOfTurn {
+        power: i32,
+        toughness: i32,
     },
     /// Destroy every creature on both battlefields as one simultaneous
     /// zone-change batch (Day of Judgment). Indestructible creatures stay.
@@ -7450,7 +7474,9 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                             state,
                             event::ProposedEvent::zone_change(binding.object, Zone::Hand),
                         );
-                        if state.objects.get(binding.object).zone == Zone::Hand {
+                        if filter.reveals_selected_card()
+                            && state.objects.get(binding.object).zone == Zone::Hand
+                        {
                             for observer in [PlayerId::P0, PlayerId::P1] {
                                 state
                                     .reveal_hand_card(observer, player, binding.object)
@@ -7768,7 +7794,9 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         .map_err(|error| error.to_string())?;
                     commit_zone_change_batch(state, &selected, Zone::Hand, false)?;
                     for binding in selected {
-                        if state.objects.get(binding.object).zone == Zone::Hand {
+                        if filter.reveals_selected_card()
+                            && state.objects.get(binding.object).zone == Zone::Hand
+                        {
                             for observer in [PlayerId::P0, PlayerId::P1] {
                                 state
                                     .reveal_hand_card(observer, player, binding.object)
@@ -10010,6 +10038,7 @@ fn library_filter_matches(
                     .any(|subtype| subtype_ids.binary_search(&subtype.stable_id()).is_ok())
         }
         LibraryCardFilter::AnyLand => def.has_type(CardType::Land),
+        LibraryCardFilter::AnyCard => true,
     })
 }
 
@@ -10034,6 +10063,7 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
                 fnv1a_u64(hash, u64::from(subtype.stable_id()))
             }),
         LibraryCardFilter::AnyLand => fnv1a_u64(0xcbf2_9ce4_8422_2325, 5),
+        LibraryCardFilter::AnyCard => fnv1a_u64(0xcbf2_9ce4_8422_2325, 6),
     }
 }
 
@@ -11201,6 +11231,46 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     event::ProposedEvent::damage(attached, Target::Player(ctx.controller), amount),
                 );
             }
+        }
+        EffectOp::BoostAttachedCreatureUntilEndOfTurn { power, toughness } => {
+            let Some(source_contract) = ctx.ability_source_contract else {
+                return;
+            };
+            let live_source = state.objects.try_get(ctx.source);
+            let source_is_same_battlefield_incarnation = live_source.is_some_and(|source| {
+                source.zone == Zone::Battlefield
+                    && source.zone_change_count == source_contract.zone_change_count
+            });
+            let link = if source_is_same_battlefield_incarnation {
+                live_source.and_then(|source| source.v4.attached_to)
+            } else {
+                source_contract.attached_to
+            };
+            let Some(link) = link else {
+                return;
+            };
+            let Some(attached) = state.objects.try_get(link.object) else {
+                return;
+            };
+            if attached.zone != Zone::Battlefield
+                || attached.zone_change_count != link.zone_change_count
+                || !crate::engine::object_has_type(state, link.object, CardType::Creature)
+                || (source_is_same_battlefield_incarnation
+                    && !attached.attachments.contains(&ctx.source))
+            {
+                return;
+            }
+            install_temporary_boost(
+                state,
+                EffectObjectBinding {
+                    object: link.object,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: link.zone_change_count,
+                },
+                *power,
+                *toughness,
+                Keywords::NONE,
+            );
         }
         EffectOp::BackupTarget { target, keyword } => {
             let target_index = match target {

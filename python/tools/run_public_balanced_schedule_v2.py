@@ -17,7 +17,7 @@ def audit(group_pin, manifest, root, remote_only=False):
     group = read(checked(group_pin))
     assert set(group["jobs"]) == {"control", "balanced"}
     if remote_only:
-        recovery_path = checked(group_pin).parent / "haleyspc/recovery-verification.json"
+        recovery_path = checked(group_pin).parent / "computehost/recovery-verification.json"
         archived = read(recovery_path)
         assert archived["mismatches"] == 0
         archive = recovery_path.parent / "results.zip"
@@ -33,7 +33,7 @@ def audit(group_pin, manifest, root, remote_only=False):
     for arm, report_pin in group["jobs"].items():
         report = read(checked(report_pin))
         if remote_only:
-            assert report["placement"]["host"] == "haleyspc"
+            assert report["placement"]["host"] == "computehost"
         assert report["config"] == manifest["training_configs"][arm]
         execution = read(checked(report["execution"]))
         assert execution["exit_code"] == 0 and not execution["timeout"]
@@ -86,7 +86,7 @@ def run(root, compute, scorer):
     assert m['analysis'] == pin(Path(__file__).with_name('public_balanced_schedule_analysis_v1.py'))
     choice = read(compute/'compute-choice.json')
     from public_evaluation_dispatch_v1 import inventory
-    current = {host: inventory(host) for host in ('jack', 'haleyspc')}
+    current = {host: inventory(host) for host in ('desktop', 'computehost')}
     write(compute/'launch-inventory-v2.json', current)
     assert all(s['active'] or choice['inventory'][host]['eligible'] for host, s in current.items()), 'New idle host: qualify expanded allocation before launch'
 

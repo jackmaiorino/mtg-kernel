@@ -42,7 +42,7 @@ Three fresh independent Fable reviews failed HTTP 429 weekly quota before any re
 
 ## Evidence
 
-- Configs, `FINAL-MANIFEST.json`, `replay-check-001.json` and the independent transition audit: `C:/Users/Jack/IdeaProjects/sideboarding-integration-20260912/engineering-002/`.
+- Configs, `FINAL-MANIFEST.json`, `replay-check-001.json` and the independent transition audit: `C:/Users/user/IdeaProjects/sideboarding-integration-20260912/engineering-002/`.
 - Immutable run outputs and logs: `E:/mtg-kernel-learned-sideboarding-evidence/engineering-002/`.
 - Preserved executable: `E:/mtg-kernel-learned-sideboarding-evidence/engineering-002/final-build-001/learned_sideboard_v1.exe`.
-- Current continuation handoff: `C:/Users/Jack/IdeaProjects/sideboarding-integration-20260912/HANDOFF.md`.
+- Current continuation handoff: `C:/Users/user/IdeaProjects/sideboarding-integration-20260912/HANDOFF.md`.

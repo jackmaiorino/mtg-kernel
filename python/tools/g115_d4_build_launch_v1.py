@@ -45,7 +45,7 @@ def save(path, value):
 
 
 def structural(plan, host):
-    require(plan['schema'] == SCHEMA and host == 'jack', 'Build mode is Jack Windows only')
+    require(plan['schema'] == SCHEMA and host == 'desktop', 'Build mode is the maintainer Windows only')
     require(plan['jobs'] in (1, 2, 3, 4), 'Build jobs must be 1..4')
     require(1 <= len(plan['bins']) <= len(BINS) and len(set(plan['bins'])) == len(plan['bins'])
             and set(plan['bins']) <= BINS, 'Only named g115 binaries may be built')
@@ -106,7 +106,7 @@ def admission(plan, host):
     free = shutil.disk_usage('E:/').free
     require(free >= 60 * GIB + plan['additional_growth_bytes'], 'E reserve plus build growth unavailable')
     memory = available_memory()
-    require(memory >= 32 * GIB, 'Jack memory reserve unavailable')
+    require(memory >= 32 * GIB, 'desktop memory reserve unavailable')
     command = [str(cargo), 'build', '--locked', '--offline', '-p', 'mtg-kernel', '--release',
                '--config', 'profile.release.package.mtg-kernel.codegen-units=4',
                '--features', FEATURES, '-j', str(plan['jobs'])]

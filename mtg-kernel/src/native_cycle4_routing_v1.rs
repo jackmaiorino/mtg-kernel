@@ -1320,7 +1320,7 @@ pub fn decode_cycle4_routing_record_v1(bytes: &[u8]) -> Result<Cycle4RoutingReco
 ///
 /// INTENT. Section D pins the freeze order: the routing output "is written to
 /// an immutable, content-hashed lane record BEFORE any M1 CP7 byte becomes
-/// readable", so that "M1 may inform Jack's continue/escalate decision; it
+/// readable", so that "M1 may inform the maintainer's continue/escalate decision; it
 /// cannot alter the recorded parent, recipe, constants, or any later
 /// selector". A process cannot prove that nobody has read a CP7 result, but
 /// it can refuse to run once the artifacts that would carry one exist where

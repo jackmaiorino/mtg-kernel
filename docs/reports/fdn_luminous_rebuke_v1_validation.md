@@ -81,7 +81,7 @@ distinct paid-spell behavior.
 
 Functional source is local `62587f74`, remote
 `9b49d9e0020035468f2016beeee183152c543524` in the owned
-`C:/Users/haley/mtg-kernel-fdn-rebuke-codex` worktree. Rust/Cargo 1.94.1,
+`C:/Users/hostuser/mtg-kernel-fdn-rebuke-codex` worktree. Rust/Cargo 1.94.1,
 MSVC linker 14.50.35725.0, two Cargo jobs, no incremental compilation or
 debug symbols, seed 123 and no GPU. Small manifests bind source/input and
 output hashes. The current launcher uses the direct pinned Cargo executable

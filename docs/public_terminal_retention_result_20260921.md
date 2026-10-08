@@ -47,17 +47,17 @@ The supported launcher is `E:/mtg-meta-recovery-20260921/retained-evaluation.py`
 
 | Allocation | Forecast for 100 games including overhead |
 |---|---:|
-| Jack, one job | 43.46 s |
-| **Jack, four jobs** | **18.88 s** |
-| HaleysPC, one job | 90.70 s |
-| HaleysPC, four jobs | 48.03 s |
+| The maintainer, one job | 43.46 s |
+| **The maintainer, four jobs** | **18.88 s** |
+| The compute host, one job | 90.70 s |
+| The compute host, four jobs | 48.03 s |
 | Both PCs, four jobs each | 25.98 s |
 
-Actual selected execution and recovery took **12.92 seconds** for 100 games, followed by 0.893 seconds for the 48-position panel and 0.899 seconds for its replay. The four-job representative workload took 7.58 seconds versus 17.42 serially. Scoring and recovery use Jack's D SSD with immutable copies on E. The five representative placement runs totalled 88.26 seconds, plus 6.28 seconds of remote setup and separate inventory/orchestration overhead. The evaluator build took 154.37 seconds using four BelowNormal Cargo jobs and E target/temp storage. Both PCs' CPUs, storage, memory and GPUs were inventoried. This reader has no qualified CUDA scorer; GPU acceleration was not assumed. RunPod inventory returned HTTP403; nothing was allocated or charged. No new training occurred in this evaluation.
+Actual selected execution and recovery took **12.92 seconds** for 100 games, followed by 0.893 seconds for the 48-position panel and 0.899 seconds for its replay. The four-job representative workload took 7.58 seconds versus 17.42 serially. Scoring and recovery use the maintainer's D SSD with immutable copies on E. The five representative placement runs totalled 88.26 seconds, plus 6.28 seconds of remote setup and separate inventory/orchestration overhead. The evaluator build took 154.37 seconds using four BelowNormal Cargo jobs and E target/temp storage. Both PCs' CPUs, storage, memory and GPUs were inventoried. This reader has no qualified CUDA scorer; GPU acceleration was not assumed. RunPod inventory returned HTTP403; nothing was allocated or charged. No new training occurred in this evaluation.
 
 Both PCs had no active research native jobs after completion. The seven idle human sessions were preserved. The heartbeat remains paused. This run finished well below the two 60-second idle-capacity diagnosis threshold; occupancy is not a strength or throughput claim.
 
-Independent Fable review remains unavailable under the recorded zero-source-read HTTP429 through September 22, 07:00 EDT. It was not repeatedly retried. This is an unresolved review gap, not endorsement. Jack's continuing research/execution authority covers this bounded work; it does not imply paid compute or broader training authority.
+Independent Fable review remains unavailable under the recorded zero-source-read HTTP429 through September 22, 07:00 EDT. It was not repeatedly retried. This is an unresolved review gap, not endorsement. The maintainer's continuing research/execution authority covers this bounded work; it does not imply paid compute or broader training authority.
 
 ## Evidence and limits
 

@@ -2,7 +2,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $script:ExpectedBaseCommit = '308842554b1cbca7ea091b154e8a33addeea995d'
-$script:BaselineRepoRoot = 'C:\Users\Jack\IdeaProjects\mtg-kernel-macro-selfplay-rung-v1-codex'
+$script:BaselineRepoRoot = "$env:USERPROFILE\IdeaProjects\mtg-kernel-macro-selfplay-rung-v1-codex"
 $script:ExpectedGpu0Uuid = 'GPU-3502709e-6aef-8ed7-4abe-562838793e3d'
 $script:ExpectedGpu1Uuid = 'GPU-0642d3ca-e3d4-ba16-96ab-c561c6da90e3'
 $script:PoolRoot = 'D:\mtg-kernel-ladder-pilot-20260725\pool3'

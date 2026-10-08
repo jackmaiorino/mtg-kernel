@@ -1,4 +1,4 @@
-"""Replay the fixed final training update, including the remote treatment on Jack."""
+"""Replay the fixed final training update, including the remote treatment on the maintainer."""
 import argparse
 from pathlib import Path
 from public_training_dispatch_v2 import read, write, checked, pin, preflight, worker
@@ -13,13 +13,13 @@ def run(root, pilot):
     training = read(pilot/"training-audit.json")
     if not training["complete"] or training["full_natural_games"] != 4000:
         raise ValueError("requires completed matched training")
-    current = inventory("jack")
+    current = inventory("desktop")
     if current["active"]:
         raise ValueError("wait for existing native owners")
     root.mkdir()
     write(root/"manifest.json", dict(pilot=pin(pilot/"manifest.json"), training=pin(pilot/"training-audit.json"),
         binary=m["training_binary"], runner=pin(__file__), updates=[199], maximum_games=20,
-        purpose="Fixed final-update replay. Treatment moves from Haley GPU0 to Jack GPU1. No outcome selection or model changes.",
+        purpose="Fixed final-update replay. Treatment moves from the compute host GPU0 to the maintainer GPU1. No outcome selection or model changes.",
         process_wall_cap_seconds=180, inventory=current))
     results = {}
     for arm in ["control", "structured"]:
@@ -29,8 +29,8 @@ def run(root, pilot):
             raise ValueError("fixed replay envelope differs")
         folder = root/arm
         folder.mkdir()
-        placement = place("jack", 1, 10)
-        write(folder/"preflight.json", preflight("jack", [placement]))
+        placement = place("desktop", 1, 10)
+        write(folder/"preflight.json", preflight("desktop", [placement]))
         resume = report["outputs"]["0198/checkpoint.json"]
         checked(resume)
         request = dict(config=cfg, output_directory=str(folder/"outputs"), resume=resume,

@@ -95,12 +95,12 @@ seed 2026091231 at policy step 400; it does not force an action after scoring.
 
 ## Review boundary
 
-Jack explicitly assigned these fixes. A fresh read-only Fable review was
+The maintainer explicitly assigned these fixes. A fresh read-only Fable review was
 dispatched as session `323e67e6-82c2-42db-b1ed-6df762f9d966`, but Claude returned
 HTTP 429 for the weekly quota before reading any source. There is no Fable
 endorsement. The recorded failure is
-`C:/Users/Jack/IdeaProjects/sideboarding-integration-20260912/fable-observation-successor-review-001/`.
-Implementation and bounded CPU verification continue under Jack's assignment;
+`C:/Users/user/IdeaProjects/sideboarding-integration-20260912/fable-observation-successor-review-001/`.
+Implementation and bounded CPU verification continue under the maintainer's assignment;
 independent Fable review remains an explicitly unresolved review limitation.
 A focused fresh goad review, session `b86c9969-f091-4455-9102-e2161dd74f79`,
 also failed HTTP 429 before any source reads or input/output tokens. Its

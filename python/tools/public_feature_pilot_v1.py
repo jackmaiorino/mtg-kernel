@@ -146,7 +146,7 @@ def prepare(root):
         limitations=["One g115 lineage; familiar stationary training pool and development V3 opponent; seven exact registrations.",
             "KeepSevenV2 and supplied static sideboards; not learned openings or sideboarding and not closed-list deployment.",
             "Combined mana-cost and prevention inputs do not identify their separate effects.",
-            "Fable HTTP429 zero-read review gap until September22 07:00EDT; no retry or endorsement; Jack authorized bounded local continuation.",
+            "Fable HTTP429 zero-read review gap until September22 07:00EDT; no retry or endorsement; the maintainer authorized bounded local continuation.",
             "No paid compute, CP7 outcome selection, engineering endpoint parents, human-strength claim or candidate promotion."],
         statistics_checks="Paired common-noise cancellation, exact fixed effect and deterministic resampling passed."))
     print(json.dumps(dict(root=str(root), training_games_per_arm=2000, evaluation_matches=2352, census=dict(census)), indent=2))
@@ -331,7 +331,7 @@ def train(root):
     choices = {arm: require_choice(root/f"{arm}-compute-choice.json", m["training_binary"]["sha256"],
                                   m["training_configs"][arm]["sha256"], 200)
                for arm in ["control", "structured"]}
-    assert all(c["host"] == "jack" for c in choices.values()), "dispatch the qualified remote placement with its supported runner"
+    assert all(c["host"] == "desktop" for c in choices.values()), "dispatch the qualified remote placement with its supported runner"
     for arm in ["control","structured"]:
         used = read(root/f"logs/{arm}-prefix.execution.json")["seconds"]
         assert used < 1800

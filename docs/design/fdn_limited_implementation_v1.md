@@ -1,6 +1,6 @@
 # Issue 110: FDN Limited implementation
 
-Assigned by Jack on 2026-09-30. Implementation branch:
+Assigned by the maintainer's on 2026-09-30. Implementation branch:
 `codex/fdn-limited-deck-loading-v1`, based on public main `d9e0910a`.
 This is engineering work; no training, evaluation campaign or playing-strength
 claim is authorized by the work plan. Preserve the lead's current PC reservation.
@@ -37,9 +37,14 @@ and Treetop Snarespinner. That first batch reached 13/286 reference names and
 19/40 copies in each fixture. The fixture stack reached **43/286
 reference names** and **40/40 copies in each fixture**, with no unsupported
 fixture name. Milestone 5's first batch adds seven keyword-only creatures
-(`fdn_keyword_creatures_v1.md`), reaching **50/286**. One reference
-planeswalker remains partial and 235 names are missing from the wider
-reference; `../reports/fdn_remaining_pool_inventory_v1.md` sizes them.
+(`fdn_keyword_creatures_v1.md`), reaching 50/286, and the second adds
+gainlands and life-gain creatures (`fdn_gainlands_lifegain_v1.md`), reaching
+61/286, the third adds trigger creatures and three instants
+(`fdn_triggers_tricks_v1.md`), reaching 73/286, the equipment, kicker and
+library-search batch (`fdn_equipment_search_v1.md`) reaches 81/286, and token
+makers and creature Auras (`fdn_tokens_auras_v1.md`) reach **90/286**. One
+reference planeswalker remains partial and 195 names are
+missing from the wider reference; `../reports/fdn_remaining_pool_inventory_v1.md` sizes them.
 
 Milestone 3's opt-in engine priority presentation is implemented on
 `codex/fdn-priority-windows-v1`; see `limited_priority_windows_v1.md`.

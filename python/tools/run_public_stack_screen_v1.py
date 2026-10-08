@@ -59,7 +59,7 @@ def run(root,compute):
     assert corrected['status']=='STACK-TIMING-CORRECTION-PASS' and not corrected['full_training_launched']
     selected=require_storage_choice(compute/'compute-choice.json',m['training_binary'],m['training_configs'],stack=True)
     assert selected==corrected['selected'] and selected['projected_seconds']<m['training_projection_cap_seconds']
-    current={h:inventory(h) for h in ['jack','haleyspc']}
+    current={h:inventory(h) for h in ['desktop','computehost']}
     assert all(not s['active'] for s in current.values()),'preserve competing native owners'
     cuda=Path('C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.8')
     os.environ['CUDA_PATH']=str(cuda);os.environ['PATH']=str(cuda/'bin')+os.pathsep+os.environ['PATH']

@@ -81,7 +81,7 @@ def prepare(root):
                   'max_worker_seconds': 300, 'workers': 8, 'exact_match_replay_required': True},
         'frozen_source': source, 'opponent_source': opponent, 'draft': pin(draft_path),
         'claim': 'Engineering legality, complete natural BO3 and timing only. Do not use outcomes for experiment selection.',
-        'review_gap': 'Fable HTTP429 until September 22 07:00 EDT; zero source reads, no endorsement. Jack assigned continuation.'})
+        'review_gap': 'Fable HTTP429 until September 22 07:00 EDT; zero source reads, no endorsement. The maintainer assigned continuation.'})
     return len(jobs)
 
 

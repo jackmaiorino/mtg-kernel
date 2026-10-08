@@ -50,11 +50,11 @@ def fake_workload(directory: Path, runs: int = 3, planned: int = 6, extra_env: d
     return path
 
 
-def inventory(eligible_haleyspc: bool = False, checked_at: str | None = None) -> dict:
+def inventory(eligible_computehost: bool = False, checked_at: str | None = None) -> dict:
     moment = checked_at or launcher.iso(launcher.utc_now())
     return {"schema": launcher.INVENTORY_SCHEMA, "hosts": {
-        "jack": {"eligible": True, "reason": "test host", "checked_at": moment, "detail": {}},
-        "haleyspc": {"eligible": eligible_haleyspc, "reason": "offline in test", "checked_at": moment, "detail": {}},
+        "desktop": {"eligible": True, "reason": "test host", "checked_at": moment, "detail": {}},
+        "computehost": {"eligible": eligible_computehost, "reason": "offline in test", "checked_at": moment, "detail": {}},
         "runpod": {"eligible": False, "reason": "no lease authority in test", "checked_at": moment, "detail": {}},
     }}
 
@@ -72,7 +72,7 @@ class QualifiedFixture(unittest.TestCase):
         cls.base = Path(cls.temporary.name)
         cls.workload_path = fake_workload(cls.base)
         cls.workload = launcher.load_workload(cls.workload_path)
-        executors = {"jack": launcher.LocalExecutor(cls.workload)}
+        executors = {"desktop": launcher.LocalExecutor(cls.workload)}
         cls.choice = launcher.qualify(cls.workload, cls.base / "qualification",
                                       [alloc("1@0"), alloc("2@0"), alloc("3@0")], 3, inventory(), executors,
                                       stop_on_saturation=False, per_process_mib=0.0)
@@ -125,7 +125,7 @@ class QualificationTests(QualifiedFixture):
     def test_launch_writes_one_manifest_entry_per_run_and_audits_the_golden_prefix(self) -> None:
         root = self.base / "launch"
         manifest = launcher.launch(self.workload, self.choice_path, root,
-                                   {"jack": launcher.LocalExecutor(self.workload)})
+                                   {"desktop": launcher.LocalExecutor(self.workload)})
         self.assertEqual(manifest["status"], "complete")
         self.assertEqual(set(manifest["runs"]), {"run-0", "run-1", "run-2"})
         for run_id, entry in manifest["runs"].items():
@@ -141,7 +141,7 @@ class QualificationTests(QualifiedFixture):
         on_disk = launcher.read_json(root / "experiment-manifest.json")
         self.assertEqual(on_disk["allocation"], launcher.require_choice(self.choice_path, self.workload)["allocation"])
         with self.assertRaises(launcher.LaunchRefused):
-            launcher.launch(self.workload, self.choice_path, root, {"jack": launcher.LocalExecutor(self.workload)})
+            launcher.launch(self.workload, self.choice_path, root, {"desktop": launcher.LocalExecutor(self.workload)})
         # A full-length serial rerun of a launched run reproduces every output byte.
         record = launcher.verify(self.workload, self.choice_path, root, ["run-1"], self.base / "verify",
                                  launcher.LocalExecutor(self.workload))
@@ -174,8 +174,8 @@ class LaunchRefusalTests(QualifiedFixture):
 
     def test_stale_inventory(self) -> None:
         stale = launcher.iso(launcher.utc_now() - timedelta(hours=25))
-        path = self.mutated_choice(lambda c: c["inventory"]["hosts"]["haleyspc"].update(checked_at=stale))
-        self.assertRefused(path, "refresh the resource inventory: haleyspc")
+        path = self.mutated_choice(lambda c: c["inventory"]["hosts"]["computehost"].update(checked_at=stale))
+        self.assertRefused(path, "refresh the resource inventory: computehost")
 
     def test_missing_host_in_inventory(self) -> None:
         self.assertRefused(self.mutated_choice(lambda c: c["inventory"]["hosts"].pop("runpod")), "RunPod")
@@ -199,15 +199,15 @@ class LaunchRefusalTests(QualifiedFixture):
         self.assertRefused(self.mutated_choice(slower), "slower than a qualified alternative")
 
     def test_eligible_host_without_measurement(self) -> None:
-        path = self.mutated_choice(lambda c: c["inventory"]["hosts"]["haleyspc"].update(eligible=True))
-        self.assertRefused(path, "no throughput measurement: haleyspc")
+        path = self.mutated_choice(lambda c: c["inventory"]["hosts"]["computehost"].update(eligible=True))
+        self.assertRefused(path, "no throughput measurement: computehost")
 
     def test_a_listed_slot_where_no_run_executed_does_not_count_as_measured(self) -> None:
         def listed_only(choice):
-            choice["inventory"]["hosts"]["haleyspc"].update(eligible=True)
+            choice["inventory"]["hosts"]["computehost"].update(eligible=True)
             for candidate in choice["candidates"]:
-                candidate["hosts"] = sorted(set(candidate["hosts"]) | {"haleyspc"})
-        self.assertRefused(self.mutated_choice(listed_only), "no throughput measurement: haleyspc")
+                candidate["hosts"] = sorted(set(candidate["hosts"]) | {"computehost"})
+        self.assertRefused(self.mutated_choice(listed_only), "no throughput measurement: computehost")
 
     def test_incomplete_benchmark(self) -> None:
         def incomplete(choice):
@@ -240,7 +240,7 @@ class DeterminismGateTests(unittest.TestCase):
                                                             extra_env={"FAKE_TRAINER_NOISE": "1"}))
             with self.assertRaises(launcher.LaunchRefused) as caught:
                 launcher.qualify(workload, Path(directory) / "q", [alloc("1@0"), alloc("2@0")], 3, inventory(),
-                                 {"jack": launcher.LocalExecutor(workload)}, per_process_mib=0.0)
+                                 {"desktop": launcher.LocalExecutor(workload)}, per_process_mib=0.0)
             self.assertIn("serial repeat is not byte-identical", str(caught.exception))
 
     def test_concurrency_dependent_outputs_disqualify_the_parallel_allocation(self) -> None:
@@ -248,7 +248,7 @@ class DeterminismGateTests(unittest.TestCase):
             workload = launcher.load_workload(fake_workload(Path(directory), runs=2,
                                                             extra_env={"FAKE_TRAINER_CONTENTION": "1"}))
             choice = launcher.qualify(workload, Path(directory) / "q", [alloc("1@0"), alloc("2@0")], 3,
-                                      inventory(), {"jack": launcher.LocalExecutor(workload)},
+                                      inventory(), {"desktop": launcher.LocalExecutor(workload)},
                                       per_process_mib=0.0)
             statuses = {c["concurrency"]: c["status"] for c in choice["candidates"]}
             self.assertEqual(statuses, {1: "qualified", 2: "disqualified"})
@@ -268,7 +268,7 @@ class DeterminismGateTests(unittest.TestCase):
             (base / "workload.json").write_text(json.dumps(raw))
             workload = launcher.load_workload(base / "workload.json")
             choice = launcher.qualify(workload, base / "q", [alloc("1@0"), alloc("2@0")], 3, inventory(),
-                                      {"jack": launcher.LocalExecutor(workload)}, per_process_mib=0.0)
+                                      {"desktop": launcher.LocalExecutor(workload)}, per_process_mib=0.0)
             self.assertEqual(choice["data_tree_sha256"], workload.data_tree_sha256())
             self.assertEqual(choice["launcher_sha256"], launcher.sha256_file(LAUNCHER_PATH))
             launcher.require_choice(base / "q" / "compute-choice.json", workload)
@@ -282,19 +282,19 @@ class DeterminismGateTests(unittest.TestCase):
             workload = launcher.load_workload(fake_workload(Path(directory), runs=1, extra_argv=["--fail"]))
             with self.assertRaises(launcher.LaunchRefused):
                 launcher.qualify(workload, Path(directory) / "q", [alloc("1@0"), alloc("2@0")], 3, inventory(),
-                                 {"jack": launcher.LocalExecutor(workload)}, per_process_mib=0.0)
+                                 {"desktop": launcher.LocalExecutor(workload)}, per_process_mib=0.0)
 
     def test_an_allocation_wider_than_the_run_count_is_not_measured(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workload = launcher.load_workload(fake_workload(Path(directory), runs=2))
             choice = launcher.qualify(workload, Path(directory) / "q", [alloc("1@0"), alloc("2@0"), alloc("3@0")],
-                                      3, inventory(), {"jack": launcher.LocalExecutor(workload)},
+                                      3, inventory(), {"desktop": launcher.LocalExecutor(workload)},
                                       per_process_mib=0.0, stop_on_saturation=False)
             wide = next(c for c in choice["candidates"] if c["concurrency"] == 3)
             # A single run is inherently sequential here: serial-only evidence suffices.
             single = launcher.load_workload(fake_workload(Path(directory) / "one", runs=1))                 if (Path(directory) / "one").mkdir() is None else None
             launcher.qualify(single, Path(directory) / "q1", [alloc("1@0"), alloc("2@0")], 3, inventory(),
-                             {"jack": launcher.LocalExecutor(single)}, per_process_mib=0.0)
+                             {"desktop": launcher.LocalExecutor(single)}, per_process_mib=0.0)
             launcher.require_choice(Path(directory) / "q1" / "compute-choice.json", single)
             self.assertEqual(wide["status"], "capacity-skipped")
             self.assertIn("unmeasured", " ".join(wide["reasons"]))
@@ -306,14 +306,14 @@ class DeterminismGateTests(unittest.TestCase):
             for candidates in ([alloc("1@0")], [alloc("2@0")]):
                 with self.assertRaises(launcher.LaunchRefused):
                     launcher.qualify(workload, Path(directory) / f"q{len(candidates[0])}{candidates[0][0].capacity}",
-                                     candidates, 3, inventory(), {"jack": launcher.LocalExecutor(workload)})
+                                     candidates, 3, inventory(), {"desktop": launcher.LocalExecutor(workload)})
 
 
 class UnitTests(unittest.TestCase):
     def test_parse_allocation(self) -> None:
-        slots = launcher.parse_allocation("3@0+1@1+2@haleyspc:0")
+        slots = launcher.parse_allocation("3@0+1@1+2@computehost:0")
         self.assertEqual([(s.host, s.device, s.capacity) for s in slots],
-                         [("jack", 0, 3), ("jack", 1, 1), ("haleyspc", 0, 2)])
+                         [("desktop", 0, 3), ("desktop", 1, 1), ("computehost", 0, 2)])
         self.assertEqual(launcher.concurrency(slots), 6)
         for bad in ("0@0", "1@0+2@0", "x", "1@mars:0"):
             with self.assertRaises(launcher.LaunchRefused):
@@ -322,29 +322,29 @@ class UnitTests(unittest.TestCase):
     def test_projection_simulates_the_scheduler_per_host(self) -> None:
         local = {"startup_seconds": 10.0, "steady_update_seconds": 2.0, "tail_seconds": 5.0}   # 215 s per run
         remote = {"startup_seconds": 20.0, "steady_update_seconds": 3.0, "tail_seconds": 30.0}  # 350 s per run
-        stats = {"jack": local, "haleyspc": remote}
+        stats = {"desktop": local, "computehost": remote}
         self.assertEqual(launcher.project_seconds(stats, alloc("4@0"), 8, 100, 30.0), 30.0 + 2 * 215)
         self.assertEqual(launcher.project_seconds(stats, alloc("4@0"), 5, 100, 0.0), 2 * 215)
         # 10 runs on 4 local + 3 remote lanes: 7 start; the 3 left take the first local lanes to free.
-        self.assertEqual(launcher.project_seconds(stats, alloc("4@0+3@haleyspc:0"), 10, 100, 0.0), 430.0)
+        self.assertEqual(launcher.project_seconds(stats, alloc("4@0+3@computehost:0"), 10, 100, 0.0), 430.0)
         # A slower remote lane bounds the finish once it holds a run.
-        self.assertEqual(launcher.project_seconds(stats, alloc("4@0+1@haleyspc:0"), 5, 100, 0.0), 350.0)
-        self.assertIsNone(launcher.project_seconds({"jack": local}, alloc("1@haleyspc:0"), 1, 100, 0.0))
+        self.assertEqual(launcher.project_seconds(stats, alloc("4@0+1@computehost:0"), 5, 100, 0.0), 350.0)
+        self.assertIsNone(launcher.project_seconds({"desktop": local}, alloc("1@computehost:0"), 1, 100, 0.0))
 
     def test_gpu_fit_uses_each_device_footprint(self) -> None:
         devices = [{"index": 0, "memory_total_mib": 12282, "memory_used_mib": 2939},
                    {"index": 1, "memory_total_mib": 6144, "memory_used_mib": 9}]
-        footprint = {("jack", 0): 2853.0, ("jack", 1): 2599.0, ("haleyspc", 0): 2400.0}
+        footprint = {("desktop", 0): 2853.0, ("desktop", 1): 2599.0, ("computehost", 0): 2400.0}
         remote = [{"index": 0, "memory_total_mib": 8188, "memory_used_mib": 1000}]
         per_process = lambda host, device: footprint[(host, device)]  # noqa: E731
-        inventories = {"jack": devices, "haleyspc": remote}.__getitem__
-        self.assertEqual(launcher.device_fits(alloc("3@0+2@1+2@haleyspc:0"), per_process,
+        inventories = {"desktop": devices, "computehost": remote}.__getitem__
+        self.assertEqual(launcher.device_fits(alloc("3@0+2@1+2@computehost:0"), per_process,
                                               inventories=inventories), [])
-        reasons = launcher.device_fits(alloc("4@0+3@1+3@haleyspc:0"), per_process, inventories=inventories)
+        reasons = launcher.device_fits(alloc("4@0+3@1+3@computehost:0"), per_process, inventories=inventories)
         self.assertEqual([reason.split(":")[0] + ":" + reason.split(":")[1] for reason in reasons],
-                         ["device jack:0", "device jack:1", "device haleyspc:0"])
+                         ["device desktop:0", "device desktop:1", "device computehost:0"])
         self.assertEqual(launcher.device_fits(alloc("1@2"), lambda h, d: 100.0, inventories=inventories),
-                         ["device jack:2 not present"])
+                         ["device desktop:2 not present"])
         # A workload that measured no device memory needs no device (and CI runners have none).
         self.assertEqual(launcher.device_fits(alloc("2@0+1@1"), lambda h, d: 0.0, inventories=lambda h: []), [])
 
@@ -359,10 +359,10 @@ class UnitTests(unittest.TestCase):
                 break
             steps.append(grown)
         self.assertEqual([launcher.allocation_text(step) for step in steps],
-                         ["1@jack:0+1@jack:1", "2@jack:0+1@jack:1", "2@jack:0+2@jack:1"])
+                         ["1@desktop:0+1@desktop:1", "2@desktop:0+1@desktop:1", "2@desktop:0+2@desktop:1"])
         self.assertEqual(launcher.allocation_text(launcher.grow_allocation(alloc("1@0"), footprint.get,
                                                                             devices=devices)),
-                         "1@jack:0+1@jack:1")
+                         "1@desktop:0+1@desktop:1")
 
     def test_auto_sweep_grows_until_nothing_fits(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -372,19 +372,19 @@ class UnitTests(unittest.TestCase):
             launcher.gpu_inventory = lambda runner=None: fake_devices
             try:
                 choice = launcher.qualify(workload, Path(directory) / "q", [], 3, inventory(),
-                                          {"jack": launcher.LocalExecutor(workload)}, per_process_mib=1000.0,
+                                          {"desktop": launcher.LocalExecutor(workload)}, per_process_mib=1000.0,
                                           auto_devices=[0], stop_on_saturation=False)
             finally:
                 launcher.gpu_inventory = original
             self.assertEqual([c["allocation"] for c in choice["candidates"]],
-                             ["1@jack:0", "2@jack:0", "3@jack:0"])
+                             ["1@desktop:0", "2@desktop:0", "3@desktop:0"])
 
     def test_remote_gpu_readings_parse_like_local_ones(self) -> None:
         csv = "0, NVIDIA GeForce RTX 4060, GPU-17ee, 8188, 7867, 100\r\nnot a row\r\n"
         runner = lambda command, **_: subprocess.CompletedProcess(command, 0, csv, "")  # noqa: E731
         with tempfile.TemporaryDirectory() as directory:
             workload = launcher.load_workload(fake_workload(Path(directory), runs=1))
-            executor = launcher.SshPowerShellExecutor(workload, "haleyspc", "haley@example", Path(directory),
+            executor = launcher.SshPowerShellExecutor(workload, "computehost", "computehost@example", Path(directory),
                                                       "C:/mirror", runner=runner)
             self.assertEqual(executor.gpus(), [{"index": 0, "name": "NVIDIA GeForce RTX 4060", "uuid": "GPU-17ee",
                                                 "memory_total_mib": 8188, "memory_used_mib": 7867,
@@ -475,7 +475,7 @@ class UnitTests(unittest.TestCase):
                 stdout = "0" * 64 if "-EncodedCommand" in command and "Get-FileHash" in _decode(command) else ""
                 return subprocess.CompletedProcess(command, 0, stdout, "")
 
-            executor = launcher.SshPowerShellExecutor(workload, "haleyspc", "haley@example", Path(directory),
+            executor = launcher.SshPowerShellExecutor(workload, "computehost", "computehost@example", Path(directory),
                                                       "C:/mtg-node/multirun-mirror", runner=runner)
             with self.assertRaises(RuntimeError) as caught:
                 executor.stage()
@@ -532,7 +532,7 @@ class SshRunTests(unittest.TestCase):
                         shutil.copyfile(remote_archive, command[-1])
                 return subprocess.CompletedProcess(command, 0, "", "")
 
-            executor = launcher.SshPowerShellExecutor(workload, "haleyspc", "haley@example", data_root,
+            executor = launcher.SshPowerShellExecutor(workload, "computehost", "computehost@example", data_root,
                                                       "C:/mtg-node/multirun-mirror", [library], runner=runner)
             ticket = base / "tickets" / "r0.ticket.json"
             result = executor.run(workload.runs[0], base / "runs" / "r0", 0, 8,
@@ -540,13 +540,13 @@ class SshRunTests(unittest.TestCase):
             executor.run(launcher.RunSpec("r1", 78), base / "runs" / "r1", 1, 8)
             self.assertEqual(sum("Get-FileHash" in script for script in scripts), 2, "stage once: exe + library")
             self.assertEqual(executor.staged["runtime_libraries_sha256"], {library.name: launcher.sha256_file(library)})
-            self.assertEqual((result.exit_code, result.host, sorted(result.generations)), (0, "haleyspc", [4, 8]))
+            self.assertEqual((result.exit_code, result.host, sorted(result.generations)), (0, "computehost", [4, 8]))
             self.assertEqual(result.started, 1000.0)
             self.assertGreaterEqual(result.finished, 1100.0)
             letter = str(base)[0].upper()
             mirrored = executor.physical(ticket)
             self.assertTrue(mirrored.startswith(f"C:/mtg-node/multirun-mirror/{letter}/"))
-            self.assertIn([str(ticket), f"haley@example:{mirrored}"], copies)
+            self.assertIn([str(ticket), f"computehost@example:{mirrored}"], copies)
             run_script = next(script for script in scripts if "tar.exe -cf" in script)
             for fragment in ("$env:MULTIRUN_BASE_SEED='77'", "$env:MULTIRUN_RUNS='1'",
                              "$env:MULTIRUN_STOP_AFTER_GENERATION='8'",
@@ -571,7 +571,7 @@ class VerdictTests(unittest.TestCase):
     def qualify(self, directory: Path, candidates, **workload_options):
         workload = launcher.load_workload(fake_workload(directory, **workload_options))
         choice = launcher.qualify(workload, directory / "q", [alloc(text) for text in candidates], 3, inventory(),
-                                  {"jack": launcher.LocalExecutor(workload)}, per_process_mib=0.0,
+                                  {"desktop": launcher.LocalExecutor(workload)}, per_process_mib=0.0,
                                   stop_on_saturation=False)
         return workload, choice, directory / "q" / "compute-choice.json"
 
@@ -599,11 +599,11 @@ class VerdictTests(unittest.TestCase):
                               side_effect=lambda _stats, slots, _runs, _updates, overhead:
                               overhead + 100.0 / launcher.concurrency(slots)):
                 choice = launcher.qualify(workload, base / "q", [alloc("1@0"), alloc("1@0+1@1")], 3, inventory(),
-                                          {"jack": launcher.LocalExecutor(workload)}, per_process_mib=0.0,
+                                          {"desktop": launcher.LocalExecutor(workload)}, per_process_mib=0.0,
                                           stop_on_saturation=False)
             sentinel = choice["sentinel"]
             self.assertTrue(sentinel["passed"])
-            self.assertEqual(sentinel["allocation"], "1@jack:0+1@jack:1")
+            self.assertEqual(sentinel["allocation"], "1@desktop:0+1@desktop:1")
             self.assertEqual({(row["device"], row["arm"]) for row in sentinel["entries"]},
                              {(0, "control"), (0, "treatment"), (1, "control"), (1, "treatment")})
             self.assertTrue(all(row["completed_generation"] == 6 for row in sentinel["entries"]))
@@ -616,7 +616,7 @@ class VerdictTests(unittest.TestCase):
                 (lambda c: c["sentinel"]["entries"].pop(), "misses placements x arms"),
                 (lambda c: c["sentinel"]["entries"][0].update(byte_identical=False), "not identical"),
                 (lambda c: c["sentinel"]["entries"][0].update(completed_generation=3), "not identical"),
-                (lambda c: c["sentinel"].update(memory_crowded=["haleyspc:0: full-length peak 7867 MiB of 8188 MiB"]),
+                (lambda c: c["sentinel"].update(memory_crowded=["computehost:0: full-length peak 7867 MiB of 8188 MiB"]),
                  "crowded a GPU"),
                 (lambda c: c["sentinel"].pop("memory_crowded"), "crowded a GPU"),
             ]:
@@ -636,7 +636,7 @@ class VerdictTests(unittest.TestCase):
             parallel = next(c for c in choice["candidates"] if c["concurrency"] == 2)
             self.assertEqual(parallel["status"], "disqualified")
             self.assertIn("full-length sentinel", " ".join(parallel["reasons"]))
-            self.assertEqual([f["allocation"] for f in choice["sentinel_failures"]], ["2@jack:0"])
+            self.assertEqual([f["allocation"] for f in choice["sentinel_failures"]], ["2@desktop:0"])
             self.assertEqual(launcher.require_choice(path, workload)["concurrency"], 1)
 
     def test_m2_prefix_audit_mismatch_fails_the_run_and_the_experiment(self) -> None:
@@ -644,7 +644,7 @@ class VerdictTests(unittest.TestCase):
             workload, choice, path = self.qualify(Path(directory), ["1@0", "2@0"], runs=2,
                                                   extra_env={"FAKE_TRAINER_DIFFER_WHEN_FULL": "1"})
             manifest = launcher.launch(workload, path, Path(directory) / "launch",
-                                       {"jack": launcher.LocalExecutor(workload)})
+                                       {"desktop": launcher.LocalExecutor(workload)})
             self.assertEqual(manifest["status"], "failed")
             for entry in manifest["runs"].values():
                 self.assertEqual((entry["status"], entry["failure"]), ("failed", "prefix-differs-from-serial-golden"))
@@ -676,15 +676,15 @@ class VerdictTests(unittest.TestCase):
                 launcher.require_choice(self.mutated(path, lambda c: c.update(launcher_sha256="0" * 64)), workload)
             self.assertIn("launcher changed", str(caught.exception))
         recorded = inventory()
-        recorded["hosts"]["jack"]["detail"] = {"gpus": [{"index": 0, "name": "RTX A", "uuid": "GPU-1"}]}
-        recorded["hosts"]["haleyspc"]["detail"] = {"gpus": ["0, RTX B, GPU-9, 8188, 900"]}
-        choice = {"inventory": recorded, "gpu_footprint_mib": {"jack:0": 2900.0}}
-        same = {"jack": {0: ("RTX A", "GPU-1")}, "haleyspc": {0: ("RTX B", "GPU-9")}}
-        launcher.check_gpu_identity(choice, alloc("2@0+1@haleyspc:0"), same.__getitem__)
-        for host, swapped in (("jack", {0: ("RTX A", "GPU-2")}), ("haleyspc", {0: ("RTX C", "GPU-9")})):
+        recorded["hosts"]["desktop"]["detail"] = {"gpus": [{"index": 0, "name": "RTX A", "uuid": "GPU-1"}]}
+        recorded["hosts"]["computehost"]["detail"] = {"gpus": ["0, RTX B, GPU-9, 8188, 900"]}
+        choice = {"inventory": recorded, "gpu_footprint_mib": {"desktop:0": 2900.0}}
+        same = {"desktop": {0: ("RTX A", "GPU-1")}, "computehost": {0: ("RTX B", "GPU-9")}}
+        launcher.check_gpu_identity(choice, alloc("2@0+1@computehost:0"), same.__getitem__)
+        for host, swapped in (("desktop", {0: ("RTX A", "GPU-2")}), ("computehost", {0: ("RTX C", "GPU-9")})):
             current = dict(same, **{host: swapped})
             with self.assertRaises(launcher.LaunchRefused) as caught:
-                launcher.check_gpu_identity(choice, alloc("2@0+1@haleyspc:0"), current.__getitem__)
+                launcher.check_gpu_identity(choice, alloc("2@0+1@computehost:0"), current.__getitem__)
             self.assertIn("not the device the receipt measured", str(caught.exception))
         with self.assertRaises(launcher.LaunchRefused):
             launcher.check_gpu_identity(choice, alloc("1@1"), same.__getitem__)
@@ -708,13 +708,13 @@ class VerdictTests(unittest.TestCase):
             workload = launcher.load_workload(segment_path)
             self.assertEqual((workload.start_generation, workload.target_generation, workload.span), (3, 9, 6))
             choice = launcher.qualify(workload, base / "q", [alloc("1@0"), alloc("2@0")], 3, inventory(),
-                                      {"jack": launcher.LocalExecutor(workload)}, per_process_mib=0.0,
+                                      {"desktop": launcher.LocalExecutor(workload)}, per_process_mib=0.0,
                                       stop_on_saturation=False)
             ticket = launcher.read_json(base / "q" / "serial-golden" / "run-0.ticket.json")
             self.assertEqual((ticket["expected_resume_generation"], ticket["stop_after_generation"]), (3, 6))
             self.assertTrue(all(c["episodes"] == 2 * 3 * 64 for c in choice["candidates"]))
             manifest = launcher.launch(workload, base / "q" / "compute-choice.json", base / "launch",
-                                       {"jack": launcher.LocalExecutor(workload)})
+                                       {"desktop": launcher.LocalExecutor(workload)})
             self.assertEqual(manifest["status"], "complete")
             self.assertEqual(manifest["episodes"], 2 * 6 * 64)
             for run in workload.runs:
@@ -756,13 +756,13 @@ class VerdictTests(unittest.TestCase):
                 peaks = monitor.stop()["gpu_peak_memory_mib"]
         finally:
             launcher.gpu_inventory = original
-        self.assertEqual(peaks, {"jack:0": 11_900})
-        totals, footprint = {"jack:0": 12_282, "jack:1": 6_144}, {"jack:0": 2_950.0, "jack:1": 2_600.0}
+        self.assertEqual(peaks, {"desktop:0": 11_900})
+        totals, footprint = {"desktop:0": 12_282, "desktop:1": 6_144}, {"desktop:0": 2_950.0, "desktop:1": 2_600.0}
         self.assertEqual(launcher.sentinel_memory_problems(alloc("2@0"), peaks, totals, footprint),
-                         ["jack:0: full-length peak 11900 MiB of 12282 MiB"])
-        self.assertEqual(launcher.sentinel_memory_problems(alloc("2@0"), {"jack:0": 9_000}, totals, footprint), [])
-        self.assertEqual(launcher.sentinel_memory_problems(alloc("2@0+1@1"), {"jack:0": 9_000}, totals, footprint),
-                         ["jack:1: no full-length memory reading"])
+                         ["desktop:0: full-length peak 11900 MiB of 12282 MiB"])
+        self.assertEqual(launcher.sentinel_memory_problems(alloc("2@0"), {"desktop:0": 9_000}, totals, footprint), [])
+        self.assertEqual(launcher.sentinel_memory_problems(alloc("2@0+1@1"), {"desktop:0": 9_000}, totals, footprint),
+                         ["desktop:1: no full-length memory reading"])
         # A workload that never used a GPU needs no reading.
         self.assertEqual(launcher.sentinel_memory_problems(alloc("2@0"), {}, {}, {}), [])
 
@@ -771,7 +771,7 @@ class VerdictTests(unittest.TestCase):
             workload, choice, path = self.qualify(Path(directory), ["1@0", "2@0"], runs=2)
             launcher.require_choice(path, workload)
             with self.assertRaises(launcher.LaunchRefused) as caught:
-                launcher.require_choice(self.mutated(path, lambda c: c.update(gpu_footprint_mib={"jack:0": 2950.0})),
+                launcher.require_choice(self.mutated(path, lambda c: c.update(gpu_footprint_mib={"desktop:0": 2950.0})),
                                         workload)
             self.assertIn("no full-length memory reading", str(caught.exception))
 

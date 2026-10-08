@@ -1,6 +1,6 @@
 # Overnight five-deck player development
 
-Jack requested a local training run while native human-interface work continues. The fixed development schedule covers4,800preboard games in480updates across Rally, Affinity, Elves, Terror and Burn. All25ordered matchups, both learner seats, starting player and four policy families are jointly balanced. Current learner, initial Adam3, original import and older checkpoints each receive25percent; no heuristic opponent is used. Common ancestry is still a diversity limitation.
+The maintainer requested a local training run while native human-interface work continues. The fixed development schedule covers4,800preboard games in480updates across Rally, Affinity, Elves, Terror and Burn. All25ordered matchups, both learner seats, starting player and four policy families are jointly balanced. Current learner, initial Adam3, original import and older checkpoints each receive25percent; no heuristic opponent is used. Common ancestry is still a diversity limitation.
 
 The original sealed CPU run stopped after34updates on a correctly rejected single blocker against menace. A V3 prefix repair at `cccf1011ef4515fb6c502b06bb26aa1e82e78f36` passed nine V3 tests and the exact failed-game replay. It preserves engine aggregate validation and V2 behavior. The corrected game and its replay are byte-identical, while an unaffected control retains its original bytes. Feature widths are unchanged, but legal-choice behavior is explicitly different.
 
@@ -10,4 +10,4 @@ See [launch and actual progress paths](E:/mtg-kernel-learned-sideboarding-eviden
 
 This develops the playing policy within the Multi-Deck BO3 Campaign. It does not train the sideboard head from match returns or establish playing strength. Equal games do not equal gradient weight, so analyze learner decision counts by deck. After execution, review learning, matched BO3 against fixed anchors, forgetting and population coverage before selecting or promoting a candidate. Preserve CP7 exclusion, prior measurements and the pinned human feedback package. Brewing remains the end goal.
 
-Fable review failed on the weekly usage limit with no source reads or endorsement. The independent Codex review accepted the actual48sealed pins,4,460remaining episode payloads, full optimizer state, mappings and resource guards. The app's broad goal remains paused as found; this local work follows Jack's separate request.
+Fable review failed on the weekly usage limit with no source reads or endorsement. The independent Codex review accepted the actual48sealed pins,4,460remaining episode payloads, full optimizer state, mappings and resource guards. The app's broad goal remains paused as found; this local work follows the maintainer's separate request.

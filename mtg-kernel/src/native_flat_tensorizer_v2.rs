@@ -796,6 +796,36 @@ fn hash_prepared_slots_v2(slots: &[DigestSlotV1], batch: &mut DigestBatchV1) -> 
     offsets
 }
 
+/// `encode_state_v2` through the multi-buffer digest path and the shared
+/// state prefix cache: the same six messages and the same block-to-feature
+/// mapping, so the features are identical.
+fn encode_state_cached_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    canonical_json: &mut Vec<u8>,
+) -> Result<Vec<f32>, NativeFlatTensorErrorV2> {
+    let mut state = encode_state_head_v2(decision)?;
+    append_state_digest_features_cached_v2(&mut state, canonical_json);
+    Ok(state)
+}
+
+/// `append_digest_features_v2(output, STATE_HASH_NAMESPACE_V2, json, 96)`.
+/// `json` is borrowed back unchanged.
+fn append_state_digest_features_cached_v2(output: &mut Vec<f32>, json: &mut Vec<u8>) {
+    let slot = DigestSlotV1 {
+        state_json: std::mem::take(json),
+        ..DigestSlotV1::default()
+    };
+    let mut batch = DigestBatchV1::default();
+    let offsets = hash_prepared_slots_v2(std::slice::from_ref(&slot), &mut batch);
+    *json = slot.state_json;
+    let head_len = output.len();
+    output.resize(head_len + NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2, 0.0);
+    digest_block_features_v1(
+        &batch.blocks[offsets[0]..offsets[0] + ACTION_HASH_BLOCK_COUNT_V1],
+        &mut output[head_len..],
+    );
+}
+
 fn finish_full_decision_v2(
     decision: FlatScoringDecisionViewV1<'_>,
     prepared: PreparedDecisionV2,
@@ -861,14 +891,14 @@ pub(crate) fn fill_native_flat_decision_tensors_v3(
     let objects = encode_objects_with_projection_v2(decision, projection)?;
     let mut edges = encode_edges_v2(decision, &objects.projection)?;
     append_extension_edges_v3(view, &objects.projection, &mut edges)?;
-    let mut canonical = canonical_observation_v2(decision, &objects.projection)?;
-    canonical
-        .as_object_mut()
-        .ok_or(NativeFlatTensorErrorV2::CanonicalJson)?
-        .insert("extensions".into(), canonical_extensions_v3(view)?);
-    let mut scratch =
-        serde_json::to_vec(&canonical).map_err(|_| NativeFlatTensorErrorV2::CanonicalJson)?;
-    let state = encode_state_v2(decision, &scratch)?;
+    let mut scratch = Vec::new();
+    write_canonical_observation_with_extensions_v2(
+        decision,
+        &objects.projection,
+        &canonical_extensions_v3(view)?,
+        &mut scratch,
+    )?;
+    let state = encode_state_cached_v2(decision, &mut scratch)?;
     let actions = encode_action_half_with_projection_and_scratch_contract_v3(
         decision,
         Some(&objects.projection),
@@ -1101,14 +1131,14 @@ pub(crate) fn fill_native_flat_decision_tensors_v4(
     let objects = encode_objects_with_projection_v2(decision, projection)?;
     let mut edges = encode_edges_v2(decision, &objects.projection)?;
     append_extension_edges_v4(view, &objects.projection, &mut edges)?;
-    let mut canonical = canonical_observation_v2(decision, &objects.projection)?;
-    canonical
-        .as_object_mut()
-        .ok_or(NativeFlatTensorErrorV2::CanonicalJson)?
-        .insert("extensions".into(), canonical_extensions_v4(view)?);
-    let mut scratch =
-        serde_json::to_vec(&canonical).map_err(|_| NativeFlatTensorErrorV2::CanonicalJson)?;
-    let state = encode_state_v2(decision, &scratch)?;
+    let mut scratch = Vec::new();
+    write_canonical_observation_with_extensions_v2(
+        decision,
+        &objects.projection,
+        &canonical_extensions_v4(view)?,
+        &mut scratch,
+    )?;
+    let state = encode_state_cached_v2(decision, &mut scratch)?;
     let actions = encode_action_half_with_projection_and_scratch_contract_v3(
         decision,
         Some(&objects.projection),
@@ -3434,6 +3464,55 @@ fn append_digest_features_v2(
         }
         counter += 1;
     }
+}
+
+/// Streamed and `serde_json::Value` canonical V3 bytes for one decision.
+#[cfg(test)]
+pub(crate) fn canonical_v3_streamed_and_reference_bytes(
+    view: crate::flat_policy_v3::FlatScoringDecisionViewV3<'_>,
+) -> (Vec<u8>, Vec<u8>) {
+    let decision = view.common();
+    let projection = build_object_projection_v3(view).unwrap();
+    let mut streamed = Vec::new();
+    write_canonical_observation_with_extensions_v2(
+        decision,
+        &projection,
+        &canonical_extensions_v3(view).unwrap(),
+        &mut streamed,
+    )
+    .unwrap();
+    let mut canonical = canonical_observation_v2(decision, &projection).unwrap();
+    canonical
+        .as_object_mut()
+        .unwrap()
+        .insert("extensions".into(), canonical_extensions_v3(view).unwrap());
+    (streamed, serde_json::to_vec(&canonical).unwrap())
+}
+
+/// The bytes of `canonical_observation_v2` with an `"extensions"` member
+/// added, serialized as one sorted object: `"extensions"` sorts directly
+/// after `"acting_player"`, the first member the streamed writer emits.
+fn write_canonical_observation_with_extensions_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: &ObjectProjectionV2,
+    extensions: &Value,
+    output: &mut Vec<u8>,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    const HEAD: &[u8] = br#"{"acting_player":"self","#;
+    let mut base = Vec::new();
+    write_canonical_observation_v2(decision, projection, &mut base)?;
+    if !base.starts_with(HEAD) {
+        return Err(NativeFlatTensorErrorV2::CanonicalJson);
+    }
+    output.clear();
+    output.reserve(base.len() + 256);
+    output.extend_from_slice(HEAD);
+    output.extend_from_slice(br#""extensions":"#);
+    serde_json::to_writer(&mut *output, extensions)
+        .map_err(|_| NativeFlatTensorErrorV2::CanonicalJson)?;
+    output.push(b',');
+    output.extend_from_slice(&base[HEAD.len()..]);
+    Ok(())
 }
 
 fn write_canonical_observation_v2(
@@ -10008,5 +10087,56 @@ mod tests {
             "skip-hash path should never be slower than the full path on average \
              (full {overall_full_mean:.1} ns vs skip {overall_skip_mean:.1} ns)"
         );
+    }
+}
+
+#[cfg(test)]
+mod cached_state_digest_tests {
+    use super::*;
+
+    #[test]
+    fn cached_state_digests_match_direct_sha512_features() {
+        // Lengths across block boundaries, then families sharing long
+        // prefixes so later messages resume from cached checkpoints.
+        let mut seed = 0x5EED_u64;
+        let mut byte = || {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            b'a' + (seed >> 59) as u8
+        };
+        let base: Vec<u8> = (0..9_000).map(|_| byte()).collect();
+        let mut messages: Vec<Vec<u8>> = [0, 1, 100, 110, 111, 112, 127, 128, 1_000, 4_096]
+            .iter()
+            .map(|&len| base[..len].to_vec())
+            .collect();
+        for cut in [1_100, 2_048, 2_049, 5_000, 8_999] {
+            for tail in 0..3 {
+                let mut message = base[..cut].to_vec();
+                message.extend((0..tail * 37 + 1).map(|_| byte()));
+                messages.push(message);
+            }
+        }
+        messages.push(base.clone());
+        messages.push(base.clone());
+        for message in messages {
+            let mut expected = vec![0.25];
+            append_digest_features_v2(
+                &mut expected,
+                STATE_HASH_NAMESPACE_V2,
+                &message,
+                NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2,
+            );
+            let mut actual = vec![0.25];
+            let mut json = message.clone();
+            append_state_digest_features_cached_v2(&mut actual, &mut json);
+            assert_eq!(json, message);
+            assert_eq!(
+                actual.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                expected.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                "len {}",
+                message.len()
+            );
+        }
     }
 }

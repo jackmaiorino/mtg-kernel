@@ -1,6 +1,6 @@
 # Sideboard plan table draft (nine registered decks): memo for ratification
 
-Generated 2026-09-09 by workflow wf_e7ed6020-f45 (nine authors, nine adversarial reviewers, repairs for refuted plans, one memo writer). Status: DRAFT; Jack ratifies before any Bo3 measurement or League use (design section 6.1, ruling 3). Plans are in plan_table_draft_nine_v1.json with names, card ids, counts, rationale, and legality results.
+Generated 2026-09-09 by workflow wf_e7ed6020-f45 (nine authors, nine adversarial reviewers, repairs for refuted plans, one memo writer). Status: DRAFT; the maintainer's ratifies before any Bo3 measurement or League use (design section 6.1, ruling 3). Plans are in plan_table_draft_nine_v1.json with names, card ids, counts, rationale, and legality results.
 
 **Boarding philosophy by deck (one line each)**
 

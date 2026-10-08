@@ -461,6 +461,10 @@ struct LinearV1 {
     // Python nn.Linear layout, contiguous row-major [output, input].
     weight: Vec<f32>,
     bias: Vec<f32>,
+    /// `weight` transposed to [input, output], derived after every write to
+    /// `weight`. Inference reads it so each output keeps its own sequential
+    /// accumulator while the outputs advance together in SIMD lanes.
+    weight_t: Vec<f32>,
 }
 
 impl LinearV1 {
@@ -470,7 +474,9 @@ impl LinearV1 {
             output_dim,
             weight: runner_fixed_rank2_v1(input_dim * output_dim),
             bias: runner_fixed_rank1_v1(output_dim),
+            weight_t: Vec::new(),
         }
+        .with_transposed_weight_v1()
     }
 
     /// Wide-net sibling of [`Self::runner_fixed_v1`]: the frozen
@@ -484,6 +490,25 @@ impl LinearV1 {
             output_dim,
             weight: runner_fixed_rank2_v1(input_dim * output_dim),
             bias: runner_fixed_rank1_wide_v1(output_dim),
+            weight_t: Vec::new(),
+        }
+        .with_transposed_weight_v1()
+    }
+
+    fn with_transposed_weight_v1(mut self) -> Self {
+        self.refresh_transposed_weight_v1();
+        self
+    }
+
+    fn refresh_transposed_weight_v1(&mut self) {
+        let (input_dim, output_dim) = (self.input_dim, self.output_dim);
+        self.weight_t.clear();
+        self.weight_t.resize(self.weight.len(), 0.0);
+        for output_index in 0..output_dim {
+            for input_index in 0..input_dim {
+                self.weight_t[input_index * output_dim + output_index] =
+                    self.weight[output_index * input_dim + input_index];
+            }
         }
     }
 
@@ -897,15 +922,8 @@ impl NativePolicyValueNetV1 {
             activation_mode,
         );
 
-        let mut scorer_input = Vec::with_capacity(counts.action_count * SCORER_INPUT_V1);
-        for action in 0..counts.action_count {
-            scorer_input.extend_from_slice(&state_hidden);
-            let action_begin = action * HIDDEN_DIM_V1;
-            scorer_input
-                .extend_from_slice(&action_hidden[action_begin..action_begin + HIDDEN_DIM_V1]);
-        }
         let mut scorer_hidden =
-            linear_rows_v1(&self.scorer_first, &scorer_input, counts.action_count);
+            scorer_first_rows_v1(&self.scorer_first, &state_hidden, &action_hidden);
         tanh_in_place_v1(&mut scorer_hidden, activation_mode);
         let logits = linear_rows_v1(&self.scorer_second, &scorer_hidden, counts.action_count);
 
@@ -1261,6 +1279,7 @@ fn visit_linear_mut_v1(
         &mut linear.weight,
     );
     visitor(bias_name, &[linear.output_dim], &mut linear.bias);
+    linear.refresh_transposed_weight_v1();
 }
 
 fn apply_two_layer_tanh_rows_v1(
@@ -1278,6 +1297,62 @@ fn apply_two_layer_tanh_rows_v1(
 
 fn linear_rows_v1(linear: &LinearV1, input: &[f32], rows: usize) -> Vec<f32> {
     debug_assert_eq!(input.len(), rows * linear.input_dim);
+    debug_assert_eq!(linear.weight_t.len(), linear.weight.len());
+    let mut output = Vec::with_capacity(rows * linear.output_dim);
+    for input_row in input.chunks_exact(linear.input_dim).take(rows) {
+        let begin = output.len();
+        output.extend_from_slice(&linear.bias);
+        accumulate_linear_row_v1(linear, input_row, 0, &mut output[begin..]);
+    }
+    output
+}
+
+/// Adds `input_row[k] * weight[o][first_input + k]` to `accumulator[o]` for
+/// every k in ascending order. Each output is still one sequential f32 sum in
+/// input order (bias first), exactly as the [output, input] loop computes it;
+/// only independent outputs are interleaved.
+fn accumulate_linear_row_v1(
+    linear: &LinearV1,
+    input_row: &[f32],
+    first_input: usize,
+    accumulator: &mut [f32],
+) {
+    let output_dim = linear.output_dim;
+    debug_assert_eq!(accumulator.len(), output_dim);
+    debug_assert!(first_input + input_row.len() <= linear.input_dim);
+    let weights = &linear.weight_t[first_input * output_dim..];
+    for (&value, weight_row) in input_row.iter().zip(weights.chunks_exact(output_dim)) {
+        for (sum, &weight) in accumulator.iter_mut().zip(weight_row) {
+            *sum += value * weight;
+        }
+    }
+}
+
+/// `scorer_first` over `[state_hidden, action_row]` for every action row.
+/// The state half of every row is the same, so its partial sums (bias, then
+/// the state inputs in order) are computed once and each row continues from
+/// a copy with its action inputs, giving the same sums as the full rows.
+fn scorer_first_rows_v1(
+    scorer_first: &LinearV1,
+    state_hidden: &[f32],
+    action_hidden: &[f32],
+) -> Vec<f32> {
+    let state_dim = state_hidden.len();
+    let action_dim = scorer_first.input_dim - state_dim;
+    let mut state_prefix = scorer_first.bias.clone();
+    accumulate_linear_row_v1(scorer_first, state_hidden, 0, &mut state_prefix);
+    let mut output = Vec::with_capacity(action_hidden.len() / action_dim * scorer_first.output_dim);
+    for action_row in action_hidden.chunks_exact(action_dim) {
+        let begin = output.len();
+        output.extend_from_slice(&state_prefix);
+        accumulate_linear_row_v1(scorer_first, action_row, state_dim, &mut output[begin..]);
+    }
+    output
+}
+
+/// The original [output, input] loop, kept as the bit-exactness reference.
+#[cfg(test)]
+fn linear_rows_reference_v1(linear: &LinearV1, input: &[f32], rows: usize) -> Vec<f32> {
     let mut output = Vec::with_capacity(rows * linear.output_dim);
     for row in 0..rows {
         let input_row = &input[row * linear.input_dim..(row + 1) * linear.input_dim];
@@ -1757,15 +1832,8 @@ impl NativePolicyValueNetWideV1 {
             counts.action_count,
         );
 
-        let mut scorer_input = Vec::with_capacity(counts.action_count * W_SCORER_INPUT_V1);
-        for action in 0..counts.action_count {
-            scorer_input.extend_from_slice(&state_hidden);
-            let action_begin = action * W_HIDDEN_DIM_V1;
-            scorer_input
-                .extend_from_slice(&action_hidden[action_begin..action_begin + W_HIDDEN_DIM_V1]);
-        }
         let mut scorer_hidden =
-            linear_rows_v1(&self.scorer_first, &scorer_input, counts.action_count);
+            scorer_first_rows_v1(&self.scorer_first, &state_hidden, &action_hidden);
         tanh_in_place_v1(&mut scorer_hidden, ForwardActivationModeV1::LibmTanh);
         let logits = linear_rows_v1(&self.scorer_second, &scorer_hidden, counts.action_count);
 
@@ -2999,5 +3067,104 @@ mod wide_tests {
         // wide parameter count is computed at build time, not assumed.
         assert_eq!(model.parameter_count_wide_v1(), 2_750_754);
         assert_eq!(W_PARAMETER_COUNT_V1, 2_750_754);
+    }
+}
+
+#[cfg(test)]
+mod linear_rows_bit_exact_tests {
+    use super::*;
+    use crate::state::SplitMix64;
+
+    fn values(rng: &mut SplitMix64, len: usize) -> Vec<f32> {
+        (0..len)
+            .map(|_| match rng.next_u64() % 8 {
+                // Exact zeros of both signs, as one-hot and tanh inputs give.
+                0 => 0.0,
+                1 => -0.0,
+                _ => ((rng.next_u64() >> 40) as f32 / (1u64 << 23) as f32 - 1.0) * 3.0,
+            })
+            .collect()
+    }
+
+    fn random_linear(rng: &mut SplitMix64, input_dim: usize, output_dim: usize) -> LinearV1 {
+        LinearV1 {
+            input_dim,
+            output_dim,
+            weight: values(rng, input_dim * output_dim),
+            bias: values(rng, output_dim),
+            weight_t: Vec::new(),
+        }
+        .with_transposed_weight_v1()
+    }
+
+    fn bits(values: &[f32]) -> Vec<u32> {
+        values.iter().map(|value| value.to_bits()).collect()
+    }
+
+    #[test]
+    fn transposed_linear_rows_match_the_reference_bit_for_bit() {
+        let mut rng = SplitMix64::seed(0x11AE_A12B);
+        for (input_dim, output_dim) in [(98, 64), (64, 64), (219, 64), (128, 1), (64, 1), (3, 5)] {
+            for rows in [0, 1, 2, 7, 33] {
+                let linear = random_linear(&mut rng, input_dim, output_dim);
+                let input = values(&mut rng, rows * input_dim);
+                assert_eq!(
+                    bits(&linear_rows_v1(&linear, &input, rows)),
+                    bits(&linear_rows_reference_v1(&linear, &input, rows)),
+                    "{input_dim}x{output_dim} rows={rows}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn shared_state_scorer_rows_match_the_concatenated_reference_bit_for_bit() {
+        let mut rng = SplitMix64::seed(0x5C0_2E25);
+        for hidden in [HIDDEN_DIM_V1, W_HIDDEN_DIM_V1] {
+            let scorer_first = random_linear(&mut rng, hidden * 2, hidden);
+            for actions in [0, 1, 2, 9, 40] {
+                let state = values(&mut rng, hidden);
+                let action_hidden = values(&mut rng, actions * hidden);
+                let mut concatenated = Vec::new();
+                for row in action_hidden.chunks_exact(hidden) {
+                    concatenated.extend_from_slice(&state);
+                    concatenated.extend_from_slice(row);
+                }
+                assert_eq!(
+                    bits(&scorer_first_rows_v1(&scorer_first, &state, &action_hidden)),
+                    bits(&linear_rows_reference_v1(
+                        &scorer_first,
+                        &concatenated,
+                        actions
+                    )),
+                    "hidden={hidden} actions={actions}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn parameter_writes_refresh_the_transposed_weights() {
+        let mut model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut snapshot = model.parameter_snapshot_v1();
+        for (index, parameter) in snapshot.iter_mut().enumerate() {
+            // The embedding's padding row must stay zero.
+            if parameter.name == "card_embedding.weight" {
+                continue;
+            }
+            for (offset, value) in parameter.values.iter_mut().enumerate() {
+                *value += ((index * 31 + offset) % 17) as f32 * 1e-3;
+            }
+        }
+        model.replace_parameter_snapshot_v1(&snapshot).unwrap();
+        let mut rng = SplitMix64::seed(7);
+        let linear = &model.object_encoder.first;
+        let input = values(&mut rng, 3 * linear.input_dim);
+        assert_eq!(
+            bits(&linear_rows_v1(linear, &input, 3)),
+            bits(&linear_rows_reference_v1(linear, &input, 3)),
+        );
     }
 }

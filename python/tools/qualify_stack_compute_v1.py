@@ -45,23 +45,23 @@ def run(root):
     configs={}
     for mode in ['structured','permuted','disabled']:
         c=copy.deepcopy(config);c['input_mode']=mode;path=root/'configs'/(mode+'.json');write(path,c);configs[mode]=pin(path)
-    hardware={host:inventory(host) for host in ['jack','haleyspc']}
+    hardware={host:inventory(host) for host in ['desktop','computehost']}
     available={}
-    for host,device in [('jack',1),('haleyspc',0)]:
+    for host,device in [('desktop',1),('computehost',0)]:
         assert not hardware[host]['active']
         current=preflight(host,[place(host,device,1)]);current['hardware']=hardware[host]
         path=root/(host+'-inventory.json');write(path,current)
-        available[host]=dict(checked_at=current['at'],eligible=True,reason='Observed idle eligible training GPU; preserve Jack desktop GPU0.',evidence=pin(path),devices=[dict(ordinal=device,uuid=place(host,device,1)['gpu_uuid'],eligible=True,reason='Observed idle with sufficient VRAM.')])
+        available[host]=dict(checked_at=current['at'],eligible=True,reason='Observed idle eligible training GPU; preserve desktop desktop GPU0.',evidence=pin(path),devices=[dict(ordinal=device,uuid=place(host,device,1)['gpu_uuid'],eligible=True,reason='Observed idle with sufficient VRAM.')])
     cloud=Path('E:/mtg-meta-recovery-20260920/public-device-placement-001/runpod-inventory.json');cloud_value=read(cloud)
     available['runpod']=dict(checked_at=cloud_value['checked_at'],eligible=False,reason='Latest authenticated read-only inventory HTTP403; no new paid allocation authorized.',evidence=pin(cloud),devices=[])
-    store=storage(hardware['jack'],'D')
+    store=storage(hardware['desktop'],'D')
     cases=[]
     for workers in [1,4,10]:
         for layout in ['a','b']:
-            placements={mode:place('jack' if (mode=='structured')==(layout=='a') else 'haleyspc',1 if (mode=='structured')==(layout=='a') else 0,workers) for mode in configs}
+            placements={mode:place('desktop' if (mode=='structured')==(layout=='a') else 'computehost',1 if (mode=='structured')==(layout=='a') else 0,workers) for mode in configs}
             cases.append(dict(id=f'{layout}-w{workers}',placements=placements,storage=store))
     dependencies=[pin(Path(__file__).with_name(name)) for name in ['public_training_dispatch_v2.py','public_training_storage_v1.py','public_evaluation_dispatch_v1.py','compute_throughput_v3.py','compute_throughput_v1.py','qualify_state_prevention_compute_v1.py']]
-    write(root/'manifest.json',dict(schema='stack-whole-update-qualification/v1',runner=pin(__file__),binary=binary,build=pin(build),schedule_parent=pin(source),configs=configs,dependencies=dependencies,inventory=available,cases=cases,prefix_updates=3,cheap_updates=1,maximum_game_executions=570,total_launch_budget_seconds=1800,native_process_cap_seconds=300,archive_scheme=ARCHIVE,full_training_launched=False,question='Which per-device queue and collector count minimizes full matched structured/permuted/disabled completion time, including staging/recovery, while all saved learning bytes remain exact?',scope='Timing and correctness only. New deterministic matched seeds, inherited balanced deck/seat schedule, terminal rewards. No outcome selection, formal experiment gate or promotion. Full training requires its separate frozen scientific plan.',review='Fable known zero-read HTTP429 through September22 07:00EDT; no retry or endorsement. Bounded compute qualification under Jack research authority.'))
+    write(root/'manifest.json',dict(schema='stack-whole-update-qualification/v1',runner=pin(__file__),binary=binary,build=pin(build),schedule_parent=pin(source),configs=configs,dependencies=dependencies,inventory=available,cases=cases,prefix_updates=3,cheap_updates=1,maximum_game_executions=570,total_launch_budget_seconds=1800,native_process_cap_seconds=300,archive_scheme=ARCHIVE,full_training_launched=False,question='Which per-device queue and collector count minimizes full matched structured/permuted/disabled completion time, including staging/recovery, while all saved learning bytes remain exact?',scope='Timing and correctness only. New deterministic matched seeds, inherited balanced deck/seat schedule, terminal rewards. No outcome selection, formal experiment gate or promotion. Full training requires its separate frozen scientific plan.',review='Fable known zero-read HTTP429 through September22 07:00EDT; no retry or endorsement. Bounded compute qualification under desktop research authority.'))
     began=time.monotonic()
     cheap=dispatch(root/(root.name+'-cheap'),binary,configs,cases[0]['placements'],store,1,mode='device_queues',stack=True)
     cheap_reports=reports(cheap)

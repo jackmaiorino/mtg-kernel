@@ -3,7 +3,7 @@
 steps + K=5 meta-gate blocks over the refresh-boundary checkpoints).
 
 Authority: CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md Section 6.3 ("Promotion
-path: ACCUMULATION class") + Amendment 9 (Jack's ruling: reading (b), the
+path: ACCUMULATION class") + Amendment 9 (the maintainer's ruling: reading (b), the
 two-arm mechanism, budget corrected to 573,440 games), implemented per the
 countersigned CLAUDE-ACCUMULATION-SPEC-LAYER-PORT-PLAN-V1.md (SHA-256
 8574202658a3660be4dd227197563caa7144d4bf277cc14eeecfdad82692b3a5).
@@ -17,7 +17,7 @@ anchor-carrying step loop with both-gates-SUCCESS installation (Section
 2.1/6.3), the accepted-step-count-triggered K=5 meta-gate (Section 2.3),
 and seed governance across all 35 streams (Section 4).
 
-Per Jack's ruling on Section 2.2 (sheet Amendment 9): reading (b), the
+Per the maintainer's ruling on Section 2.2 (sheet Amendment 9): reading (b), the
 two-arm mechanism structurally reused from candidate_02_v3's own exercised
 shape (4 games/cluster) with the second arm's identity generalized from a
 literal self-mirror to the anchor -- see accumulation_v1_analysis.py's own
@@ -81,7 +81,7 @@ META_DELTA_WORTHWHILE = 0.025
 META_DELTA_PROMOTE = 0.025
 META_ALPHA = 0.006
 MAX_N_CLUSTERS = 4096
-# Amendment 9 (sheet, Jack's ruling reading (b)): 4 games/cluster (2 arms x
+# Amendment 9 (sheet, the maintainer's ruling reading (b)): 4 games/cluster (2 arms x
 # 2 seat-swapped games each), structurally reused from candidate_02_v3's
 # own exercised shape -- NOT 2, which was Section 6.3's own original,
 # now-corrected arithmetic (reading (a)).

@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import itertools
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -75,7 +76,7 @@ def leaf_sources(template):
             for r in refs]
 
 
-def prepare_throughput(root, build_receipt, build_repo, host='jack', worker_counts=(1, 8, 24), blocks=(0, 1),
+def prepare_throughput(root, build_receipt, build_repo, host='desktop', worker_counts=(1, 8, 24), blocks=(0, 1),
                        job='g115-line-a-throughput-001'):
     build = guard.read(build_receipt)
     require = guard.require
@@ -129,11 +130,11 @@ def prepare_throughput(root, build_receipt, build_repo, host='jack', worker_coun
 
 
 BUSY = re.compile(r'^(public_feature_evaluation_v1|trainer|mtg_kernel.*|cargo|rustc)\.exe$', re.I)
-HALEYSPC = 'haley@100.71.75.65'
+COMPUTEHOST = os.environ.get('COMPUTE_HOST_SSH', 'compute-host')
 
 
-def jack_facts():
-    """Jack's PC measured now: CPUs, memory, free disk, GPUs and competing native work."""
+def desktop_facts():
+    """The primary desktop measured now: CPUs, memory, free disk, GPUs and competing native work."""
     import psutil
     gpus = subprocess.run(['nvidia-smi', '--query-gpu=index,name,uuid,memory.total,memory.used',
                            '--format=csv,noheader'], capture_output=True, text=True).stdout.strip().splitlines()
@@ -144,9 +145,9 @@ def jack_facts():
                 reason='idle local host' if not competing else 'competing native work: ' + ', '.join(competing))
 
 
-def haleyspc_facts():
+def computehost_facts():
     """Reachability and CPUs over SSH; the line (a) payload is not staged there (reported, not engineered)."""
-    probe = subprocess.run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', HALEYSPC,
+    probe = subprocess.run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', COMPUTEHOST,
                             'echo %NUMBER_OF_PROCESSORS%'], capture_output=True, text=True, timeout=30)
     reachable = probe.returncode == 0
     return dict(checked_unix=time.time(), reachable=reachable,
@@ -192,7 +193,7 @@ def main():
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--build-receipt', type=Path, required=True)
     parser.add_argument('--build-repo', type=Path, required=True)
-    parser.add_argument('--host', default='jack', choices=['jack', 'haleyspc'])
+    parser.add_argument('--host', default='desktop', choices=['desktop', 'computehost'])
     args = parser.parse_args()
     launch = prepare_throughput(args.root, args.build_receipt, args.build_repo, args.host)
     print(json.dumps(dict(launch_manifest=str(args.root / 'launch-manifest.json'),

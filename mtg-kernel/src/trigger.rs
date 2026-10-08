@@ -120,6 +120,10 @@ pub enum TriggerCondition {
     AttacksWithControllerGraveyardCardCountAtLeast(u8),
     BeginningControllerEndStepIfCreatureDied,
     BeginningControllerEndStep,
+    /// The creature this Equipment is attached to deals combat damage to a
+    /// player (Goldvein Pick). The committed marker's source incarnation
+    /// must be the Equipment's exact current host.
+    EquippedCreatureDealsCombatDamageToPlayer,
 }
 
 pub struct TriggeredAbilityDef {
@@ -246,6 +250,133 @@ const fn etb_trigger(effect: fn() -> EffectOp) -> TriggeredAbilityDef {
 }
 
 const GAIN_ONE_LIFE_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(gain_one_life_effect)];
+const AJANIS_PRIDEMATE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControllerGainsLife,
+    ..etb_trigger(writhing_chrysalis_counter_marker_effect)
+}];
+const MARAUDING_BLIGHT_PRIEST_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControllerGainsLife,
+    ..etb_trigger(opponent_loses_one_life_effect)
+}];
+const SANGUINE_SYPHONER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Attacks,
+    ..etb_trigger(sanguine_syphoner_effect)
+}];
+
+const HELPFUL_HUNTER_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(ichor_wellspring_draw_effect)];
+const PRIDEFUL_PARENT_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(prideful_parent_effect)];
+const ICEWIND_ELEMENTAL_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(icewind_elemental_effect)];
+const BURGLAR_RAT_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(burglar_rat_effect)];
+const INFESTATION_SAGE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::LeftBattlefieldToGraveyard,
+    home_zone: Zone::Graveyard,
+    ..etb_trigger(infestation_sage_effect)
+}];
+const WARY_THESPIAN_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    etb_trigger(conduit_pylons_etb_effect),
+    TriggeredAbilityDef {
+        condition: TriggerCondition::LeftBattlefieldToGraveyard,
+        home_zone: Zone::Graveyard,
+        ..etb_trigger(conduit_pylons_etb_effect)
+    },
+];
+const SPITFIRE_LAGAC_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControlledLandEnters,
+    ..etb_trigger(kessig_flamebreather_effect)
+}];
+
+const DRAGON_TRAINER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(dragon_trainer_effect)];
+const RESOLUTE_REINFORCEMENTS_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(resolute_reinforcements_effect)];
+const ELFSWORN_GIANT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControlledLandEnters,
+    ..etb_trigger(elfsworn_giant_effect)
+}];
+const EAGER_TRUFFLESNOUT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::DealsCombatDamageToPlayer,
+    ..etb_trigger(generous_ent_effect)
+}];
+const RITE_OF_THE_DRAGONCALLER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastInstantOrSorcery,
+    ..etb_trigger(rite_of_the_dragoncaller_effect)
+}];
+
+fn prideful_parent_effect() -> EffectOp {
+    EffectOp::CreateToken {
+        token_def: crate::card_def::card_id_by_name("Cat Token").expect("Cat Token in CARD_DEFS"),
+        controller: PlayerRef::Controller,
+    }
+}
+
+fn create_controller_token_effect(name: &str) -> EffectOp {
+    EffectOp::CreateToken {
+        token_def: crate::card_def::card_id_by_name(name)
+            .unwrap_or_else(|| panic!("{name} in CARD_DEFS")),
+        controller: PlayerRef::Controller,
+    }
+}
+
+fn icewind_elemental_effect() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        },
+        EffectOp::DiscardCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        },
+    ])
+}
+
+fn burglar_rat_effect() -> EffectOp {
+    // "Each opponent discards a card"; the kernel is strictly 1v1 and the
+    // discarding player chooses.
+    EffectOp::DiscardCards {
+        player: PlayerRef::Opponent,
+        count: 1,
+    }
+}
+
+fn infestation_sage_effect() -> EffectOp {
+    EffectOp::CreateToken {
+        token_def: crate::card_def::card_id_by_name("Insect Token")
+            .expect("Insect Token in CARD_DEFS"),
+        controller: PlayerRef::Controller,
+    }
+}
+
+fn dragon_trainer_effect() -> EffectOp {
+    create_controller_token_effect("Dragon Token")
+}
+
+fn resolute_reinforcements_effect() -> EffectOp {
+    create_controller_token_effect("Soldier Token")
+}
+
+fn elfsworn_giant_effect() -> EffectOp {
+    create_controller_token_effect("Elf Warrior Token")
+}
+
+fn rite_of_the_dragoncaller_effect() -> EffectOp {
+    create_controller_token_effect("Dragon 5/5 Token")
+}
+
+fn opponent_loses_one_life_effect() -> EffectOp {
+    EffectOp::LoseLife {
+        player: PlayerRef::Opponent,
+        amount: 1,
+    }
+}
+
+fn sanguine_syphoner_effect() -> EffectOp {
+    EffectOp::Sequence(vec![
+        opponent_loses_one_life_effect(),
+        gain_one_life_effect(),
+    ])
+}
 const DAZZLING_ANGEL_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::OtherControlledCreatureEnters { subtype: None },
     ..etb_trigger(gain_one_life_effect)
@@ -936,6 +1067,49 @@ fn outlaw_medic_dies_effect() -> EffectOp {
     }
 }
 
+fn adventuring_gear_landfall_effect() -> EffectOp {
+    // "Landfall -- Whenever a land you control enters, equipped creature
+    // gets +2/+2 until end of turn."
+    EffectOp::BoostAttachedCreatureUntilEndOfTurn {
+        power: 2,
+        toughness: 2,
+    }
+}
+
+fn goldvein_pick_combat_damage_effect() -> EffectOp {
+    // "Whenever equipped creature deals combat damage to a player, create a
+    // Treasure token."
+    EffectOp::CreateToken {
+        token_def: crate::card_def::card_id_by_name("Treasure Token")
+            .expect("Treasure Token in CARD_DEFS"),
+        controller: PlayerRef::Controller,
+    }
+}
+
+fn solemn_simulacrum_etb_effect() -> EffectOp {
+    // "When this creature enters, you may search your library for a basic
+    // land card, put that card onto the battlefield tapped, then shuffle."
+    // The zero-card selection is the "may".
+    EffectOp::SearchLibraryToBattlefieldTapped {
+        player: PlayerRef::Controller,
+        filter: crate::effect::LibraryCardFilter::BasicLand,
+    }
+}
+
+fn solemn_simulacrum_dies_effect() -> EffectOp {
+    // "When this creature dies, you may draw a card."
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: vec![
+            EffectOp::Sequence(vec![]),
+            EffectOp::DrawCards {
+                player: PlayerRef::Controller,
+                count: 1,
+            },
+        ],
+    }
+}
+
 fn refurbished_familiar_etb_effect() -> EffectOp {
     // The kernel is strictly 1v1. The opponent chooses and discards one
     // card when possible; otherwise the Familiar's controller draws one.
@@ -1304,6 +1478,39 @@ const OUTLAW_MEDIC_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     effect: outlaw_medic_dies_effect,
 }];
 
+const ADVENTURING_GEAR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControlledLandEnters,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: adventuring_gear_landfall_effect,
+}];
+
+const GOLDVEIN_PICK_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::EquippedCreatureDealsCombatDamageToPlayer,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: goldvein_pick_combat_damage_effect,
+}];
+
+const SOLEMN_SIMULACRUM_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::Etb,
+        home_zone: Zone::Battlefield,
+        intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
+        effect: solemn_simulacrum_etb_effect,
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::LeftBattlefieldToGraveyard,
+        home_zone: Zone::Graveyard,
+        intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
+        effect: solemn_simulacrum_dies_effect,
+    },
+];
+
 const REFURBISHED_FAMILIAR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Etb,
     home_zone: Zone::Battlefield,
@@ -1535,7 +1742,23 @@ const DELVER_OF_SECRETS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
 /// duplicating as constants here -- see `build.rs`'s module doc on id
 /// stability). Every other card in the pool has no triggered ability
 /// implemented and falls through to `&[]`.
+///
+/// Memoized per definition id: the dispatch below is a pure function of the
+/// static `CARD_DEFS` entry, but its by-name `match` is a long chain of string
+/// compares, and trigger collection calls it for every object in every zone on
+/// every committed event batch.
 pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
+    static TABLE: std::sync::OnceLock<Box<[&'static [TriggeredAbilityDef]]>> =
+        std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        (0..crate::card_def::CARD_DEFS.len())
+            .map(|index| triggers_for_uncached(index as u16))
+            .collect()
+    });
+    table.get(card_def as usize).copied().unwrap_or(&[])
+}
+
+fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
     let Some(card) = crate::card_def::CARD_DEFS.get(card_def as usize) else {
         return &[];
     };
@@ -1552,7 +1775,25 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Mossborn Hydra" => &MOSSBORN_HYDRA_TRIGGERS,
         "Beast-Kin Ranger" => &BEAST_KIN_RANGER_TRIGGERS,
         "Dwynen, Gilt-Leaf Daen" => &DWYNEN_TRIGGERS,
-        "Blossoming Sands" | "Thornwood Falls" => &GAIN_ONE_LIFE_TRIGGERS,
+        "Blossoming Sands" | "Thornwood Falls" | "Bloodfell Caves" | "Dismal Backwater"
+        | "Jungle Hollow" | "Rugged Highlands" | "Scoured Barrens" | "Swiftwater Cliffs"
+        | "Tranquil Cove" | "Wind-Scarred Crag" => &GAIN_ONE_LIFE_TRIGGERS,
+        "Ajani's Pridemate" => &AJANIS_PRIDEMATE_TRIGGERS,
+        "Marauding Blight-Priest" => &MARAUDING_BLIGHT_PRIEST_TRIGGERS,
+        "Sanguine Syphoner" => &SANGUINE_SYPHONER_TRIGGERS,
+        "Helpful Hunter" => &HELPFUL_HUNTER_TRIGGERS,
+        "Prideful Parent" => &PRIDEFUL_PARENT_TRIGGERS,
+        "Icewind Elemental" => &ICEWIND_ELEMENTAL_TRIGGERS,
+        "Burglar Rat" => &BURGLAR_RAT_TRIGGERS,
+        "Infestation Sage" => &INFESTATION_SAGE_TRIGGERS,
+        "Wary Thespian" => &WARY_THESPIAN_TRIGGERS,
+        "Firebrand Archer" => &KESSIG_FLAMEBREATHER_TRIGGERS,
+        "Spitfire Lagac" => &SPITFIRE_LAGAC_TRIGGERS,
+        "Dragon Trainer" => &DRAGON_TRAINER_TRIGGERS,
+        "Resolute Reinforcements" => &RESOLUTE_REINFORCEMENTS_TRIGGERS,
+        "Elfsworn Giant" => &ELFSWORN_GIANT_TRIGGERS,
+        "Eager Trufflesnout" => &EAGER_TRUFFLESNOUT_TRIGGERS,
+        "Rite of the Dragoncaller" => &RITE_OF_THE_DRAGONCALLER_TRIGGERS,
         "Dazzling Angel" => &DAZZLING_ANGEL_TRIGGERS,
         "Clinquant Skymage" => &CLINQUANT_SKYMAGE_TRIGGERS,
         "Mischievous Mystic" => &MISCHIEVOUS_MYSTIC_TRIGGERS,
@@ -1593,6 +1834,9 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Faerie Miscreant" => &FAERIE_MISCREANT_TRIGGERS,
         "Faerie Seer" => &FAERIE_SEER_TRIGGERS,
         "Outlaw Medic" => &OUTLAW_MEDIC_TRIGGERS,
+        "Solemn Simulacrum" => &SOLEMN_SIMULACRUM_TRIGGERS,
+        "Adventuring Gear" => &ADVENTURING_GEAR_TRIGGERS,
+        "Goldvein Pick" => &GOLDVEIN_PICK_TRIGGERS,
         "Refurbished Familiar" => &REFURBISHED_FAMILIAR_TRIGGERS,
         "Squadron Hawk" => &SQUADRON_HAWK_TRIGGERS,
         "Bind the Monster" => &BIND_THE_MONSTER_TRIGGERS,
@@ -1920,6 +2164,18 @@ pub(crate) fn saga_final_chapter_is_pending(
         })
 }
 
+/// `CARD_DEFS[i].is_token`, packed densely so the per-SBA-pass token sweep
+/// over every object does not stride through full `CardDef` entries.
+fn token_card_defs() -> &'static [bool] {
+    static TABLE: std::sync::OnceLock<Box<[bool]>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        crate::card_def::CARD_DEFS
+            .iter()
+            .map(|card| card.is_token)
+            .collect()
+    })
+}
+
 fn sba_fixed_point_with_protected_triggers(
     state: &mut GameState,
     protected_triggers: &[PendingTrigger],
@@ -2064,13 +2320,11 @@ fn sba_fixed_point_with_protected_triggers(
         // the real v3 corpus: `kernel_gy` carrying a stray "Blood Token"
         // entry the trace's own graveyard snapshot never has, many turns
         // after the token was created and then activated/sacrificed).
+        let token_defs = token_card_defs();
         let leaving: Vec<ObjectId> = state
             .objects
             .iter()
-            .filter(|(_, obj)| {
-                obj.zone != Zone::Battlefield
-                    && crate::card_def::CARD_DEFS[obj.card_def as usize].is_token
-            })
+            .filter(|(_, obj)| obj.zone != Zone::Battlefield && token_defs[obj.card_def as usize])
             .map(|(id, _)| id)
             .collect();
         for id in leaving {
@@ -2140,6 +2394,29 @@ pub(crate) fn collect_and_process_with_waiting(
     order_apnap(new_triggers, state.active_player)
 }
 
+/// Per-definition flag: whether an object of this definition can produce a
+/// trigger in `triggers_from_events`'s per-object pass (a Saga chapter, a
+/// definition-owned triggered ability, or a generic ward cost). Indexed like
+/// `CARD_DEFS`.
+fn card_defs_with_event_triggers() -> &'static [bool] {
+    static TABLE: std::sync::OnceLock<Box<[bool]>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        crate::card_def::CARD_DEFS
+            .iter()
+            .enumerate()
+            .map(|(index, card)| {
+                card.is_executable()
+                    && (card.saga.is_some()
+                        || !triggers_for(index as u16).is_empty()
+                        || matches!(
+                            card.ward_cost,
+                            Some(crate::card_def::WardCostDef::Generic(_))
+                        ))
+            })
+            .collect()
+    })
+}
+
 fn triggers_from_events(
     state: &mut GameState,
     events: &[CommittedEvent],
@@ -2157,9 +2434,23 @@ fn triggers_from_events(
                         && object.zone_change_count == entry.source.zone_change_count
                 })
     });
+    if events.is_empty() {
+        // Nothing can match an empty batch; only the use-ledger pruning
+        // above is observable.
+        uses.sort_by_key(|entry| (entry.source.object, entry.ability_index));
+        state.trigger_uses_v1 = (!uses.is_empty()).then_some(uses);
+        return Vec::new();
+    }
     let draws_this_turn_at = draws_this_turn_snapshot(events, state);
     let mut new_triggers = Vec::new();
+    let may_trigger = card_defs_with_event_triggers();
     for (id, obj) in state.objects.iter() {
+        // Most objects (lands, vanilla creatures, every library card of a
+        // definition with no triggered ability) can never match; skip them
+        // without touching their large `CardDef` entry.
+        if !may_trigger[obj.card_def as usize] {
+            continue;
+        }
         let card = &crate::card_def::CARD_DEFS[obj.card_def as usize];
         if !card.is_executable() {
             continue;
@@ -2786,6 +3077,20 @@ fn trigger_matches(
         ) => {
             *event_source == source
                 && state.objects.get(source).zone_change_count == *source_zone_change_count
+        }
+        (
+            TriggerCondition::EquippedCreatureDealsCombatDamageToPlayer,
+            CommittedEvent::CombatDamageToPlayer {
+                source: event_source,
+                source_zone_change_count,
+                ..
+            },
+        ) => {
+            state.objects.get(source).v4.attached_to
+                == Some(crate::state::ObjectLinkV4 {
+                    object: *event_source,
+                    zone_change_count: *source_zone_change_count,
+                })
         }
         (
             TriggerCondition::CastInstantOrSorcery,

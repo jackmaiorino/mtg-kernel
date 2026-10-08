@@ -8,8 +8,8 @@ from public_training_dispatch_v2 import (pin, read, write, checked, dispatch_qua
     preflight, worker)
 from compute_throughput_v2 import require_allocation
 
-UUIDS = {"jack": {0: "GPU-3502709e-6aef-8ed7-4abe-562838793e3d", 1: "GPU-0642d3ca-e3d4-ba16-96ab-c561c6da90e3"},
-         "haleyspc": {0: "GPU-17eeab7a-ad2e-5a59-4c42-8cd26a0d7223"}}
+UUIDS = {"desktop": {0: "GPU-3502709e-6aef-8ed7-4abe-562838793e3d", 1: "GPU-0642d3ca-e3d4-ba16-96ab-c561c6da90e3"},
+         "computehost": {0: "GPU-17eeab7a-ad2e-5a59-4c42-8cd26a0d7223"}}
 
 
 def place(host, device, workers):
@@ -69,7 +69,7 @@ def run(root, pilot):
         checked(item)
     jobs = {arm: dict(config_sha256=item["sha256"], updates=200) for arm, item in configs.items()}
     inventory = {}
-    for host, devices in [("jack", [0, 1]), ("haleyspc", [0])]:
+    for host, devices in [("desktop", [0, 1]), ("computehost", [0])]:
         snapshot = preflight(host, [place(host, d, 1) for d in devices])
         path = root/f"{host}-inventory.json"
         write(path, snapshot)
@@ -83,8 +83,8 @@ def run(root, pilot):
     # Ten games bound useful collectors to ten. Each stream stays on one host.
     cases = []
     for workers in [1, 4, 8, 10]:
-        cases.append((f"local-w{workers}", dict(control=place("jack", 1, workers), structured=place("jack", 0, workers))))
-        cases.append((f"cross-w{workers}", dict(control=place("jack", 1, workers), structured=place("haleyspc", 0, workers))))
+        cases.append((f"local-w{workers}", dict(control=place("desktop", 1, workers), structured=place("desktop", 0, workers))))
+        cases.append((f"cross-w{workers}", dict(control=place("desktop", 1, workers), structured=place("computehost", 0, workers))))
     write(root/"manifest.json", dict(pilot=pin(pilot/"manifest.json"), runner=pin(__file__),
         dependencies=[pin(Path(__file__).with_name(name)) for name in ["public_training_dispatch_v2.py", "compute_throughput_v2.py", "compute_throughput_v1.py"]],
         configs=configs, binary=binary, allocations=[dict(label=label, placements=p) for label, p in cases],
@@ -125,8 +125,8 @@ def run(root, pilot):
     for arm in ["control", "structured"]:
         folder = replay/arm
         folder.mkdir()
-        placement = place("jack", 1, 8)
-        write(folder/"preflight.json", preflight("jack", [placement]))
+        placement = place("desktop", 1, 8)
+        write(folder/"preflight.json", preflight("desktop", [placement]))
         request = dict(config=read(checked(configs[arm])), output_directory=str(folder/"outputs"),
             resume=cheap_reports[arm]["outputs"]["0000/checkpoint.json"], stop_after=3,
             collector_workers=8, execution_gpu_ordinal=1)
