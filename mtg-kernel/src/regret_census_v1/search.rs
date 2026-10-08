@@ -14,15 +14,30 @@
 //!   alternative with T1, turn-long or game-long improved continuation, and
 //!   logs every focal decision where improved play deviates from T1.
 //!
-//! The search logic names no card or deck. Mechanism tags exist only in the
-//! `roots` labelling (`root_tags`).
+//! Opt-in settings (unset, choices and outcomes are as before; rows only gain
+//! fields: cap hits, searched menu sizes, the recorded `config`, compute
+//! totals and, for Spy-focal roots, the Spy choice labels):
+//! - `HORIZON=turn+G` (also `HORIZON_LONG` in `cross`, default `game`):
+//!   improved play through the root's turn, then the next G focal
+//!   multi-action decisions, then plain play.
+//! - `EVAL_CROSS=1` (`cond`): also evaluates T1's root action with the
+//!   improved continuation and every improved condition's choice with plain
+//!   follow-up, completing the root-choice x continuation 2x2.
+//! - `DEVIATION_EVAL=E`, `DEVIATION_SAMPLE=P` (`cross`): for a seeded sample
+//!   of logged deviations, E paired fresh redeterminizations of the sampled
+//!   and the improved action, each followed by plain play.
+//!
+//! The search logic names no card or deck. Card names appear only in
+//! labelling: the `roots` mechanism tags (`root_tags`) and the Spy choice
+//! labels of outer selection and evaluation playouts (`spy_choice_labels`),
+//! which nothing the search chooses or samples reads.
 
 use super::{
     load_policy_v1, mix, named, seat_index, softmax, variant, CensusConfigV1, MAX_PHYSICAL,
 };
 use crate::ids::PlayerId;
 use crate::paired_bo1_harness_v1::paired_policy_seeds_v1;
-use crate::rl::TerminalClassificationV1;
+use crate::rl::{ActionSemanticV1, TerminalClassificationV1};
 use crate::rl_session::{FastActorDecisionV1, FastActorResponseV1, FastActorSessionV1};
 use crate::runtime_decks::RUNTIME_DECKS;
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
@@ -42,6 +57,16 @@ const DEFAULT_HORIZON: Horizon = Horizon::Decisions(6);
 const MAX_FAILED_ROUNDS: u32 = 16;
 const MAX_ROUNDS: u64 = 100_000;
 const SEM_CHARS: usize = 240;
+const DEFAULT_HORIZON_LONG: Horizon = Horizon::Game;
+const DEFAULT_DEVIATION_SAMPLE: f64 = 0.1;
+/// Evaluation seed namespaces. `cond` keeps its original constant; `cross`
+/// has its own, so no cross cell shares determinizations with the cond
+/// evaluation of the same root (cells within cross stay paired).
+const COND_EVAL_NS: u64 = 0xE7A1;
+const CROSS_EVAL_NS: u64 = 0xC705_5E7A_0000_E7A1;
+/// Seed salts for the deviation counterfactuals (sampling and determinizations).
+const DEVIATION_SAMPLE_SALT: u64 = 0xDE71_A7E0_5A3B;
+const DEVIATION_DET_SALT: u64 = 0xCF00_0000;
 
 pub(super) fn is_search_mode(mode: &str) -> bool {
     matches!(mode, "roots" | "cond" | "cross")
@@ -54,6 +79,9 @@ pub(super) enum Horizon {
     Turn,
     /// The next N focal multi-action decisions.
     Decisions(u32),
+    /// Every focal multi-action decision in the root's turn, then the next G
+    /// focal multi-action decisions after that turn.
+    TurnThen(u32),
     /// Every focal multi-action decision to the end of the game.
     Game,
 }
@@ -68,6 +96,12 @@ impl Horizon {
                 .strip_prefix("decisions:")
                 .and_then(|n| n.parse().ok())
                 .map(Self::Decisions)
+                .or_else(|| {
+                    other
+                        .strip_prefix("turn+")
+                        .and_then(|g| g.parse().ok())
+                        .map(Self::TurnThen)
+                })
                 .ok_or_else(|| format!("unknown HORIZON {other}")),
         }
     }
@@ -77,7 +111,48 @@ impl Horizon {
             Self::Turn => "turn".into(),
             Self::Game => "game".into(),
             Self::Decisions(n) => format!("decisions:{n}"),
+            Self::TurnThen(g) => format!("turn+{g}"),
         }
+    }
+
+    /// Whether a focal multi-action decision is searched. `in_root_turn`: it
+    /// falls in the root's turn; `searched`: decisions searched so far in
+    /// this playout; `searched_after_turn`: those of them after the root's
+    /// turn.
+    fn within(self, in_root_turn: bool, searched: u32, searched_after_turn: u32) -> bool {
+        match self {
+            Self::Turn => in_root_turn,
+            Self::Decisions(n) => searched < n,
+            Self::TurnThen(g) => in_root_turn || searched_after_turn < g,
+            Self::Game => true,
+        }
+    }
+
+    /// Whether the window is a cap: a later focal multi-action decision
+    /// outside it means the cap bound (`Outcome::cap_hit`).
+    fn capped(self) -> bool {
+        matches!(self, Self::Decisions(_) | Self::TurnThen(_))
+    }
+}
+
+/// Searched-decision counters of one improved playout.
+#[derive(Clone, Copy, Debug, Default)]
+struct Window {
+    searched: u32,
+    after_turn: u32,
+}
+
+impl Window {
+    /// At a focal multi-action decision: the decision's ordinal (1-based,
+    /// counted over searched decisions) when `horizon` searches it, `None`
+    /// once the window is closed.
+    fn admit(&mut self, horizon: Horizon, in_root_turn: bool) -> Option<u32> {
+        if !horizon.within(in_root_turn, self.searched, self.after_turn) {
+            return None;
+        }
+        self.searched += 1;
+        self.after_turn += u32::from(!in_root_turn);
+        Some(self.searched)
     }
 }
 
@@ -134,6 +209,27 @@ enum OppSel {
     Model(usize),
 }
 
+/// Deviation counterfactuals (`cross` evaluation only): `e` paired fresh
+/// redeterminizations per sampled deviation (0 = off), sampling fraction `p`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct DevCfg {
+    e: usize,
+    p: f64,
+}
+
+/// Extras of an outer playout. Selection playouts use at most `spy`;
+/// logging and counterfactuals are evaluation-only. None of them changes a
+/// choice or a sampling stream.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct PlayoutOpts {
+    /// Log focal deviations of improved play from T1's sampled action.
+    log: bool,
+    /// Record the Spy choice labels (`SpyLabels`).
+    spy: bool,
+    /// Counterfactuals for a sample of logged deviations.
+    dev: DevCfg,
+}
+
 /// Read-only state shared by all workers.
 pub(super) struct SearchSharedV1 {
     labels: Vec<String>,
@@ -144,6 +240,12 @@ pub(super) struct SearchSharedV1 {
     m_inner: usize,
     horizon: Horizon,
     budget_stop: BudgetStop,
+    /// `cross` only: the long arm's horizon (`HORIZON_LONG`).
+    horizon_long: Horizon,
+    /// `cond` only: evaluate the root-choice x continuation 2x2 (`EVAL_CROSS`).
+    eval_cross: bool,
+    /// `cross` only: deviation counterfactuals (`DEVIATION_EVAL`, `DEVIATION_SAMPLE`).
+    deviation: DevCfg,
 }
 
 fn env_or<T: std::str::FromStr>(name: &str, default: T) -> Result<T, String> {
@@ -218,6 +320,25 @@ impl SearchSharedV1 {
             Ok(v) => BudgetStop::parse(&v)?,
             Err(_) => BudgetStop::Round,
         };
+        let horizon_long = match std::env::var("HORIZON_LONG") {
+            Ok(v) => Horizon::parse(&v)?,
+            Err(_) => DEFAULT_HORIZON_LONG,
+        };
+        let eval_cross = match std::env::var("EVAL_CROSS") {
+            Ok(v) => match v.trim() {
+                "1" | "true" => true,
+                "0" | "false" | "" => false,
+                other => return Err(format!("bad EVAL_CROSS={other}")),
+            },
+            Err(_) => false,
+        };
+        let deviation = DevCfg {
+            e: env_or("DEVIATION_EVAL", 0usize)?,
+            p: env_or("DEVIATION_SAMPLE", DEFAULT_DEVIATION_SAMPLE)?,
+        };
+        if !(0.0..=1.0).contains(&deviation.p) {
+            return Err(format!("DEVIATION_SAMPLE {} is not in [0, 1]", deviation.p));
+        }
         let shared = Self {
             labels,
             opponents,
@@ -227,18 +348,46 @@ impl SearchSharedV1 {
             m_inner: env_or("M_INNER", DEFAULT_M_INNER)?.max(1),
             horizon,
             budget_stop,
+            horizon_long,
+            eval_cross,
+            deviation,
         };
         eprintln!(
-            "search: opponents {:?}, roots {}, budgets {:?} (stop {}), eval {}, m_inner {}, horizon {}",
+            "search: opponents {:?}, roots {}, budgets {:?} (stop {}), eval {}, m_inner {}, horizon {}, horizon_long {}, eval_cross {}, deviation_eval {} (sample {})",
             shared.labels,
             shared.roots.len(),
             shared.budgets,
             shared.budget_stop.label(),
             shared.eval_playouts,
             shared.m_inner,
-            shared.horizon.label()
+            shared.horizon.label(),
+            shared.horizon_long.label(),
+            shared.eval_cross,
+            shared.deviation.e,
+            shared.deviation.p
         );
         Ok(shared)
+    }
+
+    /// The search configuration a row was produced with, so an analysis can
+    /// reject rows that differ from its manifest. Only settings the mode
+    /// uses are listed: `cond` has `horizon` and `eval_cross`; `cross` has
+    /// its turn arm (`horizon`, always `turn`), `horizon_long` and the
+    /// deviation settings.
+    fn config_json(&self, cfg: &CensusConfigV1, mode: &str) -> Value {
+        let mut c = json!({"mode":mode,"budgets":self.budgets,"budget_stop":self.budget_stop.label(),
+            "m_inner":self.m_inner,"eval_playouts":self.eval_playouts,"opponents":self.labels,
+            "base_seed":cfg.base_seed,"max_actions":cfg.max_actions,"decks":cfg.decks});
+        let extra = if mode == "cross" {
+            json!({"horizon":Horizon::Turn.label(),"horizon_long":self.horizon_long.label(),
+                "deviation_eval":self.deviation.e,"deviation_sample":self.deviation.p})
+        } else {
+            json!({"horizon":self.horizon.label(),"eval_cross":self.eval_cross})
+        };
+        if let (Value::Object(c), Value::Object(x)) = (&mut c, extra) {
+            c.extend(x);
+        }
+        c
     }
 
     /// Number of work items for root-driven modes.
@@ -258,6 +407,14 @@ impl SearchSharedV1 {
             scorer: t1.fork_for_collection_v3()?,
             inner_focal: t1.fork_for_collection_v3()?,
             inner_opp: t1.fork_for_collection_v3()?,
+            cf_opps: if self.deviation.e > 0 {
+                self.opponents
+                    .iter()
+                    .map(FrozenPlayPolicyV1::fork_for_collection_v3)
+                    .collect::<Result<_, _>>()?
+            } else {
+                Vec::new()
+            },
         })
     }
 }
@@ -266,7 +423,9 @@ impl SearchSharedV1 {
 /// role's sampling stream never moves another's: `focal` and `opps` replay
 /// the root game and then play the outer playouts' main line; `t1_opp` is the
 /// opponent in selection playouts; `inner_*` play the improved continuation's
-/// inner playouts; `scorer` only computes probabilities (scoring is stateless).
+/// inner playouts; `scorer` only computes probabilities (scoring is stateless);
+/// `cf_opps` (forked only when deviation counterfactuals are on) are the
+/// opponent models in those counterfactual playouts.
 pub(super) struct SearchWorkerV1 {
     focal: FrozenPlayPolicyV1,
     opps: Vec<FrozenPlayPolicyV1>,
@@ -274,6 +433,7 @@ pub(super) struct SearchWorkerV1 {
     scorer: FrozenPlayPolicyV1,
     inner_focal: FrozenPlayPolicyV1,
     inner_opp: FrozenPlayPolicyV1,
+    cf_opps: Vec<FrozenPlayPolicyV1>,
 }
 
 /// Everything the game index decides.
@@ -517,7 +677,110 @@ fn root_tags(named_sem: &[Value], own_turn: bool, combat: bool) -> Vec<&'static 
     {
         tags.push("cawgates_basilisk");
     }
+    if own_turn
+        && named_sem
+            .iter()
+            .any(|v| kind(v) == "cast_spell" && source(v) == "Prismatic Strands")
+    {
+        tags.push("cawgates_strands_castable_own_turn");
+    }
     tags
+}
+
+/// Whether outer playouts record the Spy choice labels: only when the focal
+/// seat plays the Spy deck. Labelling only; the search never reads it.
+fn spy_labels_apply(focal_deck: &str) -> bool {
+    focal_deck == "Spy"
+}
+
+/// Spy choice labels of one focal action (its named semantics), matched as
+/// in the Spy probe: (Balustrade Spy targets its own player, Dread Return
+/// targets Lotleth Giant). Labelling only; the search never reads it.
+fn spy_choice_labels(chosen: &Value, seat: usize) -> (bool, bool) {
+    let is = |kind: &str, src: &str| chosen["action_kind"] == kind && chosen["source"] == src;
+    (
+        is("choose_target", "Balustrade Spy") && chosen["target"]["player"] == format!("p{seat}"),
+        is("choose_target", "Dread Return") && chosen["target"]["object"] == "Lotleth Giant",
+    )
+}
+
+/// Per-playout Spy choice labels: whether each labelled option (a: the
+/// Balustrade Spy self-target, b: Dread Return targeting Lotleth Giant) was
+/// ever offered to the focal player during the playout, and whether the
+/// focal player chose it (the root action included, inner playouts never).
+/// Pure labelling: observing reads the menu and changes no choice or
+/// sampling stream.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct SpyLabels {
+    self_offered: bool,
+    self_chosen: bool,
+    dr_offered: bool,
+    dr_chosen: bool,
+}
+
+impl SpyLabels {
+    /// Labels the focal action `action` at the session's current decision.
+    /// Only target choices are named, so other menus cost one variant check
+    /// per candidate.
+    fn observe(&mut self, s: &FastActorSessionV1, seat: usize, action: u32) {
+        let Some(sem) = s.diagnostic_current_action_semantics() else {
+            return;
+        };
+        for (i, x) in sem.iter().enumerate() {
+            if !matches!(x, ActionSemanticV1::ChooseTarget { .. }) {
+                continue;
+            }
+            let (a, b) =
+                spy_choice_labels(&named(serde_json::to_value(x).unwrap_or_default()), seat);
+            let chosen = i == action as usize;
+            self.self_offered |= a;
+            self.self_chosen |= a && chosen;
+            self.dr_offered |= b;
+            self.dr_chosen |= b && chosen;
+        }
+    }
+
+    fn both_chosen(self) -> bool {
+        self.self_chosen && self.dr_chosen
+    }
+}
+
+/// Spy label counts over a set of playouts (`score` 1 is a natural win).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct SpyCounts {
+    self_offered: u32,
+    self_chosen: u32,
+    dr_offered: u32,
+    dr_chosen: u32,
+    both_chosen: u32,
+    both_chosen_natural_win: u32,
+}
+
+impl SpyCounts {
+    fn add(&mut self, l: SpyLabels, score: f64) {
+        self.self_offered += u32::from(l.self_offered);
+        self.self_chosen += u32::from(l.self_chosen);
+        self.dr_offered += u32::from(l.dr_offered);
+        self.dr_chosen += u32::from(l.dr_chosen);
+        self.both_chosen += u32::from(l.both_chosen());
+        self.both_chosen_natural_win += u32::from(l.both_chosen() && score == 1.0);
+    }
+
+    fn json(self) -> Value {
+        json!({"self_offered":self.self_offered,"self_chosen":self.self_chosen,
+            "dr_offered":self.dr_offered,"dr_chosen":self.dr_chosen,
+            "both_chosen":self.both_chosen,"both_chosen_natural_win":self.both_chosen_natural_win})
+    }
+}
+
+/// Spy label counts per candidate, one array per count (aligned with the
+/// candidates).
+fn spy_counts_per_candidate(counts: &[SpyCounts]) -> Value {
+    let col = |f: fn(&SpyCounts) -> u32| counts.iter().map(f).collect::<Vec<_>>();
+    json!({"self_offered":col(|c| c.self_offered),"self_chosen":col(|c| c.self_chosen),
+        "dr_offered":col(|c| c.dr_offered),"dr_chosen":col(|c| c.dr_chosen),
+        "both_chosen":col(|c| c.both_chosen),
+        "both_chosen_natural_win":col(|c| c.both_chosen_natural_win)})
 }
 
 fn sem_strings(session: &FastActorSessionV1) -> Vec<String> {
@@ -764,10 +1027,25 @@ fn best_by_mean(cands: &[usize], means: &[f64], probs: &[f64]) -> usize {
 struct Outcome {
     score: f64,
     natural: bool,
+    /// The playout's own transitions (deviation counterfactuals excluded).
     transitions: u64,
+    /// Elapsed time, deviation counterfactuals included (see `cf_wall`).
     wall: f64,
     inner_failures: u32,
+    /// Focal multi-action decisions searched by the improved continuation.
     searched: u32,
+    /// Sum and maximum of the searched decisions' legal action counts.
+    searched_menu_sum: u64,
+    searched_menu_max: u32,
+    /// A focal multi-action decision came after a capped window closed
+    /// (`Horizon::capped`).
+    cap_hit: bool,
+    /// Spy choice labels (only when `PlayoutOpts::spy`).
+    spy: SpyLabels,
+    /// Compute of the deviation counterfactuals, counted apart from the
+    /// playout's own transitions.
+    cf_transitions: u64,
+    cf_wall: f64,
     deviations: Vec<Value>,
     failed: Option<String>,
 }
@@ -780,6 +1058,19 @@ fn plain_to_end(
     o: &mut FrozenPlayPolicyV1,
     transitions: &mut u64,
 ) -> Result<(f64, bool), String> {
+    plain_to_end_labelled(s, seat, f, o, transitions, None)
+}
+
+/// `plain_to_end`, optionally labelling every focal choice for the Spy
+/// labels (read-only: the same policy calls are made either way).
+fn plain_to_end_labelled(
+    s: &mut FastActorSessionV1,
+    seat: usize,
+    f: &mut FrozenPlayPolicyV1,
+    o: &mut FrozenPlayPolicyV1,
+    transitions: &mut u64,
+    mut spy: Option<&mut SpyLabels>,
+) -> Result<(f64, bool), String> {
     loop {
         let response = s.current_response();
         if let Some(t) = terminal_score(&response, seat) {
@@ -789,7 +1080,11 @@ fn plain_to_end(
             unreachable!("non-terminal response is a decision")
         };
         let a = if seat_index(d.acting_player) == seat {
-            f.select_fast_session_v1(s)?
+            let a = f.select_fast_session_v1(s)?;
+            if let Some(labels) = spy.as_deref_mut() {
+                labels.observe(s, seat, a);
+            }
+            a
         } else {
             o.select_fast_session_v1(s)?
         };
@@ -806,7 +1101,8 @@ fn policy_seeds(det: u64) -> ([u64; 2], [u64; 2]) {
     )
 }
 
-/// One plain T1 playout from a fresh determinization of `s` after `action`.
+/// One plain playout (focal `f` against `o`) from a fresh determinization
+/// of `s` after `action`: (score, natural).
 fn inner_playout(
     s: &FastActorSessionV1,
     seat: usize,
@@ -815,7 +1111,7 @@ fn inner_playout(
     f: &mut FrozenPlayPolicyV1,
     o: &mut FrozenPlayPolicyV1,
     transitions: &mut u64,
-) -> Result<f64, String> {
+) -> Result<(f64, bool), String> {
     let FastActorResponseV1::Decision(d) = s.current_response() else {
         return Err("inner root is terminal".into());
     };
@@ -826,7 +1122,84 @@ fn inner_playout(
     let (fs, os) = policy_seeds(det);
     f.reset_sampling_v1(fs);
     o.reset_sampling_v1(os);
-    Ok(plain_to_end(&mut c, seat, f, o, transitions)?.0)
+    plain_to_end(&mut c, seat, f, o, transitions)
+}
+
+/// A deterministic draw in [0, 1) from a seed.
+fn unit(seed: u64) -> f64 {
+    (mix(seed) >> 11) as f64 / (1u64 << 53) as f64
+}
+
+/// Whether the deviation at the searched decision with seed `dec_seed` (a
+/// hash of the determinization and the decision ordinal) is in the
+/// counterfactual sample.
+fn deviation_sampled(dec_seed: u64, p: f64) -> bool {
+    unit(dec_seed ^ DEVIATION_SAMPLE_SALT) < p
+}
+
+/// Deviation counterfactual at the focal decision `s`: `e` paired fresh
+/// redeterminizations from the focal player's view; on each, the model's
+/// sampled action and the improved choice are each followed by plain play
+/// (`f`, the focal model, against `o`, the playout's opponent model) to the
+/// end. A determinization on which either action fails is dropped for both.
+/// Returns the record and its transitions (counted apart from the playout).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "explicit policy roles keep the sampling streams separate"
+)]
+fn deviation_counterfactual(
+    s: &FastActorSessionV1,
+    seat: usize,
+    sampled: u32,
+    chosen: u32,
+    dec_seed: u64,
+    e: usize,
+    f: &mut FrozenPlayPolicyV1,
+    o: &mut FrozenPlayPolicyV1,
+) -> (Value, u64) {
+    let mut transitions = 0u64;
+    let (mut sums, mut wins, mut non_natural) = ([0f64; 2], [0u32; 2], [0u32; 2]);
+    let (mut playouts, mut failures) = (0u32, 0u32);
+    let mut failure: Option<String> = None;
+    for j in 0..e {
+        let det = mix(dec_seed ^ mix(DEVIATION_DET_SALT ^ (j as u64 + 1)));
+        let mut res = [(0f64, false); 2];
+        let mut ok = true;
+        for (i, a) in [sampled, chosen].into_iter().enumerate() {
+            match inner_playout(s, seat, det, a, f, o, &mut transitions) {
+                Ok(r) => res[i] = r,
+                Err(err) => {
+                    failures += 1;
+                    failure.get_or_insert_with(|| err.chars().take(300).collect());
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if !ok {
+            continue;
+        }
+        playouts += 1;
+        for (i, (score, natural)) in res.into_iter().enumerate() {
+            sums[i] += score;
+            wins[i] += u32::from(score == 1.0);
+            non_natural[i] += u32::from(!natural);
+        }
+    }
+    let m = |i: usize| {
+        if playouts > 0 {
+            sums[i] / f64::from(playouts)
+        } else {
+            f64::NAN
+        }
+    };
+    let (sampled_mean, chosen_mean) = (m(0), m(1));
+    let record = json!({"e":e,"playouts":playouts,"failures":failures,"failure":failure,
+        "sampled_mean":sampled_mean,"chosen_mean":chosen_mean,
+        "sampled_natural_wins":wins[0],"chosen_natural_wins":wins[1],
+        "sampled_non_natural":non_natural[0],"chosen_non_natural":non_natural[1],
+        "harmful":playouts > 0 && chosen_mean < sampled_mean,"transitions":transitions});
+    (record, transitions)
 }
 
 /// Improved continuation at one focal decision: the top two actions plus one
@@ -882,7 +1255,7 @@ fn improve_decision(
                 inner_o,
                 &mut out.transitions,
             ) {
-                Ok(score) => sums[i] += score,
+                Ok((score, _)) => sums[i] += score,
                 Err(_) => {
                     out.inner_failures += 1;
                     return sampled;
@@ -953,13 +1326,13 @@ impl SearchWorkerV1 {
         follow: Follow,
         opp: OppSel,
         m_inner: usize,
-        log: bool,
+        opts: PlayoutOpts,
     ) -> Outcome {
         let started = Instant::now();
         let mut out = Outcome::default();
-        if let Err(e) =
-            self.playout_body(root, seat, det, action, follow, opp, m_inner, log, &mut out)
-        {
+        if let Err(e) = self.playout_body(
+            root, seat, det, action, follow, opp, m_inner, opts, &mut out,
+        ) {
             out.failed = Some(e);
             out.score = f64::NAN;
         }
@@ -980,7 +1353,7 @@ impl SearchWorkerV1 {
         follow: Follow,
         opp: OppSel,
         m_inner: usize,
-        log: bool,
+        opts: PlayoutOpts,
         out: &mut Outcome,
     ) -> Result<(), String> {
         let SearchWorkerV1 {
@@ -990,8 +1363,10 @@ impl SearchWorkerV1 {
             scorer,
             inner_focal,
             inner_opp,
+            cf_opps,
         } = self;
-        let opp = match opp {
+        let opp_sel = opp;
+        let opp = match opp_sel {
             OppSel::T1 => t1_opp,
             OppSel::Model(i) => &mut opps[i],
         };
@@ -1000,6 +1375,9 @@ impl SearchWorkerV1 {
         };
         let root_turn = root.game_state().turn;
         let mut s = root.census_redeterminized_clone_v1(det)?;
+        if opts.spy {
+            out.spy.observe(&s, seat, action);
+        }
         s.step(d.episode_id, d.step, action)
             .map_err(|e| format!("root step {action}: {e:?}"))?;
         out.transitions += 1;
@@ -1007,12 +1385,14 @@ impl SearchWorkerV1 {
         focal.reset_sampling_v1(fs);
         opp.reset_sampling_v1(os);
         let Follow::Improved(horizon) = follow else {
-            let (score, natural) = plain_to_end(&mut s, seat, focal, opp, &mut out.transitions)?;
+            let spy = opts.spy.then_some(&mut out.spy);
+            let (score, natural) =
+                plain_to_end_labelled(&mut s, seat, focal, opp, &mut out.transitions, spy)?;
             out.score = score;
             out.natural = natural;
             return Ok(());
         };
-        let mut ordinal = 0u32;
+        let mut window = Window::default();
         loop {
             let response = s.current_response();
             if let Some((score, natural)) = terminal_score(&response, seat) {
@@ -1025,16 +1405,16 @@ impl SearchWorkerV1 {
             };
             let a = if seat_index(e.acting_player) == seat {
                 let sampled = focal.select_fast_session_v1(&s)?;
-                let within = match horizon {
-                    Horizon::Turn => s.game_state().turn == root_turn,
-                    Horizon::Decisions(n) => ordinal < n,
-                    Horizon::Game => true,
-                };
-                if e.legal_action_count >= 2 && within {
-                    ordinal += 1;
+                let in_root_turn = s.game_state().turn == root_turn;
+                let a = if e.legal_action_count < 2 {
+                    sampled
+                } else if let Some(ordinal) = window.admit(horizon, in_root_turn) {
                     out.searched += 1;
+                    out.searched_menu_sum += u64::from(e.legal_action_count);
+                    out.searched_menu_max = out.searched_menu_max.max(e.legal_action_count);
                     let dec_seed = mix(det ^ mix(0x1A7E_0000 ^ u64::from(ordinal)));
-                    improve_decision(
+                    let logged = out.deviations.len();
+                    let chosen = improve_decision(
                         &s,
                         seat,
                         sampled,
@@ -1044,11 +1424,49 @@ impl SearchWorkerV1 {
                         inner_focal,
                         inner_opp,
                         out,
-                        log,
-                    )
+                        opts.log,
+                    );
+                    if opts.dev.e > 0
+                        && out.deviations.len() > logged
+                        && deviation_sampled(dec_seed, opts.dev.p)
+                    {
+                        let started = Instant::now();
+                        let cf_opp = match opp_sel {
+                            OppSel::T1 => Some(&mut *inner_opp),
+                            OppSel::Model(i) => cf_opps.get_mut(i),
+                        };
+                        let record = match cf_opp {
+                            Some(o) => {
+                                let (record, t) = deviation_counterfactual(
+                                    &s,
+                                    seat,
+                                    sampled,
+                                    chosen,
+                                    dec_seed,
+                                    opts.dev.e,
+                                    inner_focal,
+                                    o,
+                                );
+                                out.cf_transitions += t;
+                                record
+                            }
+                            None => json!({"failure":"no counterfactual opponent instance"}),
+                        };
+                        out.cf_wall += started.elapsed().as_secs_f64();
+                        if let Some(last) = out.deviations.last_mut() {
+                            last["ordinal"] = json!(ordinal);
+                            last["counterfactual"] = record;
+                        }
+                    }
+                    chosen
                 } else {
+                    out.cap_hit |= horizon.capped();
                     sampled
+                };
+                if opts.spy {
+                    out.spy.observe(&s, seat, a);
                 }
+                a
             } else {
                 opp.select_fast_session_v1(&s)?
             };
@@ -1072,13 +1490,15 @@ impl SearchWorkerV1 {
         follow: Follow,
         opp: OppSel,
         m_inner: usize,
-        log: bool,
+        opts: PlayoutOpts,
     ) -> Outcome {
+        // `opts` is not in the key: within one root every selection playout
+        // uses the same options.
         let key = (det, action, follow, opp);
         if let Some(o) = cache.map.get(&key) {
             return o.clone();
         }
-        let o = self.playout(root, seat, det, action, follow, opp, m_inner, log);
+        let o = self.playout(root, seat, det, action, follow, opp, m_inner, opts);
         cache.actual_transitions += o.transitions;
         cache.actual_wall += o.wall;
         cache.actual_playouts += 1;
@@ -1087,7 +1507,10 @@ impl SearchWorkerV1 {
     }
 
     /// Round-robin selection over `cands` with follow-up `follow` (opponent
-    /// modelled as T1), recording the choice at each budget level.
+    /// modelled as T1), recording the choice at each budget level. With
+    /// `spy`, each level also carries the Spy label counts per candidate over
+    /// the complete rounds behind its means (pure labelling: nothing the
+    /// search chooses or samples depends on it).
     #[allow(
         clippy::too_many_arguments,
         reason = "selection is fully described by these inputs"
@@ -1105,19 +1528,27 @@ impl SearchWorkerV1 {
         budgets: &[u64],
         m_inner: usize,
         stop: BudgetStop,
+        spy: bool,
     ) -> Value {
         let n = cands.len();
+        let opts = PlayoutOpts {
+            spy,
+            ..PlayoutOpts::default()
+        };
         let mut sums = vec![0f64; n];
+        let mut spy_sums = vec![SpyCounts::default(); n];
         let mut rounds = 0u64;
         let mut attempted = 0u64;
         let (mut transitions, mut wall) = (0u64, 0f64);
         let (mut failed_rounds, mut consecutive) = (0u32, 0u32);
         let (mut inner_failures, mut searched) = (0u64, 0u64);
+        let (mut cap_hits, mut menu_sum, mut menu_max) = (0u64, 0u64, 0u32);
         let mut failures: Vec<String> = Vec::new();
         let mut levels: Vec<Value> = Vec::new();
         let record = |levels: &mut Vec<Value>,
                       budget: u64,
                       sums: &[f64],
+                      spy_sums: &[SpyCounts],
                       rounds: u64,
                       transitions: u64,
                       wall: f64,
@@ -1138,12 +1569,14 @@ impl SearchWorkerV1 {
                 0
             };
             let chosen = cands[best];
-            levels.push(
-                json!({"budget":budget,"transitions":transitions,"wall":wall,
+            let mut level = json!({"budget":budget,"transitions":transitions,"wall":wall,
                 "rounds":rounds,"means":if rounds > 0 { json!(means) } else { Value::Null },
                 "chosen":chosen,"chosen_prob":probs[chosen],"chosen_sem":sem[chosen],
-                "exhausted":exhausted}),
-            );
+                "exhausted":exhausted});
+            if spy {
+                level["spy"] = spy_counts_per_candidate(spy_sums);
+            }
+            levels.push(level);
         };
         let mut next_level = 0usize;
         while next_level < budgets.len() {
@@ -1153,6 +1586,7 @@ impl SearchWorkerV1 {
                         &mut levels,
                         budgets[next_level],
                         &sums,
+                        &spy_sums,
                         rounds,
                         transitions,
                         wall,
@@ -1165,6 +1599,7 @@ impl SearchWorkerV1 {
             let det = mix(ns ^ (attempted + 1));
             attempted += 1;
             let mut scores = Vec::with_capacity(n);
+            let mut labels = Vec::with_capacity(n);
             let (mut ok, mut abandoned) = (true, false);
             for (i, &c) in cands.iter().enumerate() {
                 let o = self.cached_playout(
@@ -1176,12 +1611,15 @@ impl SearchWorkerV1 {
                     follow,
                     OppSel::T1,
                     m_inner,
-                    false,
+                    opts,
                 );
                 transitions += o.transitions;
                 wall += o.wall;
                 inner_failures += u64::from(o.inner_failures);
                 searched += u64::from(o.searched);
+                cap_hits += u64::from(o.cap_hit);
+                menu_sum += o.searched_menu_sum;
+                menu_max = menu_max.max(o.searched_menu_max);
                 if let Some(e) = o.failed {
                     if failures.len() < 3 {
                         failures.push(e.chars().take(300).collect());
@@ -1190,12 +1628,14 @@ impl SearchWorkerV1 {
                     break;
                 }
                 scores.push(o.score);
+                labels.push(o.spy);
                 if stop == BudgetStop::Exact && i + 1 < n {
                     while next_level < budgets.len() && transitions >= budgets[next_level] {
                         record(
                             &mut levels,
                             budgets[next_level],
                             &sums,
+                            &spy_sums,
                             rounds,
                             transitions,
                             wall,
@@ -1216,6 +1656,9 @@ impl SearchWorkerV1 {
                 for (s, x) in sums.iter_mut().zip(&scores) {
                     *s += x;
                 }
+                for ((c, l), x) in spy_sums.iter_mut().zip(&labels).zip(&scores) {
+                    c.add(*l, *x);
+                }
                 rounds += 1;
                 consecutive = 0;
             } else {
@@ -1227,6 +1670,7 @@ impl SearchWorkerV1 {
                     &mut levels,
                     budgets[next_level],
                     &sums,
+                    &spy_sums,
                     rounds,
                     transitions,
                     wall,
@@ -1238,7 +1682,8 @@ impl SearchWorkerV1 {
         json!({"follow":follow.label(),"budget_stop":stop.label(),"candidates":cands,
             "candidate_probs":cands.iter().map(|&c| probs[c]).collect::<Vec<_>>(),
             "levels":levels,"rounds_attempted":attempted,"failed_rounds":failed_rounds,
-            "failures":failures,"inner_failures":inner_failures,"searched_decisions":searched})
+            "failures":failures,"inner_failures":inner_failures,"searched_decisions":searched,
+            "cap_hit_playouts":cap_hits,"searched_menu_sum":menu_sum,"searched_menu_max":menu_max})
     }
 
     /// E paired playouts per job from fresh determinizations of the root.
@@ -1257,22 +1702,25 @@ impl SearchWorkerV1 {
         ns: u64,
         e: usize,
         m_inner: usize,
-        log: bool,
+        opts: PlayoutOpts,
     ) -> Value {
         let max_attempts = 3 * e as u64 + 8;
         let mut per_job: Vec<Vec<Outcome>> = vec![Vec::new(); jobs.len()];
         let mut dets = Vec::new();
         let (mut attempted, mut discarded, mut failed) = (0u64, 0u32, 0u32);
         let (mut actual_transitions, mut actual_wall) = (0u64, 0f64);
+        let (mut cf_transitions, mut cf_wall) = (0u64, 0f64);
         let mut failures: Vec<String> = Vec::new();
         while dets.len() < e && attempted < max_attempts {
             let det = mix(ns ^ (attempted + 1));
             attempted += 1;
             let mut outs = Vec::with_capacity(jobs.len());
             for &(a, follow) in jobs {
-                let o = self.playout(root, seat, det, a, follow, opp, m_inner, log);
+                let o = self.playout(root, seat, det, a, follow, opp, m_inner, opts);
                 actual_transitions += o.transitions;
                 actual_wall += o.wall;
+                cf_transitions += o.cf_transitions;
+                cf_wall += o.cf_wall;
                 if let Some(err) = &o.failed {
                     failed += 1;
                     if failures.len() < 3 {
@@ -1306,7 +1754,7 @@ impl SearchWorkerV1 {
                         })
                     })
                     .collect();
-                json!({"action":a,"follow":follow.label(),
+                let mut job = json!({"action":a,"follow":follow.label(),
                     "scores":outs.iter().map(|o| o.score).collect::<Vec<_>>(),
                     "natural":outs.iter().map(|o| o.natural).collect::<Vec<_>>(),
                     "transitions":outs.iter().map(|o| o.transitions).collect::<Vec<_>>(),
@@ -1314,13 +1762,97 @@ impl SearchWorkerV1 {
                     "non_natural":outs.iter().filter(|o| !o.natural).count(),
                     "inner_failures":outs.iter().map(|o| o.inner_failures).sum::<u32>(),
                     "searched_decisions":outs.iter().map(|o| o.searched).sum::<u32>(),
-                    "deviations":deviations})
+                    "transitions_total":outs.iter().map(|o| o.transitions).sum::<u64>(),
+                    "cap_hits":outs.iter().filter(|o| o.cap_hit).count(),
+                    "searched_menu_sum":outs.iter().map(|o| o.searched_menu_sum).sum::<u64>(),
+                    "searched_menu_max":outs.iter().map(|o| o.searched_menu_max).max().unwrap_or(0),
+                    "deviations":deviations});
+                if opts.spy {
+                    let mut counts = SpyCounts::default();
+                    for o in outs {
+                        counts.add(o.spy, o.score);
+                    }
+                    job["spy"] = counts.json();
+                }
+                if opts.dev.e > 0 {
+                    job["deviation_cf_transitions"] =
+                        json!(outs.iter().map(|o| o.cf_transitions).sum::<u64>());
+                    job["deviation_cf_evaluated"] = json!(outs
+                        .iter()
+                        .flat_map(|o| &o.deviations)
+                        .filter(|d| d.get("counterfactual").is_some())
+                        .count());
+                }
+                job
             })
             .collect();
-        json!({"playouts":dets.len(),"attempted":attempted,"discarded_dets":discarded,
+        let mut out = json!({"playouts":dets.len(),"attempted":attempted,"discarded_dets":discarded,
             "failed_playouts":failed,"failures":failures,"actual_transitions":actual_transitions,
-            "actual_wall":actual_wall,"jobs":jobs_json})
+            "actual_wall":actual_wall,"jobs":jobs_json});
+        if opts.dev.e > 0 {
+            out["deviation_cf_transitions"] = json!(cf_transitions);
+            out["deviation_cf_wall"] = json!(cf_wall);
+        }
+        out
     }
+}
+
+/// Evaluation jobs for `cond` and their labels. T1's root action with plain
+/// follow-up (`ref`, job 0), then each condition's choice at each level with
+/// the condition's follow-up (`A@<budget>`), each distinct (action,
+/// follow-up) evaluated once. With `eval_cross`, appended after those (so
+/// earlier job indices are unchanged): T1's root action with the improved
+/// continuation (`ref_improved`) and every improved condition's choice with
+/// plain follow-up (`C@<budget>/plain`), completing the root-choice x
+/// continuation 2x2.
+fn cond_eval_jobs(
+    t1_action: u32,
+    improved: Follow,
+    conditions: &[(&str, Follow)],
+    selection: &serde_json::Map<String, Value>,
+    eval_cross: bool,
+) -> (Vec<(u32, Follow)>, serde_json::Map<String, Value>) {
+    let mut jobs: Vec<(u32, Follow)> = vec![(t1_action, Follow::T1)];
+    let mut job_of = serde_json::Map::new();
+    job_of.insert("ref".into(), json!(0));
+    let mut add = |jobs: &mut Vec<(u32, Follow)>, label: String, job: (u32, Follow)| {
+        let j = jobs.iter().position(|x| *x == job).unwrap_or_else(|| {
+            jobs.push(job);
+            jobs.len() - 1
+        });
+        job_of.insert(label, json!(j));
+    };
+    let levels = |name: &str| -> Vec<(u32, String)> {
+        selection
+            .get(name)
+            .and_then(|s| s["levels"].as_array())
+            .into_iter()
+            .flatten()
+            .map(|level| {
+                (
+                    level["chosen"].as_u64().unwrap_or(0) as u32,
+                    format!("{name}@{}", level["budget"]),
+                )
+            })
+            .collect()
+    };
+    for &(name, follow) in conditions {
+        for (a, label) in levels(name) {
+            add(&mut jobs, label, (a, follow));
+        }
+    }
+    if eval_cross {
+        add(&mut jobs, "ref_improved".into(), (t1_action, improved));
+        for &(name, follow) in conditions {
+            if follow == Follow::T1 {
+                continue;
+            }
+            for (a, label) in levels(name) {
+                add(&mut jobs, format!("{label}/plain"), (a, Follow::T1));
+            }
+        }
+    }
+    (jobs, job_of)
 }
 
 fn root_seed(setup: &GameSetup, step: u64) -> u64 {
@@ -1404,6 +1936,7 @@ pub(super) fn run_cond_root(
     let seat = rp.setup.focal;
     let seed = root_seed(&rp.setup, root["step"].as_u64().unwrap_or(0));
     let view = root_view(cfg, w, &rp, seed)?;
+    let spy = spy_labels_apply(RUNTIME_DECKS[rp.setup.decks[seat]].id);
     let improved = Follow::Improved(shared.horizon);
     let conditions: [(&str, &Vec<usize>, Follow); 4] = [
         ("A", &view.top, Follow::T1),
@@ -1428,6 +1961,7 @@ pub(super) fn run_cond_root(
             &shared.budgets,
             shared.m_inner,
             shared.budget_stop,
+            spy,
         );
         eprintln!(
             "root {index} condition {name}: {:.1}s elapsed, actual {} transitions",
@@ -1437,22 +1971,19 @@ pub(super) fn run_cond_root(
         selection.insert(name.into(), s);
     }
     let sel_elapsed = sel_started.elapsed().as_secs_f64();
-    // Evaluation jobs: each distinct (action, follow-up) once.
-    let mut jobs: Vec<(u32, Follow)> = vec![(rp.t1_action, Follow::T1)];
-    let mut job_of = serde_json::Map::new();
-    job_of.insert("ref".into(), json!(0));
-    for (name, _, follow) in conditions {
-        for level in selection[name]["levels"].as_array().into_iter().flatten() {
-            let a = level["chosen"].as_u64().unwrap_or(0) as u32;
-            let job = (a, follow);
-            let j = jobs.iter().position(|x| *x == job).unwrap_or_else(|| {
-                jobs.push(job);
-                jobs.len() - 1
-            });
-            job_of.insert(format!("{name}@{}", level["budget"]), json!(j));
-        }
-    }
-    let eval_ns = mix(seed ^ 0xE7A1);
+    let named_follows: Vec<(&str, Follow)> = conditions.iter().map(|&(n, _, f)| (n, f)).collect();
+    let (jobs, job_of) = cond_eval_jobs(
+        rp.t1_action,
+        improved,
+        &named_follows,
+        &selection,
+        shared.eval_cross,
+    );
+    let eval_ns = mix(seed ^ COND_EVAL_NS);
+    let opts = PlayoutOpts {
+        spy,
+        ..PlayoutOpts::default()
+    };
     let eval = w.evaluate(
         &rp.session,
         seat,
@@ -1461,8 +1992,9 @@ pub(super) fn run_cond_root(
         eval_ns,
         shared.eval_playouts,
         shared.m_inner,
-        false,
+        opts,
     );
+    let eval_transitions = eval["actual_transitions"].as_u64().unwrap_or(0);
     let mut row = root_id(root);
     let extra = json!({"kind":"cond","root_index":index,"t1_action":rp.t1_action,
         "t1_action_sem":view.sem[rp.t1_action as usize],
@@ -1474,7 +2006,11 @@ pub(super) fn run_cond_root(
         "budget_stop":shared.budget_stop.label(),"selection":selection,"selection_wall":sel_elapsed,
         "selection_actual":{"transitions":cache.actual_transitions,"wall":cache.actual_wall,"playouts":cache.actual_playouts},
         "eval_jobs":job_of,"eval":eval,"replay_secs":rp.secs,
-        "root_wall":root_started.elapsed().as_secs_f64()});
+        "root_wall":root_started.elapsed().as_secs_f64(),
+        "config":shared.config_json(cfg, "cond"),"spy_labels":spy,
+        "compute":{"selection_actual_transitions":cache.actual_transitions,
+            "eval_actual_transitions":eval_transitions,
+            "total_transitions":cache.actual_transitions + eval_transitions}});
     if let (Value::Object(r), Value::Object(x)) = (&mut row, extra) {
         r.extend(x);
     }
@@ -1482,8 +2018,10 @@ pub(super) fn run_cond_root(
 }
 
 /// Mode `cross`: T1's root action or the search alternative (condition B at
-/// the top budget), crossed with T1, turn-long and game-long improved
-/// continuation; deviations from T1 are logged for classification.
+/// the top budget), crossed with T1, turn-long and long (`HORIZON_LONG`,
+/// default game-long) improved continuation; deviations from T1 are logged
+/// for classification, with counterfactuals for a sample of them when
+/// `DEVIATION_EVAL` is set. Evaluation uses its own seed namespace.
 pub(super) fn run_cross_root(
     cfg: &CensusConfigV1,
     shared: &SearchSharedV1,
@@ -1497,6 +2035,7 @@ pub(super) fn run_cross_root(
     let seat = rp.setup.focal;
     let seed = root_seed(&rp.setup, root["step"].as_u64().unwrap_or(0));
     let view = root_view(cfg, w, &rp, seed)?;
+    let spy = spy_labels_apply(RUNTIME_DECKS[rp.setup.decks[seat]].id);
     let mut cache = PlayoutCache::default();
     let sel_started = Instant::now();
     let b = w.select(
@@ -1511,6 +2050,7 @@ pub(super) fn run_cross_root(
         &shared.budgets,
         shared.m_inner,
         shared.budget_stop,
+        spy,
     );
     let sel_elapsed = sel_started.elapsed().as_secs_f64();
     let top_level = b["levels"]
@@ -1545,7 +2085,7 @@ pub(super) fn run_cross_root(
     let follows = [
         Follow::T1,
         Follow::Improved(Horizon::Turn),
-        Follow::Improved(Horizon::Game),
+        Follow::Improved(shared.horizon_long),
     ];
     let inits = [("t1", rp.t1_action), ("alt", alt as u32)];
     let mut jobs = Vec::new();
@@ -1556,16 +2096,23 @@ pub(super) fn run_cross_root(
             cells.push(format!("{init}|{}", f.label()));
         }
     }
+    let opts = PlayoutOpts {
+        log: true,
+        spy,
+        dev: shared.deviation,
+    };
     let eval = w.evaluate(
         &rp.session,
         seat,
         &jobs,
         OppSel::Model(rp.setup.model),
-        mix(seed ^ 0xE7A1),
+        mix(seed ^ CROSS_EVAL_NS),
         shared.eval_playouts,
         shared.m_inner,
-        true,
+        opts,
     );
+    let eval_transitions = eval["actual_transitions"].as_u64().unwrap_or(0);
+    let cf_transitions = eval["deviation_cf_transitions"].as_u64().unwrap_or(0);
     let mut row = root_id(root);
     let extra = json!({"kind":"cross","root_index":index,"t1_action":rp.t1_action,
         "t1_action_sem":view.sem[rp.t1_action as usize],
@@ -1573,7 +2120,13 @@ pub(super) fn run_cross_root(
         "alt":alt,"alt_sem":view.sem[alt],"alt_prob":view.probs[alt],"alt_forced":forced,
         "cover":view.cover,"b_selection":b,"selection_wall":sel_elapsed,
         "m_inner":shared.m_inner,"budgets":shared.budgets,"budget_stop":shared.budget_stop.label(),"cells":cells,"eval":eval,
-        "replay_secs":rp.secs,"root_wall":root_started.elapsed().as_secs_f64()});
+        "replay_secs":rp.secs,"root_wall":root_started.elapsed().as_secs_f64(),
+        "horizon_long":shared.horizon_long.label(),
+        "config":shared.config_json(cfg, "cross"),"spy_labels":spy,
+        "compute":{"selection_actual_transitions":cache.actual_transitions,
+            "eval_actual_transitions":eval_transitions,
+            "deviation_cf_transitions":cf_transitions,
+            "total_transitions":cache.actual_transitions + eval_transitions + cf_transitions}});
     if let (Value::Object(r), Value::Object(x)) = (&mut row, extra) {
         r.extend(x);
     }
@@ -1675,6 +2228,7 @@ mod tests {
                 scorer: fixture(),
                 inner_focal: fixture(),
                 inner_opp: fixture(),
+                cf_opps: Vec::new(),
             };
             w.select(
                 &mut PlayoutCache::default(),
@@ -1688,6 +2242,7 @@ mod tests {
                 &budgets,
                 1,
                 stop,
+                false,
             )
         };
         let (round, exact) = (select(BudgetStop::Round), select(BudgetStop::Exact));
@@ -1734,5 +2289,301 @@ mod tests {
         );
         assert_eq!(Horizon::parse("turn").unwrap(), Horizon::Turn);
         assert!(Horizon::parse("forever").is_err());
+    }
+
+    fn fixture_worker(cf: bool) -> SearchWorkerV1 {
+        let fixture = FrozenPlayPolicyV1::training_fixture_v4;
+        SearchWorkerV1 {
+            focal: fixture(),
+            opps: vec![fixture()],
+            t1_opp: fixture(),
+            scorer: fixture(),
+            inner_focal: fixture(),
+            inner_opp: fixture(),
+            cf_opps: if cf { vec![fixture()] } else { Vec::new() },
+        }
+    }
+
+    /// The first focal decision with at least three legal actions in the
+    /// fixture game used above (focal CawGates against Spy).
+    fn fixture_root() -> (GameSetup, FastActorSessionV1) {
+        let cfg = test_cfg();
+        let setup = game_setup(&cfg, 1, 4 * 9 + 7);
+        let fixture = FrozenPlayPolicyV1::training_fixture_v4;
+        let (mut focal, mut opp) = (fixture(), fixture());
+        let mut step = None;
+        drive_game(&setup, &mut focal, &mut opp, |_, d, _| {
+            if seat_index(d.acting_player) == setup.focal && d.legal_action_count >= 3 {
+                step = Some(d.step);
+            }
+            Ok(step.is_some())
+        })
+        .unwrap();
+        let (mut focal, mut opp) = (fixture(), fixture());
+        let (session, _) = replay_core(&setup, &mut focal, &mut opp, step.unwrap()).unwrap();
+        (setup, session)
+    }
+
+    #[test]
+    fn turn_then_window_searches_the_turn_then_g_more() {
+        assert_eq!(Horizon::parse("turn+12").unwrap(), Horizon::TurnThen(12));
+        assert_eq!(Horizon::TurnThen(12).label(), "turn+12");
+        assert_eq!(
+            Follow::Improved(Horizon::TurnThen(12)).label(),
+            "improved:turn+12"
+        );
+        for h in [
+            Horizon::Turn,
+            Horizon::Game,
+            Horizon::Decisions(3),
+            Horizon::TurnThen(0),
+            Horizon::TurnThen(12),
+        ] {
+            assert_eq!(Horizon::parse(&h.label()).unwrap(), h);
+        }
+        for bad in ["turn+", "turn+x", "turn+-1", "turn12"] {
+            assert!(Horizon::parse(bad).is_err(), "{bad}");
+        }
+        // Focal multi-action decisions: three in the root's turn, then five.
+        let in_turn = [true, true, true, false, false, false, false, false];
+        let run = |h: Horizon| -> (Vec<Option<u32>>, bool) {
+            let mut w = Window::default();
+            let mut cap = false;
+            let admitted = in_turn
+                .iter()
+                .map(|&t| {
+                    let a = w.admit(h, t);
+                    cap |= a.is_none() && h.capped();
+                    a
+                })
+                .collect();
+            (admitted, cap)
+        };
+        let n = None;
+        let (turn, cap) = run(Horizon::Turn);
+        assert_eq!(turn, [Some(1), Some(2), Some(3), n, n, n, n, n]);
+        assert!(!cap, "the turn arm is not a cap");
+        let (tt, cap) = run(Horizon::TurnThen(2));
+        assert_eq!(tt, [Some(1), Some(2), Some(3), Some(4), Some(5), n, n, n]);
+        assert!(cap);
+        // The turn arm nests in turn+G: the same ordinals, hence the same
+        // decision seeds, through the root's turn.
+        assert_eq!(&tt[..3], &turn[..3]);
+        let (tt0, cap) = run(Horizon::TurnThen(0));
+        assert_eq!(tt0, turn);
+        assert!(cap);
+        let (d, cap) = run(Horizon::Decisions(4));
+        assert_eq!(d, [Some(1), Some(2), Some(3), Some(4), n, n, n, n]);
+        assert!(cap);
+        for h in [Horizon::TurnThen(5), Horizon::TurnThen(9), Horizon::Game] {
+            let (all, cap) = run(h);
+            assert!(all.iter().all(Option::is_some), "{h:?}");
+            assert!(!cap, "{h:?}");
+        }
+        assert!(Horizon::TurnThen(1).capped() && Horizon::Decisions(1).capped());
+        assert!(!Horizon::Turn.capped() && !Horizon::Game.capped());
+    }
+
+    #[test]
+    fn long_horizon_playouts_nest_and_labels_never_perturb() {
+        let (setup, session) = fixture_root();
+        let seat = setup.focal;
+        let mut w = fixture_worker(true);
+        let mut play = |follow: Follow, opts: PlayoutOpts| {
+            let o = w.playout(&session, seat, 11, 0, follow, OppSel::Model(0), 1, opts);
+            assert!(o.failed.is_none(), "{:?}", o.failed);
+            assert!(o.searched_menu_sum >= 2 * u64::from(o.searched));
+            assert_eq!(o.searched_menu_max >= 2, o.searched > 0);
+            o
+        };
+        let same = |x: &Outcome, y: &Outcome| {
+            assert_eq!(x.score, y.score);
+            assert_eq!(x.natural, y.natural);
+            assert_eq!(x.transitions, y.transitions);
+            assert_eq!(x.searched, y.searched);
+            assert_eq!(x.searched_menu_sum, y.searched_menu_sum);
+            assert_eq!(x.deviations.len(), y.deviations.len());
+        };
+        let plain = PlayoutOpts::default();
+        let turn = play(Follow::Improved(Horizon::Turn), plain);
+        assert!(!turn.cap_hit);
+        // turn+0 is the turn arm; turn+2 adds at most two decisions to it.
+        let tt0 = play(Follow::Improved(Horizon::TurnThen(0)), plain);
+        same(&turn, &tt0);
+        let tt2 = play(Follow::Improved(Horizon::TurnThen(2)), plain);
+        assert!(turn.searched <= tt2.searched && tt2.searched <= turn.searched + 2);
+        let d1 = play(Follow::Improved(Horizon::Decisions(1)), plain);
+        assert!(d1.searched <= 1);
+        let t1 = play(Follow::T1, plain);
+        assert!(t1.searched == 0 && !t1.cap_hit);
+        // Spy labels and deviation counterfactuals are pure observation.
+        let spy = PlayoutOpts { spy: true, ..plain };
+        let log = PlayoutOpts { log: true, ..plain };
+        let dev = PlayoutOpts {
+            dev: DevCfg { e: 1, p: 1.0 },
+            ..log
+        };
+        for follow in [Follow::T1, Follow::Improved(Horizon::Decisions(3))] {
+            let base = play(follow, log);
+            same(&base, &play(follow, spy));
+            let with_cf = play(follow, dev);
+            same(&base, &with_cf);
+            assert_eq!(base.cf_transitions, 0);
+            for d in &with_cf.deviations {
+                let cf = &d["counterfactual"];
+                assert_eq!(cf["e"], json!(1));
+                assert!(cf["harmful"].is_boolean() && cf["transitions"].as_u64().unwrap() > 0);
+            }
+            assert_eq!(with_cf.cf_transitions > 0, !with_cf.deviations.is_empty());
+        }
+    }
+
+    #[test]
+    fn eval_cross_adds_the_two_by_two_after_the_existing_jobs() {
+        let level = |budget: u64, chosen: u32| json!({"budget":budget,"chosen":chosen});
+        let mut selection = serde_json::Map::new();
+        for (name, a, b) in [("A", 1, 2), ("B", 1, 3), ("C", 1, 4), ("D", 5, 5)] {
+            selection.insert(
+                name.into(),
+                json!({"levels":[level(100, a), level(200, b)]}),
+            );
+        }
+        let imp = Follow::Improved(Horizon::Decisions(3));
+        let plain = Follow::T1;
+        let conds = [("A", plain), ("B", plain), ("C", imp), ("D", imp)];
+        let (jobs, map) = cond_eval_jobs(0, imp, &conds, &selection, false);
+        assert_eq!(
+            jobs,
+            [
+                (0, plain),
+                (1, plain),
+                (2, plain),
+                (3, plain),
+                (1, imp),
+                (4, imp),
+                (5, imp)
+            ]
+        );
+        let expect = json!({"ref":0,"A@100":1,"A@200":2,"B@100":1,"B@200":3,
+            "C@100":4,"C@200":5,"D@100":6,"D@200":6});
+        assert_eq!(Value::Object(map.clone()), expect);
+        let (jx, mx) = cond_eval_jobs(0, imp, &conds, &selection, true);
+        // Earlier jobs keep their indices; new jobs are deduplicated.
+        assert_eq!(&jx[..jobs.len()], &jobs[..]);
+        for (k, v) in &map {
+            assert_eq!(&mx[k], v);
+        }
+        assert_eq!(jx[7], (0, imp));
+        assert_eq!(mx["ref_improved"], json!(7));
+        assert_eq!(mx["C@100/plain"], json!(1));
+        assert_eq!(jx[8], (4, plain));
+        assert_eq!(mx["C@200/plain"], json!(8));
+        assert_eq!(jx[9], (5, plain));
+        assert_eq!(mx["D@100/plain"], json!(9));
+        assert_eq!(mx["D@200/plain"], json!(9));
+        assert_eq!(jx.len(), 10);
+        assert!(!mx.contains_key("A@100/plain"));
+    }
+
+    #[test]
+    fn spy_labels_and_strands_tag_match_named_candidates() {
+        let v = |s: &str| serde_json::from_str::<Value>(s).unwrap();
+        let spy_p1 = v(
+            r#"{"action_kind":"choose_target","remaining":1,"source":"Balustrade Spy","target":{"player":"p1","target_kind":"player"}}"#,
+        );
+        assert_eq!(spy_choice_labels(&spy_p1, 1), (true, false));
+        assert_eq!(spy_choice_labels(&spy_p1, 0), (false, false));
+        let dr = v(
+            r#"{"action_kind":"choose_target","remaining":1,"source":"Dread Return","target":{"object":"Lotleth Giant","target_kind":"object"}}"#,
+        );
+        assert_eq!(spy_choice_labels(&dr, 0), (false, true));
+        let dr_other = v(
+            r#"{"action_kind":"choose_target","remaining":1,"source":"Dread Return","target":{"object":"Generous Ent","target_kind":"object"}}"#,
+        );
+        assert_eq!(spy_choice_labels(&dr_other, 0), (false, false));
+        let cast = v(r#"{"action_kind":"cast_spell","source":"Balustrade Spy"}"#);
+        assert_eq!(spy_choice_labels(&cast, 0), (false, false));
+        assert!(spy_labels_apply("Spy") && !spy_labels_apply("CawGates"));
+        let both = SpyLabels {
+            self_offered: true,
+            self_chosen: true,
+            dr_offered: true,
+            dr_chosen: true,
+        };
+        let offered = SpyLabels {
+            self_offered: true,
+            ..SpyLabels::default()
+        };
+        let mut c = SpyCounts::default();
+        c.add(both, 1.0);
+        c.add(both, 0.5);
+        c.add(offered, 1.0);
+        assert_eq!(
+            c.json(),
+            json!({"self_offered":3,"self_chosen":2,"dr_offered":2,"dr_chosen":2,
+                "both_chosen":2,"both_chosen_natural_win":1})
+        );
+        assert_eq!(
+            spy_counts_per_candidate(&[c, SpyCounts::default()])["both_chosen"],
+            json!([2, 0])
+        );
+        let strands = [v(
+            r#"{"action_kind":"cast_spell","source":"Prismatic Strands"}"#,
+        )];
+        let own = root_tags(&strands, true, false);
+        assert!(own.contains(&"cawgates_strands_castable_own_turn"));
+        assert!(!own.contains(&"cawgates_strands_opp_combat"));
+        let opp = root_tags(&strands, false, true);
+        assert!(opp.contains(&"cawgates_strands_opp_combat"));
+        assert!(!opp.contains(&"cawgates_strands_castable_own_turn"));
+    }
+
+    #[test]
+    fn deviation_sample_and_config_record_are_deterministic() {
+        let hits = (0..20_000u64)
+            .filter(|&i| deviation_sampled(mix(i), 0.1))
+            .count();
+        assert!((1_600..2_400).contains(&hits), "{hits}");
+        assert!((0..1000u64).all(|i| deviation_sampled(mix(i), 1.0)));
+        assert!((0..1000u64).all(|i| !deviation_sampled(mix(i), 0.0)));
+        assert_eq!(deviation_sampled(77, 0.5), deviation_sampled(77, 0.5));
+        let shared = SearchSharedV1 {
+            labels: vec!["t1".into(), "a48".into()],
+            opponents: Vec::new(),
+            roots: Vec::new(),
+            budgets: vec![16000, 64000],
+            eval_playouts: 16,
+            m_inner: 1,
+            horizon: Horizon::Decisions(3),
+            budget_stop: BudgetStop::Exact,
+            horizon_long: Horizon::TurnThen(12),
+            eval_cross: true,
+            deviation: DevCfg { e: 4, p: 0.25 },
+        };
+        let cfg = test_cfg();
+        let cond = shared.config_json(&cfg, "cond");
+        assert_eq!(cond["horizon"], json!("decisions:3"));
+        assert_eq!(cond["eval_cross"], json!(true));
+        assert_eq!(cond["budget_stop"], json!("exact"));
+        assert_eq!(cond["opponents"], json!(["t1", "a48"]));
+        assert_eq!(cond["base_seed"], json!(cfg.base_seed));
+        assert!(cond.get("horizon_long").is_none() && cond.get("deviation_eval").is_none());
+        let cross = shared.config_json(&cfg, "cross");
+        assert_eq!(cross["horizon"], json!("turn"));
+        assert_eq!(cross["horizon_long"], json!("turn+12"));
+        assert_eq!(cross["deviation_eval"], json!(4));
+        assert_eq!(cross["deviation_sample"], json!(0.25));
+        assert!(cross.get("eval_cross").is_none());
+        for c in [&cond, &cross] {
+            for key in [
+                "budgets",
+                "m_inner",
+                "eval_playouts",
+                "max_actions",
+                "decks",
+            ] {
+                assert!(c.get(key).is_some(), "{key}");
+            }
+        }
     }
 }
