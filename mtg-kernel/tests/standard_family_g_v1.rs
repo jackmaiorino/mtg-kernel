@@ -33,6 +33,20 @@ const CARDS: &[(&str, &[Subtype], (i16, i16), Keywords, usize)] = &[
         Keywords::NONE,
         1,
     ),
+    (
+        "Gatekeeper of Malakir",
+        &[Subtype::Vampire, Subtype::Warrior],
+        (2, 2),
+        Keywords::NONE,
+        1,
+    ),
+    (
+        "Deep-Cavern Bat",
+        &[Subtype::Bat],
+        (1, 1),
+        Keywords(Keywords::FLYING.0 | Keywords::LIFELINK.0),
+        1,
+    ),
 ];
 
 fn ready_with_library(step: Step, library: &[&str]) -> GameState {
@@ -310,4 +324,169 @@ fn cenote_scout_that_left_still_reveals_but_gets_no_counter() {
     settled(&mut state);
     assert_eq!(state.objects.get(top).zone, Zone::Hand);
     assert_eq!(state.objects.get(scout).counters.plus1_plus1, 0);
+}
+
+/// Casts Gatekeeper of Malakir, answering the kicker prompt.
+fn cast_gatekeeper(state: &mut GameState, kicked: bool) -> ObjectId {
+    let gatekeeper = put(state, PlayerId::P0, "Gatekeeper of Malakir", Zone::Hand);
+    state.players[0].mana_pool = pool(&[(ManaColor::B, 3)], 0);
+    assert!(
+        matches!(next(state), Decision::CastSpellOrPass { castable_spells, .. } if castable_spells.contains(&gatekeeper))
+    );
+    engine::step(state, Action::CastSpell(gatekeeper)).unwrap();
+    assert!(matches!(next(state), Decision::ChooseKicker { .. }));
+    engine::step(state, Action::ChooseKicker(kicked)).unwrap();
+    gatekeeper
+}
+
+#[test]
+fn kicked_gatekeeper_makes_the_target_player_sacrifice() {
+    let mut state = ready(Step::Main1);
+    let victim = put(&mut state, PlayerId::P1, "Cenote Scout", Zone::Battlefield);
+    let gatekeeper = cast_gatekeeper(&mut state, true);
+    let target = loop {
+        match next(&mut state) {
+            Decision::ChooseTargets { legal_targets, .. } => break legal_targets,
+            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+            other => panic!("unexpected {other:?}"),
+        }
+    };
+    assert!(target.contains(&Target::Player(PlayerId::P0)));
+    assert!(target.contains(&Target::Player(PlayerId::P1)));
+    engine::step(
+        &mut state,
+        Action::ChooseTarget(Target::Player(PlayerId::P1)),
+    )
+    .unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(gatekeeper).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(victim).zone, Zone::Graveyard);
+}
+
+#[test]
+fn unkicked_gatekeeper_has_no_trigger() {
+    let mut state = ready(Step::Main1);
+    let bystander = put(&mut state, PlayerId::P1, "Cenote Scout", Zone::Battlefield);
+    let gatekeeper = cast_gatekeeper(&mut state, false);
+    settled(&mut state);
+    assert_eq!(state.objects.get(gatekeeper).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(bystander).zone, Zone::Battlefield);
+    assert_eq!(state.players[0].mana_pool[ManaColor::B.pool_index()], 1);
+}
+
+/// Casts Deep-Cavern Bat at the opponent and resolves it up to the exile
+/// prompt, returning the bat and the prompt's legal cards.
+fn cast_bat_to_choice(state: &mut GameState) -> (ObjectId, Option<Vec<Target>>) {
+    let bat = put(state, PlayerId::P0, "Deep-Cavern Bat", Zone::Hand);
+    state.players[0].mana_pool = pool(&[(ManaColor::B, 1)], 1);
+    cast(state, bat, &[]);
+    loop {
+        match next(state) {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert_eq!(legal_targets, vec![Target::Player(PlayerId::P1)]);
+                engine::step(state, Action::ChooseTarget(Target::Player(PlayerId::P1))).unwrap();
+            }
+            Decision::CastSpellOrPass { .. }
+                if state.stack.is_empty() && state.engine.pending_triggers.is_empty() =>
+            {
+                return (bat, None)
+            }
+            Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+            Decision::ChooseEffectTargets {
+                player,
+                min_targets,
+                max_targets,
+                legal_targets,
+                can_finish,
+                ..
+            } => {
+                assert_eq!((player, min_targets, max_targets), (PlayerId::P0, 0, 1));
+                assert!(can_finish);
+                return (bat, Some(legal_targets));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn deep_cavern_bat_exiles_until_it_leaves() {
+    let mut state = ready(Step::Main1);
+    let land = put(&mut state, PlayerId::P1, "Forest", Zone::Hand);
+    let spell = put(&mut state, PlayerId::P1, "Cenote Scout", Zone::Hand);
+    let (bat, legal) = cast_bat_to_choice(&mut state);
+    // A single nonland card is still a real "may" choice; lands never qualify.
+    assert_eq!(legal, Some(vec![Target::Object(spell)]));
+    engine::step(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(spell)),
+    )
+    .unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(spell).zone, Zone::Exile);
+    assert_eq!(state.players[1].hand, vec![land]);
+
+    // Leaving returns the card at once, with no trigger on the stack.
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(bat, Zone::Graveyard));
+    assert_eq!(state.objects.get(spell).zone, Zone::Hand);
+    assert!(state.engine.linked_exile_records.is_empty());
+}
+
+#[test]
+fn deep_cavern_bat_may_decline() {
+    let mut state = ready(Step::Main1);
+    let spell = put(&mut state, PlayerId::P1, "Cenote Scout", Zone::Hand);
+    let (_, legal) = cast_bat_to_choice(&mut state);
+    assert!(legal.is_some());
+    engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(spell).zone, Zone::Hand);
+    assert!(state.engine.linked_exile_records.is_empty());
+}
+
+#[test]
+fn deep_cavern_bat_sees_only_lands_and_moves_on() {
+    let mut state = ready(Step::Main1);
+    let land = put(&mut state, PlayerId::P1, "Forest", Zone::Hand);
+    let (_, legal) = cast_bat_to_choice(&mut state);
+    assert_eq!(legal, None);
+    assert_eq!(state.players[1].hand, vec![land]);
+}
+
+#[test]
+fn deep_cavern_bat_gone_before_its_trigger_resolves_exiles_nothing() {
+    let mut state = ready(Step::Main1);
+    let spell = put(&mut state, PlayerId::P1, "Cenote Scout", Zone::Hand);
+    let bat = put(&mut state, PlayerId::P0, "Deep-Cavern Bat", Zone::Hand);
+    state.players[0].mana_pool = pool(&[(ManaColor::B, 1)], 1);
+    cast(&mut state, bat, &[]);
+    loop {
+        match next(&mut state) {
+            Decision::ChooseTargets { .. } => {
+                engine::step(
+                    &mut state,
+                    Action::ChooseTarget(Target::Player(PlayerId::P1)),
+                )
+                .unwrap();
+                break;
+            }
+            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(bat, Zone::Graveyard));
+    match settle(&mut state) {
+        None => {}
+        Some(Decision::ChooseEffectTargets { .. }) => {
+            engine::step(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(spell)),
+            )
+            .unwrap();
+            settled(&mut state);
+        }
+        Some(other) => panic!("unexpected {other:?}"),
+    }
+    assert_eq!(state.objects.get(spell).zone, Zone::Hand);
+    assert!(state.engine.linked_exile_records.is_empty());
 }

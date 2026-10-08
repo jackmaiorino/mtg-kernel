@@ -3,7 +3,8 @@
 //! the `triggers_for` and target-spec tables.
 
 use super::{etb_trigger, TriggerCondition, TriggeredAbilityDef};
-use crate::effect::{EffectOp, ObjectRef, PlayerRef};
+use crate::effect::{CreatureSacrificeFilter, EffectOp, ObjectRef, PlayerRef};
+use crate::state::Zone;
 
 fn create_named_token(name: &str) -> EffectOp {
     EffectOp::CreateToken {
@@ -44,3 +45,33 @@ pub(super) const SENTINEL_OF_THE_NAMELESS_CITY_TRIGGERS: [TriggeredAbilityDef; 2
 /// Cenote Scout: "When this creature enters, it explores."
 pub(super) const CENOTE_SCOUT_TRIGGERS: [TriggeredAbilityDef; 1] =
     [etb_trigger(source_explores_effect)];
+
+fn target_player_sacrifices_creature_effect() -> EffectOp {
+    EffectOp::SacrificeCreature {
+        player: PlayerRef::Target(0),
+        filter: CreatureSacrificeFilter::Any,
+    }
+}
+
+fn exile_from_target_opponents_hand_effect() -> EffectOp {
+    EffectOp::RevealHandChooseNonlandToLinkedExile {
+        player: PlayerRef::Target(0),
+    }
+}
+
+/// Gatekeeper of Malakir: "When this creature enters, if it was kicked,
+/// target player sacrifices a creature."
+pub(super) const GATEKEEPER_OF_MALAKIR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: true,
+    intervening_if_controls_another_source_card: false,
+    effect: target_player_sacrifices_creature_effect,
+}];
+
+/// Deep-Cavern Bat: "When this creature enters, look at target opponent's
+/// hand. You may exile a nonland card from it until this creature leaves the
+/// battlefield." The return is the linked exile's own duration, not a
+/// trigger (see `effect::LinkedHandExileKind`).
+pub(super) const DEEP_CAVERN_BAT_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(exile_from_target_opponents_hand_effect)];

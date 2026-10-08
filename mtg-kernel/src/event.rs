@@ -1056,8 +1056,27 @@ fn commit_with_ability_lki(
         | CommittedEvent::CreateToken { object, .. } => Some(*object),
         _ => None,
     };
+    let left_battlefield = match &committed {
+        CommittedEvent::ZoneChange {
+            object,
+            from: Zone::Battlefield,
+            to,
+            ..
+        } if *to != Zone::Battlefield => Some(*object),
+        _ => None,
+    };
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
+    if let Some(object) = left_battlefield {
+        if !state.engine.linked_exile_records.is_empty() {
+            let left_zone_change_count = state.objects.get(object).zone_change_count - 1;
+            crate::effect::return_cards_exiled_until_source_leaves(
+                state,
+                object,
+                left_zone_change_count,
+            );
+        }
+    }
     if let Some(object) = entry_counter_object {
         let live = state.objects.get(object);
         let count = live.counters.plus1_plus1;

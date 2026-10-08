@@ -164,6 +164,72 @@
         "explore"
       ],
       "java_file": "Mage.Sets/src/mage/cards/c/CenoteScout.java"
+    },
+    {
+      "name": "Gatekeeper of Malakir",
+      "engine_capability": "full",
+      "mana_cost": "{B}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Vampire",
+        "Warrior"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "kicker",
+        "etb_trigger",
+        "edict"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GatekeeperOfMalakir.java"
+    },
+    {
+      "name": "Deep-Cavern Bat",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bat"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoB.dck",
+        "Standard16-BW.dck",
+        "Standard16-UB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "flying",
+        "lifelink",
+        "etb_trigger",
+        "exile_until_leaves"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DeepCavernBat.java"
     }
   ]
 }

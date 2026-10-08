@@ -3524,6 +3524,10 @@ fn keywords_for(card: &CardJson) -> String {
     // MageZero Standard family G, in printed keyword order.
     match card.name.as_str() {
         "Sentinel of the Nameless City" => keywords.push("Keywords::VIGILANCE"),
+        "Deep-Cavern Bat" => {
+            keywords.push("Keywords::FLYING");
+            keywords.push("Keywords::LIFELINK");
+        }
         _ => {}
     }
     if card.name == "Treetop Snarespinner" {
@@ -3720,6 +3724,7 @@ fn kicker_cost_for(name: &str) -> String {
         "Gnarlid Colony" => cost_src("{2}{G}"),
         "Sun-Blessed Healer" => cost_src("{1}{W}"),
         "Burst Lightning" => cost_src("{4}"),
+        "Gatekeeper of Malakir" => cost_src("{B}"),
         _ => "None".to_string(),
     }
 }
@@ -5303,6 +5308,10 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Novice Inspector" => "etb:investigate:1",
         "Sentinel of the Nameless City" => "etb_and_attacks:create_map_token:1",
         "Cenote Scout" => "etb:source_explores",
+        "Gatekeeper of Malakir" => "etb_if_kicked:target_player:sacrifice_creature",
+        "Deep-Cavern Bat" => {
+            "etb:target_opponent:look_at_hand:may_exile_nonland_until_source_leaves"
+        }
         _ => "none",
     }
 }

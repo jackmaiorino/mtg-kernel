@@ -3300,8 +3300,15 @@ fn complete_resumable_target_selection(
             source,
             canonical_path,
         } => {
-            if path != canonical_path || objects.len() != 1 {
+            let optional = linked_hand_exile_kind(source.card_def)
+                .ok_or("linked-exile choice lost its source definition")?
+                .optional();
+            if path != canonical_path || objects.len() > 1 || (objects.is_empty() && !optional) {
                 return Err("linked-exile choice changed path or cardinality".to_string());
+            }
+            if objects.is_empty() {
+                // "You may exile": declining leaves the hand untouched.
+                return Ok(());
             }
             let expected_remaining_frames = continuation.frames.clone();
             let frame = EffectFrame::LinkedExileChosenHandCard {
@@ -4247,7 +4254,7 @@ fn validate_linked_exile_chosen_hand_frame(
         || source.controller != pending.ctx.controller
         || source.zone != Zone::Battlefield
         || source.attached_to.is_some()
-        || crate::card_def::CARD_DEFS[source.card_def as usize].name != "Mesmeric Fiend"
+        || linked_hand_exile_kind(source.card_def).is_none()
     {
         return Err("linked-exile player or source contract changed".to_string());
     }
@@ -6191,7 +6198,9 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     if chooser != &pending.ctx.controller || path != canonical_path {
                         return Err("linked-exile chooser or structural path changed".to_string());
                     }
-                    if *min_targets != 1
+                    let kind = linked_hand_exile_kind(source.card_def)
+                        .ok_or("linked-exile prompt lost its source definition")?;
+                    if *min_targets != kind.min_choices()
                         || *max_targets != 1
                         || !*ordered
                         || !selected.is_empty()
@@ -6228,7 +6237,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                                 .has_type(CardType::Land)
                         })
                         .collect::<Vec<_>>();
-                    if expected.len() < 2 {
+                    if expected.len() < 2 - usize::from(kind.optional()) {
                         return Err(
                             "linked-exile prompt has no genuine multi-card choice".to_string()
                         );
@@ -7866,6 +7875,19 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         );
                     }
                     continuation.answered_choice_guard = None;
+                    let source_incarnation_is_live =
+                        state.objects.try_get(source.source).is_some_and(|live| {
+                            live.zone == source.zone
+                                && live.zone_change_count == source.zone_change_count
+                        });
+                    if !source_incarnation_is_live
+                        && linked_hand_exile_kind(source.card_def)
+                            == Some(LinkedHandExileKind::UntilSourceLeaves)
+                    {
+                        // 610.3c: an "until ... leaves" exile whose source is
+                        // already gone does nothing.
+                        continue;
+                    }
                     event::propose_and_commit(
                         state,
                         event::ProposedEvent::zone_change_preserving_known_identity(
@@ -7881,11 +7903,6 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         exiled_owner: exiled.owner,
                         exiled_zone_change_count: exiled.zone_change_count,
                     };
-                    let source_incarnation_is_live =
-                        state.objects.try_get(source.source).is_some_and(|live| {
-                            live.zone == source.zone
-                                && live.zone_change_count == source.zone_change_count
-                        });
                     if source_incarnation_is_live {
                         state.objects.get_mut(chosen.object).v4.exiled_by = Some(ObjectLinkV4 {
                             object: source.source,
@@ -8725,10 +8742,12 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     || source.controller != continuation.ctx.controller
                     || source.zone != Zone::Battlefield
                     || source.attached_to.is_some()
-                    || crate::card_def::CARD_DEFS[source.card_def as usize].name != "Mesmeric Fiend"
                 {
                     return Err("linked-exile effect has the wrong source contract".to_string());
                 }
+                let Some(kind) = linked_hand_exile_kind(source.card_def) else {
+                    return Err("linked-exile effect has the wrong source contract".to_string());
+                };
                 let original_hand = bind_hand(state, player);
                 validate_bound_hand_exact(state, player, &original_hand)?;
                 for binding in &original_hand {
@@ -8751,7 +8770,7 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     .collect::<Vec<_>>();
                 match candidates.as_slice() {
                     [] => {}
-                    [chosen] => {
+                    [chosen] if !kind.optional() => {
                         let expected_remaining_frames = continuation.frames.clone();
                         let frame = EffectFrame::LinkedExileChosenHandCard {
                             player,
@@ -8777,6 +8796,7 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                             original_hand,
                             candidates,
                             source,
+                            kind.min_choices(),
                             path,
                         );
                         state.engine.pending_effect = Some(continuation);
@@ -8798,7 +8818,8 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     || source.controller != continuation.ctx.controller
                     || source.zone != Zone::Battlefield
                     || source.attached_to.is_some()
-                    || crate::card_def::CARD_DEFS[source.card_def as usize].name != "Mesmeric Fiend"
+                    || linked_hand_exile_kind(source.card_def)
+                        != Some(LinkedHandExileKind::ReturnTrigger)
                 {
                     return Err("linked-exile return has the wrong source contract".to_string());
                 }
@@ -9811,6 +9832,66 @@ fn stage_creature_sacrifice_choice(
     });
 }
 
+/// How a linked hand-exile source gets its card back. Mesmeric Fiend's exile
+/// is mandatory and returns through its own leaves-the-battlefield trigger.
+/// Deep-Cavern Bat's "you may exile ... until this creature leaves the
+/// battlefield" is optional and returns immediately, with no stack object,
+/// when that incarnation leaves (610.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LinkedHandExileKind {
+    ReturnTrigger,
+    UntilSourceLeaves,
+}
+
+impl LinkedHandExileKind {
+    fn optional(self) -> bool {
+        self == LinkedHandExileKind::UntilSourceLeaves
+    }
+
+    fn min_choices(self) -> u16 {
+        u16::from(!self.optional())
+    }
+}
+
+pub(crate) fn linked_hand_exile_kind(card_def: u16) -> Option<LinkedHandExileKind> {
+    match crate::card_def::CARD_DEFS.get(card_def as usize)?.name {
+        "Mesmeric Fiend" => Some(LinkedHandExileKind::ReturnTrigger),
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Deep-Cavern Bat" => Some(LinkedHandExileKind::UntilSourceLeaves),
+        _ => None,
+    }
+}
+
+/// Returns the card an "until this leaves" source exiled once that exact
+/// battlefield incarnation (`left_zone_change_count`) has left. Called from
+/// the zone-change commit, so the return happens immediately rather than
+/// through a trigger.
+pub(crate) fn return_cards_exiled_until_source_leaves(
+    state: &mut GameState,
+    source: ObjectId,
+    left_zone_change_count: u32,
+) {
+    let Some(position) = state.engine.linked_exile_records.iter().position(|record| {
+        record.source.source == source
+            && record.source.zone_change_count == left_zone_change_count
+            && record.source.zone == Zone::Battlefield
+            && linked_hand_exile_kind(record.source.card_def)
+                == Some(LinkedHandExileKind::UntilSourceLeaves)
+    }) else {
+        return;
+    };
+    let record = state.engine.linked_exile_records.remove(position);
+    let still_exiled = state.objects.try_get(record.exiled).is_some_and(|live| {
+        live.zone == Zone::Exile && live.zone_change_count == record.exiled_zone_change_count
+    });
+    if still_exiled {
+        event::propose_and_commit(
+            state,
+            event::ProposedEvent::zone_change_preserving_known_identity(record.exiled, Zone::Hand),
+        );
+    }
+}
+
 fn stage_linked_exile_hand_choice(
     continuation: &mut EffectContinuation,
     chooser: PlayerId,
@@ -9818,9 +9899,10 @@ fn stage_linked_exile_hand_choice(
     original_hand: Vec<EffectObjectBinding>,
     candidates: Vec<EffectObjectBinding>,
     source: AbilitySourceContractV4,
+    min_targets: u16,
     canonical_path: Vec<u16>,
 ) {
-    debug_assert!(candidates.len() >= 2);
+    debug_assert!(candidates.len() >= 2 - usize::from(min_targets == 0));
     continuation.choice = Some(PendingEffectChoice::SelectTargets {
         player: chooser,
         path: canonical_path.clone(),
@@ -9832,7 +9914,7 @@ fn stage_linked_exile_hand_choice(
                 expected_object: Some(binding),
             })
             .collect(),
-        min_targets: 1,
+        min_targets,
         max_targets: 1,
         ordered: true,
         purpose: EffectTargetSelectionPurpose::LinkedExileNonlandFromRevealedHand {

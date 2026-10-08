@@ -1755,6 +1755,10 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         }
         #[cfg(feature = "standard-magezero-fixtures")]
         "Cenote Scout" => &standard_family_g_v1::CENOTE_SCOUT_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Gatekeeper of Malakir" => &standard_family_g_v1::GATEKEEPER_OF_MALAKIR_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Deep-Cavern Bat" => &standard_family_g_v1::DEEP_CAVERN_BAT_TRIGGERS,
         _ => &[],
     }
 }
@@ -1781,6 +1785,10 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
             TargetSpec::OpponentArtifactOrEnchantmentPermanent
         }
         "Vitu-Ghazi Inspector" => TargetSpec::Creature,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Gatekeeper of Malakir" => TargetSpec::AnyPlayer,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Deep-Cavern Bat" => TargetSpec::TargetOpponent,
         _ => TargetSpec::None,
     }
 }
