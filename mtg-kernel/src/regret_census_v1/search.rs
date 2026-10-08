@@ -97,6 +97,34 @@ impl Follow {
     }
 }
 
+/// When selection records a budget level. `Round` records it after the round
+/// that crosses the budget completes, so a level can overspend by most of a
+/// round. `Exact` records it at the crossing from the complete rounds so far
+/// (a partial round never enters the means) and counts the partial round's
+/// transitions as spent, so a level overspends by at most one playout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BudgetStop {
+    Round,
+    Exact,
+}
+
+impl BudgetStop {
+    fn parse(text: &str) -> Result<Self, String> {
+        match text.trim() {
+            "round" => Ok(Self::Round),
+            "exact" => Ok(Self::Exact),
+            other => Err(format!("unknown BUDGET_STOP {other}")),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Round => "round",
+            Self::Exact => "exact",
+        }
+    }
+}
+
 /// Opponent seat in an outer playout: T1 (the searcher's opponent model in
 /// selection) or one of the `OPPONENTS` models (the actual opponent, used in
 /// evaluation).
@@ -115,6 +143,7 @@ pub(super) struct SearchSharedV1 {
     eval_playouts: usize,
     m_inner: usize,
     horizon: Horizon,
+    budget_stop: BudgetStop,
 }
 
 fn env_or<T: std::str::FromStr>(name: &str, default: T) -> Result<T, String> {
@@ -185,6 +214,10 @@ impl SearchSharedV1 {
             Ok(v) => Horizon::parse(&v)?,
             Err(_) => DEFAULT_HORIZON,
         };
+        let budget_stop = match std::env::var("BUDGET_STOP") {
+            Ok(v) => BudgetStop::parse(&v)?,
+            Err(_) => BudgetStop::Round,
+        };
         let shared = Self {
             labels,
             opponents,
@@ -193,12 +226,14 @@ impl SearchSharedV1 {
             eval_playouts: env_or("EVAL_PLAYOUTS", DEFAULT_EVAL_PLAYOUTS)?,
             m_inner: env_or("M_INNER", DEFAULT_M_INNER)?.max(1),
             horizon,
+            budget_stop,
         };
         eprintln!(
-            "search: opponents {:?}, roots {}, budgets {:?}, eval {}, m_inner {}, horizon {}",
+            "search: opponents {:?}, roots {}, budgets {:?} (stop {}), eval {}, m_inner {}, horizon {}",
             shared.labels,
             shared.roots.len(),
             shared.budgets,
+            shared.budget_stop.label(),
             shared.eval_playouts,
             shared.m_inner,
             shared.horizon.label()
@@ -1069,6 +1104,7 @@ impl SearchWorkerV1 {
         ns: u64,
         budgets: &[u64],
         m_inner: usize,
+        stop: BudgetStop,
     ) -> Value {
         let n = cands.len();
         let mut sums = vec![0f64; n];
@@ -1129,8 +1165,8 @@ impl SearchWorkerV1 {
             let det = mix(ns ^ (attempted + 1));
             attempted += 1;
             let mut scores = Vec::with_capacity(n);
-            let mut ok = true;
-            for &c in cands {
+            let (mut ok, mut abandoned) = (true, false);
+            for (i, &c) in cands.iter().enumerate() {
                 let o = self.cached_playout(
                     cache,
                     root,
@@ -1154,6 +1190,27 @@ impl SearchWorkerV1 {
                     break;
                 }
                 scores.push(o.score);
+                if stop == BudgetStop::Exact && i + 1 < n {
+                    while next_level < budgets.len() && transitions >= budgets[next_level] {
+                        record(
+                            &mut levels,
+                            budgets[next_level],
+                            &sums,
+                            rounds,
+                            transitions,
+                            wall,
+                            false,
+                        );
+                        next_level += 1;
+                    }
+                    if next_level == budgets.len() {
+                        abandoned = true;
+                        break;
+                    }
+                }
+            }
+            if abandoned {
+                break;
             }
             if ok {
                 for (s, x) in sums.iter_mut().zip(&scores) {
@@ -1178,7 +1235,7 @@ impl SearchWorkerV1 {
                 next_level += 1;
             }
         }
-        json!({"follow":follow.label(),"candidates":cands,
+        json!({"follow":follow.label(),"budget_stop":stop.label(),"candidates":cands,
             "candidate_probs":cands.iter().map(|&c| probs[c]).collect::<Vec<_>>(),
             "levels":levels,"rounds_attempted":attempted,"failed_rounds":failed_rounds,
             "failures":failures,"inner_failures":inner_failures,"searched_decisions":searched})
@@ -1370,6 +1427,7 @@ pub(super) fn run_cond_root(
             sel_ns,
             &shared.budgets,
             shared.m_inner,
+            shared.budget_stop,
         );
         eprintln!(
             "root {index} condition {name}: {:.1}s elapsed, actual {} transitions",
@@ -1413,7 +1471,7 @@ pub(super) fn run_cond_root(
         "coverage_differs":view.coverage_differs,
         "candidate_sem":view.top.iter().chain(&view.cover).map(|&c| (c.to_string(), json!(view.sem[c]))).collect::<serde_json::Map<_,_>>(),
         "horizon":shared.horizon.label(),"m_inner":shared.m_inner,"budgets":shared.budgets,
-        "selection":selection,"selection_wall":sel_elapsed,
+        "budget_stop":shared.budget_stop.label(),"selection":selection,"selection_wall":sel_elapsed,
         "selection_actual":{"transitions":cache.actual_transitions,"wall":cache.actual_wall,"playouts":cache.actual_playouts},
         "eval_jobs":job_of,"eval":eval,"replay_secs":rp.secs,
         "root_wall":root_started.elapsed().as_secs_f64()});
@@ -1452,6 +1510,7 @@ pub(super) fn run_cross_root(
         mix(seed ^ 0x5E1),
         &shared.budgets,
         shared.m_inner,
+        shared.budget_stop,
     );
     let sel_elapsed = sel_started.elapsed().as_secs_f64();
     let top_level = b["levels"]
@@ -1513,7 +1572,7 @@ pub(super) fn run_cross_root(
         "t1_action_prob":view.probs[rp.t1_action as usize],
         "alt":alt,"alt_sem":view.sem[alt],"alt_prob":view.probs[alt],"alt_forced":forced,
         "cover":view.cover,"b_selection":b,"selection_wall":sel_elapsed,
-        "m_inner":shared.m_inner,"budgets":shared.budgets,"cells":cells,"eval":eval,
+        "m_inner":shared.m_inner,"budgets":shared.budgets,"budget_stop":shared.budget_stop.label(),"cells":cells,"eval":eval,
         "replay_secs":rp.secs,"root_wall":root_started.elapsed().as_secs_f64()});
     if let (Value::Object(r), Value::Object(x)) = (&mut row, extra) {
         r.extend(x);
@@ -1586,6 +1645,75 @@ mod tests {
         assert!(check_root(&session, a, &bad, setup.focal)
             .unwrap_err()
             .contains("menu_hash"));
+    }
+
+    #[test]
+    fn exact_budget_stop_records_levels_at_the_crossing() {
+        let cfg = test_cfg();
+        let setup = game_setup(&cfg, 1, 4 * 9 + 7);
+        let fixture = FrozenPlayPolicyV1::training_fixture_v4;
+        let (mut focal, mut opp) = (fixture(), fixture());
+        let mut root = None;
+        drive_game(&setup, &mut focal, &mut opp, |s, d, a| {
+            if seat_index(d.acting_player) == setup.focal && d.legal_action_count >= 3 {
+                let row = root_row(&setup, "fixture", d, a, &menu_info(s, setup.focal)?);
+                root = Some(row["step"].as_u64().unwrap());
+            }
+            Ok(root.is_some())
+        })
+        .unwrap();
+        let (mut focal, mut opp) = (fixture(), fixture());
+        let (session, _) = replay_core(&setup, &mut focal, &mut opp, root.unwrap()).unwrap();
+        let cands = [0usize, 1, 2];
+        let (probs, sem) = (vec![0.5, 0.3, 0.2], vec![String::new(); 3]);
+        let budgets = [1u64, 3000];
+        let select = |stop| {
+            let mut w = SearchWorkerV1 {
+                focal: fixture(),
+                opps: vec![fixture()],
+                t1_opp: fixture(),
+                scorer: fixture(),
+                inner_focal: fixture(),
+                inner_opp: fixture(),
+            };
+            w.select(
+                &mut PlayoutCache::default(),
+                &session,
+                setup.focal,
+                &cands,
+                &probs,
+                &sem,
+                Follow::T1,
+                7,
+                &budgets,
+                1,
+                stop,
+            )
+        };
+        let (round, exact) = (select(BudgetStop::Round), select(BudgetStop::Exact));
+        assert_eq!(exact["budget_stop"], json!("exact"));
+        let level = |s: &Value, i: usize, key: &str| s["levels"][i][key].as_u64().unwrap();
+        // Budget 1 is crossed by the first playout: the round-stop level
+        // waits for the whole round, the exact level has no complete round.
+        assert_eq!(level(&round, 0, "rounds"), 1);
+        assert_eq!(level(&exact, 0, "rounds"), 0);
+        assert!(exact["levels"][0]["means"].is_null());
+        assert!(level(&exact, 0, "transitions") < level(&round, 0, "transitions"));
+        for i in 0..budgets.len() {
+            assert!(level(&exact, i, "transitions") >= budgets[i]);
+            assert!(level(&exact, i, "transitions") <= level(&round, i, "transitions"));
+            let (r, e) = (level(&round, i, "rounds"), level(&exact, i, "rounds"));
+            assert!(
+                e == r || e + 1 == r,
+                "level {i}: exact {e} rounds, round {r}"
+            );
+            if e == r {
+                assert_eq!(exact["levels"][i]["means"], round["levels"][i]["means"]);
+            }
+        }
+        assert!(level(&round, 1, "rounds") >= 2, "budget too small to test");
+        assert_eq!(BudgetStop::parse("exact").unwrap(), BudgetStop::Exact);
+        assert!(BudgetStop::parse("never").is_err());
     }
 
     #[test]
