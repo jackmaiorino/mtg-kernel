@@ -2467,6 +2467,9 @@ enum Special {
     /// Choose one: dynamic creature-count damage, destroy an enchantment, or
     /// exile any number of target players' graveyards.
     ThrabenCharm,
+    /// Spree as three printed modes (Spirit only, counter only, both); the
+    /// per-mode `+{N}` costs live in `standard_keywords_v1::spree_extra_generic`.
+    PhantomInterference,
     /// Symmetric Elemental Blast recipe. `checked_color` is the color the
     /// target must have; `filter_timing` distinguishes the Elemental Blasts'
     /// targeting restriction from Pyroblast/Hydroblast's resolution-time
@@ -2832,6 +2835,9 @@ impl Special {
                 "cast_into_the_fire:damage_up_to_two_creatures_or_exile_artifact".to_string()
             }
             Special::DustToDust => "dust_to_dust:exile_exactly_two_artifacts".to_string(),
+            Special::PhantomInterference => {
+                "phantom_interference:spree_spirit_or_counter_unless_pays_2".to_string()
+            }
             Special::ThrabenCharm => {
                 "thraben_charm:creature_count_damage_or_destroy_enchantment_or_exile_target_graveyards".to_string()
             }
@@ -3131,6 +3137,7 @@ fn special_for(name: &str) -> Special {
         "Cast into the Fire" => Special::CastIntoTheFire,
         "Dust to Dust" => Special::DustToDust,
         "Thraben Charm" => Special::ThrabenCharm,
+        "Phantom Interference" => Special::PhantomInterference,
         "Blue Elemental Blast" => Special::ColorBlast {
             checked_color: BlastColor::Red,
             filter_timing: BlastFilterTiming::Targeting,
@@ -3305,6 +3312,7 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::CastIntoTheFire => "target=UpToTwoCreatures;spell=DamageAllTargets(1);mode2=MoveAllTargets(Exile);mana=None".to_string(),
         Special::DustToDust => "target=ExactlyTwoArtifactPermanents;spell=ExileAllArtifactTargets;mana=None".to_string(),
         Special::ThrabenCharm => "target=Creature;spell=DealDamageByControlledCreatureCount(2);mode2=DestroyEnchantment;mode3=ExileTargetPlayersGraveyards;mana=None".to_string(),
+        Special::PhantomInterference => "target=None;spell=CreateToken(Spirit Token);mode2=CounterTargetUnlessPaysGeneric(2);mode3=CounterTargetUnlessPaysGeneric(2)+prelude(CreateToken(Spirit Token));spree=3,1,4;mana=None".to_string(),
         Special::ColorBlast {
             checked_color,
             filter_timing: BlastFilterTiming::Targeting,
@@ -3579,6 +3587,7 @@ fn standard_keywords_for(name: &str) -> &'static [&'static str] {
         "Bat Token" => &["Keywords::FLYING"],
         "Ruin-Lurker Bat" => &["Keywords::FLYING", "Keywords::LIFELINK"],
         "White Insect Token" => &["Keywords::FLYING"],
+        "Spirit Token" => &["Keywords::FLYING"],
         "Enduring Curiosity" => &["Keywords::FLASH"],
         "Enduring Innocence" => &["Keywords::LIFELINK"],
         "Pawpatch Recruit" | "Pawpatch Recruit Offspring Token" => &["Keywords::TRAMPLE"],
@@ -5152,16 +5161,21 @@ fn mode2_for(name: &str) -> String {
         Special::PiracyCharm => "Some(ModeDef { target_spec: TargetSpec::Creature, effect: mode2_effect_piracy_charm_pump })".to_string(),
         Special::CastIntoTheFire => "Some(ModeDef { target_spec: TargetSpec::ArtifactPermanent, effect: mode2_effect_cast_into_the_fire_exile_artifact })".to_string(),
         Special::ThrabenCharm => "Some(ModeDef { target_spec: TargetSpec::EnchantmentPermanent, effect: mode2_effect_thraben_charm_destroy_enchantment })".to_string(),
+        Special::PhantomInterference => "Some(ModeDef { target_spec: TargetSpec::AnySpellOnStack, effect: mode2_effect_phantom_interference_counter })".to_string(),
         _ => "None".to_string(),
     }
 }
 
 /// Optional third printed mode, using the same stable mode index carried by
 /// pending casts and stack items.
+/// Phantom Interference's "both" mode shares the counter program; its Spirit
+/// half runs first from `standard_keywords_v1::spree_mode_prelude`, since a
+/// counter-unless-pays program must stay rooted.
 fn mode3_for(name: &str) -> String {
     match special_for(name) {
         Special::PiracyCharm => "Some(ModeDef { target_spec: TargetSpec::AnyPlayer, effect: mode3_effect_piracy_charm_discard })".to_string(),
         Special::ThrabenCharm => "Some(ModeDef { target_spec: TargetSpec::UpToTwoPlayers, effect: mode3_effect_thraben_charm_exile_graveyards })".to_string(),
+        Special::PhantomInterference => "Some(ModeDef { target_spec: TargetSpec::AnySpellOnStack, effect: mode2_effect_phantom_interference_counter })".to_string(),
         _ => "None".to_string(),
     }
 }
@@ -7068,6 +7082,29 @@ fn codegen(cards: &[CardJson]) -> String {
 
     if cards
         .iter()
+        .any(|card| matches!(special_for(&card.name), Special::PhantomInterference))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_phantom_interference_spirit() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    let token = crate::card_def::card_id_by_name(\"Spirit Token\").expect(\"Spirit Token in CARD_DEFS\");").unwrap();
+        writeln!(out, "    Some(EffectOp::CreateToken {{ token_def: token, controller: PlayerRef::Controller }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+        writeln!(
+            out,
+            "fn mode2_effect_phantom_interference_counter() -> EffectOp {{"
+        )
+        .unwrap();
+        writeln!(out, "    EffectOp::CounterTargetUnlessPaysGeneric {{ target: TargetRef::Target(0), generic: 2 }}").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
         .any(|card| matches!(special_for(&card.name), Special::ThrabenCharm))
     {
         writeln!(
@@ -7558,6 +7595,11 @@ fn codegen(cards: &[CardJson]) -> String {
             Special::DustToDust => (
                 "TargetSpec::ExactlyTwoArtifactPermanents",
                 "spell_effect_dust_to_dust".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::PhantomInterference => (
+                "TargetSpec::None",
+                "spell_effect_phantom_interference_spirit".to_string(),
                 "no_effect".to_string(),
             ),
             Special::ThrabenCharm => (

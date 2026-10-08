@@ -160,6 +160,8 @@ fn family_d_cards_are_fully_supported() {
         "Enduring Curiosity",
         "Enduring Innocence",
         "Make Disappear",
+        "Phantom Interference",
+        "Spirit Token",
     ] {
         let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} missing"));
         assert_eq!(
@@ -2005,4 +2007,91 @@ fn make_disappear_without_casualty_is_a_single_counter() {
         }
     }
     assert_eq!(state.players[0].life, 18);
+}
+
+/// P1 casts Burst Lightning at P0, then P0 gets priority with Phantom
+/// Interference in hand and `generic` extra mana beside its {U}.
+fn phantom_interference_facing_a_burn(state: &mut GameState, generic: u8) -> (ObjectId, ObjectId) {
+    let spree = put(state, PlayerId::P0, "Phantom Interference", Zone::Hand);
+    state.priority_player = PlayerId::P1;
+    let burst = put(state, PlayerId::P1, "Burst Lightning", Zone::Hand);
+    add_mana(state, PlayerId::P1, &[ManaColor::R], 0);
+    cast(state, burst, &[Target::Player(PlayerId::P0)]);
+    next(state);
+    engine::step(state, Action::Pass).unwrap();
+    add_mana(state, PlayerId::P0, &[ManaColor::U], generic);
+    (spree, burst)
+}
+
+fn resolve_stack_declining_payments(state: &mut GameState) {
+    for _ in 0..20 {
+        match next(state) {
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => return,
+            Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+            Decision::ChooseEffectBoolean { .. } => {
+                engine::step(state, Action::ChooseEffectBoolean(false)).unwrap()
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    panic!("stack never emptied");
+}
+
+#[test]
+fn phantom_interference_spree_offers_every_affordable_mode_set() {
+    let mut state = ready();
+    let (spree, burst) = phantom_interference_facing_a_burn(&mut state, 4);
+    assert!(castable(&mut state, spree));
+    engine::step(&mut state, Action::CastSpell(spree)).unwrap();
+    match next(&mut state) {
+        Decision::ChooseSpellMode { legal_modes, .. } => assert_eq!(legal_modes, vec![0, 1, 2]),
+        other => panic!("expected a mode choice, got {other:?}"),
+    }
+    engine::step(&mut state, Action::ChooseSpellMode(2)).unwrap();
+    match next(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert_eq!(legal_targets, vec![Target::Object(burst)])
+        }
+        other => panic!("expected spell targets, got {other:?}"),
+    }
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(burst))).unwrap();
+    resolve_stack_declining_payments(&mut state);
+    assert_eq!(state.objects.get(burst).zone, Zone::Graveyard);
+    assert_eq!(state.players[0].life, 20);
+    assert_eq!(tokens_named(&state, PlayerId::P0, "Spirit Token"), 1);
+}
+
+#[test]
+fn phantom_interference_counter_mode_costs_one_more() {
+    let mut state = ready();
+    let (spree, burst) = phantom_interference_facing_a_burn(&mut state, 1);
+    engine::step(&mut state, Action::CastSpell(spree)).unwrap();
+    // Only the {U}+{1} counter mode is affordable, so it is chosen silently.
+    assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(burst))).unwrap();
+    resolve_stack_declining_payments(&mut state);
+    assert_eq!(state.players[0].life, 20);
+    assert_eq!(tokens_named(&state, PlayerId::P0, "Spirit Token"), 0);
+}
+
+#[test]
+fn phantom_interference_spirit_mode_needs_no_spell_to_target() {
+    let mut state = ready();
+    let spree = put(&mut state, PlayerId::P0, "Phantom Interference", Zone::Hand);
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::U], 1);
+    assert!(
+        !castable(&mut state, spree),
+        "{{U}}+{{1}} with no spell to counter"
+    );
+    add_mana(&mut state, PlayerId::P0, &[], 2);
+    assert!(castable(&mut state, spree));
+    engine::step(&mut state, Action::CastSpell(spree)).unwrap();
+    resolve_stack_declining_payments(&mut state);
+    let spirit = state.players[0]
+        .battlefield
+        .iter()
+        .copied()
+        .find(|&id| CARD_DEFS[state.objects.get(id).card_def as usize].name == "Spirit Token")
+        .expect("spirit token");
+    assert_eq!(power_toughness(&state, spirit), (2, 2));
 }

@@ -3255,6 +3255,20 @@ fn completable_next_activation_targets_for(
 /// Printed modal indices whose target requirements can be completed in the
 /// current state. Omen uses the same public two-form decision, but its forms
 /// also have distinct timing and costs and are filtered after announcement.
+/// Adds a Spree card's per-mode `+{N}` surcharge to `cost`.
+#[cfg(feature = "standard-magezero-fixtures")]
+fn with_spree_surcharge(def: &card_def::CardDef, mode: u8, mut cost: Cost) -> Cost {
+    if let Some(extra) = crate::standard_keywords_v1::spree_extra_generic(def.name, mode) {
+        cost.generic = cost.generic.saturating_add(extra);
+    }
+    cost
+}
+
+#[cfg(not(feature = "standard-magezero-fixtures"))]
+fn with_spree_surcharge(_def: &card_def::CardDef, _mode: u8, cost: Cost) -> Cost {
+    cost
+}
+
 fn viable_printed_spell_modes(
     def: &card_def::CardDef,
     source: ObjectId,
@@ -3294,6 +3308,13 @@ fn viable_printed_spell_modes(
         ) {
             modes.push(2);
         }
+    }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if crate::standard_keywords_v1::spree_extra_generic(def.name, 0).is_some() {
+        let base = effective_normal_cast_cost(def, controller, state);
+        modes.retain(|&mode| {
+            mana::can_pay(&with_spree_surcharge(def, mode, base), 0, controller, state).is_some()
+        });
     }
     modes
 }
@@ -5445,11 +5466,15 @@ fn payable_cast_modes(
     state: &GameState,
 ) -> Vec<CastMode> {
     let mut modes = Vec::new();
-    let normal = effective_normal_cast_cost_with_targets(
+    let normal = with_spree_surcharge(
         def,
-        pending.controller,
-        &pending.targets_chosen,
-        state,
+        pending.mode_chosen.unwrap_or(0),
+        effective_normal_cast_cost_with_targets(
+            def,
+            pending.controller,
+            &pending.targets_chosen,
+            state,
+        ),
     );
     if pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
         && mana::can_pay(&normal, 0, pending.controller, state).is_some()
@@ -5480,11 +5505,15 @@ fn pending_cast_selected_mana_cost(
         Some(1) if supported_bestow(def).is_some() => supported_bestow(def).map(|b| b.cost),
         Some(1) if supported_omen(def).is_some() => supported_omen(def).map(|o| o.cost),
         Some(1) if supported_adventure(def).is_some() => supported_adventure(def).map(|a| a.cost),
-        Some(_) => Some(effective_normal_cast_cost_with_targets(
+        Some(mode) => Some(with_spree_surcharge(
             def,
-            pending.controller,
-            &pending.targets_chosen,
-            state,
+            mode,
+            effective_normal_cast_cost_with_targets(
+                def,
+                pending.controller,
+                &pending.targets_chosen,
+                state,
+            ),
         )),
         None => None,
     }
@@ -10691,6 +10720,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         }
     };
     let convoked_creatures = state.objects.get(item.source).v4.convoked_creatures_v1;
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if program.is_some() {
+        if let Some(prelude) =
+            crate::standard_keywords_v1::spree_mode_prelude(def.name, item.mode_chosen)
+        {
+            effect::execute(&prelude, &ctx, state);
+        }
+    }
     if let Some(program) = program {
         if execute_resolving_program(state, &item, &ctx, &program) == ResolutionProgress::Suspended
         {

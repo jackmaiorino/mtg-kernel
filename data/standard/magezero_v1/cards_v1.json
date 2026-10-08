@@ -1181,6 +1181,63 @@
         "spell_copy"
       ],
       "java_file": "Mage.Sets/src/mage/cards/m/MakeDisappear.java"
+    },
+    {
+      "name": "Phantom Interference",
+      "engine_capability": "full",
+      "mana_cost": "{U}",
+      "mana_value": 1,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "spree",
+        "counter_unless_pay",
+        "token_creation"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/p/PhantomInterference.java"
+    },
+    {
+      "name": "Spirit Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Spirit"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/Spirit22Token.java",
+      "is_token": true
     }
   ]
 }

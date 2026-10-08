@@ -444,3 +444,30 @@ pub(crate) fn unearth_exile_instead(
         change.to_zone = Zone::Exile;
     }
 }
+
+/// Spree (702.172): the `+{N}` generic surcharge for each printed mode
+/// index. Spree cards are modeled as one printed mode per legal mode set,
+/// so the surcharge is the sum of the chosen modes' `+` costs.
+pub(crate) fn spree_extra_generic(card_name: &str, mode: u8) -> Option<u8> {
+    match (card_name, mode) {
+        // Spirit only, counter only, both.
+        ("Phantom Interference", 0) => Some(3),
+        ("Phantom Interference", 1) => Some(1),
+        ("Phantom Interference", 2) => Some(4),
+        _ => None,
+    }
+}
+
+/// The part of a Spree mode set that precedes a counter-unless-pays mode.
+/// That counter must stay a rooted program, so the earlier printed mode runs
+/// here, at resolution, once the spell's targets have been checked.
+pub(crate) fn spree_mode_prelude(card_name: &str, mode: u8) -> Option<crate::effect::EffectOp> {
+    match (card_name, mode) {
+        ("Phantom Interference", 2) => Some(crate::effect::EffectOp::CreateToken {
+            token_def: crate::card_def::card_id_by_name("Spirit Token")
+                .expect("Spirit Token in CARD_DEFS"),
+            controller: crate::effect::PlayerRef::Controller,
+        }),
+        _ => None,
+    }
+}
