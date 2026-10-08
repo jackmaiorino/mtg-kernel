@@ -396,13 +396,32 @@ def run(campaign: Campaign, runs: list[str]) -> int:
     return 0 if all(campaign.run_state(name)["status"] == "complete" for name in runs) else 1
 
 
+def declared_cores(campaign: Campaign) -> list[str]:
+    """``host_slots_v1.py timed`` prefix when the campaign declares cores.
+
+    The declaration must equal the placement's CPU affinity: the launcher pins
+    every native process to that list itself, and nested dispatches start
+    outside the timed job, so the two must agree. The tool is pinned by SHA256.
+    """
+    slots = campaign.raw.get("host_slots")
+    if not slots:
+        return []
+    cores = [int(core) for core in str(slots["cores"]).split(",")] if "," in str(slots["cores"]) else         list(range(int(str(slots["cores"]).split("-")[0]), int(str(slots["cores"]).split("-")[-1]) + 1))
+    if sorted(cores) != sorted(campaign.raw["placement"]["cpu_affinity"]):
+        raise SystemExit("declared cores differ from the placement's CPU affinity")
+    tool = Path(slots["tool"]["path"])
+    if sha256_file(tool) != slots["tool"]["sha256"]:
+        raise SystemExit("host_slots tool differs from its pin")
+    return [sys.executable, "-B", str(tool), "timed", "--cores", str(slots["cores"]), "--"]
+
+
 def launch(campaign_path: Path, runs: list[str]) -> dict:
     campaign = Campaign(campaign_path)
     return reservations.dispatch(
         lane=campaign.raw["lane"], work_id="nine-deck-" + "-".join(runs),
         release_condition="nine-deck baseline runs " + ",".join(runs) + " complete or stopped",
-        command=[sys.executable, "-B", str(Path(__file__).resolve()), "run", "--campaign",
-                 str(Path(campaign_path).resolve()), "--runs", ",".join(runs)],
+        command=declared_cores(campaign) + [sys.executable, "-B", str(Path(__file__).resolve()), "run", "--campaign",
+                                            str(Path(campaign_path).resolve()), "--runs", ",".join(runs)],
         cwd=str(TOOLS.parents[1]),
         busy_pattern=r"native_expanded_training|expanded_deck_training|cargo|rustc|trainer\.exe")
 

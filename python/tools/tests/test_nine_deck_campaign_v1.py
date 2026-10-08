@@ -74,5 +74,21 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(log[0]["files"], 13)
 
 
+    def test_declared_cores_must_match_placement_and_pin(self):
+        self.assertEqual(driver.declared_cores(self.campaign), [])
+        tool = self.root / "host_slots_v1.py"; tool.write_text("tool")
+        self.campaign.raw["host_slots"] = {"cores": "0-3", "tool": driver.pin(tool)}
+        self.campaign.raw["placement"]["cpu_affinity"] = [0, 1, 2, 3]
+        prefix = driver.declared_cores(self.campaign)
+        self.assertEqual(prefix[-4:], ["timed", "--cores", "0-3", "--"])
+        self.campaign.raw["placement"]["cpu_affinity"] = list(range(8))
+        with self.assertRaises(SystemExit):
+            driver.declared_cores(self.campaign)
+        self.campaign.raw["placement"]["cpu_affinity"] = [0, 1, 2, 3]
+        tool.write_text("changed")
+        with self.assertRaises(SystemExit):
+            driver.declared_cores(self.campaign)
+
+
 if __name__ == "__main__":
     unittest.main()
