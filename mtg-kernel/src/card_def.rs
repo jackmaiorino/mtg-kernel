@@ -733,8 +733,8 @@ impl TargetSpec {
             TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker => 39,
             TargetSpec::AttackingOrBlockingCreature => 40,
             TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_) => 41,
-            TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_) => 42,
-            TargetSpec::SpellYouDontControl => 43,
+            TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_) => 50,
+            TargetSpec::SpellYouDontControl => 51,
         }
     }
 }

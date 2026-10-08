@@ -36,8 +36,8 @@ statics in `mtg-kernel/src/standard_statics_v1.rs`.
 | Haughty Djinn | Flying; power = instants and sorceries in your graveyard; yours cost {1} less | characteristic-defining power + cost adjustment |
 | Hired Claw | Attack with Lizards: 1 damage to target opponent; {1}{R}: counter, only if an opponent lost life this turn, once per turn | `ControllerAttacksWithSubtype(Lizard)` + per-turn life-loss record |
 | Warden of the Inner Sky | Tap three untapped artifacts or creatures: counter and scry 1 (sorcery speed); flying and vigilance with three or more counters | `TapControlled` cost + conditional keywords |
-| Extraction Specialist | Lifelink; ETB return a creature card with MV 2 or less from your graveyard; it can't attack or block while you control the Specialist | `TargetSpec` 42 + attack/block restriction record |
-| Hullbreaker Horror | Flash; can't be countered; you cast a spell: return target spell you don't control or target nonland permanent to hand, or neither | `CastSpell` + placement-time modes, `TargetSpec` 43 |
+| Extraction Specialist | Lifelink; ETB return a creature card with MV 2 or less from your graveyard; it can't attack or block while you control the Specialist | `TargetSpec` 50 + attack/block restriction record |
+| Hullbreaker Horror | Flash; can't be countered; you cast a spell: return target spell you don't control or target nonland permanent to hand, or neither | `CastSpell` + placement-time modes, `TargetSpec` 51 |
 | Recruitment Officer | {3}{W}: look at the top four, may take a creature card with MV 3 or less, rest on the bottom | private zero-or-one choice + typed partition frame |
 
 Human Token (1/1 white Human) is appended for Adeline.
@@ -63,8 +63,8 @@ Human Token (1/1 white Human) is appended for Adeline.
   private to its chooser in the RL projection and is a `CardSelection`.
 - New cost component `TapControlled { count, filter }`, which reuses the
   sacrifice-cost staging one pick at a time.
-- New target specs `CreatureCardInOwnGraveyardManaValueAtMost` (stable id 42)
-  and `SpellYouDontControl` (43).
+- New target specs `CreatureCardInOwnGraveyardManaValueAtMost` (stable id 50)
+  and `SpellYouDontControl` (51).
 - Paying life is now a distinct life-loss proposal, so life-loss modifiers leave
   payments alone.
 - Normal casts (including kicker and delve) and the Adventure, Omen and Bestow
@@ -88,8 +88,8 @@ Human Token (1/1 white Human) is appended for Adeline.
   at, not a random order. The kernel only advances randomness through library
   shuffles, and the order of the bottom cards matters only in games that draw
   through the whole library.
-- Target spec stable ids 42 and 43 may collide with ids appended by parallel
-  Standard or FDN threads. The second thread to merge renumbers its ids.
+- Target spec stable ids 50 and 51 skip the ids that in-flight FDN (42 to 46)
+  and Standard family C (47 to 49) branches have claimed.
 
 ## Tests
 
