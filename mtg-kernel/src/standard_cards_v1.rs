@@ -62,6 +62,9 @@ pub struct StandardStateV1 {
     /// controls the delayed trigger.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     end_step_sacrifices: Vec<(ObjectId, u32, PlayerId)>,
+    /// The Irencrag incarnations that became Everflame, Heroes' Legacy.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    everflames: Vec<(ObjectId, u32)>,
 }
 
 /// The doors of one Room permanent incarnation: bit 0 is the left door,
@@ -303,6 +306,11 @@ pub enum StandardOpV1 {
     /// value one more than the sacrificed artifact's, put it onto the
     /// battlefield, then shuffle.
     SearchArtifactWithManaValueOneMoreThanSacrificed,
+    /// The Irencrag: "you may have The Irencrag become a legendary Equipment
+    /// artifact named Everflame, Heroes' Legacy".
+    MayBecomeEverflame,
+    /// The accepted choice: interpreter owned.
+    BecomeEverflame { source: EffectObjectBinding },
 }
 
 impl StandardOpV1 {
@@ -316,6 +324,7 @@ impl StandardOpV1 {
                 | Self::PutCreatureOrPlaneswalkerFromEachGraveyard
                 | Self::MayDiscardUpToThenDraw { .. }
                 | Self::SearchArtifactWithManaValueOneMoreThanSacrificed
+                | Self::MayBecomeEverflame
         )
     }
 
@@ -329,6 +338,7 @@ impl StandardOpV1 {
             Self::SacrificePile { pile, .. } => pile.clone(),
             Self::PutChosenCardsOntoBattlefield { cards }
             | Self::DiscardChosenThenDraw { cards, .. } => cards.clone(),
+            Self::BecomeEverflame { source } => vec![*source],
             _ => Vec::new(),
         }
     }
@@ -342,6 +352,7 @@ impl StandardOpV1 {
                 | Self::SacrificePile { .. }
                 | Self::PutChosenCardsOntoBattlefield { .. }
                 | Self::DiscardChosenThenDraw { .. }
+                | Self::BecomeEverflame { .. }
         )
     }
 }
@@ -707,7 +718,9 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
         | StandardOpV1::PutChosenCardsOntoBattlefield { .. }
         | StandardOpV1::MayDiscardUpToThenDraw { .. }
         | StandardOpV1::DiscardChosenThenDraw { .. }
-        | StandardOpV1::SearchArtifactWithManaValueOneMoreThanSacrificed => {
+        | StandardOpV1::SearchArtifactWithManaValueOneMoreThanSacrificed
+        | StandardOpV1::MayBecomeEverflame
+        | StandardOpV1::BecomeEverflame { .. } => {
             panic!("choice-bearing effects must use the resumable interpreter")
         }
     }
@@ -911,6 +924,9 @@ pub enum StandardTriggerV1 {
     /// "Whenever you cast an instant or sorcery spell", printed at a Class
     /// level, so it works only from that level on.
     YouCastInstantOrSorceryAtClassLevel { level: u8 },
+    /// "Whenever a legendary creature you control enters", on a permanent
+    /// that has not become Everflame.
+    ControlledLegendaryCreatureEntersUnlessEverflame,
 }
 
 const POLUKRANOS_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
@@ -1004,6 +1020,20 @@ pub(crate) fn trigger_matches(
             controller_end_step(events, index, source, state)
                 && !case_solved(state, source)
                 && case_condition_met(state, source)
+        }
+        StandardTriggerV1::ControlledLegendaryCreatureEntersUnlessEverflame => {
+            let Some(object) = crate::trigger::battlefield_entry_object(&events[index]) else {
+                return false;
+            };
+            let live = state.objects.get(source);
+            live.zone == Zone::Battlefield
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+                && !is_everflame(state, source)
+                && state.objects.get(object).controller == live.controller
+                && crate::engine::object_has_type(state, object, CardType::Creature)
+                && CARD_DEFS[state.objects.get(object).card_def as usize]
+                    .supertypes
+                    .contains(&crate::card_def::Supertype::Legendary)
         }
         StandardTriggerV1::AnotherControlledArtifactEntersManaValueAtLeast(minimum) => {
             let Some(object) = crate::trigger::battlefield_entry_object(&events[index]) else {
@@ -1192,6 +1222,10 @@ pub(crate) fn activation_allowed(
         return u8::try_from(ability_index)
             .is_ok_and(|door| door < 2 && !door_unlocked(state, source, door));
     }
+    if def.name == THE_IRENCRAG {
+        // Equip {3} exists only once it is Everflame.
+        return is_everflame(state, source);
+    }
     if def.name == CASE_OF_THE_UNEATEN_FEAST {
         // "Solved -- Sacrifice this Case: ..."
         return case_solved(state, source);
@@ -1215,6 +1249,10 @@ pub(crate) fn activation_allowed(
 
 /// Whether `object`'s mana abilities exist on the face it shows.
 pub(crate) fn mana_abilities_active(state: &GameState, object: ObjectId, def: &CardDef) -> bool {
+    if def.name == THE_IRENCRAG {
+        // Everflame loses all other abilities.
+        return !is_everflame(state, object);
+    }
     def.transform_face.is_none() || def.name != OJER || state.objects.get(object).v4.face_index == 1
 }
 
@@ -1236,6 +1274,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         INNKEEPERS_TALENT => &INNKEEPERS_TALENT_TRIGGERS,
         STORMCHASERS_TALENT => &STORMCHASERS_TALENT_TRIGGERS,
         FABLE_GOBLIN_SHAMAN_TOKEN => &FABLE_GOBLIN_SHAMAN_TRIGGERS,
+        THE_IRENCRAG => &THE_IRENCRAG_TRIGGERS,
         "Otter Prowess Token" => &PROWESS_TRIGGERS,
         SEAM_RIP | DUSK_ROSE_RELIQUARY | SHELTERED_BY_GHOSTS | HARDLIGHT_CONTAINMENT => {
             &EXILE_UNTIL_LEAVES_TRIGGERS
@@ -2302,6 +2341,66 @@ pub(crate) fn end_step_delayed_triggers(
             }
         })
         .collect()
+}
+
+// ---- The Irencrag // Everflame, Heroes' Legacy -----------------------------
+
+const THE_IRENCRAG: &str = "The Irencrag";
+const EVERFLAME: &str = "Everflame, Heroes' Legacy";
+
+fn irencrag_may_become_everflame() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::MayBecomeEverflame)
+}
+
+const THE_IRENCRAG_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
+    TriggerCondition::StandardV1(
+        StandardTriggerV1::ControlledLegendaryCreatureEntersUnlessEverflame,
+    ),
+    irencrag_may_become_everflame,
+)];
+
+/// Whether `object` is a battlefield incarnation that became Everflame.
+pub(crate) fn is_everflame(state: &GameState, object: ObjectId) -> bool {
+    let Some(standard) = state.standard_v1.as_ref() else {
+        return false;
+    };
+    state.objects.try_get(object).is_some_and(|live| {
+        live.zone == Zone::Battlefield
+            && standard
+                .everflames
+                .contains(&(object, live.zone_change_count))
+    })
+}
+
+/// The ability source as the exact battlefield incarnation that may become
+/// Everflame, if it still is that incarnation and has not already.
+pub(crate) fn everflame_candidate(state: &GameState, ctx: &ExecCtx) -> Option<EffectObjectBinding> {
+    if !source_incarnation_live(ctx, state) || is_everflame(state, ctx.source) {
+        return None;
+    }
+    Some(EffectObjectBinding {
+        object: ctx.source,
+        expected_zone: Zone::Battlefield,
+        expected_zone_change_count: state.objects.get(ctx.source).zone_change_count,
+    })
+}
+
+/// The Irencrag becomes Everflame, Heroes' Legacy for as long as this
+/// incarnation stays on the battlefield: a legendary Equipment artifact
+/// with equip {3} and "Equipped creature gets +3/+3" that loses its other
+/// abilities. Its name changes too (layer 3).
+pub(crate) fn become_everflame(state: &mut GameState, source: EffectObjectBinding) {
+    let live = state.objects.get(source.object);
+    if live.zone != Zone::Battlefield || live.zone_change_count != source.expected_zone_change_count
+    {
+        return;
+    }
+    let incarnation = (source.object, source.expected_zone_change_count);
+    let standard = state.standard_v1.get_or_insert_with(Default::default);
+    if !standard.everflames.contains(&incarnation) {
+        standard.everflames.push(incarnation);
+    }
+    state.objects.get_mut(source.object).name = EVERFLAME.to_string();
 }
 
 // ---- Repurposing Bay -------------------------------------------------------

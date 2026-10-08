@@ -159,6 +159,10 @@ const fn equip(cost: &'static [AbilityCostRecipe]) -> ActivatedAbilityRecipe {
 
 const BASILISK_COLLAR: [ActivatedAbilityRecipe; 1] = [equip(&[ManaCost("{2}")])];
 
+/// Everflame, Heroes' Legacy's equip {3}, active only once The Irencrag
+/// has become Everflame (`standard_cards_v1::activation_allowed`).
+const THE_IRENCRAG: [ActivatedAbilityRecipe; 1] = [equip(&[ManaCost("{3}")])];
+
 /// An instant-speed activated ability from the battlefield.
 const fn instant(
     cost: &'static [AbilityCostRecipe],
@@ -236,6 +240,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Lunar Convocation" => &LUNAR_CONVOCATION,
         "Case of the Uneaten Feast" => &CASE_OF_THE_UNEATEN_FEAST,
         "Basilisk Collar" => &BASILISK_COLLAR,
+        "The Irencrag" => &THE_IRENCRAG,
         "Unholy Annex // Ritual Chamber" => &UNHOLY_ANNEX,
         "Teferi, Temporal Pilgrim" => &TEFERI,
         "Liliana of the Veil" => &LILIANA_OF_THE_VEIL,
@@ -318,6 +323,7 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         }
         "Otter Prowess Token" => "prowess",
         "Fable Goblin Shaman Token" => "attacks:create_treasure_token:1",
+        "The Irencrag" => "controlled_legendary_creature_enters:may_become_everflame_equip_3_plus_3",
         "Case of the Uneaten Feast" => {
             "controlled_creature_enters:gain_1;controller_end_step_solve:gained_5_life;solved_activated:creature_cards_in_graveyard_castable_this_turn"
         }
@@ -416,6 +422,7 @@ pub(super) fn ward_cost_for(name: &str) -> &'static str {
 pub(super) fn equipment_for(name: &str) -> &'static str {
     match name {
         "Basilisk Collar" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords(Keywords::DEATHTOUCH.0 | Keywords::LIFELINK.0), other_turn_keywords: Keywords(Keywords::DEATHTOUCH.0 | Keywords::LIFELINK.0), noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
+        "The Irencrag" => "Some(EquipmentDef { power_delta: 3, toughness_delta: 3, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
         "Sheltered by Ghosts" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::LIFELINK, other_turn_keywords: Keywords::LIFELINK, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
         _ => "None",
     }

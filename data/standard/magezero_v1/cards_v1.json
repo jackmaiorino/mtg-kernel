@@ -1033,6 +1033,38 @@
         "paid_cost_mana_value"
       ],
       "java_file": "Mage.Sets/src/mage/cards/r/RepurposingBay.java"
+    },
+    {
+      "name": "The Irencrag",
+      "engine_capability": "full",
+      "mana_cost": "{2}",
+      "mana_value": 2,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [
+        "C"
+      ],
+      "decks": [
+        "Standard16-UW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "mana_ability",
+        "legendary_enters_trigger",
+        "becomes_equipment",
+        "equip"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TheIrencrag.java"
     }
   ]
 }

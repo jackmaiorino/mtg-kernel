@@ -11828,6 +11828,10 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
     if crate::standard_cards_v1::is_phyrexian(state, id) {
         subtype_ids.push(card_def::Subtype::Phyrexian.stable_id());
     }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if crate::standard_cards_v1::is_everflame(state, id) {
+        subtype_ids.push(card_def::Subtype::Equipment.stable_id());
+    }
     subtype_ids.sort_unstable();
     subtype_ids.dedup();
     subtype_ids
@@ -11838,8 +11842,10 @@ pub fn has_effective_subtype(state: &GameState, id: ObjectId, subtype: card_def:
         return false;
     };
     #[cfg(feature = "standard-magezero-fixtures")]
-    if subtype.same_subtype_as(card_def::Subtype::Phyrexian)
-        && crate::standard_cards_v1::is_phyrexian(state, id)
+    if (subtype.same_subtype_as(card_def::Subtype::Phyrexian)
+        && crate::standard_cards_v1::is_phyrexian(state, id))
+        || (subtype.same_subtype_as(card_def::Subtype::Equipment)
+            && crate::standard_cards_v1::is_everflame(state, id))
     {
         return true;
     }

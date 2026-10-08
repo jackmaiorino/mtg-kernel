@@ -38,6 +38,7 @@ SUPPORTED_NONBASIC = {
     "Spell Pierce",
     "Stormchaser's Talent",
     "Teferi, Temporal Pilgrim",
+    "The Irencrag",
     "Tolarian Terror",
     "Unholy Annex // Ritual Chamber",
     "Voldaren Epicure",

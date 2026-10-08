@@ -510,6 +510,11 @@ impl Scan<'_> {
                         expected_remaining_frames,
                         ..
                     } => self.bs(pile_a) || self.bs(pile_b) || self.fs(expected_remaining_frames),
+                    StandardMayBecomeEverflameV1 {
+                        source,
+                        expected_remaining_frames,
+                        ..
+                    } => self.b(source) || self.fs(expected_remaining_frames),
                 }
             }
         }
@@ -620,6 +625,11 @@ pub(super) fn conflicts(
                     remaining_frames,
                     ..
                 } => s.bs(cards) || s.fs(remaining_frames),
+                StandardEverflameChosenV1 {
+                    source,
+                    remaining_frames,
+                    ..
+                } => s.b(source) || s.fs(remaining_frames),
             };
             if guard_conflicts {
                 return true;

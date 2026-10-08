@@ -180,6 +180,18 @@ than the sacrificed artifact's, read from the payment's frozen
 prompt and shuffle; this origin puts the card onto the battlefield
 untapped.
 
+## The Irencrag
+
+The Irencrag taps for {C}. Whenever a legendary creature you control
+enters, its controller may have it become Everflame, Heroes' Legacy: a
+resumable yes-or-no choice whose answer is guarded by the exact
+incarnation. Everflame is recorded per incarnation in
+`GameState::standard_v1`; it renames the object (layer 3), adds the
+Equipment subtype to the effective subtype queries, turns off the mana
+ability and the trigger, and turns on the printed equip {3} with
+"Equipped creature gets +3/+3" as the card's equipment profile, which
+only an Everflame can be attached by.
+
 ## Known limits
 
 The stack and battlefield use the Room card's combined mana value and

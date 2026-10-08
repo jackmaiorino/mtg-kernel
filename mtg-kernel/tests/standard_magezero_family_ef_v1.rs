@@ -1968,3 +1968,87 @@ fn repurposing_bay_trades_an_artifact_for_one_with_one_more_mana_value() {
     assert_eq!(state.objects.get(spellbomb).zone, Zone::Library);
     assert!(state.objects.get(bay).tapped);
 }
+
+// ---- The Irencrag ------------------------------------------------------
+
+fn mana_sources(state: &mut GameState) -> Vec<ObjectId> {
+    match next(state) {
+        Decision::CastSpellOrPass { mana_abilities, .. } => mana_abilities,
+        other => panic!("unexpected decision: {other:?}"),
+    }
+}
+
+/// Resolves the stack, answering the Everflame choice with `accept`.
+fn resolve_everflame(state: &mut GameState, accept: bool) -> bool {
+    let mut asked = false;
+    loop {
+        match next(state) {
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => return asked,
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
+            Decision::ChooseEffectBoolean { player, .. } => {
+                assert_eq!(player, P0);
+                asked = true;
+                act(state, Action::ChooseEffectBoolean(accept));
+            }
+            Decision::OrderTriggers { pending, .. } => {
+                act(state, Action::OrderTriggers((0..pending.len()).collect()))
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn the_irencrag_becomes_everflame_when_a_legend_enters() {
+    let mut state = game();
+    let irencrag = put(&mut state, P0, "The Irencrag", Zone::Battlefield);
+    assert!(mana_sources(&mut state).contains(&irencrag));
+    assert!(
+        !activatable(&mut state).contains(&(irencrag, 0)),
+        "no equip yet"
+    );
+
+    // A nonlegendary creature does nothing.
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    assert!(!resolve_everflame(&mut state, true));
+
+    let cecil = put(&mut state, P0, "Cecil, Dark Knight", Zone::Battlefield);
+    assert!(resolve_everflame(&mut state, true));
+    assert_eq!(
+        state.objects.get(irencrag).name,
+        "Everflame, Heroes' Legacy"
+    );
+    assert!(engine::has_effective_subtype(
+        &state,
+        irencrag,
+        mtg_kernel::card_def::Subtype::Equipment
+    ));
+    assert!(
+        !mana_sources(&mut state).contains(&irencrag),
+        "loses its mana ability"
+    );
+
+    // Equip {3}: equipped creature gets +3/+3.
+    let power = engine::effective_power(&state, cecil);
+    state.players[0].mana_pool[ManaColor::W.pool_index()] = 3;
+    assert!(activatable(&mut state).contains(&(irencrag, 0)));
+    act(&mut state, Action::ActivateAbility(irencrag, 0));
+    drive(&mut state, &[Target::Object(cecil)]);
+    assert_eq!(engine::effective_power(&state, cecil), power + 3);
+    assert_eq!(engine::effective_power(&state, elves), 1);
+
+    // Everflame lost the trigger: another legend asks nothing.
+    put(&mut state, P0, "Cecil, Dark Knight", Zone::Battlefield);
+    assert!(!resolve_everflame(&mut state, true));
+}
+
+#[test]
+fn the_irencrag_may_stay_a_mana_rock() {
+    let mut state = game();
+    let irencrag = put(&mut state, P0, "The Irencrag", Zone::Battlefield);
+    put(&mut state, P0, "Cecil, Dark Knight", Zone::Battlefield);
+    assert!(resolve_everflame(&mut state, false));
+    assert_eq!(state.objects.get(irencrag).name, "The Irencrag");
+    assert!(mana_sources(&mut state).contains(&irencrag));
+    assert!(!activatable(&mut state).contains(&(irencrag, 0)));
+}

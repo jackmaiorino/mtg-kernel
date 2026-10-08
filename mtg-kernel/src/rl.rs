@@ -6751,6 +6751,9 @@ fn pending_effect_semantic_v4(
                         }
                         | crate::effect::EffectBooleanChoicePurpose::StandardSacrificePileV1 {
                             ..
+                        }
+                        | crate::effect::EffectBooleanChoicePurpose::StandardMayBecomeEverflameV1 {
+                            ..
                         } => BooleanChoicePurposeV4::OptionalEffect,
                     },
                 }),

@@ -1752,6 +1752,13 @@ pub enum EffectBooleanChoicePurpose {
         canonical_path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
     },
+    /// Whether The Irencrag becomes Everflame, Heroes' Legacy.
+    StandardMayBecomeEverflameV1 {
+        player: PlayerId,
+        source: EffectObjectBinding,
+        canonical_path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
 }
 
 /// Internal completion contract for an option choice. Public schema-v4
@@ -1948,6 +1955,12 @@ pub enum EffectAnsweredChoiceGuard {
     StandardDiscardChosenV1 {
         player: PlayerId,
         cards: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+        remaining_frames: Vec<EffectFrame>,
+    },
+    /// Accepted Everflame choice whose change has not run yet.
+    StandardEverflameChosenV1 {
+        source: EffectObjectBinding,
         canonical_path: Vec<u16>,
         remaining_frames: Vec<EffectFrame>,
     },
@@ -2841,6 +2854,42 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
                                 );
                             }
                         }
+                    }
+                }
+                EffectBooleanChoicePurpose::StandardMayBecomeEverflameV1 {
+                    player: choosing_player,
+                    source,
+                    canonical_path,
+                    expected_remaining_frames,
+                } => {
+                    if player != choosing_player || continuation.frames != expected_remaining_frames
+                    {
+                        continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                            player,
+                            path: canonical_path.clone(),
+                            default,
+                            purpose: EffectBooleanChoicePurpose::StandardMayBecomeEverflameV1 {
+                                player: choosing_player,
+                                source,
+                                canonical_path,
+                                expected_remaining_frames,
+                            },
+                        });
+                        return Err("Everflame choice player or continuation changed".to_string());
+                    }
+                    if value {
+                        continuation.answered_choice_guard =
+                            Some(EffectAnsweredChoiceGuard::StandardEverflameChosenV1 {
+                                source,
+                                canonical_path: canonical_path.clone(),
+                                remaining_frames: continuation.frames.clone(),
+                            });
+                        continuation.frames.push(EffectFrame::Program {
+                            op: EffectOp::StandardV1(
+                                crate::standard_cards_v1::StandardOpV1::BecomeEverflame { source },
+                            ),
+                            path: canonical_path,
+                        });
                     }
                 }
                 EffectBooleanChoicePurpose::StandardSacrificePileV1 {
@@ -5413,6 +5462,7 @@ fn validate_answered_choice_guard(
                             | EffectAnsweredChoiceGuard::StandardPileChosenV1 { .. }
                             | EffectAnsweredChoiceGuard::StandardBreachChosenV1 { .. }
                             | EffectAnsweredChoiceGuard::StandardDiscardChosenV1 { .. }
+                            | EffectAnsweredChoiceGuard::StandardEverflameChosenV1 { .. }
                     )
                 ) {
                     return Err(
@@ -5738,6 +5788,23 @@ fn validate_answered_choice_guard(
             }
             validate_standard_piles(state, pending, *player, pile_a, pile_b, canonical_path)?;
         }
+        Some(EffectAnsweredChoiceGuard::StandardEverflameChosenV1 {
+            source,
+            canonical_path,
+            remaining_frames,
+        }) => {
+            let mut expected = remaining_frames.clone();
+            expected.push(EffectFrame::Program {
+                op: EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::BecomeEverflame {
+                    source: *source,
+                }),
+                path: canonical_path.clone(),
+            });
+            if pending.choice.is_some() || pending.frames != expected {
+                return Err("answered Everflame continuation changed".to_string());
+            }
+            validate_standard_everflame(state, pending, *source, canonical_path)?;
+        }
         Some(EffectAnsweredChoiceGuard::StandardDiscardChosenV1 {
             player,
             cards,
@@ -5811,6 +5878,29 @@ fn validate_answered_choice_guard(
                 return Err("answered pile changed".to_string());
             }
         }
+    }
+    Ok(())
+}
+
+/// Authenticates an Everflame prompt or answer against the definition-owned
+/// operation at its structural path and the live source incarnation.
+fn validate_standard_everflame(
+    state: &GameState,
+    pending: &EffectContinuation,
+    source: EffectObjectBinding,
+    path: &[u16],
+) -> Result<(), String> {
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    if !matches!(
+        effect_op_at_structural_path(&root, path),
+        Some(EffectOp::StandardV1(
+            crate::standard_cards_v1::StandardOpV1::MayBecomeEverflame
+        ))
+    ) {
+        return Err("Everflame choice lost its originating operation".to_string());
+    }
+    if crate::standard_cards_v1::everflame_candidate(state, &pending.ctx) != Some(source) {
+        return Err("Everflame source changed".to_string());
     }
     Ok(())
 }
@@ -7229,6 +7319,21 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     return Err("reveal choice payload changed".to_string());
                 }
                 validate_resumable_program(then)?;
+            }
+            EffectBooleanChoicePurpose::StandardMayBecomeEverflameV1 {
+                player: choosing_player,
+                source,
+                canonical_path,
+                expected_remaining_frames,
+            } => {
+                if player != choosing_player
+                    || *choosing_player != pending.ctx.controller
+                    || path != canonical_path
+                    || pending.frames != *expected_remaining_frames
+                {
+                    return Err("Everflame choice metadata is inconsistent".to_string());
+                }
+                validate_standard_everflame(state, pending, *source, canonical_path)?;
             }
             EffectBooleanChoicePurpose::StandardSacrificePileV1 {
                 player: pile_player,
@@ -10037,6 +10142,45 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 );
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::MayBecomeEverflame) => {
+                let Some(source) =
+                    crate::standard_cards_v1::everflame_candidate(state, &continuation.ctx)
+                else {
+                    continue;
+                };
+                let player = continuation.ctx.controller;
+                continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                    player,
+                    path: path.clone(),
+                    default: None,
+                    purpose: EffectBooleanChoicePurpose::StandardMayBecomeEverflameV1 {
+                        player,
+                        source,
+                        canonical_path: path,
+                        expected_remaining_frames: continuation.frames.clone(),
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::BecomeEverflame { source }) => {
+                let Some(EffectAnsweredChoiceGuard::StandardEverflameChosenV1 {
+                    source: expected_source,
+                    canonical_path,
+                    remaining_frames,
+                }) = continuation.answered_choice_guard.as_ref()
+                else {
+                    return Err("Everflame change lost its answered choice".to_string());
+                };
+                if source != *expected_source
+                    || path != *canonical_path
+                    || continuation.frames != *remaining_frames
+                {
+                    return Err("Everflame choice changed".to_string());
+                }
+                continuation.answered_choice_guard = None;
+                crate::standard_cards_v1::become_everflame(state, source);
             }
             EffectOp::SearchLibraryToBattlefieldTapped { player, filter } => {
                 let player = continuation.ctx.resolve_player(player, state);
