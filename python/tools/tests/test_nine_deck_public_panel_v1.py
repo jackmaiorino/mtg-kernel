@@ -47,14 +47,18 @@ class PublicPanelTests(unittest.TestCase):
             request = json.loads(Path(item["request"]["path"]).read_text())
             out = Path(request["output_directory"]); out.mkdir(parents=True)
             for index, case in enumerate(item["cases"]):
-                game = {"start": {"starting_player": case["starting_player"]}, "winner": index % 2}
+                # Every fifth match's game 1 is a natural draw (no winner); match files hold only natural games.
+                game = {"start": {"starting_player": case["starting_player"]}, "winner": None if index % 5 == 4 else index % 2}
                 (out / f"match-{index:06d}.json").write_text(json.dumps(
                     {"match": {"config": {"seed": case["seed"]}}, "games": [game, {"winner": 0}]}))
         result = panel.rows(self.root / "p2" / "plan.json")
         self.assertEqual(len(result), 216)
         for row in result:
             self.assertTrue(row["complete"])
-            self.assertIn(row["score"], (0.0, 1.0))
+            self.assertEqual(row["checkpoint_sha256"], "c" * 64)
+            self.assertIn(row["score"], (0.0, 0.5, 1.0))
+        draws = [row for row in result if row["score"] == 0.5]
+        self.assertEqual(len(draws), sum(len(item["cases"][4::5]) for item in plan["requests"]))
         first = next(row for row in result if row["seat"] == 1)
         self.assertEqual(first["score"], 0.0)  # winner 0 is the opponent when the candidate sits in seat 1
 
@@ -108,7 +112,8 @@ for index, match in enumerate(request["matches"]):
         self.assertEqual([row["seed"] for row in result], [case["seed"] for case in item["cases"]])
         incomplete = [index for index, row in enumerate(result) if not row["complete"]]
         self.assertEqual(incomplete, [3, 4, len(item["cases"]) - 1])
-        self.assertTrue(all(result[i]["score"] is None and "InvalidReference" in result[i]["technical"] for i in incomplete))
+        self.assertTrue(all(result[i]["score"] is None and "InvalidReference" in result[i]["technical"]
+                            and result[i]["technical_game"] == 1 for i in incomplete))
 
     def test_run_refuses_receipt_for_other_schedule(self):
         checkpoint = self.root / "c.json"

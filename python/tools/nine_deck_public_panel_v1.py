@@ -28,6 +28,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
@@ -275,7 +276,9 @@ def run(plan_path: Path, receipt_path: Path, executable: str) -> dict:
 
 
 def rows(plan_path: Path) -> list[dict]:
-    """One row per case from game 1: candidate win 1, loss 0 (draws or no game-1 winner are incomplete)."""
+    """One row per case from game 1: candidate win 1, draw 0.5, loss 0. A match file is written only when
+    every game ended naturally, so a game 1 without a winner is a natural draw. A failed match is a
+    technical termination: incomplete, with its error and the BO3 game it failed in."""
     plan = json.loads(Path(plan_path).read_text(encoding="utf-8"))
     out = []
     for item in plan["requests"]:
@@ -297,13 +300,17 @@ def rows(plan_path: Path) -> list[dict]:
         if sorted(list(files) + list(errors)) != list(range(len(item["cases"]))):
             raise ValueError(f"{request_path}: matches and technical terminations do not cover every case")
         for index, case in enumerate(item["cases"]):
-            row = {"panel": plan["panel"], "own": case["own"], "other": case["other"], "repeat": case["repeat"],
+            row = {"panel": plan["panel"], "checkpoint_sha256": plan["candidate"]["checkpoint"]["sha256"],
+                   "own": case["own"], "other": case["other"], "repeat": case["repeat"],
                    "seat": case["seat"], "seed": case["seed"]}
             if index in errors:
-                if errors[index]["seed"] != case["seed"]:
+                error = errors[index]["error"]
+                failed_game = re.search(rf"match seed {case['seed']}, game (\d+)", error)
+                if errors[index]["seed"] != case["seed"] or not failed_game:
                     raise ValueError("technical termination does not match the plan")
                 out.append({**row, "starting_player": case["starting_player"], "score": None, "complete": False,
-                            "technical": errors[index]["error"].split(": ", 1)[-1][:160], "match_sha256": None})
+                            "technical": error.split(": ", 1)[-1][:160], "technical_game": int(failed_game[1]),
+                            "match_sha256": None})
                 continue
             path = files[index]
             match = json.loads(path.read_text(encoding="utf-8"))
@@ -312,8 +319,8 @@ def rows(plan_path: Path) -> list[dict]:
             game = match["games"][0]
             winner = game.get("winner")
             out.append({**row, "starting_player": game["start"]["starting_player"],
-                        "score": None if winner is None else float(winner == case["seat"]),
-                        "complete": winner is not None, "match_sha256": sha256_bytes(path.read_bytes())})
+                        "score": 0.5 if winner is None else float(winner == case["seat"]),
+                        "complete": True, "match_sha256": sha256_bytes(path.read_bytes())})
     return out
 
 
