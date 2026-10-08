@@ -124,6 +124,13 @@ pub enum TriggerCondition {
     /// player (Goldvein Pick). The committed marker's source incarnation
     /// must be the Equipment's exact current host.
     EquippedCreatureDealsCombatDamageToPlayer,
+    /// Valiant: this permanent becomes the target of a spell
+    /// or ability its controller controls for the first time each turn.
+    /// Matched against `CommittedEvent::Targeted`, which every cast,
+    /// activation, trigger placement and copy retarget logs once per
+    /// targeted battlefield incarnation. "First time each turn" uses the
+    /// same per-turn use ledger as Exemplar of Light's capped trigger.
+    BecomesTargetOfControllerSpellOrAbilityFirstTimeEachTurn,
 }
 
 pub struct TriggeredAbilityDef {
@@ -879,6 +886,30 @@ const SAGU_WILDLING_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     intervening_if_controls_another_source_card: false,
     effect: gain_three_life_effect,
 }];
+/// Prowess: whenever you cast a noncreature spell, this creature gets +1/+1
+/// until end of turn.
+const PROWESS_TRIGGER: TriggeredAbilityDef = TriggeredAbilityDef {
+    condition: TriggerCondition::CastNoncreatureSpell,
+    ..etb_trigger(prowess_effect)
+};
+
+fn prowess_effect() -> EffectOp {
+    EffectOp::BindTemporaryBoostToTriggerSource {
+        power: 1,
+        toughness: 1,
+    }
+}
+
+/// Haste, prowess, and Valiant: exile the top card of your library; until
+/// end of turn, you may play it.
+const EMBERHEART_CHALLENGER_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    PROWESS_TRIGGER,
+    TriggeredAbilityDef {
+        condition: TriggerCondition::BecomesTargetOfControllerSpellOrAbilityFirstTimeEachTurn,
+        ..etb_trigger(experimental_synthesizer_impulse_effect)
+    },
+];
+
 const KESSIG_FLAMEBREATHER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::CastNoncreatureSpell,
     home_zone: Zone::Battlefield,
@@ -1744,6 +1775,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Avenging Hunter" => &AVENGING_HUNTER_TRIGGERS,
         "Azure Fleet Admiral" => &AZURE_FLEET_ADMIRAL_TRIGGERS,
         "Delver of Secrets" => &DELVER_OF_SECRETS_TRIGGERS,
+        "Emberheart Challenger" => &EMBERHEART_CHALLENGER_TRIGGERS,
         _ => &[],
     }
 }
@@ -2065,6 +2097,8 @@ fn sba_fixed_point_with_protected_triggers(
         if crate::legend_rule_v1::stage(state, protected_triggers) {
             return;
         }
+        #[cfg(feature = "standard-magezero-fixtures")]
+        crate::standard_keywords_v1::start_your_engines(state);
         let mut changed = false;
 
         // 704.5g: a creature with toughness 0 or less is put into its
@@ -2242,6 +2276,8 @@ pub(crate) fn collect_and_process_with_waiting(
     // carry over into a later, unrelated `collect_and_process` call (see
     // `EngineState::pending_kicked_source`'s doc).
     let kicked_source = state.engine.pending_kicked_source.take();
+    #[cfg(feature = "standard-magezero-fixtures")]
+    crate::standard_keywords_v1::note_life_loss(state, &events);
 
     // Trigger conditions are evaluated at the moment their event happens,
     // before the following SBA check (603.2/704.3). In particular, an ETB
@@ -2261,6 +2297,8 @@ pub(crate) fn collect_and_process_with_waiting(
         return Vec::new();
     }
     let sba_events: Vec<CommittedEvent> = state.engine.event_log.drain(..).collect();
+    #[cfg(feature = "standard-magezero-fixtures")]
+    crate::standard_keywords_v1::note_life_loss(state, &sba_events);
     new_triggers.extend(triggers_from_events(state, &sba_events, None));
 
     // 603.3d: a triggered ability requiring targets is removed from the
@@ -2481,10 +2519,7 @@ fn triggers_from_events(
                         };
                     let target_spec =
                         target_spec_for_trigger(obj.card_def, &effect).unwrap_or(TargetSpec::None);
-                    if let TriggerCondition::ControllerAddedPlusOneCountersToSelf {
-                        max_per_turn: Some(maximum),
-                    } = def.condition
-                    {
+                    if let Some(maximum) = per_turn_trigger_cap(def.condition) {
                         let ability_index =
                             u16::try_from(ability_index).expect("bounded definition abilities");
                         let source = crate::state::ObjectLinkV4 {
@@ -2803,6 +2838,16 @@ fn draws_this_turn_snapshot(events: &[CommittedEvent], state: &GameState) -> Vec
 /// (see `draws_this_turn_snapshot`'s doc for why this can't just read
 /// `state` live) -- unused, and irrelevant, for every other event/condition
 /// pairing.
+/// How many times per turn a triggered ability may trigger, tracked in
+/// `GameState::trigger_uses_v1`. `None` means unlimited.
+fn per_turn_trigger_cap(condition: TriggerCondition) -> Option<u16> {
+    match condition {
+        TriggerCondition::ControllerAddedPlusOneCountersToSelf { max_per_turn } => max_per_turn,
+        TriggerCondition::BecomesTargetOfControllerSpellOrAbilityFirstTimeEachTurn => Some(1),
+        _ => None,
+    }
+}
+
 fn trigger_matches(
     cond: TriggerCondition,
     ev: &CommittedEvent,
@@ -3052,6 +3097,19 @@ fn trigger_matches(
             TriggerCondition::BeginningOfUpkeep { controller_only },
             CommittedEvent::UpkeepBegan { player },
         ) => !controller_only || *player == controller,
+        (
+            TriggerCondition::BecomesTargetOfControllerSpellOrAbilityFirstTimeEachTurn,
+            CommittedEvent::Targeted {
+                target,
+                target_zone_change_count,
+                targeting_controller,
+                ..
+            },
+        ) => {
+            *target == source
+                && *target_zone_change_count == state.objects.get(source).zone_change_count
+                && *targeting_controller == controller
+        }
         _ => false,
     }
 }

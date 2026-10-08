@@ -65,6 +65,73 @@
         "burn"
       ],
       "java_file": "Mage.Sets/src/mage/cards/b/BurstLightning.java"
+    },
+    {
+      "name": "Emberheart Challenger",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Mouse",
+        "Warrior"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoR.dck",
+        "Standard16-RG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "haste",
+        "prowess",
+        "valiant",
+        "impulse_draw"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EmberheartChallenger.java"
+    },
+    {
+      "name": "Burnout Bashtronaut",
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Goblin",
+        "Warrior"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "menace",
+        "start_your_engines",
+        "max_speed",
+        "activated_pump"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BurnoutBashtronaut.java"
     }
   ]
 }

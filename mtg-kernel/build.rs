@@ -3014,6 +3014,12 @@ enum AbilityEffectRecipe {
     /// numeric definition id at runtime via a generated `card_id_by_name`
     /// call.
     EachPlayerControllingNamedPermanentDrawsCard(&'static str),
+    /// This permanent gets +power/+toughness until end of turn (Burnout
+    /// Bashtronaut's `{2}: +1/+0`).
+    PumpSourceUntilEndOfTurn {
+        power: i32,
+        toughness: i32,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3525,6 +3531,7 @@ fn keywords_for(card: &CardJson) -> String {
         keywords.push("Keywords::REACH");
         keywords.push("Keywords::DEATHTOUCH");
     }
+    keywords.extend_from_slice(standard_keywords_for(&card.name));
     if keywords.is_empty() {
         "Keywords::NONE".to_string()
     } else if keywords.len() == 1 {
@@ -3538,6 +3545,16 @@ fn keywords_for(card: &CardJson) -> String {
                 .collect::<Vec<_>>()
                 .join(" | ")
         )
+    }
+}
+
+/// Printed evergreen keywords of MageZero Standard cards, in printed order.
+/// Names are disjoint from the Pauper and FDN tables above.
+fn standard_keywords_for(name: &str) -> &'static [&'static str] {
+    match name {
+        "Emberheart Challenger" => &["Keywords::HASTE"],
+        "Burnout Bashtronaut" => &["Keywords::MENACE"],
+        _ => &[],
     }
 }
 
@@ -3904,6 +3921,21 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
                 generic: 3,
             }],
             effect: AbilityEffectRecipe::DrawCards(1),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Burnout Bashtronaut" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: None,
+                generic: 2,
+            }],
+            effect: AbilityEffectRecipe::PumpSourceUntilEndOfTurn {
+                power: 1,
+                toughness: 0,
+            },
             activation_zone: "Battlefield",
             sorcery_speed_only: false,
             target_spec: "None",
@@ -4721,6 +4753,9 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::AddMinusOneMinusOneCounter => {
             "add_minus_one_minus_one_counter".to_string()
         }
+        AbilityEffectRecipe::PumpSourceUntilEndOfTurn { power, toughness } => {
+            format!("pump_source_until_end_of_turn:{power}:{toughness}")
+        }
         AbilityEffectRecipe::AddPlusOnePlusOneCounters(count) => format!("add_plus_one_plus_one_counters:{count}"),
         AbilityEffectRecipe::SearchLibraryToBattlefieldTapped { filter } => format!(
             "search_library_to_battlefield_tapped:{}",
@@ -4875,6 +4910,11 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::AddMinusOneMinusOneCounter => {
             "ability_effect_add_minus_one_minus_one_counter".to_string()
         }
+        AbilityEffectRecipe::PumpSourceUntilEndOfTurn { power, toughness } => format!(
+            "ability_effect_pump_source_until_end_of_turn_{}_{}",
+            power.to_string().replace('-', "minus_"),
+            toughness.to_string().replace('-', "minus_")
+        ),
         AbilityEffectRecipe::AddPlusOnePlusOneCounters(count) => {
             format!("ability_effect_add_plus_one_plus_one_counters_{count}")
         }
@@ -5294,6 +5334,10 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Delver of Secrets" => {
             "upkeep_controller:look_top_may_reveal_instant_or_sorcery:transform_source_in_place"
         }
+        "Emberheart Challenger" => {
+            "prowess;valiant_first_target_each_turn:impulse_top_one_end_of_turn"
+        }
+        "Burnout Bashtronaut" => "start_your_engines;max_speed:double_strike",
         _ => "none",
     }
 }
@@ -5886,6 +5930,9 @@ fn codegen(cards: &[CardJson]) -> String {
                     "    EffectOp::DestroyObject {{ object: ObjectRef::Target(0) }}"
                 )
                 .unwrap();
+            }
+            AbilityEffectRecipe::PumpSourceUntilEndOfTurn { power, toughness } => {
+                writeln!(out, "    EffectOp::PumpTargetUntilEndOfTurnDynamic {{ target: TargetRef::ThisSource, power: DynamicValueDef::Fixed({power}), toughness: DynamicValueDef::Fixed({toughness}) }}").unwrap();
             }
             AbilityEffectRecipe::AddPlusOnePlusOneCounters(count) => {
                 writeln!(out, "    EffectOp::AddCountersToTarget {{ target_index: 0, optional: false, plus1_plus1: {count}, lifelink: 0, stun: 0 }}").unwrap();
@@ -8350,6 +8397,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Archer" => "Subtype::Archer",
         "Lizard" => "Subtype::Lizard",
         "Golem" => "Subtype::Golem",
+        "Mouse" => "Subtype::Mouse",
         "Pirate" => "Subtype::Pirate",
         "Plains" => "Subtype::Plains",
         "ROGUE" => "Subtype::RogueAllCaps",

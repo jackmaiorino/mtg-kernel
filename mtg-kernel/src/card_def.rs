@@ -262,6 +262,8 @@ pub enum Subtype {
     Lizard,
     /// Appended for the FDN equipment and library-search batch.
     Golem,
+    /// Appended for MageZero Standard family D (new set keywords).
+    Mouse,
 }
 
 impl Subtype {
@@ -363,6 +365,8 @@ impl Subtype {
         Subtype::Lizard,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Golem,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Mouse,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -493,6 +497,7 @@ impl Subtype {
                 | Subtype::Archer
                 | Subtype::Lizard
                 | Subtype::Golem
+                | Subtype::Mouse
         )
     }
 }

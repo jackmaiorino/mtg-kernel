@@ -11238,6 +11238,10 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     if printed_active && def.keywords_for_face(obj.v4.face_index).has(kw) {
         return true;
     }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if printed_active && crate::standard_keywords_v1::max_speed_keywords(state, id).has(kw) {
+        return true;
+    }
     if obj.zone == Zone::Battlefield
         && obj.counters.plus1_plus1 > 0
         && object_has_type(state, id, CardType::Creature)

@@ -1306,6 +1306,21 @@ pub struct CreatureDeathTurnV1 {
     pub active_player: PlayerId,
 }
 
+/// Each player's speed (Aetherdrift's Start your engines!), indexed by seat.
+/// Zero means the player has no speed. `last_increase` stamps the turn in
+/// which the active player's once-per-turn speed increase last happened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpeedV1 {
+    pub speeds: [u8; 2],
+    pub last_increase: Option<CreatureDeathTurnV1>,
+}
+
+impl SpeedV1 {
+    /// 702.179 (Max speed): a player's speed can't exceed four.
+    pub const MAX: u8 = 4;
+}
+
 /// `Hash` is manual (see the `impl Hash for GameState` block below this
 /// struct): it must reproduce the exact pre-existing field-hash sequence for
 /// a legacy P0-first state, the same discipline `starting_player`'s serde
@@ -1381,6 +1396,10 @@ pub struct GameState {
     /// Opt-in pregame state. Absent in every historical reset mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub london_mulligans_v1: Option<crate::london_mulligan_v1::LondonMulligansV1>,
+    /// Absent until some player first gets speed, so every earlier state
+    /// keeps its bytes and hashes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed_v1: Option<SpeedV1>,
 }
 
 /// Reproduces exactly the field-hash sequence `#[derive(Hash)]` produced
@@ -1432,6 +1451,10 @@ impl Hash for GameState {
         if let Some(pregame) = &self.london_mulligans_v1 {
             "london-mulligans-v1".hash(state);
             pregame.hash(state);
+        }
+        if let Some(speed) = &self.speed_v1 {
+            "speed-v1".hash(state);
+            speed.hash(state);
         }
     }
 }
@@ -1577,6 +1600,7 @@ impl GameState {
             trigger_uses_v1: None,
             creature_death_turn_v1: None,
             london_mulligans_v1: None,
+            speed_v1: None,
         }
     }
 
