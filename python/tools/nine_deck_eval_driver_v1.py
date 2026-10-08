@@ -34,6 +34,8 @@ TOOLS = Path(__file__).resolve().parent
 DISPATCH = TOOLS / "native_expanded_dispatch_v1.py"
 PANEL_DECKS = {"p1": tuple(range(ndb.DECKS)), "p3": (4, 7)}
 SAMPLE_PERCENT = 2
+BUSY_RETRIES = 60
+BUSY_RETRY_SECONDS = 60
 
 
 def sha256_file(path: Path) -> str:
@@ -100,8 +102,13 @@ def run_job(plan: dict, job: dict, state: dict) -> None:
                "choice_verification": plan["choice_verification"][job["panel"]]}
     request_pin = write_json(root / "request.json", request)
     extra = ["--compute-host-name", plan["compute_host_name"]] if plan.get("compute_host_name") else []
-    done = subprocess.run([sys.executable, "-B", str(DISPATCH), "dispatch", request_pin["path"]] + extra,
-                          capture_output=True, text=True, cwd=str(TOOLS.parents[1]))
+    for _ in range(BUSY_RETRIES):
+        done = subprocess.run([sys.executable, "-B", str(DISPATCH), "dispatch", request_pin["path"]] + extra,
+                              capture_output=True, text=True, cwd=str(TOOLS.parents[1]))
+        # A busy refusal spawns nothing (a sibling job starting, or a build): wait and retry.
+        if done.returncode == 0 or "busy refusal" not in done.stderr:
+            break
+        time.sleep(BUSY_RETRY_SECONDS)
     if done.returncode != 0:
         raise RuntimeError(f"dispatch refused for {job['id']}: {done.stderr[-1500:]}")
     while not (dispatch_root / "report.json").exists():
