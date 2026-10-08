@@ -4497,6 +4497,18 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
+        "Cori-Steel Cutter" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: Some("R"),
+                generic: 1,
+            }],
+            effect: AbilityEffectRecipe::AttachSourceToTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: true,
+            target_spec: "ControlledCreature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Quick-Draw Katana" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Mana {
                 colored: None,
@@ -5293,6 +5305,7 @@ fn equipment_for(name: &str) -> &'static str {
         "Goldvein Pick" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
         "Quick-Draw Katana" => "Some(EquipmentDef { power_delta: 2, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::FIRST_STRIKE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: true })",
         "Swiftfoot Boots" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords(Keywords::HEXPROOF.0 | Keywords::HASTE.0), other_turn_keywords: Keywords(Keywords::HEXPROOF.0 | Keywords::HASTE.0), noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
+        "Cori-Steel Cutter" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords(Keywords::TRAMPLE.0 | Keywords::HASTE.0), other_turn_keywords: Keywords(Keywords::TRAMPLE.0 | Keywords::HASTE.0), noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
         "Viridian Longbow" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: Some(GrantedActivatedAbilityDef { cost: &[CostComponent::Tap], target_spec: TargetSpec::AnyTarget, effect: longbow_ping }) })",
         _ => "None",
     }
@@ -5439,6 +5452,8 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Ruin-Lurker Bat" => "controller_end_step_if_descended:scry:1",
         "Pawpatch Recruit" | "Pawpatch Recruit Offspring Token" => "etb_if_offspring_paid:create_one_one_token_copy;controlled_creature_targeted_by_opponent:target_another_controlled_creature:plus_one_counter",
         "Manifold Mouse" | "Manifold Mouse Offspring Token" => "etb_if_offspring_paid:create_one_one_token_copy;controller_beginning_of_combat:target_controlled_mouse:choose_double_strike_or_trample",
+        "Cori-Steel Cutter" => "flurry:create_monk_prowess_token:may_attach_source",
+        "Monk Token" => "prowess",
         "Yotian Frontliner" => "attacks:target_another_controlled_creature:pump:1:1;unearth_next_end_step:exile",
         "Knight-Errant of Eos" => "convoke;etb:look_top:6:take_creatures_mana_value_at_most_convoked:2:shuffle",
         "Brutal Cathar" => "etb_or_transforms_into_front:target_opponent_creature:exile_until_source_leaves;daybound;back_face_nightbound_first_strike_ward_pay_life:3",

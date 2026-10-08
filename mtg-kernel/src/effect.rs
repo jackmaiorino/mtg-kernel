@@ -396,8 +396,9 @@ pub enum EffectOp {
         lifelink: i16,
         stun: i16,
     },
-    /// Job Select creates the token even if the Equipment later left, then
-    /// attaches only when the original source incarnation remains live.
+    /// Job Select (and Cori-Steel Cutter's flurry) creates the token even if
+    /// the Equipment later left, then attaches only when the original source
+    /// incarnation remains live.
     CreateTokenAndAttachSource {
         token_def: u16,
     },
@@ -11936,7 +11937,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     && live.zone_change_count == source.zone_change_count
                     && crate::card_def::CARD_DEFS[live.card_def as usize]
                         .equipment
-                        .is_some_and(|equipment| equipment.job_select)
+                        .is_some()
             });
             if !source_is_live {
                 return;

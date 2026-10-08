@@ -927,6 +927,67 @@
         "unearth"
       ],
       "java_file": "Mage.Sets/src/mage/cards/y/YotianFrontliner.java"
+    },
+    {
+      "name": "Cori-Steel Cutter",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Equipment"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RG.dck",
+        "Standard16-UR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "equipment",
+        "equip",
+        "flurry",
+        "token_maker"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CoriSteelCutter.java"
+    },
+    {
+      "name": "Monk Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Monk"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "prowess"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/MonasteryMentorToken.java",
+      "is_token": true
     }
   ]
 }

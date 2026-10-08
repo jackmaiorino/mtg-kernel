@@ -152,6 +152,8 @@ fn family_d_cards_are_fully_supported() {
         "Manifold Mouse",
         "Manifold Mouse Offspring Token",
         "Yotian Frontliner",
+        "Cori-Steel Cutter",
+        "Monk Token",
     ] {
         let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} missing"));
         assert_eq!(
@@ -1494,4 +1496,92 @@ fn unearth_is_sorcery_speed() {
     assert!(
         !matches!(next(&mut state), Decision::CastSpellOrPass { activatable_abilities, .. } if activatable_abilities.contains(&(frontliner, 0)))
     );
+}
+
+#[test]
+fn cori_steel_cutter_flurry_makes_a_monk_and_may_attach_to_it() {
+    for attach in [true, false] {
+        let mut state = ready();
+        let cutter = put(
+            &mut state,
+            PlayerId::P0,
+            "Cori-Steel Cutter",
+            Zone::Battlefield,
+        );
+        burn(&mut state, PlayerId::P0, Target::Player(PlayerId::P1));
+        assert_eq!(tokens_named(&state, PlayerId::P0, "Monk Token"), 0);
+        let burst = put(&mut state, PlayerId::P0, "Burst Lightning", Zone::Hand);
+        add_mana(&mut state, PlayerId::P0, &[ManaColor::R], 0);
+        cast(&mut state, burst, &[Target::Player(PlayerId::P1)]);
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectOption { .. }) => engine::step(
+                &mut state,
+                Action::ChooseEffectOption(if attach { 0 } else { 1 }),
+            )
+            .unwrap(),
+            other => panic!("expected the attach choice, got {other:?}"),
+        }
+        settled(&mut state);
+        let monk = *state.players[0]
+            .battlefield
+            .iter()
+            .find(|&&id| state.objects.get(id).name == "Monk Token")
+            .expect("a Monk");
+        let attached = state
+            .objects
+            .get(cutter)
+            .v4
+            .attached_to
+            .map(|link| link.object);
+        if attach {
+            assert_eq!(attached, Some(monk));
+            assert_eq!(power_toughness(&state, monk), (2, 2));
+            assert!(engine::has_effective_keyword(
+                &state,
+                monk,
+                Keywords::TRAMPLE
+            ));
+            assert!(engine::has_effective_keyword(&state, monk, Keywords::HASTE));
+        } else {
+            assert_eq!(attached, None);
+            assert_eq!(power_toughness(&state, monk), (1, 1));
+        }
+
+        // A third spell is not the second: no new Monk, but the Monk's
+        // prowess triggers.
+        burn(&mut state, PlayerId::P0, Target::Player(PlayerId::P1));
+        assert_eq!(tokens_named(&state, PlayerId::P0, "Monk Token"), 1);
+        let base = if attach { 2 } else { 1 };
+        assert_eq!(power_toughness(&state, monk), (base + 1, base + 1));
+    }
+}
+
+#[test]
+fn cori_steel_cutter_equips_for_one_and_red() {
+    let mut state = ready();
+    let cutter = put(
+        &mut state,
+        PlayerId::P0,
+        "Cori-Steel Cutter",
+        Zone::Battlefield,
+    );
+    let mouse = put(
+        &mut state,
+        PlayerId::P0,
+        "Manifold Mouse",
+        Zone::Battlefield,
+    );
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::R], 1);
+    assert!(
+        matches!(next(&mut state), Decision::CastSpellOrPass { activatable_abilities, .. } if activatable_abilities.contains(&(cutter, 0)))
+    );
+    engine::step(&mut state, Action::ActivateAbility(cutter, 0)).unwrap();
+    match next(&mut state) {
+        Decision::ChooseTargets { .. } => {
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(mouse))).unwrap()
+        }
+        other => panic!("expected a target, got {other:?}"),
+    }
+    settled(&mut state);
+    assert_eq!(power_toughness(&state, mouse), (2, 3));
 }

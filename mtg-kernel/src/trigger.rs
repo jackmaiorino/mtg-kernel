@@ -164,6 +164,10 @@ pub enum TriggerCondition {
     /// Unearth's "exile it at the beginning of the next end step"
     /// (`ObjectStateV4::unearthed_v1`).
     BeginningEndStepAfterUnearth,
+    /// Flurry: "Whenever you cast your second spell each turn"
+    /// (`CommittedEvent::SpellCast`, read against the caster's
+    /// `spells_cast_this_turn` immediately after the cast).
+    ControllerCastsSecondSpellEachTurn,
 }
 
 pub struct TriggeredAbilityDef {
@@ -1259,6 +1263,31 @@ const YOTIAN_FRONTLINER_TRIGGERS: [TriggeredAbilityDef; 2] = [
     },
 ];
 
+fn cori_steel_cutter_flurry_effect() -> EffectOp {
+    let monk = crate::card_def::card_id_by_name("Monk Token").expect("Monk Token in CARD_DEFS");
+    // "You may attach this Equipment to it": the choice is made as the
+    // ability resolves, before the token exists, which no information
+    // separates from choosing just after.
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: vec![
+            EffectOp::CreateTokenAndAttachSource { token_def: monk },
+            EffectOp::CreateToken {
+                token_def: monk,
+                controller: PlayerRef::Controller,
+            },
+        ],
+    }
+}
+
+/// Equipped creature gets +1/+1 and has trample and haste. Flurry: whenever
+/// you cast your second spell each turn, create a 1/1 white Monk with
+/// prowess; you may attach this Equipment to it. Equip {1}{R}.
+const CORI_STEEL_CUTTER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControllerCastsSecondSpellEachTurn,
+    ..etb_trigger(cori_steel_cutter_flurry_effect)
+}];
+
 fn chrome_host_seedshark_effect() -> EffectOp {
     EffectOp::BindIncubateToTriggerSpell
 }
@@ -2264,6 +2293,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Pawpatch Recruit" | "Pawpatch Recruit Offspring Token" => &PAWPATCH_RECRUIT_TRIGGERS,
         "Manifold Mouse" | "Manifold Mouse Offspring Token" => &MANIFOLD_MOUSE_TRIGGERS,
         "Yotian Frontliner" => &YOTIAN_FRONTLINER_TRIGGERS,
+        "Cori-Steel Cutter" => &CORI_STEEL_CUTTER_TRIGGERS,
+        "Monk Token" => &MONASTERY_SWIFTSPEAR_TRIGGERS,
         _ => &[],
     }
 }
@@ -3711,6 +3742,12 @@ fn trigger_matches(
                     crate::card_def::CardType::Creature,
                 )
         }
+        (
+            TriggerCondition::ControllerCastsSecondSpellEachTurn,
+            CommittedEvent::SpellCast {
+                controller: caster, ..
+            },
+        ) => *caster == controller && state.players[caster.index()].spells_cast_this_turn == 2,
         (
             TriggerCondition::BeginningOfControllerCombat,
             CommittedEvent::BeginningOfCombat { active_player },
