@@ -249,6 +249,10 @@ jobs:
               target_dir="$(cygpath -w "$(cygpath -u "$MTG_CI_TARGET_ROOT")/${{ matrix.group }}")"
             fi
             printf 'CARGO_TARGET_DIR=%s\n' "$target_dir" >> "$GITHUB_ENV"
+            # With a persistent target directory, incremental compilation
+            # rebuilds only the changed parts of the mtg-kernel crate. It
+            # does not change program semantics.
+            echo 'CARGO_PROFILE_RELEASE_INCREMENTAL=true' >> "$GITHUB_ENV"
           fi
 
       - name: Cache cargo registry
