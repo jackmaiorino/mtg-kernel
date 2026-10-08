@@ -878,6 +878,11 @@ pub enum CostComponent {
     /// controls or one creature card in their hand. A hand choice is
     /// publicly revealed and the exact incarnation is frozen on the spell.
     ChooseControlledCreatureOrRevealCreatureCardFromHand,
+    /// Remove `n` +1/+1 counters from among creatures the payer controls
+    /// (MageZero Standard, Hopeful Initiate). Paid without a choice: each
+    /// counter comes off the controlled creature with the most +1/+1
+    /// counters, earliest on the battlefield first on ties.
+    RemovePlusOneCountersFromControlledCreatures(u8),
 }
 
 /// Optional additional costs chosen while announcing a spell. The selected

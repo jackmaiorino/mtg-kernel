@@ -2966,6 +2966,7 @@ enum AbilityCostRecipe {
     /// grammar as spell costs. Twisted Landscape's Cycling is the first
     /// multicolor consumer.
     ManaCost(&'static str),
+    RemovePlusOneCountersFromControlledCreatures(u8),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3941,6 +3942,21 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
+        "Hopeful Initiate" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: Some("W"),
+                    generic: 2,
+                },
+                AbilityCostRecipe::RemovePlusOneCountersFromControlledCreatures(2),
+            ],
+            effect: AbilityEffectRecipe::DestroyTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "ArtifactOrEnchantmentPermanent",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Burnout Bashtronaut" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Mana {
                 colored: None,
@@ -4650,6 +4666,9 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::ReturnControlledUnblockedAttacker => {
             "CostComponent::ReturnControlledUnblockedAttackerToOwnersHand".to_string()
         }
+        AbilityCostRecipe::RemovePlusOneCountersFromControlledCreatures(count) => {
+            format!("CostComponent::RemovePlusOneCountersFromControlledCreatures({count})")
+        }
         AbilityCostRecipe::ManaCost(cost) => {
             let (pips, generic, x_count) = parse_cost(cost);
             format!(
@@ -4689,6 +4708,9 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
             "return_controlled_unblocked_attacker".to_string()
         }
         AbilityCostRecipe::ManaCost(cost) => format!("mana_cost:{cost}"),
+        AbilityCostRecipe::RemovePlusOneCountersFromControlledCreatures(count) => {
+            format!("remove_controlled_plus_one_counters:{count}")
+        }
     }
 }
 
@@ -5356,6 +5378,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Burnout Bashtronaut" => "start_your_engines;max_speed:double_strike",
         "Nova Hellkite" => "etb:target_opponent_creature:damage:1;warp_next_end_step:exile_cast_later_turn",
         "Aloe Alchemist" => "becomes_plotted:target_creature:pump:3:2:trample",
+        "Hopeful Initiate" => "training",
         "Forsaken Miner" => "cant_block;graveyard:controller_commits_crime:may_pay:B:return_source_to_battlefield",
         "Iridescent Vinelasher" | "Iridescent Vinelasher Offspring Token" => "etb_if_offspring_paid:create_one_one_token_copy;landfall:target_opponent:damage:1",
         _ => "none",

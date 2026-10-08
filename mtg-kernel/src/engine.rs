@@ -3372,6 +3372,38 @@ fn activation_cost_object_candidates(
         .collect()
 }
 
+/// The creatures `amount` +1/+1 counters come off for a
+/// `RemovePlusOneCountersFromControlledCreatures` cost, one entry per
+/// counter, or `None` when the payer's creatures have too few.
+fn controlled_plus_one_counter_removals(
+    player: PlayerId,
+    state: &GameState,
+    amount: u8,
+) -> Option<Vec<ObjectId>> {
+    let mut remaining: Vec<(ObjectId, i32)> = state.players[player.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|&id| {
+            let object = state.objects.get(id);
+            object.controller == player
+                && object.counters.plus1_plus1 > 0
+                && object_has_type(state, id, CardType::Creature)
+        })
+        .map(|id| (id, state.objects.get(id).counters.plus1_plus1))
+        .collect();
+    let mut removals = Vec::with_capacity(usize::from(amount));
+    for _ in 0..amount {
+        let most = remaining.iter().map(|&(_, count)| count).max()?;
+        let entry = remaining
+            .iter_mut()
+            .find(|(_, count)| *count == most && most > 0)?;
+        entry.1 -= 1;
+        removals.push(entry.0);
+    }
+    Some(removals)
+}
+
 fn activation_tap_cost_subtype(components: &[CostComponent]) -> Option<card_def::Subtype> {
     components.iter().find_map(|component| match component {
         CostComponent::TapOtherUntappedControlledPermanentWithSubtype(subtype) => Some(*subtype),
@@ -3583,6 +3615,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
     let mut tap_filtered_permanent_count = 0;
     let mut reveal_hand_condition_count = 0;
     let mut chosen_creature_count = 0;
+    let mut remove_counters_count = 0;
 
     for component in components {
         match component {
@@ -3654,6 +3687,12 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
             CostComponent::RevealHandIfNoCardsWithType(_) => {
                 reveal_hand_condition_count += 1;
             }
+            CostComponent::RemovePlusOneCountersFromControlledCreatures(amount) => {
+                if *amount == 0 {
+                    return false;
+                }
+                remove_counters_count += 1;
+            }
             CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {
                 chosen_creature_count += 1;
             }
@@ -3675,6 +3714,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
         || tap_filtered_permanent_count > 1
         || reveal_hand_condition_count > 1
         || chosen_creature_count > 1
+        || remove_counters_count > 1
     {
         return false;
     }
@@ -3892,6 +3932,9 @@ fn can_pay_components(
             }
             CostComponent::TapUntappedControlledPermanent(filter) => {
                 !tap_permanent_cost_candidates(player, state, *filter, &[]).is_empty()
+            }
+            CostComponent::RemovePlusOneCountersFromControlledCreatures(amount) => {
+                controlled_plus_one_counter_removals(player, state, *amount).is_some()
             }
             CostComponent::RevealHandIfNoCardsWithType(card_type) => {
                 state.players[player.index()].hand.iter().all(|&object| {
@@ -4235,6 +4278,13 @@ fn pay_cost_components_with_x(
             }
             CostComponent::TapUntappedControlledPermanent(_) => {
                 event::propose_and_commit(state, ProposedEvent::tap(object_cost_chosen[0]));
+            }
+            CostComponent::RemovePlusOneCountersFromControlledCreatures(amount) => {
+                let removals = controlled_plus_one_counter_removals(player, state, *amount)
+                    .expect("preflighted counter removal remains payable");
+                for creature in removals {
+                    state.objects.get_mut(creature).counters.plus1_plus1 -= 1;
+                }
             }
             CostComponent::RevealHandIfNoCardsWithType(_) => {
                 let hand = state.players[player.index()].hand.clone();
@@ -14033,6 +14083,7 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
                 def.condition,
                 trigger::TriggerCondition::Attacks
                     | trigger::TriggerCondition::AttacksWithControllerGraveyardCardCountAtLeast(_)
+                    | trigger::TriggerCondition::AttacksWithGreaterPowerAttacker
             )
         }) {
             let event = CommittedEvent::DeclaredAttacker {

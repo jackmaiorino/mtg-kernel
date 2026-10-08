@@ -134,6 +134,7 @@ fn family_d_cards_are_fully_supported() {
         "Aloe Alchemist",
         "Forsaken Miner",
         "Axebane Ferox",
+        "Hopeful Initiate",
     ] {
         let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} missing"));
         assert_eq!(
@@ -680,4 +681,96 @@ fn axebane_ferox_ward_ignores_its_controllers_spells() {
     let ferox = put(&mut state, PlayerId::P0, "Axebane Ferox", Zone::Battlefield);
     burn(&mut state, PlayerId::P0, Target::Object(ferox));
     assert_eq!(state.objects.get(ferox).damage, 2);
+}
+
+fn attack_with(state: &mut GameState, attackers: Vec<ObjectId>) {
+    pass_until(state, |s| s.step == Step::BeginCombat);
+    for _ in 0..20 {
+        match next(state) {
+            Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+            Decision::DeclareAttackers { .. } => {
+                engine::step(state, Action::DeclareAttackers(attackers)).unwrap();
+                return;
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    panic!("no attack declaration");
+}
+
+#[test]
+fn hopeful_initiate_trains_only_beside_a_stronger_attacker() {
+    let mut state = ready();
+    let initiate = put(
+        &mut state,
+        PlayerId::P0,
+        "Hopeful Initiate",
+        Zone::Battlefield,
+    );
+    let challenger = put(
+        &mut state,
+        PlayerId::P0,
+        "Emberheart Challenger",
+        Zone::Battlefield,
+    );
+    attack_with(&mut state, vec![initiate, challenger]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(initiate).counters.plus1_plus1, 1);
+    assert_eq!(state.objects.get(challenger).counters.plus1_plus1, 0);
+
+    // Alone (or beside an equal-power creature) it doesn't train.
+    let mut state = ready();
+    let initiate = put(
+        &mut state,
+        PlayerId::P0,
+        "Hopeful Initiate",
+        Zone::Battlefield,
+    );
+    attack_with(&mut state, vec![initiate]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(initiate).counters.plus1_plus1, 0);
+}
+
+#[test]
+fn hopeful_initiate_removes_two_counters_to_destroy_an_artifact() {
+    let mut state = ready();
+    let initiate = put(
+        &mut state,
+        PlayerId::P0,
+        "Hopeful Initiate",
+        Zone::Battlefield,
+    );
+    let challenger = put(
+        &mut state,
+        PlayerId::P0,
+        "Emberheart Challenger",
+        Zone::Battlefield,
+    );
+    let wellspring = put(
+        &mut state,
+        PlayerId::P1,
+        "Ichor Wellspring",
+        Zone::Battlefield,
+    );
+    state.objects.get_mut(initiate).counters.plus1_plus1 = 1;
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::W], 2);
+    let offered = |state: &mut GameState| matches!(next(state), Decision::CastSpellOrPass { activatable_abilities, .. } if activatable_abilities.contains(&(initiate, 0)));
+    assert!(!offered(&mut state), "only one counter among creatures");
+
+    state.objects.get_mut(challenger).counters.plus1_plus1 = 2;
+    assert!(offered(&mut state));
+    engine::step(&mut state, Action::ActivateAbility(initiate, 0)).unwrap();
+    match next(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert_eq!(legal_targets, vec![Target::Object(wellspring)]);
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(wellspring))).unwrap();
+        }
+        other => panic!("expected a target, got {other:?}"),
+    }
+    settled(&mut state);
+    assert_eq!(state.objects.get(wellspring).zone, Zone::Graveyard);
+    // Each counter comes off the creature with the most: the Challenger's
+    // first, then (tied at one) the earlier Initiate's.
+    assert_eq!(state.objects.get(challenger).counters.plus1_plus1, 1);
+    assert_eq!(state.objects.get(initiate).counters.plus1_plus1, 0);
 }

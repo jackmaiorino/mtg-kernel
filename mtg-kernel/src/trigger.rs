@@ -145,6 +145,10 @@ pub enum TriggerCondition {
     BecomesPlotted,
     /// "Whenever you commit a crime" (`CommittedEvent::CrimeCommitted`).
     ControllerCommitsCrime,
+    /// Training: this creature attacks alongside another attacking creature
+    /// with greater power (`CommittedEvent::DeclaredAttacker`, read against
+    /// the full declared attacker set).
+    AttacksWithGreaterPowerAttacker,
 }
 
 pub struct TriggeredAbilityDef {
@@ -943,6 +947,19 @@ const WARP_EXILE_TRIGGER: TriggeredAbilityDef = TriggeredAbilityDef {
 fn warp_exile_effect() -> EffectOp {
     EffectOp::BindWarpExileToTriggerSource
 }
+
+fn training_effect() -> EffectOp {
+    EffectOp::PutPlusOnePlusOneCounter {
+        object: ObjectRef::ThisSource,
+    }
+}
+
+/// Training. ({2}{W}, remove two +1/+1 counters: destroy target artifact
+/// or enchantment is an activated ability.)
+const HOPEFUL_INITIATE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::AttacksWithGreaterPowerAttacker,
+    ..etb_trigger(training_effect)
+}];
 
 fn forsaken_miner_crime_effect() -> EffectOp {
     // The optional payment must be the program root; the return re-checks
@@ -1912,6 +1929,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         }
         "Aloe Alchemist" => &ALOE_ALCHEMIST_TRIGGERS,
         "Forsaken Miner" => &FORSAKEN_MINER_TRIGGERS,
+        "Hopeful Initiate" => &HOPEFUL_INITIATE_TRIGGERS,
         _ => &[],
     }
 }
@@ -3274,6 +3292,24 @@ fn trigger_matches(
             TriggerCondition::ControllerCommitsCrime,
             CommittedEvent::CrimeCommitted { player, .. },
         ) => *player == controller,
+        (
+            TriggerCondition::AttacksWithGreaterPowerAttacker,
+            CommittedEvent::DeclaredAttacker {
+                source: event_source,
+                source_zone_change_count,
+                controller: event_controller,
+            },
+        ) => {
+            *event_source == source
+                && *event_controller == controller
+                && state.objects.get(source).zone_change_count == *source_zone_change_count
+                && {
+                    let power = crate::engine::effective_power(state, source);
+                    state.engine.combat.attackers.iter().any(|&other| {
+                        other != source && crate::engine::effective_power(state, other) > power
+                    })
+                }
+        }
         (
             TriggerCondition::BecomesPlotted,
             CommittedEvent::ZoneChange {

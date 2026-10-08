@@ -352,6 +352,38 @@
         "ward_collect_evidence"
       ],
       "java_file": "Mage.Sets/src/mage/cards/a/AxebaneFerox.java"
+    },
+    {
+      "name": "Hopeful Initiate",
+      "engine_capability": "full",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Warlock"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "training",
+        "remove_counters_cost",
+        "artifact_enchantment_removal"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HopefulInitiate.java"
     }
   ]
 }
