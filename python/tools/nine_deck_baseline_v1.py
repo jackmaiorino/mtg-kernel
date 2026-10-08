@@ -236,7 +236,7 @@ def panel_cases(own_decks: tuple[int, ...] = tuple(range(DECKS))) -> list[dict]:
 
 
 def panel_config(panel: str, source: dict, opponent: dict, decks: list[dict], output_directory: str,
-                 workers: int, own_decks: tuple[int, ...] = tuple(range(DECKS))) -> dict:
+                 workers: int, own_decks: tuple[int, ...] = tuple(range(DECKS)), learner_seat: int | None = None) -> dict:
     """Raw-policy panel collection: ``source`` pilots each own deck against a fixed opponent.
 
     Cases follow ``panel_cases``; a P3 panel (own decks Spy and CawGates) is a
@@ -246,6 +246,8 @@ def panel_config(panel: str, source: dict, opponent: dict, decks: list[dict], ou
     """
     episodes = []
     for case in panel_cases(own_decks):
+        if learner_seat is not None and case["seat"] != learner_seat:
+            continue  # one learner-seat half (a collection holds at most 1,024 episodes)
         own, other, seat = decks[case["own"]], decks[case["other"]], case["seat"]
         seats = [own, other] if seat == 0 else [other, own]
         episodes.append({
