@@ -3532,7 +3532,8 @@ fn keywords_for(card: &CardJson) -> String {
         }
         "Unstoppable Slasher" => keywords.push("Keywords::DEATHTOUCH"),
         "Adeline, Resplendent Cathar" => keywords.push("Keywords::VIGILANCE"),
-        "Bloodletter of Aclazotz" => keywords.push("Keywords::FLYING"),
+        "Bloodletter of Aclazotz" | "Haughty Djinn" => keywords.push("Keywords::FLYING"),
+        "Thalia, Guardian of Thraben" => keywords.push("Keywords::FIRST_STRIKE"),
         _ => {}
     }
     if card.name == "Treetop Snarespinner" {
@@ -5349,6 +5350,10 @@ fn standard_static_recipe_for(name: &str) -> &'static str {
         "Coppercoat Vanguard" => "other_controlled_humans:boost:1:0;ward_generic:1",
         "Adeline, Resplendent Cathar" => "cda_power:controlled_creatures",
         "Bloodletter of Aclazotz" => "opponent_life_loss_doubled_during_controller_turn",
+        "Thalia, Guardian of Thraben" => "noncreature_spells_cost_generic_more:1",
+        "Haughty Djinn" => {
+            "cda_power:controller_graveyard_instant_sorcery_cards;controller_instant_sorcery_spells_cost_generic_less:1"
+        }
         _ => "none",
     }
 }

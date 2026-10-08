@@ -549,6 +549,71 @@
         "life_loss_replacement"
       ],
       "java_file": "Mage.Sets/src/mage/cards/b/BloodletterOfAclazotz.java"
+    },
+    {
+      "name": "Thalia, Guardian of Thraben",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Soldier"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoW.dck",
+        "Standard16-5C.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "first_strike",
+        "cost_increase"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/ThaliaGuardianOfThraben.java"
+    },
+    {
+      "name": "Haughty Djinn",
+      "engine_capability": "full",
+      "mana_cost": "{1}{U}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Djinn"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoU.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "flying",
+        "characteristic_defining_power",
+        "cost_reduction"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HaughtyDjinn.java"
     }
   ]
 }

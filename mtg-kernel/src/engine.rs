@@ -4841,6 +4841,47 @@ fn effective_normal_cast_cost_with_targets(
     targets: &[Target],
     state: &GameState,
 ) -> Cost {
+    static_adjusted_spell_cost(
+        printed_normal_cast_cost_with_targets(def, player, targets, state),
+        def.types,
+        player,
+        state,
+    )
+}
+
+/// Applies permanents' statics that make spells cost more or less (Thalia,
+/// Guardian of Thraben; Haughty Djinn) to one cast form's cost, given that
+/// form's card types. Increases apply before reductions (601.2f), and only
+/// the generic component changes. Flashback, Escape, Madness and
+/// alternative costs are not adjusted.
+fn static_adjusted_spell_cost(
+    cost: Cost,
+    types: &[CardType],
+    caster: PlayerId,
+    state: &GameState,
+) -> Cost {
+    #[cfg(feature = "standard-magezero-fixtures")]
+    let cost = {
+        let (increase, reduction) =
+            crate::standard_statics_v1::spell_cost_generic_modifiers(state, types, caster);
+        let mut cost = cost;
+        cost.generic = cost
+            .generic
+            .saturating_add(increase)
+            .saturating_sub(reduction);
+        cost
+    };
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
+    let _ = (types, caster, state);
+    cost
+}
+
+fn printed_normal_cast_cost_with_targets(
+    def: &card_def::CardDef,
+    player: PlayerId,
+    targets: &[Target],
+    state: &GameState,
+) -> Cost {
     let Some(reducer) = def.generic_cost_reduction else {
         return def.cost;
     };
@@ -5194,7 +5235,18 @@ fn viable_pending_spell_forms(
             Keywords::NONE,
             pending,
             state,
-        ) && mana::can_pay(&bestow.cost, 0, pending.controller, state).is_some()
+        ) && mana::can_pay(
+            &static_adjusted_spell_cost(
+                bestow.cost,
+                &[CardType::Enchantment],
+                pending.controller,
+                state,
+            ),
+            0,
+            pending.controller,
+            state,
+        )
+        .is_some()
         {
             forms.push(1);
         }
@@ -5233,7 +5285,18 @@ fn viable_pending_spell_forms(
                 state,
             )
             && pending_cast_form_timing_ok(adventure.types, Keywords::NONE, pending, state)
-            && mana::can_pay(&adventure.cost, 0, pending.controller, state).is_some()
+            && mana::can_pay(
+                &static_adjusted_spell_cost(
+                    adventure.cost,
+                    adventure.types,
+                    pending.controller,
+                    state,
+                ),
+                0,
+                pending.controller,
+                state,
+            )
+            .is_some()
         {
             forms.push(1);
         }
@@ -5262,7 +5325,13 @@ fn viable_pending_spell_forms(
         targeting_source_for_object(state, pending.spell),
         state,
     ) && pending_cast_form_timing_ok(omen.types, Keywords::NONE, pending, state)
-        && mana::can_pay(&omen.cost, 0, pending.controller, state).is_some()
+        && mana::can_pay(
+            &static_adjusted_spell_cost(omen.cost, omen.types, pending.controller, state),
+            0,
+            pending.controller,
+            state,
+        )
+        .is_some()
     {
         forms.push(1);
     }
@@ -5303,9 +5372,13 @@ fn pending_cast_selected_mana_cost(
     state: &GameState,
 ) -> Option<Cost> {
     match pending.mode_chosen {
-        Some(1) if supported_bestow(def).is_some() => supported_bestow(def).map(|b| b.cost),
-        Some(1) if supported_omen(def).is_some() => supported_omen(def).map(|o| o.cost),
-        Some(1) if supported_adventure(def).is_some() => supported_adventure(def).map(|a| a.cost),
+        Some(1) if supported_bestow(def).is_some() => supported_bestow(def).map(|b| {
+            static_adjusted_spell_cost(b.cost, &[CardType::Enchantment], pending.controller, state)
+        }),
+        Some(1) if supported_omen(def).is_some() => supported_omen(def)
+            .map(|o| static_adjusted_spell_cost(o.cost, o.types, pending.controller, state)),
+        Some(1) if supported_adventure(def).is_some() => supported_adventure(def)
+            .map(|a| static_adjusted_spell_cost(a.cost, a.types, pending.controller, state)),
         Some(_) => Some(effective_normal_cast_cost_with_targets(
             def,
             pending.controller,
@@ -5422,7 +5495,13 @@ fn is_castable_now(
                             targeting_source_for_object(state, id),
                             state,
                         )
-                        && mana::can_pay(&omen.cost, 0, player, state).is_some()
+                        && mana::can_pay(
+                            &static_adjusted_spell_cost(omen.cost, omen.types, player, state),
+                            0,
+                            player,
+                            state,
+                        )
+                        .is_some()
                 })
             };
             let bestow_ok = || {
@@ -5441,7 +5520,18 @@ fn is_castable_now(
                             targeting_source_for_object(state, id),
                             state,
                         )
-                        && mana::can_pay(&bestow.cost, 0, player, state).is_some()
+                        && mana::can_pay(
+                            &static_adjusted_spell_cost(
+                                bestow.cost,
+                                &[CardType::Enchantment],
+                                player,
+                                state,
+                            ),
+                            0,
+                            player,
+                            state,
+                        )
+                        .is_some()
                 })
             };
             // The Adventure side is only ever offered from Hand -- unlike
@@ -5460,7 +5550,18 @@ fn is_castable_now(
                             targeting_source_for_object(state, id),
                             state,
                         )
-                        && mana::can_pay(&adventure.cost, 0, player, state).is_some()
+                        && mana::can_pay(
+                            &static_adjusted_spell_cost(
+                                adventure.cost,
+                                adventure.types,
+                                player,
+                                state,
+                            ),
+                            0,
+                            player,
+                            state,
+                        )
+                        .is_some()
                 })
             };
             main_ok || omen_ok() || bestow_ok() || adventure_ok()
@@ -6597,15 +6698,48 @@ fn remaining_cast_payment_is_payable(
         CastMethodV4::Plotted => true,
         CastMethodV4::Omen => {
             if let Some(adventure) = supported_adventure(def) {
-                mana::can_pay(&adventure.cost, x_value, pending.controller, state).is_some()
+                mana::can_pay(
+                    &static_adjusted_spell_cost(
+                        adventure.cost,
+                        adventure.types,
+                        pending.controller,
+                        state,
+                    ),
+                    x_value,
+                    pending.controller,
+                    state,
+                )
+                .is_some()
             } else {
                 supported_omen(def).is_some_and(|omen| {
-                    mana::can_pay(&omen.cost, x_value, pending.controller, state).is_some()
+                    mana::can_pay(
+                        &static_adjusted_spell_cost(
+                            omen.cost,
+                            omen.types,
+                            pending.controller,
+                            state,
+                        ),
+                        x_value,
+                        pending.controller,
+                        state,
+                    )
+                    .is_some()
                 })
             }
         }
         CastMethodV4::Bestow => supported_bestow(def).is_some_and(|bestow| {
-            mana::can_pay(&bestow.cost, x_value, pending.controller, state).is_some()
+            mana::can_pay(
+                &static_adjusted_spell_cost(
+                    bestow.cost,
+                    &[CardType::Enchantment],
+                    pending.controller,
+                    state,
+                ),
+                x_value,
+                pending.controller,
+                state,
+            )
+            .is_some()
         }),
     };
     base_payable
@@ -14729,13 +14863,14 @@ fn finalize_owned_cast(
             }
         }
         CastMethodV4::Omen => {
-            let cost = if let Some(adventure) = supported_adventure(def) {
-                adventure.cost
+            let (cost, types) = if let Some(adventure) = supported_adventure(def) {
+                (adventure.cost, adventure.types)
             } else {
-                supported_omen(def)
-                    .expect("validated Omen cast has definition-owned spell characteristics")
-                    .cost
+                let omen = supported_omen(def)
+                    .expect("validated Omen cast has definition-owned spell characteristics");
+                (omen.cost, omen.types)
             };
+            let cost = static_adjusted_spell_cost(cost, types, pending.controller, state);
             let Some(plan) = mana::can_pay(&cost, x_value, pending.controller, state) else {
                 abort_cast(state, pending, cast_method);
                 return Ok(());
@@ -14745,7 +14880,17 @@ fn finalize_owned_cast(
         CastMethodV4::Bestow => {
             let bestow = supported_bestow(def)
                 .expect("validated Bestow cast has definition-owned characteristics");
-            let Some(plan) = mana::can_pay(&bestow.cost, x_value, pending.controller, state) else {
+            let Some(plan) = mana::can_pay(
+                &static_adjusted_spell_cost(
+                    bestow.cost,
+                    &[CardType::Enchantment],
+                    pending.controller,
+                    state,
+                ),
+                x_value,
+                pending.controller,
+                state,
+            ) else {
                 abort_cast(state, pending, cast_method);
                 return Ok(());
             };

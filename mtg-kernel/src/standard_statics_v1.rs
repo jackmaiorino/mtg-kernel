@@ -175,3 +175,34 @@ pub(crate) fn modified_life_loss(
         })
         .fold(amount, |lost, _| lost.saturating_mul(2))
 }
+
+/// Generic mana a spell with `types` cast by `caster` costs more and less
+/// because of permanents' statics: "Noncreature spells cost {1} more to
+/// cast" (Thalia, Guardian of Thraben, any controller) and "Instant and
+/// sorcery spells you cast cost {1} less to cast" (Haughty Djinn).
+pub(crate) fn spell_cost_generic_modifiers(
+    state: &GameState,
+    types: &[CardType],
+    caster: crate::ids::PlayerId,
+) -> (u8, u8) {
+    let mut increase = 0u8;
+    let mut reduction = 0u8;
+    for seat in &state.players {
+        for &source in &seat.battlefield {
+            match battlefield_definition_name(state, source) {
+                Some("Thalia, Guardian of Thraben") if !types.contains(&CardType::Creature) => {
+                    increase = increase.saturating_add(1)
+                }
+                Some("Haughty Djinn")
+                    if state.objects.get(source).controller == caster
+                        && (types.contains(&CardType::Instant)
+                            || types.contains(&CardType::Sorcery)) =>
+                {
+                    reduction = reduction.saturating_add(1)
+                }
+                _ => {}
+            }
+        }
+    }
+    (increase, reduction)
+}

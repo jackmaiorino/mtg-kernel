@@ -105,6 +105,20 @@ const CARDS: &[(&str, &[Subtype], (i16, i16), Keywords, usize)] = &[
         0,
     ),
     (
+        "Thalia, Guardian of Thraben",
+        &[Subtype::Human, Subtype::Soldier],
+        (2, 1),
+        Keywords::FIRST_STRIKE,
+        0,
+    ),
+    (
+        "Haughty Djinn",
+        &[Subtype::Djinn],
+        (0, 4),
+        Keywords::FLYING,
+        0,
+    ),
+    (
         "Unstoppable Slasher",
         &[Subtype::Zombie, Subtype::Assassin],
         (2, 3),
@@ -1188,4 +1202,84 @@ fn bloodletter_does_nothing_on_the_opponents_turn() {
     cast(&mut state, bolt, &[Target::Player(PlayerId::P1)]);
     settled(&mut state);
     assert_eq!(state.players[1].life, 17);
+}
+
+fn castable(state: &mut GameState) -> Vec<ObjectId> {
+    match next(state) {
+        Decision::CastSpellOrPass {
+            castable_spells, ..
+        } => castable_spells,
+        other => panic!("expected priority, got {other:?}"),
+    }
+}
+
+#[test]
+fn thalia_taxes_noncreature_spells_from_either_player() {
+    let mut state = ready(Step::Main1);
+    put(
+        &mut state,
+        PlayerId::P1,
+        "Thalia, Guardian of Thraben",
+        Zone::Battlefield,
+    );
+    let bolt = put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
+    let scout = put(&mut state, PlayerId::P0, "Cenote Scout", Zone::Hand);
+    state.players[0].mana_pool = pool(&[(ManaColor::R, 1)], 0);
+    assert!(!castable(&mut state).contains(&bolt));
+    state.players[0].mana_pool = pool(&[(ManaColor::G, 1)], 0);
+    assert!(castable(&mut state).contains(&scout));
+
+    state.players[0].mana_pool = pool(&[(ManaColor::R, 1)], 1);
+    cast(&mut state, bolt, &[Target::Player(PlayerId::P1)]);
+    next(&mut state);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
+    settled(&mut state);
+    assert_eq!(state.players[1].life, 17);
+}
+
+#[test]
+fn haughty_djinn_counts_instants_and_sorceries_and_discounts_them() {
+    let mut state = ready(Step::Main1);
+    let djinn = put(&mut state, PlayerId::P0, "Haughty Djinn", Zone::Battlefield);
+    assert_eq!(engine::effective_power(&state, djinn), 0);
+    put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Graveyard);
+    put(&mut state, PlayerId::P0, "Snap", Zone::Graveyard);
+    put(&mut state, PlayerId::P0, "Forest", Zone::Graveyard);
+    put(&mut state, PlayerId::P1, "Lightning Bolt", Zone::Graveyard);
+    assert_eq!(engine::effective_power(&state, djinn), 2);
+
+    // Snap costs {U}; Lightning Bolt still needs its {R}.
+    let theirs = put(&mut state, PlayerId::P1, "Cenote Scout", Zone::Battlefield);
+    let snap = put(&mut state, PlayerId::P0, "Snap", Zone::Hand);
+    let bolt = put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
+    state.players[0].mana_pool = pool(&[(ManaColor::U, 1)], 0);
+    let offers = castable(&mut state);
+    assert!(offers.contains(&snap));
+    assert!(!offers.contains(&bolt));
+    cast(&mut state, snap, &[Target::Object(theirs)]);
+    next(&mut state);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(theirs).zone, Zone::Hand);
+    assert_eq!(engine::effective_power(&state, djinn), 3);
+}
+
+#[test]
+fn thalia_and_haughty_djinn_cancel_out() {
+    let mut state = ready(Step::Main1);
+    put(&mut state, PlayerId::P0, "Haughty Djinn", Zone::Battlefield);
+    put(
+        &mut state,
+        PlayerId::P1,
+        "Thalia, Guardian of Thraben",
+        Zone::Battlefield,
+    );
+    let theirs = put(&mut state, PlayerId::P1, "Cenote Scout", Zone::Battlefield);
+    let snap = put(&mut state, PlayerId::P0, "Snap", Zone::Hand);
+    state.players[0].mana_pool = pool(&[(ManaColor::U, 1)], 0);
+    assert!(!castable(&mut state).contains(&snap));
+    state.players[0].mana_pool = pool(&[(ManaColor::U, 1)], 1);
+    cast(&mut state, snap, &[Target::Object(theirs)]);
+    next(&mut state);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
 }
