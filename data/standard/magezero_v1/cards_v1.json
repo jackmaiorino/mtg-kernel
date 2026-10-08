@@ -1157,6 +1157,46 @@
         "library_placement"
       ],
       "java_file": "Mage.Sets/src/mage/cards/b/BraidedNet.java"
+    },
+    {
+      "name": "Chandra, Hope's Beacon",
+      "engine_capability": "full",
+      "mana_cost": "{4}{R}{R}",
+      "mana_value": 6,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Planeswalker"
+      ],
+      "subtypes": [
+        "Chandra"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "planeswalker",
+        "cast_trigger",
+        "spell_copy",
+        "new_targets",
+        "once_each_turn",
+        "mana_any_combination",
+        "impulse_exile_cast",
+        "variable_loyalty",
+        "multi_target_damage"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/ChandraHopesBeacon.java",
+      "starting_loyalty": 5
     }
   ]
 }

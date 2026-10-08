@@ -1483,8 +1483,8 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::CreatureOtherThanSource
         | TargetSpec::NonblackCreature
         | TargetSpec::ArtifactOrEnchantmentPermanent
-        | TargetSpec::AttackingOrBlockingCreature
-        | TargetSpec::StandardV1(_) => 1,
+        | TargetSpec::AttackingOrBlockingCreature => 1,
+        TargetSpec::StandardV1(filter) => filter.counts().0,
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
@@ -1503,6 +1503,7 @@ fn target_min_count(spec: TargetSpec) -> u8 {
         | TargetSpec::UpToTwoPlayers
         | TargetSpec::UpToTwoCardsInGraveyards
         | TargetSpec::UpToOneTappedCreature => 0,
+        TargetSpec::StandardV1(filter) => filter.counts().1,
         _ => target_count(spec),
     }
 }
@@ -2780,6 +2781,7 @@ fn legal_targets_for_controller_from_source(
             filter,
             controller,
             source.map(|source| source.object),
+            targets_chosen,
             state,
         ),
         TargetSpec::AttackingOrBlockingCreature => battlefield_objects(state)
@@ -5750,6 +5752,7 @@ pub(crate) fn active_permission_for(
         p.object == id
             && p.holder == holder
             && p.zone_change_generation == state.objects.get(id).zone_change_count
+            && !crate::standard_cards_v1::exile_cast_group_spent(state, id)
     })
 }
 
@@ -13838,6 +13841,124 @@ fn expected_spell_copy(
     copy
 }
 
+/// Copies the live, cast spell `spell` for `controller` (707.10): the copy
+/// keeps its targets, mode, X and kicker, is put on top of the stack, and
+/// is not cast. Returns the copy's source and stack incarnation, or `None`
+/// once the spell has left the stack.
+pub(crate) fn copy_spell_for(
+    state: &mut GameState,
+    spell: ObjectId,
+    controller: PlayerId,
+) -> Option<(ObjectId, StackItemId)> {
+    let parent = state
+        .stack
+        .iter()
+        .find(|item| item.kind == StackItemKind::Spell && item.source == spell)?
+        .clone();
+    let original = state.objects.get(parent.source).clone();
+    let copy_source = state.objects.push(crate::state::GameObject {
+        card_def: original.card_def,
+        name: original.name.clone(),
+        owner: controller,
+        controller,
+        zone: Zone::Stack,
+        tapped: false,
+        summoning_sick: false,
+        damage: 0,
+        counters: Default::default(),
+        attachments: Vec::new(),
+        v4: ObjectStateV4::from_card_def(original.card_def),
+        spell_copy_origin: Some(SpellCopyOriginV4 {
+            parent: parent.source,
+            parent_card_def: original.card_def,
+            parent_owner: original.owner,
+            parent_controller: parent.controller,
+            parent_stack_zone_change_count: original.zone_change_count,
+            parent_was_copy: original.spell_copy_origin.is_some(),
+        }),
+        plotted_turn: None,
+        zone_change_count: 0,
+    });
+    let copy_stack_item = next_stack_item_id(state);
+    let source_contract = StackSourceContractV4::capture(state, copy_source, CastMethodV4::Normal);
+    let mut copy = parent;
+    copy.source = copy_source;
+    copy.controller = controller;
+    copy.is_copy = true;
+    copy.is_flashback = false;
+    copy.madness_offer = false;
+    copy.discarded = Vec::new();
+    copy.v4.stack_item_id = copy_stack_item;
+    copy.v4.cast_method = Some(CastMethodV4::Normal);
+    copy.v4.source_contract = Some(source_contract);
+    copy.v4.paid_cost_refs = Vec::new();
+    copy.v4.optional_additional_cost_paid = None;
+    state.stack.push(copy);
+    Some((copy_source, copy_stack_item))
+}
+
+/// The targets a spell copy's controller may choose instead of its
+/// inherited one: every legal target for its single-target spec. Empty for
+/// an untargeted or multi-target copy, which keeps its targets.
+pub(crate) fn spell_copy_retarget_candidates(
+    state: &GameState,
+    copy_stack_item: StackItemId,
+) -> Vec<Target> {
+    let Some(copy) = state
+        .stack
+        .iter()
+        .find(|item| item.v4.stack_item_id == copy_stack_item && item.is_copy)
+    else {
+        return Vec::new();
+    };
+    let Some(spec) = copy.v4.target_spec else {
+        return Vec::new();
+    };
+    if copy.targets.len() != 1 || target_count(spec) != 1 {
+        return Vec::new();
+    }
+    legal_targets_for_controller_from_source(
+        spec,
+        &[],
+        copy.controller,
+        targeting_source_for_object(state, copy.source),
+        state,
+    )
+}
+
+/// The spell copy's current targets.
+pub(crate) fn spell_copy_targets(state: &GameState, copy_stack_item: StackItemId) -> Vec<Target> {
+    state
+        .stack
+        .iter()
+        .find(|item| item.v4.stack_item_id == copy_stack_item && item.is_copy)
+        .map(|item| item.targets.clone())
+        .unwrap_or_default()
+}
+
+/// Gives a spell copy its chosen target (or keeps the inherited one) and
+/// logs its final targeting.
+pub(crate) fn finish_spell_copy_targets(
+    state: &mut GameState,
+    copy_stack_item: StackItemId,
+    target: Option<Target>,
+) -> Result<(), String> {
+    if let Some(target) = target {
+        if !spell_copy_retarget_candidates(state, copy_stack_item).contains(&target) {
+            return Err(format!("{target:?} is not a legal spell-copy target"));
+        }
+        let contract = StackTargetContractV4::capture(state, target);
+        let copy = state
+            .stack
+            .iter_mut()
+            .find(|item| item.v4.stack_item_id == copy_stack_item && item.is_copy)
+            .ok_or("the spell copy is no longer on the stack")?;
+        copy.targets = vec![target];
+        copy.v4.target_contracts = vec![contract];
+    }
+    log_final_targeting_events(state, copy_stack_item)
+}
+
 fn create_spell_copy(state: &mut GameState, pending: &PendingSpellCopy) -> (ObjectId, StackItemId) {
     let (_, parent) = pending_spell_copy_parent(state, pending)
         .expect("validated immediately before paying; no action can interleave");
@@ -15321,6 +15442,7 @@ fn finalize_owned_cast(
     .saturating_add(1);
     log_final_targeting_events(state, stack_item_id)?;
     event::log_spell_cast(state, pending.spell, pending.controller);
+    crate::standard_cards_v1::note_spell_cast(state, pending.spell);
 
     // 601.2i/603.3: casting is complete the instant costs are paid --
     // triggered abilities that saw it happen (Guttersnipe) go on the stack

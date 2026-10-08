@@ -65,6 +65,124 @@ const LILIANA_OF_THE_VEIL: [ActivatedAbilityRecipe; 3] = [
     ),
 ];
 
+const CHANDRA_TARGETS: &str =
+    "StandardV1(crate::standard_cards_v1::StandardTargetV1::UpToTwoAnyTargets)";
+
+/// Chandra, Hope's Beacon: +2 mana, +1 impulse, then "-X: deals X damage to
+/// each of up to two targets" as one loyalty ability per X from 1 to 20.
+const CHANDRA: [ActivatedAbilityRecipe; 22] = [
+    loyalty(
+        &[Loyalty(2)],
+        Program("crate::standard_cards_v1::chandra_two_mana"),
+        "None",
+    ),
+    loyalty(
+        &[Loyalty(1)],
+        Program("crate::standard_cards_v1::chandra_impulse"),
+        "None",
+    ),
+    loyalty(
+        &[Loyalty(-1)],
+        Program("crate::standard_cards_v1::chandra_minus_1"),
+        CHANDRA_TARGETS,
+    ),
+    loyalty(
+        &[Loyalty(-2)],
+        Program("crate::standard_cards_v1::chandra_minus_2"),
+        CHANDRA_TARGETS,
+    ),
+    loyalty(
+        &[Loyalty(-3)],
+        Program("crate::standard_cards_v1::chandra_minus_3"),
+        CHANDRA_TARGETS,
+    ),
+    loyalty(
+        &[Loyalty(-4)],
+        Program("crate::standard_cards_v1::chandra_minus_4"),
+        CHANDRA_TARGETS,
+    ),
+    loyalty(
+        &[Loyalty(-5)],
+        Program("crate::standard_cards_v1::chandra_minus_5"),
+        CHANDRA_TARGETS,
+    ),
+    loyalty(
+        &[Loyalty(-6)],
+        Program("crate::standard_cards_v1::chandra_minus_6"),
+        CHANDRA_TARGETS,
+    ),
+    loyalty(
+        &[Loyalty(-7)],
+        Program("crate::standard_cards_v1::chandra_minus_7"),
+        CHANDRA_TARGETS,
+    ),
+    loyalty(
+        &[Loyalty(-8)],
+        Program("crate::standard_cards_v1::chandra_minus_8"),
+        CHANDRA_TARGETS,
+    ),
+    loyalty(
+        &[Loyalty(-9)],
+        Program("crate::standard_cards_v1::chandra_minus_9"),
+        CHANDRA_TARGETS,
+    ),
+    loyalty(
+        &[Loyalty(-10)],
+        Program("crate::standard_cards_v1::chandra_minus_10"),
+        CHANDRA_TARGETS,
+    ),
+    loyalty(
+        &[Loyalty(-11)],
+        Program("crate::standard_cards_v1::chandra_minus_11"),
+        CHANDRA_TARGETS,
+    ),
+    loyalty(
+        &[Loyalty(-12)],
+        Program("crate::standard_cards_v1::chandra_minus_12"),
+        CHANDRA_TARGETS,
+    ),
+    loyalty(
+        &[Loyalty(-13)],
+        Program("crate::standard_cards_v1::chandra_minus_13"),
+        CHANDRA_TARGETS,
+    ),
+    loyalty(
+        &[Loyalty(-14)],
+        Program("crate::standard_cards_v1::chandra_minus_14"),
+        CHANDRA_TARGETS,
+    ),
+    loyalty(
+        &[Loyalty(-15)],
+        Program("crate::standard_cards_v1::chandra_minus_15"),
+        CHANDRA_TARGETS,
+    ),
+    loyalty(
+        &[Loyalty(-16)],
+        Program("crate::standard_cards_v1::chandra_minus_16"),
+        CHANDRA_TARGETS,
+    ),
+    loyalty(
+        &[Loyalty(-17)],
+        Program("crate::standard_cards_v1::chandra_minus_17"),
+        CHANDRA_TARGETS,
+    ),
+    loyalty(
+        &[Loyalty(-18)],
+        Program("crate::standard_cards_v1::chandra_minus_18"),
+        CHANDRA_TARGETS,
+    ),
+    loyalty(
+        &[Loyalty(-19)],
+        Program("crate::standard_cards_v1::chandra_minus_19"),
+        CHANDRA_TARGETS,
+    ),
+    loyalty(
+        &[Loyalty(-20)],
+        Program("crate::standard_cards_v1::chandra_minus_20"),
+        CHANDRA_TARGETS,
+    ),
+];
+
 /// Reflection of Kiki-Jiki's "{1}, {T}: Create a token that's a copy of
 /// another target nonlegendary creature you control, except it has haste.
 /// Sacrifice it at the beginning of the next end step."
@@ -287,6 +405,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Unholy Annex // Ritual Chamber" => &UNHOLY_ANNEX,
         "Teferi, Temporal Pilgrim" => &TEFERI,
         "Liliana of the Veil" => &LILIANA_OF_THE_VEIL,
+        "Chandra, Hope's Beacon" => &CHANDRA,
         "Fable of the Mirror-Breaker" => &REFLECTION_OF_KIKI_JIKI,
         "Repurposing Bay" => &REPURPOSING_BAY,
         "Clay-Fired Bricks" => &CLAY_FIRED_BRICKS,
@@ -376,6 +495,9 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Braided Net" => "enters_with_3_net_counters;net_lock:activated_abilities_while_tapped",
         "Clay-Fired Bricks" => {
             "etb:search_basic_plains_to_hand_gain_2;back:etb:create_two_gnome_1_1_artifact_creatures;back:static:controlled_creatures_plus_1_1"
+        }
+        "Chandra, Hope's Beacon" => {
+            "you_cast_instant_or_sorcery_once_each_turn:copy_it_may_choose_new_targets"
         }
         "The Irencrag" => "controlled_legendary_creature_enters:may_become_everflame_equip_3_plus_3",
         "Case of the Uneaten Feast" => {

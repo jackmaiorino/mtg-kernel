@@ -275,6 +275,7 @@ pub enum Subtype {
     Otter,
     Liliana,
     Gnome,
+    Chandra,
 }
 
 impl Subtype {

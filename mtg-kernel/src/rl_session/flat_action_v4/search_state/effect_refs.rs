@@ -418,6 +418,16 @@ impl Scan<'_> {
                 original_candidates,
                 ..
             } => self.bs(original_candidates),
+            StandardCopyTargetV1 {
+                copy_source,
+                original_candidates,
+                ..
+            } => {
+                self.raw(*copy_source)
+                    || original_candidates
+                        .iter()
+                        .any(|t| matches!(t, crate::state::Target::Object(id) if self.raw(*id)))
+            }
             DuressDiscard {
                 original_hand,
                 eligible,
@@ -475,6 +485,10 @@ impl Scan<'_> {
                         } => self.b(object) || self.fs(expected_remaining_frames),
                         ExploreNonlandTop { top, .. } | SurveilTopCard { top, .. } => self.b(top),
                         ChooseColor {
+                            expected_remaining_frames,
+                            ..
+                        }
+                        | StandardManaCombinationV1 {
                             expected_remaining_frames,
                             ..
                         } => self.fs(expected_remaining_frames),
@@ -630,6 +644,16 @@ pub(super) fn conflicts(
                     remaining_frames,
                     ..
                 } => s.b(source) || s.fs(remaining_frames),
+                StandardCopyRetargetedV1 {
+                    copy_source,
+                    target,
+                    remaining_frames,
+                    ..
+                } => {
+                    s.raw(*copy_source)
+                        || matches!(target, crate::state::Target::Object(id) if s.raw(*id))
+                        || s.fs(remaining_frames)
+                }
             };
             if guard_conflicts {
                 return true;

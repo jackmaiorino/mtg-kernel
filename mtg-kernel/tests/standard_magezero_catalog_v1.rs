@@ -14,7 +14,7 @@ use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 
 /// Appended after the 192 Pauper definitions, in registry order.
-const STANDARD_APPENDED: [&str; 37] = [
+const STANDARD_APPENDED: [&str; 38] = [
     "Plains",
     "Burst Lightning",
     "Teferi, Temporal Pilgrim",
@@ -52,11 +52,12 @@ const STANDARD_APPENDED: [&str; 37] = [
     "Clay-Fired Bricks",
     "Cosmium Gnome Token",
     "Braided Net",
+    "Chandra, Hope's Beacon",
 ];
 
 /// Every distinct nonbasic card in the 16 decks that this build fully
 /// supports. Each Standard card batch extends this list.
-const SUPPORTED_NONBASIC: [&str; 32] = [
+const SUPPORTED_NONBASIC: [&str; 33] = [
     "Basilisk Collar",
     "Blue Sun's Twilight",
     "Braided Net",
@@ -66,6 +67,7 @@ const SUPPORTED_NONBASIC: [&str; 32] = [
     "Case of the Gateway Express",
     "Case of the Uneaten Feast",
     "Cecil, Dark Knight",
+    "Chandra, Hope's Beacon",
     "Clay-Fired Bricks",
     "Duress",
     "Dusk Rose Reliquary",
@@ -150,7 +152,7 @@ fn standard_registry_appends_to_the_pauper_prefix_without_fdn() {
 
 #[test]
 fn standard_catalog_identity_is_frozen() {
-    const EXPECTED_STANDARD_V1: u64 = 0x9aed_01be_7884_e1c0;
+    const EXPECTED_STANDARD_V1: u64 = 0x75cf_4b5c_db81_171b;
     assert_eq!(
         KERNEL_CARDDB_HASH, EXPECTED_STANDARD_V1,
         "Standard catalog hash {KERNEL_CARDDB_HASH:#018x}"

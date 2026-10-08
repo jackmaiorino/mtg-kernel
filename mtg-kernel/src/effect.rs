@@ -1651,6 +1651,16 @@ pub enum EffectTargetSelectionPurpose {
         original_candidates: Vec<EffectObjectBinding>,
         canonical_path: Vec<u16>,
     },
+    /// `player` may choose a new target for the spell copy `copy`
+    /// (`StandardOpV1::CopySpellMayChooseNewTargets`); its current target is
+    /// among the candidates when still legal.
+    StandardCopyTargetV1 {
+        player: PlayerId,
+        copy: crate::ids::StackItemId,
+        copy_source: ObjectId,
+        original_candidates: Vec<Target>,
+        canonical_path: Vec<u16>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1811,6 +1821,14 @@ pub enum EffectOptionChoicePurpose {
         canonical_path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
     },
+    /// "Add two mana in any combination of colors": the fifteen
+    /// combinations in WUBRG order
+    /// (`StandardOpV1::ChooseTwoManaInAnyCombination`).
+    StandardManaCombinationV1 {
+        player: PlayerId,
+        canonical_path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
 }
 
 /// A policy-visible choice yielded by the generic effect interpreter. This is
@@ -1961,6 +1979,14 @@ pub enum EffectAnsweredChoiceGuard {
     /// Accepted Everflame choice whose change has not run yet.
     StandardEverflameChosenV1 {
         source: EffectObjectBinding,
+        canonical_path: Vec<u16>,
+        remaining_frames: Vec<EffectFrame>,
+    },
+    /// The answered target of a spell copy, not yet given to it.
+    StandardCopyRetargetedV1 {
+        copy: crate::ids::StackItemId,
+        copy_source: ObjectId,
+        target: Target,
         canonical_path: Vec<u16>,
         remaining_frames: Vec<EffectFrame>,
     },
@@ -2234,6 +2260,26 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
             };
             match purpose {
                 EffectOptionChoicePurpose::Generic => {
+                    path.push(option_index);
+                    continuation
+                        .frames
+                        .push(EffectFrame::Program { op: selected, path });
+                }
+                EffectOptionChoicePurpose::StandardManaCombinationV1 {
+                    player: mana_player,
+                    canonical_path,
+                    expected_remaining_frames,
+                } => {
+                    if player != mana_player
+                        || path != canonical_path
+                        || continuation.frames != expected_remaining_frames
+                        || options
+                            != crate::standard_cards_v1::two_mana_combinations(
+                                PlayerRef::Controller,
+                            )
+                    {
+                        return Err("mana combination choice changed before answer".to_string());
+                    }
                     path.push(option_index);
                     continuation
                         .frames
@@ -2995,6 +3041,38 @@ fn complete_resumable_target_selection(
         continuation.choice = Some(choice);
         return Err("the pending effect is not waiting for a target selection".to_string());
     };
+    if let EffectTargetSelectionPurpose::StandardCopyTargetV1 {
+        copy,
+        copy_source,
+        original_candidates,
+        canonical_path,
+        ..
+    } = purpose
+    {
+        // A copy's new target may be a player, so it has no object binding.
+        let [chosen] = selected.as_slice() else {
+            return Err("a spell copy takes exactly one new target".to_string());
+        };
+        if path != canonical_path || !original_candidates.contains(&chosen.target) {
+            return Err("spell-copy target choice changed".to_string());
+        }
+        continuation.answered_choice_guard =
+            Some(EffectAnsweredChoiceGuard::StandardCopyRetargetedV1 {
+                copy,
+                copy_source,
+                target: chosen.target,
+                canonical_path: canonical_path.clone(),
+                remaining_frames: continuation.frames.clone(),
+            });
+        continuation.frames.push(EffectFrame::Program {
+            op: EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::RetargetSpellCopy {
+                copy,
+                target: chosen.target,
+            }),
+            path: canonical_path,
+        });
+        return Ok(());
+    }
     let mut objects = selected
         .into_iter()
         .map(|candidate| {
@@ -3008,6 +3086,9 @@ fn complete_resumable_target_selection(
         })
         .collect::<Result<Vec<_>, String>>()?;
     match purpose {
+        EffectTargetSelectionPurpose::StandardCopyTargetV1 { .. } => {
+            unreachable!("answered above without object bindings")
+        }
         EffectTargetSelectionPurpose::StandardDiscardToDrawV1 {
             player,
             original_candidates,
@@ -4394,6 +4475,9 @@ fn validated_definition_owned_root_effect(
                         pending.resolving_item.source,
                         state,
                     ) == *root
+                        // Event-bound Standard programs (Chandra's copy) are
+                        // filled in from the triggering event.
+                        || crate::standard_cards_v1::template_matches(&(trigger.effect)(), &root)
                 })
         {
             return Err(
@@ -5463,6 +5547,7 @@ fn validate_answered_choice_guard(
                             | EffectAnsweredChoiceGuard::StandardBreachChosenV1 { .. }
                             | EffectAnsweredChoiceGuard::StandardDiscardChosenV1 { .. }
                             | EffectAnsweredChoiceGuard::StandardEverflameChosenV1 { .. }
+                            | EffectAnsweredChoiceGuard::StandardCopyRetargetedV1 { .. }
                     )
                 ) {
                     return Err(
@@ -5805,6 +5890,31 @@ fn validate_answered_choice_guard(
             }
             validate_standard_everflame(state, pending, *source, canonical_path)?;
         }
+        Some(EffectAnsweredChoiceGuard::StandardCopyRetargetedV1 {
+            copy,
+            copy_source,
+            target,
+            canonical_path,
+            remaining_frames,
+        }) => {
+            let mut expected = remaining_frames.clone();
+            expected.push(EffectFrame::Program {
+                op: EffectOp::StandardV1(
+                    crate::standard_cards_v1::StandardOpV1::RetargetSpellCopy {
+                        copy: *copy,
+                        target: *target,
+                    },
+                ),
+                path: canonical_path.clone(),
+            });
+            if pending.choice.is_some() || pending.frames != expected {
+                return Err("answered spell-copy target continuation changed".to_string());
+            }
+            validate_standard_copy_origin(state, pending, *copy, *copy_source, canonical_path)?;
+            if !crate::engine::spell_copy_retarget_candidates(state, *copy).contains(target) {
+                return Err("answered spell-copy target is no longer legal".to_string());
+            }
+        }
         Some(EffectAnsweredChoiceGuard::StandardDiscardChosenV1 {
             player,
             cards,
@@ -5878,6 +5988,59 @@ fn validate_answered_choice_guard(
                 return Err("answered pile changed".to_string());
             }
         }
+    }
+    Ok(())
+}
+
+/// A spell-copy target candidate: objects carry their live incarnation.
+fn standard_copy_target_candidate(state: &GameState, target: Target) -> EffectTargetCandidate {
+    EffectTargetCandidate {
+        target,
+        expected_object: match target {
+            Target::Object(object) => {
+                let live = state.objects.get(object);
+                Some(EffectObjectBinding {
+                    object,
+                    expected_zone: live.zone,
+                    expected_zone_change_count: live.zone_change_count,
+                })
+            }
+            Target::Player(_) => None,
+        },
+    }
+}
+
+/// Authenticates a spell-copy target prompt or answer: the definition-owned
+/// copy operation at its path, and the live copy of that operation's spell.
+fn validate_standard_copy_origin(
+    state: &GameState,
+    pending: &EffectContinuation,
+    copy: crate::ids::StackItemId,
+    copy_source: ObjectId,
+    path: &[u16],
+) -> Result<(), String> {
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    let Some(EffectOp::StandardV1(
+        crate::standard_cards_v1::StandardOpV1::CopySpellMayChooseNewTargets { spell },
+    )) = effect_op_at_structural_path(&root, path)
+    else {
+        return Err("spell-copy choice lost its originating operation".to_string());
+    };
+    let live = state
+        .stack
+        .iter()
+        .find(|item| item.v4.stack_item_id == copy)
+        .ok_or("the spell copy left the stack")?;
+    if live.source != copy_source
+        || !live.is_copy
+        || live.controller != pending.ctx.controller
+        || state
+            .objects
+            .try_get(copy_source)
+            .and_then(|object| object.spell_copy_origin)
+            .is_none_or(|origin| origin.parent != *spell)
+    {
+        return Err("spell copy changed".to_string());
     }
     Ok(())
 }
@@ -6125,6 +6288,34 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                                 .collect::<Vec<_>>()
                     {
                         return Err("discard prompt candidates changed".to_string());
+                    }
+                }
+                EffectTargetSelectionPurpose::StandardCopyTargetV1 {
+                    player,
+                    copy,
+                    copy_source,
+                    original_candidates,
+                    canonical_path,
+                } => {
+                    if chooser != player
+                        || path != canonical_path
+                        || *min_targets != 1
+                        || *max_targets != 1
+                        || *ordered
+                        || !selected.is_empty()
+                    {
+                        return Err("spell-copy target prompt has a noncanonical shape".to_string());
+                    }
+                    validate_standard_copy_origin(state, pending, *copy, *copy_source, path)?;
+                    let expected = original_candidates
+                        .iter()
+                        .map(|&target| standard_copy_target_candidate(state, target))
+                        .collect::<Vec<_>>();
+                    if crate::engine::spell_copy_retarget_candidates(state, *copy)
+                        != *original_candidates
+                        || *legal != expected
+                    {
+                        return Err("spell-copy target candidates changed".to_string());
                     }
                 }
                 EffectTargetSelectionPurpose::StandardBreachChoiceV1 {
@@ -7360,6 +7551,32 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
             EffectOptionChoicePurpose::Generic => {
                 for option in options {
                     validate_resumable_program(option)?;
+                }
+            }
+            EffectOptionChoicePurpose::StandardManaCombinationV1 {
+                player: mana_player,
+                canonical_path,
+                expected_remaining_frames,
+            } => {
+                if player != mana_player
+                    || *mana_player != pending.ctx.controller
+                    || path != canonical_path
+                    || &pending.frames != expected_remaining_frames
+                    || *options
+                        != crate::standard_cards_v1::two_mana_combinations(PlayerRef::Controller)
+                {
+                    return Err("mana combination choice metadata is not canonical".to_string());
+                }
+                let root = validated_definition_owned_root_effect(state, pending)?;
+                if !matches!(
+                    effect_op_at_structural_path(&root, path),
+                    Some(EffectOp::StandardV1(
+                        crate::standard_cards_v1::StandardOpV1::ChooseTwoManaInAnyCombination
+                    ))
+                ) {
+                    return Err(
+                        "mana combination choice lost its originating operation".to_string()
+                    );
                 }
             }
             EffectOptionChoicePurpose::OwnerLibrarySecondOrBottom {
@@ -9005,6 +9222,88 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         return Ok(ResumableProgress::Suspended);
                     }
                 }
+            }
+            EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::ChooseTwoManaInAnyCombination,
+            ) => {
+                let player = continuation.ctx.controller;
+                let canonical_path = path.clone();
+                let expected_remaining_frames = continuation.frames.clone();
+                continuation.choice = Some(PendingEffectChoice::ChooseOption {
+                    player,
+                    path,
+                    options: crate::standard_cards_v1::two_mana_combinations(
+                        PlayerRef::Controller,
+                    ),
+                    purpose: EffectOptionChoicePurpose::StandardManaCombinationV1 {
+                        player,
+                        canonical_path,
+                        expected_remaining_frames,
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::CopySpellMayChooseNewTargets { spell },
+            ) => {
+                let player = continuation.ctx.controller;
+                let Some((copy_source, copy)) = crate::engine::copy_spell_for(state, spell, player)
+                else {
+                    continue;
+                };
+                let candidates = crate::engine::spell_copy_retarget_candidates(state, copy);
+                if candidates.is_empty()
+                    || candidates == crate::engine::spell_copy_targets(state, copy)
+                {
+                    crate::engine::finish_spell_copy_targets(state, copy, None)?;
+                    continue;
+                }
+                continuation.choice = Some(PendingEffectChoice::SelectTargets {
+                    player,
+                    path: path.clone(),
+                    selected: vec![],
+                    legal: candidates
+                        .iter()
+                        .map(|&target| standard_copy_target_candidate(state, target))
+                        .collect(),
+                    min_targets: 1,
+                    max_targets: 1,
+                    ordered: false,
+                    purpose: EffectTargetSelectionPurpose::StandardCopyTargetV1 {
+                        player,
+                        copy,
+                        copy_source,
+                        original_candidates: candidates,
+                        canonical_path: path,
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::RetargetSpellCopy {
+                copy,
+                target,
+            }) => {
+                let Some(EffectAnsweredChoiceGuard::StandardCopyRetargetedV1 {
+                    copy: expected_copy,
+                    target: expected_target,
+                    canonical_path,
+                    remaining_frames,
+                    ..
+                }) = continuation.answered_choice_guard.as_ref()
+                else {
+                    return Err("spell-copy target lost its answered choice".to_string());
+                };
+                if copy != *expected_copy
+                    || target != *expected_target
+                    || path != *canonical_path
+                    || continuation.frames != *remaining_frames
+                {
+                    return Err("spell-copy target choice changed".to_string());
+                }
+                continuation.answered_choice_guard = None;
+                crate::engine::finish_spell_copy_targets(state, copy, Some(target))?;
             }
             EffectOp::StandardV1(
                 crate::standard_cards_v1::StandardOpV1::MayDiscardUpToThenDraw { player, count },

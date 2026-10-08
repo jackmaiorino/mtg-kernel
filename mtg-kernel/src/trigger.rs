@@ -2535,10 +2535,16 @@ fn triggers_from_events(
                         };
                     let target_spec =
                         target_spec_for_trigger(obj.card_def, &effect).unwrap_or(TargetSpec::None);
-                    if let TriggerCondition::ControllerAddedPlusOneCountersToSelf {
-                        max_per_turn: Some(maximum),
-                    } = def.condition
-                    {
+                    let limit = match def.condition {
+                        TriggerCondition::ControllerAddedPlusOneCountersToSelf {
+                            max_per_turn: Some(maximum),
+                        } => Some(maximum),
+                        TriggerCondition::StandardV1(condition) => {
+                            crate::standard_cards_v1::trigger_limit_per_turn(condition)
+                        }
+                        _ => None,
+                    };
+                    if let Some(maximum) = limit {
                         let ability_index =
                             u16::try_from(ability_index).expect("bounded definition abilities");
                         let source = crate::state::ObjectLinkV4 {

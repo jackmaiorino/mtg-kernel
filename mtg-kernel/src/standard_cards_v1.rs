@@ -73,6 +73,11 @@ pub struct StandardStateV1 {
     /// activated for as long as they remain tapped, per exact incarnation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     net_locks: Vec<(ObjectId, u32)>,
+    /// Cards exiled together by Chandra, Hope's Beacon's +1, of which only
+    /// one may be cast: each card's exile incarnation, and whether one of
+    /// them was cast.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    exile_cast_groups: Vec<(Vec<(ObjectId, u32)>, bool)>,
 }
 
 /// The doors of one Room permanent incarnation: bit 0 is the left door,
@@ -104,6 +109,18 @@ pub enum StandardTargetV1 {
     AnotherNonlegendaryControlledCreature,
     /// Another nonland permanent (any controller).
     AnotherNonlandPermanent,
+    /// "Each of up to two targets": two distinct any-targets (115.4).
+    UpToTwoAnyTargets,
+}
+
+impl StandardTargetV1 {
+    /// How many targets this filter takes, and how many at least.
+    pub(crate) fn counts(self) -> (u8, u8) {
+        match self {
+            Self::UpToTwoAnyTargets => (2, 0),
+            _ => (1, 1),
+        }
+    }
 }
 
 impl StandardTargetV1 {
@@ -121,13 +138,32 @@ pub(crate) fn target_zone(target: StandardTargetV1) -> Zone {
     }
 }
 
-/// The legal choices for `target`, in battlefield or graveyard order.
+/// The legal choices for `target`, in battlefield or graveyard order, after
+/// the already chosen `prefix`.
 pub(crate) fn legal_targets(
     target: StandardTargetV1,
     controller: PlayerId,
     source: Option<ObjectId>,
+    prefix: &[Target],
     state: &GameState,
 ) -> Vec<Target> {
+    if target == StandardTargetV1::UpToTwoAnyTargets {
+        // 115.4: a creature, player or planeswalker; each target once.
+        let players = [PlayerId::P0, PlayerId::P1].map(Target::Player);
+        let permanents = [PlayerId::P0, PlayerId::P1]
+            .iter()
+            .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
+            .filter(|&id| {
+                crate::engine::object_has_type(state, id, CardType::Creature)
+                    || crate::engine::object_has_type(state, id, CardType::Planeswalker)
+            })
+            .map(Target::Object);
+        return players
+            .into_iter()
+            .chain(permanents)
+            .filter(|candidate| !prefix.contains(candidate))
+            .collect();
+    }
     let candidates: Vec<ObjectId> = if target.in_graveyard() {
         state.players[controller.index()].graveyard.clone()
     } else {
@@ -187,6 +223,9 @@ pub(crate) fn target_matches(
             live.controller == controller && has(CardType::Artifact)
         }
         StandardTargetV1::AnotherNonlandPermanent => !has(CardType::Land),
+        StandardTargetV1::UpToTwoAnyTargets => {
+            has(CardType::Creature) || has(CardType::Planeswalker)
+        }
         StandardTargetV1::AnotherNonlegendaryControlledCreature => {
             live.controller == controller
                 && has(CardType::Creature)
@@ -336,6 +375,25 @@ pub enum StandardOpV1 {
     /// controls, then put the source into its owner's library third from
     /// the top.
     DrawPerArtifactThenSourceThirdFromTop,
+    /// Chandra, Hope's Beacon's +2: "Add two mana in any combination of
+    /// colors", one choice among the fifteen combinations.
+    ChooseTwoManaInAnyCombination,
+    /// Chandra's +1: exile the top five cards of your library; until the end
+    /// of your next turn, you may cast an instant or sorcery spell from
+    /// among them.
+    ExileTopFiveMayCastOneInstantOrSorcery,
+    /// Chandra's -X: it deals `amount` damage to each of its targets.
+    DamageEachTarget { amount: u8 },
+    /// Chandra's copy trigger template, bound to the cast spell when the
+    /// trigger fires (`materialize_event`).
+    BindCopyCastSpell,
+    /// Copy `spell`; its controller may choose new targets for the copy.
+    CopySpellMayChooseNewTargets { spell: ObjectId },
+    /// The answered target for the copy: interpreter owned.
+    RetargetSpellCopy {
+        copy: crate::ids::StackItemId,
+        target: Target,
+    },
 }
 
 impl StandardOpV1 {
@@ -350,6 +408,8 @@ impl StandardOpV1 {
                 | Self::MayDiscardUpToThenDraw { .. }
                 | Self::SearchArtifactWithManaValueOneMoreThanSacrificed
                 | Self::MayBecomeEverflame
+                | Self::ChooseTwoManaInAnyCombination
+                | Self::CopySpellMayChooseNewTargets { .. }
         )
     }
 
@@ -378,6 +438,7 @@ impl StandardOpV1 {
                 | Self::PutChosenCardsOntoBattlefield { .. }
                 | Self::DiscardChosenThenDraw { .. }
                 | Self::BecomeEverflame { .. }
+                | Self::RetargetSpellCopy { .. }
         )
     }
 }
@@ -700,6 +761,31 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 );
             }
         }
+        StandardOpV1::ExileTopFiveMayCastOneInstantOrSorcery => {
+            exile_top_five_may_cast_one(state, ctx.controller);
+        }
+        StandardOpV1::DamageEachTarget { amount } => {
+            for index in 0..ctx.targets.len() {
+                if ctx.target_incarnation_matches(index, state)
+                    && crate::engine::effect_target_is_legal(
+                        state,
+                        ctx.source,
+                        ctx.controller,
+                        crate::card_def::TargetSpec::StandardV1(
+                            StandardTargetV1::UpToTwoAnyTargets,
+                        ),
+                        &ctx.targets,
+                        index,
+                    )
+                {
+                    event::propose_and_commit(
+                        state,
+                        ProposedEvent::damage(ctx.source, ctx.targets[index], i32::from(*amount)),
+                    );
+                }
+            }
+        }
+        StandardOpV1::BindCopyCastSpell => {}
         StandardOpV1::AddLoyaltyToSource { amount } => {
             if source_incarnation_live(ctx, state) {
                 crate::planeswalker_v1::change_loyalty(state, ctx.source, i32::from(*amount));
@@ -810,7 +896,10 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
         | StandardOpV1::DiscardChosenThenDraw { .. }
         | StandardOpV1::SearchArtifactWithManaValueOneMoreThanSacrificed
         | StandardOpV1::MayBecomeEverflame
-        | StandardOpV1::BecomeEverflame { .. } => {
+        | StandardOpV1::BecomeEverflame { .. }
+        | StandardOpV1::ChooseTwoManaInAnyCombination
+        | StandardOpV1::CopySpellMayChooseNewTargets { .. }
+        | StandardOpV1::RetargetSpellCopy { .. } => {
             panic!("choice-bearing effects must use the resumable interpreter")
         }
     }
@@ -949,6 +1038,12 @@ pub(crate) fn materialize_event(effect: &EffectOp, event: &CommittedEvent) -> Op
         ) => Some(EffectOp::StandardV1(StandardOpV1::CecilDarkness {
             amount: u32::try_from(*amount).unwrap_or(0),
         })),
+        (
+            EffectOp::StandardV1(StandardOpV1::BindCopyCastSpell),
+            CommittedEvent::SpellCast { spell, .. },
+        ) => Some(EffectOp::StandardV1(
+            StandardOpV1::CopySpellMayChooseNewTargets { spell: *spell },
+        )),
         _ => None,
     }
 }
@@ -960,6 +1055,9 @@ pub(crate) fn template_matches(template: &EffectOp, effect: &EffectOp) -> bool {
         (
             EffectOp::StandardV1(StandardOpV1::BindCecilDarkness),
             EffectOp::StandardV1(StandardOpV1::CecilDarkness { .. }),
+        ) | (
+            EffectOp::StandardV1(StandardOpV1::BindCopyCastSpell),
+            EffectOp::StandardV1(StandardOpV1::CopySpellMayChooseNewTargets { .. }),
         )
     )
 }
@@ -1017,6 +1115,17 @@ pub enum StandardTriggerV1 {
     /// "Whenever a legendary creature you control enters", on a permanent
     /// that has not become Everflame.
     ControlledLegendaryCreatureEntersUnlessEverflame,
+    /// "Whenever you cast an instant or sorcery spell, ... This ability
+    /// triggers only once each turn" (`trigger_limit_per_turn`).
+    YouCastInstantOrSorceryOncePerTurn,
+}
+
+/// How many times each turn a trigger condition may trigger, if limited.
+pub(crate) fn trigger_limit_per_turn(condition: StandardTriggerV1) -> Option<u16> {
+    match condition {
+        StandardTriggerV1::YouCastInstantOrSorceryOncePerTurn => Some(1),
+        _ => None,
+    }
 }
 
 const POLUKRANOS_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
@@ -1089,6 +1198,17 @@ pub(crate) fn trigger_matches(
                     && gained == level
                     && zone_change_count == state.objects.get(source).zone_change_count
         ),
+        StandardTriggerV1::YouCastInstantOrSorceryOncePerTurn => {
+            let CommittedEvent::SpellCast { spell, controller } = events[index] else {
+                return false;
+            };
+            let live = state.objects.get(source);
+            let def = &CARD_DEFS[state.objects.get(spell).card_def as usize];
+            controller == live.controller
+                && live.zone == Zone::Battlefield
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+                && (def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery))
+        }
         StandardTriggerV1::YouCastInstantOrSorceryAtClassLevel { level } => {
             let CommittedEvent::SpellCast { spell, controller } = events[index] else {
                 return false;
@@ -1372,6 +1492,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         FABLE_GOBLIN_SHAMAN_TOKEN => &FABLE_GOBLIN_SHAMAN_TRIGGERS,
         THE_IRENCRAG => &THE_IRENCRAG_TRIGGERS,
         CLAY_FIRED_BRICKS => &CLAY_FIRED_BRICKS_TRIGGERS,
+        CHANDRA => &CHANDRA_TRIGGERS,
         "Otter Prowess Token" => &PROWESS_TRIGGERS,
         SEAM_RIP | DUSK_ROSE_RELIQUARY | SHELTERED_BY_GHOSTS | HARDLIGHT_CONTAINMENT => {
             &EXILE_UNTIL_LEAVES_TRIGGERS
@@ -2822,5 +2943,157 @@ pub(crate) fn release_untapped_locks(state: &mut GameState) {
         .collect();
     if let Some(standard) = state.standard_v1.as_mut() {
         standard.net_locks = held;
+    }
+}
+
+// ---- Chandra, Hope's Beacon ----------------------------------------------
+
+const CHANDRA: &str = "Chandra, Hope's Beacon";
+
+fn chandra_copy() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::BindCopyCastSpell)
+}
+
+/// "Whenever you cast an instant or sorcery spell, copy it. You may choose
+/// new targets for the copy. This ability triggers only once each turn."
+const CHANDRA_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
+    TriggerCondition::StandardV1(StandardTriggerV1::YouCastInstantOrSorceryOncePerTurn),
+    chandra_copy,
+)];
+
+/// +2: "Add two mana in any combination of colors."
+pub fn chandra_two_mana() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::ChooseTwoManaInAnyCombination)
+}
+
+/// +1: "Exile the top five cards of your library. Until the end of your
+/// next turn, you may cast an instant or sorcery spell from among those
+/// exiled cards."
+pub fn chandra_impulse() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::ExileTopFiveMayCastOneInstantOrSorcery)
+}
+
+/// -X: "Chandra, Hope's Beacon deals X damage to each of up to two
+/// targets." Each X is its own loyalty ability (`build_standard_v1`).
+macro_rules! chandra_minus {
+    ($($name:ident = $x:literal),* $(,)?) => {
+        $(
+            pub fn $name() -> EffectOp {
+                EffectOp::StandardV1(StandardOpV1::DamageEachTarget { amount: $x })
+            }
+        )*
+    };
+}
+
+chandra_minus!(
+    chandra_minus_1 = 1,
+    chandra_minus_2 = 2,
+    chandra_minus_3 = 3,
+    chandra_minus_4 = 4,
+    chandra_minus_5 = 5,
+    chandra_minus_6 = 6,
+    chandra_minus_7 = 7,
+    chandra_minus_8 = 8,
+    chandra_minus_9 = 9,
+    chandra_minus_10 = 10,
+    chandra_minus_11 = 11,
+    chandra_minus_12 = 12,
+    chandra_minus_13 = 13,
+    chandra_minus_14 = 14,
+    chandra_minus_15 = 15,
+    chandra_minus_16 = 16,
+    chandra_minus_17 = 17,
+    chandra_minus_18 = 18,
+    chandra_minus_19 = 19,
+    chandra_minus_20 = 20,
+);
+
+/// The fifteen two-mana color combinations, in WUBRG order.
+pub(crate) fn two_mana_combinations(player: PlayerRef) -> Vec<EffectOp> {
+    let colors = [
+        ManaColor::W,
+        ManaColor::U,
+        ManaColor::B,
+        ManaColor::R,
+        ManaColor::G,
+    ];
+    let mut options = Vec::with_capacity(15);
+    for (index, &first) in colors.iter().enumerate() {
+        for &second in &colors[index..] {
+            options.push(EffectOp::AddMana {
+                player,
+                colors: vec![first, second],
+            });
+        }
+    }
+    options
+}
+
+fn exile_top_five_may_cast_one(state: &mut GameState, player: PlayerId) {
+    let mut group = Vec::new();
+    for _ in 0..5 {
+        let Some(&top) = state.players[player.index()].library.first() else {
+            break;
+        };
+        event::propose_and_commit(state, ProposedEvent::zone_change(top, Zone::Exile));
+        let live = state.objects.get(top);
+        let def = &CARD_DEFS[live.card_def as usize];
+        if live.zone != Zone::Exile
+            || !def.is_castable()
+            || !(def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery))
+        {
+            continue;
+        }
+        let zone_change_count = live.zone_change_count;
+        state
+            .engine
+            .exile_play_permissions
+            .push(crate::engine::PlayPermission {
+                object: top,
+                holder: player,
+                zone_change_generation: zone_change_count,
+                play_or_cast: crate::engine::PlayOrCast::Cast,
+                expiry: crate::engine::PlayPermissionExpiry::UntilHoldersNextTurn {
+                    holder_turn_started: false,
+                },
+            });
+        group.push((top, zone_change_count));
+    }
+    if group.len() > 1 {
+        state
+            .standard_v1
+            .get_or_insert_with(Default::default)
+            .exile_cast_groups
+            .push((group, false));
+    }
+}
+
+/// Whether `object` was exiled with others of which one was already cast.
+pub(crate) fn exile_cast_group_spent(state: &GameState, object: ObjectId) -> bool {
+    let Some(standard) = state.standard_v1.as_ref() else {
+        return false;
+    };
+    let zone_change_count = state.objects.get(object).zone_change_count;
+    standard
+        .exile_cast_groups
+        .iter()
+        .any(|(members, spent)| *spent && members.contains(&(object, zone_change_count)))
+}
+
+/// Marks the group a card cast from exile belonged to as spent.
+pub(crate) fn note_spell_cast(state: &mut GameState, spell: ObjectId) {
+    let Some(standard) = state.standard_v1.as_mut() else {
+        return;
+    };
+    let Some(live) = state.objects.try_get(spell) else {
+        return;
+    };
+    let Some(exiled) = live.zone_change_count.checked_sub(1) else {
+        return;
+    };
+    for (members, spent) in &mut standard.exile_cast_groups {
+        if members.contains(&(spell, exiled)) {
+            *spent = true;
+        }
     }
 }

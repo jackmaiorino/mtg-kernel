@@ -2278,3 +2278,181 @@ fn braided_quipu_draws_per_artifact_then_goes_third_from_top() {
     assert_eq!(state.players[0].library[2], braided);
     assert_eq!(state.objects.get(bricks).zone, Zone::Battlefield);
 }
+
+// ---- Chandra, Hope's Beacon ----------------------------------------------
+
+const CHANDRA: &str = "Chandra, Hope's Beacon";
+
+/// Resolves everything, answering spell targets with `spell_target`, the
+/// copy's new-target choice with `copy_target` and any variable-count
+/// ability targets with `ability_targets`.
+fn chandra_drive(
+    state: &mut GameState,
+    spell_target: Target,
+    copy_target: Option<Target>,
+    ability_targets: &[Target],
+) {
+    let mut ability_targets = ability_targets.iter().copied();
+    loop {
+        match next(state) {
+            Decision::ChooseTargets { .. } => act(state, Action::ChooseTarget(spell_target)),
+            Decision::ChooseKicker { .. } => act(state, Action::ChooseKicker(false)),
+            Decision::ChooseEffectTargets {
+                legal_targets,
+                can_finish,
+                ..
+            } => {
+                let pick = if can_finish {
+                    ability_targets.next()
+                } else {
+                    copy_target
+                };
+                match pick {
+                    Some(pick) => {
+                        assert!(
+                            legal_targets.contains(&pick),
+                            "{pick:?} not in {legal_targets:?}"
+                        );
+                        act(state, Action::ChooseEffectTarget(pick));
+                    }
+                    None => act(state, Action::FinishEffectSelection),
+                }
+            }
+            Decision::OrderTriggers { pending, .. } => {
+                act(state, Action::OrderTriggers((0..pending.len()).collect()))
+            }
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => return,
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+}
+
+fn castable(state: &mut GameState) -> Vec<ObjectId> {
+    match next(state) {
+        Decision::CastSpellOrPass {
+            castable_spells, ..
+        } => castable_spells,
+        other => panic!("unexpected decision: {other:?}"),
+    }
+}
+
+#[test]
+fn chandra_plus_two_adds_two_mana_in_any_combination() {
+    let mut state = game();
+    let chandra = put(&mut state, P0, CHANDRA, Zone::Battlefield);
+    assert_eq!(loyalty(&state, chandra), Some(5));
+    assert!(activatable(&mut state).contains(&(chandra, 0)));
+    act(&mut state, Action::ActivateAbility(chandra, 0));
+    loop {
+        match next(&mut state) {
+            Decision::ChooseEffectOption { option_count, .. } => {
+                assert_eq!(option_count, 15);
+                // WW WU WB WR WG UU UB UR UG BB BR BG RR ...
+                act(&mut state, Action::ChooseEffectOption(12));
+            }
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => break,
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    assert_eq!(state.players[0].mana_pool[ManaColor::R.pool_index()], 2);
+    assert_eq!(loyalty(&state, chandra), Some(7));
+}
+
+#[test]
+fn chandra_plus_one_lets_you_cast_only_one_exiled_instant_or_sorcery() {
+    let mut state = game();
+    let chandra = put(&mut state, P0, CHANDRA, Zone::Battlefield);
+    let first = to_library(&mut state, P0, "Lightning Bolt");
+    let second = to_library(&mut state, P0, "Lightning Bolt");
+    let island = state.players[0].library[2];
+    act_and_settle(&mut state, chandra, 1);
+    for card in [first, second, island] {
+        assert_eq!(state.objects.get(card).zone, Zone::Exile);
+    }
+    assert_eq!(loyalty(&state, chandra), Some(6));
+    state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+    let offered = castable(&mut state);
+    assert!(offered.contains(&first) && offered.contains(&second));
+    assert!(!offered.contains(&island));
+
+    // The copy trigger also fires: the copy keeps the opponent as its target.
+    act(&mut state, Action::CastSpell(first));
+    chandra_drive(
+        &mut state,
+        Target::Player(P1),
+        Some(Target::Player(P1)),
+        &[],
+    );
+    assert_eq!(state.players[1].life, 14);
+    state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+    assert!(!castable(&mut state).contains(&second));
+}
+
+fn act_and_settle(state: &mut GameState, source: ObjectId, ability: u8) {
+    next(state);
+    act(state, Action::ActivateAbility(source, ability));
+    resolve_stack(state);
+}
+
+#[test]
+fn chandra_minus_x_deals_x_to_each_of_up_to_two_targets() {
+    let mut state = game();
+    let chandra = put(&mut state, P0, CHANDRA, Zone::Battlefield);
+    let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let offered = activatable(&mut state);
+    // -1 through -5 are affordable at five loyalty; -6 and up are not.
+    for index in 2..7 {
+        assert!(offered.contains(&(chandra, index)), "{index}");
+    }
+    assert!(!offered.contains(&(chandra, 7)));
+    act(&mut state, Action::ActivateAbility(chandra, 4));
+    chandra_drive(
+        &mut state,
+        Target::Player(P1),
+        None,
+        &[Target::Player(P1), Target::Object(elves)],
+    );
+    assert_eq!(state.players[1].life, 17);
+    assert_eq!(state.objects.get(elves).zone, Zone::Graveyard);
+    assert_eq!(loyalty(&state, chandra), Some(2));
+}
+
+#[test]
+fn chandra_minus_x_may_choose_one_target() {
+    let mut state = game();
+    let chandra = put(&mut state, P0, CHANDRA, Zone::Battlefield);
+    next(&mut state);
+    act(&mut state, Action::ActivateAbility(chandra, 2));
+    chandra_drive(&mut state, Target::Player(P1), None, &[Target::Player(P1)]);
+    assert_eq!(state.players[1].life, 19);
+    assert_eq!(loyalty(&state, chandra), Some(4));
+}
+
+#[test]
+fn chandra_copies_the_first_instant_each_turn_with_a_new_target() {
+    let mut state = game();
+    put(&mut state, P0, CHANDRA, Zone::Battlefield);
+    let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let burst = put(&mut state, P0, "Burst Lightning", Zone::Hand);
+    state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+    next(&mut state);
+    act(&mut state, Action::CastSpell(burst));
+    chandra_drive(
+        &mut state,
+        Target::Player(P1),
+        Some(Target::Object(elves)),
+        &[],
+    );
+    assert_eq!(state.players[1].life, 18);
+    assert_eq!(state.objects.get(elves).zone, Zone::Graveyard);
+
+    // Only once each turn.
+    let second = put(&mut state, P0, "Burst Lightning", Zone::Hand);
+    state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+    next(&mut state);
+    act(&mut state, Action::CastSpell(second));
+    chandra_drive(&mut state, Target::Player(P1), None, &[]);
+    assert_eq!(state.players[1].life, 16);
+}

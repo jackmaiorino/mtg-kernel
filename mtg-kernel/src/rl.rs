@@ -6717,6 +6717,9 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::StandardDiscardToDrawV1 {
                                 ..
                             } => TargetSelectionPurposeV4::CardSelection,
+                            crate::effect::EffectTargetSelectionPurpose::StandardCopyTargetV1 {
+                                ..
+                            } => TargetSelectionPurposeV4::EffectTargets,
                         },
                     })
                 }

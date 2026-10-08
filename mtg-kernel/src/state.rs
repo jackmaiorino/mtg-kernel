@@ -880,7 +880,9 @@ pub fn stack_target_contract_is_structurally_valid(
     if let (TargetSpec::StandardV1(filter), StackTargetContractV4::Object { zone, .. }) =
         (spec, &contract)
     {
-        if target_index != 0 || *zone != crate::standard_cards_v1::target_zone(filter) {
+        if target_index >= usize::from(filter.counts().0)
+            || *zone != crate::standard_cards_v1::target_zone(filter)
+        {
             return false;
         }
     }

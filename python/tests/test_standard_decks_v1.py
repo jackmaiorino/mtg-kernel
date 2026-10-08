@@ -22,6 +22,7 @@ SUPPORTED_NONBASIC = {
     "Case of the Gateway Express",
     "Case of the Uneaten Feast",
     "Cecil, Dark Knight",
+    "Chandra, Hope's Beacon",
     "Clay-Fired Bricks",
     "Duress",
     "Dusk Rose Reliquary",

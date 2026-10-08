@@ -220,6 +220,26 @@ Quipu draws a card per artifact its controller controls and then goes to
 its owner's library third from the top (the appended
 `LibraryPlacement::ThirdFromTop`).
 
+## Chandra, Hope's Beacon
+
+Chandra's +2 asks for one of the fifteen two-color combinations in WUBRG
+order (`StandardManaCombinationV1`, an option choice whose options must
+equal `two_mana_combinations`). Her +1 exiles the top five cards and gives
+each castable instant or sorcery among them a cast permission until the end
+of her controller's next turn; when more than one was exiled they form a
+group, and casting one marks the group spent so the others stop being
+offered. Her -X is one loyalty ability per X from 1 to 20, each dealing X to
+each of up to two targets (`StandardTargetV1::UpToTwoAnyTargets`, chosen
+through the variable-count activation selection), so X=0 and X above 20
+are not offered. The copy trigger fires on the first instant or sorcery
+its controller casts each turn (`trigger_limit_per_turn`). It copies the
+spell onto the stack and, when the copy has exactly one target and
+another legal one exists, asks for a new target
+(`StandardCopyTargetV1`, which also accepts players); keeping the current
+target is one of the options. A copy of a spell with more than one target
+keeps its targets. The trigger's program is filled in from the cast event,
+so root validation also accepts it through `template_matches`.
+
 ## Known limits
 
 The stack and battlefield use the Room card's combined mana value and
