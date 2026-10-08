@@ -43,8 +43,9 @@ gainlands and life-gain creatures (`fdn_gainlands_lifegain_v1.md`), reaching
 (`fdn_triggers_tricks_v1.md`), reaching 73/286, the equipment, kicker and
 library-search batch (`fdn_equipment_search_v1.md`) reaches 81/286, token
 makers and creature Auras (`fdn_tokens_auras_v1.md`) reach 90/286, and removal,
-damage and combat tricks (`fdn_removal_tricks_v1.md`) reach **108/286**. One
-reference planeswalker remains partial and 177 names are
+damage and combat tricks (`fdn_removal_tricks_v1.md`) reach 108/286, and
+counterspells and simple threats (`fdn_counters_threats_v1.md`) reach
+**118/286**. One reference planeswalker remains partial and 167 names are
 missing from the wider reference; `../reports/fdn_remaining_pool_inventory_v1.md` sizes them.
 
 Milestone 3's opt-in engine priority presentation is implemented on

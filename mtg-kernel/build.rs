@@ -6990,11 +6990,23 @@ fn codegen(cards: &[CardJson]) -> String {
         .iter()
         .any(|card| matches!(special_for(&card.name), Special::CounterTargetThenLoot))
     {
-        writeln!(out, "fn spell_effect_counter_target_then_loot() -> Option<EffectOp> {{").unwrap();
+        writeln!(
+            out,
+            "fn spell_effect_counter_target_then_loot() -> Option<EffectOp> {{"
+        )
+        .unwrap();
         writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
         writeln!(out, "        counter_target_spell_effect(),").unwrap();
-        writeln!(out, "        EffectOp::DrawCards {{ player: PlayerRef::Controller, count: 1 }},").unwrap();
-        writeln!(out, "        EffectOp::DiscardCards {{ player: PlayerRef::Controller, count: 1 }},").unwrap();
+        writeln!(
+            out,
+            "        EffectOp::DrawCards {{ player: PlayerRef::Controller, count: 1 }},"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        EffectOp::DiscardCards {{ player: PlayerRef::Controller, count: 1 }},"
+        )
+        .unwrap();
         writeln!(out, "    ]))").unwrap();
         writeln!(out, "}}").unwrap();
         writeln!(out).unwrap();
@@ -7006,10 +7018,22 @@ fn codegen(cards: &[CardJson]) -> String {
             Special::ReturnCreatureCardsThenDiscard
         )
     }) {
-        writeln!(out, "fn spell_effect_return_creature_cards_then_discard() -> Option<EffectOp> {{").unwrap();
+        writeln!(
+            out,
+            "fn spell_effect_return_creature_cards_then_discard() -> Option<EffectOp> {{"
+        )
+        .unwrap();
         writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
-        writeln!(out, "        EffectOp::MoveAllTargets {{ to_zone: Zone::Hand }},").unwrap();
-        writeln!(out, "        EffectOp::DiscardCards {{ player: PlayerRef::Controller, count: 1 }},").unwrap();
+        writeln!(
+            out,
+            "        EffectOp::MoveAllTargets {{ to_zone: Zone::Hand }},"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        EffectOp::DiscardCards {{ player: PlayerRef::Controller, count: 1 }},"
+        )
+        .unwrap();
         writeln!(out, "    ]))").unwrap();
         writeln!(out, "}}").unwrap();
         writeln!(out).unwrap();

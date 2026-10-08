@@ -1962,8 +1962,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v57_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x8720_c2e3_31fc_b66b;
+    fn card_db_hash_v58_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0xf248_c83c_818b_d26a;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

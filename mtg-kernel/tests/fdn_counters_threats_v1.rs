@@ -13,7 +13,7 @@ use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 use mtg_kernel::trigger;
 
-const FIRST_ID: usize = 268;
+const FIRST_ID: usize = 307;
 
 /// Name, mana cost as (colored pips, generic), colors, types, subtypes,
 /// power/toughness, keywords and trigger count, in id order.
@@ -29,16 +29,116 @@ const CARDS: [(
     Keywords,
     usize,
 ); 10] = [
-    ("Elementalist Adept", &[ManaColor::U], 1, &[ManaColor::U], &[CardType::Creature], &[Subtype::Human, Subtype::Wizard], Some((2, 1)), Keywords::FLASH, 1),
-    ("Crypt Feaster", &[ManaColor::B], 3, &[ManaColor::B], &[CardType::Creature], &[Subtype::Zombie], Some((3, 4)), Keywords::MENACE, 1),
-    ("Erudite Wizard", &[ManaColor::U], 2, &[ManaColor::U], &[CardType::Creature], &[Subtype::Human, Subtype::Wizard], Some((2, 3)), Keywords::NONE, 1),
-    ("Phyrexian Arena", &[ManaColor::B, ManaColor::B], 1, &[ManaColor::B], &[CardType::Enchantment], &[], None, Keywords::NONE, 1),
-    ("Gleaming Barrier", &[], 2, &[], &[CardType::Artifact, CardType::Creature], &[Subtype::Wall], Some((0, 4)), Keywords::DEFENDER, 1),
-    ("Angel of Finality", &[ManaColor::W], 3, &[ManaColor::W], &[CardType::Creature], &[Subtype::Angel], Some((3, 4)), Keywords::FLYING, 1),
-    ("Bigfin Bouncer", &[ManaColor::U], 3, &[ManaColor::U], &[CardType::Creature], &[Subtype::Shark, Subtype::Pirate], Some((3, 2)), Keywords::NONE, 1),
-    ("Essence Scatter", &[ManaColor::U], 1, &[ManaColor::U], &[CardType::Instant], &[], None, Keywords::NONE, 0),
-    ("Refute", &[ManaColor::U, ManaColor::U], 1, &[ManaColor::U], &[CardType::Instant], &[], None, Keywords::NONE, 0),
-    ("Macabre Waltz", &[ManaColor::B], 1, &[ManaColor::B], &[CardType::Sorcery], &[], None, Keywords::NONE, 0),
+    (
+        "Elementalist Adept",
+        &[ManaColor::U],
+        1,
+        &[ManaColor::U],
+        &[CardType::Creature],
+        &[Subtype::Human, Subtype::Wizard],
+        Some((2, 1)),
+        Keywords::FLASH,
+        1,
+    ),
+    (
+        "Crypt Feaster",
+        &[ManaColor::B],
+        3,
+        &[ManaColor::B],
+        &[CardType::Creature],
+        &[Subtype::Zombie],
+        Some((3, 4)),
+        Keywords::MENACE,
+        1,
+    ),
+    (
+        "Erudite Wizard",
+        &[ManaColor::U],
+        2,
+        &[ManaColor::U],
+        &[CardType::Creature],
+        &[Subtype::Human, Subtype::Wizard],
+        Some((2, 3)),
+        Keywords::NONE,
+        1,
+    ),
+    (
+        "Phyrexian Arena",
+        &[ManaColor::B, ManaColor::B],
+        1,
+        &[ManaColor::B],
+        &[CardType::Enchantment],
+        &[],
+        None,
+        Keywords::NONE,
+        1,
+    ),
+    (
+        "Gleaming Barrier",
+        &[],
+        2,
+        &[],
+        &[CardType::Artifact, CardType::Creature],
+        &[Subtype::Wall],
+        Some((0, 4)),
+        Keywords::DEFENDER,
+        1,
+    ),
+    (
+        "Angel of Finality",
+        &[ManaColor::W],
+        3,
+        &[ManaColor::W],
+        &[CardType::Creature],
+        &[Subtype::Angel],
+        Some((3, 4)),
+        Keywords::FLYING,
+        1,
+    ),
+    (
+        "Bigfin Bouncer",
+        &[ManaColor::U],
+        3,
+        &[ManaColor::U],
+        &[CardType::Creature],
+        &[Subtype::Shark, Subtype::Pirate],
+        Some((3, 2)),
+        Keywords::NONE,
+        1,
+    ),
+    (
+        "Essence Scatter",
+        &[ManaColor::U],
+        1,
+        &[ManaColor::U],
+        &[CardType::Instant],
+        &[],
+        None,
+        Keywords::NONE,
+        0,
+    ),
+    (
+        "Refute",
+        &[ManaColor::U, ManaColor::U],
+        1,
+        &[ManaColor::U],
+        &[CardType::Instant],
+        &[],
+        None,
+        Keywords::NONE,
+        0,
+    ),
+    (
+        "Macabre Waltz",
+        &[ManaColor::B],
+        1,
+        &[ManaColor::B],
+        &[CardType::Sorcery],
+        &[],
+        None,
+        Keywords::NONE,
+        0,
+    ),
 ];
 
 fn ready(step: Step) -> GameState {
@@ -138,7 +238,10 @@ fn cast(state: &mut GameState, spell: ObjectId, target: Option<ObjectId>) {
         engine::step(state, Action::ChooseTarget(Target::Object(target))).unwrap();
     }
     let after = next(state);
-    assert!(matches!(after, Decision::CastSpellOrPass { .. }), "{after:?}");
+    assert!(
+        matches!(after, Decision::CastSpellOrPass { .. }),
+        "{after:?}"
+    );
     assert!(state.engine.pending_cast.is_none());
     assert_eq!(state.players[0].mana_pool, [0; 6]);
 }
@@ -181,10 +284,8 @@ fn appended_definitions_match_their_printed_characteristics() {
         target("Macabre Waltz"),
         TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
     );
-    for subtype in [Subtype::Shark] {
-        assert!(Subtype::CREATURE_TYPES.contains(&subtype));
-        assert!(subtype.is_creature_type());
-    }
+    assert!(Subtype::CREATURE_TYPES.contains(&Subtype::Shark));
+    assert!(Subtype::Shark.is_creature_type());
 }
 
 #[test]
@@ -231,7 +332,11 @@ fn permanents_cast_for_their_exact_costs() {
             engine::step(&mut state, Action::ChooseTarget(legal_targets[0])).unwrap();
             settled(&mut state);
         }
-        assert_eq!(state.objects.get(permanent).zone, Zone::Battlefield, "{name}");
+        assert_eq!(
+            state.objects.get(permanent).zone,
+            Zone::Battlefield,
+            "{name}"
+        );
     }
 }
 
@@ -280,7 +385,12 @@ fn crypt_feaster_gets_two_power_attacking_only_with_threshold() {
 #[test]
 fn erudite_wizard_grows_on_the_second_draw_each_turn() {
     let mut state = ready(Step::Main1);
-    let wizard = put(&mut state, PlayerId::P0, "Erudite Wizard", Zone::Battlefield);
+    let wizard = put(
+        &mut state,
+        PlayerId::P0,
+        "Erudite Wizard",
+        Zone::Battlefield,
+    );
     for expected in [2, 3, 3] {
         let think = put(&mut state, PlayerId::P0, "Think Twice", Zone::Hand);
         state.players[0].mana_pool = mana(&[(ManaColor::U, 1)], 1);
@@ -294,11 +404,21 @@ fn erudite_wizard_grows_on_the_second_draw_each_turn() {
 #[test]
 fn gleaming_barrier_cannot_attack_and_leaves_a_treasure_when_it_dies() {
     let mut state = ready(Step::DeclareAttackers);
-    let barrier = put(&mut state, PlayerId::P0, "Gleaming Barrier", Zone::Battlefield);
+    let barrier = put(
+        &mut state,
+        PlayerId::P0,
+        "Gleaming Barrier",
+        Zone::Battlefield,
+    );
     assert!(engine::step(&mut state, Action::DeclareAttackers(vec![barrier])).is_err());
 
     let mut state = ready(Step::Main1);
-    let barrier = put(&mut state, PlayerId::P0, "Gleaming Barrier", Zone::Battlefield);
+    let barrier = put(
+        &mut state,
+        PlayerId::P0,
+        "Gleaming Barrier",
+        Zone::Battlefield,
+    );
     move_to(&mut state, barrier, Zone::Graveyard);
     settled(&mut state);
     let [token] = state.players[0].battlefield[..] else {
@@ -314,7 +434,12 @@ fn phyrexian_arena_draws_and_drains_its_controller_each_upkeep() {
     let mut state = ready(Step::Untap);
     state.active_player = PlayerId::P0;
     state.priority_player = PlayerId::P0;
-    put(&mut state, PlayerId::P0, "Phyrexian Arena", Zone::Battlefield);
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Phyrexian Arena",
+        Zone::Battlefield,
+    );
     let hand = state.players[0].hand.len();
     for _ in 0..20 {
         if state.step == Step::Draw || state.step == Step::Main1 {
@@ -326,7 +451,7 @@ fn phyrexian_arena_draws_and_drains_its_controller_each_upkeep() {
         }
     }
     assert_eq!(life(&state), (19, 20));
-    assert!(state.players[0].hand.len() >= hand + 1);
+    assert!(state.players[0].hand.len() > hand);
 }
 
 #[test]
@@ -343,7 +468,11 @@ fn angel_of_finality_exiles_the_target_players_graveyard() {
     };
     assert!(legal_targets.contains(&Target::Player(PlayerId::P0)));
     assert!(legal_targets.contains(&Target::Player(PlayerId::P1)));
-    engine::step(&mut state, Action::ChooseTarget(Target::Player(PlayerId::P1))).unwrap();
+    engine::step(
+        &mut state,
+        Action::ChooseTarget(Target::Player(PlayerId::P1)),
+    )
+    .unwrap();
     settled(&mut state);
     assert!(state.players[1].graveyard.is_empty());
     assert_eq!(state.players[0].graveyard, vec![own]);

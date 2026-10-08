@@ -29,7 +29,7 @@ The definitions append ten ids after the previous batch. Shark appends to
 `Subtype` and joins `CREATURE_TYPES` only under the Limited feature. Crackling
 Cyclops and Dauntless Veteran were first built here and moved to the
 removal/pumps batch, which implements them the same way and merges first.
-The feature catalog takes the next `kernel_carddb` version with a new
+The feature catalog moves to `kernel_carddb/v58` (`f248c83c818bd26a`) with a new
 `FdnCountersThreats` store profile; the previous profile stays readable and is
 refused at publish and resume. Default builds keep Pauper v34. The synthetic
 `FDN_reference_counters_threats.dck` provides deck coverage.
