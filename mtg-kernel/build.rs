@@ -3532,6 +3532,7 @@ fn keywords_for(card: &CardJson) -> String {
         }
         "Unstoppable Slasher" => keywords.push("Keywords::DEATHTOUCH"),
         "Adeline, Resplendent Cathar" => keywords.push("Keywords::VIGILANCE"),
+        "Bloodletter of Aclazotz" => keywords.push("Keywords::FLYING"),
         _ => {}
     }
     if card.name == "Treetop Snarespinner" {
@@ -5347,6 +5348,7 @@ fn standard_static_recipe_for(name: &str) -> &'static str {
         "Evolving Adaptive" => "enters_with_oil_counter:1;self_boost_per_oil_counter:1:1",
         "Coppercoat Vanguard" => "other_controlled_humans:boost:1:0;ward_generic:1",
         "Adeline, Resplendent Cathar" => "cda_power:controlled_creatures",
+        "Bloodletter of Aclazotz" => "opponent_life_loss_doubled_during_controller_turn",
         _ => "none",
     }
 }

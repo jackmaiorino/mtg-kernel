@@ -98,6 +98,13 @@ const CARDS: &[(&str, &[Subtype], (i16, i16), Keywords, usize)] = &[
         1,
     ),
     (
+        "Bloodletter of Aclazotz",
+        &[Subtype::Vampire, Subtype::Demon],
+        (2, 4),
+        Keywords::FLYING,
+        0,
+    ),
+    (
         "Unstoppable Slasher",
         &[Subtype::Zombie, Subtype::Assassin],
         (2, 3),
@@ -1042,6 +1049,7 @@ fn attack_unblocked(state: &mut GameState, attackers: Vec<ObjectId>) {
             Decision::OrderTriggers { pending, .. } => {
                 engine::step(state, Action::OrderTriggers((0..pending.len()).collect())).unwrap()
             }
+            Decision::GameOver { .. } => return,
             other => panic!("unexpected {other:?}"),
         }
     }
@@ -1116,4 +1124,68 @@ fn adeline_does_not_trigger_without_attackers() {
     engine::step(&mut state, Action::DeclareAttackers(Vec::new())).unwrap();
     settled(&mut state);
     assert!(battlefield_tokens(&state, PlayerId::P0, "Human Token").is_empty());
+}
+
+#[test]
+fn bloodletter_doubles_opponent_life_loss_during_your_turn() {
+    // Your turn: Bolt's damage to the opponent doubles, your own
+    // life loss does not.
+    let mut state = ready(Step::Main1);
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Bloodletter of Aclazotz",
+        Zone::Battlefield,
+    );
+    let bolt = put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
+    state.players[0].mana_pool = pool(&[(ManaColor::R, 1)], 0);
+    cast(&mut state, bolt, &[Target::Player(PlayerId::P1)]);
+    settled(&mut state);
+    assert_eq!(state.players[1].life, 14);
+    let bolt = put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
+    state.players[0].mana_pool = pool(&[(ManaColor::R, 1)], 0);
+    cast(&mut state, bolt, &[Target::Player(PlayerId::P0)]);
+    settled(&mut state);
+    assert_eq!(state.players[0].life, 17);
+
+    // Unstoppable Slasher's half-life loss doubles too.
+    let mut state = ready(Step::DeclareAttackers);
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Bloodletter of Aclazotz",
+        Zone::Battlefield,
+    );
+    let slasher = put(
+        &mut state,
+        PlayerId::P0,
+        "Unstoppable Slasher",
+        Zone::Battlefield,
+    );
+    state.players[1].life = 30;
+    attack_unblocked(&mut state, vec![slasher]);
+    // 2 combat damage costs 4 life (26); half of 26 is 13, doubled is 26.
+    assert_eq!(state.players[1].life, 0);
+    assert!(matches!(
+        next(&mut state),
+        Decision::GameOver {
+            winner: Some(PlayerId::P0)
+        }
+    ));
+}
+
+#[test]
+fn bloodletter_does_nothing_on_the_opponents_turn() {
+    let mut state = ready(Step::Main1);
+    put(
+        &mut state,
+        PlayerId::P1,
+        "Bloodletter of Aclazotz",
+        Zone::Battlefield,
+    );
+    let bolt = put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
+    state.players[0].mana_pool = pool(&[(ManaColor::R, 1)], 0);
+    cast(&mut state, bolt, &[Target::Player(PlayerId::P1)]);
+    settled(&mut state);
+    assert_eq!(state.players[1].life, 17);
 }

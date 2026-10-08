@@ -152,3 +152,26 @@ pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> 
     };
     Some(i32::try_from(count).unwrap_or(i32::MAX))
 }
+
+/// Life `player` actually loses when they would lose `amount` (from damage
+/// or an effect, never a payment): "If an opponent would lose life during
+/// your turn, they lose twice that much life instead" (Bloodletter of
+/// Aclazotz), once per Bloodletter the active player controls.
+pub(crate) fn modified_life_loss(
+    state: &GameState,
+    player: crate::ids::PlayerId,
+    amount: i32,
+) -> i32 {
+    let active = state.active_player;
+    if amount <= 0 || player == active {
+        return amount;
+    }
+    state.players[active.index()]
+        .battlefield
+        .iter()
+        .filter(|&&source| {
+            battlefield_definition_name(state, source) == Some("Bloodletter of Aclazotz")
+                && state.objects.get(source).controller == active
+        })
+        .fold(amount, |lost, _| lost.saturating_mul(2))
+}

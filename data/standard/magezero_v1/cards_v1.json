@@ -518,6 +518,37 @@
         "token_creation"
       ],
       "java_file": "Mage.Sets/src/mage/cards/a/AdelineResplendentCathar.java"
+    },
+    {
+      "name": "Bloodletter of Aclazotz",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}{B}{B}",
+      "mana_value": 4,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Vampire",
+        "Demon"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying",
+        "life_loss_replacement"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BloodletterOfAclazotz.java"
     }
   ]
 }

@@ -107,6 +107,9 @@ pub struct ZoneChangeProposed {
 pub struct LifeLossProposed {
     pub player: PlayerId,
     pub amount: i32,
+    /// Paying life as a cost. Effects that modify life loss leave a payment
+    /// unchanged (Bloodletter of Aclazotz).
+    pub payment: bool,
     pub touched_by: Vec<ReplacementId>,
 }
 
@@ -281,6 +284,15 @@ impl ProposedEvent {
         ProposedEvent::LifeLoss(LifeLossProposed {
             player,
             amount,
+            payment: false,
+            touched_by: Vec::new(),
+        })
+    }
+    pub fn life_payment(player: PlayerId, amount: i32) -> ProposedEvent {
+        ProposedEvent::LifeLoss(LifeLossProposed {
+            player,
+            amount,
+            payment: true,
             touched_by: Vec::new(),
         })
     }
@@ -900,7 +912,10 @@ fn commit_with_ability_lki(
                     }
                 }
                 Target::Player(p) => {
-                    state.players[p.index()].life -= d.amount;
+                    let lost = d.amount;
+                    #[cfg(feature = "standard-magezero-fixtures")]
+                    let lost = crate::standard_statics_v1::modified_life_loss(state, p, lost);
+                    state.players[p.index()].life -= lost;
                 }
             }
             CommittedEvent::Damage {
@@ -962,10 +977,17 @@ fn commit_with_ability_lki(
             }
         }
         ProposedEvent::LifeLoss(l) => {
-            state.players[l.player.index()].life -= l.amount;
+            let amount = l.amount;
+            #[cfg(feature = "standard-magezero-fixtures")]
+            let amount = if l.payment {
+                amount
+            } else {
+                crate::standard_statics_v1::modified_life_loss(state, l.player, amount)
+            };
+            state.players[l.player.index()].life -= amount;
             CommittedEvent::LifeLoss {
                 player: l.player,
-                amount: l.amount,
+                amount,
             }
         }
         ProposedEvent::LifeGain(g) => {

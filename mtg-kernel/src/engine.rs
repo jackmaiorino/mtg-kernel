@@ -4218,7 +4218,7 @@ fn pay_cost_components_with_x(
             ),
             CostComponent::PayLife(amount) => event::propose_and_commit(
                 state,
-                ProposedEvent::life_loss(player, i32::from(*amount)),
+                ProposedEvent::life_payment(player, i32::from(*amount)),
             ),
             CostComponent::DiscardCards(_) => {}
             CostComponent::TapOtherUntappedControlledPermanentWithSubtype(_) => {
