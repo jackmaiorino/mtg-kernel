@@ -137,3 +137,30 @@ Fresh output roots are mandatory; this launcher never silently retries formal
 native execution. Completion is a process result and durable receipt, not a
 claim of playing strength. Source-dependent endpoint validation and statistical
 analysis remain in the accepted research lane. No paid launch path is provided.
+
+## Host reservation on Linux
+
+`host_reservation_v1.py` also runs on Linux (for example a rented CPU pod)
+with the same CLI, lock and event files, exit codes and reclaim rules; Windows
+behavior is unchanged. The root is `$MTG_HOST_LOCK_ROOT`, else
+`/var/lib/mtg-node/host-lock`, on a local filesystem with hard links and
+`flock`.
+
+Guaranteed as on Windows: exactly one acquirer wins (the record is hard-linked
+into place, which fails if a lock exists); state changes are serialized; a
+process is its pid plus start time (`/proc/<pid>/stat` field 22), so a dead,
+exited or reused pid counts as absent and anything unreadable stays unknown; a
+changed `/proc/sys/kernel/random/boot_id` is reboot evidence. The supervisor is
+spawned detached in a new session. It becomes a child subreaper and runs the
+work in a session of its own. It releases only when that session, its process
+group and every descendant of the supervisor have ended, and SIGTERM, SIGINT or
+SIGHUP to the supervisor kills all of them. The busy refusal scans `/proc`.
+
+Weaker than Windows: a job object dies with its supervisor, but here SIGKILL of
+the supervisor (or the OOM killer) kills nothing. Processes still in the work
+session keep the reservation held, but a descendant that called `setsid` itself
+is no longer seen once the supervisor is gone. Absence of the recorded
+processes is therefore weaker evidence for reclaim. Lock exclusion binds only
+processes that use this module, since `flock` is advisory where Windows share
+modes are enforced. This dispatcher's own CPU affinity, priority and memory
+sampling still use Win32 calls, so it does not yet run on Linux.
