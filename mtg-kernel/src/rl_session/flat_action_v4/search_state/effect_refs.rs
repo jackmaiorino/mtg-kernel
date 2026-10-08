@@ -41,7 +41,8 @@ impl Scan<'_> {
             | PutPlusOnePlusOneCounterOnBoundObject { object }
             | DoublePlusOneCountersOnBoundObject { object }
             | PutPlusOnePlusOneCounterOnTriggerEventObject { object }
-            | BoostBoundObjectUntilEndOfTurn { object, .. } => self.b(object),
+            | BoostBoundObjectUntilEndOfTurn { object, .. }
+            | WarpExileBoundObject { object } => self.b(object),
             PutBoundAuraOntoBattlefieldAttached { aura, host } => self.b(aura) || self.b(host),
             ResolveInitiativeTrigger { binding }
             | EnterUndercityRoom { binding, .. }
@@ -115,6 +116,7 @@ impl Scan<'_> {
             | PutSourceOntoBattlefieldAttachedToTarget { .. }
             | TapAttachedCreatureAndDamageControllerByPower
             | BoostAttachedCreatureUntilEndOfTurn { .. }
+            | BindWarpExileToTriggerSource
             | BackupTarget { .. }
             | PutSourceOntoBattlefieldTappedAndAttacking
             | UntapUpToLands { .. }

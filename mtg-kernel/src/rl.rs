@@ -6240,6 +6240,14 @@ fn exile_play_permissions_public_v2(state: &GameState) -> Result<Vec<ExilePlayPe
                 } => PlayPermissionExpiryV2::UntilHoldersNextTurn {
                     holder_turn_started,
                 },
+                // The frozen V2 projection has no unbounded expiry. Warp's
+                // later-turn permission is projected as a not-yet-started
+                // multi-turn permission, its nearest public meaning.
+                PlayPermissionExpiry::LaterTurn { .. } => {
+                    PlayPermissionExpiryV2::UntilHoldersNextTurn {
+                        holder_turn_started: false,
+                    }
+                }
             },
         });
     }

@@ -943,6 +943,11 @@ pub enum AltCostCondition {
     /// The caster must control a permanent with the named subtype (Snuff
     /// Out: "If you control a Swamp...").
     ControlsPermanentWithSubtype(Subtype),
+    /// Warp: "You may cast this card from your hand for its warp cost."
+    /// A permanent spell cast this way is exiled at the beginning of the
+    /// next end step and may be cast from exile on a later turn
+    /// (`standard_keywords_v1`).
+    WarpFromHand,
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback

@@ -2635,6 +2635,10 @@ enum Special {
     /// Target creature gains deathtouch and lifelink until end of turn, then
     /// the controller investigates.
     ToxinAnalysis,
+    /// "Target creature you control gets +3/+2 until end of turn. If that
+    /// creature was cast for its warp cost, it also gains trample and haste
+    /// until end of turn." (Full Bore).
+    FullBore,
     /// Gain three life. The card's CastSelf Storm trigger is defined in the
     /// shared trigger table.
     WeatherTheStorm,
@@ -2911,6 +2915,7 @@ impl Special {
             Special::ToxinAnalysis => {
                 "toxin_analysis:deathtouch_lifelink_eot_investigate".to_string()
             }
+            Special::FullBore => "full_bore:pump_3_2:if_warped_trample_haste".to_string(),
             Special::WeatherTheStorm => "weather_the_storm:gain_three:storm".to_string(),
             Special::MonstrousEmergence => {
                 "monstrous_emergence:chosen_creature_power_damage".to_string()
@@ -3196,6 +3201,7 @@ fn special_for(name: &str) -> Special {
         "Cleansing Wildfire" => Special::CleansingWildfire,
         "Duress" => Special::Duress,
         "Toxin Analysis" => Special::ToxinAnalysis,
+        "Full Bore" => Special::FullBore,
         "Weather the Storm" => Special::WeatherTheStorm,
         "Monstrous Emergence" => Special::MonstrousEmergence,
         "Bite Down" => Special::BiteDown,
@@ -3394,6 +3400,7 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::CleansingWildfire => "target=Land;spell=Sequence(DestroyTargetLandThenMaySearchBasicTapped(Target0),DrawCards(Controller,1));mana=None".to_string(),
         Special::Duress => "target=TargetOpponent;spell=RevealTargetHandChooseNoncreatureNonlandDiscard(Target0);mana=None".to_string(),
         Special::ToxinAnalysis => "target=Creature;spell=Sequence(GrantKeywordsTargetUntilEndOfTurn(Target0,Deathtouch|Lifelink),CreateToken(ClueToken));mana=None".to_string(),
+        Special::FullBore => "target=ControlledCreature;spell=Sequence(PumpTargetUntilEndOfTurn(3,2),If(TargetWasCastForWarp(0),GrantKeywordsTargetUntilEndOfTurn(Target0,Trample|Haste)));mana=None".to_string(),
         Special::WeatherTheStorm => {
             "target=None;spell=GainLife(Controller,3);trigger=CastSelf:Storm;mana=None".to_string()
         }
@@ -3554,6 +3561,7 @@ fn standard_keywords_for(name: &str) -> &'static [&'static str] {
     match name {
         "Emberheart Challenger" => &["Keywords::HASTE"],
         "Burnout Bashtronaut" => &["Keywords::MENACE"],
+        "Nova Hellkite" => &["Keywords::FLYING", "Keywords::HASTE"],
         _ => &[],
     }
 }
@@ -3762,6 +3770,7 @@ fn alt_cost_for(name: &str) -> &'static str {
         "Fireblast" => "Some(AltCostDef { components: &[CostComponent::SacrificeLands(2)], condition: AltCostCondition::Always })",
         "Land Grant" => "Some(AltCostDef { components: &[CostComponent::RevealHandIfNoCardsWithType(CardType::Land)], condition: AltCostCondition::Always })",
         "Snuff Out" => "Some(AltCostDef { components: &[CostComponent::PayLife(4)], condition: AltCostCondition::ControlsPermanentWithSubtype(Subtype::Swamp) })",
+        "Nova Hellkite" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 2, x_count: 0 })], condition: AltCostCondition::WarpFromHand })",
         _ => "None",
     }
 }
@@ -5338,6 +5347,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
             "prowess;valiant_first_target_each_turn:impulse_top_one_end_of_turn"
         }
         "Burnout Bashtronaut" => "start_your_engines;max_speed:double_strike",
+        "Nova Hellkite" => "etb:target_opponent_creature:damage:1;warp_next_end_step:exile_cast_later_turn",
         _ => "none",
     }
 }
@@ -5736,6 +5746,19 @@ fn codegen(cards: &[CardJson]) -> String {
     {
         writeln!(out, "fn spell_effect_duress() -> Option<EffectOp> {{").unwrap();
         writeln!(out, "    Some(EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard {{ player: PlayerRef::Target(0) }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::FullBore))
+    {
+        writeln!(out, "fn spell_effect_full_bore() -> Option<EffectOp> {{").unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+        writeln!(out, "        EffectOp::PumpTargetUntilEndOfTurnDynamic {{ target: TargetRef::Target(0), power: DynamicValueDef::Fixed(3), toughness: DynamicValueDef::Fixed(2) }},").unwrap();
+        writeln!(out, "        EffectOp::Conditional {{ cond: EffectCond::TargetWasCastForWarp(0), then: Box::new(EffectOp::GrantKeywordTargetUntilEndOfTurn {{ object: ObjectRef::Target(0), keyword: Keywords(Keywords::TRAMPLE.0 | Keywords::HASTE.0) }}), else_: Box::new(EffectOp::Sequence(vec![])) }},").unwrap();
+        writeln!(out, "    ]))").unwrap();
         writeln!(out, "}}").unwrap();
         writeln!(out).unwrap();
     }
@@ -7641,6 +7664,11 @@ fn codegen(cards: &[CardJson]) -> String {
             Special::ToxinAnalysis => (
                 "TargetSpec::Creature",
                 "spell_effect_toxin_analysis".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::FullBore => (
+                "TargetSpec::ControlledCreature",
+                "spell_effect_full_bore".to_string(),
                 "no_effect".to_string(),
             ),
             Special::WeatherTheStorm => (

@@ -124,7 +124,12 @@ fn power_toughness(state: &GameState, id: ObjectId) -> (i32, i32) {
 
 #[test]
 fn family_d_cards_are_fully_supported() {
-    for name in ["Emberheart Challenger", "Burnout Bashtronaut"] {
+    for name in [
+        "Emberheart Challenger",
+        "Burnout Bashtronaut",
+        "Nova Hellkite",
+        "Full Bore",
+    ] {
         let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} missing"));
         assert_eq!(
             CARD_DEFS[id as usize].capability,
@@ -265,4 +270,118 @@ fn burnout_bashtronaut_pumps_and_has_double_strike_at_max_speed() {
     engine::step(&mut state, Action::ActivateAbility(bashtronaut, 0)).unwrap();
     settled(&mut state);
     assert_eq!(power_toughness(&state, bashtronaut), (2, 1));
+}
+
+/// Passes priority (attacking and blocking with nothing) until `until` holds
+/// at a priority decision.
+fn pass_until(state: &mut GameState, until: impl Fn(&GameState) -> bool) {
+    for _ in 0..500 {
+        match next(state) {
+            Decision::CastSpellOrPass { .. } if until(state) => return,
+            Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+            Decision::DeclareAttackers { .. } => {
+                engine::step(state, Action::DeclareAttackers(vec![])).unwrap()
+            }
+            Decision::DeclareBlockers { .. } => {
+                engine::step(state, Action::DeclareBlockers(vec![])).unwrap()
+            }
+            Decision::OrderTriggers { pending, .. } => {
+                engine::step(state, Action::OrderTriggers((0..pending.len()).collect())).unwrap()
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    panic!("condition never reached");
+}
+
+fn castable(state: &mut GameState, id: ObjectId) -> bool {
+    matches!(next(state), Decision::CastSpellOrPass { castable_spells, .. } if castable_spells.contains(&id))
+}
+
+#[test]
+fn nova_hellkite_warps_in_then_returns_from_exile_on_a_later_turn() {
+    let mut state = ready();
+    let hellkite = put(&mut state, PlayerId::P0, "Nova Hellkite", Zone::Hand);
+    let victim = put(
+        &mut state,
+        PlayerId::P1,
+        "Burnout Bashtronaut",
+        Zone::Battlefield,
+    );
+    let full_bore = put(&mut state, PlayerId::P0, "Full Bore", Zone::Hand);
+
+    // Only the warp cost is affordable, so it is chosen without a prompt.
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::R], 2);
+    cast(&mut state, hellkite, &[]);
+    // The enters trigger targets the only opposing creature.
+    let Some(Decision::ChooseTargets { legal_targets, .. }) = settle(&mut state) else {
+        panic!("expected the enters trigger's target");
+    };
+    assert_eq!(legal_targets, vec![Target::Object(victim)]);
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(victim))).unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(hellkite).zone, Zone::Battlefield);
+    assert!(state.objects.get(hellkite).v4.warped_v1);
+    assert_eq!(state.objects.get(victim).zone, Zone::Graveyard);
+
+    // Full Bore sees the warp cast: +3/+2, trample and haste.
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::R], 0);
+    cast(&mut state, full_bore, &[Target::Object(hellkite)]);
+    settled(&mut state);
+    assert_eq!(power_toughness(&state, hellkite), (7, 7));
+    assert!(engine::has_effective_keyword(
+        &state,
+        hellkite,
+        Keywords::TRAMPLE
+    ));
+
+    // At the beginning of the end step it is exiled with a later-turn permission.
+    pass_until(&mut state, |s| s.step == Step::End && s.stack.is_empty());
+    assert_eq!(state.objects.get(hellkite).zone, Zone::Exile);
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::R, ManaColor::R], 3);
+    assert!(!castable(&mut state, hellkite), "not this turn");
+    state.players[0].mana_pool = [0; 6];
+
+    pass_until(&mut state, |s| {
+        s.active_player == PlayerId::P0 && s.step == Step::Main1
+    });
+    // From exile it is cast for its normal cost only; warp needs the hand.
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::R], 2);
+    assert!(!castable(&mut state, hellkite));
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::R], 0);
+    assert!(!castable(&mut state, hellkite));
+    add_mana(&mut state, PlayerId::P0, &[], 1);
+    cast(&mut state, hellkite, &[]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(hellkite).zone, Zone::Battlefield);
+    assert!(!state.objects.get(hellkite).v4.warped_v1);
+    pass_until(&mut state, |s| s.step == Step::End && s.stack.is_empty());
+    assert_eq!(state.objects.get(hellkite).zone, Zone::Battlefield);
+}
+
+#[test]
+fn nova_hellkite_offers_both_costs_when_both_are_affordable() {
+    let mut state = ready();
+    let hellkite = put(&mut state, PlayerId::P0, "Nova Hellkite", Zone::Hand);
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::R, ManaColor::R], 3);
+    assert!(castable(&mut state, hellkite));
+    engine::step(&mut state, Action::CastSpell(hellkite)).unwrap();
+    let Decision::ChooseCastMode { options, .. } = next(&mut state) else {
+        panic!("expected a cast mode choice");
+    };
+    assert_eq!(options.len(), 2);
+    engine::step(&mut state, Action::ChooseCastMode(engine::CastMode::Normal)).unwrap();
+    settled(&mut state);
+    assert!(!state.objects.get(hellkite).v4.warped_v1);
+    // A normally cast Hellkite stays, and Full Bore grants it no trample.
+    let full_bore = put(&mut state, PlayerId::P0, "Full Bore", Zone::Hand);
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::R], 0);
+    cast(&mut state, full_bore, &[Target::Object(hellkite)]);
+    settled(&mut state);
+    assert_eq!(power_toughness(&state, hellkite), (7, 7));
+    assert!(!engine::has_effective_keyword(
+        &state,
+        hellkite,
+        Keywords::TRAMPLE
+    ));
 }

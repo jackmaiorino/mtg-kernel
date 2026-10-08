@@ -131,6 +131,12 @@ pub enum TriggerCondition {
     /// targeted battlefield incarnation. "First time each turn" uses the
     /// same per-turn use ledger as Exemplar of Light's capped trigger.
     BecomesTargetOfControllerSpellOrAbilityFirstTimeEachTurn,
+    /// Warp's delayed trigger, modeled on the warped incarnation itself: the
+    /// beginning of the next end step after this permanent resolved from a
+    /// warp cast (`ObjectStateV4::warped_v1`, cleared by any zone change).
+    /// Warp permanents are cast at sorcery speed, so the next end step is
+    /// always in the same turn.
+    BeginningEndStepAfterWarp,
 }
 
 pub struct TriggeredAbilityDef {
@@ -185,6 +191,16 @@ fn materialize_trigger_source_program(
         EffectOp::BindPlusOnePlusOneCounterToTriggerSource => {
             let live = state.objects.get(source);
             EffectOp::PutPlusOnePlusOneCounterOnBoundObject {
+                object: EffectObjectBinding {
+                    object: source,
+                    expected_zone: live.zone,
+                    expected_zone_change_count: live.zone_change_count,
+                },
+            }
+        }
+        EffectOp::BindWarpExileToTriggerSource => {
+            let live = state.objects.get(source);
+            EffectOp::WarpExileBoundObject {
                 object: EffectObjectBinding {
                     object: source,
                     expected_zone: live.zone,
@@ -909,6 +925,28 @@ const EMBERHEART_CHALLENGER_TRIGGERS: [TriggeredAbilityDef; 2] = [
         ..etb_trigger(experimental_synthesizer_impulse_effect)
     },
 ];
+
+/// Warp's "at the beginning of the next end step, exile this creature".
+const WARP_EXILE_TRIGGER: TriggeredAbilityDef = TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningEndStepAfterWarp,
+    ..etb_trigger(warp_exile_effect)
+};
+
+fn warp_exile_effect() -> EffectOp {
+    EffectOp::BindWarpExileToTriggerSource
+}
+
+fn nova_hellkite_etb_effect() -> EffectOp {
+    EffectOp::DealDamage {
+        target: TargetRef::Target(0),
+        amount: 1,
+    }
+}
+
+/// Flying, haste; when it enters, 1 damage to target creature an opponent
+/// controls; Warp {2}{R}.
+const NOVA_HELLKITE_TRIGGERS: [TriggeredAbilityDef; 2] =
+    [etb_trigger(nova_hellkite_etb_effect), WARP_EXILE_TRIGGER];
 
 const KESSIG_FLAMEBREATHER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::CastNoncreatureSpell,
@@ -1776,6 +1814,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Azure Fleet Admiral" => &AZURE_FLEET_ADMIRAL_TRIGGERS,
         "Delver of Secrets" => &DELVER_OF_SECRETS_TRIGGERS,
         "Emberheart Challenger" => &EMBERHEART_CHALLENGER_TRIGGERS,
+        "Nova Hellkite" => &NOVA_HELLKITE_TRIGGERS,
         _ => &[],
     }
 }
@@ -1792,7 +1831,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         "Lotleth Giant" => TargetSpec::TargetOpponent,
         "Harrier Strix" => TargetSpec::AnyPermanent,
         "Bojuka Bog" => TargetSpec::AnyPlayer,
-        "Humbling Elder" => TargetSpec::OpponentControlledCreature,
+        "Humbling Elder" | "Nova Hellkite" => TargetSpec::OpponentControlledCreature,
         "Saiba Cryptomancer" => TargetSpec::Creature,
         "Spellstutter Sprite" => TargetSpec::SpellManaValueAtMostControlledSubtypes {
             first: Subtype::Faerie,
@@ -1862,7 +1901,8 @@ fn source_bound_trigger_program_matches(template: &EffectOp, effect: &EffectOp) 
         | (
             EffectOp::BindDoublePlusOneCountersToTriggerSource,
             EffectOp::DoublePlusOneCountersOnBoundObject { .. },
-        ) => true,
+        )
+        | (EffectOp::BindWarpExileToTriggerSource, EffectOp::WarpExileBoundObject { .. }) => true,
         _ => false,
     }
 }
@@ -1925,6 +1965,11 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
     }
     if !trigger_effect_matches(card_def, effect) {
         return None;
+    }
+    // Warp's delayed exile never targets, whatever its card's other
+    // triggers do.
+    if matches!(effect, EffectOp::WarpExileBoundObject { .. }) {
+        return Some(TargetSpec::None);
     }
     let card = crate::card_def::CARD_DEFS.get(card_def as usize)?;
     if card.name == "Sylvan Scavenging" {
@@ -2978,6 +3023,9 @@ fn trigger_matches(
             TriggerCondition::BeginningControllerEndStep,
             CommittedEvent::BeginningEndStep { active_player, .. },
         ) => *active_player == controller,
+        (TriggerCondition::BeginningEndStepAfterWarp, CommittedEvent::BeginningEndStep { .. }) => {
+            state.objects.get(source).v4.warped_v1
+        }
         (TriggerCondition::DealsDamage, CommittedEvent::Damage { source: s, .. }) => *s == source,
         (
             TriggerCondition::AttacksWithControllerGraveyardCardCountAtLeast(minimum),

@@ -290,6 +290,9 @@ pub enum EffectCond {
     CreatureDiedThisTurn,
     /// Resolution-time ferocious condition, using current continuous power.
     ControlsCreaturePowerAtLeast(i32),
+    /// The live target permanent at this index resolved from a spell cast
+    /// for its warp cost (`ObjectStateV4::warped_v1`).
+    TargetWasCastForWarp(u8),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1088,6 +1091,15 @@ pub enum EffectOp {
     BoostAttachedCreatureUntilEndOfTurn {
         power: i32,
         toughness: i32,
+    },
+    /// Trigger collection binds this template to the warped source
+    /// incarnation (`WarpExileBoundObject`).
+    BindWarpExileToTriggerSource,
+    /// Warp's delayed end-step trigger: exile this exact incarnation if it
+    /// is still on the battlefield, then let its owner cast it from exile
+    /// on a later turn. A source that already left does nothing.
+    WarpExileBoundObject {
+        object: EffectObjectBinding,
     },
 }
 
@@ -11223,6 +11235,36 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 );
             }
         }
+        EffectOp::BindWarpExileToTriggerSource => {
+            panic!("unmaterialized warp exile");
+        }
+        EffectOp::WarpExileBoundObject { object } => {
+            let live = state.objects.get(object.object);
+            if live.zone != object.expected_zone
+                || live.zone_change_count != object.expected_zone_change_count
+            {
+                return;
+            }
+            let owner = live.owner;
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change(object.object, Zone::Exile),
+            );
+            let exiled = state.objects.get(object.object);
+            if exiled.zone == Zone::Exile {
+                let permission = crate::engine::PlayPermission {
+                    object: object.object,
+                    holder: owner,
+                    zone_change_generation: exiled.zone_change_count,
+                    play_or_cast: crate::engine::PlayOrCast::Cast,
+                    expiry: crate::engine::PlayPermissionExpiry::LaterTurn {
+                        granted_turn: state.turn,
+                        granted_active_player: state.active_player,
+                    },
+                };
+                state.engine.exile_play_permissions.push(permission);
+            }
+        }
         EffectOp::BoostAttachedCreatureUntilEndOfTurn { power, toughness } => {
             let Some(source_contract) = ctx.ability_source_contract else {
                 return;
@@ -12808,6 +12850,16 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
                 .any(|id| id != ctx.source && state.objects.get(id).card_def == source_def)
         }
         EffectCond::WasKicked => ctx.kicked,
+        EffectCond::TargetWasCastForWarp(index) => {
+            ctx.target_incarnation_matches(usize::from(*index), state)
+                && match ctx.targets.get(usize::from(*index)) {
+                    Some(Target::Object(object)) => {
+                        let object = state.objects.get(*object);
+                        object.zone == Zone::Battlefield && object.v4.warped_v1
+                    }
+                    _ => false,
+                }
+        }
         EffectCond::OptionalAdditionalCostPaid(kind) => {
             ctx.optional_additional_cost_paid == Some(*kind)
         }

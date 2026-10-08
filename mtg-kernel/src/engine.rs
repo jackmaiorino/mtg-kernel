@@ -444,7 +444,16 @@ pub enum PlayOrCast {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PlayPermissionExpiry {
     EndOfTurn,
-    UntilHoldersNextTurn { holder_turn_started: bool },
+    UntilHoldersNextTurn {
+        holder_turn_started: bool,
+    },
+    /// Warp's "you may cast it from exile on a later turn": never expires,
+    /// and is unusable during the exact turn (round plus active player) in
+    /// which it was granted. Appended after the existing variants.
+    LaterTurn {
+        granted_turn: u32,
+        granted_active_player: PlayerId,
+    },
 }
 
 /// Grants `holder` permission to play/cast `object` straight out of
@@ -4505,10 +4514,12 @@ fn validate_optional_additional_paid_refs(
 fn alt_cost_condition_met(
     condition: card_def::AltCostCondition,
     player: PlayerId,
+    origin_zone: Zone,
     state: &GameState,
 ) -> bool {
     match condition {
         card_def::AltCostCondition::Always => true,
+        card_def::AltCostCondition::WarpFromHand => origin_zone == Zone::Hand,
         card_def::AltCostCondition::ControlsPermanentWithSubtype(subtype) => {
             let subtype_id = subtype.stable_id();
             state.players[player.index()].battlefield.iter().any(|&id| {
@@ -5288,8 +5299,12 @@ fn payable_cast_modes(
     }
     if pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
         && def.alt_cost.is_some_and(|alt| {
-            alt_cost_condition_met(alt.condition, pending.controller, state)
-                && can_pay_components(alt.components, pending.controller, pending.spell, state)
+            alt_cost_condition_met(
+                alt.condition,
+                pending.controller,
+                pending.origin_zone,
+                state,
+            ) && can_pay_components(alt.components, pending.controller, pending.spell, state)
         })
     {
         modes.push(CastMode::Alternative);
@@ -5401,7 +5416,7 @@ fn is_castable_now(
             };
             let alt_ok = || {
                 def.alt_cost.is_some_and(|alt| {
-                    alt_cost_condition_met(alt.condition, player, state)
+                    alt_cost_condition_met(alt.condition, player, state.objects.get(id).zone, state)
                         && can_pay_components(alt.components, player, id, state)
                 })
             };
@@ -5538,6 +5553,13 @@ pub(crate) fn active_permission_for(
         p.object == id
             && p.holder == holder
             && p.zone_change_generation == state.objects.get(id).zone_change_count
+            && !matches!(
+                p.expiry,
+                PlayPermissionExpiry::LaterTurn {
+                    granted_turn,
+                    granted_active_player,
+                } if granted_turn == state.turn && granted_active_player == state.active_player
+            )
     })
 }
 
@@ -6582,8 +6604,12 @@ fn remaining_cast_payment_is_payable(
             }
         }
         CastMethodV4::Alternative => def.alt_cost.is_some_and(|alt| {
-            alt_cost_condition_met(alt.condition, pending.controller, state)
-                && can_pay_components(alt.components, pending.controller, pending.spell, state)
+            alt_cost_condition_met(
+                alt.condition,
+                pending.controller,
+                pending.origin_zone,
+                state,
+            ) && can_pay_components(alt.components, pending.controller, pending.spell, state)
         }),
         CastMethodV4::Flashback => def.flashback.as_ref().is_some_and(|flashback| {
             can_pay_components(flashback.cost, pending.controller, pending.spell, state)
@@ -9626,7 +9652,8 @@ fn triggered_stack_item_expected_target_spec(
         return Err("attached-source trigger lost its host LKI".to_string());
     }
     if let EffectOp::PutPlusOnePlusOneCounterOnBoundObject { object }
-    | EffectOp::BoostBoundObjectUntilEndOfTurn { object, .. } = inline_effect
+    | EffectOp::BoostBoundObjectUntilEndOfTurn { object, .. }
+    | EffectOp::WarpExileBoundObject { object } = inline_effect
     {
         let Some(source_contract) = ability_source_contract else {
             return Err("bound-source trigger lost its historical source contract".to_string());
@@ -10450,6 +10477,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     }
+    // A permanent spell cast for its warp cost remembers that on the
+    // battlefield incarnation it just became.
+    if item.v4.cast_method == Some(CastMethodV4::Alternative)
+        && def
+            .alt_cost
+            .is_some_and(|alt| alt.condition == card_def::AltCostCondition::WarpFromHand)
+        && state.objects.get(item.source).zone == Zone::Battlefield
+    {
+        state.objects.get_mut(item.source).v4.warped_v1 = true;
+    }
 
     if state
         .engine
@@ -10883,6 +10920,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     PlayPermissionExpiry::UntilHoldersNextTurn {
                         holder_turn_started,
                     } => !(perm.holder == p && holder_turn_started),
+                    PlayPermissionExpiry::LaterTurn { .. } => true,
                 });
             let hand_size = state.players[p.index()].hand.len();
             if hand_size > 7 {

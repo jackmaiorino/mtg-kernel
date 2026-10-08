@@ -186,6 +186,12 @@ pub struct ObjectStateV4 {
     /// this set.
     #[serde(default, skip_serializing_if = "bool_is_false")]
     pub on_adventure: bool,
+    /// True iff this battlefield incarnation resolved from a spell cast for
+    /// its warp cost (`card_def::AltCostCondition::WarpFromHand`). Read by
+    /// its own end-step exile trigger and by "if that creature was cast for
+    /// its warp cost" (Full Bore). Every zone change clears it.
+    #[serde(default, skip_serializing_if = "bool_is_false")]
+    pub warped_v1: bool,
 }
 
 impl Hash for ObjectStateV4 {
@@ -216,6 +222,9 @@ impl Hash for ObjectStateV4 {
         if let Some(timestamp) = self.lifelink_counter_timestamp {
             "lifelink_counter_timestamp/v1".hash(state);
             timestamp.hash(state);
+        }
+        if self.warped_v1 {
+            "warped/v1".hash(state);
         }
     }
 }
@@ -262,6 +271,7 @@ impl ObjectStateV4 {
             layer_timestamp: None,
             lifelink_counter_timestamp: None,
             on_adventure: false,
+            warped_v1: false,
         }
     }
 

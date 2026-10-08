@@ -132,6 +132,66 @@
         "activated_pump"
       ],
       "java_file": "Mage.Sets/src/mage/cards/b/BurnoutBashtronaut.java"
+    },
+    {
+      "name": "Nova Hellkite",
+      "engine_capability": "full",
+      "mana_cost": "{3}{R}{R}",
+      "mana_value": 5,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dragon"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "flying",
+        "haste",
+        "etb_targeted_damage",
+        "warp"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/n/NovaHellkite.java"
+    },
+    {
+      "name": "Full Bore",
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "pump",
+        "warp_condition"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FullBore.java"
     }
   ]
 }
