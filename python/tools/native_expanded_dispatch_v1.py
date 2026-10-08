@@ -25,7 +25,8 @@ from public_training_dispatch_v2 import checked, pin, read, write, DISK_RESERVE_
 
 SCHEMA = "native-expanded-cpu-dispatch/v1"
 CHOICE = "native-expanded-cpu-allocation/v1"
-HOSTS = {"desktop": "DESKTOP-DJ1C40R", "computehost": "COMPUTEHOST"}
+# The compute host's machine name is site configuration, not a public constant.
+HOSTS = {"desktop": "DESKTOP-DJ1C40R", "computehost": os.environ.get("COMPUTE_HOST_NAME", "COMPUTEHOST").upper()}
 CAP = 192 * 1024**3
 
 
@@ -78,14 +79,26 @@ def positive(value, name):
     return value
 
 
-def workload(config, kind, keep_seeds=False):
+SCHEDULE_FAMILIES = (None, "permuted-units-v1")
+
+
+def workload(config, kind, keep_seeds=False, family=None):
     """Bind complete scientific schedules while permitting paired seed replicas.
 
     IDs/seeds and output placement do not alter batch shape. Training keeps
     source bits and optimizer settings. Evaluation permits new admitted weights
     with the same import, feature contract and parameter layout, retaining the
     complete deck/opponent/seat schedule. Actual endpoint pins stay in each job.
+
+    A training request may opt into ``family="permuted-units-v1"`` for chained
+    blocks of one balanced schedule. Every block must then hold the identical
+    multiset of scheduled episodes (decks, seats, starting player, opponent
+    assignment, limits) and the same number of episodes in each update, in a
+    block-specific order, and start from admitted weights with the same import,
+    feature contract and parameter layout. Everything else stays bound.
     """
+    require(family in SCHEDULE_FAMILIES, "unknown schedule family")
+    require(family is None or kind == "training", "schedule families apply to training only")
     value = copy.deepcopy(config)
     value.pop("output_directory")
     if kind == "training":
@@ -107,6 +120,12 @@ def workload(config, kind, keep_seeds=False):
         for episode in episodes:
             episode.pop("id")
             episode.pop("seed")
+        if family == "permuted-units-v1":
+            value["initial_source"]["checkpoint"] = inference_shape(value["initial_source"])
+            shapes = sorted(json.dumps(item, sort_keys=True, separators=(",", ":"))
+                            for update in value["iterations"] for item in update["episodes"])
+            value["iterations"] = {"sizes": [len(update["episodes"]) for update in value["iterations"]],
+                                   "episode_multiset_sha256": digest(shapes)}
     return digest(value)
 
 
@@ -182,8 +201,16 @@ def validate_request(request, qualification):
     for path in outputs:
         require(any(path.resolve().is_relative_to(p) for p in accounting),
                 "output is outside storage accounting")
-    require(config.get("max_non_natural_episode_fraction", 0) == 0,
-            "non-natural game tolerance is not supported")
+    family = request.get("schedule_family")
+    require(family in SCHEDULE_FAMILIES and (family is None or request["kind"] == "training"),
+            "unknown or non-training schedule family")
+    # Tolerance is opt-in: the request must restate the config's fraction, so
+    # an old request can never admit a tolerant config by accident.
+    fraction = config.get("max_non_natural_episode_fraction", 0)
+    tolerance = request.get("non_natural_tolerance")
+    require(fraction == 0 and tolerance is None
+            or request["kind"] == "training" and type(fraction) in (int, float) and 0 < fraction < 1
+            and tolerance == fraction, "non-natural game tolerance must be declared by a training request")
     if request["kind"] == "training":
         require(config.get("update_backend", {"kind": "cpu"}) == {"kind": "cpu"}, "CPU runtime required")
         prep = placement["preparation_workers"]
@@ -231,11 +258,26 @@ def placed_config(request, config, qualification):
     return result
 
 
-def collection_fingerprint(path, expected, resolve=checked):
+def collection_fingerprint(path, expected, resolve=checked, ledgers=None):
+    """Ordered trajectory hashes of a complete, all-natural collection.
+
+    A tolerant training collection may also pin a non-natural ledger of
+    discarded attempts (the kept retries are still natural trajectories).
+    Its SHA256 is appended to ``ledgers`` so serial/parallel parity covers the
+    discarded attempts too; without ``ledgers`` any ledger is refused.
+    """
     collection = read(resolve(path))
     require(collection["complete"] and len(collection["trajectories"]) == expected,
             "incomplete ordered collection")
-    require("non_natural_ledger" not in collection, "non-natural collection attempt")
+    if "non_natural_ledger" in collection:
+        require(ledgers is not None, "non-natural collection attempt")
+        ledger = read(resolve(collection["non_natural_ledger"]))
+        require(ledger["schema"] == "mtg-kernel-non-natural-collection-ledger/v1"
+                and all(0 <= entry["slot"] < expected for entry in ledger["entries"]),
+                "invalid non-natural ledger")
+        ledgers.append(collection["non_natural_ledger"]["sha256"])
+    elif ledgers is not None:
+        ledgers.append(None)
     hashes = []
     for item in collection["trajectories"]:
         trajectory = read(resolve(item))
@@ -260,12 +302,14 @@ def output_fingerprint(config, kind, result, runtime, qualification, resolve=che
             and len(result["iterations"]) == count
             and result["complete"] == (count == len(config["iterations"])),
             "incomplete native update coverage")
+    tolerant = config.get("max_non_natural_episode_fraction", 0) > 0
     fingerprints = []
     for index, item in enumerate(result["iterations"]):
         receipt = read(resolve(item))
         require(receipt["iteration"] == index, "unordered update receipts")
+        ledgers = [] if tolerant else None
         trajectories = collection_fingerprint(receipt["collection"],
-                                              len(config["iterations"][index]["episodes"]), resolve)
+                                              len(config["iterations"][index]["episodes"]), resolve, ledgers)
         update = read(resolve(receipt["update"]))
         require(update["complete"], "incomplete optimizer update")
         checkpoint = read(resolve(update["checkpoint"]))
@@ -274,7 +318,10 @@ def output_fingerprint(config, kind, result, runtime, qualification, resolve=che
         # Read the complete parameter and Adam tensors. Only the output-root
         # metadata in trajectory pins differs between serial/parallel trials.
         checkpoint["trajectories"] = trajectories
-        fingerprints.append({"trajectories": trajectories, "checkpoint_bits": digest(checkpoint)})
+        entry = {"trajectories": trajectories, "checkpoint_bits": digest(checkpoint)}
+        if tolerant:
+            entry["non_natural_ledger"] = ledgers[0]
+        fingerprints.append(entry)
     return {"iterations": fingerprints}
 
 
@@ -288,7 +335,7 @@ def require_choice(path, request, verify_outputs=False):
     choice = read(checked(path))
     require(choice["schema"] == CHOICE, "unsupported throughput choice")
     config, runtime = validate_request(request, False)
-    family = workload(config, request["kind"])
+    family = workload(config, request["kind"], family=request.get("schedule_family"))
     require(set(choice["inventory"]) == {"desktop", "computehost", "runpod"},
             "inspect all three placement options")
     eligible = set()
@@ -315,7 +362,8 @@ def require_choice(path, request, verify_outputs=False):
         other_runtime = runtime_for(original, resolve)
         require(runtime_identity(other_runtime) == runtime_identity(runtime)
                 and runtime_identity(report["runtime"]) == runtime_identity(runtime), "qualification runtime differs")
-        require(workload(original_config, request["kind"]) == family
+        require(original.get("schedule_family") == request.get("schedule_family")
+                and workload(original_config, request["kind"], family=original.get("schedule_family")) == family
                 and actual_config == placed_config(original, original_config, True),
                 "qualification workload or placement differs")
         actual = report["fingerprint"]
@@ -479,7 +527,7 @@ def execute(request_path, qualification):
               "request": pin(request_path), "executed_config": pin(root/"config.json"),
               "execution": pin(root/"execution.json"),
               "native_result": pin(root/"native-result.json"), "runtime": runtime,
-              "launcher_sha256": pin(__file__)["sha256"], "workload": workload(config, request["kind"]),
+              "launcher_sha256": pin(__file__)["sha256"], "workload": workload(config, request["kind"], family=request.get("schedule_family")),
               "placement": request["placement"], "fingerprint": fingerprint,
               "completed_games": games, "completed_updates": (1 if qualification else len(config["iterations"]))
                   if request["kind"] == "training" else 0,
@@ -499,7 +547,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("qualify", "dispatch", "_qualify", "_dispatch", "check-choice"))
     parser.add_argument("request", type=Path)
+    # WMI-created supervisors inherit no environment: the launching shell's
+    # COMPUTE_HOST_NAME travels to the guarded child on its command line.
+    parser.add_argument("--compute-host-name")
     args = parser.parse_args()
+    if args.compute_host_name:
+        HOSTS["computehost"] = args.compute_host_name.upper()
     require(args.request.is_absolute(), "absolute request path required")
     request = read(args.request)
     qualification = args.action in ("qualify", "_qualify")
@@ -518,7 +571,8 @@ def main():
         result = reservations.dispatch(
             lane=request["lane"], work_id=Path(request["root"]).name,
             release_condition="native-expanded process, durable archive and guarded receipt complete or fail",
-            command=[sys.executable, "-B", str(Path(__file__).resolve()), "_" + args.action, str(args.request)],
+            command=[sys.executable, "-B", str(Path(__file__).resolve()), "_" + args.action, str(args.request)]
+                    + ["--compute-host-name", HOSTS["computehost"]],
             cwd=str(Path(__file__).resolve().parents[2]),
             busy_pattern=r"native_expanded_training|expanded_deck_training|cargo|rustc|trainer\.exe")
         print(json.dumps(result))
