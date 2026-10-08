@@ -123,6 +123,21 @@ pub enum TriggerCondition {
     AttacksWithControllerGraveyardCardCountAtLeast(u8),
     BeginningControllerEndStepIfCreatureDied,
     BeginningControllerEndStep,
+    /// The controller casts a creature spell (Quirion Beastcaller).
+    CastCreatureSpell,
+    /// The controller casts a spell whose mana value on the stack is at
+    /// least this (Ascendant Packleader).
+    CastSpellManaValueAtLeast(u16),
+    /// A creature enters under the source's controller with greater power or
+    /// greater toughness than the source has at that moment: the trigger-time
+    /// half of Sharp-Eyed Rookie's and Evolving Adaptive's intervening if.
+    /// `another` excludes the source itself.
+    ControlledCreatureEntersOutgrowingSource {
+        another: bool,
+    },
+    /// Each successful draw by the source controller's opponent (Razorkin
+    /// Needlehead: "whenever an opponent draws a card").
+    OpponentDraws,
     /// The creature this Equipment is attached to deals combat damage to a
     /// player (Goldvein Pick). The committed marker's source incarnation
     /// must be the Equipment's exact current host.
@@ -198,12 +213,43 @@ fn materialize_trigger_source_program(
                 },
             }
         }
+        EffectOp::BindOilCounterToTriggerSource => {
+            let live = state.objects.get(source);
+            EffectOp::PutOilCounterOnBoundObject {
+                object: EffectObjectBinding {
+                    object: source,
+                    expected_zone: live.zone,
+                    expected_zone_change_count: live.zone_change_count,
+                },
+            }
+        }
+        EffectOp::Sequence(steps) if steps.iter().any(contains_source_binding_template) => {
+            EffectOp::Sequence(
+                steps
+                    .into_iter()
+                    .map(|step| materialize_trigger_source_program(step, source, state))
+                    .collect(),
+            )
+        }
         EffectOp::MaterializeStormCopies => {
             crate::engine::materialize_storm_copy_binding(state, source)
                 .map(|binding| EffectOp::CreateStormCopies { binding })
                 .unwrap_or(EffectOp::MaterializeStormCopies)
         }
         effect => effect,
+    }
+}
+
+/// Whether a program still holds a source-binding template that
+/// `materialize_trigger_source_program` must replace.
+fn contains_source_binding_template(effect: &EffectOp) -> bool {
+    match effect {
+        EffectOp::BindTemporaryBoostToTriggerSource { .. }
+        | EffectOp::BindPlusOnePlusOneCounterToTriggerSource
+        | EffectOp::BindDoublePlusOneCountersToTriggerSource
+        | EffectOp::BindOilCounterToTriggerSource => true,
+        EffectOp::Sequence(steps) => steps.iter().any(contains_source_binding_template),
+        _ => false,
     }
 }
 
@@ -225,6 +271,24 @@ fn materialize_trigger_event_effect(
     state: &GameState,
     event: &CommittedEvent,
 ) -> EffectOp {
+    if let EffectOp::BindEntrantOutgrowsSourceThen { then } = (trigger.effect)() {
+        if let Some(object) = battlefield_entry_object(event) {
+            let live = state.objects.get(source);
+            return EffectOp::IfEntrantOutgrowsSourceThen {
+                entrant: EffectObjectBinding {
+                    object,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: state.objects.get(object).zone_change_count,
+                },
+                source: EffectObjectBinding {
+                    object: source,
+                    expected_zone: live.zone,
+                    expected_zone_change_count: live.zone_change_count,
+                },
+                then: Box::new(materialize_trigger_source_program(*then, source, state)),
+            };
+        }
+    }
     if matches!(
         (trigger.effect)(),
         EffectOp::BindPlusOnePlusOneCounterToTriggerEventObject
@@ -1759,6 +1823,16 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Gatekeeper of Malakir" => &standard_family_g_v1::GATEKEEPER_OF_MALAKIR_TRIGGERS,
         #[cfg(feature = "standard-magezero-fixtures")]
         "Deep-Cavern Bat" => &standard_family_g_v1::DEEP_CAVERN_BAT_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Razorkin Needlehead" => &standard_family_g_v1::RAZORKIN_NEEDLEHEAD_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Quirion Beastcaller" => &standard_family_g_v1::QUIRION_BEASTCALLER_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Ascendant Packleader" => &standard_family_g_v1::ASCENDANT_PACKLEADER_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Sharp-Eyed Rookie" => &standard_family_g_v1::SHARP_EYED_ROOKIE_TRIGGERS,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Evolving Adaptive" => &standard_family_g_v1::EVOLVING_ADAPTIVE_TRIGGERS,
         _ => &[],
     }
 }
@@ -1838,6 +1912,24 @@ fn source_bound_trigger_program_matches(template: &EffectOp, effect: &EffectOp) 
                 ..
             },
         ) => power == actual_power && toughness == actual_toughness,
+        (EffectOp::Sequence(template_steps), EffectOp::Sequence(actual_steps)) => {
+            template_steps.len() == actual_steps.len()
+                && template_steps
+                    .iter()
+                    .zip(actual_steps)
+                    .all(|(template, actual)| {
+                        source_bound_trigger_program_matches(template, actual)
+                    })
+        }
+        (
+            EffectOp::BindEntrantOutgrowsSourceThen { then },
+            EffectOp::IfEntrantOutgrowsSourceThen {
+                then: actual_then, ..
+            },
+        ) => source_bound_trigger_program_matches(then, actual_then),
+        (EffectOp::BindOilCounterToTriggerSource, EffectOp::PutOilCounterOnBoundObject { .. }) => {
+            true
+        }
         (
             EffectOp::BindPlusOnePlusOneCounterToTriggerSource,
             EffectOp::PutPlusOnePlusOneCounterOnBoundObject { .. },
@@ -2860,6 +2952,56 @@ fn trigger_matches(
                 object: Some(_),
             },
         ) => *player == controller,
+        (
+            TriggerCondition::CastCreatureSpell,
+            CommittedEvent::SpellCast {
+                spell,
+                controller: caster,
+            },
+        ) => {
+            *caster == controller
+                && selected_spell_types(state, *spell)
+                    .contains(&crate::card_def::CardType::Creature)
+        }
+        (
+            TriggerCondition::CastSpellManaValueAtLeast(minimum),
+            CommittedEvent::SpellCast {
+                spell,
+                controller: caster,
+            },
+        ) => {
+            *caster == controller
+                && state
+                    .stack
+                    .iter()
+                    .find(|item| {
+                        item.kind == crate::state::StackItemKind::Spell && item.source == *spell
+                    })
+                    .is_some_and(|item| {
+                        crate::engine::stack_spell_mana_value(state, item) >= minimum
+                    })
+        }
+        (TriggerCondition::ControlledCreatureEntersOutgrowingSource { another }, event) => {
+            let Some(object) = battlefield_entry_object(event) else {
+                return false;
+            };
+            let entrant = state.objects.get(object);
+            (!another || object != source)
+                && entrant.zone == Zone::Battlefield
+                && entrant.controller == controller
+                && crate::engine::object_has_type(state, object, CardType::Creature)
+                && (crate::engine::effective_power(state, object)
+                    > crate::engine::effective_power(state, source)
+                    || crate::engine::effective_toughness(state, object)
+                        > crate::engine::effective_toughness(state, source))
+        }
+        (
+            TriggerCondition::OpponentDraws,
+            CommittedEvent::Draw {
+                player,
+                object: Some(_),
+            },
+        ) => *player != controller,
         (TriggerCondition::OtherControlledCreatureEnters { subtype }, event) => {
             let Some(object) = battlefield_entry_object(event) else {
                 return false;

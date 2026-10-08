@@ -2434,7 +2434,7 @@ fn stack_spell_has_type(state: &GameState, item: &StackItem, card_type: CardType
 /// Mana value of the selected printed spell form. Bestow and other
 /// alternative costs retain the ordinary value; Omen/Adventure select
 /// their own printed cost before substituting announced X.
-fn stack_spell_mana_value(state: &GameState, item: &StackItem) -> u16 {
+pub(crate) fn stack_spell_mana_value(state: &GameState, item: &StackItem) -> u16 {
     let def = &card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize];
     if item.v4.cast_method == Some(CastMethodV4::Omen) {
         if let Some((cost, _)) = def.omen_spell_form() {
@@ -11115,6 +11115,10 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
         - obj.counters.minus1_minus1 as i32;
     power += bestow_host_counter_bonus(state, id);
     power += controlled_subtype_boost(state, id).0;
+    #[cfg(feature = "standard-magezero-fixtures")]
+    {
+        power += crate::standard_statics_v1::self_counter_boost(state, id).0;
+    }
     if def.is_executable()
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {
@@ -11166,6 +11170,10 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
         - obj.counters.minus0_minus1 as i32;
     toughness += bestow_host_counter_bonus(state, id);
     toughness += controlled_subtype_boost(state, id).1;
+    #[cfg(feature = "standard-magezero-fixtures")]
+    {
+        toughness += crate::standard_statics_v1::self_counter_boost(state, id).1;
+    }
     if def.is_executable()
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {
@@ -11236,6 +11244,10 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
         return true;
     }
     if printed_active && def.keywords_for_face(obj.v4.face_index).has(kw) {
+        return true;
+    }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if crate::standard_statics_v1::conditional_self_keywords(state, id).has(kw) {
         return true;
     }
     if obj.zone == Zone::Battlefield

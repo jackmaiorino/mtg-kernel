@@ -524,6 +524,8 @@ fn initialize_entry_counters(state: &mut GameState, object: ObjectId, kicked: bo
             }
         }
     }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    crate::standard_statics_v1::apply_conditional_entry_counters(state, object);
 }
 
 pub(crate) fn log_plus_one_counters_added(

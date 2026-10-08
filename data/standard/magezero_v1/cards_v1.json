@@ -230,6 +230,131 @@
         "exile_until_leaves"
       ],
       "java_file": "Mage.Sets/src/mage/cards/d/DeepCavernBat.java"
+    },
+    {
+      "name": "Razorkin Needlehead",
+      "engine_capability": "full",
+      "mana_cost": "{R}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Assassin"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "conditional_first_strike",
+        "opponent_draw_trigger"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RazorkinNeedlehead.java"
+    },
+    {
+      "name": "Ascendant Packleader",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Wolf"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "conditional_entry_counter",
+        "cast_trigger",
+        "plus_one_counters"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AscendantPackleader.java"
+    },
+    {
+      "name": "Sharp-Eyed Rookie",
+      "engine_capability": "full",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Detective"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "vigilance",
+        "creature_enters_trigger",
+        "investigate"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SharpEyedRookie.java"
+    },
+    {
+      "name": "Evolving Adaptive",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Phyrexian",
+        "Warrior"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 0,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "oil_counters",
+        "creature_enters_trigger"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EvolvingAdaptive.java"
     }
   ]
 }

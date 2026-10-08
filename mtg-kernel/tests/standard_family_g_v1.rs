@@ -5,7 +5,7 @@ use mtg_kernel::card_def::{card_id_by_name, CardCapability, Keywords, Subtype, C
 use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
-use mtg_kernel::mana::ManaColor;
+use mtg_kernel::mana::{ManaColor, Pip};
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 use mtg_kernel::trigger;
 
@@ -45,6 +45,34 @@ const CARDS: &[(&str, &[Subtype], (i16, i16), Keywords, usize)] = &[
         &[Subtype::Bat],
         (1, 1),
         Keywords(Keywords::FLYING.0 | Keywords::LIFELINK.0),
+        1,
+    ),
+    (
+        "Razorkin Needlehead",
+        &[Subtype::Human, Subtype::Assassin],
+        (2, 2),
+        Keywords::NONE,
+        1,
+    ),
+    (
+        "Ascendant Packleader",
+        &[Subtype::Wolf],
+        (2, 1),
+        Keywords::NONE,
+        1,
+    ),
+    (
+        "Sharp-Eyed Rookie",
+        &[Subtype::Human, Subtype::Detective],
+        (2, 2),
+        Keywords::VIGILANCE,
+        1,
+    ),
+    (
+        "Evolving Adaptive",
+        &[Subtype::Phyrexian, Subtype::Warrior],
+        (0, 0),
+        Keywords::NONE,
         1,
     ),
 ];
@@ -489,4 +517,166 @@ fn deep_cavern_bat_gone_before_its_trigger_resolves_exiles_nothing() {
     }
     assert_eq!(state.objects.get(spell).zone, Zone::Hand);
     assert!(state.engine.linked_exile_records.is_empty());
+}
+
+#[test]
+fn razorkin_needlehead_has_first_strike_only_on_its_controllers_turn() {
+    let mut state = ready(Step::Main1);
+    let needlehead = put(
+        &mut state,
+        PlayerId::P0,
+        "Razorkin Needlehead",
+        Zone::Battlefield,
+    );
+    assert!(engine::has_effective_keyword(
+        &state,
+        needlehead,
+        Keywords::FIRST_STRIKE
+    ));
+    state.active_player = PlayerId::P1;
+    assert!(!engine::has_effective_keyword(
+        &state,
+        needlehead,
+        Keywords::FIRST_STRIKE
+    ));
+}
+
+#[test]
+fn razorkin_needlehead_pings_the_opponent_for_each_card_they_draw() {
+    let mut state = ready(Step::Main1);
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Razorkin Needlehead",
+        Zone::Battlefield,
+    );
+    event::propose_and_commit(&mut state, ProposedEvent::draw(PlayerId::P1));
+    event::propose_and_commit(&mut state, ProposedEvent::draw(PlayerId::P1));
+    event::propose_and_commit(&mut state, ProposedEvent::draw(PlayerId::P0));
+    let triggers = trigger::collect_and_process(&mut state);
+    state.engine.pending_triggers.extend(triggers);
+    settled(&mut state);
+    assert_eq!((state.players[0].life, state.players[1].life), (20, 18));
+}
+
+/// Puts `name` in P0's hand with exactly its printed mana in the pool and
+/// casts it with no targets.
+fn cast_creature(state: &mut GameState, name: &str) -> ObjectId {
+    let id = put(state, PlayerId::P0, name, Zone::Hand);
+    let def = &CARD_DEFS[card_id_by_name(name).unwrap() as usize];
+    let mut mana = [0; 6];
+    for pip in def.cost.pips {
+        let Pip::Colored(color) = pip else {
+            panic!("{name}: unexpected pip {pip:?}");
+        };
+        mana[color.pool_index()] += 1;
+    }
+    mana[5] += def.cost.generic;
+    state.players[0].mana_pool = mana;
+    cast(state, id, &[]);
+    id
+}
+
+#[test]
+fn ascendant_packleader_grows_from_big_spells_and_big_permanents() {
+    let mut state = ready(Step::Main1);
+    let first = cast_creature(&mut state, "Ascendant Packleader");
+    settled(&mut state);
+    assert_eq!(state.objects.get(first).counters.plus1_plus1, 0);
+
+    // Troll of Khazad-dum has mana value 6: casting it grows the Packleader
+    // already on the battlefield.
+    let troll = cast_creature(&mut state, "Troll of Khazad-dum");
+    settled(&mut state);
+    assert_eq!(state.objects.get(troll).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(first).counters.plus1_plus1, 1);
+    assert_eq!(engine::effective_power(&state, first), 3);
+
+    // With the Troll in play, a new Packleader enters with its counter, and
+    // casting a one-drop does not trigger the first one.
+    let second = cast_creature(&mut state, "Ascendant Packleader");
+    settled(&mut state);
+    assert_eq!(state.objects.get(second).counters.plus1_plus1, 1);
+    assert_eq!(state.objects.get(first).counters.plus1_plus1, 1);
+}
+
+#[test]
+fn sharp_eyed_rookie_grows_and_investigates_when_outclassed() {
+    let mut state = ready(Step::Main1);
+    let rookie = put(
+        &mut state,
+        PlayerId::P0,
+        "Sharp-Eyed Rookie",
+        Zone::Battlefield,
+    );
+    // A 1/1 does not beat a 2/2.
+    cast_creature(&mut state, "Cenote Scout");
+    while let Some(decision) = settle(&mut state) {
+        // Cenote Scout's explore choice, if a nonland is on top.
+        assert!(matches!(decision, Decision::ChooseEffectOption { .. }));
+        engine::step(&mut state, Action::ChooseEffectOption(0)).unwrap();
+    }
+    assert_eq!(state.objects.get(rookie).counters.plus1_plus1, 0);
+    assert!(battlefield_tokens(&state, PlayerId::P0, "Clue Token").is_empty());
+    // A 3/4 does.
+    cast_creature(&mut state, "Sentinel of the Nameless City");
+    settled(&mut state);
+    assert_eq!(state.objects.get(rookie).counters.plus1_plus1, 1);
+    assert_eq!(
+        battlefield_tokens(&state, PlayerId::P0, "Clue Token").len(),
+        1
+    );
+    // The opponent's creatures never count.
+    let theirs = put(&mut state, PlayerId::P1, "Troll of Khazad-dum", Zone::Hand);
+    move_to(&mut state, theirs, Zone::Battlefield);
+    settled(&mut state);
+    assert_eq!(state.objects.get(rookie).counters.plus1_plus1, 1);
+}
+
+#[test]
+fn sharp_eyed_rookie_rechecks_its_condition_on_resolution() {
+    let mut state = ready(Step::Main1);
+    let rookie = put(
+        &mut state,
+        PlayerId::P0,
+        "Sharp-Eyed Rookie",
+        Zone::Battlefield,
+    );
+    let sentinel = put(
+        &mut state,
+        PlayerId::P0,
+        "Sentinel of the Nameless City",
+        Zone::Hand,
+    );
+    move_to(&mut state, sentinel, Zone::Battlefield);
+    // Before the trigger resolves, the Rookie becomes a 4/4.
+    state.objects.get_mut(rookie).counters.plus1_plus1 = 2;
+    settled(&mut state);
+    assert_eq!(state.objects.get(rookie).counters.plus1_plus1, 2);
+    assert!(battlefield_tokens(&state, PlayerId::P0, "Clue Token").is_empty());
+}
+
+#[test]
+fn evolving_adaptive_enters_with_oil_and_grows_from_bigger_creatures() {
+    let mut state = ready(Step::Main1);
+    let adaptive = cast_creature(&mut state, "Evolving Adaptive");
+    settled(&mut state);
+    assert_eq!(state.objects.get(adaptive).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(adaptive).counters.oil, 1);
+    assert_eq!(
+        (
+            engine::effective_power(&state, adaptive),
+            engine::effective_toughness(&state, adaptive)
+        ),
+        (1, 1)
+    );
+    // A 2/2 has greater power and toughness than the 1/1.
+    cast_creature(&mut state, "Sharp-Eyed Rookie");
+    settled(&mut state);
+    assert_eq!(state.objects.get(adaptive).counters.oil, 2);
+    // Another 2/2 does not beat a 2/2.
+    cast_creature(&mut state, "Sharp-Eyed Rookie");
+    settled(&mut state);
+    assert_eq!(state.objects.get(adaptive).counters.oil, 2);
+    assert_eq!(engine::effective_power(&state, adaptive), 2);
 }

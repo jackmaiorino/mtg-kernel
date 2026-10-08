@@ -1089,6 +1089,30 @@ pub enum EffectOp {
         power: i32,
         toughness: i32,
     },
+    /// Definition-owned template for an intervening "if that creature has
+    /// greater power or toughness than this" entry trigger (Sharp-Eyed
+    /// Rookie, Evolving Adaptive). Trigger materialization binds the entering
+    /// creature and the source into `IfEntrantOutgrowsSourceThen`; `then`'s
+    /// own source-bound templates are materialized at the same time.
+    BindEntrantOutgrowsSourceThen {
+        then: Box<EffectOp>,
+    },
+    /// 603.4's resolution-time recheck: runs `then` only if the bound
+    /// entering creature's power is greater than the source's, or its
+    /// toughness is greater than the source's. Each side is read live while
+    /// it remains the bound battlefield incarnation; once a side has left,
+    /// the check fails closed and `then` does nothing.
+    IfEntrantOutgrowsSourceThen {
+        entrant: EffectObjectBinding,
+        source: EffectObjectBinding,
+        then: Box<EffectOp>,
+    },
+    /// Template: one oil counter on this exact trigger source.
+    BindOilCounterToTriggerSource,
+    /// Put one oil counter on an exact battlefield incarnation.
+    PutOilCounterOnBoundObject {
+        object: EffectObjectBinding,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -11318,6 +11342,50 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     state,
                     event::ProposedEvent::damage(attached, Target::Player(ctx.controller), amount),
                 );
+            }
+        }
+        EffectOp::BindEntrantOutgrowsSourceThen { .. }
+        | EffectOp::BindOilCounterToTriggerSource => {
+            // Templates are always materialized before reaching the stack.
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        EffectOp::IfEntrantOutgrowsSourceThen {
+            entrant,
+            source,
+            then,
+        } => {
+            let live = |binding: &EffectObjectBinding| {
+                validate_effect_object_binding(state, *binding).is_ok()
+                    && binding.expected_zone == Zone::Battlefield
+            };
+            if live(entrant)
+                && live(source)
+                && (crate::engine::effective_power(state, entrant.object)
+                    > crate::engine::effective_power(state, source.object)
+                    || crate::engine::effective_toughness(state, entrant.object)
+                        > crate::engine::effective_toughness(state, source.object))
+            {
+                execute(then, ctx, state);
+            }
+        }
+        EffectOp::PutOilCounterOnBoundObject { object } => {
+            if validate_effect_object_binding(state, *object).is_err()
+                || object.expected_zone != Zone::Battlefield
+            {
+                return;
+            }
+            let oil = &mut state.objects.get_mut(object.object).counters.oil;
+            match oil.checked_add(1) {
+                Some(next) => *oil = next,
+                None => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ))
+                }
             }
         }
         EffectOp::BoostAttachedCreatureUntilEndOfTurn { power, toughness } => {

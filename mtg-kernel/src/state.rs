@@ -54,6 +54,26 @@ pub struct Counters {
     pub minus0_minus1: i16,
     pub stun: i16,
     pub lore: i16,
+    /// Oil counters (Evolving Adaptive). Omitted from serialization and the
+    /// state hash while zero, so every earlier snapshot and hash is unchanged.
+    #[serde(default, skip_serializing_if = "is_zero_i16")]
+    pub oil: i16,
+}
+
+fn is_zero_i16(value: &i16) -> bool {
+    *value == 0
+}
+
+impl Counters {
+    /// Whether any counter of any kind is present.
+    pub fn any(&self) -> bool {
+        self.plus1_plus1 != 0
+            || self.minus1_minus1 != 0
+            || self.minus0_minus1 != 0
+            || self.stun != 0
+            || self.lore != 0
+            || self.oil != 0
+    }
 }
 
 pub(crate) fn hash_plus_one_counters<H: std::hash::Hasher>(count: i32, state: &mut H) {
@@ -73,6 +93,10 @@ impl std::hash::Hash for Counters {
         self.minus0_minus1.hash(state);
         self.stun.hash(state);
         self.lore.hash(state);
+        if self.oil != 0 {
+            b"oil_counters_v1".hash(state);
+            self.oil.hash(state);
+        }
     }
 }
 

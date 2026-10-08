@@ -35,11 +35,18 @@ impl Scan<'_> {
             } => self.op(then) || otherwise.as_ref().is_some_and(|x| self.op(x)),
             MayExileFromPlayersGraveyardMatchingThen { then, .. }
             | MayPayManaThen { then, .. }
-            | LookAtTopMayRevealThen { then, .. } => self.op(then),
+            | LookAtTopMayRevealThen { then, .. }
+            | BindEntrantOutgrowsSourceThen { then } => self.op(then),
+            IfEntrantOutgrowsSourceThen {
+                entrant,
+                source,
+                then,
+            } => self.b(entrant) || self.b(source) || self.op(then),
             PutBoundObjectInOwnersLibrary { object, .. }
             | MoveBoundObject { object, .. }
             | PutPlusOnePlusOneCounterOnBoundObject { object }
             | DoublePlusOneCountersOnBoundObject { object }
+            | PutOilCounterOnBoundObject { object }
             | PutPlusOnePlusOneCounterOnTriggerEventObject { object }
             | BoostBoundObjectUntilEndOfTurn { object, .. } => self.b(object),
             PutBoundAuraOntoBattlefieldAttached { aura, host } => self.b(aura) || self.b(host),
@@ -107,6 +114,7 @@ impl Scan<'_> {
             | BindPlusOnePlusOneCounterToTriggerSource
             | BindPlusOnePlusOneCounterToTriggerEventObject
             | BindDoublePlusOneCountersToTriggerSource
+            | BindOilCounterToTriggerSource
             | BindTemporaryBoostToTriggerSource { .. }
             | BoostControlledCreaturesUntilEndOfTurn { .. }
             | GainLifeByAttackingSubtypeCount { .. }

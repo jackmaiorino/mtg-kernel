@@ -3523,7 +3523,9 @@ fn keywords_for(card: &CardJson) -> String {
     }
     // MageZero Standard family G, in printed keyword order.
     match card.name.as_str() {
-        "Sentinel of the Nameless City" => keywords.push("Keywords::VIGILANCE"),
+        "Sentinel of the Nameless City" | "Sharp-Eyed Rookie" => {
+            keywords.push("Keywords::VIGILANCE")
+        }
         "Deep-Cavern Bat" => {
             keywords.push("Keywords::FLYING");
             keywords.push("Keywords::LIFELINK");
@@ -5312,6 +5314,31 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Deep-Cavern Bat" => {
             "etb:target_opponent:look_at_hand:may_exile_nonland_until_source_leaves"
         }
+        "Razorkin Needlehead" => "opponent_draws:damage_that_player:1",
+        "Quirion Beastcaller" => {
+            "cast_creature_spell:plus_one_counter_on_source:1;dies:distribute_source_plus_one_counters_among_controlled_creatures"
+        }
+        "Ascendant Packleader" => "cast_spell_mv_at_least_4:plus_one_counter_on_source:1",
+        "Sharp-Eyed Rookie" => {
+            "controlled_creature_enters_if_greater_power_or_toughness:plus_one_counter_on_source:1:investigate:1"
+        }
+        "Evolving Adaptive" => {
+            "another_controlled_creature_enters_if_greater_power_or_toughness:oil_counter_on_source:1"
+        }
+        _ => "none",
+    }
+}
+
+/// Static abilities implemented in `standard_statics_v1` (and the lord and
+/// ward tables they feed), named here so the Standard catalog identity covers
+/// them. Pauper and FDN canon never include this field.
+fn standard_static_recipe_for(name: &str) -> &'static str {
+    match name {
+        "Razorkin Needlehead" => "self_keyword:first_strike:controller_turn",
+        "Ascendant Packleader" => {
+            "enters_with_plus_one_counter_if_controls_permanent_mv_at_least_4"
+        }
+        "Evolving Adaptive" => "enters_with_oil_counter:1;self_boost_per_oil_counter:1:1",
         _ => "none",
     }
 }
@@ -8185,6 +8212,15 @@ fn codegen(cards: &[CardJson]) -> String {
         };
         canon.push_str(&bestow);
         canon.push('|');
+        if standard_magezero_fixtures() {
+            canon.push_str("standard_static=");
+            canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
+                standard_static_recipe_for(&c.name)
+            } else {
+                "none"
+            });
+            canon.push('|');
+        }
         canon.push_str("trigger=");
         canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
             trigger_recipe_for(&c.name)
