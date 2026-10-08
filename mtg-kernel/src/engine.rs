@@ -11439,6 +11439,10 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
         - obj.counters.minus1_minus1 as i32;
     power += bestow_host_counter_bonus(state, id);
     power += controlled_subtype_boost(state, id).0;
+    #[cfg(feature = "standard-magezero-fixtures")]
+    {
+        power += crate::standard_keywords_v1::controlled_forest_boost(state, id);
+    }
     if def.is_executable()
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {
@@ -11490,6 +11494,10 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
         - obj.counters.minus0_minus1 as i32;
     toughness += bestow_host_counter_bonus(state, id);
     toughness += controlled_subtype_boost(state, id).1;
+    #[cfg(feature = "standard-magezero-fixtures")]
+    {
+        toughness += crate::standard_keywords_v1::controlled_forest_boost(state, id);
+    }
     if def.is_executable()
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {

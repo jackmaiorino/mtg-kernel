@@ -1238,6 +1238,37 @@
       ],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/Spirit22Token.java",
       "is_token": true
+    },
+    {
+      "name": "Flourishing Bloom-Kin",
+      "engine_capability": "full",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Plant",
+        "Elemental"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 0,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "static_pt_boost",
+        "disguise_not_modeled"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FlourishingBloomKin.java"
     }
   ]
 }

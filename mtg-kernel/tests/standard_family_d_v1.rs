@@ -162,6 +162,7 @@ fn family_d_cards_are_fully_supported() {
         "Make Disappear",
         "Phantom Interference",
         "Spirit Token",
+        "Flourishing Bloom-Kin",
     ] {
         let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} missing"));
         assert_eq!(
@@ -2094,4 +2095,36 @@ fn phantom_interference_spirit_mode_needs_no_spell_to_target() {
         .find(|&id| CARD_DEFS[state.objects.get(id).card_def as usize].name == "Spirit Token")
         .expect("spirit token");
     assert_eq!(power_toughness(&state, spirit), (2, 2));
+}
+
+#[test]
+fn flourishing_bloom_kin_counts_forests_you_control() {
+    let mut state = ready();
+    let bloom = put(
+        &mut state,
+        PlayerId::P0,
+        "Flourishing Bloom-Kin",
+        Zone::Battlefield,
+    );
+    put(&mut state, PlayerId::P0, "Forest", Zone::Battlefield);
+    put(&mut state, PlayerId::P0, "Forest", Zone::Battlefield);
+    put(&mut state, PlayerId::P1, "Forest", Zone::Battlefield);
+    assert_eq!(power_toughness(&state, bloom), (2, 2));
+    put(&mut state, PlayerId::P0, "Forest", Zone::Battlefield);
+    assert_eq!(power_toughness(&state, bloom), (3, 3));
+}
+
+#[test]
+fn flourishing_bloom_kin_dies_without_forests() {
+    let mut state = ready();
+    let bloom = put(
+        &mut state,
+        PlayerId::P0,
+        "Flourishing Bloom-Kin",
+        Zone::Hand,
+    );
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::G], 1);
+    cast(&mut state, bloom, &[]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(bloom).zone, Zone::Graveyard);
 }

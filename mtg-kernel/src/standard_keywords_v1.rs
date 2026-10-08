@@ -471,3 +471,25 @@ pub(crate) fn spree_mode_prelude(card_name: &str, mode: u8) -> Option<crate::eff
         _ => None,
     }
 }
+
+/// Flourishing Bloom-Kin gets +1/+1 for each Forest its controller controls.
+pub(crate) fn controlled_forest_boost(state: &GameState, id: ObjectId) -> i32 {
+    let Some(object) = state.objects.try_get(id) else {
+        return 0;
+    };
+    if object.zone != Zone::Battlefield
+        || CARD_DEFS
+            .get(usize::from(object.card_def))
+            .is_none_or(|def| def.name != "Flourishing Bloom-Kin")
+        || !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+    {
+        return 0;
+    }
+    state.players[object.controller.index()]
+        .battlefield
+        .iter()
+        .filter(|&&land| {
+            crate::engine::has_effective_subtype(state, land, crate::card_def::Subtype::Forest)
+        })
+        .count() as i32
+}
