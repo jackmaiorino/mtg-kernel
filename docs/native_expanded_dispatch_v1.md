@@ -231,3 +231,7 @@ block, `queued_work` equals `native_alive`, and the final record is
 `finished: true`, so the guard releases the pod after `recovery_seconds` (or
 after 90 s as `controller_lost` if the driver dies). Keep campaign state,
 checkpoints, cold and retained roots on the network volume.
+
+The workstation side of a lease (packaging, planning, the Pod, staging,
+recovery and release) is `nine_deck_cloud_v1.py`; see
+[nine_deck_cloud_v1.md](nine_deck_cloud_v1.md).
