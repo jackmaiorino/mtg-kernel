@@ -11245,6 +11245,10 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
         - obj.counters.minus1_minus1 as i32;
     power += bestow_host_counter_bonus(state, id);
     power += controlled_subtype_boost(state, id).0;
+    #[cfg(feature = "standard-magezero-fixtures")]
+    {
+        power += crate::standard_cards_v1::controlled_boost(state, id).0;
+    }
     if def.is_executable()
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {
@@ -11296,6 +11300,10 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
         - obj.counters.minus0_minus1 as i32;
     toughness += bestow_host_counter_bonus(state, id);
     toughness += controlled_subtype_boost(state, id).1;
+    #[cfg(feature = "standard-magezero-fixtures")]
+    {
+        toughness += crate::standard_cards_v1::controlled_boost(state, id).1;
+    }
     if def.is_executable()
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {
@@ -14108,6 +14116,8 @@ pub(crate) fn finish_declare_attackers(state: &mut GameState, attackers: Vec<Obj
             event::propose_and_commit(state, ProposedEvent::tap(id));
         }
     }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    crate::standard_cards_v1::record_attackers(state, attackers.len());
     state.engine.combat.attackers = attackers;
     state.engine.combat.attackers_declared = true;
     for &source in &state.engine.combat.attackers {
@@ -15427,6 +15437,10 @@ pub(crate) fn pay_plan(state: &mut GameState, player: PlayerId, plan: &mana::Pay
         state.players[player.index()].mana_pool[i] -= amt;
     }
     state.players[player.index()].life -= plan.life_paid;
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if plan.life_paid > 0 {
+        crate::standard_cards_v1::record_life(state, player, 0, plan.life_paid);
+    }
 }
 
 #[cfg(test)]

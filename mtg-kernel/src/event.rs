@@ -880,6 +880,8 @@ fn commit_with_ability_lki(
                 }
                 Target::Player(p) => {
                     state.players[p.index()].life -= d.amount;
+                    #[cfg(feature = "standard-magezero-fixtures")]
+                    crate::standard_cards_v1::record_life(state, p, 0, d.amount);
                 }
             }
             #[cfg(feature = "standard-magezero-fixtures")]
@@ -956,6 +958,8 @@ fn commit_with_ability_lki(
         }
         ProposedEvent::LifeLoss(l) => {
             state.players[l.player.index()].life -= l.amount;
+            #[cfg(feature = "standard-magezero-fixtures")]
+            crate::standard_cards_v1::record_life(state, l.player, 0, l.amount);
             CommittedEvent::LifeLoss {
                 player: l.player,
                 amount: l.amount,
@@ -966,6 +970,8 @@ fn commit_with_ability_lki(
                 return;
             }
             state.players[g.player.index()].life += g.amount;
+            #[cfg(feature = "standard-magezero-fixtures")]
+            crate::standard_cards_v1::record_life(state, g.player, g.amount, 0);
             CommittedEvent::LifeGain {
                 player: g.player,
                 amount: g.amount,

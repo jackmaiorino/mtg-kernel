@@ -2974,6 +2974,8 @@ enum AbilityCostRecipe {
     ManaCost(&'static str),
     /// A planeswalker loyalty cost (`CostComponent::Loyalty`).
     Loyalty(i8),
+    /// "Pay N life" (`CostComponent::PayLife`).
+    PayLife(u8),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4648,6 +4650,7 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
             )
         }
         AbilityCostRecipe::Loyalty(delta) => format!("CostComponent::Loyalty({delta})"),
+        AbilityCostRecipe::PayLife(amount) => format!("CostComponent::PayLife({amount})"),
     }
 }
 
@@ -4681,6 +4684,7 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
         }
         AbilityCostRecipe::ManaCost(cost) => format!("mana_cost:{cost}"),
         AbilityCostRecipe::Loyalty(delta) => format!("loyalty:{delta}"),
+        AbilityCostRecipe::PayLife(amount) => format!("pay_life:{amount}"),
     }
 }
 
@@ -8479,6 +8483,9 @@ fn subtype_variant(t: &str) -> &'static str {
         "God" => "Subtype::God",
         "Demon" => "Subtype::Demon",
         "Room" => "Subtype::Room",
+        "Bat" => "Subtype::Bat",
+        "Construct" => "Subtype::Construct",
+        "Case" => "Subtype::Case",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

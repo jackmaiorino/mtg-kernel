@@ -960,3 +960,209 @@ fn basilisk_collar_equips_for_two_and_grants_deathtouch_and_lifelink() {
     assert!(engine::has_effective_keyword(&state, elves, Keywords::DEATHTOUCH));
     assert!(engine::has_effective_keyword(&state, elves, Keywords::LIFELINK));
 }
+
+// ---- Candy Trail, Warleader's Call, Lunar Convocation, Simulacrum, Cases ----
+
+/// Resolves the stack like `resolve_stack`, keeping scried cards on top.
+fn settle(state: &mut GameState) {
+    loop {
+        match next(state) {
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => return,
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
+            Decision::ChooseEffectTargets {
+                can_finish: true, ..
+            } => act(state, Action::FinishEffectSelection),
+            // Ordering the cards kept on top: take them in offered order.
+            Decision::ChooseEffectTargets { legal_targets, .. } => {
+                act(state, Action::ChooseEffectTarget(legal_targets[0]))
+            }
+            Decision::OrderTriggers { pending, .. } => {
+                act(state, Action::OrderTriggers((0..pending.len()).collect()))
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+}
+
+/// Passes to the end step like `through_end_step`, settling any scry.
+fn to_end_step(state: &mut GameState) {
+    loop {
+        let decision = next(state);
+        if state.step == Step::End {
+            break;
+        }
+        match decision {
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
+            Decision::DeclareAttackers { .. } => act(state, Action::DeclareAttackers(Vec::new())),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    settle(state);
+}
+
+#[test]
+fn candy_trail_scries_then_sacrifices_for_life_and_a_card() {
+    let mut state = game();
+    let trail = put(&mut state, P0, "Candy Trail", Zone::Hand);
+    state.players[0].mana_pool[ManaColor::U.pool_index()] = 1;
+    next(&mut state);
+    act(&mut state, Action::CastSpell(trail));
+    settle(&mut state);
+    assert_eq!(state.objects.get(trail).zone, Zone::Battlefield);
+
+    // {2}, {T}, Sacrifice: gain 3 life and draw a card.
+    assert!(!activatable(&mut state).contains(&(trail, 0)), "needs {{2}}");
+    state.players[0].mana_pool[ManaColor::U.pool_index()] = 2;
+    assert!(activatable(&mut state).contains(&(trail, 0)));
+    let hand = state.players[0].hand.len();
+    act(&mut state, Action::ActivateAbility(trail, 0));
+    settle(&mut state);
+    assert_eq!(state.objects.get(trail).zone, Zone::Graveyard);
+    assert_eq!(state.players[0].life, 23);
+    assert_eq!(state.players[0].hand.len(), hand + 1);
+}
+
+#[test]
+fn warleaders_call_pumps_your_creatures_and_pings_on_entry() {
+    let mut state = game();
+    put(&mut state, P0, "Warleader's Call", Zone::Battlefield);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let theirs = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    settle(&mut state);
+    assert_eq!(state.players[1].life, 19, "only your creature entering pings");
+    assert_eq!(
+        (engine::effective_power(&state, elves), engine::effective_toughness(&state, elves)),
+        (2, 2)
+    );
+    assert_eq!(
+        (engine::effective_power(&state, theirs), engine::effective_toughness(&state, theirs)),
+        (1, 1)
+    );
+}
+
+fn lunar_end_step(gained: i32, lost: i32) -> GameState {
+    let mut state = game();
+    put(&mut state, P0, "Lunar Convocation", Zone::Battlefield);
+    if gained > 0 {
+        event::propose_and_commit(&mut state, ProposedEvent::life_gain(P0, gained));
+    }
+    if lost > 0 {
+        event::propose_and_commit(&mut state, ProposedEvent::life_loss(P0, lost));
+    }
+    to_end_step(&mut state);
+    state
+}
+
+#[test]
+fn lunar_convocation_drains_after_you_gain_life() {
+    let state = lunar_end_step(1, 0);
+    assert_eq!(state.players[1].life, 19);
+    assert!(battlefield_named(&state, P0, "Bat").is_empty());
+
+    let state = lunar_end_step(0, 0);
+    assert_eq!(state.players[1].life, 20);
+    let state = lunar_end_step(0, 3);
+    assert_eq!(state.players[1].life, 20);
+    assert!(battlefield_named(&state, P0, "Bat").is_empty());
+}
+
+#[test]
+fn lunar_convocation_makes_a_bat_after_you_gain_and_lose_life() {
+    let state = lunar_end_step(2, 1);
+    assert_eq!(state.players[1].life, 19);
+    let bats = battlefield_named(&state, P0, "Bat");
+    assert_eq!(bats.len(), 1);
+    assert!(engine::has_effective_keyword(&state, bats[0], Keywords::FLYING));
+    assert_eq!(engine::effective_power(&state, bats[0]), 1);
+}
+
+#[test]
+fn lunar_convocation_pays_two_life_to_draw_and_that_counts_as_losing_life() {
+    let mut state = game();
+    let convocation = put(&mut state, P0, "Lunar Convocation", Zone::Battlefield);
+    state.players[0].mana_pool[ManaColor::B.pool_index()] = 2;
+    let hand = state.players[0].hand.len();
+    act(&mut state, Action::ActivateAbility(convocation, 0));
+    settle(&mut state);
+    assert_eq!(state.players[0].life, 18);
+    assert_eq!(state.players[0].hand.len(), hand + 1);
+    event::propose_and_commit(&mut state, ProposedEvent::life_gain(P0, 1));
+    to_end_step(&mut state);
+    assert_eq!(state.players[1].life, 19);
+    assert_eq!(battlefield_named(&state, P0, "Bat").len(), 1);
+}
+
+#[test]
+fn simulacrum_synthesizer_makes_constructs_for_big_artifacts() {
+    let mut state = game();
+    put(&mut state, P0, "Simulacrum Synthesizer", Zone::Battlefield);
+    settle(&mut state);
+    assert!(battlefield_named(&state, P0, "Construct").is_empty());
+
+    // Mana value 1: no Construct.
+    put(&mut state, P0, "Candy Trail", Zone::Battlefield);
+    settle(&mut state);
+    assert!(battlefield_named(&state, P0, "Construct").is_empty());
+
+    // Another Synthesizer (mana value 3) makes one from the first.
+    put(&mut state, P0, "Simulacrum Synthesizer", Zone::Battlefield);
+    settle(&mut state);
+    let constructs = battlefield_named(&state, P0, "Construct");
+    assert_eq!(constructs.len(), 1);
+    // Two Synthesizers, Candy Trail and the Construct itself.
+    let construct = constructs[0];
+    assert_eq!(engine::effective_power(&state, construct), 4);
+    assert_eq!(engine::effective_toughness(&state, construct), 4);
+
+    // An opponent's artifact entering makes nothing.
+    put(&mut state, P1, "Simulacrum Synthesizer", Zone::Battlefield);
+    settle(&mut state);
+    assert_eq!(battlefield_named(&state, P0, "Construct").len(), 1);
+}
+
+#[test]
+fn case_of_the_gateway_express_damages_with_each_creature_and_solves_after_three_attack() {
+    let mut state = game();
+    let mine = [
+        put(&mut state, P0, "Llanowar Elves", Zone::Battlefield),
+        put(&mut state, P0, "Llanowar Elves", Zone::Battlefield),
+        put(&mut state, P0, "Llanowar Elves", Zone::Battlefield),
+    ];
+    let theirs = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let targets = etb_trigger_targets(&mut state, "Case of the Gateway Express", 2, &[]);
+    assert_eq!(targets, vec![Target::Object(theirs)]);
+    drive(&mut state, &[Target::Object(theirs)]);
+    assert_eq!(state.objects.get(theirs).zone, Zone::Graveyard);
+
+    // Unsolved: no anthem yet.
+    assert_eq!(engine::effective_power(&state, mine[0]), 1);
+    attack_with(&mut state, mine.to_vec());
+    assert_eq!(state.players[1].life, 17);
+    assert_eq!(engine::effective_power(&state, mine[0]), 1);
+    to_end_step(&mut state);
+    for creature in mine {
+        assert_eq!(engine::effective_power(&state, creature), 2);
+        assert_eq!(engine::effective_toughness(&state, creature), 1);
+    }
+}
+
+#[test]
+fn case_of_the_gateway_express_stays_unsolved_after_two_attackers() {
+    let mut state = game();
+    let mine = [
+        put(&mut state, P0, "Llanowar Elves", Zone::Battlefield),
+        put(&mut state, P0, "Llanowar Elves", Zone::Battlefield),
+    ];
+    let case = put(&mut state, P0, "Case of the Gateway Express", Zone::Battlefield);
+    settle_case_trigger(&mut state, case);
+    attack_with(&mut state, mine.to_vec());
+    to_end_step(&mut state);
+    assert_eq!(engine::effective_power(&state, mine[0]), 1);
+}
+
+/// A Case put onto the battlefield with no creature to target: its entering
+/// trigger is removed for lack of a target.
+fn settle_case_trigger(state: &mut GameState, case: ObjectId) {
+    settle(state);
+    assert_eq!(state.objects.get(case).zone, Zone::Battlefield);
+}

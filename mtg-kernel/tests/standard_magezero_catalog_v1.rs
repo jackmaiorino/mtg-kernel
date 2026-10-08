@@ -14,7 +14,7 @@ use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 
 /// Appended after the 192 Pauper definitions, in registry order.
-const STANDARD_APPENDED: [&str; 17] = [
+const STANDARD_APPENDED: [&str; 24] = [
     "Plains",
     "Burst Lightning",
     "Teferi, Temporal Pilgrim",
@@ -32,28 +32,40 @@ const STANDARD_APPENDED: [&str; 17] = [
     "Sheltered by Ghosts",
     "Hardlight Containment",
     "Basilisk Collar",
+    "Candy Trail",
+    "Warleader's Call",
+    "Lunar Convocation",
+    "Bat Flying Token",
+    "Simulacrum Synthesizer",
+    "Karn Construct Token",
+    "Case of the Gateway Express",
 ];
 
 /// Every distinct nonbasic card in the 16 decks that this build fully
 /// supports. Each Standard card batch extends this list.
-const SUPPORTED_NONBASIC: [&str; 17] = [
+const SUPPORTED_NONBASIC: [&str; 22] = [
     "Basilisk Collar",
     "Blue Sun's Twilight",
     "Burst Lightning",
+    "Candy Trail",
+    "Case of the Gateway Express",
     "Cecil, Dark Knight",
     "Duress",
     "Dusk Rose Reliquary",
     "Hardlight Containment",
     "Llanowar Elves",
+    "Lunar Convocation",
     "Ojer Axonil, Deepest Might",
     "Polukranos Reborn",
     "Seam Rip",
     "Sheltered by Ghosts",
+    "Simulacrum Synthesizer",
     "Spell Pierce",
     "Teferi, Temporal Pilgrim",
     "Tolarian Terror",
     "Unholy Annex // Ritual Chamber",
     "Voldaren Epicure",
+    "Warleader's Call",
 ];
 
 const BASICS: [&str; 5] = ["Plains", "Island", "Swamp", "Mountain", "Forest"];
@@ -115,7 +127,7 @@ fn standard_registry_appends_to_the_pauper_prefix_without_fdn() {
 
 #[test]
 fn standard_catalog_identity_is_frozen() {
-    const EXPECTED_STANDARD_V1: u64 = 0x1469_6a4c_df1c_3eb2;
+    const EXPECTED_STANDARD_V1: u64 = 0x836f_ef7e_785e_8f0d;
     assert_eq!(
         KERNEL_CARDDB_HASH, EXPECTED_STANDARD_V1,
         "Standard catalog hash {KERNEL_CARDDB_HASH:#018x}"

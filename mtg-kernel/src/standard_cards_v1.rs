@@ -26,6 +26,17 @@ pub struct StandardStateV1 {
     /// Unlocked doors of Room permanents, per exact battlefield incarnation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     rooms: Vec<RoomDoorsV1>,
+    /// Turn number and, per player, the life gained and the life lost that
+    /// turn (Lunar Convocation). Paying life is losing it (119.4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    life_this_turn: Option<(u32, [u32; 2], [u32; 2])>,
+    /// Turn number and the creatures declared as attackers that turn (Case
+    /// of the Gateway Express).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    attackers_this_turn: Option<(u32, u32)>,
+    /// Solved Case permanents, per exact battlefield incarnation (719.3).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    solved_cases: Vec<(ObjectId, u32)>,
 }
 
 /// The doors of one Room permanent incarnation: bit 0 is the left door,
@@ -139,6 +150,19 @@ pub enum StandardOpV1 {
     /// (303.4f), for this module's Auras whose enchant restriction is not
     /// "enchant creature".
     AuraEnters,
+    /// Lunar Convocation: "if you gained life this turn, each opponent loses
+    /// `amount` life", the intervening condition rechecked on resolution
+    /// (603.4).
+    OpponentLosesLifeIfYouGainedLife { amount: u8 },
+    /// Lunar Convocation: "if you gained and lost life this turn, create"
+    /// the token, the intervening condition rechecked on resolution.
+    CreateTokenIfYouGainedAndLostLife { token_def: u16 },
+    /// Case of the Gateway Express: each creature you control deals 1
+    /// damage to the target creature, simultaneously.
+    EachControlledCreatureDealsOneDamageToTarget,
+    /// A Case's "to solve" end-step ability: the source becomes solved if
+    /// it is still the same unsolved incarnation and its condition holds.
+    SolveSourceCase,
 }
 
 impl StandardOpV1 {
@@ -253,6 +277,55 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
         StandardOpV1::TransformSource => transform_resolving_source(ctx, state),
         StandardOpV1::RoomEnters => room_enters(ctx, state),
         StandardOpV1::AuraEnters => aura_enters_battlefield(ctx, state),
+        StandardOpV1::OpponentLosesLifeIfYouGainedLife { amount } => {
+            if life_changed_this_turn(state, ctx.controller, false) {
+                event::propose_and_commit(
+                    state,
+                    ProposedEvent::life_loss(ctx.controller.opponent(), i32::from(*amount)),
+                );
+            }
+        }
+        StandardOpV1::CreateTokenIfYouGainedAndLostLife { token_def } => {
+            if life_changed_this_turn(state, ctx.controller, true) {
+                event::propose_and_commit(
+                    state,
+                    ProposedEvent::create_token(*token_def, ctx.controller),
+                );
+            }
+        }
+        StandardOpV1::EachControlledCreatureDealsOneDamageToTarget => {
+            let Some(Target::Object(target)) = ctx.targets.first().copied() else {
+                return;
+            };
+            let live = state.objects.get(target);
+            if !ctx.target_incarnation_matches(0, state)
+                || live.zone != Zone::Battlefield
+                || live.controller == ctx.controller
+                || !crate::engine::object_has_type(state, target, CardType::Creature)
+            {
+                return;
+            }
+            let damage = state.players[ctx.controller.index()]
+                .battlefield
+                .iter()
+                .copied()
+                .filter(|&id| crate::engine::object_has_type(state, id, CardType::Creature))
+                .map(|id| ProposedEvent::damage(id, Target::Object(target), 1))
+                .collect::<Vec<_>>();
+            if !damage.is_empty() {
+                event::propose_and_commit_batch(state, damage);
+            }
+        }
+        StandardOpV1::SolveSourceCase => {
+            if source_incarnation_live(ctx, state)
+                && !case_solved(state, ctx.source)
+                && case_condition_met(state, ctx.source)
+            {
+                let zone_change_count = state.objects.get(ctx.source).zone_change_count;
+                let standard = state.standard_v1.get_or_insert_with(Default::default);
+                standard.solved_cases.push((ctx.source, zone_change_count));
+            }
+        }
         StandardOpV1::UnlockSourceDoor { door } => {
             if source_incarnation_live(ctx, state) {
                 unlock_door(state, ctx.source, *door);
@@ -557,6 +630,15 @@ pub enum StandardTriggerV1 {
     ControllerEndStepWhileDoorUnlocked { door: u8 },
     /// "When you unlock this door."
     YouUnlockThisDoor { door: u8 },
+    /// "At the beginning of your end step, if you gained life this turn"
+    /// (and, with `require_lost`, "and lost life").
+    ControllerEndStepIfLifeChanged { require_lost: bool },
+    /// "Whenever another artifact you control with mana value N or greater
+    /// enters."
+    AnotherControlledArtifactEntersManaValueAtLeast(u8),
+    /// A Case's "to solve": at the beginning of your end step, if this Case
+    /// is unsolved and its condition holds (719.4).
+    ControllerEndStepSolveCase,
 }
 
 const POLUKRANOS_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
@@ -609,6 +691,28 @@ pub(crate) fn trigger_matches(
     state: &GameState,
 ) -> bool {
     match condition {
+        StandardTriggerV1::ControllerEndStepIfLifeChanged { require_lost } => {
+            let live = state.objects.get(source);
+            controller_end_step(events, index, source, state)
+                && life_changed_this_turn(state, live.controller, require_lost)
+        }
+        StandardTriggerV1::ControllerEndStepSolveCase => {
+            controller_end_step(events, index, source, state)
+                && !case_solved(state, source)
+                && case_condition_met(state, source)
+        }
+        StandardTriggerV1::AnotherControlledArtifactEntersManaValueAtLeast(minimum) => {
+            let Some(object) = crate::trigger::battlefield_entry_object(&events[index]) else {
+                return false;
+            };
+            let live = state.objects.get(source);
+            live.zone == Zone::Battlefield
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+                && object != source
+                && state.objects.get(object).controller == live.controller
+                && crate::engine::object_has_type(state, object, CardType::Artifact)
+                && mana_value(state, object) >= u16::from(minimum)
+        }
         StandardTriggerV1::ControllerEndStepWhileDoorUnlocked { door } => {
             let live = state.objects.get(source);
             matches!(
@@ -805,6 +909,11 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         POLUKRANOS => &POLUKRANOS_TRIGGERS,
         OJER => &OJER_TRIGGERS,
         ROOM => &ROOM_TRIGGERS,
+        CANDY_TRAIL => &SCRY_TWO_ON_ENTRY_TRIGGERS,
+        WARLEADERS_CALL => &WARLEADERS_CALL_TRIGGERS,
+        LUNAR_CONVOCATION => &LUNAR_CONVOCATION_TRIGGERS,
+        SIMULACRUM_SYNTHESIZER => &SIMULACRUM_SYNTHESIZER_TRIGGERS,
+        CASE_OF_THE_GATEWAY_EXPRESS => &GATEWAY_EXPRESS_TRIGGERS,
         SEAM_RIP | DUSK_ROSE_RELIQUARY | SHELTERED_BY_GHOSTS | HARDLIGHT_CONTAINMENT => {
             &EXILE_UNTIL_LEAVES_TRIGGERS
         }
@@ -1062,6 +1171,9 @@ const EXILE_UNTIL_LEAVES_TRIGGERS: [TriggeredAbilityDef; 2] = [
 /// name and the trigger's effect; `None` when the module doesn't own it.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<crate::card_def::TargetSpec> {
     use crate::card_def::TargetSpec;
+    if name == CASE_OF_THE_GATEWAY_EXPRESS && *effect == gateway_express_damage() {
+        return Some(TargetSpec::OpponentControlledCreature);
+    }
     if *effect != exile_target_until_source_leaves() {
         return None;
     }
@@ -1176,3 +1288,252 @@ pub(crate) fn ward_grant_exists(generic: u8) -> bool {
         .iter()
         .any(|def| granted_ward_of(def.name) == Some(generic))
 }
+
+// ---- Life, attack and anthem watchers --------------------------------------
+
+/// Records a life total change for this turn's "gained life"/"lost life"
+/// conditions.
+#[cfg(feature = "standard-magezero-fixtures")]
+pub(crate) fn record_life(state: &mut GameState, player: PlayerId, gained: i32, lost: i32) {
+    if gained <= 0 && lost <= 0 {
+        return;
+    }
+    let turn = state.turn;
+    let standard = state.standard_v1.get_or_insert_with(Default::default);
+    let (recorded_turn, gains, losses) = standard.life_this_turn.get_or_insert((turn, [0, 0], [0, 0]));
+    if *recorded_turn != turn {
+        *recorded_turn = turn;
+        *gains = [0, 0];
+        *losses = [0, 0];
+    }
+    let index = player.index();
+    gains[index] = gains[index].saturating_add(gained.max(0).unsigned_abs());
+    losses[index] = losses[index].saturating_add(lost.max(0).unsigned_abs());
+}
+
+fn life_changed_this_turn(state: &GameState, player: PlayerId, require_lost: bool) -> bool {
+    state
+        .standard_v1
+        .as_ref()
+        .and_then(|standard| standard.life_this_turn)
+        .filter(|(turn, _, _)| *turn == state.turn)
+        .is_some_and(|(_, gains, losses)| {
+            gains[player.index()] > 0 && (!require_lost || losses[player.index()] > 0)
+        })
+}
+
+/// Records declared attackers for this turn's "creatures attacked this
+/// turn" count.
+#[cfg(feature = "standard-magezero-fixtures")]
+pub(crate) fn record_attackers(state: &mut GameState, count: usize) {
+    if count == 0 {
+        return;
+    }
+    let turn = state.turn;
+    let standard = state.standard_v1.get_or_insert_with(Default::default);
+    let (recorded_turn, total) = standard.attackers_this_turn.get_or_insert((turn, 0));
+    if *recorded_turn != turn {
+        *recorded_turn = turn;
+        *total = 0;
+    }
+    *total = total.saturating_add(u32::try_from(count).unwrap_or(u32::MAX));
+}
+
+fn attackers_this_turn(state: &GameState) -> u32 {
+    state
+        .standard_v1
+        .as_ref()
+        .and_then(|standard| standard.attackers_this_turn)
+        .filter(|(turn, _)| *turn == state.turn)
+        .map_or(0, |(_, total)| total)
+}
+
+/// "At the beginning of your end step", for a source on the battlefield
+/// whose printed abilities function.
+fn controller_end_step(
+    events: &[CommittedEvent],
+    index: usize,
+    source: ObjectId,
+    state: &GameState,
+) -> bool {
+    let live = state.objects.get(source);
+    matches!(
+        events[index],
+        CommittedEvent::BeginningEndStep { active_player, .. } if active_player == live.controller
+    ) && live.zone == Zone::Battlefield
+        && crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+}
+
+/// Power and toughness this module's static abilities give `object`:
+/// Warleader's Call's and a solved Case of the Gateway Express's anthems,
+/// and the Construct token's "+1/+1 for each artifact you control".
+#[cfg(feature = "standard-magezero-fixtures")]
+pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i32, i32) {
+    let live = state.objects.get(object);
+    if live.zone != Zone::Battlefield
+        || !crate::engine::object_has_type(state, object, CardType::Creature)
+    {
+        return (0, 0);
+    }
+    let controller = live.controller;
+    let mut boost = (0, 0);
+    let mut artifacts = 0;
+    for &id in &state.players[controller.index()].battlefield {
+        if crate::engine::object_has_type(state, id, CardType::Artifact) {
+            artifacts += 1;
+        }
+        let name = CARD_DEFS[state.objects.get(id).card_def as usize].name;
+        if !matches!(name, WARLEADERS_CALL | CASE_OF_THE_GATEWAY_EXPRESS)
+            || !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+        {
+            continue;
+        }
+        if name == WARLEADERS_CALL {
+            boost.0 += 1;
+            boost.1 += 1;
+        } else if case_solved(state, id) {
+            boost.0 += 1;
+        }
+    }
+    if CARD_DEFS[live.card_def as usize].name == KARN_CONSTRUCT_TOKEN
+        && crate::continuous_characteristics_v1::printed_abilities_active(state, object)
+    {
+        boost.0 += artifacts;
+        boost.1 += artifacts;
+    }
+    boost
+}
+
+// ---- Candy Trail, Warleader's Call, Lunar Convocation, Simulacrum ----------
+
+const CANDY_TRAIL: &str = "Candy Trail";
+const WARLEADERS_CALL: &str = "Warleader's Call";
+const LUNAR_CONVOCATION: &str = "Lunar Convocation";
+const SIMULACRUM_SYNTHESIZER: &str = "Simulacrum Synthesizer";
+const KARN_CONSTRUCT_TOKEN: &str = "Karn Construct Token";
+
+fn scry_two() -> EffectOp {
+    EffectOp::Scry {
+        player: PlayerRef::Controller,
+        count: 2,
+    }
+}
+
+/// "When this enters, scry 2."
+const SCRY_TWO_ON_ENTRY_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [trigger(TriggerCondition::Etb, scry_two)];
+
+/// Candy Trail: "{2}, {T}, Sacrifice this: You gain 3 life and draw a card."
+pub fn candy_trail_sacrifice() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::GainLife {
+            player: PlayerRef::Controller,
+            amount: 3,
+        },
+        EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        },
+    ])
+}
+
+fn warleaders_call_damage() -> EffectOp {
+    EffectOp::DealDamage {
+        target: crate::effect::TargetRef::Opponent,
+        amount: 1,
+    }
+}
+
+/// "Whenever a creature you control enters, this deals 1 damage to each
+/// opponent." Its anthem is `controlled_boost`.
+const WARLEADERS_CALL_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
+    TriggerCondition::OtherControlledCreatureEnters { subtype: None },
+    warleaders_call_damage,
+)];
+
+fn lunar_convocation_drain() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::OpponentLosesLifeIfYouGainedLife { amount: 1 })
+}
+
+fn lunar_convocation_bat() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::CreateTokenIfYouGainedAndLostLife {
+        token_def: crate::card_def::card_id_by_name("Bat Flying Token")
+            .expect("Bat Flying Token in CARD_DEFS"),
+    })
+}
+
+const LUNAR_CONVOCATION_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    trigger(
+        TriggerCondition::StandardV1(StandardTriggerV1::ControllerEndStepIfLifeChanged {
+            require_lost: false,
+        }),
+        lunar_convocation_drain,
+    ),
+    trigger(
+        TriggerCondition::StandardV1(StandardTriggerV1::ControllerEndStepIfLifeChanged {
+            require_lost: true,
+        }),
+        lunar_convocation_bat,
+    ),
+];
+
+fn simulacrum_construct() -> EffectOp {
+    EffectOp::CreateToken {
+        token_def: crate::card_def::card_id_by_name(KARN_CONSTRUCT_TOKEN)
+            .expect("Karn Construct Token in CARD_DEFS"),
+        controller: PlayerRef::Controller,
+    }
+}
+
+const SIMULACRUM_SYNTHESIZER_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    trigger(TriggerCondition::Etb, scry_two),
+    trigger(
+        TriggerCondition::StandardV1(
+            StandardTriggerV1::AnotherControlledArtifactEntersManaValueAtLeast(3),
+        ),
+        simulacrum_construct,
+    ),
+];
+
+// ---- Cases -------------------------------------------------------------------
+
+const CASE_OF_THE_GATEWAY_EXPRESS: &str = "Case of the Gateway Express";
+
+/// Whether `object`'s current battlefield incarnation is a solved Case.
+pub(crate) fn case_solved(state: &GameState, object: ObjectId) -> bool {
+    let zone_change_count = state.objects.get(object).zone_change_count;
+    state.standard_v1.as_ref().is_some_and(|standard| {
+        standard
+            .solved_cases
+            .contains(&(object, zone_change_count))
+    })
+}
+
+/// A Case's "to solve" condition.
+fn case_condition_met(state: &GameState, object: ObjectId) -> bool {
+    match CARD_DEFS[state.objects.get(object).card_def as usize].name {
+        // "Three or more creatures attacked this turn."
+        CASE_OF_THE_GATEWAY_EXPRESS => attackers_this_turn(state) >= 3,
+        _ => false,
+    }
+}
+
+fn gateway_express_damage() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::EachControlledCreatureDealsOneDamageToTarget)
+}
+
+fn solve_source_case() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::SolveSourceCase)
+}
+
+/// "When this Case enters, choose target creature you don't control. Each
+/// creature you control deals 1 damage to that creature." To solve: three
+/// or more creatures attacked this turn. Solved: creatures you control get
+/// +1/+0 (`controlled_boost`).
+const GATEWAY_EXPRESS_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    trigger(TriggerCondition::Etb, gateway_express_damage),
+    trigger(
+        TriggerCondition::StandardV1(StandardTriggerV1::ControllerEndStepSolveCase),
+        solve_source_case,
+    ),
+];

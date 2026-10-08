@@ -538,6 +538,217 @@
         "lifelink"
       ],
       "java_file": "Mage.Sets/src/mage/cards/b/BasiliskCollar.java"
+    },
+    {
+      "name": "Candy Trail",
+      "engine_capability": "full",
+      "mana_cost": "{1}",
+      "mana_value": 1,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Food",
+        "Clue"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "etb_trigger",
+        "scry",
+        "activated_sacrifice",
+        "lifegain",
+        "draw"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CandyTrail.java"
+    },
+    {
+      "name": "Warleader's Call",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}{W}",
+      "mana_value": 3,
+      "colors": [
+        "R",
+        "W"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "anthem",
+        "creature_enters_trigger",
+        "damage_each_opponent"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/w/WarleadersCall.java"
+    },
+    {
+      "name": "Lunar Convocation",
+      "engine_capability": "full",
+      "mana_cost": "{W}{B}",
+      "mana_value": 2,
+      "colors": [
+        "W",
+        "B"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-BW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "end_step_trigger",
+        "lifegain_watcher",
+        "token",
+        "pay_life",
+        "draw"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LunarConvocation.java"
+    },
+    {
+      "name": "Bat Flying Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bat"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/BatToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Simulacrum Synthesizer",
+      "engine_capability": "full",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "etb_trigger",
+        "scry",
+        "artifact_enters_trigger",
+        "token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SimulacrumSynthesizer.java"
+    },
+    {
+      "name": "Karn Construct Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Construct"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 0,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "artifact_count_boost"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/KarnConstructToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Case of the Gateway Express",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [
+        "Case"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "case",
+        "etb_trigger",
+        "damage",
+        "anthem"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CaseOfTheGatewayExpress.java"
     }
   ]
 }

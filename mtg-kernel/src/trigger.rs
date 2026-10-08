@@ -206,7 +206,7 @@ fn materialize_trigger_source_program(
     }
 }
 
-fn battlefield_entry_object(event: &CommittedEvent) -> Option<ObjectId> {
+pub(crate) fn battlefield_entry_object(event: &CommittedEvent) -> Option<ObjectId> {
     match event {
         CommittedEvent::ZoneChange {
             object,

@@ -268,6 +268,9 @@ pub enum Subtype {
     God,
     Demon,
     Room,
+    Bat,
+    Construct,
+    Case,
 }
 
 impl Subtype {
@@ -369,6 +372,14 @@ impl Subtype {
         Subtype::Lizard,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Golem,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::God,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Demon,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Bat,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Construct,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:

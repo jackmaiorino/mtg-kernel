@@ -5,7 +5,7 @@
 //! identity.
 
 use super::{AbilityCostRecipe, AbilityEffectRecipe, ActivatedAbilityRecipe, Special};
-use AbilityCostRecipe::{Loyalty, ManaCost, Tap};
+use AbilityCostRecipe::{Loyalty, ManaCost, PayLife, SacrificeSelf, Tap};
 use AbilityEffectRecipe::AttachSourceToTarget;
 use AbilityEffectRecipe::{DrawCards, Program};
 
@@ -94,8 +94,31 @@ const fn equip(cost: &'static [AbilityCostRecipe]) -> ActivatedAbilityRecipe {
 
 const BASILISK_COLLAR: [ActivatedAbilityRecipe; 1] = [equip(&[ManaCost("{2}")])];
 
+/// An instant-speed activated ability from the battlefield.
+const fn instant(cost: &'static [AbilityCostRecipe], effect: AbilityEffectRecipe) -> ActivatedAbilityRecipe {
+    ActivatedAbilityRecipe {
+        cost,
+        effect,
+        activation_zone: "Battlefield",
+        sorcery_speed_only: false,
+        target_spec: "None",
+        activation_target_filter: "TargetSpecOnly",
+        max_activations_per_turn: None,
+    }
+}
+
+const CANDY_TRAIL: [ActivatedAbilityRecipe; 1] = [instant(
+    &[ManaCost("{2}"), Tap, SacrificeSelf],
+    Program("crate::standard_cards_v1::candy_trail_sacrifice"),
+)];
+
+const LUNAR_CONVOCATION: [ActivatedAbilityRecipe; 1] =
+    [instant(&[ManaCost("{1}{B}"), PayLife(2)], DrawCards(1))];
+
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
+        "Candy Trail" => &CANDY_TRAIL,
+        "Lunar Convocation" => &LUNAR_CONVOCATION,
         "Basilisk Collar" => &BASILISK_COLLAR,
         "Unholy Annex // Ritual Chamber" => &UNHOLY_ANNEX,
         "Teferi, Temporal Pilgrim" => &TEFERI,
@@ -136,7 +159,8 @@ pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
 }
 
 /// Card-database tokens for the triggered abilities in
-/// `standard_cards_v1::triggers_for`.
+/// `standard_cards_v1::triggers_for` and the static abilities in
+/// `standard_cards_v1::controlled_boost`.
 pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
         "Teferi, Temporal Pilgrim" => "controller_draws:add_loyalty_to_bound_source:1",
@@ -152,6 +176,20 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Unholy Annex // Ritual Chamber" => {
             "door0:controller_end_step:draw_then_drain_2_if_demon_else_lose_2;door1:unlock_this_door:create_demon_6_6_flying"
         }
+        "Candy Trail" => "etb:scry_2",
+        "Warleader's Call" => {
+            "static:controlled_creatures_plus_1_1;controlled_creature_enters:damage_each_opponent_1"
+        }
+        "Karn Construct Token" => "static:plus_1_1_per_controlled_artifact",
+        "Lunar Convocation" => {
+            "controller_end_step_if_gained_life:each_opponent_loses_1;controller_end_step_if_gained_and_lost_life:create_bat_1_1_flying"
+        }
+        "Simulacrum Synthesizer" => {
+            "etb:scry_2;another_controlled_artifact_mv_3_enters:create_karn_construct"
+        }
+        "Case of the Gateway Express" => {
+            "etb:each_controlled_creature_deals_1_to_target_opponent_creature;controller_end_step_solve:three_creatures_attacked;solved_static:controlled_creatures_plus_1_0"
+        }
         _ => "none",
     }
 }
@@ -164,7 +202,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Polukranos Reborn" | "Phyrexian Hydra Reach Token" => &["Keywords::REACH"],
         "Ojer Axonil, Deepest Might" => &["Keywords::TRAMPLE"],
         "Phyrexian Hydra Lifelink Token" => &["Keywords::LIFELINK"],
-        "Demon Flying Token" => &["Keywords::FLYING"],
+        "Demon Flying Token" | "Bat Flying Token" => &["Keywords::FLYING"],
         _ => &[],
     }
 }
@@ -178,6 +216,8 @@ pub(super) fn object_name_for(name: &str) -> Option<&'static str> {
             Some("Phyrexian Hydra")
         }
         "Demon Flying Token" => Some("Demon"),
+        "Bat Flying Token" => Some("Bat"),
+        "Karn Construct Token" => Some("Construct"),
         _ => None,
     }
 }

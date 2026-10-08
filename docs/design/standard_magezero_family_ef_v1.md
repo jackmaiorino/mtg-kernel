@@ -78,12 +78,36 @@ Reliquary sacrifices an artifact or creature as an additional cost and has
 ward {2}. Basilisk Collar is Equipment with equip {2} granting deathtouch
 and lifelink.
 
+## Turn watchers, anthems and Cases
+
+`GameState::standard_v1` records, per turn, the life each player gained
+and lost (paid life included, 119.4) and the creatures declared as
+attackers. Lunar Convocation's two end-step abilities check those records
+when the end step begins and again on resolution (603.4); its {1}{B}, pay
+2 life ability draws a card. Warleader's Call gives creatures you control
++1/+1 and deals 1 damage to each opponent whenever a creature you control
+enters. Simulacrum Synthesizer scries 2 on entry and makes a Construct
+token whenever another artifact you control with mana value 3 or more
+enters; the Construct gets +1/+1 for each artifact you control. Candy
+Trail scries 2 on entry and sacrifices for 3 life and a card. These
+power and toughness changes are read alongside the existing static boosts.
+
+Case of the Gateway Express's entering ability has each creature you
+control deal 1 damage to target creature you don't control, as one
+simultaneous batch. At the beginning of your end step, if three or more
+creatures attacked this turn and it is unsolved, it becomes solved (719.3,
+719.4), and while solved creatures you control get +1/+0. Solved state
+is kept per exact incarnation, so a Case that leaves and returns is
+unsolved.
+
 ## Known limits
 
 The stack and battlefield use the Room card's combined mana value and
 name rather than the unlocked halves'. Sacrifice bindings, Bargain and
 collect evidence fail closed on a back face. The legend rule counts
-Temple of Power as legendary. Ninjutsu attackers attack the player.
+Temple of Power as legendary. Ninjutsu attackers attack the player. The
+attack count adds each declaration, so a creature attacking in two combats
+in one turn counts twice.
 
 ## Catalog identity
 
