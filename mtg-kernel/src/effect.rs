@@ -1145,6 +1145,17 @@ pub enum EffectOp {
     ReturnSourceFromGraveyardTappedWithStunCounters {
         stun: i16,
     },
+    /// Privately look at the top `count` cards of the player's library; they
+    /// may reveal one creature card with mana value at most `max_mana_value`
+    /// from among them and put it into their hand, and the rest go on the
+    /// bottom (Recruitment Officer). The printed random bottom order is kept
+    /// as the looked-at order: randomness only advances through library
+    /// shuffles. The bottom placement reuses the typed partition frame.
+    LookTopMayTakeCreatureManaValueAtMostToHandBottomRest {
+        player: PlayerRef,
+        count: u8,
+        max_mana_value: u16,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -1662,6 +1673,16 @@ pub enum EffectTargetSelectionPurpose {
         canonical_path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
     },
+    /// The private zero-or-one creature choice of
+    /// `EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest`.
+    LookTopTakeCreatureManaValueAtMostToHand {
+        player: PlayerId,
+        requested_count: u8,
+        original_library_len: u32,
+        max_mana_value: u16,
+        original_prefix: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -2093,6 +2114,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::CounterUnlessPaysGeneric { .. }
         | EffectOp::CounterTargetUnlessPaysGeneric { .. }
         | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
+        | EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. }
         | EffectOp::ExploreTarget { .. }
         | EffectOp::ExileOneFromPlayersGraveyard { .. }
         | EffectOp::MayExileFromPlayersGraveyardMatchingThen { .. }
@@ -3085,6 +3107,36 @@ fn complete_resumable_target_selection(
                 path: canonical_path.clone(),
                 canonical_path,
             });
+        }
+        EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand {
+            player,
+            requested_count,
+            original_library_len,
+            max_mana_value: _,
+            original_prefix,
+            canonical_path,
+        } => {
+            validate_library_partition_bound_metadata(
+                requested_count,
+                original_library_len,
+                &original_prefix,
+            )?;
+            if path != canonical_path {
+                return Err("look-top creature prompt structural path changed".to_string());
+            }
+            if objects.len() > 1 {
+                return Err("look-top creature prompt selected more than one card".to_string());
+            }
+            let selected = canonicalize_binding_subset(&original_prefix, &objects)?;
+            push_library_partition_bottom_frame(
+                continuation,
+                player,
+                requested_count,
+                original_library_len,
+                original_prefix,
+                selected,
+                canonical_path,
+            )?;
         }
         EffectTargetSelectionPurpose::SearchLibraryToHand {
             player,
@@ -5883,6 +5935,55 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         );
                     }
                 }
+                EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand {
+                    player: library_player,
+                    requested_count,
+                    original_library_len,
+                    max_mana_value,
+                    original_prefix,
+                    canonical_path,
+                } => {
+                    if chooser != library_player {
+                        return Err(
+                            "look-top creature choice player does not own the selected library"
+                                .to_string(),
+                        );
+                    }
+                    validate_library_partition_live_metadata(
+                        state,
+                        *library_player,
+                        *requested_count,
+                        *original_library_len,
+                        CardType::Creature,
+                        original_prefix,
+                    )?;
+                    if path != canonical_path {
+                        return Err("look-top creature prompt structural path changed".to_string());
+                    }
+                    let candidates = selected
+                        .iter()
+                        .chain(legal)
+                        .map(|candidate| {
+                            candidate.expected_object.ok_or_else(|| {
+                                "look-top creature target lacks an object-incarnation binding"
+                                    .to_string()
+                            })
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    let matching = creature_prefix_mana_value_at_most(
+                        state,
+                        *max_mana_value,
+                        original_prefix,
+                    )?;
+                    if matching.is_empty() || *min_targets != 0 || *max_targets != 1 || *ordered {
+                        return Err("look-top creature prompt has a noncanonical shape".to_string());
+                    }
+                    validate_exact_binding_permutation(
+                        &matching,
+                        &candidates,
+                        "look-top creature candidates",
+                    )?;
+                }
                 EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
                     player: library_player,
                     requested_count,
@@ -8669,6 +8770,68 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     return Ok(ResumableProgress::Suspended);
                 }
             }
+            EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest {
+                player,
+                count,
+                max_mana_value,
+            } => {
+                let player = continuation.ctx.resolve_player(player, state);
+                let original_library_len = state.players[player.index()]
+                    .library
+                    .len()
+                    .try_into()
+                    .expect("a live library length fits the u32 state contract");
+                let original_prefix = bind_library_top(state, player, count);
+                validate_library_partition_live_metadata(
+                    state,
+                    player,
+                    count,
+                    original_library_len,
+                    CardType::Creature,
+                    &original_prefix,
+                )?;
+                state.reveal_library_top(player, player, original_prefix.len());
+                let candidates =
+                    creature_prefix_mana_value_at_most(state, max_mana_value, &original_prefix)?;
+                if candidates.is_empty() {
+                    push_library_partition_bottom_frame(
+                        &mut continuation,
+                        player,
+                        count,
+                        original_library_len,
+                        original_prefix,
+                        Vec::new(),
+                        path,
+                    )?;
+                } else {
+                    continuation.choice = Some(PendingEffectChoice::SelectTargets {
+                        player,
+                        path: path.clone(),
+                        selected: Vec::new(),
+                        legal: candidates
+                            .into_iter()
+                            .map(|binding| EffectTargetCandidate {
+                                target: Target::Object(binding.object),
+                                expected_object: Some(binding),
+                            })
+                            .collect(),
+                        min_targets: 0,
+                        max_targets: 1,
+                        ordered: false,
+                        purpose:
+                            EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand {
+                                player,
+                                requested_count: count,
+                                original_library_len,
+                                max_mana_value,
+                                original_prefix,
+                                canonical_path: path,
+                            },
+                    });
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
             EffectOp::SearchLibraryToHandUpTo {
                 player,
                 filter,
@@ -10439,6 +10602,58 @@ fn binding_partition_rest(
         .copied()
         .filter(|binding| !selected.contains(binding))
         .collect())
+}
+
+/// The creature cards with mana value at most `max_mana_value` in a bound
+/// library prefix, in prefix order.
+fn creature_prefix_mana_value_at_most(
+    state: &GameState,
+    max_mana_value: u16,
+    original_prefix: &[EffectObjectBinding],
+) -> Result<Vec<EffectObjectBinding>, String> {
+    Ok(
+        library_partition_matching_prefix(state, CardType::Creature, original_prefix)?
+            .into_iter()
+            .filter(|binding| {
+                crate::card_def::CARD_DEFS[state.objects.get(binding.object).card_def as usize]
+                    .mana_value
+                    <= max_mana_value
+            })
+            .collect(),
+    )
+}
+
+/// Queues the typed partition frame's final stage: `selected` to hand and
+/// the rest of the prefix to the bottom in prefix order.
+fn push_library_partition_bottom_frame(
+    continuation: &mut EffectContinuation,
+    player: PlayerId,
+    requested_count: u8,
+    original_library_len: u32,
+    original_prefix: Vec<EffectObjectBinding>,
+    selected: Vec<EffectObjectBinding>,
+    canonical_path: Vec<u16>,
+) -> Result<(), String> {
+    let ordered_rest = binding_partition_rest(&original_prefix, &selected)?;
+    let progress = LibraryPartitionProgress::RestOrderChosen {
+        selected,
+        ordered_rest,
+    };
+    let progress_fingerprint = library_partition_progress_fingerprint(&progress);
+    continuation
+        .frames
+        .push(EffectFrame::LookTopSelectByTypeToHandBottomRest {
+            player,
+            requested_count,
+            original_library_len,
+            card_type: CardType::Creature,
+            original_prefix,
+            progress,
+            progress_fingerprint,
+            path: canonical_path.clone(),
+            canonical_path,
+        });
+    Ok(())
 }
 
 fn scry_stage_tag(stage: &ScrySelectionStage) -> u16 {
@@ -12961,6 +13176,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::CounterUnlessPaysGeneric { .. }
         | EffectOp::CounterTargetUnlessPaysGeneric { .. }
         | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
+        | EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. }
         | EffectOp::ExileOneFromPlayersGraveyard { .. }
         | EffectOp::MayExileFromPlayersGraveyardMatchingThen { .. }
         | EffectOp::SacrificeCreature { .. }

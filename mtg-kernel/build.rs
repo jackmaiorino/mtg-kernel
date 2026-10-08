@@ -3024,6 +3024,13 @@ enum AbilityEffectRecipe {
     /// The same counter, then the controller scries this many (Warden of
     /// the Inner Sky).
     PutPlusOneCounterOnSourceThenScry(u8),
+    /// Look at the top `count` cards, may put one creature card with mana
+    /// value at most `max_mana_value` from among them into hand, the rest on
+    /// the bottom (Recruitment Officer).
+    LookTopMayTakeCreatureToHandBottomRest {
+        count: u8,
+        max_mana_value: u16,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4616,6 +4623,18 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
+        "Recruitment Officer" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ManaCost("{3}{W}")],
+            effect: AbilityEffectRecipe::LookTopMayTakeCreatureToHandBottomRest {
+                count: 4,
+                max_mana_value: 3,
+            },
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         _ => &[],
     }
 }
@@ -4784,6 +4803,12 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::PutPlusOneCounterOnSourceThenScry(count) => {
             format!("put_plus_one_counter_on_source_then_scry:{count}")
         }
+        AbilityEffectRecipe::LookTopMayTakeCreatureToHandBottomRest {
+            count,
+            max_mana_value,
+        } => format!(
+            "look_top_may_take_creature_mv_at_most_to_hand_bottom_rest:{count}:{max_mana_value}"
+        ),
         AbilityEffectRecipe::AddPlusOnePlusOneCounters(count) => format!("add_plus_one_plus_one_counters:{count}"),
         AbilityEffectRecipe::SearchLibraryToBattlefieldTapped { filter } => format!(
             "search_library_to_battlefield_tapped:{}",
@@ -4944,6 +4969,10 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::PutPlusOneCounterOnSourceThenScry(count) => {
             format!("ability_effect_put_plus_one_counter_on_source_then_scry_{count}")
         }
+        AbilityEffectRecipe::LookTopMayTakeCreatureToHandBottomRest {
+            count,
+            max_mana_value,
+        } => format!("ability_effect_look_top_{count}_may_take_creature_mv_{max_mana_value}"),
         AbilityEffectRecipe::AddPlusOnePlusOneCounters(count) => {
             format!("ability_effect_add_plus_one_plus_one_counters_{count}")
         }
@@ -6051,6 +6080,12 @@ fn codegen(cards: &[CardJson]) -> String {
                 )
                 .unwrap();
                 writeln!(out, "    ])").unwrap();
+            }
+            AbilityEffectRecipe::LookTopMayTakeCreatureToHandBottomRest {
+                count,
+                max_mana_value,
+            } => {
+                writeln!(out, "    EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest {{ player: PlayerRef::Controller, count: {count}, max_mana_value: {max_mana_value} }}").unwrap();
             }
             AbilityEffectRecipe::SearchLibraryToBattlefieldTapped { filter } => {
                 let filter = library_search_filter_src(filter);

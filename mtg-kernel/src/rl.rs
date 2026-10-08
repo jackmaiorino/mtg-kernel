@@ -6542,6 +6542,9 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
                                 ..
                             }
+                            | crate::effect::EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand {
+                                ..
+                            }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany {
                                 ..
                             }
@@ -6559,6 +6562,7 @@ fn pending_effect_semantic_v4(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
                             | crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped { .. }
                     ) && acting_player != *player;
@@ -6673,6 +6677,9 @@ fn pending_effect_semantic_v4(
                                 ..
                             }
                             | crate::effect::EffectTargetSelectionPurpose::UndercityThroneCreature {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand {
                                 ..
                             } => TargetSelectionPurposeV4::CardSelection,
                             crate::effect::EffectTargetSelectionPurpose::SacrificeCreature {

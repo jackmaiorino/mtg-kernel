@@ -748,6 +748,38 @@
         "bounce"
       ],
       "java_file": "Mage.Sets/src/mage/cards/h/HullbreakerHorror.java"
+    },
+    {
+      "name": "Recruitment Officer",
+      "engine_capability": "full",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "activated_ability",
+        "look_at_top",
+        "card_selection"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RecruitmentOfficer.java"
     }
   ]
 }

@@ -140,6 +140,13 @@ const CARDS: &[(&str, &[Subtype], (i16, i16), Keywords, usize)] = &[
         1,
     ),
     (
+        "Recruitment Officer",
+        &[Subtype::Human, Subtype::Soldier],
+        (3, 1),
+        Keywords::NONE,
+        0,
+    ),
+    (
         "Hullbreaker Horror",
         &[Subtype::Kraken, Subtype::Horror],
         (7, 8),
@@ -1717,4 +1724,150 @@ fn hullbreaker_horror_returns_a_nonland_permanent_or_nothing() {
     settled(&mut state);
     assert_eq!(state.objects.get(horror).zone, Zone::Battlefield);
     assert_eq!(state.players[1].life, 14);
+}
+
+/// Puts new cards on top of P0's library, first name on top.
+fn stack_library_top(state: &mut GameState, names: &[&str]) -> Vec<ObjectId> {
+    let ids: Vec<ObjectId> = names
+        .iter()
+        .map(|name| {
+            let card_def = card_id_by_name(name).unwrap();
+            state.objects.push(GameObject {
+                card_def,
+                name: CARD_DEFS[card_def as usize].object_name.into(),
+                owner: PlayerId::P0,
+                controller: PlayerId::P0,
+                zone: Zone::Library,
+                tapped: false,
+                summoning_sick: false,
+                damage: 0,
+                counters: Default::default(),
+                attachments: Vec::new(),
+                v4: ObjectStateV4::from_card_def(card_def),
+                spell_copy_origin: None,
+                plotted_turn: None,
+                zone_change_count: 0,
+            })
+        })
+        .collect();
+    let library = &mut state.players[0].library;
+    library.splice(0..0, ids.iter().copied());
+    ids
+}
+
+/// Activates Recruitment Officer with its mana in the pool and returns the
+/// cards it may take, or None if it asks nothing.
+fn activate_officer(state: &mut GameState, officer: ObjectId) -> Option<Vec<Target>> {
+    state.players[0].mana_pool = pool(&[(ManaColor::W, 1)], 3);
+    assert!(activatable(state).contains(&(officer, 0)));
+    engine::step(state, Action::ActivateAbility(officer, 0)).unwrap();
+    match settle(state) {
+        Some(Decision::ChooseEffectTargets {
+            player: PlayerId::P0,
+            min_targets: 0,
+            max_targets: 1,
+            legal_targets,
+            ..
+        }) => Some(legal_targets),
+        None => None,
+        Some(other) => panic!("unexpected {other:?}"),
+    }
+}
+
+fn library_bottom(state: &GameState, count: usize) -> Vec<ObjectId> {
+    let library = &state.players[0].library;
+    library[library.len() - count..].to_vec()
+}
+
+#[test]
+fn recruitment_officer_takes_a_cheap_creature_and_bottoms_the_rest() {
+    let mut state = ready(Step::Main1);
+    let officer = put(
+        &mut state,
+        PlayerId::P0,
+        "Recruitment Officer",
+        Zone::Battlefield,
+    );
+    let top = stack_library_top(
+        &mut state,
+        &[
+            "Troll of Khazad-dum",
+            "Novice Inspector",
+            "Lightning Bolt",
+            "Cenote Scout",
+            "Hullbreaker Horror",
+        ],
+    );
+    let (troll, inspector, bolt, scout, fifth) = (top[0], top[1], top[2], top[3], top[4]);
+    let library_len = state.players[0].library.len();
+    // Only creatures with mana value 3 or less among the top four.
+    let legal = activate_officer(&mut state, officer).unwrap();
+    assert_eq!(
+        legal,
+        vec![Target::Object(inspector), Target::Object(scout)]
+    );
+    engine::step(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(scout)),
+    )
+    .unwrap();
+    while let Some(decision) = settle(&mut state) {
+        match decision {
+            Decision::ChooseEffectTargets {
+                can_finish: true, ..
+            } => engine::step(&mut state, Action::FinishEffectSelection).unwrap(),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    assert_eq!(state.objects.get(scout).zone, Zone::Hand);
+    assert!(state.players[0].hand.contains(&scout));
+    assert_eq!(state.players[0].library.len(), library_len - 1);
+    assert_eq!(state.players[0].library[0], fifth);
+    assert_eq!(library_bottom(&state, 3), vec![troll, inspector, bolt]);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
+}
+
+#[test]
+fn recruitment_officer_may_take_nothing() {
+    let mut state = ready(Step::Main1);
+    let officer = put(
+        &mut state,
+        PlayerId::P0,
+        "Recruitment Officer",
+        Zone::Battlefield,
+    );
+    let top = stack_library_top(
+        &mut state,
+        &["Novice Inspector", "Forest", "Forest", "Forest"],
+    );
+    let hand = state.players[0].hand.len();
+    assert!(activate_officer(&mut state, officer).is_some());
+    engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+    settled(&mut state);
+    assert_eq!(state.players[0].hand.len(), hand);
+    assert_eq!(library_bottom(&state, 4), top);
+}
+
+#[test]
+fn recruitment_officer_with_no_cheap_creature_asks_nothing() {
+    let mut state = ready(Step::Main1);
+    let officer = put(
+        &mut state,
+        PlayerId::P0,
+        "Recruitment Officer",
+        Zone::Battlefield,
+    );
+    let top = stack_library_top(
+        &mut state,
+        &[
+            "Troll of Khazad-dum",
+            "Lightning Bolt",
+            "Forest",
+            "Hullbreaker Horror",
+        ],
+    );
+    let hand = state.players[0].hand.len();
+    assert_eq!(activate_officer(&mut state, officer), None);
+    assert_eq!(state.players[0].hand.len(), hand);
+    assert_eq!(library_bottom(&state, 4), top);
 }

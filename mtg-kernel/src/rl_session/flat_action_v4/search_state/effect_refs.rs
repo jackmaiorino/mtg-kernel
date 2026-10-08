@@ -93,6 +93,7 @@ impl Scan<'_> {
             | UntapObject { .. }
             | PumpTargetUntilEndOfTurnDynamic { .. }
             | LookTopSelectByTypeToHandBottomRest { .. }
+            | LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. }
             | GainLifeEqualToPaidCostManaValue { .. }
             | MoveAllTargets { .. }
             | ExploreTarget { .. }
@@ -380,6 +381,9 @@ impl Scan<'_> {
             | SearchLibraryToBattlefieldTapped {
                 original_library, ..
             } => self.bs(original_library),
+            LookTopTakeCreatureManaValueAtMostToHand {
+                original_prefix, ..
+            } => self.bs(original_prefix),
             LookTopSelectByTypeToHandBottomRest {
                 original_prefix,
                 stage,
