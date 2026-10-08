@@ -373,6 +373,7 @@ impl Subtype {
         Subtype::Boar,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Cyclops,
+        #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Shark,
     ];
 
