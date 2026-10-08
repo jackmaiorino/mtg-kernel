@@ -227,7 +227,12 @@ fn build_wave(state: &GameState, phase: DamagePhaseV1, first: &[ObjectLinkV4]) -
             continue;
         }
         let controller = state.objects.get(attacker).controller;
-        let trample = engine::has_effective_keyword(state, attacker, Keywords::TRAMPLE);
+        // The defending player, the attacked planeswalker, or nothing once
+        // that planeswalker has left (506.4c, 702.19e). A trampler without an
+        // excess recipient divides its damage like any blocked creature.
+        let excess = crate::attack_target_v1::damage_recipient(state, attacker);
+        let trample = engine::has_effective_keyword(state, attacker, Keywords::TRAMPLE)
+            && excess.is_some();
         let mut recipients = Vec::new();
         if let Some((_, blockers)) = state
             .engine
@@ -260,16 +265,18 @@ fn build_wave(state: &GameState, phase: DamagePhaseV1, first: &[ObjectLinkV4]) -
                 });
             }
             if trample {
-                recipients.push(DamageRecipientV1 {
-                    target: Target::Player(controller.opponent()),
-                    incarnation: None,
-                    lethal: 0,
-                });
+                if let Some((target, incarnation)) = excess {
+                    recipients.push(DamageRecipientV1 {
+                        target,
+                        incarnation,
+                        lethal: 0,
+                    });
+                }
             }
-        } else {
+        } else if let Some((target, incarnation)) = excess {
             recipients.push(DamageRecipientV1 {
-                target: Target::Player(controller.opponent()),
-                incarnation: None,
+                target,
+                incarnation,
                 lethal: 0,
             });
         }
@@ -342,8 +349,8 @@ impl CreatureDamageV1 {
             .get(index)
             .ok_or("damage recipient missing")?;
         if index + 1 == self.recipients.len() {
+            // A trampler's last recipient is always its excess recipient.
             if self.trample
-                && matches!(recipient.target, Target::Player(_))
                 && remaining > 0
                 && self
                     .amounts
@@ -358,12 +365,7 @@ impl CreatureDamageV1 {
                 maximum: remaining,
             });
         }
-        let last_blocker = self.trample
-            && index + 2 == self.recipients.len()
-            && matches!(
-                self.recipients.last().map(|r| r.target),
-                Some(Target::Player(_))
-            );
+        let last_blocker = self.trample && index + 2 == self.recipients.len();
         let minimum = if last_blocker {
             if self
                 .amounts

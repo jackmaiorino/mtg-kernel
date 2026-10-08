@@ -330,6 +330,7 @@ fn actor(action: &A) -> Option<PlayerSeatV1> {
         | A::ChooseCombatDamageRange { actor, .. }
         | A::ChooseLondonMulligan { actor, .. }
         | A::ChooseLondonBottom { actor, .. }
+        | A::ChooseAttackTarget { actor, .. }
         | A::ChooseLegendPermanent { actor, .. } => Some(*actor),
         #[cfg(feature = "limited-fdn-fixtures")]
         A::ChooseTriggerOrderNext { actor, .. } => Some(*actor),
@@ -922,6 +923,7 @@ pub(super) fn label(
         | A::ChooseLondonMulligan { .. }
         | A::ChooseLondonBottom { .. }
         | A::ChooseLegendPermanent { .. }
+        | A::ChooseAttackTarget { .. }
         | A::Ambiguous { .. } => return Err(Error::UnsupportedPrompt),
     })
 }

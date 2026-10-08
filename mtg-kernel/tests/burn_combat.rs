@@ -72,6 +72,7 @@ fn kind_of(d: &Decision) -> Kind {
         | Decision::ChooseEffectBoolean { .. }
         | Decision::ChooseCombatDamageRange { .. }
         | Decision::ChooseLegendPermanent { .. }
+        | Decision::ChooseAttackTarget { .. }
         | Decision::ChooseLondonMulligan { .. }
         | Decision::ChooseLondonBottom { .. }
         | Decision::ChooseEffectTargets { .. }
@@ -321,6 +322,7 @@ fn run_combat_game(state: &mut GameState) -> (Vec<Kind>, u32) {
             | Decision::ChooseEffectBoolean { .. }
             | Decision::ChooseCombatDamageRange { .. }
             | Decision::ChooseLegendPermanent { .. }
+            | Decision::ChooseAttackTarget { .. }
             | Decision::ChooseLondonMulligan { .. }
             | Decision::ChooseLondonBottom { .. }
             | Decision::ChooseEffectTargets { .. }

@@ -1123,7 +1123,8 @@ where
         }
         ActionSemanticV1::ChooseLegendPermanent { .. }
         | ActionSemanticV1::ChooseLondonMulligan { .. }
-        | ActionSemanticV1::ChooseLondonBottom { .. } => {
+        | ActionSemanticV1::ChooseLondonBottom { .. }
+        | ActionSemanticV1::ChooseAttackTarget { .. } => {
             return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
         }
         #[cfg(feature = "limited-fdn-fixtures")]
@@ -2629,6 +2630,7 @@ fn flat_validate_origin_decision_v1(
         | Decision::ChooseLegendPermanent { .. }
         | Decision::ChooseLondonMulligan { .. }
         | Decision::ChooseLondonBottom { .. }
+        | Decision::ChooseAttackTarget { .. }
         | Decision::DeclareAttackers { .. }
         | Decision::DeclareBlockers { .. }
         | Decision::GameOver { .. }
@@ -2768,7 +2770,8 @@ fn flat_validate_semantic_policy_pair_v1(
         (
             ActionSemanticV1::ChooseLegendPermanent { .. }
             | ActionSemanticV1::ChooseLondonMulligan { .. }
-            | ActionSemanticV1::ChooseLondonBottom { .. },
+            | ActionSemanticV1::ChooseLondonBottom { .. }
+            | ActionSemanticV1::ChooseAttackTarget { .. },
             _,
         ) => return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic),
         (

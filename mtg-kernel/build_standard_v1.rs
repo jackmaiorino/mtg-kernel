@@ -69,3 +69,12 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         _ => &[],
     }
 }
+
+/// The in-game name of a token definition whose registry name carries a
+/// disambiguating suffix.
+pub(super) fn object_name_for(name: &str) -> Option<&'static str> {
+    match name {
+        "Teferi Spirit Token" => Some("Spirit"),
+        _ => None,
+    }
+}

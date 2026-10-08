@@ -790,6 +790,11 @@ fn fixed_continuation_action(decision: &SurfaceDecision) -> Result<SurfaceAction
                 *candidates.first().ok_or("empty legend group")?,
             )))
         }
+        SurfaceDecision::Decision(Decision::ChooseAttackTarget { candidates, .. }) => {
+            Ok(SurfaceAction::Action(Action::ChooseAttackTarget(
+                *candidates.first().ok_or("empty attack target list")?,
+            )))
+        }
         SurfaceDecision::Decision(Decision::ChooseCombatDamageRange { .. }) => {
             Ok(SurfaceAction::Action(Action::ChooseCombatDamageRange {
                 upper_half: false,

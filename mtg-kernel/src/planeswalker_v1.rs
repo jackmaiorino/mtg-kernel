@@ -76,7 +76,7 @@ pub(crate) fn damage(state: &mut GameState, object: ObjectId, amount: i32) {
 /// Adds (positive) or removes (negative) loyalty counters on a battlefield
 /// planeswalker. Removal stops at zero; the state-based action then puts it
 /// into its owner's graveyard.
-pub(crate) fn change_loyalty(state: &mut GameState, object: ObjectId, delta: i32) {
+pub fn change_loyalty(state: &mut GameState, object: ObjectId, delta: i32) {
     let Some(counters) = loyalty(state, object) else {
         return;
     };

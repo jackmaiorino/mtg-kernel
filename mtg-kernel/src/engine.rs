@@ -1005,6 +1005,11 @@ pub struct CombatState {
     /// Explicit custom-game rules. Absent in frozen Pauper sessions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foundations_v1: Option<crate::combat_damage_v1::FoundationsCombatV1>,
+    /// Attackers attacking planeswalkers, and a declaration whose attack
+    /// targets are still being chosen. Absent whenever every attacker
+    /// attacks the defending player.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attack_targets_v1: Option<crate::attack_target_v1::AttackTargetsV1>,
 }
 
 // Preserve the original derived field sequence when the extension is absent.
@@ -1017,6 +1022,10 @@ impl std::hash::Hash for CombatState {
         if let Some(rules) = &self.foundations_v1 {
             "foundations_combat/v1".hash(state);
             rules.hash(state);
+        }
+        if let Some(targets) = &self.attack_targets_v1 {
+            "attack_targets/v1".hash(state);
+            targets.hash(state);
         }
     }
 }
@@ -1041,6 +1050,7 @@ impl CombatState {
         for (_, blockers) in &mut self.blocked_by {
             blockers.retain(|&blocker| blocker != id);
         }
+        crate::attack_target_v1::remove_from_combat(&mut self.attack_targets_v1, id);
     }
 }
 
@@ -1296,6 +1306,15 @@ pub enum Decision {
         remaining: u8,
         candidates: Vec<ObjectId>,
     },
+    /// 508.1b: choose whether `attacker` attacks the defending player or
+    /// one of their planeswalkers. Asked once per declared attacker, in
+    /// declaration order, only while the defending player controls a
+    /// planeswalker. `candidates` starts with the player.
+    ChooseAttackTarget {
+        player: PlayerId,
+        attacker: ObjectId,
+        candidates: Vec<Target>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1381,6 +1400,8 @@ pub enum Action {
         mulligan: bool,
     },
     ChooseLondonBottom(ObjectId),
+    /// Answers `Decision::ChooseAttackTarget`.
+    ChooseAttackTarget(Target),
 }
 
 const CHAIN_COPY_COST: Cost = Cost {
@@ -2572,10 +2593,13 @@ fn legal_targets_for_controller_from_source(
             .collect(),
         TargetSpec::TargetOpponent => vec![Target::Player(controller.opponent())],
         TargetSpec::AnyTarget => {
+            // 115.4: any target is a creature, player, planeswalker or battle.
             let mut out = vec![Target::Player(PlayerId::P0), Target::Player(PlayerId::P1)];
             for p in [PlayerId::P0, PlayerId::P1] {
                 for &id in &state.players[p.index()].battlefield {
-                    if object_has_type(state, id, CardType::Creature) {
+                    if object_has_type(state, id, CardType::Creature)
+                        || object_has_type(state, id, CardType::Planeswalker)
+                    {
                         out.push(Target::Object(id));
                     }
                 }
@@ -6293,6 +6317,15 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
                     continue;
                 }
             }
+        }
+
+        if crate::attack_target_v1::has_pending(state) {
+            if let Some(decision) = crate::attack_target_v1::decision(state) {
+                return decision;
+            }
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+            continue;
         }
 
         if crate::combat_damage_v1::has_pending_assignment(state) {
@@ -11738,13 +11771,10 @@ fn combat_damage_wave(state: &mut GameState, first_strike_wave: bool) {
         }
         if let Some((_, blockers)) = blocked_by.iter().find(|(a, _)| *a == attacker) {
             assign_attacker_damage_to_blockers(state, attacker, power, blockers, &mut events);
-        } else {
-            let defender = state.objects.get(attacker).controller.opponent();
-            events.push(ProposedEvent::damage(
-                attacker,
-                Target::Player(defender),
-                power,
-            ));
+        } else if let Some((recipient, _)) =
+            crate::attack_target_v1::damage_recipient(state, attacker)
+        {
+            events.push(ProposedEvent::damage(attacker, recipient, power));
         }
     }
     for (attacker, blockers) in &blocked_by {
@@ -11952,11 +11982,23 @@ fn assign_attacker_damage_to_blockers(
     if has_effective_keyword(state, attacker, Keywords::TRAMPLE) {
         let mut remaining = power;
         let deathtouch = has_effective_keyword(state, attacker, Keywords::DEATHTOUCH);
-        for &blocker in blockers.iter().filter(|&&id| is_still_in_combat(state, id)) {
+        // 702.19e: with the attacked planeswalker gone there is no excess
+        // recipient, so the last blocker takes whatever remains.
+        let excess = crate::attack_target_v1::damage_recipient(state, attacker);
+        let live_blockers = blockers
+            .iter()
+            .copied()
+            .filter(|&id| is_still_in_combat(state, id))
+            .collect::<Vec<_>>();
+        for (index, &blocker) in live_blockers.iter().enumerate() {
             let lethal = (effective_toughness(state, blocker)
                 - state.objects.get(blocker).damage as i32)
                 .max(0);
-            let assign = remaining.min(if deathtouch { lethal.min(1) } else { lethal });
+            let assign = if excess.is_none() && index + 1 == live_blockers.len() {
+                remaining
+            } else {
+                remaining.min(if deathtouch { lethal.min(1) } else { lethal })
+            };
             if assign > 0 {
                 events.push(ProposedEvent::damage(
                     attacker,
@@ -11970,11 +12012,9 @@ fn assign_attacker_damage_to_blockers(
             }
         }
         if remaining > 0 {
-            events.push(ProposedEvent::damage(
-                attacker,
-                Target::Player(state.objects.get(attacker).controller.opponent()),
-                remaining,
-            ));
+            if let Some((recipient, _)) = excess {
+                events.push(ProposedEvent::damage(attacker, recipient, remaining));
+            }
         }
         return;
     }
@@ -12251,6 +12291,12 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
             _ => Err("only a legend-rule answer may be taken during its SBA pass".into()),
         };
     }
+    if crate::attack_target_v1::has_pending(state) {
+        return match action {
+            Action::ChooseAttackTarget(target) => crate::attack_target_v1::answer(state, target),
+            _ => Err("only an attack target answer may be taken while attackers are declared".into()),
+        };
+    }
     if crate::combat_damage_v1::has_pending_assignment(state) {
         return match action {
             Action::ChooseCombatDamageRange { upper_half } => {
@@ -12341,6 +12387,7 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
             Ok(())
         }
         Action::ChooseLegendPermanent(_) => Err("no legend-rule choice is pending".into()),
+        Action::ChooseAttackTarget(_) => Err("no attack target choice is pending".into()),
         Action::ChooseLondonMulligan { .. } | Action::ChooseLondonBottom(_) => {
             Err("no London mulligan choice is pending".into())
         }
@@ -13996,7 +14043,15 @@ pub(crate) fn validate_declare_attackers(
 
 fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> Result<(), String> {
     validate_declare_attackers(state, &attackers)?;
+    if crate::attack_target_v1::begin(state, &attackers) {
+        return Ok(());
+    }
+    finish_declare_attackers(state, attackers);
+    Ok(())
+}
 
+/// Completes a validated declaration once every attacker's target is known.
+pub(crate) fn finish_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) {
     for &id in &attackers {
         if !has_effective_keyword(state, id, Keywords::VIGILANCE) {
             event::propose_and_commit(state, ProposedEvent::tap(id));
@@ -14024,7 +14079,6 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
     }
     collect_and_queue_triggers(state);
     reset_priority(state);
-    Ok(())
 }
 
 pub(crate) fn validate_declare_blockers(

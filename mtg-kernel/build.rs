@@ -3620,7 +3620,7 @@ fn object_name_for(name: &str) -> &str {
         "Homunculus Horde Token" => "Homunculus Horde",
         "Koma's Coil Token" => "Koma's Coil",
         "Scion of the Deep Token" => "Scion of the Deep",
-        _ => name,
+        _ => build_standard_v1::object_name_for(name).unwrap_or(name),
     }
 }
 
