@@ -32,8 +32,12 @@ import nine_deck_baseline_v1 as ndb
 
 TOOLS = Path(__file__).resolve().parent
 DISPATCH = TOOLS / "native_expanded_dispatch_v1.py"
-PANEL_DECKS = {"p1": tuple(range(ndb.DECKS)), "p3": (4, 7)}
+PANEL_DECKS = {"p1": tuple(range(ndb.DECKS)), "p3": (4, 7), "p1s0": tuple(range(ndb.DECKS)), "p1s1": tuple(range(ndb.DECKS))}
+# P1's 1,944 cases exceed the collector's 1,024-episode bound, so P1 runs as its two learner-seat halves.
+PANEL_SEAT = {"p1s0": 0, "p1s1": 1}
 SAMPLE_PERCENT = 2
+BUSY_RETRIES = 60
+BUSY_RETRY_SECONDS = 60
 
 
 def sha256_file(path: Path) -> str:
@@ -60,7 +64,8 @@ def kept_case(case_id: str) -> bool:
 def job_config(plan: dict, job: dict, native: Path) -> dict:
     decks = ndb.load_decks(Path(plan["decks"]))
     return ndb.panel_config(job["panel"], job["source"], plan["t1_source"], decks, str(native).replace("\\", "/"),
-                            plan["placement"]["workers"], own_decks=PANEL_DECKS[job["panel"]])
+                            plan["placement"]["workers"], own_decks=PANEL_DECKS[job["panel"]],
+                            learner_seat=PANEL_SEAT.get(job["panel"]))
 
 
 def rows_from(collection_path: Path, job: dict) -> list[dict]:
@@ -100,8 +105,13 @@ def run_job(plan: dict, job: dict, state: dict) -> None:
                "choice_verification": plan["choice_verification"][job["panel"]]}
     request_pin = write_json(root / "request.json", request)
     extra = ["--compute-host-name", plan["compute_host_name"]] if plan.get("compute_host_name") else []
-    done = subprocess.run([sys.executable, "-B", str(DISPATCH), "dispatch", request_pin["path"]] + extra,
-                          capture_output=True, text=True, cwd=str(TOOLS.parents[1]))
+    for _ in range(BUSY_RETRIES):
+        done = subprocess.run([sys.executable, "-B", str(DISPATCH), "dispatch", request_pin["path"]] + extra,
+                              capture_output=True, text=True, cwd=str(TOOLS.parents[1]))
+        # A busy refusal spawns nothing (a sibling job starting, or a build): wait and retry.
+        if done.returncode == 0 or "busy refusal" not in done.stderr:
+            break
+        time.sleep(BUSY_RETRY_SECONDS)
     if done.returncode != 0:
         raise RuntimeError(f"dispatch refused for {job['id']}: {done.stderr[-1500:]}")
     while not (dispatch_root / "report.json").exists():

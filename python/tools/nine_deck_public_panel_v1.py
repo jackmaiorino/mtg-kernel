@@ -113,26 +113,81 @@ def schedule_digest(cases: list[dict], opponent: dict) -> str:
                                    sort_keys=True).encode())
 
 
-def run_requests(executable: str, requests: list[Path], workers: int) -> float:
-    """Run evaluator requests with at most ``workers`` concurrent processes; return wall seconds."""
+def run_one(executable: str, request: Path, token: str) -> bool:
+    """Run one evaluator request; True when it exits 0."""
+    log = request.with_suffix(".log")
+    # The evaluator creates its output directory but not that directory's parent.
+    Path(json.loads(request.read_text(encoding="utf-8"))["output_directory"]).parent.mkdir(parents=True, exist_ok=True)
+    with log.open("w") as stream:
+        child = subprocess.Popen([executable, str(request)], stdout=stream, stderr=subprocess.STDOUT,
+                                 creationflags=getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0),
+                                 env=dict(os.environ, CUDA_VISIBLE_DEVICES=""))
+        reservations.record_descendant(token, child.pid)
+        return child.wait() == 0
+
+
+def held_token() -> str:
     token = os.environ.get(reservations.TOKEN_ENV)
     if not token or reservations.status(token).get("token_fate") != "holds":
         raise SystemExit("public panel execution runs only inside a held host reservation")
+    return token
+
+
+def run_requests(executable: str, requests: list[Path], workers: int, tolerate: bool = False) -> float:
+    """Run evaluator requests with at most ``workers`` concurrent processes; return wall seconds.
+    With ``tolerate`` a failed request is left for ``recover`` instead of raising."""
+    token = held_token()
 
     def one(request: Path) -> None:
-        log = request.with_suffix(".log")
-        with log.open("w") as stream:
-            child = subprocess.Popen([executable, str(request)], stdout=stream, stderr=subprocess.STDOUT,
-                                     creationflags=getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0),
-                                     env=dict(os.environ, CUDA_VISIBLE_DEVICES=""))
-            reservations.record_descendant(token, child.pid)
-            if child.wait() != 0:
-                raise RuntimeError(f"evaluator failed on {request}; see {log}")
+        if not run_one(executable, request, token) and not tolerate:
+            raise RuntimeError(f"evaluator failed on {request}; see {request.with_suffix('.log')}")
 
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=workers) as pool:
         list(pool.map(one, requests))
     return time.monotonic() - started
+
+
+def recover(executable: str, request_path: Path) -> dict:
+    """A failed request stops at its first failing match: the match files before it are valid and the
+    rest never ran. Record that match as a technical termination (incomplete, never dropped) and continue
+    from the next match in a continuation request until every match is accounted for. Match files do
+    not depend on sharding (qualification parity), so continuations reproduce them."""
+    request_path = Path(request_path)
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    matches, base = request["matches"], request["output_directory"]
+    segments, errors, start, current, k = [], [], 0, request_path, 0
+    while True:
+        output = Path(json.loads(current.read_text(encoding="utf-8"))["output_directory"])
+        done = len(sorted(output.glob("match-*.json")))
+        segments.append({"request": pin(current), "output_directory": str(output).replace("\\", "/"),
+                         "start": start, "count": done})
+        if (output / "completion.json").exists():
+            if start + done != len(matches):
+                raise RuntimeError(f"{output} completed {done} matches, expected {len(matches) - start}")
+            break
+        failure = output / "failure.json"
+        if not failure.exists():
+            raise RuntimeError(f"evaluator failed on {current} without a failure record")
+        index = start + done
+        error = json.loads(failure.read_text(encoding="utf-8"))["error"]
+        seed = matches[index]["config"]["seed"]
+        if f"match seed {seed}," not in error:
+            raise RuntimeError(f"{failure} does not name match {index} (seed {seed})")
+        errors.append({"index": index, "seed": seed, "error": error})
+        start = index + 1
+        if start == len(matches):
+            break
+        k += 1
+        current = request_path.with_name(f"{request_path.stem}-c{k}.json")
+        write_json(current, dict(request, matches=matches[start:], output_directory=f"{base}-c{k}"))
+        output = Path(f"{base}-c{k}")  # an interrupted recovery: reuse a finished continuation, set aside a partial one
+        if output.exists() and not (output / "completion.json").exists() and not (output / "failure.json").exists():
+            output.rename(output.with_name(f"{output.name}.partial-{int(time.time())}"))
+        if not output.exists():
+            run_one(executable, current, held_token())
+    return write_json(request_path.with_suffix(".recovery.json"),
+                      {"request": pin(request_path), "segments": segments, "errors": errors})
 
 
 def match_hashes(request: Path) -> list[str]:
@@ -195,10 +250,26 @@ def run(plan_path: Path, receipt_path: Path, executable: str) -> dict:
     if not all(trial["parity"] for trial in receipt["trials"]) or receipt["trials"][0]["workers"] != 1:
         raise SystemExit("receipt lacks a serial golden or parallel parity")
     paths = [checked(item["request"]) for item in plan["requests"]]
-    seconds = run_requests(executable, paths, receipt["selected_workers"])
+    pending = []
+    for path in paths:  # a resumed run keeps finished and failed outputs; a partial one is set aside
+        output = Path(json.loads(path.read_text(encoding="utf-8"))["output_directory"])
+        if output.exists() and not (output / "completion.json").exists() and not (output / "failure.json").exists():
+            output.rename(output.with_name(f"{output.name}.partial-{int(time.time())}"))
+        if not output.exists():
+            pending.append(path)
+    seconds = run_requests(executable, pending, receipt["selected_workers"], tolerate=True)
+    completions = []
+    for path in paths:
+        output = Path(json.loads(path.read_text(encoding="utf-8"))["output_directory"])
+        recovery = path.with_suffix(".recovery.json")
+        if recovery.exists():
+            completions.append(pin(recovery))
+        elif (output / "completion.json").exists():
+            completions.append(pin(output / "completion.json"))
+        else:
+            completions.append(recover(executable, path))
     result = {"plan": pin(plan_path), "receipt": pin(receipt_path), "workers": receipt["selected_workers"],
-              "seconds": seconds, "completions": [pin(Path(json.loads(p.read_text())["output_directory"]) / "completion.json")
-                                                  for p in paths]}
+              "seconds": seconds, "completions": completions}
     write_json(Path(plan_path).parent / "run.json", result)
     return result
 
@@ -208,19 +279,39 @@ def rows(plan_path: Path) -> list[dict]:
     plan = json.loads(Path(plan_path).read_text(encoding="utf-8"))
     out = []
     for item in plan["requests"]:
-        request = json.loads(checked(item["request"]).read_text(encoding="utf-8"))
-        output = Path(request["output_directory"])
-        files = sorted(output.glob("match-*.json"))
-        if len(files) != len(item["cases"]):
-            raise ValueError(f"{output} holds {len(files)} matches, expected {len(item['cases'])}")
-        for case, path in zip(item["cases"], files):
+        request_path = checked(item["request"])
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+        recovery_path = request_path.with_suffix(".recovery.json")
+        if recovery_path.exists():
+            recovery = json.loads(recovery_path.read_text(encoding="utf-8"))
+            segments = [(Path(s["output_directory"]), s["start"], s["count"]) for s in recovery["segments"]]
+            errors = {e["index"]: e for e in recovery["errors"]}
+        else:
+            segments, errors = [(Path(request["output_directory"]), 0, len(item["cases"]))], {}
+        files = {}
+        for output, start, count in segments:
+            found = sorted(output.glob("match-*.json"))
+            if len(found) != count:
+                raise ValueError(f"{output} holds {len(found)} matches, expected {count}")
+            files.update({start + i: path for i, path in enumerate(found)})
+        if sorted(list(files) + list(errors)) != list(range(len(item["cases"]))):
+            raise ValueError(f"{request_path}: matches and technical terminations do not cover every case")
+        for index, case in enumerate(item["cases"]):
+            row = {"panel": plan["panel"], "own": case["own"], "other": case["other"], "repeat": case["repeat"],
+                   "seat": case["seat"], "seed": case["seed"]}
+            if index in errors:
+                if errors[index]["seed"] != case["seed"]:
+                    raise ValueError("technical termination does not match the plan")
+                out.append({**row, "starting_player": case["starting_player"], "score": None, "complete": False,
+                            "technical": errors[index]["error"].split(": ", 1)[-1][:160], "match_sha256": None})
+                continue
+            path = files[index]
             match = json.loads(path.read_text(encoding="utf-8"))
             if match["match"]["config"]["seed"] != case["seed"]:
                 raise ValueError("match order differs from the plan")
             game = match["games"][0]
             winner = game.get("winner")
-            out.append({"panel": plan["panel"], "own": case["own"], "other": case["other"], "repeat": case["repeat"],
-                        "seat": case["seat"], "seed": case["seed"], "starting_player": game["start"]["starting_player"],
+            out.append({**row, "starting_player": game["start"]["starting_player"],
                         "score": None if winner is None else float(winner == case["seat"]),
                         "complete": winner is not None, "match_sha256": sha256_bytes(path.read_bytes())})
     return out
