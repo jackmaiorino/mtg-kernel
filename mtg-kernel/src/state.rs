@@ -262,7 +262,8 @@ impl ObjectStateV4 {
             exiled_by: None,
             ward_generic: match def.ward_cost {
                 Some(crate::card_def::WardCostDef::Generic(amount)) => u16::from(amount),
-                None => 0,
+                // Observations carry only generic Ward amounts.
+                Some(crate::card_def::WardCostDef::CollectEvidence(_)) | None => 0,
             },
             minimum_blockers_override: None,
             landwalk_mask: 0,

@@ -129,3 +129,46 @@ pub(crate) fn cant_block(state: &GameState, id: ObjectId) -> bool {
         .is_some_and(|def| def.name == "Forsaken Miner")
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
 }
+
+/// The graveyard cards a player exiles to collect evidence `minimum`, or
+/// `None` when their graveyard's total mana value falls short. Among the
+/// subsets that reach the minimum it picks the smallest total, then the
+/// fewest cards, then the earliest-found subset in graveyard order.
+pub(crate) fn evidence_plan(
+    state: &GameState,
+    player: PlayerId,
+    minimum: u16,
+) -> Option<Vec<ObjectId>> {
+    let cards: Vec<(ObjectId, usize)> = state.players[player.index()]
+        .graveyard
+        .iter()
+        .map(|&id| {
+            let mana_value = CARD_DEFS[usize::from(state.objects.get(id).card_def)].mana_value;
+            (id, usize::from(mana_value))
+        })
+        .collect();
+    let minimum = usize::from(minimum);
+    let cap = minimum + cards.iter().map(|&(_, mv)| mv).max().unwrap_or(0);
+    // best[sum] = fewest-card subset reaching exactly `sum` (sums above the
+    // cap can never be the smallest total that reaches the minimum).
+    let mut best: Vec<Option<Vec<usize>>> = vec![None; cap + 1];
+    best[0] = Some(Vec::new());
+    for (index, &(_, mana_value)) in cards.iter().enumerate() {
+        for sum in (0..=cap.saturating_sub(mana_value)).rev() {
+            let Some(base) = best[sum].as_ref() else {
+                continue;
+            };
+            let next = sum + mana_value;
+            if best[next]
+                .as_ref()
+                .is_none_or(|current| current.len() > base.len() + 1)
+            {
+                let mut chosen = base.clone();
+                chosen.push(index);
+                best[next] = Some(chosen);
+            }
+        }
+    }
+    let chosen = best.into_iter().skip(minimum).flatten().next()?;
+    Some(chosen.into_iter().map(|index| cards[index].0).collect())
+}

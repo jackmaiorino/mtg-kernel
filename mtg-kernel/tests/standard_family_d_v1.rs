@@ -133,6 +133,7 @@ fn family_d_cards_are_fully_supported() {
         "Iridescent Vinelasher Offspring Token",
         "Aloe Alchemist",
         "Forsaken Miner",
+        "Axebane Ferox",
     ] {
         let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} missing"));
         assert_eq!(
@@ -623,4 +624,60 @@ fn pass_until_blocks(state: &mut GameState, attacker: ObjectId, check: impl Fn(&
         }
     }
     panic!("no block step");
+}
+
+#[test]
+fn axebane_ferox_ward_counters_unless_evidence_is_collected() {
+    let mut state = ready();
+    let ferox = put(&mut state, PlayerId::P0, "Axebane Ferox", Zone::Battlefield);
+    for keyword in [Keywords::DEATHTOUCH, Keywords::HASTE] {
+        assert!(engine::has_effective_keyword(&state, ferox, keyword));
+    }
+    state.priority_player = PlayerId::P1;
+
+    // Three mana value of evidence is not enough: the spell is countered.
+    let hellkite = put(&mut state, PlayerId::P1, "Nova Hellkite", Zone::Graveyard);
+    let first = put(&mut state, PlayerId::P1, "Burst Lightning", Zone::Hand);
+    add_mana(&mut state, PlayerId::P1, &[ManaColor::R], 0);
+    let graveyard = state.players[1].graveyard.clone();
+    state.players[1].graveyard.clear();
+    let bashtronauts: Vec<_> = (0..3)
+        .map(|_| {
+            put(
+                &mut state,
+                PlayerId::P1,
+                "Burnout Bashtronaut",
+                Zone::Graveyard,
+            )
+        })
+        .collect();
+    cast(&mut state, first, &[Target::Object(ferox)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(ferox).damage, 0, "countered by ward");
+    assert_eq!(state.objects.get(first).zone, Zone::Graveyard);
+    for id in &bashtronauts {
+        assert_eq!(state.objects.get(*id).zone, Zone::Graveyard);
+    }
+
+    // With the five-drop back the payer can pay, and exiles the smallest
+    // total that reaches four: the three one-drops and the first Burst
+    // (total 4) rather than Hellkite (total 5).
+    state.players[1].graveyard.extend(graveyard);
+    state.priority_player = PlayerId::P1;
+    let second = put(&mut state, PlayerId::P1, "Burst Lightning", Zone::Hand);
+    add_mana(&mut state, PlayerId::P1, &[ManaColor::R], 0);
+    cast(&mut state, second, &[Target::Object(ferox)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(ferox).damage, 2);
+    let exiled: Vec<_> = state.exile.clone();
+    assert_eq!(exiled.len(), 4, "{exiled:?}");
+    assert_eq!(state.objects.get(hellkite).zone, Zone::Graveyard);
+}
+
+#[test]
+fn axebane_ferox_ward_ignores_its_controllers_spells() {
+    let mut state = ready();
+    let ferox = put(&mut state, PlayerId::P0, "Axebane Ferox", Zone::Battlefield);
+    burn(&mut state, PlayerId::P0, Target::Object(ferox));
+    assert_eq!(state.objects.get(ferox).damage, 2);
 }

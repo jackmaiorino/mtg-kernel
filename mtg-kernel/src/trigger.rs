@@ -2489,10 +2489,7 @@ fn card_defs_with_event_triggers() -> &'static [bool] {
                 card.is_executable()
                     && (card.saga.is_some()
                         || !triggers_for(index as u16).is_empty()
-                        || matches!(
-                            card.ward_cost,
-                            Some(crate::card_def::WardCostDef::Generic(_))
-                        ))
+                        || card.ward_cost.is_some())
             })
             .collect()
     })
@@ -2757,7 +2754,7 @@ fn triggers_from_events(
         if obj.zone == Zone::Battlefield
             && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
         {
-            if let Some(crate::card_def::WardCostDef::Generic(generic)) = card.ward_cost {
+            if let Some(ward_cost) = card.ward_cost {
                 for event in events {
                     let CommittedEvent::Targeted {
                         target,
@@ -2782,10 +2779,21 @@ fn triggers_from_events(
                         controller: obj.controller,
                         source: id,
                         granted_by: None,
-                        effect: EffectOp::CounterUnlessPaysGeneric {
-                            ward_target,
-                            targeting_stack_item: *targeting_stack_item,
-                            generic,
+                        effect: match ward_cost {
+                            crate::card_def::WardCostDef::Generic(generic) => {
+                                EffectOp::CounterUnlessPaysGeneric {
+                                    ward_target,
+                                    targeting_stack_item: *targeting_stack_item,
+                                    generic,
+                                }
+                            }
+                            crate::card_def::WardCostDef::CollectEvidence(minimum_mana_value) => {
+                                EffectOp::CounterUnlessCollectsEvidence {
+                                    ward_target,
+                                    targeting_stack_item: *targeting_stack_item,
+                                    minimum_mana_value,
+                                }
+                            }
                         },
                         is_madness_offer: false,
                         kicked: false,

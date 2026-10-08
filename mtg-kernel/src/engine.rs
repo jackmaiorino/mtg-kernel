@@ -9733,12 +9733,29 @@ fn triggered_stack_item_expected_target_spec(
     let definition_trigger = item.v4.granted_by.is_none() && definition_target_spec.is_some();
     let ward_trigger = if item.v4.granted_by.is_none() {
         if let Some(source_contract) = ability_source_contract {
-            match inline_effect {
+            let ward = match inline_effect {
                 EffectOp::CounterUnlessPaysGeneric {
                     ward_target,
                     targeting_stack_item,
                     generic,
-                } => {
+                } => Some((
+                    ward_target,
+                    targeting_stack_item,
+                    crate::card_def::WardCostDef::Generic(*generic),
+                )),
+                EffectOp::CounterUnlessCollectsEvidence {
+                    ward_target,
+                    targeting_stack_item,
+                    minimum_mana_value,
+                } => Some((
+                    ward_target,
+                    targeting_stack_item,
+                    crate::card_def::WardCostDef::CollectEvidence(*minimum_mana_value),
+                )),
+                _ => None,
+            };
+            match ward {
+                Some((ward_target, targeting_stack_item, ward_cost)) => {
                     let source_contract_is_consistent = matches!(
                         *ward_target,
                         StackTargetContractV4::Object {
@@ -9757,11 +9774,11 @@ fn triggered_stack_item_expected_target_spec(
                             && (source.zone_change_count != zone_change_count
                                 || source.zone == Zone::Battlefield)
                     );
-                    source_def.ward_cost == Some(crate::card_def::WardCostDef::Generic(*generic))
+                    source_def.ward_cost == Some(ward_cost)
                         && *targeting_stack_item != StackItemId::default()
                         && source_contract_is_consistent
                 }
-                _ => false,
+                None => false,
             }
         } else {
             false

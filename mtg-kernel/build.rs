@@ -3563,6 +3563,7 @@ fn standard_keywords_for(name: &str) -> &'static [&'static str] {
         "Burnout Bashtronaut" => &["Keywords::MENACE"],
         "Nova Hellkite" => &["Keywords::FLYING", "Keywords::HASTE"],
         "Aloe Alchemist" => &["Keywords::TRAMPLE"],
+        "Axebane Ferox" => &["Keywords::DEATHTOUCH", "Keywords::HASTE"],
         _ => &[],
     }
 }
@@ -5189,6 +5190,7 @@ fn ward_cost_for(name: &str) -> &'static str {
     match name {
         "Tolarian Terror" | "Cackling Prowler" => "Some(WardCostDef::Generic(2))",
         "Koma, World-Eater" => "Some(WardCostDef::Generic(4))",
+        "Axebane Ferox" => "Some(WardCostDef::CollectEvidence(4))",
         _ => "None",
     }
 }

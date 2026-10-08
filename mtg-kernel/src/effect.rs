@@ -624,6 +624,17 @@ pub enum EffectOp {
         targeting_stack_item: StackItemId,
         generic: u8,
     },
+    /// Ward—Collect evidence N: counters the exact stack incarnation that
+    /// targeted the bound Ward permanent unless that item's controller
+    /// exiles cards with total mana value N or more from their graveyard.
+    /// The payer always pays when able, exiling the deterministic
+    /// `standard_keywords_v1::evidence_plan` selection; it never asks, so
+    /// no decision or observation shape changes.
+    CounterUnlessCollectsEvidence {
+        ward_target: StackTargetContractV4,
+        targeting_stack_item: StackItemId,
+        minimum_mana_value: u16,
+    },
     /// Deals one simultaneous damage batch to every creature without the
     /// excluded subtype. Breath Weapon is the first consumer.
     DamageEachCreatureWithoutSubtype {
@@ -11240,6 +11251,52 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         }
         EffectOp::BindWarpExileToTriggerSource => {
             panic!("unmaterialized warp exile");
+        }
+        EffectOp::CounterUnlessCollectsEvidence {
+            targeting_stack_item,
+            minimum_mana_value,
+            ..
+        } => {
+            #[cfg(feature = "standard-magezero-fixtures")]
+            {
+                let Some(payer) = state
+                    .stack
+                    .iter()
+                    .find(|item| item.v4.stack_item_id == *targeting_stack_item)
+                    .map(|item| item.controller)
+                else {
+                    return;
+                };
+                match crate::standard_keywords_v1::evidence_plan(state, payer, *minimum_mana_value)
+                {
+                    Some(cards) => {
+                        for card in cards {
+                            event::propose_and_commit(
+                                state,
+                                event::ProposedEvent::zone_change(card, Zone::Exile),
+                            );
+                        }
+                    }
+                    None => {
+                        if crate::engine::counter_stack_item_by_id(state, *targeting_stack_item)
+                            .is_err()
+                        {
+                            state.engine.halted = Some((
+                                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                                ctx.source,
+                            ));
+                        }
+                    }
+                }
+            }
+            #[cfg(not(feature = "standard-magezero-fixtures"))]
+            {
+                let _ = (targeting_stack_item, minimum_mana_value);
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
         }
         EffectOp::WarpExileBoundObject { object } => {
             let live = state.objects.get(object.object);

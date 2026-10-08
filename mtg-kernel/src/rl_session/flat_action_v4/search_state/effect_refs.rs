@@ -81,6 +81,7 @@ impl Scan<'_> {
             | SurveilOne { .. }
             | DestroyObject { .. }
             | CounterUnlessPaysGeneric { .. }
+            | CounterUnlessCollectsEvidence { .. }
             | DamageEachCreatureWithoutSubtype { .. }
             | CounterTargetUnlessPaysGeneric { .. }
             | GainLifeDynamic { .. }

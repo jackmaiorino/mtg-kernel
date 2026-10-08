@@ -321,6 +321,37 @@
         "graveyard_recursion"
       ],
       "java_file": "Mage.Sets/src/mage/cards/f/ForsakenMiner.java"
+    },
+    {
+      "name": "Axebane Ferox",
+      "engine_capability": "full",
+      "mana_cost": "{2}{G}{G}",
+      "mana_value": 4,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Beast"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "deathtouch",
+        "haste",
+        "ward_collect_evidence"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AxebaneFerox.java"
     }
   ]
 }
