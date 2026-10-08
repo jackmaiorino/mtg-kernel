@@ -121,6 +121,8 @@ def run_requests(executable: str, requests: list[Path], workers: int) -> float:
 
     def one(request: Path) -> None:
         log = request.with_suffix(".log")
+        # The evaluator creates its output directory but not that directory's parent.
+        Path(json.loads(request.read_text(encoding="utf-8"))["output_directory"]).parent.mkdir(parents=True, exist_ok=True)
         with log.open("w") as stream:
             child = subprocess.Popen([executable, str(request)], stdout=stream, stderr=subprocess.STDOUT,
                                      creationflags=getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0),
