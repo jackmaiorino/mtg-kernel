@@ -138,6 +138,7 @@ fn family_d_cards_are_fully_supported() {
         "Chrome Host Seedshark",
         "Incubator Token",
         "Brutal Cathar",
+        "Knight-Errant of Eos",
     ] {
         let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} missing"));
         assert_eq!(
@@ -964,4 +965,89 @@ fn brutal_cathar_enters_transformed_at_night() {
     cast(&mut state, cathar, &[]);
     settled(&mut state);
     assert_eq!(state.objects.get(cathar).name, "Moonrage Brute");
+}
+
+/// Puts `names` on top of `player`'s library, first name on top.
+fn stack_library(state: &mut GameState, player: PlayerId, names: &[&str]) -> Vec<ObjectId> {
+    let ids: Vec<ObjectId> = names
+        .iter()
+        .map(|name| {
+            let id = put(state, player, name, Zone::Hand);
+            state.players[player.index()]
+                .hand
+                .retain(|&card| card != id);
+            state.objects.get_mut(id).zone = Zone::Library;
+            id
+        })
+        .collect();
+    let library = &mut state.players[player.index()].library;
+    for (index, &id) in ids.iter().enumerate() {
+        library.insert(index, id);
+    }
+    ids
+}
+
+#[test]
+fn knight_errant_of_eos_convokes_and_takes_creatures_up_to_the_count() {
+    let mut state = ready();
+    let initiate = put(
+        &mut state,
+        PlayerId::P0,
+        "Hopeful Initiate",
+        Zone::Battlefield,
+    );
+    let challenger = put(
+        &mut state,
+        PlayerId::P0,
+        "Emberheart Challenger",
+        Zone::Battlefield,
+    );
+    let top = stack_library(
+        &mut state,
+        PlayerId::P0,
+        &[
+            "Burnout Bashtronaut",
+            "Nova Hellkite",
+            "Emberheart Challenger",
+            "Mountain",
+            "Iridescent Vinelasher",
+        ],
+    );
+    let knight = put(&mut state, PlayerId::P0, "Knight-Errant of Eos", Zone::Hand);
+    // Three mana plus two creatures (the white Initiate pays {W}).
+    add_mana(&mut state, PlayerId::P0, &[], 3);
+    cast(&mut state, knight, &[]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(knight).zone, Zone::Battlefield);
+    assert!(state.objects.get(initiate).tapped);
+    assert!(state.objects.get(challenger).tapped);
+    assert_eq!(state.objects.get(knight).v4.convoked_creatures_v1, 2);
+    // X = 2: the two-drop, then the topmost one-drop; never the five-drop.
+    let hand = &state.players[0].hand;
+    assert!(hand.contains(&top[2]) && hand.contains(&top[0]));
+    assert!(!hand.contains(&top[4]) && !hand.contains(&top[1]));
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
+}
+
+#[test]
+fn knight_errant_of_eos_offers_convoke_or_mana_when_both_work() {
+    let mut state = ready();
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Hopeful Initiate",
+        Zone::Battlefield,
+    );
+    let knight = put(&mut state, PlayerId::P0, "Knight-Errant of Eos", Zone::Hand);
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::W], 4);
+    assert!(castable(&mut state, knight));
+    engine::step(&mut state, Action::CastSpell(knight)).unwrap();
+    let Decision::ChooseCastMode { options, .. } = next(&mut state) else {
+        panic!("expected a cast mode choice");
+    };
+    assert_eq!(options.len(), 2);
+    engine::step(&mut state, Action::ChooseCastMode(engine::CastMode::Normal)).unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(knight).v4.convoked_creatures_v1, 0);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
 }

@@ -3783,6 +3783,7 @@ fn alt_cost_for(name: &str) -> &'static str {
         "Fireblast" => "Some(AltCostDef { components: &[CostComponent::SacrificeLands(2)], condition: AltCostCondition::Always })",
         "Land Grant" => "Some(AltCostDef { components: &[CostComponent::RevealHandIfNoCardsWithType(CardType::Land)], condition: AltCostCondition::Always })",
         "Snuff Out" => "Some(AltCostDef { components: &[CostComponent::PayLife(4)], condition: AltCostCondition::ControlsPermanentWithSubtype(Subtype::Swamp) })",
+        "Knight-Errant of Eos" => "Some(AltCostDef { components: &[CostComponent::ConvokeMana(Cost { pips: &[Pip::Colored(ManaColor::W)], generic: 4, x_count: 0 })], condition: AltCostCondition::Always })",
         "Nova Hellkite" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 2, x_count: 0 })], condition: AltCostCondition::WarpFromHand })",
         _ => "None",
     }
@@ -5402,6 +5403,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Aloe Alchemist" => "becomes_plotted:target_creature:pump:3:2:trample",
         "Hopeful Initiate" => "training",
         "Chrome Host Seedshark" => "cast_noncreature_spell:incubate_spell_mana_value",
+        "Knight-Errant of Eos" => "convoke;etb:look_top:6:take_creatures_mana_value_at_most_convoked:2:shuffle",
         "Brutal Cathar" => "etb_or_transforms_into_front:target_opponent_creature:exile_until_source_leaves;daybound;back_face_nightbound_first_strike_ward_pay_life:3",
         "Forsaken Miner" => "cant_block;graveyard:controller_commits_crime:may_pay:B:return_source_to_battlefield",
         "Iridescent Vinelasher" | "Iridescent Vinelasher Offspring Token" => "etb_if_offspring_paid:create_one_one_token_copy;landfall:target_opponent:damage:1",

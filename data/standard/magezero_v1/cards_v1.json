@@ -480,6 +480,39 @@
         "ward_pay_life_back_face"
       ],
       "java_file": "Mage.Sets/src/mage/cards/b/BrutalCathar.java"
+    },
+    {
+      "name": "Knight-Errant of Eos",
+      "engine_capability": "full",
+      "mana_cost": "{4}{W}",
+      "mana_value": 5,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Knight"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoW.dck",
+        "Standard16-RW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "convoke",
+        "etb_look_top",
+        "creature_selection_to_hand"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/k/KnightErrantOfEos.java"
     }
   ]
 }

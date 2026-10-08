@@ -25,6 +25,7 @@
 use crate::card_def::{Keywords, CARD_DEFS};
 use crate::event::CommittedEvent;
 use crate::ids::{ObjectId, PlayerId};
+use crate::mana::{Cost, PaymentPlan, Pip};
 use crate::state::{CreatureDeathTurnV1, DayNightV1, GameState, SpeedV1, StackItem, Target, Zone};
 
 /// Definitions with "Start your engines!".
@@ -226,4 +227,76 @@ pub(crate) fn sync_day_night(state: &mut GameState) {
 /// A daybound card entering the battlefield at night enters transformed.
 pub(crate) fn enters_transformed_at_night(state: &GameState, card_def: u16) -> bool {
     state.day_night_v1 == Some(DayNightV1::Night) && is_daybound(card_def)
+}
+
+/// Convoke's deterministic payment: the untapped creatures `player`
+/// controls that pay part of `cost`, and the mana plan for the rest. Uses as
+/// many creatures as possible, summoning-sick ones first, then battlefield
+/// order. A creature pays a colored pip only when creatures of the right
+/// colors can cover every colored pip (the cost's pips stay whole or go
+/// entirely); otherwise creatures pay generic mana only. Returns `None`
+/// unless at least one creature convokes and the remainder is payable.
+pub(crate) fn convoke_plan(
+    cost: &Cost,
+    player: PlayerId,
+    state: &GameState,
+) -> Option<(Vec<ObjectId>, PaymentPlan)> {
+    let mut creatures: Vec<ObjectId> = state.players[player.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|&id| {
+            let object = state.objects.get(id);
+            object.controller == player
+                && !object.tapped
+                && crate::engine::object_has_type(state, id, crate::card_def::CardType::Creature)
+        })
+        .collect();
+    creatures.sort_by_key(|&id| !state.objects.get(id).summoning_sick);
+
+    // Try covering every colored pip with a creature of that color.
+    let mut pip_payers = Vec::new();
+    let mut available = creatures.clone();
+    let all_colored = cost.pips.iter().all(|pip| matches!(pip, Pip::Colored(_)));
+    if all_colored {
+        for pip in cost.pips {
+            let Pip::Colored(color) = pip else {
+                unreachable!("checked above")
+            };
+            let mask = crate::card_def::mana_color_mask(*color);
+            let Some(position) = available
+                .iter()
+                .position(|&id| state.objects.get(id).v4.effective_color_mask & mask != 0)
+            else {
+                pip_payers.clear();
+                available = creatures.clone();
+                break;
+            };
+            pip_payers.push(available.remove(position));
+        }
+    }
+    let pips_paid = !cost.pips.is_empty() && pip_payers.len() == cost.pips.len();
+    let generic_payers = usize::from(cost.generic).min(available.len());
+    for generic_paid in (0..=generic_payers).rev() {
+        let mut tapped = if pips_paid {
+            pip_payers.clone()
+        } else {
+            Vec::new()
+        };
+        tapped.extend_from_slice(&available[..generic_paid]);
+        if tapped.is_empty() {
+            return None;
+        }
+        let remaining = Cost {
+            pips: if pips_paid { &[] } else { cost.pips },
+            generic: cost.generic - generic_paid as u8,
+            x_count: cost.x_count,
+        };
+        if let Some(plan) =
+            crate::mana::can_pay_excluding_sources(&remaining, 0, player, state, &tapped)
+        {
+            return Some((tapped, plan));
+        }
+    }
+    None
 }

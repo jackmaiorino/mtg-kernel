@@ -893,6 +893,13 @@ pub enum CostComponent {
     /// counter comes off the controlled creature with the most +1/+1
     /// counters, earliest on the battlefield first on ties.
     RemovePlusOneCountersFromControlledCreatures(u8),
+    /// Convoke (MageZero Standard, Knight-Errant of Eos), carried as the
+    /// card's alternative cost: pay this mana cost with as many untapped
+    /// creatures the payer controls as `standard_keywords_v1::convoke_plan`
+    /// can use (at least one), the rest with mana. The creatures are chosen
+    /// deterministically; whether to convoke at all is the ordinary cast
+    /// mode choice.
+    ConvokeMana(crate::mana::Cost),
 }
 
 /// Optional additional costs chosen while announcing a spell. The selected

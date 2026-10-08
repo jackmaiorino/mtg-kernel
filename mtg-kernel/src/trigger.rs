@@ -274,6 +274,13 @@ fn materialize_trigger_event_effect(
             };
         }
     }
+    if let EffectOp::BindConvokedCreatureCountToLookTop { count, max_taken } = (trigger.effect)() {
+        return EffectOp::LookTopTakeCreaturesManaValueAtMostThenShuffle {
+            count,
+            max_taken,
+            max_mana_value: u16::from(state.objects.get(source).v4.convoked_creatures_v1),
+        };
+    }
     if matches!((trigger.effect)(), EffectOp::BindIncubateToTriggerSpell) {
         if let CommittedEvent::SpellCast { spell, .. } = event {
             return EffectOp::Incubate {
@@ -985,6 +992,19 @@ const BRUTAL_CATHAR_TRIGGERS: [TriggeredAbilityDef; 3] = [
         ..etb_trigger(journey_to_nowhere_ltb_effect)
     },
 ];
+
+fn knight_errant_of_eos_effect() -> EffectOp {
+    EffectOp::BindConvokedCreatureCountToLookTop {
+        count: 6,
+        max_taken: 2,
+    }
+}
+
+/// Convoke. When it enters, look at the top six cards, reveal up to two
+/// creature cards with mana value X or less (X = creatures that convoked
+/// it), put them into hand, then shuffle.
+const KNIGHT_ERRANT_OF_EOS_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(knight_errant_of_eos_effect)];
 
 fn chrome_host_seedshark_effect() -> EffectOp {
     EffectOp::BindIncubateToTriggerSpell
@@ -1981,6 +2001,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Hopeful Initiate" => &HOPEFUL_INITIATE_TRIGGERS,
         "Chrome Host Seedshark" => &CHROME_HOST_SEEDSHARK_TRIGGERS,
         "Brutal Cathar" => &BRUTAL_CATHAR_TRIGGERS,
+        "Knight-Errant of Eos" => &KNIGHT_ERRANT_OF_EOS_TRIGGERS,
         _ => &[],
     }
 }
@@ -2093,6 +2114,14 @@ fn source_bound_trigger_program_matches(template: &EffectOp, effect: &EffectOp) 
         )
         | (EffectOp::BindWarpExileToTriggerSource, EffectOp::WarpExileBoundObject { .. })
         | (EffectOp::BindIncubateToTriggerSpell, EffectOp::Incubate { .. }) => true,
+        (
+            EffectOp::BindConvokedCreatureCountToLookTop { count, max_taken },
+            EffectOp::LookTopTakeCreaturesManaValueAtMostThenShuffle {
+                count: actual_count,
+                max_taken: actual_max_taken,
+                ..
+            },
+        ) => count == actual_count && max_taken == actual_max_taken,
         _ => false,
     }
 }

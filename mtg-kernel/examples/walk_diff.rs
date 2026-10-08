@@ -1715,7 +1715,8 @@ fn render_activated_ability_text(state: &GameState, id: ObjectId, ability_idx: u
             | card_def::CostComponent::RevealHandIfNoCardsWithType(_)
             | card_def::CostComponent::ReturnControlledUnblockedAttackerToOwnersHand
             | card_def::CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand
-            | card_def::CostComponent::RemovePlusOneCountersFromControlledCreatures(_)) => {
+            | card_def::CostComponent::RemovePlusOneCountersFromControlledCreatures(_)
+            | card_def::CostComponent::ConvokeMana(_)) => {
                 panic!("walk_diff has no Mage-pinned renderer for activated cost {unsupported:?}")
             }
         }

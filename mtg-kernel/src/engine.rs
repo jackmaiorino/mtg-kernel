@@ -3616,6 +3616,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
     let mut reveal_hand_condition_count = 0;
     let mut chosen_creature_count = 0;
     let mut remove_counters_count = 0;
+    let mut convoke_count = 0;
 
     for component in components {
         match component {
@@ -3692,6 +3693,12 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                     return false;
                 }
                 remove_counters_count += 1;
+            }
+            CostComponent::ConvokeMana(_) => {
+                if mana.is_some() || saw_source_changing_component || convoke_count > 0 {
+                    return false;
+                }
+                convoke_count += 1;
             }
             CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {
                 chosen_creature_count += 1;
@@ -3935,6 +3942,17 @@ fn can_pay_components(
             }
             CostComponent::RemovePlusOneCountersFromControlledCreatures(amount) => {
                 controlled_plus_one_counter_removals(player, state, *amount).is_some()
+            }
+            CostComponent::ConvokeMana(cost) => {
+                #[cfg(feature = "standard-magezero-fixtures")]
+                {
+                    crate::standard_keywords_v1::convoke_plan(cost, player, state).is_some()
+                }
+                #[cfg(not(feature = "standard-magezero-fixtures"))]
+                {
+                    let _ = cost;
+                    false
+                }
             }
             CostComponent::RevealHandIfNoCardsWithType(card_type) => {
                 state.players[player.index()].hand.iter().all(|&object| {
@@ -4284,6 +4302,27 @@ fn pay_cost_components_with_x(
                     .expect("preflighted counter removal remains payable");
                 for creature in removals {
                     state.objects.get_mut(creature).counters.plus1_plus1 -= 1;
+                }
+            }
+            CostComponent::ConvokeMana(cost) => {
+                #[cfg(feature = "standard-magezero-fixtures")]
+                {
+                    let Some((creatures, plan)) =
+                        crate::standard_keywords_v1::convoke_plan(cost, player, state)
+                    else {
+                        return false;
+                    };
+                    for &creature in &creatures {
+                        event::propose_and_commit(state, ProposedEvent::tap(creature));
+                    }
+                    pay_plan(state, player, &plan);
+                    state.objects.get_mut(source).v4.convoked_creatures_v1 =
+                        u8::try_from(creatures.len()).unwrap_or(u8::MAX);
+                }
+                #[cfg(not(feature = "standard-magezero-fixtures"))]
+                {
+                    let _ = cost;
+                    return false;
                 }
             }
             CostComponent::RevealHandIfNoCardsWithType(_) => {
@@ -10563,11 +10602,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             _ => None,
         }
     };
+    let convoked_creatures = state.objects.get(item.source).v4.convoked_creatures_v1;
     if let Some(program) = program {
         if execute_resolving_program(state, &item, &ctx, &program) == ResolutionProgress::Suspended
         {
             return ResolutionProgress::Suspended;
         }
+    }
+    // Convoke's creature count carries over onto the permanent.
+    if convoked_creatures != 0 && state.objects.get(item.source).zone == Zone::Battlefield {
+        state.objects.get_mut(item.source).v4.convoked_creatures_v1 = convoked_creatures;
     }
     // A permanent spell cast for its warp cost remembers that on the
     // battlefield incarnation it just became.

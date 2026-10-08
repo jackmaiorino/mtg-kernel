@@ -120,6 +120,8 @@ impl Scan<'_> {
             | BoostAttachedCreatureUntilEndOfTurn { .. }
             | BindWarpExileToTriggerSource
             | BindIncubateToTriggerSpell
+            | BindConvokedCreatureCountToLookTop { .. }
+            | LookTopTakeCreaturesManaValueAtMostThenShuffle { .. }
             | Incubate { .. }
             | BackupTarget { .. }
             | PutSourceOntoBattlefieldTappedAndAttacking

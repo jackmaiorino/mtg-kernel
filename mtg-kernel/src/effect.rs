@@ -1116,6 +1116,23 @@ pub enum EffectOp {
         power: i32,
         toughness: i32,
     },
+    /// Trigger collection binds this template to the number of creatures
+    /// that convoked the trigger source
+    /// (`LookTopTakeCreaturesManaValueAtMostThenShuffle`).
+    BindConvokedCreatureCountToLookTop {
+        count: u8,
+        max_taken: u8,
+    },
+    /// Look at the top `count` cards of the controller's library, reveal up
+    /// to `max_taken` creature cards with mana value `max_mana_value` or
+    /// less from among them and put them into hand, then shuffle. The
+    /// cards are taken without a choice: the highest mana values first,
+    /// then nearest the top.
+    LookTopTakeCreaturesManaValueAtMostThenShuffle {
+        count: u8,
+        max_taken: u8,
+        max_mana_value: u16,
+    },
     /// Trigger collection binds this template to the triggering spell's
     /// mana value (`Incubate`).
     BindIncubateToTriggerSpell,
@@ -11271,6 +11288,53 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         }
         EffectOp::BindIncubateToTriggerSpell => {
             panic!("unmaterialized incubate");
+        }
+        EffectOp::BindConvokedCreatureCountToLookTop { .. } => {
+            panic!("unmaterialized convoked look");
+        }
+        EffectOp::LookTopTakeCreaturesManaValueAtMostThenShuffle {
+            count,
+            max_taken,
+            max_mana_value,
+        } => {
+            let player = ctx.controller;
+            let library = &state.players[player.index()].library;
+            let mut candidates: Vec<(usize, ObjectId, u16)> = library
+                .iter()
+                .take(usize::from(*count))
+                .enumerate()
+                .filter_map(|(position, &id)| {
+                    let def = &crate::card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
+                    (def.has_type(CardType::Creature) && def.mana_value <= *max_mana_value)
+                        .then_some((position, id, def.mana_value))
+                })
+                .collect();
+            candidates.sort_by_key(|&(position, _, mana_value)| {
+                (std::cmp::Reverse(mana_value), position)
+            });
+            for &(_, card, _) in candidates.iter().take(usize::from(*max_taken)) {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::zone_change(card, Zone::Hand),
+                );
+                if state.objects.get(card).zone == Zone::Hand {
+                    for observer in [PlayerId::P0, PlayerId::P1] {
+                        if state.reveal_hand_card(observer, player, card).is_err() {
+                            state.engine.halted = Some((
+                                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                                ctx.source,
+                            ));
+                            return;
+                        }
+                    }
+                }
+            }
+            if state.shuffle_library(player).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
         }
         EffectOp::CounterUnlessPaysLife {
             targeting_stack_item,

@@ -15,6 +15,10 @@ fn i16_is_zero(value: &i16) -> bool {
     *value == 0
 }
 
+fn u8_is_zero(value: &u8) -> bool {
+    *value == 0
+}
+
 fn bool_is_false(value: &bool) -> bool {
     !*value
 }
@@ -192,6 +196,11 @@ pub struct ObjectStateV4 {
     /// its warp cost" (Full Bore). Every zone change clears it.
     #[serde(default, skip_serializing_if = "bool_is_false")]
     pub warped_v1: bool,
+    /// How many creatures convoked this spell (on the stack) or the spell
+    /// this permanent resolved from (on the battlefield). Every zone change
+    /// clears it; resolution carries it onto the permanent.
+    #[serde(default, skip_serializing_if = "u8_is_zero")]
+    pub convoked_creatures_v1: u8,
 }
 
 impl Hash for ObjectStateV4 {
@@ -225,6 +234,10 @@ impl Hash for ObjectStateV4 {
         }
         if self.warped_v1 {
             "warped/v1".hash(state);
+        }
+        if self.convoked_creatures_v1 != 0 {
+            "convoked-creatures/v1".hash(state);
+            self.convoked_creatures_v1.hash(state);
         }
     }
 }
@@ -277,6 +290,7 @@ impl ObjectStateV4 {
             lifelink_counter_timestamp: None,
             on_adventure: false,
             warped_v1: false,
+            convoked_creatures_v1: 0,
         }
     }
 
