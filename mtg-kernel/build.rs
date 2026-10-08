@@ -2663,6 +2663,44 @@ enum Special {
         toughness: i32,
         keyword: &'static str,
     },
+    /// Creates `count` copies of `token`, then boosts every creature the
+    /// controller controls at that point (the new tokens included) until
+    /// end of turn. Heroic Reinforcements is the sole consumer.
+    CreateTokensThenBoostControlled {
+        token: &'static str,
+        count: u8,
+        power: i32,
+        toughness: i32,
+        keyword: &'static str,
+    },
+    /// Two printed modes: creatures you control get `power`/`toughness`
+    /// until end of turn, or create `count` copies of `token`. Goblin
+    /// Surprise is the sole consumer.
+    BoostControlledOrCreateTokens {
+        power: i32,
+        toughness: i32,
+        token: &'static str,
+        count: u8,
+    },
+    /// A spell program composed only from existing generic `EffectOp`s.
+    /// `recipe` is the stable semantic token hashed into the card database;
+    /// `effect` and the optional second mode's effect are the emitted Rust
+    /// expressions, which are not hashed. FDN removal and combat-trick
+    /// batches add their cards through `fdn_program_for` so each card is one
+    /// table row rather than a new enum variant and four codegen sites.
+    Program {
+        target: &'static str,
+        recipe: &'static str,
+        effect: &'static str,
+        mode2: Option<ProgramMode>,
+    },
+}
+
+#[derive(Clone, Copy)]
+struct ProgramMode {
+    target: &'static str,
+    recipe: &'static str,
+    effect: &'static str,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -2915,6 +2953,16 @@ impl Special {
             Special::BoostControlledCreatures { power, toughness, keyword } => {
                 format!("boost_controlled_creatures:{power}:{toughness}:{keyword}:exact_incarnations")
             }
+            Special::CreateTokensThenBoostControlled { token, count, power, toughness, keyword } => {
+                format!("create_tokens_then_boost_controlled:{token}:{count}:{power}:{toughness}:{keyword}:exact_incarnations")
+            }
+            Special::BoostControlledOrCreateTokens { power, toughness, token, count } => {
+                format!("boost_controlled_or_create_tokens:{power}:{toughness}:exact_incarnations|{token}:{count}")
+            }
+            Special::Program { recipe, mode2, .. } => match mode2 {
+                Some(mode) => format!("program:{recipe}:mode2:{}", mode.recipe),
+                None => format!("program:{recipe}"),
+            },
         }
     }
 }
@@ -3167,7 +3215,9 @@ fn special_for(name: &str) -> Special {
         "Land Grant" => Special::SearchForestToHand,
         "Grim Tutor" => Special::GrimTutor,
         "Unexpected Fangs" => Special::AddPlusOnePlusOneAndLifelinkCounters,
-        "Bind the Monster" | "Witness Protection" => Special::BindTheMonster,
+        "Bind the Monster" | "Witness Protection" | "Twinblade Blessing" | "Blanchwood Armor" => {
+            Special::BindTheMonster
+        }
         "Snap" => Special::Snap,
         "Flaring Pain" => Special::DamageCannotBePreventedThisTurn,
         "Prismatic Strands" => Special::PrismaticStrands,
@@ -3181,13 +3231,141 @@ fn special_for(name: &str) -> Special {
         "Fleeting Flight" => Special::FleetingFlight,
         "Joust Through" => Special::JoustThrough,
         "Nyxborn Hydra" => Special::NyxbornHydra,
+        "Heroic Reinforcements" => Special::CreateTokensThenBoostControlled {
+            token: "Soldier Token",
+            count: 2,
+            power: 1,
+            toughness: 1,
+            keyword: "HASTE",
+        },
+        "Goblin Surprise" => Special::BoostControlledOrCreateTokens {
+            power: 2,
+            toughness: 0,
+            token: "Goblin Token",
+            count: 2,
+        },
         "Overrun" => Special::BoostControlledCreatures {
             power: 3,
             toughness: 3,
             keyword: "TRAMPLE",
         },
-        _ => Special::None,
+        _ => fdn_program_for(name).unwrap_or(Special::None),
     }
+}
+
+/// FDN removal, damage and combat-trick spells that compose existing
+/// generic effect operations. Characteristics and rules text were read from
+/// the XMage card files named in each `cards_v1.json` entry.
+fn fdn_program_for(name: &str) -> Option<Special> {
+    let program = |target, recipe, effect| Special::Program {
+        target,
+        recipe,
+        effect,
+        mode2: None,
+    };
+    Some(match name {
+        // Target creature gets +3/+0 and gains first strike until end of turn.
+        "Sure Strike" => program(
+            "Creature",
+            "Sequence(PumpTargetUntilEndOfTurn(3,0),GrantKeywordTargetUntilEndOfTurn(Target0,FirstStrike))",
+            "EffectOp::Sequence(vec![EffectOp::PumpTargetUntilEndOfTurnDynamic { target: TargetRef::Target(0), power: DynamicValueDef::Fixed(3), toughness: DynamicValueDef::Fixed(0) }, EffectOp::GrantKeywordTargetUntilEndOfTurn { object: ObjectRef::Target(0), keyword: Keywords::FIRST_STRIKE }])",
+        ),
+        // Put a +1/+1 counter on target creature you control. It gains
+        // hexproof until end of turn.
+        "Snakeskin Veil" => program(
+            "ControlledCreature",
+            "Sequence(AddCounters(Target0,PlusOnePlusOne,1),GrantKeywordTargetUntilEndOfTurn(Target0,Hexproof))",
+            "EffectOp::Sequence(vec![EffectOp::AddCountersToTarget { target_index: 0, optional: false, plus1_plus1: 1, lifelink: 0, stun: 0 }, EffectOp::GrantKeywordTargetUntilEndOfTurn { object: ObjectRef::Target(0), keyword: Keywords::HEXPROOF }])",
+        ),
+        // Deals 2 damage to each creature without flying.
+        "Seismic Rupture" => program(
+            "None",
+            "DamageAllCreatures(WithoutKeyword(Flying),2)",
+            "EffectOp::DamageAllCreatures { filter: CreatureFilter::WithoutKeyword(Keywords::FLYING), amount: 2 }",
+        ),
+        // Deals 3 damage to each opponent.
+        "Boltwave" => program(
+            "None",
+            "DealDamage(Opponent,3)",
+            "EffectOp::DealDamage { target: TargetRef::Opponent, amount: 3 }",
+        ),
+        // Destroy all creatures.
+        "Day of Judgment" => program(
+            "None",
+            "DestroyAllCreatures",
+            "EffectOp::DestroyAllCreatures",
+        ),
+        // Deals 6 damage to target creature. You may discard a card. If you
+        // do, draw a card.
+        "Incinerating Blast" => program(
+            "Creature",
+            "Sequence(DealDamage(Target0,6),MayPayCostThen(Discard1,DrawCards(Controller,1)))",
+            "EffectOp::Sequence(vec![EffectOp::DealDamage { target: TargetRef::Target(0), amount: 6 }, EffectOp::MayPayCostThen { discard: 1, sacrifice_lands: 0, return_permanent: None, then: Box::new(EffectOp::DrawCards { player: PlayerRef::Controller, count: 1 }), otherwise: None }])",
+        ),
+        // Choose one -- 3 damage to each creature; or 3 damage to each player.
+        "Slagstorm" => Special::Program {
+            target: "None",
+            recipe: "DamageAllCreatures(All,3)",
+            effect: "EffectOp::DamageAllCreatures { filter: CreatureFilter::All, amount: 3 }",
+            mode2: Some(ProgramMode {
+                target: "None",
+                recipe: "Sequence(DealDamage(Controller,3),DealDamage(Opponent,3))",
+                effect: "EffectOp::Sequence(vec![EffectOp::DealDamage { target: TargetRef::Controller, amount: 3 }, EffectOp::DealDamage { target: TargetRef::Opponent, amount: 3 }])",
+            }),
+        },
+        // Choose one -- 3 damage to target creature; or destroy target artifact.
+        "Abrade" => Special::Program {
+            target: "Creature",
+            recipe: "DealDamage(Target0,3)",
+            effect: "EffectOp::DealDamage { target: TargetRef::Target(0), amount: 3 }",
+            mode2: Some(ProgramMode {
+                target: "ArtifactPermanent",
+                recipe: "Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0))",
+                effect: "EffectOp::Conditional { cond: EffectCond::TargetInZone(0, Zone::Battlefield), then: Box::new(EffectOp::DestroyObject { object: ObjectRef::Target(0) }), else_: Box::new(EffectOp::Sequence(vec![])) }",
+            }),
+        },
+        // Creatures you control get +10/+10 and gain vigilance until end of turn.
+        "Preposterous Proportions" => program(
+            "None",
+            "BoostControlledCreatures(10,10,VIGILANCE,exact_incarnations)",
+            "EffectOp::BoostControlledCreaturesUntilEndOfTurn { power: 10, toughness: 10, keywords: Keywords::VIGILANCE }",
+        ),
+        // Destroy target creature. Create a Food token.
+        "Bake into a Pie" => program(
+            "Creature",
+            "Sequence(Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0)),CreateToken(FoodToken,Controller))",
+            "EffectOp::Sequence(vec![EffectOp::Conditional { cond: EffectCond::TargetInZone(0, Zone::Battlefield), then: Box::new(EffectOp::DestroyObject { object: ObjectRef::Target(0) }), else_: Box::new(EffectOp::Sequence(vec![])) }, EffectOp::CreateToken { token_def: crate::card_def::card_id_by_name(\"Food Token\").expect(\"Food Token in CARD_DEFS\"), controller: PlayerRef::Controller }])",
+        ),
+        // Destroy target creature or planeswalker.
+        "Hero's Downfall" => program("CreatureOrPlaneswalker", "Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0))", "EffectOp::Conditional { cond: EffectCond::TargetInZone(0, Zone::Battlefield), then: Box::new(EffectOp::DestroyObject { object: ObjectRef::Target(0) }), else_: Box::new(EffectOp::Sequence(vec![])) }"),
+        // Destroy target artifact, enchantment, or creature with flying.
+        "Broken Wings" => program("ArtifactEnchantmentOrFlyingCreature", "Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0))", "EffectOp::Conditional { cond: EffectCond::TargetInZone(0, Zone::Battlefield), then: Box::new(EffectOp::DestroyObject { object: ObjectRef::Target(0) }), else_: Box::new(EffectOp::Sequence(vec![])) }"),
+        // Destroy target artifact, enchantment, or creature with power 4 or greater.
+        "Make Your Move" => program("ArtifactEnchantmentOrCreaturePowerAtLeastFour", "Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0))", "EffectOp::Conditional { cond: EffectCond::TargetInZone(0, Zone::Battlefield), then: Box::new(EffectOp::DestroyObject { object: ObjectRef::Target(0) }), else_: Box::new(EffectOp::Sequence(vec![])) }"),
+        _ => return None,
+    })
+}
+
+fn program_target_spec_src(target: &str) -> &'static str {
+    match target {
+        "None" => "TargetSpec::None",
+        "Creature" => "TargetSpec::Creature",
+        "ControlledCreature" => "TargetSpec::ControlledCreature",
+        "ArtifactPermanent" => "TargetSpec::ArtifactPermanent",
+        "CreatureOrPlaneswalker" => "TargetSpec::CreatureOrPlaneswalker",
+        "ArtifactEnchantmentOrFlyingCreature" => "TargetSpec::ArtifactEnchantmentOrFlyingCreature",
+        "ArtifactEnchantmentOrCreaturePowerAtLeastFour" => {
+            "TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour"
+        }
+        other => panic!("unsupported program target spec {other}"),
+    }
+}
+
+fn program_function_suffix(name: &str) -> String {
+    name.to_ascii_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect()
 }
 
 /// Stable, gameplay-semantic description of the generated spell target,
@@ -3219,6 +3397,12 @@ fn effect_recipe_for(card: &CardJson) -> String {
         }
         Special::BoostControlledCreatures { power, toughness, keyword } => {
             format!("target=None;spell=BoostControlledCreatures({power},{toughness},{keyword},exact_incarnations);mana=None")
+        }
+        Special::CreateTokensThenBoostControlled { token, count, power, toughness, keyword } => {
+            format!("target=None;spell=Sequence(CreateToken({token},{count}),BoostControlledCreatures({power},{toughness},{keyword},exact_incarnations));mana=None")
+        }
+        Special::BoostControlledOrCreateTokens { power, toughness, token, count } => {
+            format!("target=None;spell=BoostControlledCreatures({power},{toughness},NONE,exact_incarnations);mode2=CreateToken({token},{count});mana=None")
         }
         Special::GreatFurnace => "target=None;spell=None;mana=AddMana(R)".to_string(),
         Special::DrawCards(count) => {
@@ -3393,6 +3577,13 @@ fn effect_recipe_for(card: &CardJson) -> String {
         // `Special::CleansingWildfire`'s own recipe two lines above, the
         // first and (until Raze) only consumer of that same target spec.
         Special::DestroyLand => "target=Land;spell=DestroyObject(Target0);mana=None".to_string(),
+        Special::Program { target, recipe, mode2, .. } => match mode2 {
+            Some(mode) => format!(
+                "target={target};spell={recipe};mode2_target={};mode2={};mana=None",
+                mode.target, mode.recipe
+            ),
+            None => format!("target={target};spell={recipe};mana=None"),
+        },
     }
 }
 
@@ -3453,8 +3644,12 @@ fn keywords_for(card: &CardJson) -> String {
         | "Guarded Heir"
         | "Sun-Blessed Healer" => keywords.push("Keywords::LIFELINK"),
         "Guardian of the Guildpact" => keywords.push("Keywords::PROTECTION_FROM_MONOCOLORED"),
-        "Brazen Scourge" => keywords.push("Keywords::HASTE"),
+        "Brazen Scourge" | "Fanatical Firebrand" => keywords.push("Keywords::HASTE"),
         "Samurai Token" => keywords.push("Keywords::VIGILANCE"),
+        "Dragon Token" | "Dragon 5/5 Token" => keywords.push("Keywords::FLYING"),
+        "Resolute Reinforcements" | "Twinblade Blessing" => keywords.push("Keywords::FLASH"),
+        "Elfsworn Giant" => keywords.push("Keywords::REACH"),
+        "Eager Trufflesnout" => keywords.push("Keywords::TRAMPLE"),
         _ => {}
     }
     if card.name == "Nyxborn Hydra" {
@@ -3950,6 +4145,16 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
                     filter: PermanentFilterRecipe::ArtifactOrCreature,
                 },
             ],
+            effect: AbilityEffectRecipe::DealDamageAnyTarget(1),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "AnyTarget",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        // {T}, Sacrifice this creature: It deals 1 damage to any target.
+        "Fanatical Firebrand" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Tap, AbilityCostRecipe::SacrificeSelf],
             effect: AbilityEffectRecipe::DealDamageAnyTarget(1),
             activation_zone: "Battlefield",
             sorcery_speed_only: false,
@@ -4987,6 +5192,15 @@ fn mode2_for(name: &str) -> String {
         Special::PiracyCharm => "Some(ModeDef { target_spec: TargetSpec::Creature, effect: mode2_effect_piracy_charm_pump })".to_string(),
         Special::CastIntoTheFire => "Some(ModeDef { target_spec: TargetSpec::ArtifactPermanent, effect: mode2_effect_cast_into_the_fire_exile_artifact })".to_string(),
         Special::ThrabenCharm => "Some(ModeDef { target_spec: TargetSpec::EnchantmentPermanent, effect: mode2_effect_thraben_charm_destroy_enchantment })".to_string(),
+        Special::BoostControlledOrCreateTokens { .. } => format!(
+            "Some(ModeDef {{ target_spec: TargetSpec::None, effect: mode2_effect_create_tokens_{} }})",
+            name.to_ascii_lowercase().replace([' ', '\''], "_")
+        ),
+        Special::Program { mode2: Some(mode), .. } => format!(
+            "Some(ModeDef {{ target_spec: TargetSpec::{}, effect: mode2_effect_program_{} }})",
+            mode.target,
+            program_function_suffix(name)
+        ),
         _ => "None".to_string(),
     }
 }
@@ -5157,6 +5371,8 @@ fn attachment_for(name: &str) -> &'static str {
     match name {
         "Bind the Monster" => "Some(AttachmentDef::AuraCreature { prevents_untap: true })",
         "Witness Protection" => "Some(AttachmentDef::AuraCreatureOverride(CreatureCharacteristicsOverrideDef { name: \"Legitimate Businessperson\", subtype: Subtype::Citizen, colors: &[ManaColor::G, ManaColor::W], power: 1, toughness: 1, loses_abilities: true }))",
+        "Twinblade Blessing" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 0, toughness: 0, keywords: Keywords::DOUBLE_STRIKE, per_controlled_subtype: None }))",
+        "Blanchwood Armor" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 1, toughness: 1, keywords: Keywords::NONE, per_controlled_subtype: Some(Subtype::Forest) }))",
         _ => "None",
     }
 }
@@ -5216,6 +5432,11 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Wary Thespian" => "etb_and_dies:surveil:1",
         "Firebrand Archer" => "cast_noncreature:damage_opponent:1",
         "Spitfire Lagac" => "controlled_land_enters:damage_opponent:1",
+        "Dragon Trainer" => "etb:create_red_4_4_flying_dragon:1",
+        "Resolute Reinforcements" => "etb:create_white_1_1_soldier:1",
+        "Elfsworn Giant" => "controlled_land_enters:create_elf_warrior:1",
+        "Eager Trufflesnout" => "source_combat_damage_to_player:create_food:1",
+        "Rite of the Dragoncaller" => "cast_instant_or_sorcery:create_red_5_5_flying_dragon:1",
         "Dazzling Angel" => "other_controlled_creature_enters:gain_life:1",
         "Beast-Kin Ranger" => "other_controlled_creature_enters:pump_bound_source:1:0:end_of_turn",
         "Dwynen, Gilt-Leaf Daen" => "source_declared_attacker:gain_life_current_attacking_elf_count",
@@ -5254,6 +5475,10 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Bojuka Bog" => "etb:target_player:exile_graveyard",
         "Conduit Pylons" => "etb:surveil:1",
         "Humbling Elder" => "etb:target_opponent_creature:pump:-2:0:eot",
+        "Meteor Golem" => "etb:target_opponent_nonland_permanent:destroy",
+        "Dauntless Veteran" => "source_declared_attacker:boost_controlled_creatures:1:1:none:end_of_turn",
+        "Crackling Cyclops" => "cast_noncreature:pump_bound_source:3:0:end_of_turn",
+        "Reclamation Sage" => "etb:target_artifact_or_enchantment:may_destroy",
         "Moon-Circuit Hacker" => {
             "combat_damage_player:may_draw:discard_unless_source_entered_this_turn:lki"
         }
@@ -7187,6 +7412,52 @@ fn codegen(cards: &[CardJson]) -> String {
     }
 
     for (card_index, card) in cards.iter().enumerate() {
+        match special_for(&card.name) {
+            Special::CreateTokensThenBoostControlled {
+                token,
+                count,
+                power,
+                toughness,
+                keyword,
+            } => {
+                // Tokens first, so the resolution-time snapshot of
+                // controlled creatures includes them.
+                writeln!(
+                    out,
+                    "fn spell_effect_controlled_boost_{card_index}() -> Option<EffectOp> {{"
+                )
+                .unwrap();
+                writeln!(out, "    let token = crate::card_def::card_id_by_name({token:?}).expect(\"{token} in CARD_DEFS\");").unwrap();
+                writeln!(out, "    let mut ops = vec![EffectOp::CreateToken {{ token_def: token, controller: PlayerRef::Controller }}; {count}];").unwrap();
+                writeln!(out, "    ops.push(EffectOp::BoostControlledCreaturesUntilEndOfTurn {{ power: {power}, toughness: {toughness}, keywords: Keywords::{keyword} }});").unwrap();
+                writeln!(out, "    Some(EffectOp::Sequence(ops))").unwrap();
+                writeln!(out, "}}").unwrap();
+            }
+            Special::BoostControlledOrCreateTokens {
+                power,
+                toughness,
+                token,
+                count,
+            } => {
+                let function = card.name.to_ascii_lowercase().replace([' ', '\''], "_");
+                writeln!(
+                    out,
+                    "fn spell_effect_controlled_boost_{card_index}() -> Option<EffectOp> {{"
+                )
+                .unwrap();
+                writeln!(out, "    Some(EffectOp::BoostControlledCreaturesUntilEndOfTurn {{ power: {power}, toughness: {toughness}, keywords: Keywords::NONE }})").unwrap();
+                writeln!(out, "}}").unwrap();
+                writeln!(
+                    out,
+                    "fn mode2_effect_create_tokens_{function}() -> EffectOp {{"
+                )
+                .unwrap();
+                writeln!(out, "    let token = crate::card_def::card_id_by_name({token:?}).expect(\"{token} in CARD_DEFS\");").unwrap();
+                writeln!(out, "    EffectOp::Sequence(vec![EffectOp::CreateToken {{ token_def: token, controller: PlayerRef::Controller }}; {count}])").unwrap();
+                writeln!(out, "}}").unwrap();
+            }
+            _ => {}
+        }
         if let Special::BoostControlledCreatures {
             power,
             toughness,
@@ -7200,6 +7471,25 @@ fn codegen(cards: &[CardJson]) -> String {
             .unwrap();
             writeln!(out, "    Some(EffectOp::BoostControlledCreaturesUntilEndOfTurn {{ power: {power}, toughness: {toughness}, keywords: Keywords::{keyword} }})").unwrap();
             writeln!(out, "}}").unwrap();
+        }
+    }
+
+    for card in cards {
+        if let Special::Program { effect, mode2, .. } = special_for(&card.name) {
+            let suffix = program_function_suffix(&card.name);
+            writeln!(
+                out,
+                "fn spell_effect_program_{suffix}() -> Option<EffectOp> {{"
+            )
+            .unwrap();
+            writeln!(out, "    Some({effect})").unwrap();
+            writeln!(out, "}}").unwrap();
+            if let Some(mode) = mode2 {
+                writeln!(out, "fn mode2_effect_program_{suffix}() -> EffectOp {{").unwrap();
+                writeln!(out, "    {}", mode.effect).unwrap();
+                writeln!(out, "}}").unwrap();
+            }
+            writeln!(out).unwrap();
         }
     }
 
@@ -7610,7 +7900,9 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_joust_through".to_string(),
                 "no_effect".to_string(),
             ),
-            Special::BoostControlledCreatures { .. } => (
+            Special::BoostControlledCreatures { .. }
+            | Special::CreateTokensThenBoostControlled { .. }
+            | Special::BoostControlledOrCreateTokens { .. } => (
                 "TargetSpec::None",
                 format!("spell_effect_controlled_boost_{card_index}"),
                 "no_effect".to_string(),
@@ -7618,6 +7910,11 @@ fn codegen(cards: &[CardJson]) -> String {
             Special::NyxbornHydra => (
                 "TargetSpec::None",
                 "spell_effect_nyxborn_hydra".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::Program { target, .. } => (
+                program_target_spec_src(target),
+                format!("spell_effect_program_{}", program_function_suffix(&c.name)),
                 "no_effect".to_string(),
             ),
         };
@@ -7970,7 +8267,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v55\n"
+            "kernel_carddb/v57\n"
         } else {
             "kernel_carddb/v34\n"
         },
@@ -8328,6 +8625,8 @@ fn subtype_variant(t: &str) -> &'static str {
         "Archer" => "Subtype::Archer",
         "Lizard" => "Subtype::Lizard",
         "Golem" => "Subtype::Golem",
+        "Boar" => "Subtype::Boar",
+        "Cyclops" => "Subtype::Cyclops",
         "Pirate" => "Subtype::Pirate",
         "Plains" => "Subtype::Plains",
         "ROGUE" => "Subtype::RogueAllCaps",

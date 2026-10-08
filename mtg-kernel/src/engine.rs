@@ -1462,7 +1462,11 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::CreatureOtherThanSource
         | TargetSpec::NonblackCreature
         | TargetSpec::ArtifactOrEnchantmentPermanent
-        | TargetSpec::AttackingOrBlockingCreature => 1,
+        | TargetSpec::AttackingOrBlockingCreature
+        | TargetSpec::CreatureOrPlaneswalker
+        | TargetSpec::ArtifactEnchantmentOrFlyingCreature
+        | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour
+        | TargetSpec::OpponentNonlandPermanent => 1,
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
@@ -2732,6 +2736,34 @@ fn legal_targets_for_controller_from_source(
                 .map(Target::Object)
                 .collect()
         }
+        TargetSpec::CreatureOrPlaneswalker => battlefield_objects(state)
+            .filter(|&id| {
+                object_has_type(state, id, CardType::Creature)
+                    || object_has_type(state, id, CardType::Planeswalker)
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::ArtifactEnchantmentOrFlyingCreature
+        | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour => battlefield_objects(state)
+            .filter(|&id| {
+                object_has_type(state, id, CardType::Artifact)
+                    || object_has_type(state, id, CardType::Enchantment)
+                    || (object_has_type(state, id, CardType::Creature)
+                        && if spec == TargetSpec::ArtifactEnchantmentOrFlyingCreature {
+                            has_effective_keyword(state, id, Keywords::FLYING)
+                        } else {
+                            effective_power(state, id) >= 4
+                        })
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::OpponentNonlandPermanent => battlefield_objects(state)
+            .filter(|&id| {
+                state.objects.get(id).controller != controller
+                    && !object_has_type(state, id, CardType::Land)
+            })
+            .map(Target::Object)
+            .collect(),
         TargetSpec::AttackingOrBlockingCreature => battlefield_objects(state)
             .filter(|&id| {
                 object_has_type(state, id, CardType::Creature)
@@ -3839,10 +3871,12 @@ fn can_pay_components(
                 let obj = state.objects.get(source);
                 let def = &card_def::CARD_DEFS[obj.card_def as usize];
                 // 302.6: a *creature's* tap-cost ability needs continuous
-                // control since the turn began. Irrelevant to every
-                // tap-cost ability in this pool (Blood is an artifact),
-                // kept for correctness if a future card needs it.
-                !(obj.tapped || (def.has_type(CardType::Creature) && obj.summoning_sick))
+                // control since the turn began, unless it has haste
+                // (702.10c; Fanatical Firebrand).
+                !(obj.tapped
+                    || (def.has_type(CardType::Creature)
+                        && obj.summoning_sick
+                        && !has_effective_keyword(state, source, Keywords::HASTE)))
             }
             CostComponent::SacrificeSelf | CostComponent::ExileSelf => true,
             CostComponent::DiscardSelf => {
@@ -11128,6 +11162,9 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
         let controller_turn = state.active_player == state.objects.get(equipment_id).controller;
         power += i32::from(equipment.pt_deltas(controller_turn).0);
     }
+    for (aura, profile) in attached_static_aura_profiles(state, id) {
+        power += i32::from(profile.power) * static_aura_multiplier(state, aura, profile);
+    }
     for eff in &state.engine.until_end_of_turn {
         match eff {
             UntilEndOfTurnEffect::ResolvedSetEffect {
@@ -11178,6 +11215,9 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
     for (equipment_id, equipment) in attached_equipment_profiles(state, id) {
         let controller_turn = state.active_player == state.objects.get(equipment_id).controller;
         toughness += i32::from(equipment.pt_deltas(controller_turn).1);
+    }
+    for (aura, profile) in attached_static_aura_profiles(state, id) {
+        toughness += i32::from(profile.toughness) * static_aura_multiplier(state, aura, profile);
     }
     for eff in &state.engine.until_end_of_turn {
         match eff {
@@ -11293,6 +11333,16 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     {
         return true;
     }
+    if attached_static_aura_profiles(state, id).any(|(aura, profile)| {
+        profile.keywords.has(kw)
+            && crate::continuous_characteristics_v1::grant_survives(
+                state,
+                id,
+                state.objects.get(aura).v4.layer_timestamp.unwrap_or(0),
+            )
+    }) {
+        return true;
+    }
     if state.engine.until_next_turn_keywords.iter().any(|effect| {
         effect.object_id == id
             && obj.zone == Zone::Battlefield
@@ -11369,6 +11419,57 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
         }
     }
     false
+}
+
+/// Static creature Auras validly attached to `host`'s current incarnation
+/// whose own abilities are active.
+pub(crate) fn attached_static_aura_profiles(
+    state: &GameState,
+    host: ObjectId,
+) -> impl Iterator<Item = (ObjectId, card_def::AuraCreatureStaticDef)> + '_ {
+    let host_object = state
+        .objects
+        .try_get(host)
+        .filter(|host_object| host_object.zone == Zone::Battlefield);
+    let host_link = host_object.map(|host_object| crate::state::ObjectLinkV4 {
+        object: host,
+        zone_change_count: host_object.zone_change_count,
+    });
+    host_object
+        .into_iter()
+        .flat_map(|host_object| host_object.attachments.iter().copied())
+        .filter_map(move |aura_id| {
+            let aura = state.objects.try_get(aura_id)?;
+            if aura.zone != Zone::Battlefield || aura.v4.attached_to != host_link {
+                return None;
+            }
+            let definition = card_def::CARD_DEFS.get(aura.card_def as usize)?;
+            if !definition.is_executable()
+                || !crate::continuous_characteristics_v1::printed_abilities_active(state, aura_id)
+            {
+                return None;
+            }
+            match definition.attachment? {
+                card_def::AttachmentDef::AuraCreatureStatic(profile) => Some((aura_id, profile)),
+                _ => None,
+            }
+        })
+}
+
+fn static_aura_multiplier(
+    state: &GameState,
+    aura: ObjectId,
+    profile: card_def::AuraCreatureStaticDef,
+) -> i32 {
+    let Some(subtype) = profile.per_controlled_subtype else {
+        return 1;
+    };
+    let controller = state.objects.get(aura).controller;
+    state.players[controller.index()]
+        .battlefield
+        .iter()
+        .filter(|id| subtype.is_in_subtype_ids(&effective_subtype_ids(state, **id)))
+        .count() as i32
 }
 
 pub(crate) fn attached_equipment_profiles(

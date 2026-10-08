@@ -114,7 +114,8 @@ fn appended_definitions_match_their_printed_characteristics() {
             CardCapability::Full
         );
     }
-    assert_eq!(first as usize + NAMES.len(), CARD_DEFS.len());
+    // Later batches append after these definitions.
+    assert!(first as usize + NAMES.len() <= CARD_DEFS.len());
     preflight_fully_supported_deck(&NAMES.map(id)).unwrap();
     println!("FDN catalog hash: {KERNEL_CARDDB_HASH:016x}");
 
