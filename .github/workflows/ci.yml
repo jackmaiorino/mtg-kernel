@@ -267,6 +267,12 @@ jobs:
           cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test london_mulligans_v1 -- --nocapture
           cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib london_session_snapshot_restores
 
+      - name: Validate MageZero Standard catalog
+        if: matrix.group == 'limited'
+        run: |
+          cargo test --release --locked -p mtg-kernel --features standard-magezero-fixtures --test standard_magezero_catalog_v1
+          python python/tools/run_rust_lib_filters.py --features standard-magezero-fixtures card_def::
+
       - name: Run Rust release tests
         if: matrix.group == 'workspace'
         run: python python/tools/run_rust_workspace_tests.py --no-fail-fast
