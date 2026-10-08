@@ -2663,6 +2663,25 @@ enum Special {
         toughness: i32,
         keyword: &'static str,
     },
+    /// Creates `count` copies of `token`, then boosts every creature the
+    /// controller controls at that point (the new tokens included) until
+    /// end of turn. Heroic Reinforcements is the sole consumer.
+    CreateTokensThenBoostControlled {
+        token: &'static str,
+        count: u8,
+        power: i32,
+        toughness: i32,
+        keyword: &'static str,
+    },
+    /// Two printed modes: creatures you control get `power`/`toughness`
+    /// until end of turn, or create `count` copies of `token`. Goblin
+    /// Surprise is the sole consumer.
+    BoostControlledOrCreateTokens {
+        power: i32,
+        toughness: i32,
+        token: &'static str,
+        count: u8,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -2914,6 +2933,12 @@ impl Special {
             Special::JoustThrough => "joust_through:attacking_or_blocking_creature_damage_and_life".to_string(),
             Special::BoostControlledCreatures { power, toughness, keyword } => {
                 format!("boost_controlled_creatures:{power}:{toughness}:{keyword}:exact_incarnations")
+            }
+            Special::CreateTokensThenBoostControlled { token, count, power, toughness, keyword } => {
+                format!("create_tokens_then_boost_controlled:{token}:{count}:{power}:{toughness}:{keyword}:exact_incarnations")
+            }
+            Special::BoostControlledOrCreateTokens { power, toughness, token, count } => {
+                format!("boost_controlled_or_create_tokens:{power}:{toughness}:exact_incarnations|{token}:{count}")
             }
         }
     }
@@ -3167,7 +3192,9 @@ fn special_for(name: &str) -> Special {
         "Land Grant" => Special::SearchForestToHand,
         "Grim Tutor" => Special::GrimTutor,
         "Unexpected Fangs" => Special::AddPlusOnePlusOneAndLifelinkCounters,
-        "Bind the Monster" | "Witness Protection" => Special::BindTheMonster,
+        "Bind the Monster" | "Witness Protection" | "Twinblade Blessing" | "Blanchwood Armor" => {
+            Special::BindTheMonster
+        }
         "Snap" => Special::Snap,
         "Flaring Pain" => Special::DamageCannotBePreventedThisTurn,
         "Prismatic Strands" => Special::PrismaticStrands,
@@ -3181,6 +3208,19 @@ fn special_for(name: &str) -> Special {
         "Fleeting Flight" => Special::FleetingFlight,
         "Joust Through" => Special::JoustThrough,
         "Nyxborn Hydra" => Special::NyxbornHydra,
+        "Heroic Reinforcements" => Special::CreateTokensThenBoostControlled {
+            token: "Soldier Token",
+            count: 2,
+            power: 1,
+            toughness: 1,
+            keyword: "HASTE",
+        },
+        "Goblin Surprise" => Special::BoostControlledOrCreateTokens {
+            power: 2,
+            toughness: 0,
+            token: "Goblin Token",
+            count: 2,
+        },
         "Overrun" => Special::BoostControlledCreatures {
             power: 3,
             toughness: 3,
@@ -3219,6 +3259,12 @@ fn effect_recipe_for(card: &CardJson) -> String {
         }
         Special::BoostControlledCreatures { power, toughness, keyword } => {
             format!("target=None;spell=BoostControlledCreatures({power},{toughness},{keyword},exact_incarnations);mana=None")
+        }
+        Special::CreateTokensThenBoostControlled { token, count, power, toughness, keyword } => {
+            format!("target=None;spell=Sequence(CreateToken({token},{count}),BoostControlledCreatures({power},{toughness},{keyword},exact_incarnations));mana=None")
+        }
+        Special::BoostControlledOrCreateTokens { power, toughness, token, count } => {
+            format!("target=None;spell=BoostControlledCreatures({power},{toughness},NONE,exact_incarnations);mode2=CreateToken({token},{count});mana=None")
         }
         Special::GreatFurnace => "target=None;spell=None;mana=AddMana(R)".to_string(),
         Special::DrawCards(count) => {
@@ -3455,6 +3501,10 @@ fn keywords_for(card: &CardJson) -> String {
         "Guardian of the Guildpact" => keywords.push("Keywords::PROTECTION_FROM_MONOCOLORED"),
         "Brazen Scourge" => keywords.push("Keywords::HASTE"),
         "Samurai Token" => keywords.push("Keywords::VIGILANCE"),
+        "Dragon Token" | "Dragon 5/5 Token" => keywords.push("Keywords::FLYING"),
+        "Resolute Reinforcements" | "Twinblade Blessing" => keywords.push("Keywords::FLASH"),
+        "Elfsworn Giant" => keywords.push("Keywords::REACH"),
+        "Eager Trufflesnout" => keywords.push("Keywords::TRAMPLE"),
         _ => {}
     }
     if card.name == "Nyxborn Hydra" {
@@ -4987,6 +5037,10 @@ fn mode2_for(name: &str) -> String {
         Special::PiracyCharm => "Some(ModeDef { target_spec: TargetSpec::Creature, effect: mode2_effect_piracy_charm_pump })".to_string(),
         Special::CastIntoTheFire => "Some(ModeDef { target_spec: TargetSpec::ArtifactPermanent, effect: mode2_effect_cast_into_the_fire_exile_artifact })".to_string(),
         Special::ThrabenCharm => "Some(ModeDef { target_spec: TargetSpec::EnchantmentPermanent, effect: mode2_effect_thraben_charm_destroy_enchantment })".to_string(),
+        Special::BoostControlledOrCreateTokens { .. } => format!(
+            "Some(ModeDef {{ target_spec: TargetSpec::None, effect: mode2_effect_create_tokens_{} }})",
+            name.to_ascii_lowercase().replace([' ', '\''], "_")
+        ),
         _ => "None".to_string(),
     }
 }
@@ -5157,6 +5211,8 @@ fn attachment_for(name: &str) -> &'static str {
     match name {
         "Bind the Monster" => "Some(AttachmentDef::AuraCreature { prevents_untap: true })",
         "Witness Protection" => "Some(AttachmentDef::AuraCreatureOverride(CreatureCharacteristicsOverrideDef { name: \"Legitimate Businessperson\", subtype: Subtype::Citizen, colors: &[ManaColor::G, ManaColor::W], power: 1, toughness: 1, loses_abilities: true }))",
+        "Twinblade Blessing" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 0, toughness: 0, keywords: Keywords::DOUBLE_STRIKE, per_controlled_subtype: None }))",
+        "Blanchwood Armor" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 1, toughness: 1, keywords: Keywords::NONE, per_controlled_subtype: Some(Subtype::Forest) }))",
         _ => "None",
     }
 }
@@ -5216,6 +5272,11 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Wary Thespian" => "etb_and_dies:surveil:1",
         "Firebrand Archer" => "cast_noncreature:damage_opponent:1",
         "Spitfire Lagac" => "controlled_land_enters:damage_opponent:1",
+        "Dragon Trainer" => "etb:create_red_4_4_flying_dragon:1",
+        "Resolute Reinforcements" => "etb:create_white_1_1_soldier:1",
+        "Elfsworn Giant" => "controlled_land_enters:create_elf_warrior:1",
+        "Eager Trufflesnout" => "source_combat_damage_to_player:create_food:1",
+        "Rite of the Dragoncaller" => "cast_instant_or_sorcery:create_red_5_5_flying_dragon:1",
         "Dazzling Angel" => "other_controlled_creature_enters:gain_life:1",
         "Beast-Kin Ranger" => "other_controlled_creature_enters:pump_bound_source:1:0:end_of_turn",
         "Dwynen, Gilt-Leaf Daen" => "source_declared_attacker:gain_life_current_attacking_elf_count",
@@ -7187,6 +7248,52 @@ fn codegen(cards: &[CardJson]) -> String {
     }
 
     for (card_index, card) in cards.iter().enumerate() {
+        match special_for(&card.name) {
+            Special::CreateTokensThenBoostControlled {
+                token,
+                count,
+                power,
+                toughness,
+                keyword,
+            } => {
+                // Tokens first, so the resolution-time snapshot of
+                // controlled creatures includes them.
+                writeln!(
+                    out,
+                    "fn spell_effect_controlled_boost_{card_index}() -> Option<EffectOp> {{"
+                )
+                .unwrap();
+                writeln!(out, "    let token = crate::card_def::card_id_by_name({token:?}).expect(\"{token} in CARD_DEFS\");").unwrap();
+                writeln!(out, "    let mut ops = vec![EffectOp::CreateToken {{ token_def: token, controller: PlayerRef::Controller }}; {count}];").unwrap();
+                writeln!(out, "    ops.push(EffectOp::BoostControlledCreaturesUntilEndOfTurn {{ power: {power}, toughness: {toughness}, keywords: Keywords::{keyword} }});").unwrap();
+                writeln!(out, "    Some(EffectOp::Sequence(ops))").unwrap();
+                writeln!(out, "}}").unwrap();
+            }
+            Special::BoostControlledOrCreateTokens {
+                power,
+                toughness,
+                token,
+                count,
+            } => {
+                let function = card.name.to_ascii_lowercase().replace([' ', '\''], "_");
+                writeln!(
+                    out,
+                    "fn spell_effect_controlled_boost_{card_index}() -> Option<EffectOp> {{"
+                )
+                .unwrap();
+                writeln!(out, "    Some(EffectOp::BoostControlledCreaturesUntilEndOfTurn {{ power: {power}, toughness: {toughness}, keywords: Keywords::NONE }})").unwrap();
+                writeln!(out, "}}").unwrap();
+                writeln!(
+                    out,
+                    "fn mode2_effect_create_tokens_{function}() -> EffectOp {{"
+                )
+                .unwrap();
+                writeln!(out, "    let token = crate::card_def::card_id_by_name({token:?}).expect(\"{token} in CARD_DEFS\");").unwrap();
+                writeln!(out, "    EffectOp::Sequence(vec![EffectOp::CreateToken {{ token_def: token, controller: PlayerRef::Controller }}; {count}])").unwrap();
+                writeln!(out, "}}").unwrap();
+            }
+            _ => {}
+        }
         if let Special::BoostControlledCreatures {
             power,
             toughness,
@@ -7610,7 +7717,9 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_joust_through".to_string(),
                 "no_effect".to_string(),
             ),
-            Special::BoostControlledCreatures { .. } => (
+            Special::BoostControlledCreatures { .. }
+            | Special::CreateTokensThenBoostControlled { .. }
+            | Special::BoostControlledOrCreateTokens { .. } => (
                 "TargetSpec::None",
                 format!("spell_effect_controlled_boost_{card_index}"),
                 "no_effect".to_string(),
@@ -7970,7 +8079,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v55\n"
+            "kernel_carddb/v56\n"
         } else {
             "kernel_carddb/v34\n"
         },
@@ -8328,6 +8437,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Archer" => "Subtype::Archer",
         "Lizard" => "Subtype::Lizard",
         "Golem" => "Subtype::Golem",
+        "Boar" => "Subtype::Boar",
         "Pirate" => "Subtype::Pirate",
         "Plains" => "Subtype::Plains",
         "ROGUE" => "Subtype::RogueAllCaps",
