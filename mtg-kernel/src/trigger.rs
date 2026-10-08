@@ -171,6 +171,15 @@ pub enum TriggerCondition {
     /// Impending: "At the beginning of your end step, remove a time counter
     /// from it", collected only while it has one.
     BeginningControllerEndStepWithTimeCounter,
+    /// Enduring: "When this dies, if it was a creature" (a battlefield to
+    /// graveyard `ZoneChange` preceded by
+    /// `CommittedEvent::WasCreatureBeforeLeavingBattlefield`).
+    DiesIfWasCreature,
+    /// "Whenever a creature you control deals combat damage to a player".
+    ControlledCreatureDealsCombatDamageToPlayer,
+    /// "Whenever one or more other creatures you control with power N or
+    /// less enter ... This ability triggers only once each turn."
+    OtherControlledCreatureWithPowerAtMostEntersOncePerTurn(i32),
 }
 
 pub struct TriggeredAbilityDef {
@@ -1173,6 +1182,18 @@ fn controller_descended_this_turn(_state: &GameState, _controller: PlayerId) -> 
     false
 }
 
+#[cfg(feature = "standard-magezero-fixtures")]
+fn source_was_creature_before_leaving(state: &GameState, source: ObjectId) -> bool {
+    let current = state.objects.get(source).zone_change_count;
+    current > 0
+        && crate::standard_keywords_v1::was_creature_before_leaving(state, source, current - 1)
+}
+
+#[cfg(not(feature = "standard-magezero-fixtures"))]
+fn source_was_creature_before_leaving(_state: &GameState, _source: ObjectId) -> bool {
+    false
+}
+
 fn scry_one_effect() -> EffectOp {
     EffectOp::Scry {
         player: PlayerRef::Controller,
@@ -1367,6 +1388,45 @@ const OVERLORD_OF_THE_MISTMOORS_TRIGGERS: [TriggeredAbilityDef; 3] = [
         condition: TriggerCondition::BeginningControllerEndStepWithTimeCounter,
         ..etb_trigger(remove_time_counter_effect)
     },
+];
+
+fn enduring_return_effect() -> EffectOp {
+    EffectOp::ReturnSourceAsEnduringEnchantment
+}
+
+/// "When this dies, if it was a creature, return it to the battlefield
+/// under its owner's control. It's an enchantment."
+const ENDURING_RETURN_TRIGGER: TriggeredAbilityDef = TriggeredAbilityDef {
+    condition: TriggerCondition::DiesIfWasCreature,
+    home_zone: Zone::Graveyard,
+    ..etb_trigger(enduring_return_effect)
+};
+
+fn draw_one_effect() -> EffectOp {
+    EffectOp::DrawCards {
+        player: PlayerRef::Controller,
+        count: 1,
+    }
+}
+
+/// Flash. Whenever a creature you control deals combat damage to a player,
+/// draw a card. Enduring.
+const ENDURING_CURIOSITY_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::ControlledCreatureDealsCombatDamageToPlayer,
+        ..etb_trigger(draw_one_effect)
+    },
+    ENDURING_RETURN_TRIGGER,
+];
+
+/// Lifelink. Whenever one or more other creatures you control with power 2
+/// or less enter, draw a card (once each turn). Enduring.
+const ENDURING_INNOCENCE_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::OtherControlledCreatureWithPowerAtMostEntersOncePerTurn(2),
+        ..etb_trigger(draw_one_effect)
+    },
+    ENDURING_RETURN_TRIGGER,
 ];
 
 fn chrome_host_seedshark_effect() -> EffectOp {
@@ -2428,6 +2488,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Cori-Steel Cutter" => &CORI_STEEL_CUTTER_TRIGGERS,
         "Graveyard Trespasser" => &GRAVEYARD_TRESPASSER_TRIGGERS,
         "Overlord of the Mistmoors" => &OVERLORD_OF_THE_MISTMOORS_TRIGGERS,
+        "Enduring Curiosity" => &ENDURING_CURIOSITY_TRIGGERS,
+        "Enduring Innocence" => &ENDURING_INNOCENCE_TRIGGERS,
         "Monk Token" => &MONASTERY_SWIFTSPEAR_TRIGGERS,
         _ => &[],
     }
@@ -3608,6 +3670,7 @@ fn per_turn_trigger_cap(condition: TriggerCondition) -> Option<u16> {
     match condition {
         TriggerCondition::ControllerAddedPlusOneCountersToSelf { max_per_turn } => max_per_turn,
         TriggerCondition::BecomesTargetOfControllerSpellOrAbilityFirstTimeEachTurn => Some(1),
+        TriggerCondition::OtherControlledCreatureWithPowerAtMostEntersOncePerTurn(_) => Some(1),
         _ => None,
     }
 }
@@ -3899,6 +3962,43 @@ fn trigger_matches(
             TriggerCondition::BeginningControllerEndStepWithTimeCounter,
             CommittedEvent::BeginningEndStep { active_player, .. },
         ) => *active_player == controller && state.objects.get(source).v4.time_counters_v1 > 0,
+        (
+            TriggerCondition::DiesIfWasCreature,
+            CommittedEvent::ZoneChange {
+                object,
+                from: Zone::Battlefield,
+                to: Zone::Graveyard,
+                ..
+            },
+        ) => *object == source && source_was_creature_before_leaving(state, source),
+        (
+            TriggerCondition::ControlledCreatureDealsCombatDamageToPlayer,
+            CommittedEvent::CombatDamageToPlayer {
+                source: damage_source,
+                ..
+            },
+        ) => state.objects.try_get(*damage_source).is_some_and(|object| {
+            object.controller == controller
+                && crate::engine::object_has_type(
+                    state,
+                    *damage_source,
+                    crate::card_def::CardType::Creature,
+                )
+        }),
+        (
+            TriggerCondition::OtherControlledCreatureWithPowerAtMostEntersOncePerTurn(maximum),
+            event,
+        ) => battlefield_entry_object(event).is_some_and(|object| {
+            object != source
+                && state.objects.get(object).controller == controller
+                && state.objects.get(object).zone == Zone::Battlefield
+                && crate::engine::object_has_type(
+                    state,
+                    object,
+                    crate::card_def::CardType::Creature,
+                )
+                && crate::engine::effective_power(state, object) <= maximum
+        }),
         (
             TriggerCondition::BeginningOfControllerCombat,
             CommittedEvent::BeginningOfCombat { active_player },

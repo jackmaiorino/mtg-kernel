@@ -157,6 +157,8 @@ fn family_d_cards_are_fully_supported() {
         "Graveyard Trespasser",
         "Overlord of the Mistmoors",
         "White Insect Token",
+        "Enduring Curiosity",
+        "Enduring Innocence",
     ] {
         let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} missing"));
         assert_eq!(
@@ -1837,4 +1839,88 @@ fn impending_overlord_cannot_attack_or_block() {
     pass_until_blocks(&mut state, attacker, |blockers| {
         assert!(!blockers.contains(&overlord))
     });
+}
+
+#[test]
+fn enduring_innocence_returns_as_an_enchantment_and_draws_once_a_turn() {
+    use mtg_kernel::card_def::CardType;
+    let mut state = ready();
+    let innocence = put(
+        &mut state,
+        PlayerId::P0,
+        "Enduring Innocence",
+        Zone::Battlefield,
+    );
+    let hand = state.players[0].hand.len();
+    // Two small creatures enter: one card, once this turn.
+    for _ in 0..2 {
+        let frontliner = put(&mut state, PlayerId::P0, "Yotian Frontliner", Zone::Hand);
+        add_mana(&mut state, PlayerId::P0, &[], 1);
+        cast(&mut state, frontliner, &[]);
+        settled(&mut state);
+    }
+    assert_eq!(state.players[0].hand.len(), hand + 1);
+
+    // It dies as a creature and comes back as a noncreature enchantment
+    // that still draws.
+    burn(&mut state, PlayerId::P0, Target::Object(innocence));
+    assert_eq!(state.objects.get(innocence).zone, Zone::Battlefield);
+    assert!(state.objects.get(innocence).v4.enduring_enchantment_v1);
+    assert!(!engine::object_has_type(
+        &state,
+        innocence,
+        CardType::Creature
+    ));
+    assert!(engine::object_has_type(
+        &state,
+        innocence,
+        CardType::Enchantment
+    ));
+    let turn = state.turn;
+    pass_until(&mut state, |s| {
+        s.turn > turn && s.active_player == PlayerId::P0 && s.step == Step::Main1
+    });
+    let hand = state.players[0].hand.len();
+    let frontliner = put(&mut state, PlayerId::P0, "Yotian Frontliner", Zone::Hand);
+    add_mana(&mut state, PlayerId::P0, &[], 1);
+    cast(&mut state, frontliner, &[]);
+    settled(&mut state);
+    assert_eq!(state.players[0].hand.len(), hand + 1);
+
+    // As an enchantment it is no longer a creature target, and destroyed
+    // that way it stays in the graveyard.
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::zone_change(innocence, Zone::Graveyard),
+    );
+    settled(&mut state);
+    assert_eq!(state.objects.get(innocence).zone, Zone::Graveyard);
+}
+
+#[test]
+fn enduring_curiosity_draws_for_each_creature_connecting() {
+    let mut state = ready();
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Enduring Curiosity",
+        Zone::Battlefield,
+    );
+    let first = put(
+        &mut state,
+        PlayerId::P0,
+        "Monastery Swiftspear",
+        Zone::Battlefield,
+    );
+    let second = put(
+        &mut state,
+        PlayerId::P0,
+        "Monastery Swiftspear",
+        Zone::Battlefield,
+    );
+    let hand = state.players[0].hand.len();
+    attack_with(&mut state, vec![first, second]);
+    pass_until(&mut state, |s| s.step == Step::Main2);
+    assert_eq!(state.players[0].hand.len(), hand + 2);
+    assert_eq!(state.players[1].life, 18);
 }

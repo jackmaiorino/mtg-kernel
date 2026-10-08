@@ -525,6 +525,13 @@ pub enum CommittedEvent {
     BeginningOfCombat {
         active_player: PlayerId,
     },
+    /// A permanent that was a creature just before it left the battlefield,
+    /// logged for the Enduring cards' "if it was a creature". Only
+    /// `standard-magezero-fixtures` builds emit it.
+    WasCreatureBeforeLeavingBattlefield {
+        object: ObjectId,
+        zone_change_count: u32,
+    },
     /// Morbid is captured when this step begins, before any later death.
     BeginningEndStep {
         active_player: PlayerId,

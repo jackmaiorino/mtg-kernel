@@ -1085,6 +1085,73 @@
       ],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/InsectWhiteToken.java",
       "is_token": true
+    },
+    {
+      "name": "Enduring Curiosity",
+      "engine_capability": "full",
+      "mana_cost": "{2}{U}{U}",
+      "mana_value": 4,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Enchantment",
+        "Creature"
+      ],
+      "subtypes": [
+        "Cat",
+        "Glimmer"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "flash",
+        "combat_damage_draw",
+        "enduring"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EnduringCuriosity.java"
+    },
+    {
+      "name": "Enduring Innocence",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Enchantment",
+        "Creature"
+      ],
+      "subtypes": [
+        "Sheep",
+        "Glimmer"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-BW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "lifelink",
+        "creature_enters_draw",
+        "once_each_turn",
+        "enduring"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EnduringInnocence.java"
     }
   ]
 }

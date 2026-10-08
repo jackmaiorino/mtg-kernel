@@ -212,6 +212,10 @@ pub struct ObjectStateV4 {
     /// their end steps. Every zone change clears them.
     #[serde(default, skip_serializing_if = "u8_is_zero")]
     pub time_counters_v1: u8,
+    /// An Enduring card returned by its own dies trigger: "It's an
+    /// enchantment" (not a creature). Every zone change clears it.
+    #[serde(default, skip_serializing_if = "bool_is_false")]
+    pub enduring_enchantment_v1: bool,
 }
 
 impl Hash for ObjectStateV4 {
@@ -256,6 +260,9 @@ impl Hash for ObjectStateV4 {
         if self.time_counters_v1 != 0 {
             "time-counters/v1".hash(state);
             self.time_counters_v1.hash(state);
+        }
+        if self.enduring_enchantment_v1 {
+            "enduring-enchantment/v1".hash(state);
         }
     }
 }
@@ -312,6 +319,7 @@ impl ObjectStateV4 {
             convoked_creatures_v1: 0,
             unearthed_v1: false,
             time_counters_v1: 0,
+            enduring_enchantment_v1: false,
         }
     }
 

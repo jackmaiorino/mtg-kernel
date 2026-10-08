@@ -6233,6 +6233,7 @@ fn can_attack(state: &GameState, id: ObjectId) -> bool {
         && !has_effective_keyword(state, id, Keywords::DEFENDER)
         && (!obj.summoning_sick || has_effective_keyword(state, id, Keywords::HASTE))
         && obj.v4.time_counters_v1 == 0
+        && !obj.v4.enduring_enchantment_v1
 }
 
 fn eligible_attackers(state: &GameState) -> Vec<ObjectId> {
@@ -11271,12 +11272,7 @@ fn bestow_host_counter_bonus(state: &GameState, host: ObjectId) -> i32 {
 /// are always front-face objects because every zone change resets the face.
 pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> bool {
     #[cfg(feature = "standard-magezero-fixtures")]
-    if card_type == CardType::Creature
-        && state
-            .objects
-            .try_get(id)
-            .is_some_and(|object| object.v4.time_counters_v1 > 0)
-    {
+    if card_type == CardType::Creature && crate::standard_keywords_v1::not_a_creature(state, id) {
         return false;
     }
     if crate::continuous_characteristics_v1::creature_override(state, id).is_some() {

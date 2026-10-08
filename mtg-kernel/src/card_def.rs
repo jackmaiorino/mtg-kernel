@@ -272,6 +272,8 @@ pub enum Subtype {
     Bat,
     Rabbit,
     Avatar,
+    Glimmer,
+    Sheep,
 }
 
 impl Subtype {
@@ -387,6 +389,10 @@ impl Subtype {
         Subtype::Rabbit,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Avatar,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Glimmer,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Sheep,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -524,6 +530,8 @@ impl Subtype {
                 | Subtype::Bat
                 | Subtype::Rabbit
                 | Subtype::Avatar
+                | Subtype::Glimmer
+                | Subtype::Sheep
         )
     }
 }

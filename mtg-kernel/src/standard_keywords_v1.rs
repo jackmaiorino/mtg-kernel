@@ -132,9 +132,41 @@ pub(crate) fn targets_commit_crime(state: &GameState, item: &StackItem) -> bool 
 }
 
 /// Printed "This creature can't block."
+/// A creature card's permanent that currently isn't a creature: impending
+/// with time counters, or an Enduring card returned as an enchantment.
+pub(crate) fn not_a_creature(state: &GameState, id: ObjectId) -> bool {
+    state
+        .objects
+        .try_get(id)
+        .is_some_and(|object| object.v4.time_counters_v1 > 0 || object.v4.enduring_enchantment_v1)
+}
+
+fn is_enduring(card_def: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(card_def))
+        .is_some_and(|def| matches!(def.name, "Enduring Curiosity" | "Enduring Innocence"))
+}
+
+/// Whether `object` was a creature as it last left the battlefield (logged
+/// for Enduring cards' "if it was a creature").
+pub(crate) fn was_creature_before_leaving(
+    state: &GameState,
+    object: ObjectId,
+    zone_change_count: u32,
+) -> bool {
+    state.engine.event_history.iter().rev().any(|event| {
+        matches!(
+            event,
+            CommittedEvent::WasCreatureBeforeLeavingBattlefield {
+                object: logged,
+                zone_change_count: logged_count,
+            } if *logged == object && *logged_count == zone_change_count
+        )
+    })
+}
+
 pub(crate) fn cant_block(state: &GameState, id: ObjectId) -> bool {
-    // An impending permanent with time counters isn't a creature.
-    state.objects.get(id).v4.time_counters_v1 > 0
+    not_a_creature(state, id)
         || CARD_DEFS
             .get(usize::from(state.objects.get(id).card_def))
             .is_some_and(|def| def.name == "Forsaken Miner")
@@ -322,6 +354,18 @@ pub(crate) fn before_zone_change(state: &mut GameState, object: ObjectId, to: Zo
             object,
             zone_change_count: live.zone_change_count,
             power: crate::engine::effective_power(state, object),
+        };
+        state.engine.event_log.push(marker.clone());
+        state.engine.event_history.push(marker);
+    }
+    let live = state.objects.get(object);
+    if live.zone == Zone::Battlefield
+        && is_enduring(live.card_def)
+        && crate::engine::object_has_type(state, object, CardType::Creature)
+    {
+        let marker = CommittedEvent::WasCreatureBeforeLeavingBattlefield {
+            object,
+            zone_change_count: live.zone_change_count,
         };
         state.engine.event_log.push(marker.clone());
         state.engine.event_history.push(marker);

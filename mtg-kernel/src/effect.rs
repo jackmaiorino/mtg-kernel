@@ -1196,6 +1196,10 @@ pub enum EffectOp {
     /// Impending's end-step upkeep: remove a time counter from this exact
     /// source incarnation if it still has one.
     RemoveTimeCounterFromSource,
+    /// Enduring: return this exact graveyard incarnation to the battlefield
+    /// under its owner's control; it's an enchantment, not a creature
+    /// (`ObjectStateV4::enduring_enchantment_v1`).
+    ReturnSourceAsEnduringEnchantment,
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -11414,6 +11418,25 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     state,
                     event::ProposedEvent::life_gain(ctx.controller, creatures),
                 );
+            }
+        }
+        EffectOp::ReturnSourceAsEnduringEnchantment => {
+            let still_there = ctx.ability_source_contract.is_some_and(|contract| {
+                let object = state.objects.get(contract.source);
+                contract.source == ctx.source
+                    && object.zone == Zone::Graveyard
+                    && object.zone == contract.zone
+                    && object.zone_change_count == contract.zone_change_count
+            });
+            if !still_there {
+                return;
+            }
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change(ctx.source, Zone::Battlefield),
+            );
+            if state.objects.get(ctx.source).zone == Zone::Battlefield {
+                state.objects.get_mut(ctx.source).v4.enduring_enchantment_v1 = true;
             }
         }
         EffectOp::RemoveTimeCounterFromSource => {

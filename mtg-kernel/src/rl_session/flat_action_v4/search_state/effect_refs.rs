@@ -132,6 +132,7 @@ impl Scan<'_> {
             | ReturnSourceFromGraveyardUnearthed
             | ExileGraveyardTargetsDrainPerCreature { .. }
             | RemoveTimeCounterFromSource
+            | ReturnSourceAsEnduringEnchantment
             | BackupTarget { .. }
             | PutSourceOntoBattlefieldTappedAndAttacking
             | UntapUpToLands { .. }
@@ -620,6 +621,7 @@ pub(super) fn conflicts(
             | UpkeepBegan { .. }
             | CrimeCommitted { .. }
             | BeginningOfCombat { .. }
+            | WasCreatureBeforeLeavingBattlefield { .. }
             | PowerBeforeLeavingBattlefield { .. }
             | BeginningEndStep { .. } => false,
         }
