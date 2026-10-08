@@ -331,6 +331,10 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::None",
             "crate::standard_cards_v1::room_enters_program",
         ),
+        "Breach the Multiverse" => (
+            "TargetSpec::None",
+            "crate::standard_cards_v1::breach_the_multiverse",
+        ),
         _ => return None,
     };
     Some(Special::StandardProgram {

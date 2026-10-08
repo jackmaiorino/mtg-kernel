@@ -11793,6 +11793,10 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
             })
             .filter_map(|(_, equipment)| equipment.add_subtype.map(|subtype| subtype.stable_id())),
     );
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if crate::standard_cards_v1::is_phyrexian(state, id) {
+        subtype_ids.push(card_def::Subtype::Phyrexian.stable_id());
+    }
     subtype_ids.sort_unstable();
     subtype_ids.dedup();
     subtype_ids
@@ -11802,6 +11806,12 @@ pub fn has_effective_subtype(state: &GameState, id: ObjectId, subtype: card_def:
     let Some(object) = state.objects.try_get(id) else {
         return false;
     };
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if subtype.same_subtype_as(card_def::Subtype::Phyrexian)
+        && crate::standard_cards_v1::is_phyrexian(state, id)
+    {
+        return true;
+    }
     let override_effect = crate::continuous_characteristics_v1::creature_override(state, id);
     let base_has_subtype = override_effect.map_or_else(
         || subtype.is_in_subtype_ids(&object.v4.effective_subtype_ids),

@@ -140,6 +140,17 @@ and sacrifices it as one batch. Both answers carry guards naming the exact
 incarnations in each pile, and each prompt is checked against the
 definition's operation at its structural path.
 
+## Breach the Multiverse
+
+Each player mills ten cards, the controller first. Then, for each player in
+turn order whose graveyard holds a creature or planeswalker card, the
+controller chooses one of those cards (not targeted) through the resumable
+interpreter, and the chosen cards enter the battlefield under the
+controller's control together. Each creature the controller then controls
+becomes a Phyrexian in addition to its other types; the affected set is
+fixed at resolution (611.2c) and recorded per exact incarnation in
+`GameState::standard_v1`, and the effective subtype queries read it.
+
 ## Known limits
 
 The stack and battlefield use the Room card's combined mana value and

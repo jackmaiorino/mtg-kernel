@@ -911,6 +911,35 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/l/LilianaOfTheVeil.java",
       "starting_loyalty": 3
+    },
+    {
+      "name": "Breach the Multiverse",
+      "engine_capability": "full",
+      "mana_cost": "{5}{B}{B}",
+      "mana_value": 7,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "mill",
+        "reanimate_from_any_graveyard",
+        "type_change"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BreachTheMultiverse.java"
     }
   ]
 }

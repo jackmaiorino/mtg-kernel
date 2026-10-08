@@ -327,6 +327,16 @@ impl Scan<'_> {
         use EffectTargetSelectionPurpose::*;
         match p {
             OrderIntoGraveyard { .. } | OrderMilledIntoGraveyard => false,
+            StandardBreachChoiceV1 {
+                chosen,
+                original_candidates,
+                later,
+                ..
+            } => {
+                self.bs(chosen)
+                    || self.bs(original_candidates)
+                    || later.as_ref().is_some_and(|(_, cards)| self.bs(cards))
+            }
             AttachReturningAura {
                 aura,
                 original_candidates,
@@ -596,6 +606,11 @@ pub(super) fn conflicts(
                     remaining_frames,
                     ..
                 } => s.bs(pile) || s.fs(remaining_frames),
+                StandardBreachChosenV1 {
+                    cards,
+                    remaining_frames,
+                    ..
+                } => s.bs(cards) || s.fs(remaining_frames),
             };
             if guard_conflicts {
                 return true;

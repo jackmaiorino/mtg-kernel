@@ -1696,3 +1696,69 @@ fn liliana_minus_six_separates_piles_and_the_target_sacrifices_one() {
     assert_eq!(state.objects.get(forest).zone, Zone::Battlefield);
     assert_eq!(state.objects.get(mine).zone, Zone::Battlefield);
 }
+
+// ---- Breach the Multiverse ---------------------------------------------
+
+fn to_graveyard(state: &mut GameState, player: PlayerId, name: &str) -> ObjectId {
+    let card = put(state, player, name, Zone::Hand);
+    event::propose_and_commit(state, ProposedEvent::zone_change(card, Zone::Graveyard));
+    card
+}
+
+#[test]
+fn breach_the_multiverse_mills_and_takes_a_card_from_each_graveyard() {
+    let mut state = game();
+    let elves = to_graveyard(&mut state, P0, "Llanowar Elves");
+    let terror = to_graveyard(&mut state, P1, "Tolarian Terror");
+    let teferi = to_graveyard(&mut state, P1, "Teferi, Temporal Pilgrim");
+    let mine = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let breach = put(&mut state, P0, "Breach the Multiverse", Zone::Hand);
+    state.players[0].mana_pool[ManaColor::B.pool_index()] = 7;
+    let libraries = [
+        state.players[0].library.len(),
+        state.players[1].library.len(),
+    ];
+    next(&mut state);
+    act(&mut state, Action::CastSpell(breach));
+    let mut picks = Vec::new();
+    loop {
+        match next(&mut state) {
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => break,
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            Decision::ChooseEffectTargets {
+                player,
+                legal_targets,
+                ..
+            } => {
+                let pick = [elves, teferi]
+                    .into_iter()
+                    .map(Target::Object)
+                    .find(|target| legal_targets.contains(target));
+                if let Some(pick) = pick {
+                    assert_eq!(player, P0, "Breach's controller chooses");
+                    assert!(!legal_targets.contains(&Target::Object(mine)));
+                    picks.push(pick);
+                    act(&mut state, Action::ChooseEffectTarget(pick));
+                } else {
+                    // A milled batch's owner orders it into the graveyard.
+                    act(&mut state, Action::ChooseEffectTarget(legal_targets[0]));
+                }
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    assert_eq!(picks, vec![Target::Object(elves), Target::Object(teferi)]);
+    assert_eq!(state.players[0].library.len(), libraries[0] - 10);
+    assert_eq!(state.players[1].library.len(), libraries[1] - 10);
+    for card in [elves, teferi] {
+        assert_eq!(state.objects.get(card).zone, Zone::Battlefield);
+        assert_eq!(state.objects.get(card).controller, P0);
+    }
+    assert_eq!(loyalty(&state, teferi), Some(4));
+    assert_eq!(state.objects.get(terror).zone, Zone::Graveyard);
+    let phyrexian = mtg_kernel::card_def::Subtype::Phyrexian;
+    assert!(engine::has_effective_subtype(&state, elves, phyrexian));
+    assert!(engine::has_effective_subtype(&state, mine, phyrexian));
+    assert!(!engine::has_effective_subtype(&state, teferi, phyrexian));
+    assert!(engine::effective_subtype_ids(&state, mine).contains(&phyrexian.stable_id()));
+}

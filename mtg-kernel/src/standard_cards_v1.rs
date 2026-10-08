@@ -49,6 +49,10 @@ pub struct StandardStateV1 {
     /// discard lands: the ability, the player and the count.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     queued_discards: Vec<(crate::ids::StackItemId, PlayerId, u32)>,
+    /// Creatures that became Phyrexian in addition to their other types
+    /// (Breach the Multiverse), per exact battlefield incarnation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    phyrexians: Vec<(ObjectId, u32)>,
 }
 
 /// The doors of one Room permanent incarnation: bit 0 is the left door,
@@ -248,6 +252,17 @@ pub enum StandardOpV1 {
         player: PlayerId,
         pile: Vec<EffectObjectBinding>,
     },
+    /// Breach the Multiverse: for each player in turn order, the controller
+    /// chooses a creature or planeswalker card in that player's graveyard
+    /// (not targeted); the chosen cards then enter under the controller's
+    /// control together.
+    PutCreatureOrPlaneswalkerFromEachGraveyard,
+    /// The chosen cards, one per graveyard that had one: interpreter owned.
+    PutChosenCardsOntoBattlefield { cards: Vec<EffectObjectBinding> },
+    /// Each creature the controller controls becomes a Phyrexian in
+    /// addition to its other types, for as long as it stays on the
+    /// battlefield.
+    ControlledCreaturesBecomePhyrexian,
 }
 
 impl StandardOpV1 {
@@ -256,7 +271,9 @@ impl StandardOpV1 {
     pub(crate) fn contains_player_choice(&self) -> bool {
         matches!(
             self,
-            Self::PlayerChoosesControlledPermanent { .. } | Self::SeparatePilesThenSacrifice { .. }
+            Self::PlayerChoosesControlledPermanent { .. }
+                | Self::SeparatePilesThenSacrifice { .. }
+                | Self::PutCreatureOrPlaneswalkerFromEachGraveyard
         )
     }
 
@@ -268,6 +285,7 @@ impl StandardOpV1 {
                 pile_a.iter().chain(pile_b).copied().collect()
             }
             Self::SacrificePile { pile, .. } => pile.clone(),
+            Self::PutChosenCardsOntoBattlefield { cards } => cards.clone(),
             _ => Vec::new(),
         }
     }
@@ -279,6 +297,7 @@ impl StandardOpV1 {
             Self::ApplyChosenPermanent { .. }
                 | Self::ChooseSacrificePile { .. }
                 | Self::SacrificePile { .. }
+                | Self::PutChosenCardsOntoBattlefield { .. }
         )
     }
 }
@@ -590,11 +609,16 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
                     .push((stack_item_id, ctx.controller.opponent(), *count));
             }
         }
+        StandardOpV1::ControlledCreaturesBecomePhyrexian => {
+            become_phyrexian(state, ctx.controller);
+        }
         StandardOpV1::PlayerChoosesControlledPermanent { .. }
         | StandardOpV1::ApplyChosenPermanent { .. }
         | StandardOpV1::SeparatePilesThenSacrifice { .. }
         | StandardOpV1::ChooseSacrificePile { .. }
-        | StandardOpV1::SacrificePile { .. } => {
+        | StandardOpV1::SacrificePile { .. }
+        | StandardOpV1::PutCreatureOrPlaneswalkerFromEachGraveyard
+        | StandardOpV1::PutChosenCardsOntoBattlefield { .. } => {
             panic!("choice-bearing effects must use the resumable interpreter")
         }
     }
@@ -2031,6 +2055,117 @@ pub fn target_player_sacrifices_creature() -> EffectOp {
         player: PlayerRef::Target(0),
         filter: crate::effect::CreatureSacrificeFilter::Any,
     }
+}
+
+// ---- Breach the Multiverse ------------------------------------------------
+
+pub fn breach_the_multiverse() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::MillCards {
+            player: PlayerRef::Controller,
+            count: 10,
+        },
+        EffectOp::MillCards {
+            player: PlayerRef::Opponent,
+            count: 10,
+        },
+        EffectOp::StandardV1(StandardOpV1::PutCreatureOrPlaneswalkerFromEachGraveyard),
+        EffectOp::StandardV1(StandardOpV1::ControlledCreaturesBecomePhyrexian),
+    ])
+}
+
+/// Breach the Multiverse's choices in order: each player, starting with
+/// `controller`, whose graveyard holds a creature or planeswalker card,
+/// with those cards as exact incarnations in graveyard order.
+pub(crate) fn breach_stages(
+    state: &GameState,
+    controller: PlayerId,
+) -> Vec<(PlayerId, Vec<EffectObjectBinding>)> {
+    [controller, controller.opponent()]
+        .into_iter()
+        .map(|player| {
+            let cards = state.players[player.index()]
+                .graveyard
+                .iter()
+                .copied()
+                .filter(|&card| {
+                    let def = &CARD_DEFS[state.objects.get(card).card_def as usize];
+                    def.types.contains(&CardType::Creature)
+                        || def.types.contains(&CardType::Planeswalker)
+                })
+                .map(|card| EffectObjectBinding {
+                    object: card,
+                    expected_zone: Zone::Graveyard,
+                    expected_zone_change_count: state.objects.get(card).zone_change_count,
+                })
+                .collect::<Vec<_>>();
+            (player, cards)
+        })
+        .filter(|(_, cards)| !cards.is_empty())
+        .collect()
+}
+
+/// The chosen cards still in their graveyards enter the battlefield under
+/// `controller`'s control simultaneously.
+pub(crate) fn put_chosen_onto_battlefield(
+    state: &mut GameState,
+    controller: PlayerId,
+    cards: &[EffectObjectBinding],
+) {
+    let present = cards
+        .iter()
+        .filter(|binding| {
+            let live = state.objects.get(binding.object);
+            live.zone == Zone::Graveyard
+                && live.zone_change_count == binding.expected_zone_change_count
+        })
+        .map(|binding| {
+            let mut proposed = ProposedEvent::zone_change(binding.object, Zone::Battlefield);
+            if let ProposedEvent::ZoneChange(change) = &mut proposed {
+                change.battlefield_controller = Some(controller);
+            }
+            proposed
+        })
+        .collect::<Vec<_>>();
+    if !present.is_empty() {
+        event::propose_and_commit_batch(state, present);
+    }
+}
+
+fn become_phyrexian(state: &mut GameState, controller: PlayerId) {
+    let creatures = state.players[controller.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|&id| crate::engine::object_has_type(state, id, CardType::Creature))
+        .map(|id| (id, state.objects.get(id).zone_change_count))
+        .collect::<Vec<_>>();
+    if creatures.is_empty() {
+        return;
+    }
+    let standard = state.standard_v1.get_or_insert_with(Default::default);
+    for creature in creatures {
+        if !standard.phyrexians.contains(&creature) {
+            standard.phyrexians.push(creature);
+        }
+    }
+}
+
+/// Whether `object` is a battlefield creature that Breach the Multiverse
+/// made a Phyrexian.
+#[cfg(feature = "standard-magezero-fixtures")]
+pub(crate) fn is_phyrexian(state: &GameState, object: ObjectId) -> bool {
+    let Some(standard) = state.standard_v1.as_ref() else {
+        return false;
+    };
+    let Some(live) = state.objects.try_get(object) else {
+        return false;
+    };
+    live.zone == Zone::Battlefield
+        && standard
+            .phyrexians
+            .contains(&(object, live.zone_change_count))
+        && crate::engine::object_has_type(state, object, CardType::Creature)
 }
 
 pub fn liliana_piles() -> EffectOp {

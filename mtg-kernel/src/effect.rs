@@ -1628,6 +1628,18 @@ pub enum EffectTargetSelectionPurpose {
         original_candidates: Vec<EffectObjectBinding>,
         canonical_path: Vec<u16>,
     },
+    /// Breach the Multiverse: `chooser` picks one creature or planeswalker
+    /// card from `from`'s graveyard. `chosen` holds the earlier players'
+    /// picks and `later` the next player's stage, if any
+    /// (`StandardOpV1::PutCreatureOrPlaneswalkerFromEachGraveyard`).
+    StandardBreachChoiceV1 {
+        chooser: PlayerId,
+        from: PlayerId,
+        chosen: Vec<EffectObjectBinding>,
+        original_candidates: Vec<EffectObjectBinding>,
+        later: Option<(PlayerId, Vec<EffectObjectBinding>)>,
+        canonical_path: Vec<u16>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1910,6 +1922,13 @@ pub enum EffectAnsweredChoiceGuard {
     StandardPileChosenV1 {
         player: PlayerId,
         pile: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+        remaining_frames: Vec<EffectFrame>,
+    },
+    /// Answered Breach the Multiverse picks, one per graveyard stage, whose
+    /// move onto the battlefield has not run yet.
+    StandardBreachChosenV1 {
+        cards: Vec<EffectObjectBinding>,
         canonical_path: Vec<u16>,
         remaining_frames: Vec<EffectFrame>,
     },
@@ -2921,6 +2940,63 @@ fn complete_resumable_target_selection(
         })
         .collect::<Result<Vec<_>, String>>()?;
     match purpose {
+        EffectTargetSelectionPurpose::StandardBreachChoiceV1 {
+            chooser,
+            mut chosen,
+            original_candidates,
+            later,
+            canonical_path,
+            ..
+        } => {
+            let [pick] = objects.as_slice() else {
+                return Err("Breach choice must pick exactly one card".to_string());
+            };
+            if path != canonical_path || !original_candidates.contains(pick) {
+                return Err("Breach choice changed path or candidate".to_string());
+            }
+            chosen.push(*pick);
+            if let Some((from, candidates)) = later {
+                continuation.choice = Some(PendingEffectChoice::SelectTargets {
+                    player: chooser,
+                    path: canonical_path.clone(),
+                    selected: vec![],
+                    legal: candidates
+                        .iter()
+                        .copied()
+                        .map(|binding| EffectTargetCandidate {
+                            target: Target::Object(binding.object),
+                            expected_object: Some(binding),
+                        })
+                        .collect(),
+                    min_targets: 1,
+                    max_targets: 1,
+                    ordered: false,
+                    purpose: EffectTargetSelectionPurpose::StandardBreachChoiceV1 {
+                        chooser,
+                        from,
+                        chosen,
+                        original_candidates: candidates,
+                        later: None,
+                        canonical_path,
+                    },
+                });
+                return Ok(());
+            }
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::StandardBreachChosenV1 {
+                    cards: chosen.clone(),
+                    canonical_path: canonical_path.clone(),
+                    remaining_frames: continuation.frames.clone(),
+                });
+            continuation.frames.push(EffectFrame::Program {
+                op: EffectOp::StandardV1(
+                    crate::standard_cards_v1::StandardOpV1::PutChosenCardsOntoBattlefield {
+                        cards: chosen,
+                    },
+                ),
+                path: canonical_path,
+            });
+        }
         EffectTargetSelectionPurpose::StandardSeparatePilesV1 {
             player,
             original_candidates,
@@ -5250,6 +5326,7 @@ fn validate_answered_choice_guard(
                         EffectAnsweredChoiceGuard::StandardChosenPermanentV1 { .. }
                             | EffectAnsweredChoiceGuard::StandardPilesSeparatedV1 { .. }
                             | EffectAnsweredChoiceGuard::StandardPileChosenV1 { .. }
+                            | EffectAnsweredChoiceGuard::StandardBreachChosenV1 { .. }
                     )
                 ) {
                     return Err(
@@ -5575,6 +5652,28 @@ fn validate_answered_choice_guard(
             }
             validate_standard_piles(state, pending, *player, pile_a, pile_b, canonical_path)?;
         }
+        Some(EffectAnsweredChoiceGuard::StandardBreachChosenV1 {
+            cards,
+            canonical_path,
+            remaining_frames,
+        }) => {
+            let mut expected = remaining_frames.clone();
+            expected.push(EffectFrame::Program {
+                op: EffectOp::StandardV1(
+                    crate::standard_cards_v1::StandardOpV1::PutChosenCardsOntoBattlefield {
+                        cards: cards.clone(),
+                    },
+                ),
+                path: canonical_path.clone(),
+            });
+            if pending.choice.is_some() || pending.frames != expected {
+                return Err("answered Breach continuation changed".to_string());
+            }
+            if validate_standard_breach(state, pending, cards, canonical_path)?.len() != cards.len()
+            {
+                return Err("answered Breach picks skipped a graveyard".to_string());
+            }
+        }
         Some(EffectAnsweredChoiceGuard::StandardPileChosenV1 {
             player,
             pile,
@@ -5600,6 +5699,36 @@ fn validate_answered_choice_guard(
         }
     }
     Ok(())
+}
+
+/// Authenticates a Breach the Multiverse prompt or answer against the
+/// definition-owned operation at its structural path, and checks that the
+/// earlier picks are still the cards of their stages.
+fn validate_standard_breach(
+    state: &GameState,
+    pending: &EffectContinuation,
+    chosen: &[EffectObjectBinding],
+    path: &[u16],
+) -> Result<Vec<(PlayerId, Vec<EffectObjectBinding>)>, String> {
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    if !matches!(
+        effect_op_at_structural_path(&root, path),
+        Some(EffectOp::StandardV1(
+            crate::standard_cards_v1::StandardOpV1::PutCreatureOrPlaneswalkerFromEachGraveyard
+        ))
+    ) {
+        return Err("Breach choice lost its originating operation".to_string());
+    }
+    let stages = crate::standard_cards_v1::breach_stages(state, pending.ctx.controller);
+    if chosen.len() > stages.len()
+        || chosen
+            .iter()
+            .zip(&stages)
+            .any(|(pick, (_, cards))| !cards.contains(pick))
+    {
+        return Err("Breach picks no longer match their graveyards".to_string());
+    }
+    Ok(stages)
 }
 
 /// Authenticates a pile prompt or answer against the definition-owned
@@ -5727,6 +5856,40 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 validate_effect_target_candidate(state, candidate)?;
             }
             match purpose {
+                EffectTargetSelectionPurpose::StandardBreachChoiceV1 {
+                    chooser: breach_chooser,
+                    from,
+                    chosen,
+                    original_candidates,
+                    later,
+                    canonical_path,
+                } => {
+                    if chooser != breach_chooser
+                        || *breach_chooser != pending.ctx.controller
+                        || path != canonical_path
+                        || *min_targets != 1
+                        || *max_targets != 1
+                        || *ordered
+                        || !selected.is_empty()
+                    {
+                        return Err("Breach prompt has a noncanonical shape".to_string());
+                    }
+                    let stages = validate_standard_breach(state, pending, chosen, canonical_path)?;
+                    let expected_legal = original_candidates
+                        .iter()
+                        .copied()
+                        .map(|binding| EffectTargetCandidate {
+                            target: Target::Object(binding.object),
+                            expected_object: Some(binding),
+                        })
+                        .collect::<Vec<_>>();
+                    if stages.get(chosen.len()) != Some(&(*from, original_candidates.clone()))
+                        || stages.get(chosen.len() + 1) != later.as_ref()
+                        || *legal != expected_legal
+                    {
+                        return Err("Breach prompt candidates changed".to_string());
+                    }
+                }
                 EffectTargetSelectionPurpose::StandardSeparatePilesV1 {
                     separator,
                     player,
@@ -8547,6 +8710,63 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         return Ok(ResumableProgress::Suspended);
                     }
                 }
+            }
+            EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::PutCreatureOrPlaneswalkerFromEachGraveyard,
+            ) => {
+                let chooser = continuation.ctx.controller;
+                let mut stages =
+                    crate::standard_cards_v1::breach_stages(state, chooser).into_iter();
+                let Some((from, candidates)) = stages.next() else {
+                    continue;
+                };
+                continuation.choice = Some(PendingEffectChoice::SelectTargets {
+                    player: chooser,
+                    path: path.clone(),
+                    selected: vec![],
+                    legal: candidates
+                        .iter()
+                        .copied()
+                        .map(|binding| EffectTargetCandidate {
+                            target: Target::Object(binding.object),
+                            expected_object: Some(binding),
+                        })
+                        .collect(),
+                    min_targets: 1,
+                    max_targets: 1,
+                    ordered: false,
+                    purpose: EffectTargetSelectionPurpose::StandardBreachChoiceV1 {
+                        chooser,
+                        from,
+                        chosen: vec![],
+                        original_candidates: candidates,
+                        later: stages.next(),
+                        canonical_path: path,
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::PutChosenCardsOntoBattlefield { cards },
+            ) => {
+                let Some(EffectAnsweredChoiceGuard::StandardBreachChosenV1 {
+                    cards: expected_cards,
+                    canonical_path,
+                    remaining_frames,
+                }) = continuation.answered_choice_guard.as_ref()
+                else {
+                    return Err("Breach move lost its answered choices".to_string());
+                };
+                if cards != *expected_cards
+                    || path != *canonical_path
+                    || continuation.frames != *remaining_frames
+                {
+                    return Err("Breach choices changed".to_string());
+                }
+                continuation.answered_choice_guard = None;
+                let controller = continuation.ctx.controller;
+                crate::standard_cards_v1::put_chosen_onto_battlefield(state, controller, &cards);
             }
             EffectOp::StandardV1(
                 crate::standard_cards_v1::StandardOpV1::SeparatePilesThenSacrifice { player },

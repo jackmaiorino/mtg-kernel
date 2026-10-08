@@ -15,6 +15,7 @@ STANDARD = REPO_ROOT / "data/standard/magezero_v1"
 SUPPORTED_NONBASIC = {
     "Basilisk Collar",
     "Blue Sun's Twilight",
+    "Breach the Multiverse",
     "Burst Lightning",
     "Candy Trail",
     "Case of the Gateway Express",

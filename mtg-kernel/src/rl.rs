@@ -6711,6 +6711,9 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::StandardSeparatePilesV1 {
                                 ..
                             } => TargetSelectionPurposeV4::PermanentSelection,
+                            crate::effect::EffectTargetSelectionPurpose::StandardBreachChoiceV1 {
+                                ..
+                            } => TargetSelectionPurposeV4::CardSelection,
                         },
                     })
                 }
