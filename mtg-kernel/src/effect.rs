@@ -11356,12 +11356,12 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             let events = [PlayerId::P0, PlayerId::P1]
                 .into_iter()
                 .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
-                .filter_map(|id| {
-                    (crate::engine::object_has_type(state, id, CardType::Creature)
+                .filter(|&id| {
+                    crate::engine::object_has_type(state, id, CardType::Creature)
                         && !excluded_subtype
-                            .is_in_subtype_ids(&crate::engine::effective_subtype_ids(state, id)))
-                    .then(|| event::ProposedEvent::damage(ctx.source, Target::Object(id), *amount))
+                            .is_in_subtype_ids(&crate::engine::effective_subtype_ids(state, id))
                 })
+                .map(|id| event::ProposedEvent::damage(ctx.source, Target::Object(id), *amount))
                 .collect();
             event::propose_and_commit_batch(state, events);
         }
@@ -11719,10 +11719,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     .battlefield
                     .iter()
                     .copied()
-                    .filter_map(|id| {
-                        crate::engine::object_has_type(state, id, CardType::Creature).then(|| {
-                            event::ProposedEvent::damage(ctx.source, Target::Object(id), *amount)
-                        })
+                    .filter(|&id| crate::engine::object_has_type(state, id, CardType::Creature))
+                    .map(|id| {
+                        event::ProposedEvent::damage(ctx.source, Target::Object(id), *amount)
                     }),
             );
             event::propose_and_commit_batch(state, events);
