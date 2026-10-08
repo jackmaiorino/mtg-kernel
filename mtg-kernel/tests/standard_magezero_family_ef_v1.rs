@@ -462,6 +462,9 @@ fn cast_burst_at_opponent(state: &mut GameState) {
         match next(state) {
             Decision::ChooseTargets { .. } => act(state, Action::ChooseTarget(Target::Player(P1))),
             Decision::ChooseKicker { .. } => act(state, Action::ChooseKicker(false)),
+            Decision::OrderTriggers { pending, .. } => {
+                act(state, Action::OrderTriggers((0..pending.len()).collect()))
+            }
             Decision::CastSpellOrPass { .. } if state.stack.is_empty() => return,
             Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
             other => panic!("unexpected decision: {other:?}"),
@@ -1165,4 +1168,177 @@ fn case_of_the_gateway_express_stays_unsolved_after_two_attackers() {
 fn settle_case_trigger(state: &mut GameState, case: ObjectId) {
     settle(state);
     assert_eq!(state.objects.get(case).zone, Zone::Battlefield);
+}
+
+// ---- Classes -------------------------------------------------------------------
+
+/// Passes from the precombat main phase to the beginning of combat and
+/// returns the legal targets of the trigger waiting there.
+fn begin_combat_targets(state: &mut GameState) -> Vec<Target> {
+    loop {
+        match next(state) {
+            Decision::ChooseTargets { legal_targets, .. } if state.step == Step::BeginCombat => {
+                return legal_targets
+            }
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+}
+
+fn level_up(state: &mut GameState, class: ObjectId, ability: u8, color: ManaColor, mana: u8) {
+    state.players[0].mana_pool[color.pool_index()] = mana;
+    assert!(activatable(state).contains(&(class, ability)));
+    act(state, Action::ActivateAbility(class, ability));
+    settle(state);
+    state.players[0].mana_pool = Default::default();
+}
+
+#[test]
+fn innkeepers_talent_levels_in_order_and_grants_ward_to_countered_permanents() {
+    let mut state = game();
+    let class = put(&mut state, P0, "Innkeeper's Talent", Zone::Battlefield);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+
+    // Level 3 needs level 2 first (716.2a).
+    state.players[0].mana_pool[ManaColor::G.pool_index()] = 5;
+    let abilities = activatable(&mut state);
+    assert!(abilities.contains(&(class, 0)));
+    assert!(!abilities.contains(&(class, 1)));
+    level_up(&mut state, class, 0, ManaColor::G, 1);
+    assert!(!activatable(&mut state).contains(&(class, 0)), "already level 2");
+
+    // Level 1: a +1/+1 counter on target creature you control at the
+    // beginning of combat on your turn.
+    assert_eq!(begin_combat_targets(&mut state), vec![Target::Object(elves)]);
+    act(&mut state, Action::ChooseTarget(Target::Object(elves)));
+    settle(&mut state);
+    assert_eq!(state.objects.get(elves).counters.plus1_plus1, 1);
+
+    // Level 2: it has a counter, so it has ward {1}.
+    state.active_player = P1;
+    state.priority_player = P1;
+    let burst = put(&mut state, P1, "Burst Lightning", Zone::Hand);
+    state.players[1].mana_pool[ManaColor::R.pool_index()] = 1;
+    next(&mut state);
+    act(&mut state, Action::CastSpell(burst));
+    loop {
+        match next(&mut state) {
+            Decision::ChooseTargets { .. } => act(&mut state, Action::ChooseTarget(Target::Object(elves))),
+            Decision::ChooseKicker { .. } => act(&mut state, Action::ChooseKicker(false)),
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => break,
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    assert_eq!(state.objects.get(elves).damage, 0, "countered by ward");
+}
+
+#[test]
+fn innkeepers_talent_level_three_doubles_your_counters() {
+    let mut state = game();
+    let class = put(&mut state, P0, "Innkeeper's Talent", Zone::Battlefield);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    level_up(&mut state, class, 0, ManaColor::G, 1);
+    level_up(&mut state, class, 1, ManaColor::G, 4);
+    assert!(activatable(&mut state).iter().all(|&(source, _)| source != class));
+    begin_combat_targets(&mut state);
+    act(&mut state, Action::ChooseTarget(Target::Object(elves)));
+    settle(&mut state);
+    assert_eq!(state.objects.get(elves).counters.plus1_plus1, 2);
+}
+
+#[test]
+fn stormchasers_talent_makes_otters_and_regrows_a_spell_at_level_two() {
+    let mut state = game();
+    let class = put(&mut state, P0, "Stormchaser's Talent", Zone::Hand);
+    state.players[0].mana_pool[ManaColor::U.pool_index()] = 1;
+    next(&mut state);
+    act(&mut state, Action::CastSpell(class));
+    settle(&mut state);
+    let otters = battlefield_named(&state, P0, "Otter");
+    assert_eq!(otters.len(), 1);
+    let otter = otters[0];
+    assert_eq!(engine::effective_power(&state, otter), 1);
+
+    let burst = put(&mut state, P0, "Burst Lightning", Zone::Hand);
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(burst, Zone::Graveyard));
+    state.players[0].mana_pool[ManaColor::U.pool_index()] = 4;
+    act(&mut state, Action::ActivateAbility(class, 0));
+    drive(&mut state, &[Target::Object(burst)]);
+    assert_eq!(state.objects.get(burst).zone, Zone::Hand);
+
+    // Level 3: casting an instant makes an Otter, and the first Otter's
+    // prowess triggers.
+    level_up(&mut state, class, 1, ManaColor::U, 6);
+    cast_burst_at_opponent(&mut state);
+    assert_eq!(battlefield_named(&state, P0, "Otter").len(), 2);
+    assert_eq!(engine::effective_power(&state, otter), 2);
+    assert_eq!(state.players[1].life, 18);
+}
+
+// ---- Case of the Uneaten Feast -----------------------------------------------
+
+/// Passes priority through the rest of this turn and the opponent's turn to
+/// P0's next precombat main phase.
+fn to_next_own_main(state: &mut GameState) {
+    let start = state.turn;
+    loop {
+        let decision = next(state);
+        if state.turn > start && state.active_player == P0 && state.step == Step::Main1 {
+            return;
+        }
+        match decision {
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
+            Decision::DeclareAttackers { .. } => act(state, Action::DeclareAttackers(Vec::new())),
+            Decision::DeclareBlockers { .. } => act(state, Action::DeclareBlockers(Vec::new())),
+            Decision::OrderTriggers { pending, .. } => {
+                act(state, Action::OrderTriggers((0..pending.len()).collect()))
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn case_of_the_uneaten_feast_gains_life_solves_and_lets_creatures_be_cast_from_the_graveyard() {
+    let mut state = game();
+    let case = put(&mut state, P0, "Case of the Uneaten Feast", Zone::Battlefield);
+    for _ in 0..4 {
+        put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    }
+    settle(&mut state);
+    assert_eq!(state.players[0].life, 24);
+    assert!(!activatable(&mut state).contains(&(case, 0)), "unsolved");
+    // Four life is not enough to solve it.
+    to_end_step(&mut state);
+    to_next_own_main(&mut state);
+    assert!(!activatable(&mut state).contains(&(case, 0)));
+
+    for _ in 0..5 {
+        put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    }
+    settle(&mut state);
+    to_end_step(&mut state);
+    to_next_own_main(&mut state);
+    assert!(activatable(&mut state).contains(&(case, 0)), "solved");
+
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Hand);
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(elves, Zone::Graveyard));
+    state.players[0].mana_pool[ManaColor::G.pool_index()] = 1;
+    match next(&mut state) {
+        Decision::CastSpellOrPass { castable_spells, .. } => assert!(!castable_spells.contains(&elves)),
+        other => panic!("unexpected decision: {other:?}"),
+    }
+    act(&mut state, Action::ActivateAbility(case, 0));
+    settle(&mut state);
+    assert_eq!(state.objects.get(case).zone, Zone::Graveyard);
+    match next(&mut state) {
+        Decision::CastSpellOrPass { castable_spells, .. } => assert!(castable_spells.contains(&elves)),
+        other => panic!("unexpected decision: {other:?}"),
+    }
+    act(&mut state, Action::CastSpell(elves));
+    settle(&mut state);
+    assert_eq!(state.objects.get(elves).zone, Zone::Battlefield);
 }

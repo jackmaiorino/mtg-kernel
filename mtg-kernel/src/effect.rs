@@ -11726,6 +11726,20 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ));
                 return;
             }
+            #[cfg(feature = "standard-magezero-fixtures")]
+            let scaled = {
+                let scale = |count: i16| {
+                    i16::try_from(crate::standard_cards_v1::scale_counters(
+                        state,
+                        ctx.controller,
+                        i32::from(count),
+                    ))
+                    .unwrap_or(i16::MAX)
+                };
+                (scale(*plus1_plus1), scale(*lifelink), scale(*stun))
+            };
+            #[cfg(feature = "standard-magezero-fixtures")]
+            let (plus1_plus1, lifelink, stun) = (&scaled.0, &scaled.1, &scaled.2);
             let next = (
                 live.counters
                     .plus1_plus1

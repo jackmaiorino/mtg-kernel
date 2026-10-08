@@ -749,6 +749,133 @@
         "anthem"
       ],
       "java_file": "Mage.Sets/src/mage/cards/c/CaseOfTheGatewayExpress.java"
+    },
+    {
+      "name": "Innkeeper's Talent",
+      "engine_capability": "full",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [
+        "Class"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-RG.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "class",
+        "beginning_of_combat_trigger",
+        "counters",
+        "ward",
+        "counter_doubling"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/i/InnkeepersTalent.java"
+    },
+    {
+      "name": "Stormchaser's Talent",
+      "engine_capability": "full",
+      "mana_cost": "{U}",
+      "mana_value": 1,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [
+        "Class"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-UR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "class",
+        "etb_trigger",
+        "token",
+        "regrowth",
+        "cast_trigger"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/StormchasersTalent.java"
+    },
+    {
+      "name": "Otter Prowess Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "U",
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Otter"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "prowess"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/OtterProwessToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Case of the Uneaten Feast",
+      "engine_capability": "full",
+      "mana_cost": "{W}",
+      "mana_value": 1,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [
+        "Case"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard16-BW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "case",
+        "creature_enters_trigger",
+        "lifegain",
+        "cast_from_graveyard"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CaseOfTheUneatenFeast.java"
     }
   ]
 }

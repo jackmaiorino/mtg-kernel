@@ -64,11 +64,12 @@ in `GameState::standard_v1` per exact incarnation.
 Seam Rip, Dusk Rose Reliquary, Sheltered by Ghosts and Hardlight
 Containment reuse Journey to Nowhere's linked exile: an entering trigger
 exiles its target until the source leaves, and a leave trigger returns it.
-Their targets use `TargetSpec::StandardV1`, a one-object battlefield filter
-owned by the Standard module (opponent's nonland permanent with mana value
-at most 2, opponent's nonland permanent, opponent's artifact or creature,
-artifact you control); its stable id 44 follows the Standard lands' 42
-and 43. Sheltered by Ghosts ("enchant creature you control") and Hardlight
+Their targets use `TargetSpec::StandardV1`, a one-object filter owned by
+the Standard module (opponent's nonland permanent with mana value at most
+2, opponent's nonland permanent, opponent's artifact or creature, artifact
+you control, and later an instant or sorcery card in your graveyard); its
+stable id 55 follows the ids 42 to 54 that the FDN and other Standard
+batches claim. Sheltered by Ghosts ("enchant creature you control") and Hardlight
 Containment ("enchant artifact you control") enter attached to their
 target; their enchant restriction, control included, is checked as a
 state-based action (704.5m). Sheltered by Ghosts' +1/+0 and lifelink use
@@ -100,6 +101,33 @@ creatures attacked this turn and it is unsolved, it becomes solved (719.3,
 is kept per exact incarnation, so a Case that leaves and returns is
 unsolved.
 
+## Classes
+
+Innkeeper's Talent and Stormchaser's Talent enter at level 1 (716.3).
+Their level-up abilities are ordinary sorcery-speed activated abilities
+that use the stack and can be activated only at the level before them
+(716.2a); the level lives in `GameState::standard_v1` per exact
+incarnation, and each gain commits `ClassLevelGainedV1` for "when this
+Class becomes level N". The beginning of combat step commits
+`BeginningCombatV1` under the Standard feature for "at the beginning of
+combat on your turn". Innkeeper's Talent level 2 gives each permanent you
+control with a counter on it ward {1} through the existing ward trigger,
+and level 3 doubles the +1/+1, lifelink and stun counters you put on
+permanents, once per such Class (616.1). Stormchaser's Talent makes a 1/1
+Otter with prowess on entry, returns an instant or sorcery card from your
+graveyard at level 2, and makes an Otter whenever you cast an instant or
+sorcery at level 3. Prowess is a trigger on the token, as in the keyword
+batch.
+
+## Case of the Uneaten Feast
+
+Whenever a creature you control enters, you gain 1 life. It is solved at
+your end step if you gained 5 or more life that turn. Once solved, you may
+sacrifice it: each creature card then in your graveyard may be cast from
+there this turn. The grant names each card's exact graveyard incarnation
+and turn, and such a cast uses the appended `GraveyardPermissionV1` cast
+route, paying the card's normal costs.
+
 ## Known limits
 
 The stack and battlefield use the Room card's combined mana value and
@@ -107,7 +135,8 @@ name rather than the unlocked halves'. Sacrifice bindings, Bargain and
 collect evidence fail closed on a back face. The legend rule counts
 Temple of Power as legendary. Ninjutsu attackers attack the player. The
 attack count adds each declaration, so a creature attacking in two combats
-in one turn counts twice.
+in one turn counts twice. Innkeeper's Talent does not double loyalty,
+lore or poison counters; no other card in its deck puts them.
 
 ## Catalog identity
 

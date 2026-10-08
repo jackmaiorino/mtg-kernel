@@ -8486,6 +8486,8 @@ fn subtype_variant(t: &str) -> &'static str {
         "Bat" => "Subtype::Bat",
         "Construct" => "Subtype::Construct",
         "Case" => "Subtype::Case",
+        "Class" => "Subtype::Class",
+        "Otter" => "Subtype::Otter",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

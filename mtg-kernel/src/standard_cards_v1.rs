@@ -37,6 +37,14 @@ pub struct StandardStateV1 {
     /// Solved Case permanents, per exact battlefield incarnation (719.3).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     solved_cases: Vec<(ObjectId, u32)>,
+    /// Class levels above 1, per exact battlefield incarnation (716.2).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    class_levels: Vec<(ObjectId, u32, u8)>,
+    /// "You may cast this card from your graveyard" grants: card, its
+    /// graveyard incarnation, the player who may cast it, and the turn the
+    /// grant ends with.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    graveyard_casts: Vec<(ObjectId, u32, PlayerId, u32)>,
 }
 
 /// The doors of one Room permanent incarnation: bit 0 is the left door,
@@ -62,6 +70,44 @@ pub enum StandardTargetV1 {
     OpponentArtifactOrCreature,
     /// An artifact the targeting controller controls.
     ControlledArtifact,
+    /// An instant or sorcery card in the targeting controller's graveyard.
+    InstantOrSorceryCardInOwnGraveyard,
+}
+
+impl StandardTargetV1 {
+    fn in_graveyard(self) -> bool {
+        matches!(self, Self::InstantOrSorceryCardInOwnGraveyard)
+    }
+}
+
+/// The zone a `TargetSpec::StandardV1` target is chosen in.
+pub(crate) fn target_zone(target: StandardTargetV1) -> Zone {
+    if target.in_graveyard() {
+        Zone::Graveyard
+    } else {
+        Zone::Battlefield
+    }
+}
+
+/// The legal choices for `target`, in battlefield or graveyard order.
+pub(crate) fn legal_targets(
+    target: StandardTargetV1,
+    controller: PlayerId,
+    state: &GameState,
+) -> Vec<Target> {
+    let candidates: Vec<ObjectId> = if target.in_graveyard() {
+        state.players[controller.index()].graveyard.clone()
+    } else {
+        [PlayerId::P0, PlayerId::P1]
+            .iter()
+            .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
+            .collect()
+    };
+    candidates
+        .into_iter()
+        .filter(|&id| target_matches(target, controller, id, state))
+        .map(Target::Object)
+        .collect()
 }
 
 /// Whether `object` satisfies `target` for `controller`.
@@ -74,6 +120,13 @@ pub(crate) fn target_matches(
     let Some(live) = state.objects.try_get(object) else {
         return false;
     };
+    if target.in_graveyard() {
+        let def = &CARD_DEFS[live.card_def as usize];
+        return live.zone == Zone::Graveyard
+            && live.owner == controller
+            && !live.v4.is_token
+            && (def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery));
+    }
     if live.zone != Zone::Battlefield {
         return false;
     }
@@ -93,6 +146,7 @@ pub(crate) fn target_matches(
         StandardTargetV1::ControlledArtifact => {
             live.controller == controller && has(CardType::Artifact)
         }
+        StandardTargetV1::InstantOrSorceryCardInOwnGraveyard => false,
     }
 }
 
@@ -163,6 +217,12 @@ pub enum StandardOpV1 {
     /// A Case's "to solve" end-step ability: the source becomes solved if
     /// it is still the same unsolved incarnation and its condition holds.
     SolveSourceCase,
+    /// A Class's level-up ability resolves: the source gains `level` if it
+    /// is still the same incarnation at the level before it (716.2a).
+    GainClassLevel { level: u8 },
+    /// Case of the Uneaten Feast: creature cards now in your graveyard gain
+    /// "You may cast this card from your graveyard" until end of turn.
+    GraveyardCreaturesCastableThisTurn,
 }
 
 impl StandardOpV1 {
@@ -315,6 +375,28 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
             if !damage.is_empty() {
                 event::propose_and_commit_batch(state, damage);
             }
+        }
+        StandardOpV1::GainClassLevel { level } => {
+            if source_incarnation_live(ctx, state)
+                && class_level(state, ctx.source).checked_add(1) == Some(*level)
+            {
+                set_class_level(state, ctx.source, *level);
+            }
+        }
+        StandardOpV1::GraveyardCreaturesCastableThisTurn => {
+            let turn = state.turn;
+            let grants = state.players[ctx.controller.index()]
+                .graveyard
+                .iter()
+                .copied()
+                .filter(|&id| {
+                    CARD_DEFS[state.objects.get(id).card_def as usize].has_type(CardType::Creature)
+                })
+                .map(|id| (id, state.objects.get(id).zone_change_count, ctx.controller, turn))
+                .collect::<Vec<_>>();
+            let standard = state.standard_v1.get_or_insert_with(Default::default);
+            standard.graveyard_casts.retain(|grant| grant.3 == turn);
+            standard.graveyard_casts.extend(grants);
         }
         StandardOpV1::SolveSourceCase => {
             if source_incarnation_live(ctx, state)
@@ -639,6 +721,13 @@ pub enum StandardTriggerV1 {
     /// A Case's "to solve": at the beginning of your end step, if this Case
     /// is unsolved and its condition holds (719.4).
     ControllerEndStepSolveCase,
+    /// "At the beginning of combat on your turn."
+    ControllerBeginningOfCombat,
+    /// "When this Class becomes level N" (716.2c).
+    ClassBecomesLevel { level: u8 },
+    /// "Whenever you cast an instant or sorcery spell", printed at a Class
+    /// level, so it works only from that level on.
+    YouCastInstantOrSorceryAtClassLevel { level: u8 },
 }
 
 const POLUKRANOS_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
@@ -691,6 +780,34 @@ pub(crate) fn trigger_matches(
     state: &GameState,
 ) -> bool {
     match condition {
+        StandardTriggerV1::ControllerBeginningOfCombat => {
+            let live = state.objects.get(source);
+            matches!(
+                events[index],
+                CommittedEvent::BeginningCombatV1 { active_player }
+                    if active_player == live.controller
+            ) && live.zone == Zone::Battlefield
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+        }
+        StandardTriggerV1::ClassBecomesLevel { level } => matches!(
+            events[index],
+            CommittedEvent::ClassLevelGainedV1 { object, zone_change_count, level: gained }
+                if object == source
+                    && gained == level
+                    && zone_change_count == state.objects.get(source).zone_change_count
+        ),
+        StandardTriggerV1::YouCastInstantOrSorceryAtClassLevel { level } => {
+            let CommittedEvent::SpellCast { spell, controller } = events[index] else {
+                return false;
+            };
+            let live = state.objects.get(source);
+            let def = &CARD_DEFS[state.objects.get(spell).card_def as usize];
+            controller == live.controller
+                && live.zone == Zone::Battlefield
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+                && class_level(state, source) >= level
+                && (def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery))
+        }
         StandardTriggerV1::ControllerEndStepIfLifeChanged { require_lost } => {
             let live = state.objects.get(source);
             controller_end_step(events, index, source, state)
@@ -880,6 +997,14 @@ pub(crate) fn activation_allowed(
         return u8::try_from(ability_index)
             .is_ok_and(|door| door < 2 && !door_unlocked(state, source, door));
     }
+    if def.name == CASE_OF_THE_UNEATEN_FEAST {
+        // "Solved -- Sacrifice this Case: ..."
+        return case_solved(state, source);
+    }
+    if is_class(def.name) {
+        // Level N+1 can be gained only at level N (716.2a).
+        return usize::from(class_level(state, source)) == ability_index + 1;
+    }
     if def.transform_face.is_none() {
         return true;
     }
@@ -914,6 +1039,10 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         LUNAR_CONVOCATION => &LUNAR_CONVOCATION_TRIGGERS,
         SIMULACRUM_SYNTHESIZER => &SIMULACRUM_SYNTHESIZER_TRIGGERS,
         CASE_OF_THE_GATEWAY_EXPRESS => &GATEWAY_EXPRESS_TRIGGERS,
+        CASE_OF_THE_UNEATEN_FEAST => &UNEATEN_FEAST_TRIGGERS,
+        INNKEEPERS_TALENT => &INNKEEPERS_TALENT_TRIGGERS,
+        STORMCHASERS_TALENT => &STORMCHASERS_TALENT_TRIGGERS,
+        "Otter Prowess Token" => &PROWESS_TRIGGERS,
         SEAM_RIP | DUSK_ROSE_RELIQUARY | SHELTERED_BY_GHOSTS | HARDLIGHT_CONTAINMENT => {
             &EXILE_UNTIL_LEAVES_TRIGGERS
         }
@@ -1174,6 +1303,14 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<crate
     if name == CASE_OF_THE_GATEWAY_EXPRESS && *effect == gateway_express_damage() {
         return Some(TargetSpec::OpponentControlledCreature);
     }
+    if name == INNKEEPERS_TALENT && *effect == innkeeper_counter() {
+        return Some(TargetSpec::ControlledCreature);
+    }
+    if name == STORMCHASERS_TALENT && *effect == stormchaser_regrowth() {
+        return Some(TargetSpec::StandardV1(
+            StandardTargetV1::InstantOrSorceryCardInOwnGraveyard,
+        ));
+    }
     if *effect != exile_target_until_source_leaves() {
         return None;
     }
@@ -1260,7 +1397,7 @@ pub(crate) fn granted_wards(state: &GameState, host: ObjectId) -> Vec<u8> {
         object: host,
         zone_change_count: host_live.zone_change_count,
     };
-    host_live
+    let mut wards = host_live
         .attachments
         .iter()
         .filter_map(|&attached| {
@@ -1270,7 +1407,14 @@ pub(crate) fn granted_wards(state: &GameState, host: ObjectId) -> Vec<u8> {
             }
             granted_ward_of(CARD_DEFS[aura.card_def as usize].name)
         })
-        .collect()
+        .collect::<Vec<_>>();
+    // Innkeeper's Talent level 2: "Permanents you control with counters on
+    // them have ward {1}."
+    if host_live.zone == Zone::Battlefield && has_counters(state, host) {
+        let classes = controlled_classes_at(state, host_live.controller, INNKEEPERS_TALENT, 2);
+        wards.extend((0..classes).map(|_| 1));
+    }
+    wards
 }
 
 fn granted_ward_of(name: &str) -> Option<u8> {
@@ -1309,6 +1453,15 @@ pub(crate) fn record_life(state: &mut GameState, player: PlayerId, gained: i32, 
     let index = player.index();
     gains[index] = gains[index].saturating_add(gained.max(0).unsigned_abs());
     losses[index] = losses[index].saturating_add(lost.max(0).unsigned_abs());
+}
+
+fn life_gained_this_turn(state: &GameState, player: PlayerId) -> u32 {
+    state
+        .standard_v1
+        .as_ref()
+        .and_then(|standard| standard.life_this_turn)
+        .filter(|(turn, _, _)| *turn == state.turn)
+        .map_or(0, |(_, gains, _)| gains[player.index()])
 }
 
 fn life_changed_this_turn(state: &GameState, player: PlayerId, require_lost: bool) -> bool {
@@ -1514,6 +1667,10 @@ fn case_condition_met(state: &GameState, object: ObjectId) -> bool {
     match CARD_DEFS[state.objects.get(object).card_def as usize].name {
         // "Three or more creatures attacked this turn."
         CASE_OF_THE_GATEWAY_EXPRESS => attackers_this_turn(state) >= 3,
+        // "You've gained 5 or more life this turn."
+        CASE_OF_THE_UNEATEN_FEAST => {
+            life_gained_this_turn(state, state.objects.get(object).controller) >= 5
+        }
         _ => false,
     }
 }
@@ -1532,6 +1689,213 @@ fn solve_source_case() -> EffectOp {
 /// +1/+0 (`controlled_boost`).
 const GATEWAY_EXPRESS_TRIGGERS: [TriggeredAbilityDef; 2] = [
     trigger(TriggerCondition::Etb, gateway_express_damage),
+    trigger(
+        TriggerCondition::StandardV1(StandardTriggerV1::ControllerEndStepSolveCase),
+        solve_source_case,
+    ),
+];
+
+// ---- Classes -----------------------------------------------------------------
+
+const INNKEEPERS_TALENT: &str = "Innkeeper's Talent";
+const STORMCHASERS_TALENT: &str = "Stormchaser's Talent";
+
+fn is_class(name: &str) -> bool {
+    matches!(name, INNKEEPERS_TALENT | STORMCHASERS_TALENT)
+}
+
+/// A Class permanent's level; a Class enters at level 1 (716.3).
+pub(crate) fn class_level(state: &GameState, object: ObjectId) -> u8 {
+    let zone_change_count = state.objects.get(object).zone_change_count;
+    state
+        .standard_v1
+        .as_ref()
+        .and_then(|standard| {
+            standard
+                .class_levels
+                .iter()
+                .find(|(id, count, _)| *id == object && *count == zone_change_count)
+        })
+        .map_or(1, |(_, _, level)| *level)
+}
+
+fn set_class_level(state: &mut GameState, object: ObjectId, level: u8) {
+    let zone_change_count = state.objects.get(object).zone_change_count;
+    let live = |entry: &(ObjectId, u32, u8)| {
+        state
+            .objects
+            .try_get(entry.0)
+            .is_some_and(|live| live.zone == Zone::Battlefield && live.zone_change_count == entry.1)
+    };
+    let mut levels = state
+        .standard_v1
+        .as_ref()
+        .map(|standard| standard.class_levels.clone())
+        .unwrap_or_default();
+    levels.retain(|entry| live(entry) && entry.0 != object);
+    levels.push((object, zone_change_count, level));
+    state.standard_v1.get_or_insert_with(Default::default).class_levels = levels;
+    let committed = CommittedEvent::ClassLevelGainedV1 {
+        object,
+        zone_change_count,
+        level,
+    };
+    state.engine.event_log.push(committed.clone());
+    state.engine.event_history.push(committed);
+}
+
+pub fn gain_level_two() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::GainClassLevel { level: 2 })
+}
+
+pub fn gain_level_three() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::GainClassLevel { level: 3 })
+}
+
+/// Whether `player` controls a permanent showing a Class at `level` or
+/// higher with functioning abilities, counted once per such Class.
+fn controlled_classes_at(state: &GameState, player: PlayerId, name: &str, level: u8) -> u32 {
+    let count = state.players[player.index()]
+        .battlefield
+        .iter()
+        .filter(|&&id| {
+            CARD_DEFS[state.objects.get(id).card_def as usize].name == name
+                && class_level(state, id) >= level
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+        })
+        .count();
+    u32::try_from(count).unwrap_or(u32::MAX)
+}
+
+/// Innkeeper's Talent level 3: "If you would put one or more counters on a
+/// permanent or player, put twice that many of each of those kinds of
+/// counters on that permanent or player instead." Each such Class doubles
+/// again (616.1).
+#[cfg(feature = "standard-magezero-fixtures")]
+pub(crate) fn scale_counters(state: &GameState, player: PlayerId, count: i32) -> i32 {
+    if count <= 0 {
+        return count;
+    }
+    let doublings = controlled_classes_at(state, player, INNKEEPERS_TALENT, 3);
+    (0..doublings).fold(count, |count, _| count.saturating_mul(2))
+}
+
+/// Whether `object` has any counters on it.
+fn has_counters(state: &GameState, object: ObjectId) -> bool {
+    let live = state.objects.get(object);
+    let counters = &live.counters;
+    counters.plus1_plus1 > 0
+        || counters.minus1_minus1 > 0
+        || counters.minus0_minus1 > 0
+        || counters.stun > 0
+        || counters.lore > 0
+        || live.v4.lifelink_keyword_counters > 0
+        || crate::planeswalker_v1::loyalty(state, object).is_some_and(|loyalty| loyalty > 0)
+}
+
+fn innkeeper_counter() -> EffectOp {
+    EffectOp::AddCountersToTarget {
+        target_index: 0,
+        optional: false,
+        plus1_plus1: 1,
+        lifelink: 0,
+        stun: 0,
+    }
+}
+
+/// Level 1: "At the beginning of combat on your turn, put a +1/+1 counter
+/// on target creature you control." Level 2's ward is `granted_wards`;
+/// level 3's doubling is `scale_counters`.
+const INNKEEPERS_TALENT_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
+    TriggerCondition::StandardV1(StandardTriggerV1::ControllerBeginningOfCombat),
+    innkeeper_counter,
+)];
+
+fn otter_token() -> EffectOp {
+    EffectOp::CreateToken {
+        token_def: crate::card_def::card_id_by_name("Otter Prowess Token")
+            .expect("Otter Prowess Token in CARD_DEFS"),
+        controller: PlayerRef::Controller,
+    }
+}
+
+fn stormchaser_regrowth() -> EffectOp {
+    EffectOp::MoveObject {
+        object: crate::effect::ObjectRef::Target(0),
+        to_zone: Zone::Hand,
+    }
+}
+
+/// Level 1: an Otter on entry. Level 2: "When this Class becomes level 2,
+/// return target instant or sorcery card from your graveyard to your hand."
+/// Level 3: "Whenever you cast an instant or sorcery spell, create" an
+/// Otter.
+const STORMCHASERS_TALENT_TRIGGERS: [TriggeredAbilityDef; 3] = [
+    trigger(TriggerCondition::Etb, otter_token),
+    trigger(
+        TriggerCondition::StandardV1(StandardTriggerV1::ClassBecomesLevel { level: 2 }),
+        stormchaser_regrowth,
+    ),
+    trigger(
+        TriggerCondition::StandardV1(StandardTriggerV1::YouCastInstantOrSorceryAtClassLevel {
+            level: 3,
+        }),
+        otter_token,
+    ),
+];
+
+fn prowess_boost() -> EffectOp {
+    EffectOp::BindTemporaryBoostToTriggerSource {
+        power: 1,
+        toughness: 1,
+    }
+}
+
+/// Prowess (702.108): "Whenever you cast a noncreature spell, this creature
+/// gets +1/+1 until end of turn."
+const PROWESS_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [trigger(TriggerCondition::CastNoncreatureSpell, prowess_boost)];
+
+// ---- Case of the Uneaten Feast ----------------------------------------------
+
+const CASE_OF_THE_UNEATEN_FEAST: &str = "Case of the Uneaten Feast";
+
+/// Whether `holder` may cast `object` from its graveyard incarnation
+/// `zone_change_count` this turn.
+pub(crate) fn graveyard_cast_granted(
+    state: &GameState,
+    object: ObjectId,
+    holder: PlayerId,
+    zone_change_count: u32,
+) -> bool {
+    state.standard_v1.as_ref().is_some_and(|standard| {
+        standard
+            .graveyard_casts
+            .contains(&(object, zone_change_count, holder, state.turn))
+    })
+}
+
+fn gain_one_life() -> EffectOp {
+    EffectOp::GainLife {
+        player: PlayerRef::Controller,
+        amount: 1,
+    }
+}
+
+/// "Solved -- Sacrifice this Case: Creature cards in your graveyard gain
+/// 'You may cast this card from your graveyard' until end of turn." Usable
+/// only while solved (`activation_allowed`).
+pub fn uneaten_feast_grant() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::GraveyardCreaturesCastableThisTurn)
+}
+
+/// "Whenever a creature you control enters, you gain 1 life." To solve:
+/// you've gained 5 or more life this turn.
+const UNEATEN_FEAST_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    trigger(
+        TriggerCondition::OtherControlledCreatureEnters { subtype: None },
+        gain_one_life,
+    ),
     trigger(
         TriggerCondition::StandardV1(StandardTriggerV1::ControllerEndStepSolveCase),
         solve_source_case,

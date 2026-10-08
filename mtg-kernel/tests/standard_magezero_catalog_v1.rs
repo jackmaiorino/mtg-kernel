@@ -14,7 +14,7 @@ use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 
 /// Appended after the 192 Pauper definitions, in registry order.
-const STANDARD_APPENDED: [&str; 24] = [
+const STANDARD_APPENDED: [&str; 28] = [
     "Plains",
     "Burst Lightning",
     "Teferi, Temporal Pilgrim",
@@ -39,20 +39,26 @@ const STANDARD_APPENDED: [&str; 24] = [
     "Simulacrum Synthesizer",
     "Karn Construct Token",
     "Case of the Gateway Express",
+    "Innkeeper's Talent",
+    "Stormchaser's Talent",
+    "Otter Prowess Token",
+    "Case of the Uneaten Feast",
 ];
 
 /// Every distinct nonbasic card in the 16 decks that this build fully
 /// supports. Each Standard card batch extends this list.
-const SUPPORTED_NONBASIC: [&str; 22] = [
+const SUPPORTED_NONBASIC: [&str; 25] = [
     "Basilisk Collar",
     "Blue Sun's Twilight",
     "Burst Lightning",
     "Candy Trail",
     "Case of the Gateway Express",
+    "Case of the Uneaten Feast",
     "Cecil, Dark Knight",
     "Duress",
     "Dusk Rose Reliquary",
     "Hardlight Containment",
+    "Innkeeper's Talent",
     "Llanowar Elves",
     "Lunar Convocation",
     "Ojer Axonil, Deepest Might",
@@ -61,6 +67,7 @@ const SUPPORTED_NONBASIC: [&str; 22] = [
     "Sheltered by Ghosts",
     "Simulacrum Synthesizer",
     "Spell Pierce",
+    "Stormchaser's Talent",
     "Teferi, Temporal Pilgrim",
     "Tolarian Terror",
     "Unholy Annex // Ritual Chamber",
@@ -127,7 +134,7 @@ fn standard_registry_appends_to_the_pauper_prefix_without_fdn() {
 
 #[test]
 fn standard_catalog_identity_is_frozen() {
-    const EXPECTED_STANDARD_V1: u64 = 0x836f_ef7e_785e_8f0d;
+    const EXPECTED_STANDARD_V1: u64 = 0x01ad_44f6_dc8e_aca3;
     assert_eq!(
         KERNEL_CARDDB_HASH, EXPECTED_STANDARD_V1,
         "Standard catalog hash {KERNEL_CARDDB_HASH:#018x}"

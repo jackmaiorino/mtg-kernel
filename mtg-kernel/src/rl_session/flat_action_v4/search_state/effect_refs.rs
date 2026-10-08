@@ -595,7 +595,8 @@ pub(super) fn conflicts(
             PlusOneCountersAdded { object, .. }
             | PrintedAbilitiesRemovedBeforeZoneChange { object, .. }
             | LeftBattlefieldFaceV1 { object, .. }
-            | RoomDoorUnlockedV1 { object, .. } => s.raw(*object),
+            | RoomDoorUnlockedV1 { object, .. }
+            | ClassLevelGainedV1 { object, .. } => s.raw(*object),
             Draw { object, .. } => object.is_some_and(|id| s.raw(id)),
             SpellCast { spell, .. } => s.raw(*spell),
             Targeted { target, .. } => s.raw(*target),
@@ -613,7 +614,8 @@ pub(super) fn conflicts(
             | LifeGain { .. }
             | ManaAdded { .. }
             | UpkeepBegan { .. }
-            | BeginningEndStep { .. } => false,
+            | BeginningEndStep { .. }
+            | BeginningCombatV1 { .. } => false,
         }
     })
 }

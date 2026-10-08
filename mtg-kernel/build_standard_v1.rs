@@ -112,13 +112,46 @@ const CANDY_TRAIL: [ActivatedAbilityRecipe; 1] = [instant(
     Program("crate::standard_cards_v1::candy_trail_sacrifice"),
 )];
 
+const CASE_OF_THE_UNEATEN_FEAST: [ActivatedAbilityRecipe; 1] = [instant(
+    &[SacrificeSelf],
+    Program("crate::standard_cards_v1::uneaten_feast_grant"),
+)];
+
 const LUNAR_CONVOCATION: [ActivatedAbilityRecipe; 1] =
     [instant(&[ManaCost("{1}{B}"), PayLife(2)], DrawCards(1))];
 
+/// A Class's level-up abilities, level 2 then level 3, each at sorcery
+/// timing and only at the level before it (`standard_cards_v1::
+/// activation_allowed`).
+const fn level(cost: &'static [AbilityCostRecipe], program: &'static str) -> ActivatedAbilityRecipe {
+    ActivatedAbilityRecipe {
+        cost,
+        effect: Program(program),
+        activation_zone: "Battlefield",
+        sorcery_speed_only: true,
+        target_spec: "None",
+        activation_target_filter: "TargetSpecOnly",
+        max_activations_per_turn: None,
+    }
+}
+
+const INNKEEPERS_TALENT: [ActivatedAbilityRecipe; 2] = [
+    level(&[ManaCost("{G}")], "crate::standard_cards_v1::gain_level_two"),
+    level(&[ManaCost("{3}{G}")], "crate::standard_cards_v1::gain_level_three"),
+];
+
+const STORMCHASERS_TALENT: [ActivatedAbilityRecipe; 2] = [
+    level(&[ManaCost("{3}{U}")], "crate::standard_cards_v1::gain_level_two"),
+    level(&[ManaCost("{5}{U}")], "crate::standard_cards_v1::gain_level_three"),
+];
+
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
+        "Innkeeper's Talent" => &INNKEEPERS_TALENT,
+        "Stormchaser's Talent" => &STORMCHASERS_TALENT,
         "Candy Trail" => &CANDY_TRAIL,
         "Lunar Convocation" => &LUNAR_CONVOCATION,
+        "Case of the Uneaten Feast" => &CASE_OF_THE_UNEATEN_FEAST,
         "Basilisk Collar" => &BASILISK_COLLAR,
         "Unholy Annex // Ritual Chamber" => &UNHOLY_ANNEX,
         "Teferi, Temporal Pilgrim" => &TEFERI,
@@ -181,6 +214,16 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
             "static:controlled_creatures_plus_1_1;controlled_creature_enters:damage_each_opponent_1"
         }
         "Karn Construct Token" => "static:plus_1_1_per_controlled_artifact",
+        "Innkeeper's Talent" => {
+            "level1:controller_beginning_of_combat:plus_one_counter_on_target_controlled_creature;level2:static:countered_permanents_you_control_have_ward_1;level3:replacement:double_counters_you_put"
+        }
+        "Stormchaser's Talent" => {
+            "level1:etb:create_otter_prowess;level2:becomes_level_2:return_target_instant_or_sorcery_from_your_graveyard;level3:you_cast_instant_or_sorcery:create_otter_prowess"
+        }
+        "Otter Prowess Token" => "prowess",
+        "Case of the Uneaten Feast" => {
+            "controlled_creature_enters:gain_1;controller_end_step_solve:gained_5_life;solved_activated:creature_cards_in_graveyard_castable_this_turn"
+        }
         "Lunar Convocation" => {
             "controller_end_step_if_gained_life:each_opponent_loses_1;controller_end_step_if_gained_and_lost_life:create_bat_1_1_flying"
         }
@@ -218,6 +261,7 @@ pub(super) fn object_name_for(name: &str) -> Option<&'static str> {
         "Demon Flying Token" => Some("Demon"),
         "Bat Flying Token" => Some("Bat"),
         "Karn Construct Token" => Some("Construct"),
+        "Otter Prowess Token" => Some("Otter"),
         _ => None,
     }
 }

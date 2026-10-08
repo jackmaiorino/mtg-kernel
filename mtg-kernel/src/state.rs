@@ -616,6 +616,14 @@ pub enum SpellCastRouteV4 {
     /// `engine::PlayPermission`, and a card exiled by any other means never
     /// carries it.
     AdventureExile,
+    /// Casting a card from its owner's graveyard under a "you may cast this
+    /// card from your graveyard" grant held by the Standard catalog's card
+    /// module (Case of the Uneaten Feast), for the grant's exact graveyard
+    /// incarnation.
+    GraveyardPermissionV1 {
+        holder: PlayerId,
+        permission_zone_change_count: u32,
+    },
 }
 
 /// Incarnation-local cast provenance stored on the physical source object
@@ -869,7 +877,14 @@ pub fn stack_target_contract_is_structurally_valid(
     if contract.target() != target {
         return false;
     }
-    let shape_is_valid = matches!(
+    if let (TargetSpec::StandardV1(filter), StackTargetContractV4::Object { zone, .. }) =
+        (spec, &contract)
+    {
+        if target_index != 0 || *zone != crate::standard_cards_v1::target_zone(filter) {
+            return false;
+        }
+    }
+    let shape_is_valid = matches!(spec, TargetSpec::StandardV1(_)) || matches!(
         (spec, target_index, contract),
         (
             TargetSpec::AnyPlayer
@@ -908,8 +923,7 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::Land
                 | TargetSpec::OpponentArtifactOrEnchantmentPermanent
                 | TargetSpec::ArtifactOrEnchantmentPermanent
-                | TargetSpec::AttackingOrBlockingCreature
-                | TargetSpec::StandardV1(_),
+                | TargetSpec::AttackingOrBlockingCreature,
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Battlefield,

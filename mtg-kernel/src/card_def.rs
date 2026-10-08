@@ -271,6 +271,8 @@ pub enum Subtype {
     Bat,
     Construct,
     Case,
+    Class,
+    Otter,
 }
 
 impl Subtype {
@@ -380,6 +382,8 @@ impl Subtype {
         Subtype::Bat,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Construct,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Otter,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -661,7 +665,8 @@ pub enum TargetSpec {
     AttackingOrBlockingCreature,
     NonlandPermanentCardInOwnGraveyardManaValueAtMost(u16),
     /// A single-object target filter owned by the Standard catalog's card
-    /// module. Stable id 44 follows the Standard lands' 42 and 43.
+    /// module. Stable id 55 follows the ids 42-54 that the FDN and other
+    /// Standard batches claim.
     StandardV1(crate::standard_cards_v1::StandardTargetV1),
 }
 
@@ -713,7 +718,7 @@ impl TargetSpec {
             TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker => 39,
             TargetSpec::AttackingOrBlockingCreature => 40,
             TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_) => 41,
-            TargetSpec::StandardV1(_) => 44,
+            TargetSpec::StandardV1(_) => 55,
         }
     }
 }

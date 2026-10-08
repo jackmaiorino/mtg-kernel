@@ -529,6 +529,16 @@ pub enum CommittedEvent {
         zone_change_count: u32,
         door: u8,
     },
+    /// A Class permanent gained a level (716.2). Only the Standard catalog's
+    /// Classes record it.
+    ClassLevelGainedV1 {
+        object: ObjectId,
+        zone_change_count: u32,
+        level: u8,
+    },
+    /// The beginning of combat step began (507.1). Only the Standard
+    /// catalog records it, for "at the beginning of combat on your turn".
+    BeginningCombatV1 { active_player: PlayerId },
 }
 
 fn initialize_entry_counters(state: &mut GameState, object: ObjectId, kicked: bool) {
@@ -537,7 +547,12 @@ fn initialize_entry_counters(state: &mut GameState, object: ObjectId, kicked: bo
     if definition.is_executable() {
         if let Some(entry) = definition.enters_with_plus_one_counters {
             if !entry.if_kicked || kicked {
-                state.objects.get_mut(object).counters.plus1_plus1 = entry.count;
+                #[cfg(feature = "standard-magezero-fixtures")]
+                let entry_count =
+                    crate::standard_cards_v1::scale_counters(state, live.controller, entry.count);
+                #[cfg(not(feature = "standard-magezero-fixtures"))]
+                let entry_count = entry.count;
+                state.objects.get_mut(object).counters.plus1_plus1 = entry_count;
             }
         }
     }
@@ -573,6 +588,8 @@ pub(crate) fn add_plus_one_counters(
     if live.zone != Zone::Battlefield || count < 0 {
         return Err("invalid +1/+1 counter placement".to_string());
     }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    let count = crate::standard_cards_v1::scale_counters(state, player, count);
     let total = live
         .counters
         .plus1_plus1

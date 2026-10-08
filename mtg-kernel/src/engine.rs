@@ -1735,6 +1735,21 @@ fn validate_physical_spell_cast_origin(
                 && def.flashback.is_some()
                 && def.escape.is_none()
         }
+        SpellCastRouteV4::GraveyardPermissionV1 {
+            holder,
+            permission_zone_change_count,
+        } => {
+            origin.origin_zone == Zone::Graveyard
+                && source.owner == item.controller
+                && holder == item.controller
+                && matches!(cast_method, CastMethodV4::Normal | CastMethodV4::Alternative)
+                && crate::standard_cards_v1::graveyard_cast_granted(
+                    state,
+                    item.source,
+                    holder,
+                    permission_zone_change_count,
+                )
+        }
         SpellCastRouteV4::ExilePermission {
             holder,
             permission_zone_change_count,
@@ -2044,7 +2059,8 @@ fn storm_source_contract_is_structurally_valid(
         | SpellCastRouteV4::Plotted { .. }
         | SpellCastRouteV4::Madness
         | SpellCastRouteV4::GraveyardEscape
-        | SpellCastRouteV4::AdventureExile => false,
+        | SpellCastRouteV4::AdventureExile
+        | SpellCastRouteV4::GraveyardPermissionV1 { .. } => false,
     };
     definition.name == "Weather the Storm"
         && definition.is_executable()
@@ -2757,10 +2773,9 @@ fn legal_targets_for_controller_from_source(
                 .map(Target::Object)
                 .collect()
         }
-        TargetSpec::StandardV1(filter) => battlefield_objects(state)
-            .filter(|&id| crate::standard_cards_v1::target_matches(filter, controller, id, state))
-            .map(Target::Object)
-            .collect(),
+        TargetSpec::StandardV1(filter) => {
+            crate::standard_cards_v1::legal_targets(filter, controller, state)
+        }
         TargetSpec::AttackingOrBlockingCreature => battlefield_objects(state)
             .filter(|&id| {
                 object_has_type(state, id, CardType::Creature)
@@ -5380,6 +5395,25 @@ pub(crate) fn maximum_payable_x(cost: &Cost, player: PlayerId, state: &GameState
 /// the current object-id-only `Action::CastSpell` surface. A future card with
 /// both Flashback and Escape is deliberately omitted until the action schema
 /// can carry an explicit method choice.
+/// The graveyard incarnation a standing "you may cast this card from your
+/// graveyard" grant lets `holder` cast `id` from, if any.
+fn graveyard_permission_zone_change_count(
+    holder: PlayerId,
+    id: ObjectId,
+    state: &GameState,
+) -> Option<u32> {
+    let live = state.objects.get(id);
+    (live.zone == Zone::Graveyard
+        && live.owner == holder
+        && crate::standard_cards_v1::graveyard_cast_granted(
+            state,
+            id,
+            holder,
+            live.zone_change_count,
+        ))
+    .then_some(live.zone_change_count)
+}
+
 fn unambiguous_graveyard_cast_method(def: &card_def::CardDef) -> Option<CastMethodV4> {
     match (def.flashback.is_some(), def.escape.is_some()) {
         (true, false) => Some(CastMethodV4::Flashback),
@@ -5552,6 +5586,11 @@ fn castable_spells(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
         let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
         if unambiguous_graveyard_cast_method(def)
             .is_some_and(|method| is_castable_now(player, id, method, state))
+        {
+            out.push(id);
+        } else if unambiguous_graveyard_cast_method(def).is_none()
+            && graveyard_permission_zone_change_count(player, id, state).is_some()
+            && is_castable_now(player, id, CastMethodV4::Normal, state)
         {
             out.push(id);
         }
@@ -7507,7 +7546,22 @@ pub(crate) fn validate_pending_cast(
             // it is still readable here on the live post-move source.
             let has_adventure_exile_permission =
                 pending.origin_zone == Zone::Exile && source.v4.on_adventure;
+            let has_graveyard_permission = pending.origin_zone == Zone::Graveyard
+                && source.owner == pending.controller
+                && pending
+                    .source_contract
+                    .zone_change_count
+                    .checked_sub(1)
+                    .is_some_and(|generation| {
+                        crate::standard_cards_v1::graveyard_cast_granted(
+                            state,
+                            pending.spell,
+                            pending.controller,
+                            generation,
+                        )
+                    });
             if pending.origin_zone != Zone::Hand
+                && !has_graveyard_permission
                 && !(pending.origin_zone == Zone::Exile
                     && (has_prior_exile_permission() || has_adventure_exile_permission))
             {
@@ -10943,6 +10997,15 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
         }
         Step::BeginCombat => {
             state.engine.combat.reset_preserving_rules();
+            #[cfg(feature = "standard-magezero-fixtures")]
+            {
+                let marker = event::CommittedEvent::BeginningCombatV1 {
+                    active_player: state.active_player,
+                };
+                state.engine.event_log.push(marker.clone());
+                state.engine.event_history.push(marker);
+                collect_and_queue_triggers(state);
+            }
         }
         Step::CombatDamage => {
             if state.engine.combat.foundations_v1.is_some() {
@@ -14487,8 +14550,15 @@ fn begin_cast_ex(
         && state.objects.get(spell_id).owner == player
         && state.objects.get(spell_id).v4.on_adventure;
     let target_spec = def.target_spec;
+    let graveyard_permission = (forced_cast_method.is_none()
+        && origin_zone == Zone::Graveyard
+        && unambiguous_graveyard_cast_method(def).is_none())
+    .then(|| graveyard_permission_zone_change_count(player, spell_id, state))
+    .flatten();
     let cast_method = forced_cast_method.unwrap_or_else(|| {
-        if origin_zone == Zone::Graveyard {
+        if graveyard_permission.is_some() {
+            CastMethodV4::Normal
+        } else if origin_zone == Zone::Graveyard {
             unambiguous_graveyard_cast_method(def).expect(
                 "a graveyard CastSpell action was offered through exactly one supported method",
             )
@@ -14508,6 +14578,13 @@ fn begin_cast_ex(
         },
         CastMethodV4::Madness => SpellCastRouteV4::Madness,
         CastMethodV4::Normal if origin_zone == Zone::Hand => SpellCastRouteV4::Hand,
+        CastMethodV4::Normal if origin_zone == Zone::Graveyard => {
+            SpellCastRouteV4::GraveyardPermissionV1 {
+                holder: player,
+                permission_zone_change_count: graveyard_permission
+                    .expect("an ordinary graveyard cast was offered through an exact grant"),
+            }
+        }
         CastMethodV4::Normal if origin_zone == Zone::Exile && is_adventure_exile => {
             SpellCastRouteV4::AdventureExile
         }
