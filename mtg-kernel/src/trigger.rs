@@ -936,6 +936,41 @@ fn warp_exile_effect() -> EffectOp {
     EffectOp::BindWarpExileToTriggerSource
 }
 
+fn iridescent_vinelasher_offspring_effect() -> EffectOp {
+    let token_def = crate::card_def::card_id_by_name("Iridescent Vinelasher Offspring Token")
+        .expect("Iridescent Vinelasher Offspring Token in CARD_DEFS");
+    EffectOp::Conditional {
+        cond: EffectCond::WasKicked,
+        then: Box::new(EffectOp::CreateToken {
+            token_def,
+            controller: PlayerRef::Controller,
+        }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    }
+}
+
+fn iridescent_vinelasher_landfall_effect() -> EffectOp {
+    EffectOp::DealDamage {
+        target: TargetRef::Target(0),
+        amount: 1,
+    }
+}
+
+/// Offspring {2} (kicker's optional cost): when it enters, if the offspring
+/// cost was paid, create a 1/1 token copy of it. The copy is a separate
+/// 1/1 token definition with the same name, types and landfall ability.
+/// Landfall: 1 damage to target opponent.
+const IRIDESCENT_VINELASHER_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        intervening_if_kicked: true,
+        ..etb_trigger(iridescent_vinelasher_offspring_effect)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::ControlledLandEnters,
+        ..etb_trigger(iridescent_vinelasher_landfall_effect)
+    },
+];
+
 fn nova_hellkite_etb_effect() -> EffectOp {
     EffectOp::DealDamage {
         target: TargetRef::Target(0),
@@ -1815,6 +1850,9 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Delver of Secrets" => &DELVER_OF_SECRETS_TRIGGERS,
         "Emberheart Challenger" => &EMBERHEART_CHALLENGER_TRIGGERS,
         "Nova Hellkite" => &NOVA_HELLKITE_TRIGGERS,
+        "Iridescent Vinelasher" | "Iridescent Vinelasher Offspring Token" => {
+            &IRIDESCENT_VINELASHER_TRIGGERS
+        }
         _ => &[],
     }
 }
@@ -1842,6 +1880,24 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         }
         "Vitu-Ghazi Inspector" => TargetSpec::Creature,
         _ => TargetSpec::None,
+    }
+}
+
+/// Per-trigger target specs for Standard cards whose triggers do not all
+/// share one spec (`trigger_target_spec` is keyed by card name only).
+fn standard_trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
+    if !cfg!(feature = "standard-magezero-fixtures") {
+        return None;
+    }
+    match name {
+        "Iridescent Vinelasher" | "Iridescent Vinelasher Offspring Token" => {
+            Some(if *effect == iridescent_vinelasher_landfall_effect() {
+                TargetSpec::TargetOpponent
+            } else {
+                TargetSpec::None
+            })
+        }
+        _ => None,
     }
 }
 
@@ -1981,7 +2037,9 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
         );
     }
     Some(
-        if card.name == "Mesmeric Fiend" && *effect == mesmeric_fiend_exile_effect() {
+        if let Some(spec) = standard_trigger_target_spec(card.name, effect) {
+            spec
+        } else if card.name == "Mesmeric Fiend" && *effect == mesmeric_fiend_exile_effect() {
             TargetSpec::TargetOpponent
         } else if card.name == "Journey to Nowhere" && *effect == journey_to_nowhere_etb_effect() {
             TargetSpec::CreatureOtherThanSource

@@ -3635,6 +3635,7 @@ fn object_name_for(name: &str) -> &str {
     match name {
         "Sacred Cat Embalmed Token" => "Sacred Cat",
         "Homunculus Horde Token" => "Homunculus Horde",
+        "Iridescent Vinelasher Offspring Token" => "Iridescent Vinelasher",
         "Koma's Coil Token" => "Koma's Coil",
         "Scion of the Deep Token" => "Scion of the Deep",
         _ => name,
@@ -3737,6 +3738,8 @@ fn enters_battlefield_tapped_unless_for(name: &str) -> &'static str {
 fn kicker_cost_for(name: &str) -> String {
     match name {
         "Goblin Bushwhacker" => cost_src("{R}"),
+        // Offspring {2} reuses kicker's optional additional cost.
+        "Iridescent Vinelasher" => cost_src("{2}"),
         "Gnarlid Colony" => cost_src("{2}{G}"),
         "Sun-Blessed Healer" => cost_src("{1}{W}"),
         "Burst Lightning" => cost_src("{4}"),
@@ -5348,6 +5351,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         }
         "Burnout Bashtronaut" => "start_your_engines;max_speed:double_strike",
         "Nova Hellkite" => "etb:target_opponent_creature:damage:1;warp_next_end_step:exile_cast_later_turn",
+        "Iridescent Vinelasher" | "Iridescent Vinelasher Offspring Token" => "etb_if_offspring_paid:create_one_one_token_copy;landfall:target_opponent:damage:1",
         _ => "none",
     }
 }
@@ -8426,6 +8430,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Lizard" => "Subtype::Lizard",
         "Golem" => "Subtype::Golem",
         "Mouse" => "Subtype::Mouse",
+        "Assassin" => "Subtype::Assassin",
         "Pirate" => "Subtype::Pirate",
         "Plains" => "Subtype::Plains",
         "ROGUE" => "Subtype::RogueAllCaps",

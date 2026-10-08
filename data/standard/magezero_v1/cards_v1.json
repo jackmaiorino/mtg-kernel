@@ -192,6 +192,70 @@
         "warp_condition"
       ],
       "java_file": "Mage.Sets/src/mage/cards/f/FullBore.java"
+    },
+    {
+      "name": "Iridescent Vinelasher",
+      "engine_capability": "full",
+      "mana_cost": "{B}",
+      "mana_value": 1,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Lizard",
+        "Assassin"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoB.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "offspring",
+        "landfall",
+        "targeted_player_damage"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/i/IridescentVinelasher.java"
+    },
+    {
+      "name": "Iridescent Vinelasher Offspring Token",
+      "engine_capability": "full",
+      "mana_cost": "{B}",
+      "mana_value": 1,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Lizard",
+        "Assassin"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "offspring",
+        "landfall",
+        "targeted_player_damage",
+        "token_copy"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/i/IridescentVinelasher.java",
+      "is_token": true
     }
   ]
 }

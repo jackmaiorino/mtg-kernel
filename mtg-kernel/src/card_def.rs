@@ -264,6 +264,7 @@ pub enum Subtype {
     Golem,
     /// Appended for MageZero Standard family D (new set keywords).
     Mouse,
+    Assassin,
 }
 
 impl Subtype {
@@ -367,6 +368,8 @@ impl Subtype {
         Subtype::Golem,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Mouse,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Assassin,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -498,6 +501,7 @@ impl Subtype {
                 | Subtype::Lizard
                 | Subtype::Golem
                 | Subtype::Mouse
+                | Subtype::Assassin
         )
     }
 }

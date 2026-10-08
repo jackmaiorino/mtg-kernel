@@ -129,6 +129,8 @@ fn family_d_cards_are_fully_supported() {
         "Burnout Bashtronaut",
         "Nova Hellkite",
         "Full Bore",
+        "Iridescent Vinelasher",
+        "Iridescent Vinelasher Offspring Token",
     ] {
         let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} missing"));
         assert_eq!(
@@ -384,4 +386,76 @@ fn nova_hellkite_offers_both_costs_when_both_are_affordable() {
         hellkite,
         Keywords::TRAMPLE
     ));
+}
+
+fn cast_vinelasher(state: &mut GameState, offspring: bool) -> ObjectId {
+    let vinelasher = put(state, PlayerId::P0, "Iridescent Vinelasher", Zone::Hand);
+    add_mana(state, PlayerId::P0, &[ManaColor::B], 2);
+    assert!(castable(state, vinelasher));
+    engine::step(state, Action::CastSpell(vinelasher)).unwrap();
+    assert!(matches!(next(state), Decision::ChooseKicker { spell, .. } if spell == vinelasher));
+    engine::step(state, Action::ChooseKicker(offspring)).unwrap();
+    settled(state);
+    state.players[0].mana_pool = [0; 6];
+    vinelasher
+}
+
+fn controlled_vinelashers(state: &GameState) -> Vec<ObjectId> {
+    state.players[0]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|&id| state.objects.get(id).name == "Iridescent Vinelasher")
+        .collect()
+}
+
+#[test]
+fn iridescent_vinelasher_offspring_makes_a_one_one_copy_only_when_paid() {
+    let mut state = ready();
+    let vinelasher = cast_vinelasher(&mut state, false);
+    assert_eq!(controlled_vinelashers(&state), vec![vinelasher]);
+
+    let mut state = ready();
+    let vinelasher = cast_vinelasher(&mut state, true);
+    let both = controlled_vinelashers(&state);
+    assert_eq!(both.len(), 2);
+    let token = *both.iter().find(|&&id| id != vinelasher).unwrap();
+    assert_eq!(power_toughness(&state, vinelasher), (1, 2));
+    assert_eq!(power_toughness(&state, token), (1, 1));
+    assert!(CARD_DEFS[state.objects.get(token).card_def as usize].is_token);
+}
+
+#[test]
+fn iridescent_vinelasher_landfall_pings_target_opponent_from_each_copy() {
+    let mut state = ready();
+    cast_vinelasher(&mut state, true);
+    let land = put(&mut state, PlayerId::P0, "Mountain", Zone::Hand);
+    engine::step(&mut state, Action::PlayLand(land)).unwrap();
+    // Two landfall triggers, each targeting the only opponent.
+    for _ in 0..2 {
+        match settle(&mut state) {
+            Some(Decision::ChooseTargets { legal_targets, .. }) => {
+                assert_eq!(legal_targets, vec![Target::Player(PlayerId::P1)]);
+                engine::step(
+                    &mut state,
+                    Action::ChooseTarget(Target::Player(PlayerId::P1)),
+                )
+                .unwrap();
+            }
+            other => panic!("expected a landfall target, got {other:?}"),
+        }
+    }
+    settled(&mut state);
+    assert_eq!(state.players[1].life, 18);
+    assert_eq!(state.players[0].life, 20);
+
+    // An opponent's land doesn't trigger it.
+    state.turn += 1;
+    state.active_player = PlayerId::P1;
+    state.priority_player = PlayerId::P1;
+    let land = put(&mut state, PlayerId::P1, "Mountain", Zone::Hand);
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    engine::step(&mut state, Action::PlayLand(land)).unwrap();
+    settled(&mut state);
+    assert_eq!(state.players[1].life, 18);
 }
