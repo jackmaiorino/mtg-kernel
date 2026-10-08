@@ -987,6 +987,7 @@ fn commit_with_ability_lki(
                 v4: {
                     let mut v4 = crate::state::ObjectStateV4::from_card_def(t.token_def);
                     v4.entered_battlefield_turn = Some(state.turn);
+                    v4.entered_battlefield_this_turn = cfg!(feature = "standard-magezero-fixtures");
                     v4
                 },
                 spell_copy_origin: None,
@@ -1316,6 +1317,36 @@ fn permanent_enters_battlefield_tapped(
     let def = &crate::card_def::CARD_DEFS[state.objects.get(object).card_def as usize];
     if def.enters_battlefield_tapped {
         return true;
+    }
+    if let Some(rule) = def.enters_tapped_unless_controller {
+        use crate::card_def::EntersTappedUnlessControllerDef;
+        let other_lands = || {
+            state.players[controller.index()]
+                .battlefield
+                .iter()
+                .copied()
+                .filter(|&candidate| {
+                    candidate != object
+                        && state.objects.get(candidate).zone == Zone::Battlefield
+                        && crate::engine::object_has_type(
+                            state,
+                            candidate,
+                            crate::card_def::CardType::Land,
+                        )
+                })
+                .count()
+        };
+        return match rule {
+            EntersTappedUnlessControllerDef::ControlsAtMostOtherLands(most) => {
+                other_lands() > usize::from(most)
+            }
+            EntersTappedUnlessControllerDef::ControlsAtLeastOtherLands(least) => {
+                other_lands() < usize::from(least)
+            }
+            EntersTappedUnlessControllerDef::WithinOwnFirstTurns(turns) => {
+                !(state.active_player == controller && state.turn <= u32::from(turns))
+            }
+        };
     }
     let Some(rule) = def.enters_battlefield_tapped_unless else {
         return false;

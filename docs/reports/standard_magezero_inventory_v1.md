@@ -1,6 +1,6 @@
 # MageZero Standard pool inventory
 
-The `standard-magezero-fixtures` catalog targets the 16-deck Standard opponent pool MageZero trains against (`data/standard/magezero_v1/`). As of `kernel_carddb_standard/v1` the decks use 225 distinct nonbasic cards; 6 are supported (Burst Lightning, Duress, Llanowar Elves, Spell Pierce, Tolarian Terror, Voldaren Epicure) and no deck resolves yet. `mtg-kernel/tests/standard_magezero_catalog_v1.rs` and `python/tests/test_standard_decks_v1.py` track the supported list.
+The `standard-magezero-fixtures` catalog targets the 16-deck Standard opponent pool MageZero trains against (`data/standard/magezero_v1/`). As of `kernel_carddb_standard/v5` the decks use 225 distinct nonbasic cards; 47 are supported (Burst Lightning, Duress, Llanowar Elves, Spell Pierce, Tolarian Terror, Voldaren Epicure, and the 41 lands of `docs/design/standard_lands_v1.md`) and no deck resolves yet. `mtg-kernel/tests/standard_magezero_catalog_v1.rs` and `python/tests/test_standard_decks_v1.py` track the supported list.
 
 ## Order of work
 
@@ -15,7 +15,7 @@ Initial threads and merge order (each tells the next when it merges; later batch
 1. Removal, counters and card selection (family C), v2.
 2. Creatures with triggered and static abilities (family G), v3.
 3. New set keywords (family D), v4.
-4. Lands (families A and B), v5. Mono-deck lands first; dual lands are needed by every two-color deck.
+4. Lands (families A and B), v5. Mono-deck lands first; dual lands are needed by every two-color deck. The first lands batch covers all of family A plus Mishra's Foundry, Eiganjo, Mirrex and Rockface Village; the Restless lands, the other channel lands and the remaining utility lands follow in a second lands batch.
 5. Non-creature permanents, planeswalkers and transforming legends (families E and F), v6.
 
 The 5-color deck's legends (family H) wait until those land.

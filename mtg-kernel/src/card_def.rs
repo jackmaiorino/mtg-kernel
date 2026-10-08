@@ -262,6 +262,15 @@ pub enum Subtype {
     Lizard,
     /// Appended for the FDN equipment and library-search batch.
     Golem,
+    /// MageZero Standard lands batch; existing ids remain fixed.
+    AssemblyWorker,
+    Mite,
+    Mouse,
+    Otter,
+    /// Mirrex's land subtype. Not a creature type.
+    Sphere,
+    /// Starting Town's land subtype. Not a creature type.
+    Town,
 }
 
 impl Subtype {
@@ -363,6 +372,14 @@ impl Subtype {
         Subtype::Lizard,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Golem,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::AssemblyWorker,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Mite,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Mouse,
+        #[cfg(feature = "standard-magezero-fixtures")]
+        Subtype::Otter,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -493,6 +510,10 @@ impl Subtype {
                 | Subtype::Archer
                 | Subtype::Lizard
                 | Subtype::Golem
+                | Subtype::AssemblyWorker
+                | Subtype::Mite
+                | Subtype::Mouse
+                | Subtype::Otter
         )
     }
 }
@@ -643,6 +664,13 @@ pub enum TargetSpec {
     ControlledCreatureThenOpponentCreatureOrPlaneswalker,
     AttackingOrBlockingCreature,
     NonlandPermanentCardInOwnGraveyardManaValueAtMost(u16),
+    /// Exactly one attacking creature with the named effective subtype
+    /// (Mishra's Foundry's "target attacking Assembly-Worker").
+    AttackingCreatureWithSubtype(Subtype),
+    /// Exactly one permanent the announcing player controls with any of the
+    /// named effective subtypes (Rockface Village's "target Lizard, Mouse,
+    /// Otter, or Raccoon you control").
+    ControlledPermanentWithAnySubtype([Subtype; 4]),
 }
 
 impl TargetSpec {
@@ -693,6 +721,8 @@ impl TargetSpec {
             TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker => 39,
             TargetSpec::AttackingOrBlockingCreature => 40,
             TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_) => 41,
+            TargetSpec::AttackingCreatureWithSubtype(_) => 42,
+            TargetSpec::ControlledPermanentWithAnySubtype(_) => 43,
         }
     }
 }
@@ -732,6 +762,12 @@ impl Keywords {
     /// first consumer -- see `engine::legal_blockers_for`'s `ISLANDWALK`
     /// check, which this sits beside.
     pub const CANT_BE_BLOCKED: Keywords = Keywords(1 << 16);
+    /// Toxic 1 (702.164): combat damage this creature deals to a player also
+    /// gives that player a poison counter. The Phyrexian Mite token is the
+    /// first consumer.
+    pub const TOXIC_1: Keywords = Keywords(1 << 17);
+    /// "This creature can't block." Read by `engine::legal_blockers_for`.
+    pub const CANT_BLOCK: Keywords = Keywords(1 << 18);
 
     pub const fn has(self, other: Keywords) -> bool {
         self.0 & other.0 != 0
@@ -1023,6 +1059,10 @@ pub enum ManaAbilityCostDef {
     /// Appended for pauper meta wave 2 Task 3; existing discriminants remain
     /// fixed.
     None,
+    /// `{T}, Pay N life` (Starting Town). Paying life is not damage, and
+    /// needs at least N life (119.4). Appended; existing discriminants
+    /// remain fixed.
+    TapSelfPayLife(u8),
 }
 
 /// Amount of the chosen color added by a mana ability.
@@ -1103,6 +1143,84 @@ pub struct AdditionalManaAbilityDef {
 pub struct EntersBattlefieldTappedUnlessDef {
     pub controller_controls_other_subtype: Subtype,
     pub minimum_count: u8,
+}
+
+/// Untapped-entry conditions on the entering permanent's controller, kept
+/// beside `EntersBattlefieldTappedUnlessDef` so that definition's generated
+/// identity is unchanged. "Other lands" excludes the entering permanent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntersTappedUnlessControllerDef {
+    /// Fastlands: "unless you control two or fewer other lands".
+    ControlsAtMostOtherLands(u8),
+    /// Slowlands: "unless you control two or more other lands".
+    ControlsAtLeastOtherLands(u8),
+    /// Starting Town: "unless it's your first, second, or third turn of the
+    /// game" -- the controller is the active player and `GameState::turn`
+    /// (each player's own turn count in this two-player kernel) is at most
+    /// this value.
+    WithinOwnFirstTurns(u8),
+}
+
+/// An activation restriction on one additional printed mana ability
+/// (XMage `ActivateIfConditionManaAbility`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManaAbilityConditionDef {
+    /// The verges: "Activate only if you control a [first] or a [second]."
+    ControllerControlsPermanentWithEitherSubtype { first: Subtype, second: Subtype },
+    /// Mirrex: "Activate only if this land entered the battlefield this
+    /// turn."
+    SourceEnteredThisTurn,
+}
+
+/// What a restricted mana ability's mana may pay for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManaSpendRestrictionDef {
+    /// "Spend this mana only to cast a creature spell."
+    CreatureSpell,
+}
+
+/// A `{T}: Add one mana of a listed color` ability whose mana carries a
+/// spending restriction. It is never an explicit action: the payment
+/// planner offers these colors from the source only while paying the total
+/// cost of a spell the restriction allows, so restricted mana never floats.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RestrictedManaAbilityDef {
+    pub colors: &'static [ManaColor],
+    pub restriction: ManaSpendRestrictionDef,
+}
+
+/// "This permanent becomes a [power]/[toughness] [colors] [subtypes]
+/// creature [with keywords] until end of turn. It's still a land."
+/// (XMage `BecomesCreatureSourceEffect` over a `CreatureToken`). The source
+/// keeps its printed types and gains Creature, plus Artifact when
+/// `artifact` is set; its base power and toughness, colors and creature
+/// subtypes become the listed ones; the keywords are added.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnimationDef {
+    pub power: i16,
+    pub toughness: i16,
+    pub artifact: bool,
+    pub colors: &'static [ManaColor],
+    pub subtypes: &'static [Subtype],
+    pub keywords: Keywords,
+    /// False for "until end of turn"; true for an animation that lasts while
+    /// the permanent remains on the battlefield.
+    pub permanent: bool,
+}
+
+/// Reduces the generic mana of one printed activated ability, by
+/// `activated_abilities` index, by one for each permanent its controller
+/// controls matching `per` (XMage `LegendaryCreatureCostAdjuster` for the
+/// Kamigawa channel lands).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ActivatedAbilityGenericReductionDef {
+    pub ability_index: u8,
+    pub per: ActivatedAbilityReductionCountDef,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivatedAbilityReductionCountDef {
+    ControlledLegendaryCreatures,
 }
 
 /// One alternative mode of a spell, with its own target shape and resolution
@@ -1477,6 +1595,20 @@ pub struct CardDef {
     /// `mana::ManaSource::yield_per_tap`. Appended so every earlier
     /// generated field identity remains stable.
     pub conditional_tap_yield: Option<DynamicValueDef>,
+    /// Controller-relative untapped-entry condition (fastlands, slowlands,
+    /// Starting Town). `None` for every other card. Appended so every
+    /// earlier generated field identity remains stable.
+    pub enters_tapped_unless_controller: Option<EntersTappedUnlessControllerDef>,
+    /// Activation conditions for `additional_mana_abilities`, by index.
+    /// Empty, or one entry per additional ability.
+    pub additional_mana_ability_conditions: &'static [Option<ManaAbilityConditionDef>],
+    /// Tap-for-one mana abilities whose mana is restricted to certain
+    /// spells; see `RestrictedManaAbilityDef`.
+    pub restricted_mana_abilities: &'static [RestrictedManaAbilityDef],
+    /// What this permanent becomes when one of its abilities animates it.
+    pub animation: Option<AnimationDef>,
+    /// Generic-cost reducers for printed activated abilities.
+    pub activated_ability_generic_reductions: &'static [ActivatedAbilityGenericReductionDef],
 }
 
 impl CardDef {

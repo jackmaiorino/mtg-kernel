@@ -27,14 +27,15 @@ MIT licensed, Copyright (c) 2025 Will Wroble.
 
 `card_names.json` lists every distinct nonbasic card in those decks. `cards_v1.json` holds the
 Standard definitions appended after the unchanged 192-definition Pauper registry: Plains and
-Burst Lightning so far, whose behavior is shared with the FDN build. FDN definitions are not
-included, so FDN batches never move Standard card ids.
+Burst Lightning, whose behavior is shared with the FDN build, then the first lands batch
+(`docs/design/standard_lands_v1.md`). FDN definitions are not included, so FDN batches never
+move Standard card ids.
 
 Build with `cargo build --locked -p mtg-kernel --features standard-magezero-fixtures`. The feature
 also enables `limited-fdn-fixtures` for its rules behavior, but `build.rs` appends this file
 instead of the FDN one and uses the separate `kernel_carddb_standard/vN` identity. Only
-`standard_magezero_catalog_v1` and the `card_def::` library tests are expected to pass in this
-build; the other Limited tests are tied to FDN cards and identity.
+`standard_magezero_catalog_v1`, the Standard card tests (`standard_lands_v1`) and the
+`card_def::` library tests are expected to pass in this build; the other Limited tests are tied to FDN cards and identity.
 
 Inspect coverage without a build:
 

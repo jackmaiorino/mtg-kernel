@@ -14,17 +14,103 @@ use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 
 /// Appended after the 192 Pauper definitions, in registry order.
-const STANDARD_APPENDED: [&str; 2] = ["Plains", "Burst Lightning"];
+const STANDARD_APPENDED: [&str; 44] = [
+    "Plains",
+    "Burst Lightning",
+    "Mishra's Foundry",
+    "Eiganjo, Seat of the Empire",
+    "Mirrex",
+    "Rockface Village",
+    "Phyrexian Mite Token",
+    "Adarkar Wastes",
+    "Battlefield Forge",
+    "Brushland",
+    "Caves of Koilos",
+    "Karplusan Forest",
+    "Llanowar Wastes",
+    "Shivan Reef",
+    "Sulfurous Springs",
+    "Underground River",
+    "Yavimaya Coast",
+    "Blackcleave Cliffs",
+    "Blooming Marsh",
+    "Concealed Courtyard",
+    "Copperline Gorge",
+    "Darkslick Shores",
+    "Inspiring Vantage",
+    "Razorverge Thicket",
+    "Seachrome Coast",
+    "Spirebluff Canal",
+    "Deserted Beach",
+    "Dreamroot Cascade",
+    "Haunted Ridge",
+    "Overgrown Farmland",
+    "Rockfall Vale",
+    "Floodfarm Verge",
+    "Gloomlake Verge",
+    "Hushwood Verge",
+    "Riverpyre Verge",
+    "Thornspire Verge",
+    "Wastewood Verge",
+    "Elegant Parlor",
+    "Lush Portico",
+    "Underground Mortuary",
+    "Jetmir's Garden",
+    "Spara's Headquarters",
+    "Ziatora's Proving Ground",
+    "Starting Town",
+];
 
 /// Every distinct nonbasic card in the 16 decks that this build fully
 /// supports. Each Standard card batch extends this list.
-const SUPPORTED_NONBASIC: [&str; 6] = [
+const SUPPORTED_NONBASIC: [&str; 47] = [
+    "Adarkar Wastes",
+    "Battlefield Forge",
+    "Blackcleave Cliffs",
+    "Blooming Marsh",
+    "Brushland",
     "Burst Lightning",
+    "Caves of Koilos",
+    "Concealed Courtyard",
+    "Copperline Gorge",
+    "Darkslick Shores",
+    "Deserted Beach",
+    "Dreamroot Cascade",
     "Duress",
+    "Eiganjo, Seat of the Empire",
+    "Elegant Parlor",
+    "Floodfarm Verge",
+    "Gloomlake Verge",
+    "Haunted Ridge",
+    "Hushwood Verge",
+    "Inspiring Vantage",
+    "Jetmir's Garden",
+    "Karplusan Forest",
     "Llanowar Elves",
+    "Llanowar Wastes",
+    "Lush Portico",
+    "Mirrex",
+    "Mishra's Foundry",
+    "Overgrown Farmland",
+    "Razorverge Thicket",
+    "Riverpyre Verge",
+    "Rockface Village",
+    "Rockfall Vale",
+    "Seachrome Coast",
+    "Shivan Reef",
+    "Spara's Headquarters",
     "Spell Pierce",
+    "Spirebluff Canal",
+    "Starting Town",
+    "Sulfurous Springs",
+    "Thornspire Verge",
     "Tolarian Terror",
+    "Underground Mortuary",
+    "Underground River",
     "Voldaren Epicure",
+    "Wastewood Verge",
+    "Yavimaya Coast",
+    "Ziatora's Proving Ground",
 ];
 
 const BASICS: [&str; 5] = ["Plains", "Island", "Swamp", "Mountain", "Forest"];
@@ -86,9 +172,9 @@ fn standard_registry_appends_to_the_pauper_prefix_without_fdn() {
 
 #[test]
 fn standard_catalog_identity_is_frozen() {
-    const EXPECTED_STANDARD_V1: u64 = 0xe248_6ab5_dc8f_1653;
+    const EXPECTED_STANDARD_V5: u64 = 0xbd6a_08e9_01cb_7fd9;
     assert_eq!(
-        KERNEL_CARDDB_HASH, EXPECTED_STANDARD_V1,
+        KERNEL_CARDDB_HASH, EXPECTED_STANDARD_V5,
         "Standard catalog hash {KERNEL_CARDDB_HASH:#018x}"
     );
 }
