@@ -908,7 +908,10 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::CreatureOrPlaneswalker
                 | TargetSpec::ArtifactEnchantmentOrFlyingCreature
                 | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour
-                | TargetSpec::OpponentNonlandPermanent,
+                | TargetSpec::OpponentNonlandPermanent
+                | TargetSpec::NonOutlawCreature
+                | TargetSpec::CreatureToughnessAtLeastFour
+                | TargetSpec::CreatureEnchantmentOrPlaneswalker,
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Battlefield,
@@ -1057,6 +1060,16 @@ pub struct StackStateV4 {
     /// physical payments through `paid_cost_refs`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub optional_additional_cost_paid: Option<crate::card_def::OptionalAdditionalCostDef>,
+    /// Mana spent to cast this spell (CR 601.2h), recorded only for a
+    /// definition with `CardDef::records_mana_spent` (Memory Deluge's "X is
+    /// the amount of mana spent to cast this spell"). Zero, and absent from
+    /// serialized state, for every other stack item.
+    #[serde(default, skip_serializing_if = "u16_is_zero")]
+    pub mana_spent: u16,
+}
+
+fn u16_is_zero(value: &u16) -> bool {
+    *value == 0
 }
 
 impl StackStateV4 {

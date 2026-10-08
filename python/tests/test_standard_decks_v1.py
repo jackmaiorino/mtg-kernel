@@ -13,8 +13,10 @@ import limited_decks_v1 as limited
 STANDARD = REPO_ROOT / "data/standard/magezero_v1"
 # Each Standard card batch extends this list with the deck cards it supports.
 SUPPORTED_NONBASIC = {
-    "Burst Lightning", "Duress", "Llanowar Elves", "Spell Pierce", "Tolarian Terror",
-    "Voldaren Epicure",
+    "Burst Lightning", "Consider", "Destroy Evil", "Dissipate", "Duress", "Fading Hope",
+    "Flow of Knowledge", "Get Lost", "Hard-Hitting Question", "Impulse", "Lightning Strike",
+    "Llanowar Elves", "Memory Deluge", "Negate", "Opt", "Shock", "Shoot the Sheriff",
+    "Spell Pierce", "Thirst for Discovery", "Tolarian Terror", "Voldaren Epicure",
 }
 
 
@@ -35,6 +37,7 @@ class StandardDeckTest(unittest.TestCase):
     def test_extension_follows_the_pauper_prefix_without_fdn(self) -> None:
         self.assertEqual(self.registry["Plains"].card_id, 192)
         self.assertEqual(self.registry["Burst Lightning"].card_id, 193)
+        self.assertEqual(self.registry["Get Lost"].card_id, 208)
         self.assertNotIn("Dwynen, Gilt-Leaf Daen", self.registry)
 
     def test_pool_is_sixteen_unsideboarded_decks(self) -> None:
