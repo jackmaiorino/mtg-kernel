@@ -1977,6 +1977,25 @@ fn validated_ability_source_contract(
     Ok(contract)
 }
 
+/// Whether an ability's source contract names the definition its source
+/// has now or had as that same incarnation: a copy effect (Assimilation
+/// Aegis) changes a permanent's definition without a zone change, and an
+/// ability already on the stack keeps the one it was created with
+/// (113.7a).
+fn source_card_def_matches(
+    state: &GameState,
+    contract: AbilitySourceContractV4,
+    live_card_def: u16,
+) -> bool {
+    contract.card_def == live_card_def
+        || crate::standard_cards_v1::had_card_def(
+            state,
+            contract.source,
+            contract.zone_change_count,
+            contract.card_def,
+        )
+}
+
 fn validate_historical_ability_source_contract(
     state: &GameState,
     contract: AbilitySourceContractV4,
@@ -1985,7 +2004,7 @@ fn validate_historical_ability_source_contract(
         .objects
         .try_get(contract.source)
         .ok_or("ability source object no longer exists")?;
-    if contract.card_def != live.card_def
+    if !source_card_def_matches(state, contract, live.card_def)
         || contract.owner != live.owner
         || live.zone_change_count < contract.zone_change_count
         || (live.zone_change_count == contract.zone_change_count && live.zone != contract.zone)
@@ -2340,7 +2359,7 @@ fn validate_ability_source_contract(
         .try_get(item.source)
         .ok_or("ability source object no longer exists")?;
     if contract.source != item.source
-        || contract.card_def != source.card_def
+        || !source_card_def_matches(state, contract, source.card_def)
         || contract.owner != source.owner
         || contract.controller != item.controller
         || contract.zone == Zone::Stack

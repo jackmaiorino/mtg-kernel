@@ -258,7 +258,10 @@ leaving the battlefield stops being a copy first, so it reaches its new
 zone as its own card. As in XMage, the copied card is locked in when the
 copy starts. The linked-exile record now reads the exiled card's
 definition after the move, so a copy exiled until something leaves comes
-back as its own card.
+back as its own card. Abilities the creature put on the stack keep the
+definition they were created with (113.7a): the Standard state lists
+every definition each incarnation had through a copy, and ability source
+contracts accept any of them.
 
 ## Known limits
 
@@ -276,10 +279,9 @@ Craft's material decision reuses `CostKind::ExileFromGraveyard` even when
 the candidate is a battlefield artifact, and net counters live in the
 Standard state rather than `Counters`, so observations do not show them.
 Assimilation Aegis's copy starts during the next state-based action pass
-rather than from a triggered ability on the stack. While a creature is a
-copy, abilities it put on the stack before or after the change see a
-different definition and do nothing, and its leaves-the-battlefield
-abilities are its own card's rather than the copied card's.
+rather than from a triggered ability on the stack, and a copied
+creature's leaves-the-battlefield abilities are its own card's rather than
+the copied card's.
 
 ## Catalog identity
 

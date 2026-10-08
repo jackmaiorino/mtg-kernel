@@ -2589,3 +2589,54 @@ fn an_aegis_copy_that_dies_reaches_the_graveyard_as_its_own_card() {
     );
     assert_eq!(state.objects.get(aegis).v4.attached_to, None);
 }
+
+#[test]
+fn an_aegis_copys_trigger_still_resolves_after_the_copy_ends() {
+    let mut state = game();
+    let cecil = put(&mut state, P1, "Cecil, Dark Knight", Zone::Battlefield);
+    let terror = put(&mut state, P0, "Tolarian Terror", Zone::Battlefield);
+    let aegis = cast_aegis(&mut state, &[Target::Object(cecil)]);
+    equip_aegis(&mut state, aegis, terror);
+    assert_eq!(state.objects.get(terror).name, "Cecil, Dark Knight");
+
+    // Cecil's "you lose that much life" trigger waits on the stack while
+    // the Aegis leaves and the copy ends.
+    let mut removed = false;
+    loop {
+        match next(&mut state) {
+            Decision::DeclareAttackers { .. } => {
+                act(&mut state, Action::DeclareAttackers(vec![terror]))
+            }
+            Decision::ChooseAttackTarget { .. } => {
+                act(&mut state, Action::ChooseAttackTarget(Target::Player(P1)))
+            }
+            Decision::DeclareBlockers { .. } => {
+                act(&mut state, Action::DeclareBlockers(Vec::new()))
+            }
+            Decision::OrderTriggers { pending, .. } => act(
+                &mut state,
+                Action::OrderTriggers((0..pending.len()).collect()),
+            ),
+            Decision::CastSpellOrPass { .. } if !state.stack.is_empty() && !removed => {
+                removed = true;
+                event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(aegis, Zone::Graveyard),
+                );
+            }
+            Decision::CastSpellOrPass { .. }
+                if matches!(state.step, Step::EndCombat | Step::Main2)
+                    && state.stack.is_empty() =>
+            {
+                break
+            }
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    assert!(removed);
+    assert_eq!(state.objects.get(terror).name, "Tolarian Terror");
+    assert_eq!(state.players[1].life, 18);
+    assert_eq!(state.players[0].life, 18);
+    assert_eq!(state.objects.get(cecil).zone, Zone::Battlefield);
+}

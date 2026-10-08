@@ -82,6 +82,11 @@ pub struct StandardStateV1 {
     /// while that Aegis stays attached, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     aegis_copies: Vec<AegisCopyV1>,
+    /// Every definition a permanent incarnation has had through an
+    /// Assimilation Aegis copy, so its abilities already on the stack stay
+    /// valid when the copy starts or ends.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    copied_card_defs: Vec<(ObjectId, u32, u16)>,
 }
 
 /// One Assimilation Aegis copy effect: the Aegis and the creature, per exact
@@ -3213,6 +3218,7 @@ pub(crate) fn refresh_aegis_copies(state: &mut GameState) {
             subtype_ids: std::mem::take(&mut live.v4.effective_subtype_ids),
             ward_generic: live.v4.ward_generic,
         };
+        let had = [record.card_def, copied].map(|def| (host.object, host.zone_change_count, def));
         let base = crate::state::ObjectStateV4::from_card_def(copied);
         live.card_def = copied;
         live.name = CARD_DEFS[copied as usize].object_name.into();
@@ -3220,12 +3226,29 @@ pub(crate) fn refresh_aegis_copies(state: &mut GameState) {
         live.v4.effective_color_mask = base.effective_color_mask;
         live.v4.effective_subtype_ids = base.effective_subtype_ids;
         live.v4.ward_generic = base.ward_generic;
-        state
-            .standard_v1
-            .get_or_insert_with(Default::default)
-            .aegis_copies
-            .push(record);
+        let standard = state.standard_v1.get_or_insert_with(Default::default);
+        standard.aegis_copies.push(record);
+        for entry in had {
+            if !standard.copied_card_defs.contains(&entry) {
+                standard.copied_card_defs.push(entry);
+            }
+        }
     }
+}
+
+/// Whether `object`'s battlefield incarnation `zone_change_count` was ever
+/// `card_def` through a copy effect.
+pub(crate) fn had_card_def(
+    state: &GameState,
+    object: ObjectId,
+    zone_change_count: u32,
+    card_def: u16,
+) -> bool {
+    state.standard_v1.as_ref().is_some_and(|standard| {
+        standard
+            .copied_card_defs
+            .contains(&(object, zone_change_count, card_def))
+    })
 }
 
 /// Ends the copy at `index`: a later copy of the same creature inherits the
