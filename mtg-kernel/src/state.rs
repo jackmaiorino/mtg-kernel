@@ -1015,7 +1015,8 @@ pub fn stack_target_contract_is_structurally_valid(
             TargetSpec::CreatureOrLandCardInGraveyard
                 | TargetSpec::CreatureCardInOwnGraveyard
                 | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_)
-                | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_),
+                | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_)
+                | TargetSpec::PermanentCardInOwnGraveyard,
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Graveyard,

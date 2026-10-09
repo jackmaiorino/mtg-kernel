@@ -981,6 +981,19 @@ fn sun_blessed_healer_effect() -> EffectOp {
     }
 }
 
+const ELVISH_REGROWER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(elvish_regrower_effect)];
+fn elvish_regrower_effect() -> EffectOp {
+    EffectOp::MoveAllTargets {
+        to_zone: Zone::Hand,
+    }
+}
+const AMBUSH_WOLF_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(ambush_wolf_effect)];
+fn ambush_wolf_effect() -> EffectOp {
+    EffectOp::MoveAllTargets {
+        to_zone: Zone::Exile,
+    }
+}
+
 fn double_counter_marker_effect() -> EffectOp {
     EffectOp::BindDoublePlusOneCountersToTriggerSource
 }
@@ -2811,6 +2824,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Angel of Finality" => &BOJUKA_BOG_TRIGGERS,
         "Bigfin Bouncer" => &BIGFIN_BOUNCER_TRIGGERS,
         "Rune-Scarred Demon" => &RUNE_SCARRED_DEMON_TRIGGERS,
+        "Elvish Regrower" => &ELVISH_REGROWER_TRIGGERS,
+        "Ambush Wolf" => &AMBUSH_WOLF_TRIGGERS,
         "Tatyova, Benthic Druid" => &TATYOVA_BENTHIC_DRUID_TRIGGERS,
         "Dazzling Angel" => &DAZZLING_ANGEL_TRIGGERS,
         "Clinquant Skymage" => &CLINQUANT_SKYMAGE_TRIGGERS,
@@ -2950,6 +2965,8 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
     match card.name {
         "Celestial Armor" => TargetSpec::ControlledCreature,
         "Sun-Blessed Healer" => TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(2),
+        "Elvish Regrower" => TargetSpec::PermanentCardInOwnGraveyard,
+        "Ambush Wolf" => TargetSpec::UpToOneCardInGraveyards,
         "Balustrade Spy" => TargetSpec::AnyPlayer,
         "Lotleth Giant" => TargetSpec::TargetOpponent,
         "Harrier Strix" => TargetSpec::AnyPermanent,
@@ -3292,6 +3309,10 @@ pub struct PendingTrigger {
     /// been ordered by its controller or proven singleton.
     #[serde(default)]
     pub placement_ordered: bool,
+    /// Explicit finish of a target prefix below an optional target maximum.
+    /// Omission keeps every preexisting required-target serialization unchanged.
+    #[serde(default, skip_serializing_if = "target_selection_is_open")]
+    pub target_selection_finished: bool,
     /// Exact historical source incarnation captured when the trigger was
     /// created. This lets independent and linked abilities remain valid
     /// across later zone changes of the same physical card.
@@ -3308,6 +3329,10 @@ pub struct PendingTrigger {
     /// spell's stack incarnation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paid_cost_refs: Vec<PaidCostRefV4>,
+}
+
+fn target_selection_is_open(finished: &bool) -> bool {
+    !finished
 }
 
 pub(crate) fn creature_dies_to_state_based_actions(
@@ -3710,6 +3735,7 @@ fn triggers_from_events(
                     targets: Vec::new(),
                     target_contracts: Vec::new(),
                     placement_ordered: false,
+                    target_selection_finished: false,
                     source_contract: Some(AbilitySourceContractV4 {
                         source: id,
                         card_def: obj.card_def,
@@ -3916,6 +3942,7 @@ fn triggers_from_events(
                         targets: Vec::new(),
                         target_contracts: Vec::new(),
                         placement_ordered: false,
+                        target_selection_finished: false,
                         source_contract,
                         optional_additional_cost_paid: paid_optional_cost,
                         paid_cost_refs,
@@ -3991,6 +4018,7 @@ fn triggers_from_events(
                         targets: Vec::new(),
                         target_contracts: Vec::new(),
                         placement_ordered: false,
+                        target_selection_finished: false,
                         source_contract: Some(AbilitySourceContractV4::capture(state, id)),
                         optional_additional_cost_paid: None,
                         paid_cost_refs: Vec::new(),
@@ -4109,6 +4137,7 @@ fn triggers_from_events(
                     targets: Vec::new(),
                     target_contracts: Vec::new(),
                     placement_ordered: false,
+                    target_selection_finished: false,
                     optional_additional_cost_paid: None,
                     paid_cost_refs: Vec::new(),
                 });
@@ -4134,6 +4163,7 @@ fn triggers_from_events(
             targets: Vec::new(),
             target_contracts: Vec::new(),
             placement_ordered: false,
+            target_selection_finished: false,
             source_contract: Some(binding.source),
             granted_by: None,
             optional_additional_cost_paid: None,
@@ -4156,6 +4186,7 @@ fn triggers_from_events(
             targets: Vec::new(),
             target_contracts: Vec::new(),
             placement_ordered: false,
+            target_selection_finished: false,
             source_contract: Some(binding.source),
             granted_by: None,
             optional_additional_cost_paid: None,
@@ -5022,6 +5053,7 @@ mod tests {
             targets: Vec::new(),
             target_contracts: Vec::new(),
             placement_ordered: false,
+            target_selection_finished: false,
             source_contract: Some(contract),
             optional_additional_cost_paid: None,
             paid_cost_refs: Vec::new(),
@@ -5073,6 +5105,7 @@ mod tests {
             targets: Vec::new(),
             target_contracts: Vec::new(),
             placement_ordered: false,
+            target_selection_finished: false,
             source_contract: None,
             optional_additional_cost_paid: None,
             paid_cost_refs: Vec::new(),
@@ -5088,6 +5121,7 @@ mod tests {
             targets: Vec::new(),
             target_contracts: Vec::new(),
             placement_ordered: false,
+            target_selection_finished: false,
             source_contract: None,
             optional_additional_cost_paid: None,
             paid_cost_refs: Vec::new(),

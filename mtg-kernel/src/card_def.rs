@@ -420,7 +420,7 @@ impl Subtype {
         Subtype::Mercenary,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Assassin,
-        #[cfg(feature = "standard-magezero-fixtures")]
+        #[cfg(any(feature = "standard-magezero-fixtures", feature = "limited-fdn-fixtures"))]
         Subtype::Wolf,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Kraken,
@@ -788,6 +788,8 @@ pub enum TargetSpec {
     ControlledCreatureWithSubtype(Subtype),
     /// Zero or one nontoken card in either graveyard.
     UpToOneCardInGraveyards,
+    /// One permanent card from the controller's graveyard, including a land.
+    PermanentCardInOwnGraveyard,
 }
 
 impl TargetSpec {
@@ -851,6 +853,7 @@ impl TargetSpec {
             TargetSpec::AnotherControlledCreature => 52,
             TargetSpec::ControlledCreatureWithSubtype(_) => 53,
             TargetSpec::UpToOneCardInGraveyards => 54,
+            TargetSpec::PermanentCardInOwnGraveyard => 55,
         }
     }
 }
@@ -2121,6 +2124,7 @@ mod tests {
                 53,
             ),
             (TargetSpec::UpToOneCardInGraveyards, 54),
+            (TargetSpec::PermanentCardInOwnGraveyard, 55),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);

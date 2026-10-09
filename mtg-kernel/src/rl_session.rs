@@ -11953,6 +11953,7 @@ mod tests {
                 targets: Vec::new(),
                 target_contracts: Vec::new(),
                 placement_ordered: false,
+                target_selection_finished: false,
                 source_contract: None,
                 optional_additional_cost_paid: None,
                 paid_cost_refs: Vec::new(),

@@ -3870,7 +3870,9 @@ fn keywords_for(card: &CardJson) -> String {
         "Brazen Scourge" | "Fanatical Firebrand" => keywords.push("Keywords::HASTE"),
         "Samurai Token" => keywords.push("Keywords::VIGILANCE"),
         "Dragon Token" | "Dragon 5/5 Token" => keywords.push("Keywords::FLYING"),
-        "Resolute Reinforcements" | "Twinblade Blessing" => keywords.push("Keywords::FLASH"),
+        "Resolute Reinforcements" | "Twinblade Blessing" | "Ambush Wolf" => {
+            keywords.push("Keywords::FLASH")
+        }
         "Elfsworn Giant" => keywords.push("Keywords::REACH"),
         "Eager Trufflesnout" => keywords.push("Keywords::TRAMPLE"),
         _ => {}
@@ -6003,6 +6005,8 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Angel of Finality" => "etb:target_player:exile_graveyard",
         "Bigfin Bouncer" => "etb:target_opponent_controlled_creature:return_to_owners_hand",
         "Rune-Scarred Demon" => "etb:search_library_any_card_to_hand_unrevealed",
+        "Elvish Regrower" => "etb:return_target_own_graveyard_permanent_card_to_hand",
+        "Ambush Wolf" => "etb:exile_up_to_one_target_graveyard_card",
         "Tatyova, Benthic Druid" => "controlled_land_enters:gain_life:1:then_draw:1",
         "Dazzling Angel" => "other_controlled_creature_enters:gain_life:1",
         "Beast-Kin Ranger" => "other_controlled_creature_enters:pump_bound_source:1:0:end_of_turn",
