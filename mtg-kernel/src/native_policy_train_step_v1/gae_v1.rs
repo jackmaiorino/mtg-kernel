@@ -324,6 +324,47 @@ impl NativePolicyValueTrainStateV1 {
         Ok((result, report.expect("recovery report requested")))
     }
 
+    /// Profile the actual CPU GAE route without changing its arithmetic.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn train_step_gae_feature_transfer_profiled_v1(
+        &mut self,
+        generation: crate::sideboard_play_policy_v1::FreshLineageGenerationV1,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        backward_worker_limit: Option<usize>,
+        recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        let config = match generation {
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3 => {
+                self.model.feature_transfer_config_v3()
+            }
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V4 => {
+                self.model.feature_transfer_config_v4()
+            }
+        };
+        let execution = match backward_worker_limit {
+            None => BackwardExecutionV1::Sequential,
+            Some(worker_limit) => BackwardExecutionV1::FixedPartitions { worker_limit },
+        };
+        self.train_step_gae_core_profiled_v1(
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            execution,
+            config,
+            false,
+            None,
+            None,
+            recorder,
+        )
+        .map(|(result, _, _)| result)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn train_step_gae_core_v1(
         &mut self,
@@ -345,6 +386,44 @@ impl NativePolicyValueTrainStateV1 {
         ),
         NativePolicyTrainErrorV1,
     > {
+        self.train_step_gae_core_profiled_v1(
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            backward_execution,
+            input_config,
+            imitation,
+            line_b,
+            exploration,
+            &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn train_step_gae_core_profiled_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        backward_execution: BackwardExecutionV1,
+        input_config: NativePolicyValueModelConfigV1,
+        imitation: bool,
+        line_b: Option<&LineBAuxiliaryInputV1>,
+        exploration: Option<(f32, u64, bool)>,
+        phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
+    ) -> Result<
+        (
+            NativePolicyTrainStepResultV1,
+            Option<LineBAuxiliaryResultV1>,
+            Option<serde_json::Value>,
+        ),
+        NativePolicyTrainErrorV1,
+    > {
+        let setup_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::SetupValidation);
         validate_gae_inputs_v1(groups, value_targets, advantages)?;
         if !value_coefficient.is_finite()
             || (value_coefficient <= 0.0 && !(imitation && value_coefficient == 0.0))
@@ -363,6 +442,8 @@ impl NativePolicyValueTrainStateV1 {
             &self.second_moments,
             self.scorer_bias_anchor_bits,
         )?;
+        phase_recorder.finish_v1(setup_timer);
+        let forward_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::ForwardLoss);
         let mut selected_outputs = Vec::new();
         let mut physical_terms = Vec::with_capacity(groups.len());
         let mut group_tapes = Vec::with_capacity(groups.len());
@@ -471,6 +552,8 @@ impl NativePolicyValueTrainStateV1 {
             })
             .transpose()?;
 
+        phase_recorder.finish_v1(forward_timer);
+        let backward_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::BackwardGauge);
         let (mut gradients, mut gauge_accumulator) = match backward_execution {
             BackwardExecutionV1::Sequential => {
                 let mut gradients = parameters
@@ -581,6 +664,8 @@ impl NativePolicyValueTrainStateV1 {
             gauge_accumulator.finish(raw_scorer_bias_residual, scorer_bias_before_bits)?;
         gradients[SCORER_SECOND_BIAS][0] = 0.0;
 
+        phase_recorder.finish_v1(backward_timer);
+        let adam_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::AdamMath);
         let next_step = self
             .adam_step
             .checked_add(1)
@@ -600,6 +685,9 @@ impl NativePolicyValueTrainStateV1 {
         scorer_bias_gauge.parameter_after_bits =
             next_parameters[SCORER_SECOND_BIAS].values[0].to_bits();
 
+        phase_recorder.finish_v1(adam_timer);
+        let finalization_timer =
+            phase_recorder.start_v1(NativeTrainingPhaseV1::FinalizationCloning);
         let mut candidate_model = self.model.clone();
         candidate_model.replace_parameter_snapshot_v1(&next_parameters)?;
         validate_optimizer_state(&next_parameters, &next_first_moments, &next_second_moments)?;
@@ -620,6 +708,7 @@ impl NativePolicyValueTrainStateV1 {
         self.adam_step = next_step;
         self.first_moments = next_first_moments;
         self.second_moments = next_second_moments;
+        phase_recorder.finish_v1(finalization_timer);
         Ok((
             NativePolicyTrainStepResultV1 {
                 policy_sum,
