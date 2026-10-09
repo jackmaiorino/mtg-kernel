@@ -29,6 +29,50 @@ fn hash_visible(
 }
 
 impl FastActorSessionV1 {
+    pub(crate) fn kernel_search_canonical_visible_first_v4(
+        &self,
+        expected: FastActorDecisionV1,
+    ) -> Result<u32, Error> {
+        self.kernel_search_action_token_v4(expected)?;
+        let count = expected.legal_action_count as usize;
+        let capacity = count
+            .checked_mul(FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1)
+            .ok_or(Error::InvalidVisibleBinding)?
+            .max(256);
+        let mut actions = vec![FlatActionCoreV1::default(); count];
+        let mut refs = vec![FlatActionRefV2::default(); capacity];
+        let mut objects = vec![FlatActionObjectV2::default(); capacity];
+        self.encode_current_flat_action_slice_v4(
+            expected,
+            &mut FlatActionDecisionSliceBuffersV2 {
+                actions: &mut actions,
+                refs: &mut refs,
+                objects: &mut objects,
+            },
+        )
+        .map_err(|_| Error::InvalidVisibleBinding)?;
+        let mut keys = Vec::with_capacity(count);
+        for (index, action) in actions.iter().copied().enumerate() {
+            let mut core = action;
+            core.ref_start = 0;
+            let mut key = format!("{core:?}");
+            for reference in &refs
+                [action.ref_start as usize..action.ref_start as usize + action.ref_len as usize]
+            {
+                let object = objects[reference.object_index as usize];
+                let mut role = *reference;
+                role.action_index = 0;
+                role.object_index = 0;
+                key.push_str(&format!("{role:?}{object:?}"));
+            }
+            keys.push((key, index as u32));
+        }
+        keys.into_iter()
+            .min()
+            .map(|(_, index)| index)
+            .ok_or(Error::InvalidVisibleBinding)
+    }
+
     pub(crate) fn kernel_search_visible_key_v4(&self, depth: u32) -> Result<[u8; 32], Error> {
         if self.flat_action_contract_mode != FlatActionContractModeV1::V3 {
             return Err(Error::UnsupportedActionContract);

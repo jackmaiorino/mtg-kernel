@@ -231,9 +231,17 @@ impl FastActorSessionV1 {
             .ok_or(Error::NoLiveDecision)?
             .candidates;
         let mut copy = self.clone();
-        if let Err(error) =
+        let sample = if mode == V4SearchSampleMode::FutureChanceV3 {
+            sampler::redeterminize_with_library_plan_classified(
+                &mut copy.state,
+                actor,
+                seed,
+                plan.as_ref(),
+            )
+        } else {
             sampler::redeterminize_with_library_plan(&mut copy.state, actor, seed, plan.as_ref())
-        {
+        };
+        if let Err(error) = sample {
             // Opt-in local correctness diagnostics only. Never overwrite a prior
             // root, expose this private state in a policy input, or resume play.
             if let Some(path) = std::env::var_os("MTG_V4_SEARCH_FAILURE_STATE") {
@@ -250,12 +258,7 @@ impl FastActorSessionV1 {
                     }
                 }
             }
-            // Legacy error vocabulary stays unchanged. Only the fresh mode
-            // names the lawful reference rejection used by its fallback.
-            return Err(if mode == V4SearchSampleMode::FutureChanceV3
-                && error == Error::HiddenStateContract
-                && sampler::has_hidden_reference_conflict(&self.state, actor, plan.as_ref())
-            { Error::HiddenReferenceConflict } else { error });
+            return Err(error);
         }
         if mode == V4SearchSampleMode::FutureChanceV3 {
             // `seed` already derives from visible root, experiment and

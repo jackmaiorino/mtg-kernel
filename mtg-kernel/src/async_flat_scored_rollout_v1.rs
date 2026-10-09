@@ -39,17 +39,19 @@ use crate::flat_policy_v1::{
 };
 use crate::flat_policy_v2::FlatScoringDecisionViewV2;
 use crate::kernel_native_search_opponent_v1::KernelNativeSearchOpponentV1;
-use crate::native_full_episode_trajectory_v1::{
-    NativeFullEpisodeTrajectoryDecisionRowV1, NativeTrajectoryActorRoleV1,
-};
+use crate::native_full_episode_trajectory_v1::NativeTrajectoryActorRoleV1;
 use crate::native_full_episode_trajectory_v2::{
     NativeEnvironmentWindowPreflightAuthorityV2, NativeFullEpisodeTrajectoryStartV2,
-    NativeRunBoundFullEpisodeAccumulatorV2, NativeTrainingTrajectoryReceiptV2,
+    NativeRunBoundFullEpisodeAccumulatorV2,
 };
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 use crate::native_opponent_sampler_v1::select_native_trainer_opponent_action_v1;
 use crate::native_population_opponent_v1::{
     PopulationOpponentEngineV1, PopulationSlotKindV1, PopulationSlotV1,
+};
+use crate::native_search_trajectory_v3::{
+    NativeLaneTrajectoryAccumulatorV3, NativeLaneTrajectoryReceiptV3, NativeLaneTrajectoryRowV3,
+    NativeSearchTrajectoryAccumulatorV3,
 };
 use crate::native_trainer_schedule_v1::{
     derive_native_trainer_learner_action_seed_v1, derive_native_trainer_opponent_group_seed_v1,
@@ -792,7 +794,7 @@ pub(crate) struct FlatScoredTerminalEventV1 {
     /// observer path always supplies `None`. The opaque run-bound wrapper
     /// carries either the legacy V1 receipt or the environment randomization
     /// V2 receipt, matching the schedule that produced the episode.
-    pub(crate) native_full_trajectory_receipt: Option<NativeTrainingTrajectoryReceiptV2>,
+    pub(crate) native_full_trajectory_receipt: Option<NativeLaneTrajectoryReceiptV3>,
 }
 
 /// Crate-private staging boundary for a future native learner. Implementations
@@ -1316,6 +1318,7 @@ pub(crate) trait FlatScoredFamilyCore: Copy + Send + Sync + 'static {
         Self: 'a;
 
     const WORKER_NAME: &'static str;
+    const SEARCH_TRAJECTORY_V3: bool = false;
     const MEMBERSHIP_DIGEST_DOMAIN: &'static [u8];
 
     fn reset_session(
@@ -1547,7 +1550,7 @@ struct RoundTerminalV1 {
     terminal: AsyncRolloutTerminalV1,
     learner_action_count: u64,
     learner_trace_hash: u64,
-    native_full_trajectory_receipt: Option<NativeTrainingTrajectoryReceiptV2>,
+    native_full_trajectory_receipt: Option<NativeLaneTrajectoryReceiptV3>,
 }
 
 struct WorkerRoundCore<F: FlatScoredFamilyCore> {
@@ -1669,7 +1672,7 @@ struct LocalLaneCore<F: FlatScoredFamilyCore> {
     opponent_policy: SplitMix64,
     learner_seat: PlayerSeatV1,
     native_schedule: Option<NativeLaneScheduleStateV1>,
-    native_full_trajectory: Option<NativeRunBoundFullEpisodeAccumulatorV2>,
+    native_full_trajectory: Option<NativeLaneTrajectoryAccumulatorV3>,
     learner_action_count: u64,
     learner_trace_hash: u64,
     /// Set once per lane at construction; absence reproduces today's
@@ -1778,19 +1781,16 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                         .map_err(|_| {
                             self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding)
                         })?;
-                    let row = NativeFullEpisodeTrajectoryDecisionRowV1 {
-                        row_ordinal: waiting.expected.step,
-                        actor_seat: waiting.expected.acting_player,
-                        actor_role: NativeTrajectoryActorRoleV1::Learner,
-                        physical_decision_ordinal: waiting.expected.physical_decision_id,
-                        actor_physical_decision_ordinal: preflight.actor_physical_decision_ordinal,
-                        substep_index: waiting.expected.substep_index,
-                        substep_count: waiting.expected.substep_count,
-                        action_seed: preflight.action_seed,
-                        legal_action_count: waiting.expected.legal_action_count,
-                        selected_index: action.scored.selected_index,
-                        flat_action_v2_commitment: commitment,
-                    };
+                    let row = NativeLaneTrajectoryRowV3::new(
+                        trajectory.is_search(),
+                        waiting.expected,
+                        NativeTrajectoryActorRoleV1::Learner,
+                        preflight.actor_physical_decision_ordinal,
+                        preflight.action_seed,
+                        action.scored.selected_index,
+                        commitment,
+                        false,
+                    );
                     trajectory.preflight_candidate(row).map_err(|_| {
                         self.failure(AsyncFlatScoredWorkerPhaseV1::LearnerActionBinding)
                     })?;
@@ -1999,7 +1999,7 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                 }
             };
             match accumulator {
-                Ok(trajectory) => Some(trajectory),
+                Ok(trajectory) => Some(NativeLaneTrajectoryAccumulatorV3::Legacy(trajectory)),
                 Err(_) => {
                     self.episode_id = episode_id;
                     return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Reset));
@@ -2007,6 +2007,36 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
             }
         } else {
             None
+        };
+        let native_full_trajectory = if F::SEARCH_TRAJECTORY_V3 {
+            let schedule =
+                native_schedule.ok_or_else(|| self.failure(AsyncFlatScoredWorkerPhaseV1::Reset))?;
+            let search = if let Some(slot) = schedule.population_slot {
+                self.population_opponent
+                    .as_ref()
+                    .and_then(|population| population.search_authority_for_slot_v1(slot))
+                    .map(Arc::as_ref)
+            } else {
+                self.search_opponent.as_deref()
+            }
+            .ok_or_else(|| self.failure(AsyncFlatScoredWorkerPhaseV1::Reset))?;
+            let digest = search
+                .authority()
+                .digest()
+                .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Reset))?;
+            Some(NativeLaneTrajectoryAccumulatorV3::Search(
+                NativeSearchTrajectoryAccumulatorV3::new(
+                    episode_id,
+                    environment_seed,
+                    &config.deck_ids,
+                    session.native_full_trajectory_deck_hashes_v1(),
+                    learner_seat,
+                    digest,
+                )
+                .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Reset))?,
+            ))
+        } else {
+            native_full_trajectory
         };
         self.response = Some(session.current_response());
         self.session = Some(session);
@@ -2144,6 +2174,7 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                     } else {
                         None
                     };
+                    let mut rejected_determinization = false;
                     let selected_index = if let Some(preflight) = native_preflight {
                         let ladder_member = self
                             .native_schedule
@@ -2179,12 +2210,17 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                                 let session = self.session.as_ref().ok_or_else(|| {
                                     self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
                                 })?;
-                                searcher
-                                    .select_action(session, decision)
-                                    .map(|result| result.selected_index)
-                                    .map_err(|_| {
-                                        self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
-                                    })?
+                                select_search_root_for_collection_v3(
+                                    searcher,
+                                    session,
+                                    decision,
+                                    F::SEARCH_TRAJECTORY_V3,
+                                )
+                                .map(|(index, rejected)| {
+                                    rejected_determinization = rejected;
+                                    index
+                                })
+                                .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?
                             }
                             // Fail closed: more than one opponent authority
                             // installed at once (ladder+population,
@@ -2229,12 +2265,17 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                                 let session = self.session.as_ref().ok_or_else(|| {
                                     self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
                                 })?;
-                                searcher
-                                    .select_action(session, decision)
-                                    .map(|result| result.selected_index)
-                                    .map_err(|_| {
-                                        self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
-                                    })?
+                                select_search_root_for_collection_v3(
+                                    searcher,
+                                    session,
+                                    decision,
+                                    F::SEARCH_TRAJECTORY_V3,
+                                )
+                                .map(|(index, rejected)| {
+                                    rejected_determinization = rejected;
+                                    index
+                                })
+                                .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?
                             }
                             (Some(_), None, false) | (None, Some(_), false) => {
                                 // Deferred from preflight for either immutable
@@ -2319,24 +2360,20 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                                 .map_err(|_| {
                                     self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
                                 })?;
-                        let row = NativeFullEpisodeTrajectoryDecisionRowV1 {
-                            row_ordinal: decision.step,
-                            actor_seat: decision.acting_player,
-                            actor_role: NativeTrajectoryActorRoleV1::Opponent,
-                            physical_decision_ordinal: decision.physical_decision_id,
-                            actor_physical_decision_ordinal: preflight
-                                .actor_physical_decision_ordinal,
-                            substep_index: decision.substep_index,
-                            substep_count: decision.substep_count,
-                            action_seed: preflight.action_seed,
-                            legal_action_count: decision.legal_action_count,
-                            selected_index,
-                            flat_action_v2_commitment: commitment,
-                        };
                         let trajectory = self
                             .native_full_trajectory
                             .as_ref()
                             .ok_or_else(|| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
+                        let row = NativeLaneTrajectoryRowV3::new(
+                            trajectory.is_search(),
+                            decision,
+                            NativeTrajectoryActorRoleV1::Opponent,
+                            preflight.actor_physical_decision_ordinal,
+                            preflight.action_seed,
+                            selected_index,
+                            commitment,
+                            rejected_determinization,
+                        );
                         trajectory
                             .preflight_candidate(row)
                             .map_err(|_| self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol))?;
@@ -3366,6 +3403,24 @@ pub(crate) const fn opponent_authority_installation_is_valid_v1(
     (ladder_installed as u8 + population_installed as u8 + search_installed as u8) <= 1
 }
 
+pub(crate) fn select_search_root_for_collection_v3(
+    searcher: &KernelNativeSearchOpponentV1,
+    session: &FastActorSessionV1,
+    decision: FastActorDecisionV1,
+    fresh: bool,
+) -> Result<(u32, bool), crate::kernel_native_search_opponent_v1::KernelNativeSearchErrorV1> {
+    use crate::kernel_native_search_opponent_v1::KernelNativeSearchErrorV1;
+    match searcher.select_action(session, decision) {
+        Ok(result) => Ok((result.selected_index, false)),
+        Err(KernelNativeSearchErrorV1::DeterminizationReferenceConflict) if fresh => {
+            let (adapted, mapping) = session.kernel_search_v4_root_clone_v3(decision)?;
+            let index = adapted.kernel_search_canonical_visible_first_v4(decision)?;
+            Ok((mapping[index as usize], true))
+        }
+        Err(error) => Err(error),
+    }
+}
+
 // The kernel-native search authority parameter pushes this from 7 to 8
 // arguments. A bundling struct would only paper over the real complexity
 // (three mutually exclusive optional opponent authorities plus the
@@ -3387,18 +3442,34 @@ pub(crate) fn run_async_flat_scored_rollout_core_with_population_v1<
 ) -> Result<(AsyncFlatScoredRolloutResultV1, O::Output), AsyncFlatScoredObservedRunErrorV1<O::Error>>
 {
     let api_started = Instant::now();
+    if F::SEARCH_TRAJECTORY_V3
+        && (!matches!(
+            execution_schedule,
+            FlatScoredExecutionScheduleV1::NativeTrainerV1 { .. }
+        ) || ladder_opponent.is_some()
+            || search_opponent
+                .as_ref()
+                .is_some_and(|search| !search.authority().uses_v4_contract_v3())
+            || population_opponent
+                .as_ref()
+                .is_some_and(|population| !population.supports_search_collection_v3())
+            || (search_opponent.is_none() && population_opponent.is_none()))
+    {
+        return Err(AsyncFlatScoredRolloutErrorV1::UnsupportedSearchTrajectoryContract.into());
+    }
     // The fresh search API can bind library candidates that V2 receipts
     // cannot encode. Reject at admission instead of launching a worker that
     // would fail later or laundering V4 authority into a frozen V2 receipt.
-    if search_opponent
-        .as_ref()
-        .is_some_and(|search| search.authority().uses_v4_contract_v3())
-        || population_opponent.as_ref().is_some_and(|population| {
-            (0..crate::native_population_opponent_v1::POPULATION_OPPONENT_SLOT_COUNT_V1)
-                .filter_map(PopulationSlotV1::from_index_v1)
-                .filter_map(|slot| population.search_authority_for_slot_v1(slot))
-                .any(|search| search.authority().uses_v4_contract_v3())
-        })
+    if !F::SEARCH_TRAJECTORY_V3
+        && (search_opponent
+            .as_ref()
+            .is_some_and(|search| search.authority().uses_v4_contract_v3())
+            || population_opponent.as_ref().is_some_and(|population| {
+                (0..crate::native_population_opponent_v1::POPULATION_OPPONENT_SLOT_COUNT_V1)
+                    .filter_map(PopulationSlotV1::from_index_v1)
+                    .filter_map(|slot| population.search_authority_for_slot_v1(slot))
+                    .any(|search| search.authority().uses_v4_contract_v3())
+            }))
     {
         return Err(AsyncFlatScoredRolloutErrorV1::UnsupportedSearchTrajectoryContract.into());
     }

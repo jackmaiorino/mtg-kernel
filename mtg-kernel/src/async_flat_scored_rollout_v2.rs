@@ -1040,7 +1040,18 @@ impl<O: FlatScoredTrajectoryObserverV2> FlatScoredTrajectoryObserverCore<FlatSco
             terminal: event.terminal,
             learner_action_count: event.learner_action_count,
             learner_trace_hash: event.learner_trace_hash,
-            native_full_trajectory_receipt: event.native_full_trajectory_receipt,
+            native_full_trajectory_receipt: event.native_full_trajectory_receipt.map(|receipt| {
+                match receipt {
+                    crate::native_search_trajectory_v3::NativeLaneTrajectoryReceiptV3::Legacy(
+                        receipt,
+                    ) => receipt,
+                    crate::native_search_trajectory_v3::NativeLaneTrajectoryReceiptV3::Search(
+                        _,
+                    ) => {
+                        panic!("fresh search receipt reached a frozen V2 observer")
+                    }
+                }
+            }),
         })
     }
 

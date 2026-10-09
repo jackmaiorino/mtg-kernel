@@ -117,32 +117,6 @@ fn draw(rng: &mut SplitMix64, bound: u64) -> usize {
     }
 }
 
-pub(super) fn has_hidden_reference_conflict(
-    state: &GameState, actor: PlayerId,
-    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
-) -> bool {
-    for owner in [PlayerId::P0, PlayerId::P1] {
-        let mut pool = Vec::new();
-        if owner != actor {
-            for &id in &state.players[owner.index()].hand {
-                let object = state.objects.get(id);
-                if !state.known_hand_cards(actor, owner).iter().any(|known| {
-                    known.object == id && known.zone_change_count == object.zone_change_count
-                }) { pool.push(id); }
-            }
-        }
-        for (position, &id) in state.players[owner.index()].library.iter().enumerate() {
-            let object = state.objects.get(id);
-            if !state.known_library_cards(actor, owner).iter().any(|known| {
-                known.position as usize == position && known.object == id
-                    && known.zone_change_count == object.zone_change_count
-            }) { pool.push(id); }
-        }
-        if conflicts(state, &pool, plan) { return true; }
-    }
-    false
-}
-
 /// Called only on a disposable cloned state. Failure never permits retrying a seed.
 #[cfg(test)]
 pub(super) fn redeterminize(
@@ -157,6 +131,23 @@ pub(super) fn redeterminize_with_library_plan(
     actor: PlayerId,
     seed: u64,
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+) -> Result<(), Error> {
+    redeterminize_with_library_plan_inner(state, actor, seed, plan, false)
+}
+pub(super) fn redeterminize_with_library_plan_classified(
+    state: &mut GameState,
+    actor: PlayerId,
+    seed: u64,
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+) -> Result<(), Error> {
+    redeterminize_with_library_plan_inner(state, actor, seed, plan, true)
+}
+fn redeterminize_with_library_plan_inner(
+    state: &mut GameState,
+    actor: PlayerId,
+    seed: u64,
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+    classified: bool,
 ) -> Result<(), Error> {
     let mut rng = SplitMix64::seed(seed);
     for owner in [PlayerId::P0, PlayerId::P1] {
@@ -186,8 +177,15 @@ pub(super) fn redeterminize_with_library_plan(
         }
         let mut pool: Vec<_> = slots.iter().map(|x| x.2).collect();
         pool.sort_unstable();
-        if pool.windows(2).any(|x| x[0] == x[1]) || conflicts(state, &pool, plan) {
+        if pool.windows(2).any(|x| x[0] == x[1]) {
             return Err(Error::HiddenStateContract);
+        }
+        if conflicts(state, &pool, plan) {
+            return Err(if classified {
+                Error::HiddenReferenceConflict
+            } else {
+                Error::HiddenStateContract
+            });
         }
         for &(zone, _, id) in &slots {
             let obj = state.objects.get(id);

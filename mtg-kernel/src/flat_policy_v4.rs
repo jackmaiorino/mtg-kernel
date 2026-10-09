@@ -28,14 +28,14 @@ pub const FLAT_POLICY_TYPED_LAYOUT_VERSION_V4: u32 = 4;
 pub const FLAT_SCORER_PACKET_VERSION_V4: u32 = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FlatHistoricalPublicSourceV4 {
+pub struct FlatHistoricalPublicSourceV4 {
     pub context: HistoricalSourceContextV7,
     pub stack_item_kind: StackItemKindV2,
     pub model_object_index: u32,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct FlatScoringExtensionsV4 {
+pub struct FlatScoringExtensionsV4 {
     /// Only newly introduced physical rows, in V4 registration order. Rows
     /// reused from common public or legitimately known groups are excluded.
     pub appended_object_indices: Vec<u32>,
@@ -58,7 +58,7 @@ pub(crate) struct FlatDecisionV4 {
 /// The common value types are storage layouts, not a V2 identity assertion.
 /// Callers cannot construct or extract this view outside the crate.
 #[derive(Clone, Copy)]
-pub(crate) struct FlatScoringDecisionViewV4<'a> {
+pub struct FlatScoringDecisionViewV4<'a> {
     common: FlatScoringDecisionViewV2<'a>,
     extensions: &'a FlatScoringExtensionsV4,
 }
@@ -71,11 +71,11 @@ impl<'a> FlatScoringDecisionViewV4<'a> {
         Self { common, extensions }
     }
 
-    pub(crate) fn common(self) -> FlatScoringDecisionViewV2<'a> {
+    pub fn common(self) -> FlatScoringDecisionViewV2<'a> {
         self.common
     }
 
-    pub(crate) fn extensions(self) -> &'a FlatScoringExtensionsV4 {
+    pub fn extensions(self) -> &'a FlatScoringExtensionsV4 {
         self.extensions
     }
 }

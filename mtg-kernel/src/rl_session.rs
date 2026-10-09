@@ -298,9 +298,9 @@ pub(crate) use flat_action_v3::{
 pub use flat_action_v3::{FlatActionDecisionBindingV3, FlatActionDecisionSliceV3};
 #[cfg(test)]
 pub(crate) use flat_action_v4::search_library_fixture_v3;
+pub(crate) use flat_action_v4::V4SearchActionTokenV1;
 pub(crate) use flat_action_v4::V4SearchSampleMode;
 pub(crate) use flat_action_v4::V4SearchStateErrorV1;
-pub(crate) use flat_action_v4::V4SearchActionTokenV1;
 #[cfg(test)]
 pub(crate) use flat_action_v4::{
     hidden_order_triggers_shared_source_state_v1, hidden_order_triggers_state_v1,
