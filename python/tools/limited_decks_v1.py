@@ -215,7 +215,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--registry-extension", type=Path, action="append", default=None,
                         help="append definitions; the default base registry includes the FDN extension")
     parser.add_argument("--deck", type=Path, action="append", default=[])
-    parser.add_argument("--card-names", type=Path, default=REPO_ROOT / "data/limited/fdn_v1/card_names.json")
+    parser.add_argument("--card-names", type=Path, default=REPO_ROOT / "data/limited/fdn_v1/booster_pool_v1.json")
     args = parser.parse_args(argv)
     try:
         raw_registry = args.registry.read_bytes()

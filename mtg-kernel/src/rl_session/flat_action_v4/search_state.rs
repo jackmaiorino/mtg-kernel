@@ -5,8 +5,9 @@ use crate::state::GameState;
 mod chance_tests;
 mod effect_refs;
 mod key_step;
+pub(crate) use key_step::V4SearchActionTokenV1;
 #[cfg(test)]
-mod library_tests;
+pub(super) mod library_tests;
 mod sampler;
 #[cfg(test)]
 mod sampler_tests;
@@ -20,6 +21,7 @@ pub(crate) enum V4SearchStateErrorV1 {
     DecisionLocalLibrary,
     InvalidVisibleBinding,
     HiddenStateContract,
+    HiddenReferenceConflict,
     SampleCandidateRebuildFailed,
     SampleBoundaryEncodingFailed,
     SampleBoundaryChanged,
@@ -248,9 +250,17 @@ impl FastActorSessionV1 {
             .ok_or(Error::NoLiveDecision)?
             .candidates;
         let mut copy = self.clone();
-        if let Err(error) =
+        let sample = if mode == V4SearchSampleMode::FutureChanceV3 {
+            sampler::redeterminize_with_library_plan_classified(
+                &mut copy.state,
+                actor,
+                seed,
+                plan.as_ref(),
+            )
+        } else {
             sampler::redeterminize_with_library_plan(&mut copy.state, actor, seed, plan.as_ref())
-        {
+        };
+        if let Err(error) = sample {
             // Opt-in local correctness diagnostics only. Never overwrite a prior
             // root, expose this private state in a policy input, or resume play.
             if let Some(path) = std::env::var_os("MTG_V4_SEARCH_FAILURE_STATE") {

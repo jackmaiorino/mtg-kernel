@@ -1,0 +1,70 @@
+{
+  "version": 2,
+  "cards": [
+    {
+      "name": "Plains",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [
+        "Plains"
+      ],
+      "supertypes": [
+        "Basic"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "W"
+      ],
+      "decks": [
+        "Standard-MonoW.dck",
+        "Standard16-BW.dck",
+        "Standard16-GW.dck",
+        "Standard16-RW.dck",
+        "Standard16-UW.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "mana_ability"
+      ],
+      "java_file": "Mage/src/main/java/mage/cards/basiclands/Plains.java"
+    },
+    {
+      "name": "Burst Lightning",
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Standard-MonoR.dck",
+        "Standard16-RG.dck",
+        "Standard16-UR.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "kicker",
+        "burn"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BurstLightning.java"
+    }
+  ]
+}

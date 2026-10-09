@@ -28,7 +28,7 @@ type Result<T> = std::result::Result<T, RlContractError>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub(crate) enum HistoricalSourceContextV7 {
+pub enum HistoricalSourceContextV7 {
     Stack {
         stack_index: u32,
     },
