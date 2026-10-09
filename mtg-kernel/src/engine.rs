@@ -11971,6 +11971,14 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     {
         return true;
     }
+    if printed_active
+        && obj.zone == Zone::Battlefield
+        && def.name == "Cephalid Inkmage"
+        && kw == Keywords::CANT_BE_BLOCKED
+        && crate::effect::controller_graveyard_card_count(state, obj.controller) >= 7
+    {
+        return true;
+    }
     if obj.zone == Zone::Battlefield
         && obj.counters.plus1_plus1 > 0
         && object_has_type(state, id, CardType::Creature)

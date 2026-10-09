@@ -293,6 +293,8 @@ pub enum Subtype {
     Avatar,
     Glimmer,
     Sheep,
+    /// Appended for Lightshell Duo without changing existing subtype ids.
+    Otter,
 }
 
 impl Subtype {
@@ -408,6 +410,8 @@ impl Subtype {
         Subtype::Dwarf,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Berserker,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Otter,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Scout,
         #[cfg(feature = "standard-magezero-fixtures")]
@@ -568,6 +572,7 @@ impl Subtype {
                 | Subtype::Homunculus
                 | Subtype::Merfolk
                 | Subtype::Octopus
+                | Subtype::Otter
                 | Subtype::Hyena
                 | Subtype::Raccoon
                 | Subtype::Citizen

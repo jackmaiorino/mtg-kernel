@@ -6544,6 +6544,7 @@ fn pending_effect_semantic_v4(
                             }
                             | crate::effect::EffectTargetSelectionPurpose::ScryLibrary { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryOne { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand {
                                 ..
                             }
@@ -6577,7 +6578,8 @@ fn pending_effect_semantic_v4(
                     ) && acting_player == *player;
                     let redact_search_shape = matches!(
                         purpose,
-                        crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
+                        crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
                             | crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. } | crate::effect::EffectTargetSelectionPurpose::SearchLibraryCardsToDestination { .. }
                             | crate::effect::EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand { .. }
@@ -6627,7 +6629,9 @@ fn pending_effect_semantic_v4(
                         },
                         ordered: *ordered,
                         purpose: match purpose {
-                            crate::effect::EffectTargetSelectionPurpose::SurveilLibraryOne { .. }
+                            crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { graveyard_order: Some(_), .. } => TargetSelectionPurposeV4::LibraryOrder,
+                            crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { graveyard_order: None, .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryOne { .. }
                             | crate::effect::EffectTargetSelectionPurpose::OrderIntoGraveyard {
                                 ..
                             }
