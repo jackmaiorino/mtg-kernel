@@ -796,7 +796,7 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
             out.effect(
                 EffectAtom::new(EvF::StatChange)
                     .obj(ObjF::ThisObject)
-                    .amount(AmtF::fixed(i64::from(power.max(toughness))))
+                    .amount(AmtF::stat(i64::from(power), i64::from(toughness)))
                     .duration(DurF::WhileOnBattlefield),
             );
             if grant_haste {
@@ -829,7 +829,7 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 EffectAtom::new(EvF::StatChange)
                     .player(RelF::You)
                     .obj(ObjF::Typed(CardTypeF::Creature))
-                    .amount(AmtF::fixed(i64::from(power.max(toughness))))
+                    .amount(AmtF::stat(i64::from(power), i64::from(toughness)))
                     .duration(DurF::WhileOnBattlefield),
             );
         });
@@ -854,7 +854,10 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 out.effect(
                     EffectAtom::new(EvF::StatChange)
                         .obj(ObjF::AttachedObject)
-                        .amount(AmtF::fixed(i64::from(power_delta.max(toughness_delta))))
+                        .amount(AmtF::stat(
+                            i64::from(power_delta),
+                            i64::from(toughness_delta),
+                        ))
                         .duration(DurF::WhileOnBattlefield),
                 );
             }
@@ -1004,7 +1007,7 @@ fn attachment_facts(aura: AttachmentDef, out: &mut Collector) {
             out.effect(
                 EffectAtom::new(EvF::SetCharacteristic)
                     .obj(ObjF::AttachedObject)
-                    .amount(AmtF::fixed(i64::from(power.max(toughness))))
+                    .amount(AmtF::stat(i64::from(power), i64::from(toughness)))
                     .duration(DurF::WhileOnBattlefield),
             );
             if loses_abilities {
@@ -1032,7 +1035,7 @@ fn attachment_facts(aura: AttachmentDef, out: &mut Collector) {
                 );
                 AmtF::Dynamic
             } else {
-                AmtF::fixed(i64::from(power.max(toughness)))
+                AmtF::stat(i64::from(power), i64::from(toughness))
             };
             out.effect(
                 EffectAtom::new(EvF::StatChange)

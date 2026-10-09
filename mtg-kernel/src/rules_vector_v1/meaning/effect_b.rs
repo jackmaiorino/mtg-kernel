@@ -47,9 +47,7 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
 
     /// Bucketed magnitude of a fixed power/toughness change.
     fn stat_magnitude(power: i32, toughness: i32) -> AmtF {
-        AmtF::fixed(i64::from(
-            power.unsigned_abs().max(toughness.unsigned_abs()),
-        ))
+        AmtF::stat(i64::from(power), i64::from(toughness))
     }
 
     match op {

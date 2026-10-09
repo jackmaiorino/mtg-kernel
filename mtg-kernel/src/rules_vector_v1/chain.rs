@@ -147,6 +147,23 @@ impl Deck {
         Some(needs)
     }
 
+    /// Zones other than hand that card index `i` can be cast from.
+    fn alt_cast_zones(&self, i: usize) -> Vec<ZoneF> {
+        let mut zones: Vec<ZoneF> = self.rules[i]
+            .abilities
+            .iter()
+            .filter(|a| a.ctx == CtxF::AltZoneCast)
+            .flat_map(|a| a.atoms.iter())
+            .filter_map(|atom| match atom {
+                Atom::CastFrom(zone) if *zone != ZoneF::Hand => Some(*zone),
+                _ => None,
+            })
+            .collect();
+        zones.sort();
+        zones.dedup();
+        zones
+    }
+
     /// Steps that achieve `goal`.
     fn supports(&self, goal: GoalV1) -> Vec<StepV1> {
         let mut steps = Vec::new();
@@ -156,13 +173,12 @@ impl Deck {
                     let Atom::Effect(e) = atom else { continue };
                     let achieved = match goal {
                         GoalV1::OpponentLosesLife => {
+                            // The recipient must be a player, and that player
+                            // can be an opponent. Damage to creatures alone
+                            // does not count.
                             matches!(e.ev, EvF::Damage | EvF::LifeLoss)
-                                && (reaches(e.player, RelF::Opponent, ability)
-                                    || (e.player.is_none()
-                                        && matches!(
-                                            e.obj,
-                                            Some(ObjF::Player | ObjF::PlayerOrPermanent)
-                                        )))
+                                && matches!(e.obj, Some(ObjF::Player | ObjF::PlayerOrPermanent))
+                                && reaches(e.player, RelF::Opponent, ability)
                         }
                         GoalV1::CountUp { owner, zone, obj } => {
                             e.ev == EvF::Move
@@ -200,16 +216,34 @@ impl Deck {
                             });
                         }
                     }
-                    if needs.contains(&goal) {
-                        continue;
+                    // A spell's effect is reached by casting it from hand, or
+                    // from each other zone the card can be cast from
+                    // (flashback, escape), which then needs it in that zone.
+                    let mut variants = vec![needs.clone()];
+                    if matches!(ability.ctx, CtxF::Spell | CtxF::Mode) {
+                        for zone in self.alt_cast_zones(i) {
+                            let mut alt = needs.clone();
+                            alt.push(GoalV1::InZone {
+                                card: self.ids[i],
+                                zone,
+                            });
+                            variants.push(alt);
+                        }
                     }
-                    steps.push(StepV1 {
-                        goal,
-                        card: self.ids[i],
-                        ability: k,
-                        amount: e.amount,
-                        needs,
-                    });
+                    for mut needs in variants {
+                        needs.sort();
+                        needs.dedup();
+                        if needs.contains(&goal) {
+                            continue;
+                        }
+                        steps.push(StepV1 {
+                            goal,
+                            card: self.ids[i],
+                            ability: k,
+                            amount: e.amount,
+                            needs,
+                        });
+                    }
                 }
             }
         }
@@ -235,46 +269,94 @@ impl Deck {
     }
 }
 
-/// Every line to `OpponentLosesLife` within `max_depth` regression steps.
+/// Most proofs kept per goal, so a large deck cannot blow up the search.
+/// Proofs are built in a fixed order, so the cap is deterministic.
+const MAX_PROOFS_PER_GOAL: usize = 512;
+
+/// Every proof of `goal` as a set of steps, within `depth` levels. A goal
+/// already being proved further up (an ancestor) has no proof here, so a
+/// line can never rest on itself.
+fn prove(deck: &Deck, goal: GoalV1, ancestors: &mut Vec<GoalV1>, depth: usize) -> Vec<Vec<StepV1>> {
+    if ancestors.contains(&goal) {
+        return Vec::new();
+    }
+    let mut proofs = Vec::new();
+    if deck.base(goal) {
+        proofs.push(Vec::new());
+    }
+    if depth == 0 {
+        return proofs;
+    }
+    ancestors.push(goal);
+    for step in deck.supports(goal) {
+        let mut partial = vec![vec![step.clone()]];
+        for &need in &step.needs {
+            let sub = prove(deck, need, ancestors, depth - 1);
+            let mut next = Vec::new();
+            'outer: for p in &partial {
+                for q in &sub {
+                    let mut merged = p.clone();
+                    merged.extend(q.iter().cloned());
+                    merged.sort();
+                    merged.dedup();
+                    next.push(merged);
+                    if next.len() >= MAX_PROOFS_PER_GOAL {
+                        break 'outer;
+                    }
+                }
+            }
+            partial = next;
+            if partial.is_empty() {
+                break;
+            }
+        }
+        proofs.extend(partial);
+        if proofs.len() >= MAX_PROOFS_PER_GOAL {
+            proofs.truncate(MAX_PROOFS_PER_GOAL);
+            break;
+        }
+    }
+    ancestors.pop();
+    proofs.sort();
+    proofs.dedup();
+    proofs
+}
+
+/// Whether a line is well founded: replaying its steps from casts alone
+/// reaches every goal it uses, ending at `OpponentLosesLife`.
+pub fn is_well_founded(ids: &[u16], line: &LineV1) -> bool {
+    let deck = Deck::new(ids);
+    let mut met: BTreeSet<GoalV1> = BTreeSet::new();
+    loop {
+        let before = met.len();
+        for step in &line.steps {
+            if step.needs.iter().all(|n| met.contains(n) || deck.base(*n)) {
+                met.insert(step.goal);
+            }
+        }
+        if met.len() == before {
+            break;
+        }
+    }
+    met.contains(&GoalV1::OpponentLosesLife)
+}
+
+/// Every line to `OpponentLosesLife` within `max_depth` regression levels.
 pub fn lines_for_deck(ids: &[u16], max_depth: usize) -> Vec<LineV1> {
     let deck = Deck::new(ids);
     let mut lines = BTreeSet::new();
-    let mut stack = vec![(vec![GoalV1::OpponentLosesLife], Vec::<StepV1>::new())];
-    while let Some((mut open, steps)) = stack.pop() {
-        let Some(goal) = open.pop() else {
-            let mut cards: Vec<u16> = steps.iter().map(|s| s.card).collect();
-            cards.sort_unstable();
-            cards.dedup();
-            let scaling = steps
-                .iter()
-                .any(|s| s.goal == GoalV1::OpponentLosesLife && s.amount == AmtF::Dynamic);
-            lines.insert(LineV1 {
-                steps,
-                cards,
-                scaling,
-            });
-            continue;
-        };
-        if steps.iter().any(|s| s.goal == goal) {
-            stack.push((open, steps));
-            continue;
-        }
-        let mut alternatives = Vec::new();
-        if deck.base(goal) {
-            alternatives.push(None);
-        }
-        if steps.len() < max_depth {
-            alternatives.extend(deck.supports(goal).into_iter().map(Some));
-        }
-        for alt in alternatives {
-            let mut open = open.clone();
-            let mut steps = steps.clone();
-            if let Some(step) = alt {
-                open.extend(step.needs.iter().copied());
-                steps.push(step);
-            }
-            stack.push((open, steps));
-        }
+    for steps in prove(&deck, GoalV1::OpponentLosesLife, &mut Vec::new(), max_depth) {
+        let mut cards: Vec<u16> = steps.iter().map(|s| s.card).collect();
+        cards.sort_unstable();
+        cards.dedup();
+        let scaling = steps
+            .iter()
+            .any(|s| s.goal == GoalV1::OpponentLosesLife && s.amount == AmtF::Dynamic);
+        lines.insert(LineV1 {
+            steps,
+            cards,
+            scaling,
+        });
     }
     lines.into_iter().collect()
 }

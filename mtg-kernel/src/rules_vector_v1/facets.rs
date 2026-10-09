@@ -213,6 +213,16 @@ pub enum AmtF {
 
 impl AmtF {
     /// Log-scale bucket: 0, 1, 2, 3, 4-5, 6-9, 10+.
+    /// A power/toughness change: the larger-magnitude side, with its sign,
+    /// so +2/+2 and -2/-2 differ.
+    pub fn stat(power: i64, toughness: i64) -> AmtF {
+        AmtF::fixed(if power.abs() >= toughness.abs() {
+            power
+        } else {
+            toughness
+        })
+    }
+
     pub fn fixed(n: i64) -> AmtF {
         let negative = n < 0;
         let n = n.unsigned_abs();

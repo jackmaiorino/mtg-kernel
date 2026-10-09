@@ -71,9 +71,7 @@ fn library_top(ev: EvF, out: &mut Collector) {
 /// Magnitude of a power/toughness modifier (the sign has no facet slot; see
 /// report).
 fn stat_magnitude(power: i16, toughness: i16) -> AmtF {
-    AmtF::fixed(i64::from(
-        power.unsigned_abs().max(toughness.unsigned_abs()),
-    ))
+    AmtF::stat(i64::from(power), i64::from(toughness))
 }
 
 pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {

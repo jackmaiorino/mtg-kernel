@@ -462,6 +462,53 @@ fn backward_chaining_finds_the_spy_line() {
         "{} lines, none with Spy+Dread Return+Lotleth",
         lines.len()
     );
+    // The flashback route: Dread Return's reanimation needs Dread Return in
+    // the graveyard, and some line proves that.
+    let flashback = chain::GoalV1::InZone {
+        card: dread,
+        zone: ZoneF::Graveyard,
+    };
+    assert!(lines.iter().any(|l| l.scaling
+        && l.steps
+            .iter()
+            .any(|s| s.card == dread && s.needs.contains(&flashback))
+        && l.steps.iter().any(|s| s.goal == flashback)));
+}
+
+#[test]
+fn backward_chaining_lines_are_well_founded_and_hit_a_player() {
+    for (deck, ids) in runtime_deck_cards() {
+        let ids: Vec<u16> = ids.iter().copied().collect();
+        for line in chain::lines_for_deck(&ids, 5) {
+            assert!(
+                chain::is_well_founded(&ids, &line),
+                "{deck}: circular line {:?}",
+                line.cards
+            );
+            for step in line
+                .steps
+                .iter()
+                .filter(|s| s.goal == chain::GoalV1::OpponentLosesLife)
+            {
+                let rules = card_rules(step.card);
+                let hits_player = rules.abilities[step.ability].atoms.iter().any(|a| {
+                    matches!(
+                        a,
+                        Atom::Effect(e) if matches!(e.ev, EvF::Damage | EvF::LifeLoss)
+                            && matches!(e.obj, Some(ObjF::Player | ObjF::PlayerOrPermanent))
+                    )
+                });
+                assert!(hits_player, "{deck}: root step damages no player");
+            }
+        }
+    }
+}
+
+#[test]
+fn power_toughness_changes_keep_their_sign() {
+    assert_ne!(AmtF::stat(2, 2), AmtF::stat(-2, -2));
+    assert_eq!(AmtF::stat(-2, -2), AmtF::Minus(2));
+    assert_eq!(AmtF::stat(1, 0), AmtF::Fixed(1));
 }
 
 // 10. Source inventory: every card-name branch in the rules engine is either
