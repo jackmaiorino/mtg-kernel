@@ -2948,7 +2948,8 @@ fn legal_targets_for_controller_from_source(
                     let object = state.objects.get(id);
                     object.zone == Zone::Graveyard
                         && !object.v4.is_token
-                        && object.spell_copy_origin.is_none()
+                        && (spec != TargetSpec::UpToOneCardInGraveyards
+                            || object.spell_copy_origin.is_none())
                 })
                 .map(Target::Object)
                 .collect()
