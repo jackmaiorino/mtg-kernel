@@ -134,7 +134,8 @@ fn appended_definitions_match_their_printed_characteristics() {
             CardCapability::Full
         );
     }
-    assert_eq!(first as usize + NAMES.len(), CARD_DEFS.len());
+    assert_eq!(first, 317, "the batch keeps its frozen ids");
+    assert!(first as usize + NAMES.len() <= CARD_DEFS.len());
     preflight_fully_supported_deck(&NAMES[..4].iter().map(|name| id(name)).collect::<Vec<_>>())
         .unwrap();
     println!("FDN catalog hash: {KERNEL_CARDDB_HASH:016x}");

@@ -6,11 +6,14 @@ supervised success; an A to B to C chain with B gone, released only after C
 ends and taken down whole with an abandoned supervisor; nested dispatch that
 carries the token and holds the outer lock, also after a lost response with
 the parent gone; a late nested supervisor refused; a lost creation response;
-two competing reclaimers). Every test uses its own temporary root."""
+two competing reclaimers). Every test uses its own temporary root. On Linux
+the same tests run against the Linux backend (a detached session stands in
+for WMI), plus tests of its own identity, locking and containment."""
 from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -26,7 +29,9 @@ TOOLS = Path(__file__).resolve().parents[1] / "tools"
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
-if os.name == "nt":
+LINUX = sys.platform.startswith("linux")
+SUPPORTED = os.name == "nt" or LINUX
+if SUPPORTED:
     import host_reservation_v1 as hr
 
 PRELUDE = (
@@ -50,7 +55,7 @@ def wait_until(predicate, timeout, step=0.2):
     return predicate()
 
 
-@unittest.skipUnless(os.name == "nt", "the host reservation is Windows-only")
+@unittest.skipUnless(SUPPORTED, "the host reservation supports Windows and Linux")
 class HostReservationTests(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix="host-reservation-test-")
@@ -219,6 +224,7 @@ class HostReservationTests(unittest.TestCase):
         self.assertEqual(code, hr.EXIT_REFUSED)
         self.assertFalse(marker.exists())
 
+    @unittest.skipUnless(os.name == "nt", "app-execution aliases exist only on Windows")
     def test_app_execution_alias_is_refused_before_acquiring(self):
         alias = "C:/Users/someone/AppData/Local/Microsoft/WindowsApps/python.exe"
         with self.assertRaises(ValueError):
@@ -236,8 +242,8 @@ class HostReservationTests(unittest.TestCase):
             self.assertEqual(hr.supervisor_python(), os.path.abspath(base))
             self.assertEqual(hr.supervisor_python(redirector), os.path.abspath(base))
             line = hr.supervisor_command(uuid.uuid4().hex, work)
-            self.assertTrue(line.startswith(subprocess.list2cmdline([os.path.abspath(base)])))
-            self.assertTrue(line.endswith(subprocess.list2cmdline(work)))
+            self.assertTrue(line.startswith(hr.command_line([os.path.abspath(base)])))
+            self.assertTrue(line.endswith(hr.command_line(work)))
             explicit = "C:/test/other/python.exe"
             self.assertEqual(hr.supervisor_python(explicit), os.path.abspath(explicit))
 
@@ -246,6 +252,7 @@ class HostReservationTests(unittest.TestCase):
             self.assertEqual(hr.supervisor_python(), os.path.abspath(sys.executable))
 
     # ------------------------------------------------------------ WMI lifecycle
+    # (on Linux, spawn_detached creates the supervisor in place of WMI)
 
     @unittest.skipUnless(WMI_STARTABLE, NO_WMI)
     def test_wmi_supervisor_holds_until_its_child_ends_then_releases(self):
@@ -340,7 +347,7 @@ class HostReservationTests(unittest.TestCase):
                        f"time.sleep(5); open({str(done_file)!r}, 'w').write('done')")
         outer = PRELUDE + (
             "def lossy(line, cwd):\n"
-            "    hr.wmi_create(line, cwd)\n"
+            "    hr.create_process(line, cwd)\n"
             "    raise TimeoutError('creation response lost')\n"
             f"r = hr.dispatch('test', 'nested', 'held by the outer supervisor', [sys.executable, '-c', {nested_work!r}], "
             f"cwd={self.root!r}, create={'lossy' if lossy else 'None'})\n"
@@ -391,7 +398,7 @@ class HostReservationTests(unittest.TestCase):
         hr.release(r["token"], "cancelled")
         marker = Path(self.root) / "late.ran"
         line = hr.supervisor_command(r["token"], [sys.executable, "-c", f"open({str(marker)!r}, 'w').close()"], nested=True)
-        created = hr.wmi_create(line, self.root)
+        created = hr.create_process(line, self.root)
         self.assertEqual(created["return_value"], 0)
         creation = hr.creation_time(created["pid"])
         if creation is not None:
@@ -404,7 +411,7 @@ class HostReservationTests(unittest.TestCase):
     @unittest.skipUnless(WMI_STARTABLE, NO_WMI)
     def test_wmi_lost_creation_response_is_never_redispatched(self):
         def lossy(line, cwd):
-            hr.wmi_create(line, cwd)  # the process is created ...
+            hr.create_process(line, cwd)  # the process is created ...
             raise TimeoutError("creation response lost")  # ... but the caller never hears
         result = hr.dispatch("test", "wmi-lost", "the supervisor releases at exit",
                              [sys.executable, "-c", SLEEP.format(4)], cwd=self.root, create=lossy)
@@ -453,6 +460,197 @@ class HostReservationTests(unittest.TestCase):
         self.assertEqual(len(list(Path(self.root).glob(f"{hr.HOST}.g*.{old['token']}.reclaimed-*.json"))), 1)
         self.assertEqual(hr.status()["record"]["token"], winners[0])
         hr.release(winners[0], "cancelled")
+
+    # ------------------------------------------------------------ Linux backend
+
+    def work_with_children(self, info_file):
+        """Work that starts three sleepers (in its group, in another group of its
+        session, and in a session of its own), records the ids, then sleeps."""
+        sleeper = f"[sys.executable, '-c', {SLEEP.format(120)!r}]"
+        code = (
+            "import json, os, subprocess, sys, time\n"
+            f"same = subprocess.Popen({sleeper})\n"
+            f"moved = subprocess.Popen({sleeper}, process_group=0)\n"
+            f"escaped = subprocess.Popen({sleeper}, start_new_session=True)\n"
+            "info = {'pid': os.getpid(), 'sid': os.getsid(0), 'pgid': os.getpgrp(),\n"
+            "        'children': {'same': same.pid, 'moved': moved.pid, 'escaped': escaped.pid}}\n"
+            f"open({str(info_file)!r} + '.tmp', 'w').write(json.dumps(info))\n"
+            f"os.rename({str(info_file)!r} + '.tmp', {str(info_file)!r})\n"
+            "time.sleep(120)\n"
+        )
+        return [sys.executable, "-c", code]
+
+    def read_work(self, info_file):
+        """The work's ids; its processes are killed after the test even if it fails
+        (an escaped sleeper is outside every session tearDown can see)."""
+        info = json.loads(info_file.read_text())
+        named = {p: hr.creation_time(p) for p in [info["pid"], *info["children"].values()]}
+
+        def kill_survivors():
+            for pid, born in named.items():
+                if born is not None and hr.process_state(pid, born) == "alive":
+                    os.kill(pid, 9)
+        self.addCleanup(kill_survivors)
+        return info
+
+    @staticmethod
+    def session_and_group(pid):
+        row = hr._stat(pid)
+        return row.session, row.pgrp
+
+    @unittest.skipUnless(LINUX, "Linux backend")
+    def test_linux_second_acquire_fails_while_held_and_never_replaces_the_lock(self):
+        first = hr.acquire("test", "first", "released by the test")
+        before = hr.lock_path().read_bytes()
+        with self.assertRaises(hr.Held) as caught:
+            hr.acquire("test", "second", "must be refused")
+        self.assertEqual(caught.exception.holder["token"], first["token"])
+        cli = subprocess.run([sys.executable, str(TOOLS / "host_reservation_v1.py"), "acquire", "--lane", "test",
+                              "--work-id", "cli", "--release-condition", "must be refused"],
+                             env=dict(os.environ), capture_output=True, text=True, timeout=60)
+        self.assertEqual(cli.returncode, hr.EXIT_HELD, cli.stderr)
+        self.assertEqual(json.loads(cli.stdout)["holder"]["token"], first["token"])
+        self.assertEqual(hr.lock_path().read_bytes(), before, "a refused acquire never replaces the lock")
+        self.assertEqual(list(Path(self.root).glob(".*.tmp")), [], "the loser removes its temp file")
+        # POSIX rename would silently replace the lock; publishing refuses.
+        other = Path(self.root) / "other.tmp"
+        other.write_bytes(b"other")
+        with self.assertRaises(FileExistsError):
+            hr._publish(other, hr.lock_path())
+        self.assertEqual(hr.lock_path().read_bytes(), before)
+        hr.release(first["token"], "cancelled")
+        second = hr.acquire("test", "second", "released by the test")
+        self.assertEqual(second["generation"], first["generation"] + 1)
+        hr.release(second["token"], "cancelled")
+
+    @unittest.skipUnless(LINUX, "Linux backend")
+    def test_linux_dead_exited_or_restarted_holder_is_stale_by_pid_and_start_time(self):
+        pid, start = hr.self_identity()
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        self.assertEqual(start, int(stat[stat.rindex(")") + 2:].split()[19]), "field 22, start time")
+        self.assertEqual(hr.process_state(pid, start), "alive")
+        dead = self.spawn(SLEEP.format(30))
+        dead_start = wait_until(lambda: hr.creation_time(dead.pid), 10)
+        dead.kill()
+        dead.wait(10)  # reaped: the pid is gone (or names a newer process)
+        exited = self.spawn("pass")
+        exited_start = hr.creation_time(exited.pid)
+        self.assertTrue(wait_until(lambda: hr._stat(exited.pid).state == "Z", 10), "exited, not yet reaped")
+        self.assertEqual(hr.creation_time(exited.pid), exited_start, "an unreaped process keeps its start time")
+        stale = {"dead": (dead.pid, dead_start), "exited": (exited.pid, exited_start), "restarted": (pid, start + 1)}
+        for label, (owner_pid, owner_start) in stale.items():
+            self.assertEqual(hr.process_state(owner_pid, owner_start), "absent", label)
+            crafted = self.record(owner_pid=owner_pid, owner_process_creation_time=owner_start)
+            hr.lock_path().write_bytes(json.dumps(crafted).encode())
+            self.assertEqual(hr.status()["state"], "reclaimable", label)
+            new = hr.reclaim("test", f"after-{label}", "released by the test")
+            self.assertEqual(new["reclaimed"]["token"], crafted["token"])
+            self.assertIn("absent by pid and creation time", new["reclaimed"]["evidence"])
+            hr.release(new["token"], "cancelled")
+        hr.lock_path().write_bytes(json.dumps(self.record()).encode())
+        self.assertEqual(hr.status()["state"], "held", "a live owner with its own start time holds")
+        with self.assertRaises(hr.Refused):
+            hr.reclaim("test", "recovery", "must be refused")
+
+    @unittest.skipUnless(LINUX, "Linux backend")
+    def test_linux_supervisor_runs_work_in_its_own_session_and_stop_kills_the_whole_group(self):
+        info_file = Path(self.root) / "work.json"
+        result = hr.dispatch("test", "linux-session", "reclaimed by the test", self.work_with_children(info_file),
+                             cwd=self.root)
+        self.assertEqual(result["state"], "dispatched", result)
+        token = result["token"]
+        self.assertTrue(wait_until(info_file.exists, 30))
+        info, events = self.read_work(info_file), self.events(token)
+        adopt = [e for e in events if e["kind"] == "adopt"][0]
+        self.assertTrue(adopt["contained"])
+        self.assertEqual([e["pid"] for e in events if e["kind"] == "descendant"], [info["pid"]])
+        # The supervisor was created detached (its own session), the work in another.
+        self.assertEqual(self.session_and_group(adopt["pid"]), (adopt["pid"], adopt["pid"]))
+        self.assertNotEqual(adopt["pid"], os.getsid(0), "not the caller's session")
+        self.assertEqual((info["sid"], info["pgid"]), (info["pid"], info["pid"]))
+        kids = info["children"]
+        self.assertEqual(self.session_and_group(kids["same"]), (info["pid"], info["pid"]))
+        self.assertEqual(self.session_and_group(kids["moved"]), (info["pid"], kids["moved"]))
+        self.assertEqual(self.session_and_group(kids["escaped"]), (kids["escaped"], kids["escaped"]))
+        work = {"work": info["pid"], **kids}
+        work = {name: (p, hr.creation_time(p)) for name, p in work.items()}
+        self.assertEqual(hr.status()["state"], "held")
+        # Stop the supervisor: it kills its whole job, also the process that left the session.
+        self.assertTrue(hr.terminate(adopt["pid"], adopt["creation_time"]))
+        for name, (p, born) in work.items():
+            self.assertTrue(wait_until(lambda: hr.process_state(p, born) == "absent", 15), name)
+        # Like a terminated Windows supervisor: no release, positive evidence to reclaim.
+        self.assertEqual(hr.status()["state"], "reclaimable")
+        new = hr.reclaim("test", "recovery", "released by the test")
+        self.assertEqual(new["reclaimed"]["token"], token)
+        hr.release(new["token"], "cancelled")
+
+    @unittest.skipUnless(LINUX, "Linux backend")
+    def test_linux_killed_supervisor_leaves_work_that_keeps_the_host_held(self):
+        # Weaker than a job object: SIGKILL of the supervisor kills nothing, but
+        # the surviving work session still holds the reservation.
+        info_file = Path(self.root) / "work.json"
+        result = hr.dispatch("test", "linux-sigkill", "reclaimed by the test", self.work_with_children(info_file),
+                             cwd=self.root)
+        token = result["token"]
+        self.assertTrue(wait_until(info_file.exists, 30))
+        info = self.read_work(info_file)
+        adopt = [e for e in self.events(token) if e["kind"] == "adopt"][0]
+        work = (info["pid"], hr.creation_time(info["pid"]))
+        same = (info["children"]["same"], hr.creation_time(info["children"]["same"]))
+        os.kill(adopt["pid"], 9)
+        self.assertTrue(wait_until(lambda: hr.process_state(adopt["pid"], adopt["creation_time"]) == "absent", 10))
+        self.assertEqual(hr.process_state(*work), "alive")
+        self.assertEqual(hr.status()["state"], "held")
+        os.kill(work[0], 9)
+        self.assertTrue(wait_until(lambda: hr.process_state(*work) == "absent", 10))
+        # Only the session now names the surviving sleeper: still held, never reclaimed.
+        status = hr.status()
+        self.assertEqual(status["state"], "held", status)
+        self.assertIn(same[0], [d["pid"] for d in status["live_descendants"]])
+        with self.assertRaises(hr.Refused):
+            hr.reclaim("test", "recovery", "must be refused")
+        for name in ("same", "moved", "escaped"):
+            child = info["children"][name]
+            hr.terminate(child, hr.creation_time(child))
+        new = wait_until(self.try_reclaim, 20, step=0.5)
+        self.assertTrue(new, hr.status())
+        hr.release(new["token"], "cancelled")
+
+    @unittest.skipUnless(LINUX, "Linux backend")
+    def test_linux_boot_id_is_the_kernel_boot_id(self):
+        raw = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip()
+        self.assertRegex(raw, r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+        self.assertEqual(hr.boot_id(), f"bootid:{raw}")
+        r = hr.acquire("test", "boot", "released by the test")
+        self.assertEqual(r["boot_id"], f"bootid:{raw}")
+        hr.release(r["token"], "cancelled")
+        with patch.object(hr, "BOOT_ID_PATH", str(Path(self.root) / "missing")):
+            self.assertEqual(hr.boot_id(), "unavailable")
+            # An unreadable boot id is never evidence of a reboot.
+            hr.lock_path().write_bytes(json.dumps(self.record(boot_id="bootid:another-boot")).encode())
+            self.assertEqual(hr.status()["state"], "held")
+
+    @unittest.skipUnless(LINUX, "Linux backend")
+    def test_linux_busy_scan_matches_image_names_from_proc(self):
+        worker = self.spawn(SLEEP.format(30))
+        image = os.path.basename(os.path.realpath(sys.executable))
+        pattern = f"^{re.escape(image)}$"
+        self.assertTrue(wait_until(lambda: worker.pid in [r["ProcessId"] for r in hr.busy_processes(pattern, [])], 10))
+        self.assertIn({"ProcessId": worker.pid, "Name": image}, hr.busy_processes(pattern.upper(), []),
+                      "case-insensitive, like PowerShell -match")
+        self.assertNotIn(worker.pid, [r["ProcessId"] for r in hr.busy_processes(pattern, [worker.pid])])
+
+    @unittest.skipUnless(LINUX, "Linux backend")
+    def test_linux_lock_root_default_and_override(self):
+        with patch.dict(os.environ):
+            os.environ.pop(hr.TEST_ROOT_ENV)
+            os.environ.pop(hr.ROOT_ENV, None)
+            self.assertEqual(hr.root_dir(), Path("/var/lib/mtg-node/host-lock"))
+            os.environ[hr.ROOT_ENV] = self.root
+            self.assertEqual(hr.lock_path(), Path(self.root) / f"{hr.HOST}.lock")
+            os.environ[hr.TEST_ROOT_ENV] = str(Path(self.root) / "test")
+            self.assertEqual(hr.root_dir(), Path(self.root) / "test", "the test root still wins")
 
 
 if __name__ == "__main__":
