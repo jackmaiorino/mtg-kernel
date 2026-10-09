@@ -4046,6 +4046,7 @@ impl FlatDecisionEncoderV2 {
         session: &FastActorSessionV1,
         expected: FastActorDecisionV1,
         buffers: &mut FlatScoringOwnedBuffersV2<'_>,
+        repair_public_relations: bool,
     ) -> Result<crate::flat_policy_v3::FlatDecisionV3, FlatDecisionErrorV2> {
         self.clear_typed_cache();
         self.v3_action_objects = Some(Vec::new());
@@ -4096,6 +4097,9 @@ impl FlatDecisionEncoderV2 {
             session.game_state(),
             observation.acting_player,
         )?;
+        if repair_public_relations {
+            self.register_exiled_by_sources_for_v3_evaluation(&observation)?;
+        }
         self.build_relations(&observation)?;
         self.validate_cached_tables()?;
         if self.scorer_actions.len() != self.actions.len()
@@ -4127,6 +4131,39 @@ impl FlatDecisionEncoderV2 {
         std::mem::swap(&mut self.scorer_actions, buffers.actions);
         std::mem::swap(&mut self.scorer_action_refs, buffers.action_refs);
         Ok(decision)
+    }
+
+    /// Evaluation adapter only. The V6 producer already authenticates each
+    /// public ExiledBy relation against its live source or linked-exile record.
+    /// Register only missing sources actually present in this actor projection,
+    /// so hidden records cannot introduce model rows or affect row ordinals.
+    fn register_exiled_by_sources_for_v3_evaluation(
+        &mut self,
+        observation: &ObservationV6,
+    ) -> Result<(), FlatDecisionErrorV2> {
+        let actor = observation.acting_player;
+        let mut appended = 0_u32;
+        for relation in &observation.projection.surface.object_relations {
+            let ObjectRelationPublicV4::ExiledBy { exiled_by, .. } = relation else {
+                continue;
+            };
+            match self.resolve_reference(exiled_by, actor) {
+                Ok(_) => continue,
+                Err(FlatDecisionErrorV2::InvalidReference) => {}
+                Err(error) => return Err(error),
+            }
+            // The shared ceiling is 1 + stack length. Compute it from the
+            // actor projection here, without any hidden state dependency.
+            let ordinal = usize_u32(observation.projection.surface.stack.len())?
+                .checked_add(1 + FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1 as u32)
+                .and_then(|base| base.checked_add(appended))
+                .ok_or(FlatDecisionErrorV2::CheckedIntegerRange)?;
+            self.add_validated_historical_source_v3(exiled_by, actor, ordinal)?;
+            appended = appended
+                .checked_add(1)
+                .ok_or(FlatDecisionErrorV2::CheckedIntegerRange)?;
+        }
+        Ok(())
     }
 
     fn build_cache(
@@ -5407,6 +5444,51 @@ mod tests {
         StackItemPublicV2,
     };
     use crate::rl_session::{FastActorResponseV1, CANONICAL_BURN_DECK_ID};
+
+    #[test]
+    fn v3_spell_target_public_relation_registration_deduplicates_two_departed_sources() {
+        let session = FastActorSessionV1::from_v3_fixture_state(
+            crate::rl_session::linked_exile_target_fixture_v1(),
+        );
+        let mut observation = session
+            .flat_policy_observation_v3(expected(&session))
+            .unwrap();
+        assert_eq!(observation.projection.surface.object_relations.len(), 2);
+        let relations = observation.projection.surface.object_relations.clone();
+        observation
+            .projection
+            .surface
+            .object_relations
+            .extend(relations.clone());
+        let mut encoder = FlatDecisionEncoderV2::default();
+        encoder.register_objects(&observation).unwrap();
+        encoder.register_extensions_v3(&observation).unwrap();
+        let before = encoder.objects.len();
+        encoder
+            .register_exiled_by_sources_for_v3_evaluation(&observation)
+            .unwrap();
+        assert_eq!(encoder.objects.len(), before + 2);
+        let indices: Vec<_> = relations
+            .iter()
+            .map(|relation| {
+                let ObjectRelationPublicV4::ExiledBy { exiled_by, .. } = relation else {
+                    panic!()
+                };
+                encoder
+                    .resolve_reference(exiled_by, observation.acting_player)
+                    .unwrap()
+            })
+            .collect();
+        assert_ne!(indices[0], indices[1]);
+        assert_ne!(
+            encoder.objects[indices[0] as usize].visible_ordinal,
+            encoder.objects[indices[1] as usize].visible_ordinal
+        );
+        encoder
+            .register_exiled_by_sources_for_v3_evaluation(&observation)
+            .unwrap();
+        assert_eq!(encoder.objects.len(), before + 2);
+    }
 
     fn expected(session: &FastActorSessionV1) -> FastActorDecisionV1 {
         let FastActorResponseV1::Decision(expected) = session.current_response() else {

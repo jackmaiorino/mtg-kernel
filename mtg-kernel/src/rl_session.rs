@@ -286,7 +286,9 @@ mod flat_action_v3;
 mod trace_v1;
 mod v3_spell_target_adapter_v1;
 #[cfg(test)]
-pub(crate) use v3_spell_target_adapter_v1::pyroblast_target_fixture_v1;
+pub(crate) use v3_spell_target_adapter_v1::{
+    linked_exile_target_fixture_v1, pyroblast_target_fixture_v1,
+};
 mod flat_action_v4;
 #[cfg(test)]
 pub(crate) use flat_action_v3::{
