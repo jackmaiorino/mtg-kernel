@@ -21,7 +21,8 @@ The product-derived 286 names equal the historical reference exactly,
 including all ten Special Guests. See `fdn_booster_target_v1.md`.
 The original fixture milestone's final main CI run 37440121764 has all eight
 jobs successful; final retained evidence integration in collaboration PR
-#92 is still pending. This updates the older qualification status above
+#92 is merged at `f5e220570aecd0dda7b66294e747347d698944b1`.
+This updates the older qualification status above
 without changing any frozen measurements.
 
 | Milestone | Concrete work | Acceptance |
