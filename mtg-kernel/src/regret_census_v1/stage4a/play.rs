@@ -111,13 +111,16 @@ pub(crate) fn apply(
     defs: &SpyDefs,
 ) -> Result<(), PlayErr> {
     meter.charge()?;
-    let before = labels
-        .as_ref()
-        .map(|_| Before::take(s.game_state(), focal, defs));
+    let before = labels.as_ref().map(|l| {
+        let mut b = Before::take(s.game_state(), focal, defs);
+        b.self_chosen_now = l.self_pending;
+        b
+    });
     s.step(d.episode_id, d.step, a)
         .map_err(|e| PlayErr::Fault(format!("step {} action {a}: {e:?}", d.step)))?;
     if let (Some(l), Some(b)) = (labels, before) {
         l.apply(events(&b, s.game_state(), focal, defs));
+        l.self_pending = false;
     }
     Ok(())
 }

@@ -19,7 +19,10 @@ pub(crate) enum Purpose {
     EvalInner,
     Policy,
     Ties,
-    #[allow(dead_code, reason = "listed by RUNNER.md; the analysis bootstraps with its own frozen seed")]
+    #[allow(
+        dead_code,
+        reason = "listed by RUNNER.md; the analysis bootstraps with its own frozen seed"
+    )]
     Bootstrap,
 }
 

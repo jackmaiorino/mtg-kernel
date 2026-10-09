@@ -54,9 +54,13 @@ pub(crate) struct Before {
     spy_spells: Vec<ObjectId>,
     /// Number of focal Spy self-target ability items on the stack.
     self_target_items: usize,
-    /// (Dread Return source, Giant target) pairs of focal spells on the stack.
+    /// (Dread Return source, Giant target) pairs of focal spells on the
+    /// stack or pending with that target chosen.
     dr_giant: Vec<(ObjectId, ObjectId)>,
     library: usize,
+    /// The focal player chose the Spy self-target in this very transition
+    /// (the trigger can go on the stack and resolve within it).
+    pub(crate) self_chosen_now: bool,
 }
 
 fn is_spell(item: &StackItem, state: &GameState) -> bool {
@@ -67,7 +71,7 @@ fn self_target(item: &StackItem, state: &GameState, focal: PlayerId, d: &SpyDefs
     item.inline_effect.is_some()
         && item.controller == focal
         && state.objects.get(item.source).card_def == d.spy
-        && item.targets.iter().any(|t| *t == Target::Player(focal))
+        && item.targets.contains(&Target::Player(focal))
 }
 
 impl Before {
@@ -97,11 +101,30 @@ impl Before {
                 }
             }
         }
+        // A cast whose last choice finalizes it can resolve in the same
+        // transition (the engine skips priority passes with no other
+        // action), so a pending DR cast that has chosen a Giant counts too.
+        if let Some(p) = &state.engine.pending_cast {
+            if p.controller == focal && state.objects.get(p.spell).card_def == d.dread_return {
+                for t in &p.targets_chosen {
+                    if let Target::Object(g) = t {
+                        if state.objects.get(*g).card_def == d.giant
+                            && !b.dr_giant.contains(&(p.spell, *g))
+                        {
+                            b.dr_giant.push((p.spell, *g));
+                        }
+                    }
+                }
+            }
+        }
         b
     }
 
     fn quiet(&self) -> bool {
-        self.spy_spells.is_empty() && self.self_target_items == 0 && self.dr_giant.is_empty()
+        self.spy_spells.is_empty()
+            && self.self_target_items == 0
+            && !self.self_chosen_now
+            && self.dr_giant.is_empty()
     }
 }
 
@@ -111,6 +134,8 @@ pub(crate) struct Events {
     pub(crate) spy_resolved: bool,
     pub(crate) self_target_resolved: bool,
     pub(crate) dr_giant_resolved: bool,
+    /// A focal Dread Return targeting a Lotleth Giant was on the stack.
+    pub(crate) dr_giant_stacked: bool,
 }
 
 pub(crate) fn events(before: &Before, after: &GameState, focal: PlayerId, d: &SpyDefs) -> Events {
@@ -118,24 +143,42 @@ pub(crate) fn events(before: &Before, after: &GameState, focal: PlayerId, d: &Sp
     if before.quiet() {
         return e;
     }
+    e.dr_giant_stacked = !before.dr_giant.is_empty();
     e.spy_resolved = before.spy_spells.iter().any(|&s| {
         let o = after.objects.get(s);
         o.zone == Zone::Battlefield && o.controller == focal
     });
-    if before.self_target_items > 0 {
+    let watched = before.self_target_items + usize::from(before.self_chosen_now);
+    if watched > 0 {
         let now = after
             .stack
             .iter()
             .filter(|i| i.controller == focal && !i.is_copy && self_target(i, after, focal, d))
             .count();
         e.self_target_resolved =
-            now < before.self_target_items && after.players[focal.index()].library.len() < before.library;
+            now < watched && after.players[focal.index()].library.len() < before.library;
     }
     e.dr_giant_resolved = before.dr_giant.iter().any(|&(dr, g)| {
-        let dr_left = after.objects.get(dr).zone != Zone::Stack
-            || !after.stack.iter().any(|i| i.source == dr && !i.is_copy);
+        let pending = after.engine.pending_cast.as_ref().is_some_and(|p| p.spell == dr);
+        let dr_left = !pending
+            && (after.objects.get(dr).zone != Zone::Stack
+                || !after.stack.iter().any(|i| i.source == dr && !i.is_copy));
         let giant = after.objects.get(g);
-        dr_left && giant.zone == Zone::Battlefield && giant.controller == focal
+        let resolved = dr_left && giant.zone == Zone::Battlefield && giant.controller == focal;
+        if dr_left && !resolved && std::env::var_os("S4A_TRACE_LABELS").is_some() {
+            // Diagnostic only (never set in formal runs): why a DR -> Giant
+            // spell left the stack without the Giant entering.
+            eprintln!(
+                "label-trace: DR left the stack; dr zone {:?}, giant zone {:?} controller {:?}, turn {}, stack {}, life {:?}",
+                after.objects.get(dr).zone,
+                giant.zone,
+                giant.controller,
+                after.turn,
+                after.stack.len(),
+                [after.players[0].life, after.players[1].life]
+            );
+        }
+        resolved
     });
     e
 }
@@ -157,6 +200,10 @@ pub(crate) struct Suffix {
     pub(crate) spy_resolved: bool,
     pub(crate) self_target_resolved: bool,
     pub(crate) dr_giant_resolved: bool,
+    pub(crate) dr_giant_stacked: bool,
+    /// Set by `observe_menu` when the focal player chooses the Spy
+    /// self-target; read and cleared by the next transition.
+    pub(crate) self_pending: bool,
 }
 
 impl Suffix {
@@ -176,6 +223,7 @@ impl Suffix {
         self.spy_resolved |= e.spy_resolved;
         self.self_target_resolved |= e.self_target_resolved;
         self.dr_giant_resolved |= e.dr_giant_resolved;
+        self.dr_giant_stacked |= e.dr_giant_stacked;
         // Advance in order; a later step only counts after the earlier one.
         if self.stage == 0 && e.spy_resolved {
             self.stage = 1;
@@ -203,6 +251,7 @@ impl Suffix {
             self.cast_chosen |= cast && chosen;
             self.self_offered |= own;
             self.self_chosen |= own && chosen;
+            self.self_pending |= own && chosen;
             self.dr_giant_offered |= dr;
             self.dr_giant_chosen |= dr && chosen;
         }
@@ -214,7 +263,7 @@ impl Suffix {
             "self_offered":self.self_offered,"self_chosen":self.self_chosen,
             "dr_giant_offered":self.dr_giant_offered,"dr_giant_chosen":self.dr_giant_chosen,
             "spy_resolved":self.spy_resolved,"self_target_resolved":self.self_target_resolved,
-            "dr_giant_resolved":self.dr_giant_resolved})
+            "dr_giant_resolved":self.dr_giant_resolved,"dr_giant_stacked":self.dr_giant_stacked})
     }
 }
 
@@ -248,18 +297,12 @@ pub(crate) fn root_strata(
     focal: PlayerId,
     d: &SpyDefs,
 ) -> (bool, bool) {
-    let cast = sem
-        .iter()
-        .any(|x| classify(x, state, focal, d).0);
+    let cast = sem.iter().any(|x| classify(x, state, focal, d).0);
     let spy_targets: Vec<&ActionSemanticV1> = sem
         .iter()
         .filter(|x| matches!(x, ActionSemanticV1::ChooseTarget { source, .. } if source.card_db_id == d.spy))
         .collect();
-    let own = spy_targets
-        .iter()
-        .any(|x| classify(x, state, focal, d).1);
-    let other = spy_targets
-        .iter()
-        .any(|x| !classify(x, state, focal, d).1);
+    let own = spy_targets.iter().any(|x| classify(x, state, focal, d).1);
+    let other = spy_targets.iter().any(|x| !classify(x, state, focal, d).1);
     (cast, own && other)
 }

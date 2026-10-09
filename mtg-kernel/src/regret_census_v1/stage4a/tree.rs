@@ -302,10 +302,16 @@ impl Tree {
 
 /// Live candidate index for an edge's canonical bytes.
 pub(crate) fn live_index(c: &Canon, edge: &[u8]) -> Result<u32, PlayErr> {
-    let mut hits = c.menu.iter().enumerate().filter(|(_, m)| m.as_slice() == edge);
+    let mut hits = c
+        .menu
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.as_slice() == edge);
     match (hits.next(), hits.next()) {
         (Some((i, _)), None) => Ok(i as u32),
-        _ => Err(PlayErr::Fault("edge does not bind to exactly one live candidate".into())),
+        _ => Err(PlayErr::Fault(
+            "edge does not bind to exactly one live candidate".into(),
+        )),
     }
 }
 
@@ -348,7 +354,7 @@ mod tests {
                 revisits += 1;
                 n.wins[a] += 1; // it starts winning
             } else {
-                n.wins[a] += u64::from(n.n[a] % 2 == 0);
+                n.wins[a] += u64::from(n.n[a].is_multiple_of(2));
             }
         }
         assert!(revisits > 50, "{revisits}");

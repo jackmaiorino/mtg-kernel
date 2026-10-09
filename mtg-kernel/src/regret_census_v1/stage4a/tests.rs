@@ -1,4 +1,4 @@
-use super::arms::{Limits, RootCtx, Roles};
+use super::arms::{Limits, Roles, RootCtx};
 use super::play::{Meter, PlayErr};
 use super::*;
 use crate::ids::PlayerId;
@@ -71,7 +71,7 @@ fn sampler_with_deck_prior_over_nine_deck_games() {
         let mut n = 0u64;
         each_decision(game, |s, d| {
             n += 1;
-            if n % 3 != 0 {
+            if !n.is_multiple_of(3) {
                 return;
             }
             let actor = play::acting(d);
@@ -114,7 +114,10 @@ fn sampler_with_deck_prior_over_nine_deck_games() {
                         assert_eq!(a.players[i].library.len(), b.players[i].library.len());
                     }
                     let wd = play::decision(&w.world).unwrap();
-                    assert_eq!(tree::canon(s, *d).unwrap(), tree::canon(&w.world, wd).unwrap());
+                    assert_eq!(
+                        tree::canon(s, *d).unwrap(),
+                        tree::canon(&w.world, wd).unwrap()
+                    );
                     let again = world::sample(s, seed, &prior).unwrap();
                     assert_eq!(
                         w.world.diagnostic_state_hash(),
@@ -132,8 +135,14 @@ fn sampler_with_deck_prior_over_nine_deck_games() {
         "ok {ok} library {library} library_ok {library_ok} rejections {kinds:?} decks {decks_seen:?}"
     );
     assert!(ok > 100, "{ok}");
-    assert_eq!(library, library_ok, "library-search samples rejected: {kinds:?}");
-    assert!(decks_seen.len() >= 3, "prior never left the true deck: {decks_seen:?}");
+    assert_eq!(
+        library, library_ok,
+        "library-search samples rejected: {kinds:?}"
+    );
+    assert!(
+        decks_seen.len() >= 3,
+        "prior never left the true deck: {decks_seen:?}"
+    );
 }
 
 /// The prior chooses only decks consistent with the opponent's public cards.
@@ -145,7 +154,8 @@ fn deck_prior_is_consistent_with_public_cards() {
         let st = s.game_state();
         let opp = play::acting(d).opponent();
         if late.is_none()
-            && st.players[opp.index()].graveyard.len() + st.players[opp.index()].battlefield.len() >= 6
+            && st.players[opp.index()].graveyard.len() + st.players[opp.index()].battlefield.len()
+                >= 6
         {
             late = Some(s.clone());
         }

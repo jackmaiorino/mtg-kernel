@@ -84,7 +84,7 @@ pub(crate) struct SamplerStats {
 
 impl SamplerStats {
     pub(crate) fn json(&self) -> Value {
-        json!({"ok":self.ok,"rejected":self.rejected,"kinds":self.kinds,"seconds":self.seconds})
+        json!({"ok":self.ok,"rejected":self.rejected,"kinds":self.kinds})
     }
 }
 
@@ -151,7 +151,9 @@ fn uniform_draw(pool: &[usize], take: usize, rng: &mut SplitMix64) -> Vec<usize>
 fn best_by_mean(cands: &[usize], means: &[f64], probs: &[f64]) -> usize {
     let mut best = 0;
     for i in 1..cands.len() {
-        if means[i] > means[best] || (means[i] == means[best] && probs[cands[i]] > probs[cands[best]]) {
+        if means[i] > means[best]
+            || (means[i] == means[best] && probs[cands[i]] > probs[cands[best]])
+        {
             best = i;
         }
     }
@@ -231,6 +233,7 @@ pub(crate) struct Discovery {
     pub(crate) dr_giant_chosen: u64,
     pub(crate) self_target_resolved: u64,
     pub(crate) dr_giant_resolved: u64,
+    pub(crate) dr_giant_stacked: u64,
 }
 
 impl Discovery {
@@ -243,6 +246,7 @@ impl Discovery {
         self.dr_giant_chosen += u64::from(s.dr_giant_chosen);
         self.self_target_resolved += u64::from(s.self_target_resolved);
         self.dr_giant_resolved += u64::from(s.dr_giant_resolved);
+        self.dr_giant_stacked += u64::from(s.dr_giant_stacked);
         if let Some(End::Natural { win }) = end {
             self.natural += 1;
             if s.complete() {
@@ -261,7 +265,7 @@ impl Discovery {
             "completion_wins":self.completion_wins,"completion_distinct_seeds":self.completion_seeds.len(),
             "cast_chosen":self.cast_chosen,"self_offered":self.self_offered,"self_chosen":self.self_chosen,
             "dr_giant_offered":self.dr_giant_offered,"dr_giant_chosen":self.dr_giant_chosen,
-            "self_target_resolved":self.self_target_resolved,"dr_giant_resolved":self.dr_giant_resolved})
+            "self_target_resolved":self.self_target_resolved,"dr_giant_resolved":self.dr_giant_resolved,"dr_giant_stacked":self.dr_giant_stacked})
     }
 }
 
@@ -414,8 +418,12 @@ impl Roles {
             return Ok(sampled);
         };
         let d = decision(&world).ok_or_else(|| PlayErr::Fault("inner world is terminal".into()))?;
-        let fs = ctx.seeds.policy("D", index, &format!("{tag}-inner/{ordinal}/focal"));
-        let os = ctx.seeds.policy("D", index, &format!("{tag}-inner/{ordinal}/opp"));
+        let fs = ctx
+            .seeds
+            .policy("D", index, &format!("{tag}-inner/{ordinal}/focal"));
+        let os = ctx
+            .seeds
+            .policy("D", index, &format!("{tag}-inner/{ordinal}/opp"));
         let mut means = Vec::with_capacity(cands.len());
         for &cand in &cands {
             let mut w = world.clone();
@@ -456,7 +464,7 @@ impl Roles {
     /// From a world at the root decision: play `action`, then plain or D's
     /// improved continuation to the end.
     #[allow(clippy::too_many_arguments, reason = "explicit roles and accounting")]
-    fn from_root(
+    fn play_from_root(
         &mut self,
         ctx: &RootCtx,
         s: &mut FastActorSessionV1,
@@ -470,7 +478,15 @@ impl Roles {
     ) -> Result<End, PlayErr> {
         let d = decision(s).ok_or_else(|| PlayErr::Fault("root is terminal".into()))?;
         observe(labels.as_deref_mut(), s, action, ctx.focal, &ctx.defs);
-        apply(s, &d, action, meter, ctx.focal, labels.as_deref_mut(), &ctx.defs)?;
+        apply(
+            s,
+            &d,
+            action,
+            meter,
+            ctx.focal,
+            labels.as_deref_mut(),
+            &ctx.defs,
+        )?;
         let Some(phase) = improved else {
             return plain_to_end(
                 s,
@@ -565,7 +581,7 @@ impl Roles {
                 self.reset_main(ctx, arm, index, "select");
                 let mut suffix = Suffix::new(ctx.cast_root);
                 let mut dstats = DStats::default();
-                let r = self.from_root(
+                let r = self.play_from_root(
                     ctx,
                     &mut s,
                     cand as u32,
@@ -579,7 +595,8 @@ impl Roles {
                 sel.d.add(&dstats);
                 match r {
                     Ok(End::Natural { win }) => {
-                        sel.discovery.add(&suffix, Some(End::Natural { win }), index);
+                        sel.discovery
+                            .add(&suffix, Some(End::Natural { win }), index);
                         scores.push(u64::from(win));
                     }
                     Ok(End::NonNatural) => {
@@ -613,7 +630,13 @@ impl Roles {
         sel.inference = c.inference;
         let means: Vec<f64> = sums
             .iter()
-            .map(|&s| if rounds > 0 { s as f64 / rounds as f64 } else { f64::NAN })
+            .map(|&s| {
+                if rounds > 0 {
+                    s as f64 / rounds as f64
+                } else {
+                    f64::NAN
+                }
+            })
             .collect();
         let chosen = (rounds > 0).then(|| cands[best_by_mean(cands, &means, &ctx.probs)]);
         match (&root_canon, chosen) {
@@ -730,7 +753,8 @@ impl Roles {
             let mut suffix = Suffix::new(ctx.cast_root);
             match self.simulate(ctx, &tree, world, &mut meter, &mut c, &mut suffix) {
                 Ok((path, new, End::Natural { win })) => {
-                    sel.discovery.add(&suffix, Some(End::Natural { win }), index);
+                    sel.discovery
+                        .add(&suffix, Some(End::Natural { win }), index);
                     tree.backup(&path, new, win);
                     sel.completed += 1;
                 }
@@ -757,6 +781,7 @@ impl Roles {
     }
 
     /// Evaluation of one arm on one world (a clone of the paired world).
+    #[allow(clippy::too_many_arguments, reason = "explicit roles and accounting")]
     pub(crate) fn evaluate(
         &mut self,
         ctx: &RootCtx,
@@ -774,7 +799,15 @@ impl Roles {
         let mut suffix = Suffix::new(ctx.cast_root);
         if arm == "E" {
             let mut stats = EStats::default();
-            let r = self.frozen(ctx, tree.expect("E has a tree"), &mut s, &mut meter, &mut c, &mut suffix, &mut stats);
+            let r = self.frozen(
+                ctx,
+                tree.expect("E has a tree"),
+                &mut s,
+                &mut meter,
+                &mut c,
+                &mut suffix,
+                &mut stats,
+            );
             let mut out = finish(r, suffix, &meter, &c);
             out.fallback_root = !stats.root_qualified;
             out.e = stats.json();
@@ -792,7 +825,17 @@ impl Roles {
                 }
             };
             let improved = (arm == "D").then_some(Phase::Eval(e));
-            self.from_root(ctx, &mut s, action, improved, &mut meter, &mut c, Some(&mut suffix), &mut dstats, sampler)
+            self.play_from_root(
+                ctx,
+                &mut s,
+                action,
+                improved,
+                &mut meter,
+                &mut c,
+                Some(&mut suffix),
+                &mut dstats,
+                sampler,
+            )
         })();
         let mut out = finish(r, suffix, &meter, &c);
         out.fallback_root = fallback;

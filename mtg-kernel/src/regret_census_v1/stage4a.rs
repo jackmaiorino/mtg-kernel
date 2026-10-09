@@ -28,7 +28,7 @@ use super::{load_policy_v1, CensusConfigV1};
 use crate::paired_bo1_harness_v1::paired_policy_seeds_v1;
 use crate::runtime_decks::RUNTIME_DECKS;
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
-use arms::{Limits, RootCtx, Roles, SamplerStats, ARMS};
+use arms::{Limits, Roles, RootCtx, SamplerStats, ARMS};
 use labels::{root_strata, spy_defs};
 use play::{act, acting, apply, decision, Counters, Meter};
 use seeds::{Purpose, RootSeeds};
@@ -184,9 +184,11 @@ fn root_record(
 ) -> Result<Value, String> {
     let (obs, menu) = replay_key(s, *d)?;
     let st = s.game_state();
-    Ok(json!({"step":d.step,"turn":st.turn,"phase":format!("{:?}",st.step),
+    Ok(
+        json!({"step":d.step,"turn":st.turn,"phase":format!("{:?}",st.step),
         "k":d.legal_action_count,"physical_decision_id":d.physical_decision_id,
-        "substep":[d.substep_index,d.substep_count],"obs_hash":obs,"menu_hash":menu,"plain_action":a}))
+        "substep":[d.substep_index,d.substep_count],"obs_hash":obs,"menu_hash":menu,"plain_action":a}),
+    )
 }
 
 /// `s4a-corpus`: one game.
@@ -246,31 +248,54 @@ fn replay(
     for (name, got, want) in [
         ("seed", json!(setup.seed), root["seed"].clone()),
         ("focal_seat", json!(setup.focal), root["focal_seat"].clone()),
-        ("opp_model", json!(shared.labels[setup.model]), root["opp_model"].clone()),
-        ("deck", json!(RUNTIME_DECKS[setup.decks[setup.focal]].id), root["deck"].clone()),
+        (
+            "opp_model",
+            json!(shared.labels[setup.model]),
+            root["opp_model"].clone(),
+        ),
+        (
+            "deck",
+            json!(RUNTIME_DECKS[setup.decks[setup.focal]].id),
+            root["deck"].clone(),
+        ),
     ] {
         if got != want {
             return Err(format!("replay mismatch: {name} {got} != {want}"));
         }
     }
     let mut found = None;
-    let (s, finished) = drive(&setup, &mut roles.focal, &mut roles.opps[setup.model], |s, d, a| {
-        if d.step > step {
-            return Err(format!("replay passed step {step}"));
-        }
-        if d.step == step {
-            found = Some(root_record(s, d, a)?);
-            return Ok(true);
-        }
-        Ok(false)
-    })?;
+    let (s, finished) = drive(
+        &setup,
+        &mut roles.focal,
+        &mut roles.opps[setup.model],
+        |s, d, a| {
+            if d.step > step {
+                return Err(format!("replay passed step {step}"));
+            }
+            if d.step == step {
+                found = Some(root_record(s, d, a)?);
+                return Ok(true);
+            }
+            Ok(false)
+        },
+    )?;
     if finished {
         return Err("replay reached the end before the root".into());
     }
     let got = found.ok_or("replay stopped without a root")?;
-    for key in ["turn", "k", "physical_decision_id", "obs_hash", "menu_hash", "plain_action"] {
+    for key in [
+        "turn",
+        "k",
+        "physical_decision_id",
+        "obs_hash",
+        "menu_hash",
+        "plain_action",
+    ] {
         if got[key] != root[key] {
-            return Err(format!("replay mismatch: {key} {} != {}", got[key], root[key]));
+            return Err(format!(
+                "replay mismatch: {key} {} != {}",
+                got[key], root[key]
+            ));
         }
     }
     Ok((setup, s))
@@ -293,7 +318,10 @@ fn run_root(
     root: &Value,
 ) -> Result<Value, String> {
     let started = Instant::now();
-    let root_id = root["root_id"].as_str().ok_or("root has no root_id")?.to_owned();
+    let root_id = root["root_id"]
+        .as_str()
+        .ok_or("root has no root_id")?
+        .to_owned();
     let (setup, session) = replay(cfg, shared, roles, root)?;
     let replay_secs = started.elapsed().as_secs_f64();
     let d = decision(&session).ok_or("root is terminal")?;
@@ -335,16 +363,41 @@ fn run_root(
         let world = match world::sample(&session, seed, &shared.prior) {
             Ok(w) => w,
             Err(err) => {
-                rejected_worlds.push(json!({"world":e,"error":err.chars().take(300).collect::<String>()}));
+                rejected_worlds
+                    .push(json!({"world":e,"error":err.chars().take(300).collect::<String>()}));
                 continue;
             }
         };
         worlds.push(json!({"world":e,"prior_deck":shared.prior.ids()[world.prior_deck]}));
         for (i, arm) in ARMS.iter().enumerate() {
             let out = match *arm {
-                "E" => roles.evaluate(&ctx, arm, &world.world, e, None, Some(&e_tree), &mut eval_sampler),
-                "A" => roles.evaluate(&ctx, arm, &world.world, e, a_sel.choice.as_ref(), None, &mut eval_sampler),
-                _ => roles.evaluate(&ctx, arm, &world.world, e, d_sel.choice.as_ref(), None, &mut eval_sampler),
+                "E" => roles.evaluate(
+                    &ctx,
+                    arm,
+                    &world.world,
+                    e,
+                    None,
+                    Some(&e_tree),
+                    &mut eval_sampler,
+                ),
+                "A" => roles.evaluate(
+                    &ctx,
+                    arm,
+                    &world.world,
+                    e,
+                    a_sel.choice.as_ref(),
+                    None,
+                    &mut eval_sampler,
+                ),
+                _ => roles.evaluate(
+                    &ctx,
+                    arm,
+                    &world.world,
+                    e,
+                    d_sel.choice.as_ref(),
+                    None,
+                    &mut eval_sampler,
+                ),
             };
             let s = &mut summary[i];
             s.0 += u64::from(out.w);
@@ -389,15 +442,6 @@ fn run_root(
             "selection_sampler_seconds":{"E":e_sel.sampler.seconds,"A":a_sel.sampler.seconds,"D":d_sel.sampler.seconds},
             "eval_wall":eval_wall,"eval_sampler_seconds":eval_sampler.seconds,
             "root_wall":started.elapsed().as_secs_f64()}});
-    // Sampler seconds are wall-derived: keep them out of the primary hash.
-    for arm in ARMS {
-        if let Some(s) = row["arms"][arm]["selection"]["sampler"].as_object_mut() {
-            s.remove("seconds");
-        }
-    }
-    if let Some(s) = row["eval_sampler"].as_object_mut() {
-        s.remove("seconds");
-    }
     row["primary_sha256"] = json!(primary_hash(&row));
     Ok(row)
 }
@@ -474,14 +518,24 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
                         if done.contains(&id) {
                             continue;
                         }
-                        run_root(cfg, shared, &mut roles, root).and_then(|row| write_line(sink, &row))
+                        run_root(cfg, shared, &mut roles, root)
+                            .and_then(|row| write_line(sink, &row))
                     };
                     if let Err(e) = result {
                         eprintln!("item {item} failed: {e}");
-                        let id = shared.roots.get(item as usize).map(|r| r["root_id"].clone());
-                        write_line(sink, &json!({"kind":"error","item":item,"root_id":id,"error":e}))?;
+                        let id = shared
+                            .roots
+                            .get(item as usize)
+                            .map(|r| r["root_id"].clone());
+                        write_line(
+                            sink,
+                            &json!({"kind":"error","item":item,"root_id":id,"error":e}),
+                        )?;
                     }
-                    eprintln!("item {item} done at {:.1}s", started.elapsed().as_secs_f64());
+                    eprintln!(
+                        "item {item} done at {:.1}s",
+                        started.elapsed().as_secs_f64()
+                    );
                 }
             }));
         }
