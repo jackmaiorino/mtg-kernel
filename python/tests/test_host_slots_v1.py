@@ -12,7 +12,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 TOOLS = Path(__file__).resolve().parents[1] / "tools"
 if str(TOOLS) not in sys.path:
@@ -63,6 +63,75 @@ def counter(path):
         return int(Path(path).read_text() or 0)
     except (OSError, ValueError):
         return 0
+
+
+class SuspensionHandshakeTests(unittest.TestCase):
+    def test_failed_windows_suspend_never_acknowledges_vacated_cores(self):
+        tree = object.__new__(slots.Tree)
+        tree.suspended = set()
+        tree.members = MagicMock(return_value=[11, 12])
+        with patch.object(slots, "os", name="nt") as fake_os, \
+                patch.object(slots, "_suspend_pid", side_effect=lambda pid, suspend: pid == 11, create=True):
+            fake_os.name = "nt"
+            self.assertFalse(tree.set_suspended(True))
+            self.assertEqual(tree.suspended, {11})
+        with patch.object(slots, "os") as fake_os, \
+                patch.object(slots, "_suspend_pid", return_value=True, create=True):
+            fake_os.name = "nt"
+            self.assertTrue(tree.set_suspended(True))
+            self.assertEqual(tree.suspended, {11, 12})
+
+    def test_failed_resume_remains_tracked_for_the_next_attempt(self):
+        tree = object.__new__(slots.Tree)
+        tree.suspended = {11, 12}
+        tree.members = MagicMock(return_value=[11, 12])
+        with patch.object(slots, "os") as fake_os, \
+                patch.object(slots, "_suspend_pid", side_effect=lambda pid, suspend: pid == 11, create=True):
+            fake_os.name = "nt"
+            self.assertFalse(tree.set_suspended(False))
+            self.assertEqual(tree.suspended, {12})
+        with patch.object(slots, "os") as fake_os, \
+                patch.object(slots, "_suspend_pid", return_value=True, create=True):
+            fake_os.name = "nt"
+            self.assertTrue(tree.set_suspended(False))
+            self.assertEqual(tree.suspended, set())
+
+    def test_start_resume_and_acknowledgement_share_the_admission_mutex(self):
+        claim = Path("unused-claim.json")
+        for suspend_succeeds in (False, True):
+            with self.subTest(suspend_succeeds=suspend_succeeds):
+                locked = [False]
+                states = []
+                class TestMutex:
+                    def __enter__(inner):
+                        self.assertFalse(locked[0])
+                        locked[0] = True
+                    def __exit__(inner, *_):
+                        locked[0] = False
+                child = MagicMock()
+                child.wait.side_effect = [subprocess.TimeoutExpired("probe", 0), 0]
+                tree = MagicMock()
+                tree.members.side_effect = [[11], []]
+                def start(*_):
+                    self.assertTrue(locked[0])
+                    return child
+                def transition(suspend):
+                    self.assertTrue(locked[0])
+                    return suspend_succeeds if suspend else True
+                def publish(_claim, state):
+                    self.assertTrue(locked[0])
+                    states.append(state)
+                tree.start.side_effect = start
+                tree.set_suspended.side_effect = transition
+                with patch.object(slots, "Tree", return_value=tree), \
+                        patch.object(slots, "Mutex", TestMutex), \
+                        patch.object(slots, "conflicts", side_effect=[False, True, False]), \
+                        patch.object(slots, "_set_state_locked", side_effect=publish), \
+                        patch.object(slots.time, "sleep"), \
+                        patch.object(slots.signal, "signal"):
+                    self.assertEqual(slots._run_claimed(claim, [0], "normal", ["probe"], None, "x"), 0)
+                self.assertEqual(states, ["running", "suspended" if suspend_succeeds else "running", "running"])
+                tree.kill.assert_not_called()
 
 
 class CoreListTests(unittest.TestCase):

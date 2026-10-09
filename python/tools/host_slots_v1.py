@@ -597,23 +597,27 @@ class Tree:
             pass
         return [self.child.pid]
 
-    def set_suspended(self, suspend: bool) -> None:
+    def set_suspended(self, suspend: bool) -> bool:
         if os.name == "nt":
             if suspend:
                 for _ in range(2):  # a second pass catches a process created during the first
                     for pid in self.members():
                         if pid not in self.suspended and _suspend_pid(pid, True):
                             self.suspended.add(pid)
+                return set(self.members()) <= self.suspended
             else:
                 for pid in sorted(self.suspended):
-                    _suspend_pid(pid, False)
-                self.suspended.clear()
+                    if _suspend_pid(pid, False):
+                        self.suspended.discard(pid)
+                self.suspended.intersection_update(self.members())
+                return not self.suspended
         elif self.child is not None:
             try:
                 os.killpg(self.child.pid, signal.SIGSTOP if suspend else signal.SIGCONT)
             except ProcessLookupError:
                 pass
             self.suspended = {self.child.pid} if suspend else set()
+        return True
 
     def kill(self) -> None:
         if os.name == "nt":
@@ -689,23 +693,17 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
                 pass
 
 
-def _set_state(claim: Path, state: str) -> None:
-    with Mutex():
-        record = read_json(claim)
-        if record is not None:
-            write_json(claim, {**record, "state": state, "state_at": now_utc()})
+def _set_state_locked(claim: Path, state: str) -> None:
+    """Publish under the same mutex that protects timed admission and tree transitions."""
+    record = read_json(claim)
+    if record is not None and record.get("state") != state:
+        write_json(claim, {**record, "state": state, "state_at": now_utc()})
 
 
 def _run_claimed(claim: Path, cores: list[int], priority: str, command: list[str], cwd: str | None,
                  claim_id: str) -> int:
     tree = Tree(cores, priority)
     env = dict(os.environ, **{CLAIM_ENV: claim_id, CORES_ENV: format_cores(cores)})
-    if conflicts(cores):  # never start work on cores timed work holds
-        _set_state(claim, "suspended")
-        while conflicts(cores):
-            time.sleep(poll_seconds())
-        _set_state(claim, "running")
-    suspended = False
     previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
 
     def stop(signum, _frame):
@@ -715,7 +713,15 @@ def _run_claimed(claim: Path, cores: list[int], priority: str, command: list[str
     for sig in previous:
         signal.signal(sig, stop)
     try:
-        child = tree.start(command, cwd, env)
+        while True:
+            with Mutex():
+                if not conflicts(cores):
+                    _set_state_locked(claim, "running")
+                    child = tree.start(command, cwd, env)
+                    break
+                # No child exists yet, so these cores are already vacated.
+                _set_state_locked(claim, "suspended")
+            time.sleep(poll_seconds())
         code = None
         while True:
             if code is None:
@@ -727,15 +733,18 @@ def _run_claimed(claim: Path, cores: list[int], priority: str, command: list[str
                 break
             if code is not None:
                 time.sleep(poll_seconds())
-            conflict = conflicts(cores)
-            if conflict != suspended:
-                tree.set_suspended(conflict)
-                suspended = conflict
-                _set_state(claim, "suspended" if conflict else "running")
+            with Mutex():
+                conflict = conflicts(cores)
+                complete = tree.set_suspended(conflict)
+                # A partial suspension leaves the claim busy. Retry incomplete
+                # transitions on later polls without acknowledging vacated cores.
+                _set_state_locked(claim, "suspended" if conflict and complete else "running")
         return code
+    except BaseException:
+        # Retain containment on every exit, including partial suspension errors.
+        tree.kill()
+        raise
     finally:
-        if suspended:
-            tree.set_suspended(False)
         for sig, handler in previous.items():
             signal.signal(sig, handler)
 
