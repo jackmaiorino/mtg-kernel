@@ -286,6 +286,76 @@ const SPITFIRE_LAGAC_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::ControlledLandEnters,
     ..etb_trigger(kessig_flamebreather_effect)
 }];
+const ELEMENTALIST_ADEPT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastNoncreatureSpell,
+    ..etb_trigger(prowess_effect)
+}];
+const CRYPT_FEASTER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::AttacksWithControllerGraveyardCardCountAtLeast(7),
+    ..etb_trigger(crypt_feaster_threshold_effect)
+}];
+const ERUDITE_WIZARD_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::DrawNth(2),
+    ..etb_trigger(writhing_chrysalis_counter_marker_effect)
+}];
+const PHYREXIAN_ARENA_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningOfUpkeep {
+        controller_only: true,
+    },
+    ..etb_trigger(phyrexian_arena_effect)
+}];
+const GLEAMING_BARRIER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::LeftBattlefieldToGraveyard,
+    home_zone: Zone::Graveyard,
+    ..etb_trigger(gleaming_barrier_effect)
+}];
+const BIGFIN_BOUNCER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(bigfin_bouncer_effect)];
+
+/// Prowess (702.108a): "Whenever you cast a noncreature spell, this
+/// creature gets +1/+1 until end of turn."
+fn prowess_effect() -> EffectOp {
+    EffectOp::BindTemporaryBoostToTriggerSource {
+        power: 1,
+        toughness: 1,
+    }
+}
+
+/// Threshold is an intervening-if clause, so it is rechecked on resolution.
+fn crypt_feaster_threshold_effect() -> EffectOp {
+    EffectOp::Conditional {
+        cond: EffectCond::ControllerGraveyardCardCountAtLeast(7),
+        then: Box::new(EffectOp::BindTemporaryBoostToTriggerSource {
+            power: 2,
+            toughness: 0,
+        }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    }
+}
+
+fn phyrexian_arena_effect() -> EffectOp {
+    EffectOp::Sequence(vec![
+        ichor_wellspring_draw_effect(),
+        EffectOp::LoseLife {
+            player: PlayerRef::Controller,
+            amount: 1,
+        },
+    ])
+}
+
+fn gleaming_barrier_effect() -> EffectOp {
+    EffectOp::CreateToken {
+        token_def: crate::card_def::card_id_by_name("Treasure Token")
+            .expect("Treasure Token in CARD_DEFS"),
+        controller: PlayerRef::Controller,
+    }
+}
+
+fn bigfin_bouncer_effect() -> EffectOp {
+    EffectOp::MoveObject {
+        object: ObjectRef::Target(0),
+        to_zone: Zone::Hand,
+    }
+}
 
 const DRAGON_TRAINER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(dragon_trainer_effect)];
 const RESOLUTE_REINFORCEMENTS_TRIGGERS: [TriggeredAbilityDef; 1] =
@@ -1794,6 +1864,13 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Elfsworn Giant" => &ELFSWORN_GIANT_TRIGGERS,
         "Eager Trufflesnout" => &EAGER_TRUFFLESNOUT_TRIGGERS,
         "Rite of the Dragoncaller" => &RITE_OF_THE_DRAGONCALLER_TRIGGERS,
+        "Elementalist Adept" => &ELEMENTALIST_ADEPT_TRIGGERS,
+        "Crypt Feaster" => &CRYPT_FEASTER_TRIGGERS,
+        "Erudite Wizard" => &ERUDITE_WIZARD_TRIGGERS,
+        "Phyrexian Arena" => &PHYREXIAN_ARENA_TRIGGERS,
+        "Gleaming Barrier" => &GLEAMING_BARRIER_TRIGGERS,
+        "Angel of Finality" => &BOJUKA_BOG_TRIGGERS,
+        "Bigfin Bouncer" => &BIGFIN_BOUNCER_TRIGGERS,
         "Dazzling Angel" => &DAZZLING_ANGEL_TRIGGERS,
         "Clinquant Skymage" => &CLINQUANT_SKYMAGE_TRIGGERS,
         "Mischievous Mystic" => &MISCHIEVOUS_MYSTIC_TRIGGERS,
@@ -1876,7 +1953,8 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         "Balustrade Spy" => TargetSpec::AnyPlayer,
         "Lotleth Giant" => TargetSpec::TargetOpponent,
         "Harrier Strix" => TargetSpec::AnyPermanent,
-        "Bojuka Bog" => TargetSpec::AnyPlayer,
+        "Bojuka Bog" | "Angel of Finality" => TargetSpec::AnyPlayer,
+        "Bigfin Bouncer" => TargetSpec::OpponentControlledCreature,
         "Humbling Elder" => TargetSpec::OpponentControlledCreature,
         "Meteor Golem" => TargetSpec::OpponentNonlandPermanent,
         "Reclamation Sage" => TargetSpec::ArtifactOrEnchantmentPermanent,

@@ -3857,6 +3857,7 @@ fn validate_counter_target_unless_pays_program(
             | crate::card_def::TargetSpec::ArtifactOrEnchantmentSpellOnStack
             | crate::card_def::TargetSpec::SorcerySpellOnStack
             | crate::card_def::TargetSpec::NoncreatureSpellOnStack
+            | crate::card_def::TargetSpec::CreatureSpellOnStack
             | crate::card_def::TargetSpec::ArtifactSpellOnStack
     ) {
         return Err("counter-unless-pay resolving spell has a nonspell target filter".to_string());
