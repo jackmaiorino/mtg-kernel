@@ -72,6 +72,7 @@ from analyze_search import (  # noqa: E402
     ClusterBoot,
     check_manifest,
     disposition,
+    drop_no_evaluation,
     holm_bounds,
 )
 
@@ -367,7 +368,6 @@ def main():
     ap.add_argument("--json")
     a = ap.parse_args()
     rows, errors = load(a.cross)
-    print("T1 TOOLING-QUALIFICATION RESULTS - not research conclusions (T1 never trained on Spy or CawGates).")
     print(f"rows {len(rows)}, error rows {len(errors)}")
     for e in errors:
         print(f"  error root {e.get('game')}: {str(e.get('error'))[:200]}")
@@ -384,6 +384,7 @@ def main():
         configs = {json.dumps(r.get("config"), sort_keys=True) for r in rows}
         if len(configs) > 1:
             print(f"WARNING: rows carry {len(configs)} distinct configs; pass --expect to keep one")
+    rows = drop_no_evaluation(rows, out)
     if not rows:
         return
     res, per, cells = analyze(rows, a.boot, a.seed)

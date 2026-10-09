@@ -42,9 +42,12 @@ Contract (collab GOALS/opus-search-opponent-20260927.md, amendment 01:35):
    finds it gone or held by the winner) and acquires a new generation. It
    needs positive evidence: a changed boot id, or every recorded process
    (supervisors, their direct children, nested supervisors) absent by pid
-   and creation time. The process-tree walk is an extra conservative check,
-   never proof of absence. An unreadable or incomplete record or event means
-   unknown, never dead; age never counts.
+   and creation time. When Windows refuses to open a recorded pid (a service
+   or another user's process now holds it), the system process list decides:
+   a pid missing from it, or listed with another creation time, is absent.
+   The process-tree walk is an extra conservative check, never proof of
+   absence. An unreadable or incomplete record or event means unknown, never
+   dead; age never counts.
 7. Coverage: native tests, throughput checks, builds during announced quiet
    windows and formal runs acquire; status never acquires. Nested wrappers
    share the reservation through MTG_HOST_RESERVATION_TOKEN; a nested
@@ -274,11 +277,61 @@ if os.name == "nt":
         return os.getpid(), creation
 
 
+    _ntdll = ctypes.WinDLL("ntdll")
+    _NtQuerySystemInformation = _ntdll.NtQuerySystemInformation
+    _NtQuerySystemInformation.restype = ctypes.c_long
+    _NtQuerySystemInformation.argtypes = (ctypes.c_ulong, wintypes.LPVOID, ctypes.c_ulong,
+                                          ctypes.POINTER(ctypes.c_ulong))
+    SYSTEM_PROCESS_INFORMATION = 5
+    STATUS_INFO_LENGTH_MISMATCH = ctypes.c_long(0xC0000004).value
+
+
+    def system_creation_times() -> dict[int, int] | None:
+        """{pid: creation time} of every live process, from the system process
+        list (NtQuerySystemInformation, SystemProcessInformation). It opens no
+        process, so it also covers processes OpenProcess refuses (services,
+        other users). None if the query fails or the layout is unknown."""
+        if ctypes.sizeof(ctypes.c_void_p) != 8:
+            return None  # the offsets below are the 64-bit layout
+        size = 1 << 20
+        for _ in range(8):
+            buf = ctypes.create_string_buffer(size)
+            needed = ctypes.c_ulong(0)
+            status = _NtQuerySystemInformation(SYSTEM_PROCESS_INFORMATION, buf, size, ctypes.byref(needed))
+            if status == STATUS_INFO_LENGTH_MISMATCH:
+                size = max(2 * size, needed.value + (1 << 16))
+                continue
+            if status != 0:
+                return None
+            out, offset = {}, 0
+            while True:
+                (next_entry,) = struct.unpack_from("<I", buf, offset)
+                (created,) = struct.unpack_from("<q", buf, offset + 0x20)  # CreateTime
+                (pid,) = struct.unpack_from("<Q", buf, offset + 0x50)  # UniqueProcessId
+                out[pid] = created
+                if not next_entry:
+                    return out
+                offset += next_entry
+        return None
+
+
+    def _listed_state(pid: int, creation: int) -> str:
+        """State of a process OpenProcess refuses, from the system process list:
+        a live process is always listed, so a pid missing from the list or listed
+        with another creation time is absent; a match is alive."""
+        listed = system_creation_times()
+        if listed is None:
+            return "unknown"
+        return "alive" if listed.get(pid) == creation else "absent"
+
+
     def creation_time(pid: int) -> int | None:
         """Creation time of the process now holding this pid, or None if absent or unreadable."""
         handle = _OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
         if not handle:
-            return None
+            if ctypes.get_last_error() == ERROR_INVALID_PARAMETER:
+                return None
+            return (system_creation_times() or {}).get(pid)
         try:
             return _creation_of(handle)
         finally:
@@ -288,16 +341,17 @@ if os.name == "nt":
     def process_state(pid, creation) -> str:
         """'alive', 'absent' or 'unknown' for the process named by pid and creation time.
         Absent needs positive evidence: no such pid, the pid names a process created
-        at another time, or the process has exited. Anything else is unknown."""
+        at another time, or the process has exited. When OpenProcess refuses the pid,
+        the system process list decides (see _listed_state). Anything else is unknown."""
         if not isinstance(pid, int) or not isinstance(creation, int) or pid <= 0 or creation <= 0:
             return "unknown"
         handle = _OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, False, pid)
         if not handle:
-            return "absent" if ctypes.get_last_error() == ERROR_INVALID_PARAMETER else "unknown"
+            return "absent" if ctypes.get_last_error() == ERROR_INVALID_PARAMETER else _listed_state(pid, creation)
         try:
             actual = _creation_of(handle)
             if actual is None:
-                return "unknown"
+                return _listed_state(pid, creation)
             if actual != creation:
                 return "absent"
             wait = _WaitForSingleObject(handle, 0)

@@ -8,8 +8,9 @@
 //! in this module close that audit gap for the checked runtime pool.
 
 use crate::card_def::{CardType, Keywords, CARD_DEFS, KERNEL_CARDDB_HASH};
+use crate::effect::PendingEffectChoice;
 use crate::engine::{effective_power, effective_toughness, has_effective_keyword};
-use crate::ids::PlayerId;
+use crate::ids::{ObjectId, PlayerId};
 use crate::rl::{
     ActionSemanticV1, ObservationV5, PlayerSeatV1, TerminalClassificationV1, TerminalOutcomeV1,
 };
@@ -18,7 +19,7 @@ use crate::rl_session::{
     RlSessionError,
 };
 use crate::runtime_decks::RUNTIME_DECK_CATALOG_FILE_SHA256;
-use crate::state::{GameState, ObjectStateV4, SplitMix64, UndercityRoomV1, Zone};
+use crate::state::{GameState, ObjectStateV4, SplitMix64, Target, UndercityRoomV1, Zone};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -1038,6 +1039,62 @@ pub(crate) fn redeterminize_hidden_zones_v1(
     root_actor: PlayerId,
     simulation_seed: u64,
 ) -> Result<(), KernelNativeSearchErrorV1> {
+    redeterminize_hidden_zones_pinned_v1(state, root_actor, simulation_seed, &[])
+}
+
+/// Hand and library objects that the root actor's own pending effect
+/// selection offers or has already selected (for example every card a
+/// library search can find). The actor sees these cards in order to choose
+/// among them, and the engine revalidates the stored candidate set against
+/// their identities, so a determinization of this decision must keep them.
+pub(crate) fn pending_selection_hidden_objects_v1(
+    state: &GameState,
+    root_actor: PlayerId,
+) -> Vec<ObjectId> {
+    let Some(PendingEffectChoice::SelectTargets {
+        player,
+        selected,
+        legal,
+        ..
+    }) = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .and_then(|pending| pending.choice.as_ref())
+    else {
+        return Vec::new();
+    };
+    if *player != root_actor {
+        return Vec::new();
+    }
+    let mut objects: Vec<ObjectId> = selected
+        .iter()
+        .chain(legal)
+        .filter_map(|candidate| match candidate.target {
+            Target::Object(id) => Some(id),
+            Target::Player(_) => None,
+        })
+        .filter(|&id| {
+            state
+                .objects
+                .try_get(id)
+                .is_some_and(|object| matches!(object.zone, Zone::Hand | Zone::Library))
+        })
+        .collect();
+    objects.sort_unstable();
+    objects.dedup();
+    objects
+}
+
+/// [`redeterminize_hidden_zones_v1`] with `pinned` objects treated as known:
+/// they keep their identities and stay out of the resampled pool. With no
+/// pins this is exactly the unpinned sampler, draw for draw.
+pub(crate) fn redeterminize_hidden_zones_pinned_v1(
+    state: &mut GameState,
+    root_actor: PlayerId,
+    simulation_seed: u64,
+    pinned: &[ObjectId],
+) -> Result<(), KernelNativeSearchErrorV1> {
     if root_actor != PlayerId::P0 && root_actor != PlayerId::P1 {
         return Err(KernelNativeSearchErrorV1::HiddenStateContract);
     }
@@ -1053,7 +1110,7 @@ pub(crate) fn redeterminize_hidden_zones_v1(
                     .any(|entry| {
                         entry.object == id && entry.zone_change_count == object.zone_change_count
                     });
-                if !known {
+                if !known && !pinned.contains(&id) {
                     unknown_slots.push(id);
                 }
             }
@@ -1068,7 +1125,7 @@ pub(crate) fn redeterminize_hidden_zones_v1(
                         && entry.object == id
                         && entry.zone_change_count == object.zone_change_count
                 });
-            if !known {
+            if !known && !pinned.contains(&id) {
                 unknown_slots.push(id);
             }
         }

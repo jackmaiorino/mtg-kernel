@@ -120,6 +120,30 @@ def per_root(row):
     return out
 
 
+def no_evaluation(row):
+    """True when the root kept no evaluation determinization (every playout
+    failed, so no job has a score): the root has no outcome, and its NaN
+    would spoil every summary that includes it."""
+    return not any(j["scores"] for j in row["eval"]["jobs"])
+
+
+def drop_no_evaluation(rows, out):
+    """Leave roots with no kept evaluation determinization out of every
+    estimate, report them and record them in `out`. The rule reads no
+    outcome: such a root has none."""
+    dropped = [r for r in rows if no_evaluation(r)]
+    out["no_evaluation"] = [{"root": r.get("root_id", r.get("root_index")), "stratum": r.get("stratum"),
+                             "failed_playouts": r["eval"].get("failed_playouts", 0),
+                             "failures": r["eval"].get("failures", [])[:1]} for r in dropped]
+    if dropped:
+        print(f"technical exclusions: {len(dropped)} roots kept no evaluation determinization (no outcome; "
+              "the search could not run there) and are left out of every estimate:")
+        for e in out["no_evaluation"]:
+            print(f"  root {e['root']} {e['stratum'] or ''}: {e['failed_playouts']} failed playouts; "
+                  f"{(e['failures'] or [''])[0][:200]}")
+    return [r for r in rows if not no_evaluation(r)]
+
+
 def expected_config(manifest):
     return manifest.get("config", manifest)
 
@@ -758,7 +782,6 @@ def main():
     ap.add_argument("--project", default="600,100,16", help="representative,mechanism,E for the cost projection")
     a = ap.parse_args()
     rows, errors = load(a.cond)
-    print("T1 TOOLING-QUALIFICATION RESULTS - not research conclusions (T1 never trained on Spy or CawGates).")
     print(f"rows {len(rows)}, error rows {len(errors)} (replay mismatches and other errors)")
     for e in errors:
         print(f"  error root {e.get('game')}: {str(e.get('error'))[:200]}")
@@ -775,6 +798,7 @@ def main():
         configs = {json.dumps(r.get("config"), sort_keys=True) for r in rows}
         if len(configs) > 1:
             print(f"WARNING: rows carry {len(configs)} distinct configs; pass --expect to keep one")
+    rows = drop_no_evaluation(rows, out)
     if not rows:
         return
     budgets = rows[0]["budgets"]

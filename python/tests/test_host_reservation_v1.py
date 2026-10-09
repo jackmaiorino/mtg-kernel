@@ -653,5 +653,24 @@ class HostReservationTests(unittest.TestCase):
             self.assertEqual(hr.root_dir(), Path(self.root) / "test", "the test root still wins")
 
 
+@unittest.skipUnless(os.name == "nt", "Windows backend")
+class WindowsProcessListTests(unittest.TestCase):
+    def test_system_process_list_has_this_process_with_its_creation_time(self):
+        pid, creation = hr.self_identity()
+        self.assertEqual(hr.system_creation_times()[pid], creation)
+
+    def test_a_refused_pid_is_judged_by_the_system_process_list(self):
+        pid, creation = hr.self_identity()
+        with patch.object(hr, "_OpenProcess", return_value=None), \
+                patch.object(hr.ctypes, "get_last_error", return_value=hr.ERROR_ACCESS_DENIED):
+            self.assertEqual(hr.process_state(pid, creation), "alive")
+            self.assertEqual(hr.process_state(pid, creation + 1), "absent", "pid reused by another process")
+            self.assertEqual(hr.creation_time(pid), creation)
+            with patch.object(hr, "system_creation_times", return_value={}):
+                self.assertEqual(hr.process_state(pid, creation), "absent", "pid not listed")
+            with patch.object(hr, "system_creation_times", return_value=None):
+                self.assertEqual(hr.process_state(pid, creation), "unknown", "list unavailable")
+
+
 if __name__ == "__main__":
     unittest.main()
