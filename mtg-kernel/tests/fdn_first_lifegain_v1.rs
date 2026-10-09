@@ -527,9 +527,25 @@ fn first_lifegain_real_next_turn_resets_both_seats_and_own_turn_gate() {
     queue(&mut state);
     settle(&mut state);
     let old_anchor = state.life_gain_turn_v1.as_ref().unwrap().history_index;
-    state.step = Step::Cleanup;
-    next(&mut state);
+    assert!(state.stack.is_empty());
+    assert!(state.engine.pending_triggers.is_empty());
+    state.objects.get_mut(p0_seraph).damage = 1;
+    state.step = Step::End;
+    state.priority_player = PlayerId::P0;
+    state.engine.priority_passes = [false, false];
+    for _ in 0..8 {
+        let action = match next(&mut state) {
+            Decision::CastSpellOrPass { .. } if state.active_player == PlayerId::P1 => break,
+            Decision::CastSpellOrPass { .. } => Action::Pass,
+            Decision::OrderTriggers { pending, .. } => {
+                Action::OrderTriggers((0..pending.len()).collect())
+            }
+            other => panic!("unexpected End/Cleanup decision {other:?}"),
+        };
+        engine::step(&mut state, action).unwrap();
+    }
     assert_eq!(state.active_player, PlayerId::P1);
+    assert_eq!(state.objects.get(p0_seraph).damage, 0, "Cleanup entry ran");
     let ledger = state.life_gain_turn_v1.as_ref().unwrap();
     assert_eq!(ledger.active_player, PlayerId::P1);
     assert!(ledger.history_index > old_anchor);

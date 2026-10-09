@@ -56,7 +56,9 @@ hidden pools, validate legacy omission/hash behavior, exercise per-seat
 ordinals, batches and turn resets, and cover event-time entry/departure,
 source control changes, Food costs, Cat identity, pending capture/surveil
 restore, stale capture replay after drain, and valid captures followed by
-later atomic events. Hosted tests will supply actual results after the prior versions
+later atomic events. The next-turn regression passes the real End window
+through Cleanup and Untap, verifying Cleanup's damage reset before checking
+the new ledger anchor. Hosted tests will supply actual results after the prior versions
 integrate. Pinned rustfmt and diff checks are the only local Rust checks;
 Stage4a's desktop reservation, paid-run authority and frozen evidence remain
 untouched.
