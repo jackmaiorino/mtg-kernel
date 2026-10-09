@@ -646,6 +646,7 @@ def execute(request_path, qualification):
         # Linux: nice 10 before exec, so every native thread inherits it.
         options = ({"creationflags": subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW}
                    if WINDOWS else {"preexec_fn": lambda: os.nice(10)})
+        child_started = time.monotonic()
         child = subprocess.Popen(command, stdout=stdout, stderr=stderr, **options)
         reservations.record_descendant(token, child.pid)
         write(root/"started.json", {"pid": child.pid, "started_unix": time.time(),
@@ -671,7 +672,9 @@ def execute(request_path, qualification):
                 child.kill()
             child.wait()
         finally:
+            child_seconds = time.monotonic() - child_started
             write(root/"execution.json", {"exit_code": child.returncode, "error": failure,
+                                         "child_seconds": child_seconds,
                                          "seconds": time.monotonic() - started})
     if failure:
         raise RuntimeError(failure + "; preserve failed outputs at " + str(root))
