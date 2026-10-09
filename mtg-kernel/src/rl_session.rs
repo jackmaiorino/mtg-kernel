@@ -6558,15 +6558,21 @@ impl FastActorSessionV1 {
     /// set. Unknown hand/library identities are resampled in the clone; the
     /// current decision's cached candidates are kept, so the caller applies a
     /// root action before any hidden identity can be observed.
+    ///
+    /// Cards that the actor's own pending effect selection offers (every card
+    /// a library search can find) are known to the actor and keep their
+    /// identities. Resampling them would break the engine's stored candidate
+    /// set, so every cached candidate of a library-search decision would fail
+    /// in place.
     pub(crate) fn census_redeterminized_clone_v1(&self, seed: u64) -> Result<Self, String> {
+        use crate::kernel_native_search_opponent_v1::{
+            pending_selection_hidden_objects_v1, redeterminize_hidden_zones_pinned_v1,
+        };
         let actor = self.current.as_ref().ok_or("no current decision")?.actor;
+        let pinned = pending_selection_hidden_objects_v1(&self.state, actor);
         let mut sampled = self.clone();
-        crate::kernel_native_search_opponent_v1::redeterminize_hidden_zones_v1(
-            &mut sampled.state,
-            actor,
-            seed,
-        )
-        .map_err(|error| error.to_string())?;
+        redeterminize_hidden_zones_pinned_v1(&mut sampled.state, actor, seed, &pinned)
+            .map_err(|error| error.to_string())?;
         Ok(sampled)
     }
 
@@ -16430,5 +16436,85 @@ mod tests {
         assert_eq!(profile.phases.observe.count, 0);
         assert_eq!(profile.phases.actions.count, 0);
         assert_eq!(profile.phases.postbind.count, 0);
+    }
+
+    /// Regression: a census determinization of a pending library search
+    /// resampled the searcher's library identities. The engine revalidates
+    /// the stored candidate set against those identities, so every cached
+    /// candidate (the Forest and the zero-card finish) failed in place with
+    /// "prevalidated fast actor action failed internally".
+    #[test]
+    fn census_redeterminized_library_search_keeps_every_candidate_steppable() {
+        use crate::engine::{Action, Decision};
+        use crate::policy_observation_v6::tests::{put, ready_state};
+
+        let actor = PlayerId::P0;
+        let mut state = ready_state();
+        let ent = put(&mut state, actor, "Generous Ent", Zone::Hand);
+        let mut library = Vec::new();
+        for name in [
+            "Lightning Bolt",
+            "Island",
+            "Forest",
+            "Counterspell",
+            "Swamp",
+            "Mountain",
+            "Island",
+            "Brainstorm",
+        ] {
+            library.push(put(&mut state, actor, name, Zone::Library));
+        }
+        let forest = library[2];
+        for name in ["Forest", "Island", "Lightning Bolt"] {
+            put(&mut state, actor.opponent(), name, Zone::Library);
+        }
+        state.players[actor.index()].mana_pool[crate::mana::ManaColor::G.pool_index()] = 1;
+        // Forestcycling: search for a Forest card.
+        crate::engine::step(&mut state, Action::ActivateAbility(ent, 0)).unwrap();
+        loop {
+            match crate::engine::advance_until_decision(&mut state) {
+                Decision::CastSpellOrPass { .. } => {
+                    crate::engine::step(&mut state, Action::Pass).unwrap();
+                }
+                Decision::ChooseEffectTargets { .. } => break,
+                other => panic!("unexpected decision {other:?}"),
+            }
+        }
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let FastActorResponseV1::Decision(d) = session.current_response() else {
+            panic!("missing library-search decision");
+        };
+        assert_eq!(d.legal_action_count, 2, "one findable Forest plus finish");
+        let card = |s: &FastActorSessionV1, id: ObjectId| s.state.objects.get(id).card_def;
+        let regenerate = |s: &FastActorSessionV1| {
+            let current = s.current.as_ref().unwrap();
+            core_policy_action_candidates_v5(&current.origin_decision, &s.state)
+                .unwrap()
+                .into_iter()
+                .map(|candidate| candidate.semantic)
+                .collect::<Vec<_>>()
+        };
+        let root_semantics = regenerate(&session);
+
+        let mut resampled = false;
+        for det in 0..32u64 {
+            let sampled = session.census_redeterminized_clone_v1(det).unwrap();
+            for index in 0..d.legal_action_count {
+                let mut stepped = sampled.clone();
+                stepped
+                    .step(d.episode_id, d.step, index)
+                    .unwrap_or_else(|error| panic!("det {det} candidate {index}: {error:?}"));
+                assert!(stepped.state.engine.halted.is_none());
+            }
+            // The determinization stays consistent with what the searcher
+            // sees: the Forest keeps its identity and the sampled state
+            // regenerates the root's candidates.
+            assert_eq!(card(&sampled, forest), card(&session, forest));
+            assert_eq!(regenerate(&sampled), root_semantics);
+            resampled |= library
+                .iter()
+                .any(|&id| card(&sampled, id) != card(&session, id));
+        }
+        assert!(resampled, "the rest of the library is still resampled");
     }
 }
