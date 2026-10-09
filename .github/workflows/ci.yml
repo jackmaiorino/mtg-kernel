@@ -128,6 +128,11 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --release --locked --workspace --all-targets -- -D warnings
 
+      - name: Check joined serializer fixture and warmed encoder allocations
+        run: |
+          cargo test --release --locked -p mtg-kernel --lib joined_frame_
+          cargo test --release --locked -p mtg-kernel --test flat_policy_allocation
+
       - name: Run non-Windows native Store feature Clippy
         run: cargo clippy --release --locked -p mtg-kernel --all-targets --features native-training-store-v2-production -- -D warnings
 

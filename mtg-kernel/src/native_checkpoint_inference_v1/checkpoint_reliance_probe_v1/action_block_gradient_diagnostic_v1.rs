@@ -7911,8 +7911,39 @@ impl JoinFixtureV1 {
 
 #[test]
 fn joined_frame_is_preflight_sealed_neutral_and_lineage_complete_v1() {
-    let (authority, deck_ids, deck_hashes, tape) = joined_fixture_v1();
+    let (authority, deck_ids, deck_hashes, mut tape) = joined_fixture_v1();
     let frame = frame_joined_tape_v1(&authority, &deck_ids, deck_hashes, &tape).unwrap();
+    // Authenticate the live tape above. The serializer golden below is a
+    // historical input fixture, preserving the exact contract metadata at
+    // faf1045a. These three source-bound identities move when implementation
+    // text changes, even when the typed schema and all tensor rows stay fixed.
+    // Freeze the serializer input only; production admission/framing and the
+    // live-authority mutation checks in this test continue using live metadata.
+    let historical_digest = |text: &str| {
+        std::array::from_fn(|index| {
+            u8::from_str_radix(&text[index * 2..index * 2 + 2], 16).unwrap()
+        })
+    };
+    for episode in &mut tape.episodes {
+        for group in &mut episode.groups {
+            for substep in &mut group.substeps {
+                let digests = &mut substep.binding.contract_digests;
+                digests.feature_inventory_sha256 = historical_digest(
+                    "a2ac65c9fe3873c4fdfa3e9126a498ac4ec411d9e26732f200670105379d4b09",
+                );
+                digests.overlay_typed_layout_sha256 = historical_digest(
+                    "0ed54703d8588e0d1c6f7150367bd2c51607d05d33f75a39b09add0b3a7f8123",
+                );
+                digests.typed_layout_sha256 = historical_digest(
+                    "32d2885392f99450d9cf2feba4d881226ce502217ec6da5bb164f864824cfec3",
+                );
+                substep.retained.binding = substep.binding;
+            }
+        }
+    }
+    let mut historical_frame = FramedWriterV1::new_v1(JOINED_TAPE_SCHEMA_V1);
+    historical_frame.u64_v1("episodes_per_tape", EPISODES_PER_TAPE_V1);
+    frame_joined_tape_side_v1(&mut historical_frame, "neutral", &tape).unwrap();
     // Re-baselined once per the owner ruling on record (collab CLAUDE #236,
     // 2026-08-14): joined_fixture_v1 carries live deck_ids/deck_hashes, so
     // this serializer golden moves with the nine-deck catalog landing.
@@ -7950,7 +7981,7 @@ fn joined_frame_is_preflight_sealed_neutral_and_lineage_complete_v1() {
     // lint cleanup (92270264). CI run 36812673206, job 110211057207,
     // supplies the resulting joined-body digest; strict framing stays fixed.
     assert_eq!(
-        frame.sha256_v1(),
+        historical_frame.sha256_v1(),
         "011d1d9bf3f7cfb49860fa74d00fafc551f6b79419c01b01c6a56ad9dd6882a4",
         "the complete compact joined-body fixture is a frozen serializer golden"
     );

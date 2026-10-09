@@ -8,28 +8,39 @@ use mtg_kernel::rl_session::{
     CANONICAL_RALLY_DECK_ID,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 struct CountingAllocator;
 
 static TRACK_ALLOCATIONS: AtomicBool = AtomicBool::new(false);
 static ALLOCATION_COUNT: AtomicUsize = AtomicUsize::new(0);
+static ENCODER_THREAD_ALLOCATION_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+thread_local! {
+    static ENCODER_THREAD: Cell<bool> = const { Cell::new(false) };
+}
+
+fn record_allocation() {
+    if TRACK_ALLOCATIONS.load(Ordering::Relaxed) {
+        ALLOCATION_COUNT.fetch_add(1, Ordering::Relaxed);
+        if ENCODER_THREAD.try_with(Cell::get).unwrap_or(false) {
+            ENCODER_THREAD_ALLOCATION_COUNT.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
 
 #[global_allocator]
 static GLOBAL_ALLOCATOR: CountingAllocator = CountingAllocator;
 
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if TRACK_ALLOCATIONS.load(Ordering::Relaxed) {
-            ALLOCATION_COUNT.fetch_add(1, Ordering::Relaxed);
-        }
+        record_allocation();
         unsafe { System.alloc(layout) }
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        if TRACK_ALLOCATIONS.load(Ordering::Relaxed) {
-            ALLOCATION_COUNT.fetch_add(1, Ordering::Relaxed);
-        }
+        record_allocation();
         unsafe { System.alloc_zeroed(layout) }
     }
 
@@ -38,9 +49,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 
     unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if TRACK_ALLOCATIONS.load(Ordering::Relaxed) {
-            ALLOCATION_COUNT.fetch_add(1, Ordering::Relaxed);
-        }
+        record_allocation();
         unsafe { System.realloc(pointer, layout, new_size) }
     }
 }
@@ -106,6 +115,8 @@ fn assert_warmed_encode_allocates_nothing(mut session: FastActorSessionV1) {
             .unwrap();
 
         ALLOCATION_COUNT.store(0, Ordering::SeqCst);
+        ENCODER_THREAD_ALLOCATION_COUNT.store(0, Ordering::SeqCst);
+        ENCODER_THREAD.set(true);
         TRACK_ALLOCATIONS.store(true, Ordering::SeqCst);
         let warmed = std::hint::black_box(&session)
             .encode_current_flat_decision_v1(
@@ -115,11 +126,13 @@ fn assert_warmed_encode_allocates_nothing(mut session: FastActorSessionV1) {
             )
             .unwrap();
         TRACK_ALLOCATIONS.store(false, Ordering::SeqCst);
+        ENCODER_THREAD.set(false);
         assert_eq!(first, warmed);
         assert_eq!(
             ALLOCATION_COUNT.load(Ordering::SeqCst),
             0,
-            "warmed decision {decisions}"
+            "warmed decision {decisions}; encoder thread allocations {}",
+            ENCODER_THREAD_ALLOCATION_COUNT.load(Ordering::SeqCst)
         );
         decisions += 1;
         if matches!(
