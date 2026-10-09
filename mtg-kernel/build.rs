@@ -1873,6 +1873,12 @@ pub const FLAT_ACTION_CANDIDATE_COMMITMENT_DOMAIN_V2: &[u8; {}] = &[{}];\n",
     (flat_policy_contract, flat_action_contract)
 }
 
+/// True for `standard-magezero-fixtures` builds, which also enable
+/// `limited-fdn-fixtures` but append the Standard registry instead of FDN's.
+fn standard_magezero_fixtures() -> bool {
+    env::var_os("CARGO_FEATURE_STANDARD_MAGEZERO_FIXTURES").is_some()
+}
+
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set by cargo");
     let repo_root = Path::new(&manifest_dir).join("..");
@@ -1910,21 +1916,31 @@ fn main() {
 
     let fdn_path = repo_root.join("data/limited/fdn_v1/cards_v1.json");
     println!("cargo:rerun-if-changed={}", fdn_path.display());
+    let standard_path = repo_root.join("data/standard/magezero_v1/cards_v1.json");
+    println!("cargo:rerun-if-changed={}", standard_path.display());
     if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
         assert_eq!(
             data.cards.len(),
             192,
-            "FDN extension requires the frozen Pauper ID prefix"
+            "Limited and Standard extensions require the frozen Pauper ID prefix"
         );
-        let fdn_text = fs::read_to_string(&fdn_path)
-            .unwrap_or_else(|e| panic!("failed to read {}: {e}", fdn_path.display()));
-        let fdn: CardsFile = serde_json::from_str(&fdn_text)
-            .unwrap_or_else(|e| panic!("failed to parse {}: {e}", fdn_path.display()));
+        // The Standard feature turns on `limited-fdn-fixtures` for its rules
+        // behavior but appends its own registry, so FDN batches never shift
+        // Standard card ids or identity.
+        let extension_path = if standard_magezero_fixtures() {
+            &standard_path
+        } else {
+            &fdn_path
+        };
+        let extension_text = fs::read_to_string(extension_path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", extension_path.display()));
+        let extension: CardsFile = serde_json::from_str(&extension_text)
+            .unwrap_or_else(|e| panic!("failed to parse {}: {e}", extension_path.display()));
         assert_eq!(
-            fdn.version, EXPECTED_SCHEMA_VERSION,
-            "FDN registry schema mismatch"
+            extension.version, EXPECTED_SCHEMA_VERSION,
+            "extension registry schema mismatch"
         );
-        data.cards.extend(fdn.cards);
+        data.cards.extend(extension.cards);
     }
 
     let mut seen_names = HashSet::new();
@@ -8558,6 +8574,12 @@ fn codegen(cards: &[CardJson]) -> String {
             "kernel_carddb/v34\n"
         },
     );
+    if standard_magezero_fixtures() {
+        // `standard-magezero-fixtures` builds: the Pauper prefix plus
+        // `data/standard/magezero_v1/cards_v1.json`, versioned separately
+        // from the FDN Limited catalog.
+        canon = String::from("kernel_carddb_standard/v1\n");
+    }
     if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
         canon.push_str("counter_target_spell_guard=bound_stack_spell_can_be_countered\n");
     }

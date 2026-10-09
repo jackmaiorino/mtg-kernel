@@ -1,0 +1,1739 @@
+{
+  "schema": "native-expanded-local-r1-stages/20261009",
+  "generated_utc": "2026-10-09T21:11:10.479127+00:00",
+  "root": "E:/nine-deck-baseline-20261007/computehost-campaign/retained/r1",
+  "selection": "b01..b20;162 completed iterations each; collection/update raw SHA256 verified against complete.json",
+  "all": {
+    "updates": 3240,
+    "episodes": 32400,
+    "update_stage_sums": {
+      "input_read_seconds": 1204.5847858,
+      "behavior_replay_seconds": 458.4284941,
+      "learner_update_seconds": 6631.2459538,
+      "checkpoint_io_seconds": 1145.6442793,
+      "update_elapsed_seconds": 9439.9217274,
+      "physical_decisions": 2564914,
+      "policy_substeps": 2796895
+    },
+    "collection_elapsed_seconds": 3740.5084408,
+    "collection_initialization_seconds": 693.2318814,
+    "collection_plus_update_seconds": 13180.4301682,
+    "update_timer_residual_seconds": 0.018214399999123998,
+    "stage_percent_of_collection_plus_update": {
+      "input_read_seconds": 9.139191744335195,
+      "behavior_replay_seconds": 3.478099639009019,
+      "learner_update_seconds": 50.31130144598007,
+      "checkpoint_io_seconds": 8.692009780257848,
+      "collection": 28.3792591976596
+    },
+    "initialization_percent_of_collection": 18.533092288697933,
+    "sum_worker_busy_seconds": 9904.0033756,
+    "worker_capacity_seconds_excluding_initialization": 12189.1062376,
+    "worker_busy_capacity_proxy": 0.8125290880679098,
+    "max_worker_busy_seconds": {
+      "n": 3240,
+      "sum": 2997.7379687,
+      "mean": 0.9252277681172839,
+      "median": 0.8780276499999999,
+      "p90": 1.2395597,
+      "p95": 1.3946613799999994,
+      "p99": 1.924001124000008,
+      "max": 3.5711323
+    },
+    "max_to_mean_worker_busy_ratio": {
+      "n": 3240,
+      "sum": 3907.6826530942476,
+      "mean": 1.2060748929303233,
+      "median": 1.1770569793918817,
+      "p90": 1.3771354536374936,
+      "p95": 1.4543804534343356,
+      "p99": 1.6574971744895273,
+      "max": 2.272280713328438
+    },
+    "worker_episode_count_histogram": {
+      "2": 5875,
+      "4": 916,
+      "3": 5255,
+      "1": 838,
+      "5": 73,
+      "6": 3
+    },
+    "workers_histogram": {
+      "4": 3240
+    },
+    "update_elapsed_stats": {
+      "n": 3240,
+      "sum": 9439.9217274,
+      "mean": 2.9135560887037038,
+      "median": 2.7241377,
+      "p90": 4.05208314,
+      "p95": 4.556053309999999,
+      "p99": 6.2334857360000075,
+      "max": 13.4259153
+    },
+    "collection_elapsed_stats": {
+      "n": 3240,
+      "sum": 3740.5084408,
+      "mean": 1.1544779138271606,
+      "median": 1.1081558999999999,
+      "p90": 1.46627581,
+      "p95": 1.6204478899999992,
+      "p99": 2.1555084450000086,
+      "max": 3.7963006999999998
+    },
+    "all_receipts_complete": true
+  },
+  "blocks": {
+    "b01": {
+      "updates": 162,
+      "episodes": 1620,
+      "update_stage_sums": {
+        "input_read_seconds": 64.9407392,
+        "behavior_replay_seconds": 27.1372384,
+        "learner_update_seconds": 387.8331942,
+        "checkpoint_io_seconds": 57.5555608,
+        "update_elapsed_seconds": 537.4676463,
+        "physical_decisions": 140567,
+        "policy_substeps": 153755
+      },
+      "collection_elapsed_seconds": 208.4765192,
+      "collection_initialization_seconds": 35.0334512,
+      "collection_plus_update_seconds": 745.9441654999999,
+      "update_timer_residual_seconds": 0.0009136999999554973,
+      "stage_percent_of_collection_plus_update": {
+        "input_read_seconds": 8.705844512701669,
+        "behavior_replay_seconds": 3.637971802059762,
+        "learner_update_seconds": 51.99225520318116,
+        "checkpoint_io_seconds": 7.715800117750235,
+        "collection": 27.948005875246707
+      },
+      "initialization_percent_of_collection": 16.80450697010678,
+      "sum_worker_busy_seconds": 549.6691102,
+      "worker_capacity_seconds_excluding_initialization": 693.772272,
+      "worker_busy_capacity_proxy": 0.7922903990028589,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 170.9124322,
+        "mean": 1.055015013580247,
+        "median": 0.9816497,
+        "p90": 1.5503463700000002,
+        "p95": 1.8559470999999996,
+        "p99": 2.3414762539999994,
+        "max": 2.4170493
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 199.47081217876467,
+        "mean": 1.231301309745461,
+        "median": 1.186990043926099,
+        "p90": 1.4571048591277653,
+        "p95": 1.5133079279963098,
+        "p99": 1.697249336950898,
+        "max": 1.7597903298194533
+      },
+      "worker_episode_count_histogram": {
+        "2": 277,
+        "4": 63,
+        "3": 245,
+        "1": 59,
+        "5": 4
+      },
+      "workers_histogram": {
+        "4": 162
+      },
+      "update_elapsed_stats": {
+        "n": 162,
+        "sum": 537.4676463,
+        "mean": 3.3177015203703704,
+        "median": 3.01075505,
+        "p90": 4.77006963,
+        "p95": 5.968394199999999,
+        "p99": 8.25868552499999,
+        "max": 8.7685864
+      },
+      "collection_elapsed_stats": {
+        "n": 162,
+        "sum": 208.4765192,
+        "mean": 1.2868920938271604,
+        "median": 1.2208677,
+        "p90": 1.77221688,
+        "p95": 2.0860817999999997,
+        "p99": 2.565165718999999,
+        "max": 2.6427645
+      },
+      "all_receipts_complete": true,
+      "source_count": 486,
+      "source_hash_rollup_sha256": "8c8b4e76a79a1e5ff1f28e451045c9ab2523db9d552267c61e40217b22b13142",
+      "complete_json_hash_matches": 324
+    },
+    "b02": {
+      "updates": 162,
+      "episodes": 1620,
+      "update_stage_sums": {
+        "input_read_seconds": 60.3041474,
+        "behavior_replay_seconds": 23.3563683,
+        "learner_update_seconds": 337.7586225,
+        "checkpoint_io_seconds": 57.060302,
+        "update_elapsed_seconds": 478.4803857,
+        "physical_decisions": 132839,
+        "policy_substeps": 143911
+      },
+      "collection_elapsed_seconds": 187.6776138,
+      "collection_initialization_seconds": 34.7272797,
+      "collection_plus_update_seconds": 666.1579995,
+      "update_timer_residual_seconds": 0.0009455000000002656,
+      "stage_percent_of_collection_plus_update": {
+        "input_read_seconds": 9.052529196566377,
+        "behavior_replay_seconds": 3.506130425143983,
+        "learner_update_seconds": 50.702479404812735,
+        "checkpoint_io_seconds": 8.565580844608622,
+        "collection": 28.173138195573078
+      },
+      "initialization_percent_of_collection": 18.503687785058574,
+      "sum_worker_busy_seconds": 509.9523646,
+      "worker_capacity_seconds_excluding_initialization": 611.8013364,
+      "worker_busy_capacity_proxy": 0.8335260717158512,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 150.59980050000001,
+        "mean": 0.9296283981481481,
+        "median": 0.8921196499999999,
+        "p90": 1.2592779000000003,
+        "p95": 1.4164896799999998,
+        "p99": 1.742585982999998,
+        "max": 2.0712015
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 190.68166110490387,
+        "mean": 1.1770472907710114,
+        "median": 1.167919284883976,
+        "p90": 1.2985490136937539,
+        "p95": 1.3570816394664318,
+        "p99": 1.4436763760726092,
+        "max": 1.487270498152892
+      },
+      "worker_episode_count_histogram": {
+        "1": 49,
+        "2": 294,
+        "4": 52,
+        "3": 245,
+        "5": 8
+      },
+      "workers_histogram": {
+        "4": 162
+      },
+      "update_elapsed_stats": {
+        "n": 162,
+        "sum": 478.4803857,
+        "mean": 2.9535826277777777,
+        "median": 2.78402755,
+        "p90": 4.02753458,
+        "p95": 4.442282804999999,
+        "p99": 6.206647426999998,
+        "max": 6.558176
+      },
+      "collection_elapsed_stats": {
+        "n": 162,
+        "sum": 187.6776138,
+        "mean": 1.158503788888889,
+        "median": 1.13212205,
+        "p90": 1.4753917300000001,
+        "p95": 1.6525737549999997,
+        "p99": 1.981650966999998,
+        "max": 2.3160949
+      },
+      "all_receipts_complete": true,
+      "source_count": 486,
+      "source_hash_rollup_sha256": "ce10d98c7ba50d83f21deaeaca5ed38e1eff4a51c4e7f1352c0d02d50359e408",
+      "complete_json_hash_matches": 324
+    },
+    "b03": {
+      "updates": 162,
+      "episodes": 1620,
+      "update_stage_sums": {
+        "input_read_seconds": 60.3337151,
+        "behavior_replay_seconds": 23.0581999,
+        "learner_update_seconds": 335.8564362,
+        "checkpoint_io_seconds": 56.8968021,
+        "update_elapsed_seconds": 476.1460445,
+        "physical_decisions": 131251,
+        "policy_substeps": 142503
+      },
+      "collection_elapsed_seconds": 186.4267842,
+      "collection_initialization_seconds": 34.4507034,
+      "collection_plus_update_seconds": 662.5728287,
+      "update_timer_residual_seconds": 0.0008912000000123044,
+      "stage_percent_of_collection_plus_update": {
+        "input_read_seconds": 9.105974843305555,
+        "behavior_replay_seconds": 3.480100435938689,
+        "learner_update_seconds": 50.689738795804026,
+        "checkpoint_io_seconds": 8.587252545751731,
+        "collection": 28.13679887323155
+      },
+      "initialization_percent_of_collection": 18.479481662378,
+      "sum_worker_busy_seconds": 499.2210246,
+      "worker_capacity_seconds_excluding_initialization": 607.9043232,
+      "worker_busy_capacity_proxy": 0.8212164407255855,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 149.4702582,
+        "mean": 0.9226559148148148,
+        "median": 0.8562911,
+        "p90": 1.2513267800000003,
+        "p95": 1.4179398799999994,
+        "p99": 1.8264316239999987,
+        "max": 2.0084166
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 193.51247508969382,
+        "mean": 1.1945214511709494,
+        "median": 1.1625690927264247,
+        "p90": 1.3499328429805961,
+        "p95": 1.4129026240785285,
+        "p99": 1.6479917718598538,
+        "max": 1.7380513062339458
+      },
+      "worker_episode_count_histogram": {
+        "3": 269,
+        "2": 283,
+        "1": 47,
+        "4": 45,
+        "5": 4
+      },
+      "workers_histogram": {
+        "4": 162
+      },
+      "update_elapsed_stats": {
+        "n": 162,
+        "sum": 476.1460445,
+        "mean": 2.939173114197531,
+        "median": 2.73367585,
+        "p90": 4.22231379,
+        "p95": 4.682451019999999,
+        "p99": 5.629336679999998,
+        "max": 7.3739807
+      },
+      "collection_elapsed_stats": {
+        "n": 162,
+        "sum": 186.4267842,
+        "mean": 1.1507826185185186,
+        "median": 1.08093415,
+        "p90": 1.47336273,
+        "p95": 1.6415472299999996,
+        "p99": 2.0472382489999985,
+        "max": 2.2291975
+      },
+      "all_receipts_complete": true,
+      "source_count": 486,
+      "source_hash_rollup_sha256": "1603db13fcaa75b1d71a2de99fa0e5c6583bce14c0d8e135e4d96e0e26de40b8",
+      "complete_json_hash_matches": 324
+    },
+    "b04": {
+      "updates": 162,
+      "episodes": 1620,
+      "update_stage_sums": {
+        "input_read_seconds": 61.3618385,
+        "behavior_replay_seconds": 23.9669281,
+        "learner_update_seconds": 347.1664606,
+        "checkpoint_io_seconds": 57.0755456,
+        "update_elapsed_seconds": 489.5716904,
+        "physical_decisions": 132630,
+        "policy_substeps": 145065
+      },
+      "collection_elapsed_seconds": 191.27364070000002,
+      "collection_initialization_seconds": 34.6076399,
+      "collection_plus_update_seconds": 680.8453311000001,
+      "update_timer_residual_seconds": 0.0009176000000366002,
+      "stage_percent_of_collection_plus_update": {
+        "input_read_seconds": 9.01259591526631,
+        "behavior_replay_seconds": 3.5201722043504513,
+        "learner_update_seconds": 50.990503237953384,
+        "checkpoint_io_seconds": 8.383041344762772,
+        "collection": 28.093552524032283
+      },
+      "initialization_percent_of_collection": 18.09326145168104,
+      "sum_worker_busy_seconds": 507.0324133,
+      "worker_capacity_seconds_excluding_initialization": 626.6640032,
+      "worker_busy_capacity_proxy": 0.809097715379992,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 154.3377527,
+        "mean": 0.9527021771604938,
+        "median": 0.8900262499999999,
+        "p90": 1.33263474,
+        "p95": 1.4773862849999997,
+        "p99": 1.8468402219999978,
+        "max": 2.5201407
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 196.88757392838008,
+        "mean": 1.2153553946196303,
+        "median": 1.192330958667844,
+        "p90": 1.39647606363463,
+        "p95": 1.44949353384346,
+        "p99": 1.6078500112442757,
+        "max": 1.8439150217238494
+      },
+      "worker_episode_count_histogram": {
+        "2": 293,
+        "3": 253,
+        "4": 52,
+        "1": 46,
+        "5": 3,
+        "6": 1
+      },
+      "workers_histogram": {
+        "4": 162
+      },
+      "update_elapsed_stats": {
+        "n": 162,
+        "sum": 489.5716904,
+        "mean": 3.0220474716049384,
+        "median": 2.7749870999999997,
+        "p90": 4.1636730900000005,
+        "p95": 5.035448825,
+        "p99": 6.129474773999996,
+        "max": 7.9520891
+      },
+      "collection_elapsed_stats": {
+        "n": 162,
+        "sum": 191.27364070000002,
+        "mean": 1.1807014858024691,
+        "median": 1.11834585,
+        "p90": 1.5545513600000003,
+        "p95": 1.7014863799999995,
+        "p99": 2.0791811729999976,
+        "max": 2.7544873
+      },
+      "all_receipts_complete": true,
+      "source_count": 486,
+      "source_hash_rollup_sha256": "fd1eaa2d2b89abe1d9367dbeab477db64e2cbc562cb482e1128738e706dd23d5",
+      "complete_json_hash_matches": 324
+    },
+    "b05": {
+      "updates": 162,
+      "episodes": 1620,
+      "update_stage_sums": {
+        "input_read_seconds": 60.3318671,
+        "behavior_replay_seconds": 23.1580779,
+        "learner_update_seconds": 332.6157154,
+        "checkpoint_io_seconds": 57.4028367,
+        "update_elapsed_seconds": 473.5093796,
+        "physical_decisions": 130471,
+        "policy_substeps": 142479
+      },
+      "collection_elapsed_seconds": 187.221076,
+      "collection_initialization_seconds": 34.7059719,
+      "collection_plus_update_seconds": 660.7304556,
+      "update_timer_residual_seconds": 0.000882499999988795,
+      "stage_percent_of_collection_plus_update": {
+        "input_read_seconds": 9.131086146954356,
+        "behavior_replay_seconds": 3.5049206077492636,
+        "learner_update_seconds": 50.340606003692734,
+        "checkpoint_io_seconds": 8.68778428684255,
+        "collection": 28.335469390462283
+      },
+      "initialization_percent_of_collection": 18.537427858816493,
+      "sum_worker_busy_seconds": 497.4998893,
+      "worker_capacity_seconds_excluding_initialization": 610.0604164,
+      "worker_busy_capacity_proxy": 0.8154928199337602,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 149.8979045,
+        "mean": 0.9252957067901234,
+        "median": 0.8942522,
+        "p90": 1.1954733400000004,
+        "p95": 1.3913465949999997,
+        "p99": 1.698221330999999,
+        "max": 1.9644797
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 194.87885549099946,
+        "mean": 1.2029558980925892,
+        "median": 1.1748255167928199,
+        "p90": 1.344075283438989,
+        "p95": 1.477623714240959,
+        "p99": 1.603050599591629,
+        "max": 1.7140998433290155
+      },
+      "worker_episode_count_histogram": {
+        "3": 265,
+        "4": 44,
+        "2": 290,
+        "1": 44,
+        "5": 5
+      },
+      "workers_histogram": {
+        "4": 162
+      },
+      "update_elapsed_stats": {
+        "n": 162,
+        "sum": 473.5093796,
+        "mean": 2.9228974049382717,
+        "median": 2.8743399,
+        "p90": 4.0177634200000005,
+        "p95": 4.4412068399999995,
+        "p99": 5.329167900999999,
+        "max": 6.1776691
+      },
+      "collection_elapsed_stats": {
+        "n": 162,
+        "sum": 187.221076,
+        "mean": 1.1556856543209877,
+        "median": 1.1179423499999999,
+        "p90": 1.4239745600000002,
+        "p95": 1.61524009,
+        "p99": 1.922508724999999,
+        "max": 2.1916478
+      },
+      "all_receipts_complete": true,
+      "source_count": 486,
+      "source_hash_rollup_sha256": "f9459fb6d8e89b4f9f99cb5705e201ce48d2d3fac70dde838f4eeb724090f279",
+      "complete_json_hash_matches": 324
+    },
+    "b06": {
+      "updates": 162,
+      "episodes": 1620,
+      "update_stage_sums": {
+        "input_read_seconds": 59.6315342,
+        "behavior_replay_seconds": 22.7331745,
+        "learner_update_seconds": 329.2610044,
+        "checkpoint_io_seconds": 57.1204338,
+        "update_elapsed_seconds": 468.7470512,
+        "physical_decisions": 131569,
+        "policy_substeps": 142774
+      },
+      "collection_elapsed_seconds": 185.0928608,
+      "collection_initialization_seconds": 34.5309582,
+      "collection_plus_update_seconds": 653.839912,
+      "update_timer_residual_seconds": 0.0009043000000019674,
+      "stage_percent_of_collection_plus_update": {
+        "input_read_seconds": 9.120204059980969,
+        "behavior_replay_seconds": 3.476871644385025,
+        "learner_update_seconds": 50.358046114505164,
+        "checkpoint_io_seconds": 8.736149744251158,
+        "collection": 28.30859013085148
+      },
+      "initialization_percent_of_collection": 18.656018417324066,
+      "sum_worker_busy_seconds": 494.0983759,
+      "worker_capacity_seconds_excluding_initialization": 602.2476104,
+      "worker_busy_capacity_proxy": 0.8204239707515493,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 148.0359528,
+        "mean": 0.9138021777777778,
+        "median": 0.8817684000000001,
+        "p90": 1.20333837,
+        "p95": 1.3478969249999992,
+        "p99": 1.4868597459999997,
+        "max": 1.5669304999999998
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 193.98821780381917,
+        "mean": 1.1974581345914763,
+        "median": 1.1832098582302182,
+        "p90": 1.327806573181663,
+        "p95": 1.3883314421208404,
+        "p99": 1.5740409957916794,
+        "max": 1.7195738399149685
+      },
+      "worker_episode_count_histogram": {
+        "3": 273,
+        "2": 303,
+        "4": 41,
+        "1": 31
+      },
+      "workers_histogram": {
+        "4": 162
+      },
+      "update_elapsed_stats": {
+        "n": 162,
+        "sum": 468.7470512,
+        "mean": 2.8935003160493826,
+        "median": 2.82313205,
+        "p90": 3.7211969700000003,
+        "p95": 4.13453978,
+        "p99": 4.809927608999997,
+        "max": 6.1966554
+      },
+      "collection_elapsed_stats": {
+        "n": 162,
+        "sum": 185.0928608,
+        "mean": 1.14254852345679,
+        "median": 1.1156392,
+        "p90": 1.4217422600000003,
+        "p95": 1.5711422049999992,
+        "p99": 1.723294851,
+        "max": 1.7893487000000001
+      },
+      "all_receipts_complete": true,
+      "source_count": 486,
+      "source_hash_rollup_sha256": "ea65992ba9e856bd3b7fb4268b73409e20450d8252db3ef05b0bd944027bb65c",
+      "complete_json_hash_matches": 324
+    },
+    "b07": {
+      "updates": 162,
+      "episodes": 1620,
+      "update_stage_sums": {
+        "input_read_seconds": 60.0896975,
+        "behavior_replay_seconds": 22.6684761,
+        "learner_update_seconds": 330.5417983,
+        "checkpoint_io_seconds": 57.3437066,
+        "update_elapsed_seconds": 470.6445839,
+        "physical_decisions": 128520,
+        "policy_substeps": 139769
+      },
+      "collection_elapsed_seconds": 186.5880933,
+      "collection_initialization_seconds": 34.6866461,
+      "collection_plus_update_seconds": 657.2326772,
+      "update_timer_residual_seconds": 0.0009054000000219276,
+      "stage_percent_of_collection_plus_update": {
+        "input_read_seconds": 9.142834734876448,
+        "behavior_replay_seconds": 3.449079281415863,
+        "learner_update_seconds": 50.29296469375245,
+        "checkpoint_io_seconds": 8.72502366198538,
+        "collection": 28.38995986853832
+      },
+      "initialization_percent_of_collection": 18.589956886600543,
+      "sum_worker_busy_seconds": 491.67706929999997,
+      "worker_capacity_seconds_excluding_initialization": 607.6057888,
+      "worker_busy_capacity_proxy": 0.8092040569117105,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 149.4113776,
+        "mean": 0.9222924543209876,
+        "median": 0.87714765,
+        "p90": 1.2976123200000003,
+        "p95": 1.4169325499999998,
+        "p99": 1.8904208389999972,
+        "max": 2.7096955
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 195.60943238781368,
+        "mean": 1.2074656320235413,
+        "median": 1.1761017653358055,
+        "p90": 1.3850681240444622,
+        "p95": 1.4570418268034915,
+        "p99": 1.6193228386897485,
+        "max": 2.0154555353335173
+      },
+      "worker_episode_count_histogram": {
+        "3": 272,
+        "2": 301,
+        "4": 41,
+        "1": 33,
+        "5": 1
+      },
+      "workers_histogram": {
+        "4": 162
+      },
+      "update_elapsed_stats": {
+        "n": 162,
+        "sum": 470.6445839,
+        "mean": 2.9052134808641976,
+        "median": 2.7010856,
+        "p90": 4.12811958,
+        "p95": 4.635337509999999,
+        "p99": 5.934328339999968,
+        "max": 7.4422296
+      },
+      "collection_elapsed_stats": {
+        "n": 162,
+        "sum": 186.5880933,
+        "mean": 1.1517783537037036,
+        "median": 1.1184565499999999,
+        "p90": 1.5216475600000001,
+        "p95": 1.65146466,
+        "p99": 2.1166590959999976,
+        "max": 2.9952555
+      },
+      "all_receipts_complete": true,
+      "source_count": 486,
+      "source_hash_rollup_sha256": "52e92506d042bdbee2c333b6751687e36b185142fd7267939d6757df4fb09d2a",
+      "complete_json_hash_matches": 324
+    },
+    "b08": {
+      "updates": 162,
+      "episodes": 1620,
+      "update_stage_sums": {
+        "input_read_seconds": 58.6447615,
+        "behavior_replay_seconds": 21.4883496,
+        "learner_update_seconds": 314.4620476,
+        "checkpoint_io_seconds": 57.1798555,
+        "update_elapsed_seconds": 451.7758888,
+        "physical_decisions": 125740,
+        "policy_substeps": 136644
+      },
+      "collection_elapsed_seconds": 181.0989409,
+      "collection_initialization_seconds": 34.6430247,
+      "collection_plus_update_seconds": 632.8748297,
+      "update_timer_residual_seconds": 0.000874600000031478,
+      "stage_percent_of_collection_plus_update": {
+        "input_read_seconds": 9.266407628788023,
+        "behavior_replay_seconds": 3.3953553833363967,
+        "learner_update_seconds": 49.68787394326674,
+        "checkpoint_io_seconds": 9.034939109065979,
+        "collection": 28.615285740759493
+      },
+      "initialization_percent_of_collection": 19.129335891107907,
+      "sum_worker_busy_seconds": 476.3454283,
+      "worker_capacity_seconds_excluding_initialization": 585.8236648,
+      "worker_busy_capacity_proxy": 0.8131208363913127,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 144.1081835,
+        "mean": 0.889556688271605,
+        "median": 0.8451343,
+        "p90": 1.19943271,
+        "p95": 1.3186327399999997,
+        "p99": 1.6661491299999986,
+        "max": 1.9908087
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 195.33748957872416,
+        "mean": 1.2057869727081738,
+        "median": 1.1709246635109105,
+        "p90": 1.3893789666705154,
+        "p95": 1.4849689557867536,
+        "p99": 1.62060431326703,
+        "max": 2.272280713328438
+      },
+      "worker_episode_count_histogram": {
+        "2": 297,
+        "3": 272,
+        "4": 41,
+        "1": 36,
+        "5": 2
+      },
+      "workers_histogram": {
+        "4": 162
+      },
+      "update_elapsed_stats": {
+        "n": 162,
+        "sum": 451.7758888,
+        "mean": 2.7887400543209875,
+        "median": 2.6886685000000003,
+        "p90": 3.5949309600000006,
+        "p95": 4.009905224999999,
+        "p99": 5.1918042589999995,
+        "max": 6.8443774
+      },
+      "collection_elapsed_stats": {
+        "n": 162,
+        "sum": 181.0989409,
+        "mean": 1.1178946969135803,
+        "median": 1.07050515,
+        "p90": 1.42421919,
+        "p95": 1.5491091399999997,
+        "p99": 1.8938160859999984,
+        "max": 2.225331
+      },
+      "all_receipts_complete": true,
+      "source_count": 486,
+      "source_hash_rollup_sha256": "988791e7c2ea613f1bc614df948889c3bac301648f5a391cf289182291267ca9",
+      "complete_json_hash_matches": 324
+    },
+    "b09": {
+      "updates": 162,
+      "episodes": 1620,
+      "update_stage_sums": {
+        "input_read_seconds": 60.5889562,
+        "behavior_replay_seconds": 23.2347889,
+        "learner_update_seconds": 333.3136277,
+        "checkpoint_io_seconds": 57.1604995,
+        "update_elapsed_seconds": 474.2987572,
+        "physical_decisions": 128453,
+        "policy_substeps": 140220
+      },
+      "collection_elapsed_seconds": 187.0568201,
+      "collection_initialization_seconds": 34.5611236,
+      "collection_plus_update_seconds": 661.3555773,
+      "update_timer_residual_seconds": 0.0008849000000168417,
+      "stage_percent_of_collection_plus_update": {
+        "input_read_seconds": 9.161328380620281,
+        "behavior_replay_seconds": 3.51320676765993,
+        "learner_update_seconds": 50.398550967206,
+        "checkpoint_io_seconds": 8.642929985312758,
+        "collection": 28.283850098257876
+      },
+      "initialization_percent_of_collection": 18.476270248539308,
+      "sum_worker_busy_seconds": 500.4349242,
+      "worker_capacity_seconds_excluding_initialization": 609.982786,
+      "worker_busy_capacity_proxy": 0.8204082732918302,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 150.1264677,
+        "mean": 0.9267065907407407,
+        "median": 0.89060705,
+        "p90": 1.27549879,
+        "p95": 1.3651075849999996,
+        "p99": 1.592487741999999,
+        "max": 2.0361194
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 193.9919537540186,
+        "mean": 1.1974811960124605,
+        "median": 1.1788945700118538,
+        "p90": 1.3842895270297464,
+        "p95": 1.4045599916952638,
+        "p99": 1.5037593520817891,
+        "max": 1.5469632222247567
+      },
+      "worker_episode_count_histogram": {
+        "3": 262,
+        "2": 302,
+        "1": 37,
+        "5": 5,
+        "4": 42
+      },
+      "workers_histogram": {
+        "4": 162
+      },
+      "update_elapsed_stats": {
+        "n": 162,
+        "sum": 474.2987572,
+        "mean": 2.9277701061728396,
+        "median": 2.68994035,
+        "p90": 4.180719700000001,
+        "p95": 5.155873669999998,
+        "p99": 5.997490730999994,
+        "max": 7.9366509
+      },
+      "collection_elapsed_stats": {
+        "n": 162,
+        "sum": 187.0568201,
+        "mean": 1.1546717290123456,
+        "median": 1.1148551,
+        "p90": 1.50023237,
+        "p95": 1.5876094999999997,
+        "p99": 1.818906060999999,
+        "max": 2.2602608
+      },
+      "all_receipts_complete": true,
+      "source_count": 486,
+      "source_hash_rollup_sha256": "e0743f721239006835d534eb5c86de073f2135a9cddfb4a64be6b2bc8d7b625e",
+      "complete_json_hash_matches": 324
+    },
+    "b10": {
+      "updates": 162,
+      "episodes": 1620,
+      "update_stage_sums": {
+        "input_read_seconds": 59.1665626,
+        "behavior_replay_seconds": 22.1946338,
+        "learner_update_seconds": 318.3677779,
+        "checkpoint_io_seconds": 57.3967714,
+        "update_elapsed_seconds": 457.1266469,
+        "physical_decisions": 126113,
+        "policy_substeps": 137222
+      },
+      "collection_elapsed_seconds": 184.7106193,
+      "collection_initialization_seconds": 34.7076451,
+      "collection_plus_update_seconds": 641.8372662,
+      "update_timer_residual_seconds": 0.0009011999999870568,
+      "stage_percent_of_collection_plus_update": {
+        "input_read_seconds": 9.21831213545699,
+        "behavior_replay_seconds": 3.457984596532297,
+        "learner_update_seconds": 49.60256978920805,
+        "checkpoint_io_seconds": 8.942573830251055,
+        "collection": 28.778419239128933
+      },
+      "initialization_percent_of_collection": 18.790281377179056,
+      "sum_worker_busy_seconds": 488.4386209,
+      "worker_capacity_seconds_excluding_initialization": 600.0118968,
+      "worker_busy_capacity_proxy": 0.8140482272184173,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 147.6416735,
+        "mean": 0.9113683549382716,
+        "median": 0.8892998999999999,
+        "p90": 1.1646669200000002,
+        "p95": 1.3297090549999997,
+        "p99": 1.531579696999997,
+        "max": 1.8305492
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 195.92999140392226,
+        "mean": 1.2094443913822361,
+        "median": 1.1867279481991515,
+        "p90": 1.3509524405653126,
+        "p95": 1.3921708939562798,
+        "p99": 1.5961360048361248,
+        "max": 2.2150749739768965
+      },
+      "worker_episode_count_histogram": {
+        "3": 270,
+        "4": 42,
+        "1": 33,
+        "2": 302,
+        "5": 1
+      },
+      "workers_histogram": {
+        "4": 162
+      },
+      "update_elapsed_stats": {
+        "n": 162,
+        "sum": 457.1266469,
+        "mean": 2.821769425308642,
+        "median": 2.56893395,
+        "p90": 3.9170336199999998,
+        "p95": 4.295808634999999,
+        "p99": 5.016303577999996,
+        "max": 6.6153248
+      },
+      "collection_elapsed_stats": {
+        "n": 162,
+        "sum": 184.7106193,
+        "mean": 1.1401890080246913,
+        "median": 1.112685,
+        "p90": 1.3929237399999999,
+        "p95": 1.5558457049999999,
+        "p99": 1.7589542999999972,
+        "max": 2.0605256
+      },
+      "all_receipts_complete": true,
+      "source_count": 486,
+      "source_hash_rollup_sha256": "a716788eafbd7f8cce231f5e9750b62f77d08c5978c1742e2509b9b0f0e8d657",
+      "complete_json_hash_matches": 324
+    },
+    "b11": {
+      "updates": 162,
+      "episodes": 1620,
+      "update_stage_sums": {
+        "input_read_seconds": 61.4572383,
+        "behavior_replay_seconds": 23.9261963,
+        "learner_update_seconds": 344.440196,
+        "checkpoint_io_seconds": 57.3337752,
+        "update_elapsed_seconds": 487.1583309,
+        "physical_decisions": 130661,
+        "policy_substeps": 142518
+      },
+      "collection_elapsed_seconds": 191.0259169,
+      "collection_initialization_seconds": 34.7227967,
+      "collection_plus_update_seconds": 678.1842478,
+      "update_timer_residual_seconds": 0.0009251000000176646,
+      "stage_percent_of_collection_plus_update": {
+        "input_read_seconds": 9.062026801619853,
+        "behavior_replay_seconds": 3.5279787723786766,
+        "learner_update_seconds": 50.788586894689594,
+        "checkpoint_io_seconds": 8.454011632677735,
+        "collection": 28.167259490275647
+      },
+      "initialization_percent_of_collection": 18.177008263322204,
+      "sum_worker_busy_seconds": 502.8082636,
+      "worker_capacity_seconds_excluding_initialization": 625.2124808,
+      "worker_busy_capacity_proxy": 0.8042198117296445,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 153.8273443,
+        "mean": 0.9495515080246913,
+        "median": 0.8699276,
+        "p90": 1.3218993300000002,
+        "p95": 1.420194725,
+        "p99": 1.8319190479999996,
+        "max": 2.6951495
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 197.82400826181217,
+        "mean": 1.2211358534679764,
+        "median": 1.188161296583994,
+        "p90": 1.4003555891201007,
+        "p95": 1.516109910227037,
+        "p99": 1.6344979263523982,
+        "max": 2.2083618092138595
+      },
+      "worker_episode_count_histogram": {
+        "3": 241,
+        "1": 53,
+        "4": 59,
+        "2": 289,
+        "5": 6
+      },
+      "workers_histogram": {
+        "4": 162
+      },
+      "update_elapsed_stats": {
+        "n": 162,
+        "sum": 487.1583309,
+        "mean": 3.0071501907407407,
+        "median": 2.7394913499999998,
+        "p90": 4.34303681,
+        "p95": 5.129417464999997,
+        "p99": 5.917950503999995,
+        "max": 7.4124605
+      },
+      "collection_elapsed_stats": {
+        "n": 162,
+        "sum": 191.0259169,
+        "mean": 1.17917232654321,
+        "median": 1.09404155,
+        "p90": 1.5427700000000002,
+        "p95": 1.644347075,
+        "p99": 2.0642504539999997,
+        "max": 2.9298455
+      },
+      "all_receipts_complete": true,
+      "source_count": 486,
+      "source_hash_rollup_sha256": "2dd4f27868e20fe70edb1073a5516f0068e54bc800a2ab4c381bff8daf70bdcc",
+      "complete_json_hash_matches": 324
+    },
+    "b12": {
+      "updates": 162,
+      "episodes": 1620,
+      "update_stage_sums": {
+        "input_read_seconds": 60.28343,
+        "behavior_replay_seconds": 22.8073233,
+        "learner_update_seconds": 332.3419935,
+        "checkpoint_io_seconds": 57.1597817,
+        "update_elapsed_seconds": 472.5934282,
+        "physical_decisions": 126786,
+        "policy_substeps": 138462
+      },
+      "collection_elapsed_seconds": 188.092924,
+      "collection_initialization_seconds": 34.8320797,
+      "collection_plus_update_seconds": 660.6863522,
+      "update_timer_residual_seconds": 0.0008996999999908439,
+      "stage_percent_of_collection_plus_update": {
+        "input_read_seconds": 9.124364352201916,
+        "behavior_replay_seconds": 3.4520651477141255,
+        "learner_update_seconds": 50.30253650515774,
+        "checkpoint_io_seconds": 8.651575972421004,
+        "collection": 28.469321845937174
+      },
+      "initialization_percent_of_collection": 18.518548682883996,
+      "sum_worker_busy_seconds": 495.1840132,
+      "worker_capacity_seconds_excluding_initialization": 613.0433772,
+      "worker_busy_capacity_proxy": 0.8077471050444943,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 150.9501318,
+        "mean": 0.9317909370370371,
+        "median": 0.8864216,
+        "p90": 1.2369390200000003,
+        "p95": 1.3935489799999996,
+        "p99": 1.8590478579999994,
+        "max": 2.3963619
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 196.7310253130902,
+        "mean": 1.214389045142532,
+        "median": 1.1858602893441197,
+        "p90": 1.3950137366282747,
+        "p95": 1.467748819199212,
+        "p99": 1.6336894925022798,
+        "max": 1.95205623722144
+      },
+      "worker_episode_count_histogram": {
+        "2": 292,
+        "1": 46,
+        "3": 255,
+        "4": 51,
+        "5": 3,
+        "6": 1
+      },
+      "workers_histogram": {
+        "4": 162
+      },
+      "update_elapsed_stats": {
+        "n": 162,
+        "sum": 472.5934282,
+        "mean": 2.917243383950617,
+        "median": 2.70191325,
+        "p90": 4.133767730000001,
+        "p95": 4.714735639999998,
+        "p99": 5.888114962999986,
+        "max": 7.9496375
+      },
+      "collection_elapsed_stats": {
+        "n": 162,
+        "sum": 188.092924,
+        "mean": 1.1610674320987655,
+        "median": 1.1146528,
+        "p90": 1.4659563100000002,
+        "p95": 1.6128079049999997,
+        "p99": 2.0979411949999998,
+        "max": 2.6419648000000002
+      },
+      "all_receipts_complete": true,
+      "source_count": 486,
+      "source_hash_rollup_sha256": "c4e55a0e860aef1795294710e1a4cf2cfae1935ce07cb2023ebe25d6946398dc",
+      "complete_json_hash_matches": 324
+    },
+    "b13": {
+      "updates": 162,
+      "episodes": 1620,
+      "update_stage_sums": {
+        "input_read_seconds": 60.1976367,
+        "behavior_replay_seconds": 22.9131656,
+        "learner_update_seconds": 332.8547393,
+        "checkpoint_io_seconds": 57.556477,
+        "update_elapsed_seconds": 473.5229741,
+        "physical_decisions": 126903,
+        "policy_substeps": 139686
+      },
+      "collection_elapsed_seconds": 189.33543,
+      "collection_initialization_seconds": 34.7220536,
+      "collection_plus_update_seconds": 662.8584041,
+      "update_timer_residual_seconds": 0.000955499999975018,
+      "stage_percent_of_collection_plus_update": {
+        "input_read_seconds": 9.08152273964659,
+        "behavior_replay_seconds": 3.4567209917343487,
+        "learner_update_seconds": 50.21505908972151,
+        "checkpoint_io_seconds": 8.683072680981944,
+        "collection": 28.563480349482983
+      },
+      "initialization_percent_of_collection": 18.338909732848208,
+      "sum_worker_busy_seconds": 497.7457698,
+      "worker_capacity_seconds_excluding_initialization": 618.4535056,
+      "worker_busy_capacity_proxy": 0.8048232652786179,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 152.049902,
+        "mean": 0.9385796419753086,
+        "median": 0.8997154,
+        "p90": 1.18494709,
+        "p95": 1.31039232,
+        "p99": 1.6598941559999978,
+        "max": 2.5805199
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 197.3584423654988,
+        "mean": 1.2182619899104865,
+        "median": 1.1765198145779299,
+        "p90": 1.3920625954777814,
+        "p95": 1.4947529111937217,
+        "p99": 1.741863115635872,
+        "max": 1.972014307508056
+      },
+      "worker_episode_count_histogram": {
+        "4": 49,
+        "2": 287,
+        "3": 255,
+        "1": 50,
+        "5": 7
+      },
+      "workers_histogram": {
+        "4": 162
+      },
+      "update_elapsed_stats": {
+        "n": 162,
+        "sum": 473.5229741,
+        "mean": 2.9229813216049383,
+        "median": 2.79786905,
+        "p90": 3.86464058,
+        "p95": 4.312046119999999,
+        "p99": 5.912189898999991,
+        "max": 6.4665033
+      },
+      "collection_elapsed_stats": {
+        "n": 162,
+        "sum": 189.33543,
+        "mean": 1.1687372222222223,
+        "median": 1.1313684,
+        "p90": 1.41723306,
+        "p95": 1.5556474799999997,
+        "p99": 1.882932470999998,
+        "max": 2.7999745000000003
+      },
+      "all_receipts_complete": true,
+      "source_count": 486,
+      "source_hash_rollup_sha256": "00b1b2575502d5c3a29b6415bb13172bfbd934937c49a5ff08e66e3d5386af1f",
+      "complete_json_hash_matches": 324
+    },
+    "b14": {
+      "updates": 162,
+      "episodes": 1620,
+      "update_stage_sums": {
+        "input_read_seconds": 60.2547515,
+        "behavior_replay_seconds": 22.7404087,
+        "learner_update_seconds": 331.0755094,
+        "checkpoint_io_seconds": 57.2892144,
+        "update_elapsed_seconds": 471.3607891,
+        "physical_decisions": 126500,
+        "policy_substeps": 138361
+      },
+      "collection_elapsed_seconds": 186.4335647,
+      "collection_initialization_seconds": 34.6792249,
+      "collection_plus_update_seconds": 657.7943538,
+      "update_timer_residual_seconds": 0.0009051000000113163,
+      "stage_percent_of_collection_plus_update": {
+        "input_read_seconds": 9.160119899466368,
+        "behavior_replay_seconds": 3.457069609769581,
+        "learner_update_seconds": 50.33115706868204,
+        "checkpoint_io_seconds": 8.70928947155703,
+        "collection": 28.342226354330254
+      },
+      "initialization_percent_of_collection": 18.601384871766065,
+      "sum_worker_busy_seconds": 493.3154132,
+      "worker_capacity_seconds_excluding_initialization": 607.0173592,
+      "worker_busy_capacity_proxy": 0.8126874886249547,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 149.4468726,
+        "mean": 0.9225115592592593,
+        "median": 0.8659038,
+        "p90": 1.17279317,
+        "p95": 1.3481473949999994,
+        "p99": 2.3953750769999984,
+        "max": 3.2685332000000002
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 194.94126687311433,
+        "mean": 1.2033411535377427,
+        "median": 1.1579206965683762,
+        "p90": 1.3482909580272273,
+        "p95": 1.4965791882868984,
+        "p99": 1.9554868189398533,
+        "max": 2.1304719791598483
+      },
+      "worker_episode_count_histogram": {
+        "4": 42,
+        "2": 314,
+        "3": 264,
+        "1": 27,
+        "5": 1
+      },
+      "workers_histogram": {
+        "4": 162
+      },
+      "update_elapsed_stats": {
+        "n": 162,
+        "sum": 471.3607891,
+        "mean": 2.909634500617284,
+        "median": 2.6932263499999998,
+        "p90": 3.81801073,
+        "p95": 4.19071433,
+        "p99": 7.047585167999974,
+        "max": 10.9740088
+      },
+      "collection_elapsed_stats": {
+        "n": 162,
+        "sum": 186.4335647,
+        "mean": 1.15082447345679,
+        "median": 1.1015163000000001,
+        "p90": 1.40166444,
+        "p95": 1.5762904199999992,
+        "p99": 2.6323879199999984,
+        "max": 3.4877029
+      },
+      "all_receipts_complete": true,
+      "source_count": 486,
+      "source_hash_rollup_sha256": "11fb5b01bbfd671b10aec72a2469ab0336fd0f7005df6e5ca9388acafb127ad4",
+      "complete_json_hash_matches": 324
+    },
+    "b15": {
+      "updates": 162,
+      "episodes": 1620,
+      "update_stage_sums": {
+        "input_read_seconds": 60.8732289,
+        "behavior_replay_seconds": 23.0728598,
+        "learner_update_seconds": 335.8835192,
+        "checkpoint_io_seconds": 57.5757808,
+        "update_elapsed_seconds": 477.4063011,
+        "physical_decisions": 127833,
+        "policy_substeps": 140023
+      },
+      "collection_elapsed_seconds": 187.1732385,
+      "collection_initialization_seconds": 34.6556808,
+      "collection_plus_update_seconds": 664.5795396,
+      "update_timer_residual_seconds": 0.0009124000000042543,
+      "stage_percent_of_collection_plus_update": {
+        "input_read_seconds": 9.159660397706292,
+        "behavior_replay_seconds": 3.471798095663191,
+        "learner_update_seconds": 50.5407553476839,
+        "checkpoint_io_seconds": 8.66348982616196,
+        "collection": 28.16415904297274
+      },
+      "initialization_percent_of_collection": 18.51529688631209,
+      "sum_worker_busy_seconds": 496.7933051,
+      "worker_capacity_seconds_excluding_initialization": 610.0702308,
+      "worker_busy_capacity_proxy": 0.8143214994256363,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 150.0183835,
+        "mean": 0.9260394043209876,
+        "median": 0.8883193,
+        "p90": 1.2388257900000001,
+        "p95": 1.3285693799999996,
+        "p99": 1.8801207019999984,
+        "max": 2.4220892
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 194.61790770345291,
+        "mean": 1.2013451092805736,
+        "median": 1.175275329990644,
+        "p90": 1.3609603645063986,
+        "p95": 1.4338341181721497,
+        "p99": 1.6246632747180336,
+        "max": 1.655402911591699
+      },
+      "worker_episode_count_histogram": {
+        "3": 279,
+        "1": 42,
+        "2": 286,
+        "4": 36,
+        "5": 5
+      },
+      "workers_histogram": {
+        "4": 162
+      },
+      "update_elapsed_stats": {
+        "n": 162,
+        "sum": 477.4063011,
+        "mean": 2.946952475925926,
+        "median": 2.75332515,
+        "p90": 4.07644636,
+        "p95": 4.55144871,
+        "p99": 5.7339549979999935,
+        "max": 8.3867477
+      },
+      "collection_elapsed_stats": {
+        "n": 162,
+        "sum": 187.1732385,
+        "mean": 1.1553903611111112,
+        "median": 1.12683095,
+        "p90": 1.4629874,
+        "p95": 1.5542632849999996,
+        "p99": 2.109789436999998,
+        "max": 2.6438776
+      },
+      "all_receipts_complete": true,
+      "source_count": 486,
+      "source_hash_rollup_sha256": "2e2e85bc73f9510d2d28113b2599422c979950567b6dc6ce5cb0139952fb4ce5",
+      "complete_json_hash_matches": 324
+    },
+    "b16": {
+      "updates": 162,
+      "episodes": 1620,
+      "update_stage_sums": {
+        "input_read_seconds": 60.065083,
+        "behavior_replay_seconds": 22.5222417,
+        "learner_update_seconds": 326.9331901,
+        "checkpoint_io_seconds": 57.3794029,
+        "update_elapsed_seconds": 466.9009374,
+        "physical_decisions": 124324,
+        "policy_substeps": 136031
+      },
+      "collection_elapsed_seconds": 185.8647094,
+      "collection_initialization_seconds": 34.6706513,
+      "collection_plus_update_seconds": 652.7656468,
+      "update_timer_residual_seconds": 0.0010196999999720902,
+      "stage_percent_of_collection_plus_update": {
+        "input_read_seconds": 9.20163052306018,
+        "behavior_replay_seconds": 3.4502798684962905,
+        "learner_update_seconds": 50.08431306131044,
+        "checkpoint_io_seconds": 8.790199542712823,
+        "collection": 28.47342079215557
+      },
+      "initialization_percent_of_collection": 18.653703229581463,
+      "sum_worker_busy_seconds": 488.6572518,
+      "worker_capacity_seconds_excluding_initialization": 604.7762324,
+      "worker_busy_capacity_proxy": 0.8079967856223577,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 147.9567869,
+        "mean": 0.913313499382716,
+        "median": 0.87949085,
+        "p90": 1.21370805,
+        "p95": 1.290126435,
+        "p99": 1.7025041329999926,
+        "max": 3.5711323
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 194.71323090432392,
+        "mean": 1.201933524100765,
+        "median": 1.1708214233626824,
+        "p90": 1.374150401083372,
+        "p95": 1.4076850514056323,
+        "p99": 1.4737320822326685,
+        "max": 1.9306982585176502
+      },
+      "worker_episode_count_histogram": {
+        "3": 269,
+        "2": 297,
+        "1": 38,
+        "4": 40,
+        "5": 3,
+        "6": 1
+      },
+      "workers_histogram": {
+        "4": 162
+      },
+      "update_elapsed_stats": {
+        "n": 162,
+        "sum": 466.9009374,
+        "mean": 2.8821045518518518,
+        "median": 2.61617955,
+        "p90": 3.91189357,
+        "p95": 4.20495311,
+        "p99": 5.182962011999999,
+        "max": 13.4259153
+      },
+      "collection_elapsed_stats": {
+        "n": 162,
+        "sum": 185.8647094,
+        "mean": 1.1473130209876543,
+        "median": 1.1143546,
+        "p90": 1.43799278,
+        "p95": 1.5476913149999996,
+        "p99": 1.9306402399999925,
+        "max": 3.7963006999999998
+      },
+      "all_receipts_complete": true,
+      "source_count": 486,
+      "source_hash_rollup_sha256": "1144504799406f0879a46f0db04debebc64ee4ab97cb4701a6d8f63ccfadee68",
+      "complete_json_hash_matches": 324
+    },
+    "b17": {
+      "updates": 162,
+      "episodes": 1620,
+      "update_stage_sums": {
+        "input_read_seconds": 58.3615639,
+        "behavior_replay_seconds": 21.311631,
+        "learner_update_seconds": 306.7049501,
+        "checkpoint_io_seconds": 57.3055339,
+        "update_elapsed_seconds": 443.6845726,
+        "physical_decisions": 121045,
+        "policy_substeps": 132071
+      },
+      "collection_elapsed_seconds": 179.9219722,
+      "collection_initialization_seconds": 34.5416185,
+      "collection_plus_update_seconds": 623.6065448,
+      "update_timer_residual_seconds": 0.0008937000000059925,
+      "stage_percent_of_collection_plus_update": {
+        "input_read_seconds": 9.358715745794077,
+        "behavior_replay_seconds": 3.4174803291769424,
+        "learner_update_seconds": 49.182445671471406,
+        "checkpoint_io_seconds": 9.189373392221011,
+        "collection": 28.85184154981947
+      },
+      "initialization_percent_of_collection": 19.198110201684415,
+      "sum_worker_busy_seconds": 474.8880399,
+      "worker_capacity_seconds_excluding_initialization": 581.5214148,
+      "worker_busy_capacity_proxy": 0.8166303558456676,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 143.1279234,
+        "mean": 0.8835057,
+        "median": 0.8511316,
+        "p90": 1.2004094000000003,
+        "p95": 1.2901435149999998,
+        "p99": 1.876705498999992,
+        "max": 2.3218513
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 194.65098365995468,
+        "mean": 1.201549281851572,
+        "median": 1.1748643538508077,
+        "p90": 1.360268278781757,
+        "p95": 1.4394926316823566,
+        "p99": 1.6790542758642129,
+        "max": 1.89002018304549
+      },
+      "worker_episode_count_histogram": {
+        "3": 266,
+        "1": 42,
+        "2": 292,
+        "4": 44,
+        "5": 4
+      },
+      "workers_histogram": {
+        "4": 162
+      },
+      "update_elapsed_stats": {
+        "n": 162,
+        "sum": 443.6845726,
+        "mean": 2.7387936580246914,
+        "median": 2.5459361,
+        "p90": 3.7648891300000003,
+        "p95": 4.050981455,
+        "p99": 5.488984833999985,
+        "max": 6.5470118
+      },
+      "collection_elapsed_stats": {
+        "n": 162,
+        "sum": 179.9219722,
+        "mean": 1.1106294580246914,
+        "median": 1.0753808,
+        "p90": 1.4214700800000002,
+        "p95": 1.51096002,
+        "p99": 2.098025313999992,
+        "max": 2.5567325
+      },
+      "all_receipts_complete": true,
+      "source_count": 486,
+      "source_hash_rollup_sha256": "4552434a2df7160d0a63ce95f299f3c7609a93a5e478573730aeb6eeaf1fc2c3",
+      "complete_json_hash_matches": 324
+    },
+    "b18": {
+      "updates": 162,
+      "episodes": 1620,
+      "update_stage_sums": {
+        "input_read_seconds": 60.011514,
+        "behavior_replay_seconds": 22.7559489,
+        "learner_update_seconds": 330.7107762,
+        "checkpoint_io_seconds": 57.3008856,
+        "update_elapsed_seconds": 470.7800481,
+        "physical_decisions": 127722,
+        "policy_substeps": 138932
+      },
+      "collection_elapsed_seconds": 184.8420817,
+      "collection_initialization_seconds": 34.715109,
+      "collection_plus_update_seconds": 655.6221298,
+      "update_timer_residual_seconds": 0.0009233999999764819,
+      "stage_percent_of_collection_plus_update": {
+        "input_read_seconds": 9.153369185129051,
+        "behavior_replay_seconds": 3.4708939594430386,
+        "learner_update_seconds": 50.442283926700966,
+        "checkpoint_io_seconds": 8.73992548382707,
+        "collection": 28.193386601575934
+      },
+      "initialization_percent_of_collection": 18.780955440841044,
+      "sum_worker_busy_seconds": 489.3329256,
+      "worker_capacity_seconds_excluding_initialization": 600.5078908,
+      "worker_busy_capacity_proxy": 0.8148651051830608,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 147.6451919,
+        "mean": 0.9113900734567901,
+        "median": 0.90823075,
+        "p90": 1.15532601,
+        "p95": 1.3159233849999994,
+        "p99": 1.8468004939999922,
+        "max": 2.2042515
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 194.82096570878363,
+        "mean": 1.2025985537579236,
+        "median": 1.170443622457278,
+        "p90": 1.3716940488704426,
+        "p95": 1.4071399980661956,
+        "p99": 1.7320966279724674,
+        "max": 1.8820831423781956
+      },
+      "worker_episode_count_histogram": {
+        "2": 288,
+        "4": 40,
+        "3": 270,
+        "1": 44,
+        "5": 6
+      },
+      "workers_histogram": {
+        "4": 162
+      },
+      "update_elapsed_stats": {
+        "n": 162,
+        "sum": 470.7800481,
+        "mean": 2.90604967962963,
+        "median": 2.6873475,
+        "p90": 3.94493625,
+        "p95": 4.287890985,
+        "p99": 5.527943116999979,
+        "max": 8.3554061
+      },
+      "collection_elapsed_stats": {
+        "n": 162,
+        "sum": 184.8420817,
+        "mean": 1.1410005043209877,
+        "median": 1.1304471,
+        "p90": 1.37755996,
+        "p95": 1.5404695199999994,
+        "p99": 2.0748313889999923,
+        "max": 2.4296556000000002
+      },
+      "all_receipts_complete": true,
+      "source_count": 486,
+      "source_hash_rollup_sha256": "e6b09512e948e0a5537bed8bcc58c3460a63365ce8c0f3916157f212b903490f",
+      "complete_json_hash_matches": 324
+    },
+    "b19": {
+      "updates": 162,
+      "episodes": 1620,
+      "update_stage_sums": {
+        "input_read_seconds": 59.4158572,
+        "behavior_replay_seconds": 22.1564362,
+        "learner_update_seconds": 317.9873389,
+        "checkpoint_io_seconds": 57.2875657,
+        "update_elapsed_seconds": 456.8480643,
+        "physical_decisions": 123301,
+        "policy_substeps": 134439
+      },
+      "collection_elapsed_seconds": 180.8536059,
+      "collection_initialization_seconds": 34.5717911,
+      "collection_plus_update_seconds": 637.7016702,
+      "update_timer_residual_seconds": 0.0008662999999842214,
+      "stage_percent_of_collection_plus_update": {
+        "input_read_seconds": 9.317187013382862,
+        "behavior_replay_seconds": 3.4744202870052328,
+        "learner_update_seconds": 49.86459245124304,
+        "checkpoint_io_seconds": 8.98344294472886,
+        "collection": 28.360221456418575
+      },
+      "initialization_percent_of_collection": 19.115898147541444,
+      "sum_worker_busy_seconds": 479.5785475,
+      "worker_capacity_seconds_excluding_initialization": 585.1272592,
+      "worker_busy_capacity_proxy": 0.8196140924210081,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 143.8746546,
+        "mean": 0.8881151518518519,
+        "median": 0.8481609999999999,
+        "p90": 1.16513361,
+        "p95": 1.2986578049999993,
+        "p99": 1.648461160999996,
+        "max": 2.1307233
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 194.6162437658263,
+        "mean": 1.2013348380606563,
+        "median": 1.1800568160147749,
+        "p90": 1.3609328597291979,
+        "p95": 1.4248446446530179,
+        "p99": 1.640358269618252,
+        "max": 1.859566978507715
+      },
+      "worker_episode_count_histogram": {
+        "3": 271,
+        "2": 284,
+        "1": 45,
+        "4": 46,
+        "5": 2
+      },
+      "workers_histogram": {
+        "4": 162
+      },
+      "update_elapsed_stats": {
+        "n": 162,
+        "sum": 456.8480643,
+        "mean": 2.8200497796296298,
+        "median": 2.6275866,
+        "p90": 3.8867587400000003,
+        "p95": 4.24034631,
+        "p99": 5.507191838999999,
+        "max": 7.3232265
+      },
+      "collection_elapsed_stats": {
+        "n": 162,
+        "sum": 180.8536059,
+        "mean": 1.1163802833333334,
+        "median": 1.0738206,
+        "p90": 1.38959841,
+        "p95": 1.5302975299999992,
+        "p99": 1.8825227069999961,
+        "max": 2.3507789
+      },
+      "all_receipts_complete": true,
+      "source_count": 486,
+      "source_hash_rollup_sha256": "2bc02cf62fbb78dbc1c958d7f051407b49ed9d715c21718669701ca7a8483bde",
+      "complete_json_hash_matches": 324
+    },
+    "b20": {
+      "updates": 162,
+      "episodes": 1620,
+      "update_stage_sums": {
+        "input_read_seconds": 58.270663,
+        "behavior_replay_seconds": 21.2260471,
+        "learner_update_seconds": 305.1370563,
+        "checkpoint_io_seconds": 57.2635481,
+        "update_elapsed_seconds": 441.8982071,
+        "physical_decisions": 121686,
+        "policy_substeps": 132030
+      },
+      "collection_elapsed_seconds": 181.3420292,
+      "collection_initialization_seconds": 34.466432,
+      "collection_plus_update_seconds": 623.2402363,
+      "update_timer_residual_seconds": 0.0008925999999860323,
+      "stage_percent_of_collection_plus_update": {
+        "input_read_seconds": 9.349631106286774,
+        "behavior_replay_seconds": 3.4057568596682724,
+        "learner_update_seconds": 48.9597812412613,
+        "checkpoint_io_seconds": 9.188037736452543,
+        "collection": 29.096649837079845
+      },
+      "initialization_percent_of_collection": 19.00631207892097,
+      "sum_worker_busy_seconds": 471.3306253,
+      "worker_capacity_seconds_excluding_initialization": 587.5023888000001,
+      "worker_busy_capacity_proxy": 0.8022616320977246,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 144.2989745,
+        "mean": 0.8907344104938272,
+        "median": 0.8215463,
+        "p90": 1.17074622,
+        "p95": 1.33848932,
+        "p99": 1.8782557369999973,
+        "max": 2.7861572
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 197.1201158173507,
+        "mean": 1.216790838378708,
+        "median": 1.1718890354406337,
+        "p90": 1.4134618425488472,
+        "p95": 1.5047234233811093,
+        "p99": 1.6560104278450947,
+        "max": 1.7796091632150008
+      },
+      "worker_episode_count_histogram": {
+        "3": 259,
+        "2": 304,
+        "4": 46,
+        "1": 36,
+        "5": 3
+      },
+      "workers_histogram": {
+        "4": 162
+      },
+      "update_elapsed_stats": {
+        "n": 162,
+        "sum": 441.8982071,
+        "mean": 2.7277667104938272,
+        "median": 2.5725127,
+        "p90": 3.7795685900000002,
+        "p95": 4.0798410249999995,
+        "p99": 5.651611488999988,
+        "max": 8.2901065
+      },
+      "collection_elapsed_stats": {
+        "n": 162,
+        "sum": 181.3420292,
+        "mean": 1.1193952419753086,
+        "median": 1.06026745,
+        "p90": 1.3946992,
+        "p95": 1.5655224399999998,
+        "p99": 2.1095641669999976,
+        "max": 3.0093147
+      },
+      "all_receipts_complete": true,
+      "source_count": 486,
+      "source_hash_rollup_sha256": "55d9ade93f3cf8632d9daca2582f53c1fb3e504226a0556d8d9047361c822ebf",
+      "complete_json_hash_matches": 324
+    }
+  },
+  "source_count": 9720,
+  "source_hash_rollup_sha256": "f7b8a88dc06ef2050595387ab7099f9f83b81e453ee2bf70c24c6003faf2a34d",
+  "source_hash_rollup_definition": "SHA256 UTF8 compact JSON list of [absolute POSIX path, raw SHA256]; blocks,iterations ascending; per iteration complete,collection,update.",
+  "complete_json_hash_matches": 6480,
+  "limitations": [
+    "Summed collection/update host wall is not whole-job wall.",
+    "Worker busy is worker wall time, not CPU utilization; max worker busy is not per-game latency.",
+    "No trajectory, non-natural ledger, reward, loss, outcome or holdout fields selected."
+  ]
+}

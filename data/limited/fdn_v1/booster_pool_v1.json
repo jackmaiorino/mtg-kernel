@@ -1,0 +1,2830 @@
+{
+  "schema": "kernel_limited_card_names/v1",
+  "set": "FDN",
+  "scope": "foundations_play_booster/v1",
+  "authorized_on": "2026-10-09",
+  "identity_unit": "unique English card name, independent of artwork and foil treatment",
+  "sources": [
+    {
+      "url": "https://magic.wizards.com/en/news/feature/collecting-foundations",
+      "sha256": "021419f028788091885d9b92b1f06f4b3d5087ef6480939071bb05726f2f4f34",
+      "role": "Wizards product rules: main-set, land and ten Special Guests slots"
+    },
+    {
+      "url": "https://api.scryfall.com/cards/search?q=set%3Afdn+is%3Abooster&unique=cards&order=set",
+      "page_sha256s": [
+        "1e6c2889109c5f34d8408b91e70e7c82fd1dc4a67446b7b9e4496085f83ec767",
+        "ccd354dabb11aa0490aac3cc703c1013ac6dd0c9e96f8daa00cf20dfb769c555"
+      ],
+      "role": "FDN booster printing metadata; names independently matched against pinned XMage Foundations.java"
+    },
+    {
+      "url": "https://api.scryfall.com/cards/search?q=set%3Aspg+cn%3E%3D74+cn%3C%3D83&unique=cards&order=set",
+      "page_sha256s": [
+        "f2b4ee25700b2d3200ef555531c3a0b8a8af1a4e851b4fda615875a9eba7da17"
+      ],
+      "role": "Foundations Special Guests printing identities"
+    },
+    {
+      "url": "https://github.com/jackmaiorino/mage/blob/a5c90fe180021e70e2a644ade00eeab07f857a40/Mage.Sets/src/mage/sets/Foundations.java",
+      "sha256": "4c9db46e80a765bbe0f62ed766981b3821f376aa3809d540e7d3db0a3160a1e0",
+      "role": "Independent exact 276-name FDN comparison using XMage explicit Play Booster printings 1 through 361"
+    }
+  ],
+  "card_names": [
+    "Abrade",
+    "Abyssal Harvester",
+    "Adventuring Gear",
+    "Aegis Turtle",
+    "Aetherize",
+    "Affectionate Indrik",
+    "Ajani's Pridemate",
+    "Ajani, Caller of the Pride",
+    "Akroma's Memorial",
+    "Alesha, Who Laughs at Fate",
+    "Ambush Wolf",
+    "An Offer You Can't Refuse",
+    "Angel of Finality",
+    "Anthem of Champions",
+    "Apothecary Stomper",
+    "Arahbo, the First Fang",
+    "Arbiter of Woe",
+    "Arcane Epiphany",
+    "Archmage of Runes",
+    "Armasaur Guide",
+    "Ashroot Animist",
+    "Authority of the Consuls",
+    "Axgard Cavalry",
+    "Bake into a Pie",
+    "Balmor, Battlemage Captain",
+    "Banishing Light",
+    "Banner of Kinship",
+    "Battlesong Berserker",
+    "Beast-Kin Ranger",
+    "Bigfin Bouncer",
+    "Billowing Shriekmass",
+    "Bite Down",
+    "Blanchwood Armor",
+    "Blasphemous Edict",
+    "Bloodfell Caves",
+    "Bloodthirsty Conqueror",
+    "Bloom Tender",
+    "Blossoming Sands",
+    "Boltwave",
+    "Brass's Bounty",
+    "Brazen Scourge",
+    "Brineborn Cutthroat",
+    "Broken Wings",
+    "Bulk Up",
+    "Burglar Rat",
+    "Burnished Hart",
+    "Burst Lightning",
+    "Bushwhack",
+    "Cackling Prowler",
+    "Campus Guide",
+    "Cat Collector",
+    "Cathar Commando",
+    "Celestial Armor",
+    "Cephalid Inkmage",
+    "Chandra, Flameshaper",
+    "Claws Out",
+    "Clinquant Skymage",
+    "Condemn",
+    "Consuming Aberration",
+    "Courageous Goblin",
+    "Crackling Cyclops",
+    "Crypt Feaster",
+    "Crystal Barricade",
+    "Curator of Destinies",
+    "Dauntless Veteran",
+    "Day of Judgment",
+    "Dazzling Angel",
+    "Diregraf Ghoul",
+    "Dismal Backwater",
+    "Divine Resilience",
+    "Doubling Season",
+    "Dragon Trainer",
+    "Drake Hatcher",
+    "Drakuseth, Maw of Flames",
+    "Dreadwing Scavenger",
+    "Dwynen's Elite",
+    "Dwynen, Gilt-Leaf Daen",
+    "Eager Trufflesnout",
+    "Eaten Alive",
+    "Electroduplicate",
+    "Elementalist Adept",
+    "Elenda, Saint of Dusk",
+    "Elfsworn Giant",
+    "Elvish Archdruid",
+    "Elvish Regrower",
+    "Embercleave",
+    "Empyrean Eagle",
+    "Erudite Wizard",
+    "Essence Scatter",
+    "Etali, Primal Storm",
+    "Evolving Wilds",
+    "Exemplar of Light",
+    "Exsanguinate",
+    "Extravagant Replication",
+    "Faebloom Trick",
+    "Fake Your Own Death",
+    "Fanatical Firebrand",
+    "Felidar Savior",
+    "Felling Blow",
+    "Fiend Artisan",
+    "Fiendish Panda",
+    "Fiery Annihilation",
+    "Firebrand Archer",
+    "Firespitter Whelp",
+    "Fishing Pole",
+    "Flamewake Phoenix",
+    "Fleeting Distraction",
+    "Fleeting Flight",
+    "Forest",
+    "Frenzied Goblin",
+    "Garruk's Uprising",
+    "Genesis Wave",
+    "Ghalta, Primal Hunger",
+    "Giada, Font of Hope",
+    "Giant Growth",
+    "Gleaming Barrier",
+    "Gnarlid Colony",
+    "Goblin Boarders",
+    "Goblin Bushwhacker",
+    "Goblin Negotiation",
+    "Goblin Surprise",
+    "Goldvein Pick",
+    "Good-Fortune Unicorn",
+    "Gorehorn Raider",
+    "Grappling Kraken",
+    "Grim Tutor",
+    "Grow from the Ashes",
+    "Guarded Heir",
+    "Gutless Plunderer",
+    "Hare Apparent",
+    "Healer's Hawk",
+    "Heartfire Immolator",
+    "Helpful Hunter",
+    "Herald of Eternal Dawn",
+    "Heraldic Banner",
+    "Hero's Downfall",
+    "Heroic Reinforcements",
+    "Hidetsugu's Second Rite",
+    "High Fae Trickster",
+    "High-Society Hunter",
+    "Homunculus Horde",
+    "Hungry Ghoul",
+    "Icewind Elemental",
+    "Imprisoned in the Moon",
+    "Incinerating Blast",
+    "Infernal Vessel",
+    "Infestation Sage",
+    "Inspiration from Beyond",
+    "Inspiring Call",
+    "Inspiring Paladin",
+    "Involuntary Employment",
+    "Island",
+    "Joust Through",
+    "Juggernaut",
+    "Jungle Hollow",
+    "Kaito, Cunning Infiltrator",
+    "Kellan, Planar Trailblazer",
+    "Kiora, the Rising Tide",
+    "Koma, World-Eater",
+    "Krenko, Mob Boss",
+    "Kykar, Zephyr Awakener",
+    "Lathril, Blade of the Elves",
+    "Leyline Axe",
+    "Lightshell Duo",
+    "Liliana, Dreadhorde General",
+    "Llanowar Elves",
+    "Loot, Exuberant Explorer",
+    "Luminous Rebuke",
+    "Lunar Insight",
+    "Macabre Waltz",
+    "Make Your Move",
+    "Marauding Blight-Priest",
+    "Meteor Golem",
+    "Micromancer",
+    "Midnight Snack",
+    "Mild-Mannered Librarian",
+    "Mischievous Mystic",
+    "Mischievous Pup",
+    "Mocking Sprite",
+    "Mossborn Hydra",
+    "Mountain",
+    "Muldrotha, the Gravetide",
+    "Needletooth Pack",
+    "Nessian Hornbeetle",
+    "Nine-Lives Familiar",
+    "Niv-Mizzet, Visionary",
+    "Omniscience",
+    "Overrun",
+    "Painful Quandary",
+    "Paradise Druid",
+    "Perforating Artist",
+    "Phyrexian Arena",
+    "Pilfer",
+    "Plains",
+    "Preposterous Proportions",
+    "Prideful Parent",
+    "Progenitus",
+    "Quakestrider Ceratops",
+    "Quick-Draw Katana",
+    "Quilled Greatwurm",
+    "Raise the Past",
+    "Ravenous Amulet",
+    "Reassembling Skeleton",
+    "Reclamation Sage",
+    "Refute",
+    "Resolute Reinforcements",
+    "Revenge of the Rats",
+    "Rise of the Dark Realms",
+    "Rite of the Dragoncaller",
+    "Rogue's Passage",
+    "Ruby, Daring Tracker",
+    "Rugged Highlands",
+    "Run Away Together",
+    "Rune-Scarred Demon",
+    "Rune-Sealed Wall",
+    "Sanguine Syphoner",
+    "Savannah Lions",
+    "Scavenging Ooze",
+    "Scoured Barrens",
+    "Scrawling Crawler",
+    "Searslicer Goblin",
+    "Secluded Courtyard",
+    "Seeker's Folly",
+    "Seismic Rupture",
+    "Self-Reflection",
+    "Serra Angel",
+    "Shivan Dragon",
+    "Sire of Seven Deaths",
+    "Skyknight Squire",
+    "Skyship Buccaneer",
+    "Slagstorm",
+    "Slumbering Cerberus",
+    "Snakeskin Veil",
+    "Solemn Simulacrum",
+    "Soul-Shackled Zombie",
+    "Soulstone Sanctuary",
+    "Sower of Chaos",
+    "Spectral Sailor",
+    "Sphinx of Forgotten Lore",
+    "Sphinx's Tutelage",
+    "Spinner of Souls",
+    "Spitfire Lagac",
+    "Squad Rallier",
+    "Stab",
+    "Strix Lookout",
+    "Stroke of Midnight",
+    "Stromkirk Bloodthief",
+    "Strongbox Raider",
+    "Sun-Blessed Healer",
+    "Sure Strike",
+    "Swamp",
+    "Swiftblade Vindicator",
+    "Swiftfoot Boots",
+    "Swiftwater Cliffs",
+    "Sylvan Scavenging",
+    "Tatyova, Benthic Druid",
+    "Temporal Manipulation",
+    "Think Twice",
+    "Thornwood Falls",
+    "Thousand-Year Storm",
+    "Thrill of Possibility",
+    "Time Stop",
+    "Tinybones, Bauble Burglar",
+    "Tolarian Terror",
+    "Tragic Banshee",
+    "Tranquil Cove",
+    "Treetop Snarespinner",
+    "Twinblade Blessing",
+    "Twinflame Tyrant",
+    "Uncharted Voyage",
+    "Valkyrie's Call",
+    "Vampire Gourmand",
+    "Vampire Nighthawk",
+    "Vampire Soulcaller",
+    "Vanguard Seraph",
+    "Vengeful Bloodwitch",
+    "Vivien Reid",
+    "Wardens of the Cycle",
+    "Wary Thespian",
+    "Wildwood Scourge",
+    "Wind-Scarred Crag",
+    "Witness Protection",
+    "Youthful Valkyrie",
+    "Zimone, Paradox Sculptor",
+    "Zombify",
+    "Zul Ashur, Lich Lord"
+  ],
+  "cards": [
+    {
+      "name": "Abrade",
+      "set": "FDN",
+      "collector_number": "188",
+      "scryfall_id": "548947dc-a5ca-43b5-9531-bcef20fa4ae5",
+      "oracle_id": "f9db72dc-9a5b-48a4-a86e-7464d9a2166a",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Abyssal Harvester",
+      "set": "FDN",
+      "collector_number": "54",
+      "scryfall_id": "f2e0f538-5825-47e9-883c-3ec6fd5b25ea",
+      "oracle_id": "68cc5065-0514-4adf-885f-da554e1db00a",
+      "rarity": "rare"
+    },
+    {
+      "name": "Adventuring Gear",
+      "set": "FDN",
+      "collector_number": "249",
+      "scryfall_id": "361f9b99-5b5d-40da-b4b9-5ad90f6280ee",
+      "oracle_id": "17042684-7af4-43a6-88c7-885032cfb27c",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Aegis Turtle",
+      "set": "FDN",
+      "collector_number": "150",
+      "scryfall_id": "c7f2014a-fbc9-447c-a440-e06d01066bb9",
+      "oracle_id": "f84c30e7-2ea8-43ff-9356-1f907558cfd9",
+      "rarity": "common"
+    },
+    {
+      "name": "Aetherize",
+      "set": "FDN",
+      "collector_number": "151",
+      "scryfall_id": "1e5530fc-0291-4a17-b048-c5d24e6f51d8",
+      "oracle_id": "7c779721-cd1b-4696-9ae9-68ccc284ed2a",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Affectionate Indrik",
+      "set": "FDN",
+      "collector_number": "211",
+      "scryfall_id": "2da8347d-06a4-46e0-a55e-cc2da4660263",
+      "oracle_id": "88aa032d-dc11-4cae-81f3-ce66353963e0",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Ajani's Pridemate",
+      "set": "FDN",
+      "collector_number": "135",
+      "scryfall_id": "222c1a68-e34c-4103-b1be-17d4ceaef6ce",
+      "oracle_id": "95e94dea-5ac0-4d6f-adec-ca147aee861f",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Ajani, Caller of the Pride",
+      "set": "FDN",
+      "collector_number": "134",
+      "scryfall_id": "59793f1c-8c7e-433e-9c09-40aa3ce931a1",
+      "oracle_id": "1d5ff280-7f4d-4801-aefd-9b6e6b1f2818",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Akroma's Memorial",
+      "set": "SPG",
+      "collector_number": "81",
+      "scryfall_id": "7c23360d-ff57-412c-9899-6050cb481da6",
+      "oracle_id": "967e8b3f-8266-4d9a-a38b-d0e10184e1e4",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Alesha, Who Laughs at Fate",
+      "set": "FDN",
+      "collector_number": "115",
+      "scryfall_id": "a93e3406-4e29-4bc0-ae52-cbd2ac1f99a4",
+      "oracle_id": "17ce2c17-b69b-4ebf-9c3c-c64e771af101",
+      "rarity": "rare"
+    },
+    {
+      "name": "Ambush Wolf",
+      "set": "FDN",
+      "collector_number": "98",
+      "scryfall_id": "2903832c-318e-42ab-bf58-c682ec2f7afd",
+      "oracle_id": "4c48de92-e053-4af7-b936-d7ec0875e0d3",
+      "rarity": "common"
+    },
+    {
+      "name": "An Offer You Can't Refuse",
+      "set": "FDN",
+      "collector_number": "160",
+      "scryfall_id": "a829747f-cf9b-4d81-ba66-9f0630ed4565",
+      "oracle_id": "234a734b-ba28-4f1b-9d01-3c3e7d516590",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Angel of Finality",
+      "set": "FDN",
+      "collector_number": "136",
+      "scryfall_id": "baaabd52-3aa9-4e2f-9369-d4db8b405ba8",
+      "oracle_id": "48d14b5c-711a-4f8a-9de5-55415cb7a79a",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Anthem of Champions",
+      "set": "FDN",
+      "collector_number": "116",
+      "scryfall_id": "42fe3a40-9cbe-4235-86f9-32576aaebba8",
+      "oracle_id": "f1d8e9a6-1903-4be5-8609-1009a463f393",
+      "rarity": "rare"
+    },
+    {
+      "name": "Apothecary Stomper",
+      "set": "FDN",
+      "collector_number": "99",
+      "scryfall_id": "680b7b0c-0e1b-46ce-9917-9fc6e05aa148",
+      "oracle_id": "6a381121-9134-489c-8c7e-44be1936b0e2",
+      "rarity": "common"
+    },
+    {
+      "name": "Arahbo, the First Fang",
+      "set": "FDN",
+      "collector_number": "2",
+      "scryfall_id": "524a5d93-26ed-436d-a437-dc9460acce98",
+      "oracle_id": "dfec65a0-6fb6-463d-aa62-e84a427db217",
+      "rarity": "rare"
+    },
+    {
+      "name": "Arbiter of Woe",
+      "set": "FDN",
+      "collector_number": "55",
+      "scryfall_id": "b2496c4a-df03-4583-bd76-f98ed5cb61ee",
+      "oracle_id": "540693f3-985c-4a4a-945c-c957c5aad395",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Arcane Epiphany",
+      "set": "FDN",
+      "collector_number": "29",
+      "scryfall_id": "06431793-5dfe-4cbf-990b-4bcc960d1f31",
+      "oracle_id": "fe1556cc-32d0-4e51-bb15-f3fce669a5e1",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Archmage of Runes",
+      "set": "FDN",
+      "collector_number": "30",
+      "scryfall_id": "334b5018-2da9-49f1-9d09-83d312ecfb02",
+      "oracle_id": "28045b32-4c1a-40e5-a15d-524d0f8fe6ec",
+      "rarity": "rare"
+    },
+    {
+      "name": "Armasaur Guide",
+      "set": "FDN",
+      "collector_number": "3",
+      "scryfall_id": "c80fc380-0499-4499-8a60-c43844c02c9b",
+      "oracle_id": "1d4e7422-2e26-49ce-beef-08f61583089a",
+      "rarity": "common"
+    },
+    {
+      "name": "Ashroot Animist",
+      "set": "FDN",
+      "collector_number": "117",
+      "scryfall_id": "dece147f-d71a-4c95-9fe5-f5c862ef14ac",
+      "oracle_id": "3f008b57-6471-4785-9571-3b90193da7e2",
+      "rarity": "rare"
+    },
+    {
+      "name": "Authority of the Consuls",
+      "set": "FDN",
+      "collector_number": "137",
+      "scryfall_id": "42ce2d7f-5924-47c0-b5ed-dacf9f9617a0",
+      "oracle_id": "55f3c721-e13a-406e-bc8e-d6cdc91ac477",
+      "rarity": "rare"
+    },
+    {
+      "name": "Axgard Cavalry",
+      "set": "FDN",
+      "collector_number": "189",
+      "scryfall_id": "fe3cc41a-adae-4c9b-b4d3-03f3ca862fed",
+      "oracle_id": "6a92b011-fd01-4b6a-a17c-73ac1967ff98",
+      "rarity": "common"
+    },
+    {
+      "name": "Bake into a Pie",
+      "set": "FDN",
+      "collector_number": "169",
+      "scryfall_id": "2ab0e660-86a3-4b92-82fa-77dcb5db947d",
+      "oracle_id": "1b9ec782-0ba1-41f1-bc39-d3302494ecb3",
+      "rarity": "common"
+    },
+    {
+      "name": "Balmor, Battlemage Captain",
+      "set": "FDN",
+      "collector_number": "237",
+      "scryfall_id": "0b45ab13-9bb6-48af-8b37-d97b25801ac8",
+      "oracle_id": "7da19fc5-cb85-4ec7-beea-95210378bbfe",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Banishing Light",
+      "set": "FDN",
+      "collector_number": "138",
+      "scryfall_id": "e38dc3b3-1629-491b-8afd-0e7a9a857713",
+      "oracle_id": "f28b21a6-f7ce-437a-8c5b-0423cb55cefb",
+      "rarity": "common"
+    },
+    {
+      "name": "Banner of Kinship",
+      "set": "FDN",
+      "collector_number": "127",
+      "scryfall_id": "a14c16c0-4053-46b0-8fa6-be8b4a7a1c8a",
+      "oracle_id": "8c220dbd-6572-4715-aae6-dd09a4252d68",
+      "rarity": "rare"
+    },
+    {
+      "name": "Battlesong Berserker",
+      "set": "FDN",
+      "collector_number": "78",
+      "scryfall_id": "a1f8b199-5d62-485f-b1c3-b30aa550595b",
+      "oracle_id": "396cc8ce-9efa-4fc7-90a6-b439b2b021db",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Beast-Kin Ranger",
+      "set": "FDN",
+      "collector_number": "100",
+      "scryfall_id": "0102e0be-5783-4825-9489-713b1b1df0b2",
+      "oracle_id": "db794af5-ba2e-4b10-b213-e481e8a50432",
+      "rarity": "common"
+    },
+    {
+      "name": "Bigfin Bouncer",
+      "set": "FDN",
+      "collector_number": "31",
+      "scryfall_id": "9b1d5b76-b07e-45c6-800d-4cfce085164f",
+      "oracle_id": "4e473298-0b67-42b8-90a8-3bcdd73da473",
+      "rarity": "common"
+    },
+    {
+      "name": "Billowing Shriekmass",
+      "set": "FDN",
+      "collector_number": "56",
+      "scryfall_id": "7b3587a9-0667-4d53-807b-c437bcb1d7b3",
+      "oracle_id": "ce45d6bd-74e3-401b-983d-028d3fb942da",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Bite Down",
+      "set": "FDN",
+      "collector_number": "212",
+      "scryfall_id": "f8d70b3b-f6f9-4b3c-ad70-0ce369e812b5",
+      "oracle_id": "623903de-3c04-4745-9af3-d7ec9fb2574d",
+      "rarity": "common"
+    },
+    {
+      "name": "Blanchwood Armor",
+      "set": "FDN",
+      "collector_number": "213",
+      "scryfall_id": "1fd7ec1a-dafa-42ca-bc25-f6848fb03f60",
+      "oracle_id": "80ea56ad-e741-4a85-b4e8-ce62e7d593d5",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Blasphemous Edict",
+      "set": "FDN",
+      "collector_number": "57",
+      "scryfall_id": "11040ecd-3153-4029-b42b-1441bc51ec34",
+      "oracle_id": "6cf50e21-0f60-4e9a-b910-ebe1bad2a29e",
+      "rarity": "rare"
+    },
+    {
+      "name": "Bloodfell Caves",
+      "set": "FDN",
+      "collector_number": "259",
+      "scryfall_id": "8b90dc92-cb66-41d9-89f9-2b6e3cfc8082",
+      "oracle_id": "64e29bfc-9313-4e8c-808c-bc27f6b018a6",
+      "rarity": "common"
+    },
+    {
+      "name": "Bloodthirsty Conqueror",
+      "set": "FDN",
+      "collector_number": "58",
+      "scryfall_id": "ce860ed4-a5bd-4347-9eab-dd716ea84db1",
+      "oracle_id": "fd505c02-c59e-476d-8e88-35da862ddc23",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Bloom Tender",
+      "set": "SPG",
+      "collector_number": "79",
+      "scryfall_id": "ef1b78d9-8f09-4d67-ac6b-45204e525b35",
+      "oracle_id": "0c23fefe-9891-4dd8-9bb1-eebdb3274e31",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Blossoming Sands",
+      "set": "FDN",
+      "collector_number": "260",
+      "scryfall_id": "37676ed8-588c-4bca-8065-874b74d84807",
+      "oracle_id": "45429b2c-be3b-4b2e-9bab-a059ccbda8cd",
+      "rarity": "common"
+    },
+    {
+      "name": "Boltwave",
+      "set": "FDN",
+      "collector_number": "79",
+      "scryfall_id": "8d1ec351-5e70-4eb2-b590-6bff94ef8178",
+      "oracle_id": "bb8cccc8-e56f-42fa-a0d7-fc889b5e1c7b",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Brass's Bounty",
+      "set": "FDN",
+      "collector_number": "190",
+      "scryfall_id": "65fe7127-b0ec-400f-97f1-6e17ab8e319d",
+      "oracle_id": "63b0538e-aa94-4e23-adf1-704cbf5bc3e5",
+      "rarity": "rare"
+    },
+    {
+      "name": "Brazen Scourge",
+      "set": "FDN",
+      "collector_number": "191",
+      "scryfall_id": "eb84b86c-3276-4fc1-a09d-47de388cb729",
+      "oracle_id": "422ef4ec-863a-450e-9577-a0707bc16532",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Brineborn Cutthroat",
+      "set": "FDN",
+      "collector_number": "152",
+      "scryfall_id": "acf7aafb-931f-49e5-8691-eab8cb34b05e",
+      "oracle_id": "916cb70f-3b06-48ed-972d-75f805aa0892",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Broken Wings",
+      "set": "FDN",
+      "collector_number": "214",
+      "scryfall_id": "61f9cbeb-cc9c-4562-be65-8a77053faefe",
+      "oracle_id": "5e316864-d55c-496f-8f46-773567896864",
+      "rarity": "common"
+    },
+    {
+      "name": "Bulk Up",
+      "set": "FDN",
+      "collector_number": "80",
+      "scryfall_id": "977dcc50-da10-4281-b522-9240c1204f5d",
+      "oracle_id": "fade8af0-5fdb-4237-9dd6-48bfd1d62767",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Burglar Rat",
+      "set": "FDN",
+      "collector_number": "170",
+      "scryfall_id": "de1c8758-ce3d-49cf-8173-c0eb46f5e7bc",
+      "oracle_id": "2f807301-37df-4724-871a-08e3512b07b3",
+      "rarity": "common"
+    },
+    {
+      "name": "Burnished Hart",
+      "set": "FDN",
+      "collector_number": "250",
+      "scryfall_id": "65ebbff0-fbe6-4310-a33f-e00bb2534979",
+      "oracle_id": "893fed41-c144-433f-af88-bc7d419b7fb3",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Burst Lightning",
+      "set": "FDN",
+      "collector_number": "192",
+      "scryfall_id": "aec5d380-d354-4750-931a-6c91853e2edc",
+      "oracle_id": "ac2086fe-98ee-4280-9c7c-c5c2d6548a8b",
+      "rarity": "common"
+    },
+    {
+      "name": "Bushwhack",
+      "set": "FDN",
+      "collector_number": "215",
+      "scryfall_id": "03ebdb36-55e0-49dd-a514-785fbeb4ae19",
+      "oracle_id": "c61374e5-a7f6-455e-a40b-a481751b536b",
+      "rarity": "common"
+    },
+    {
+      "name": "Cackling Prowler",
+      "set": "FDN",
+      "collector_number": "101",
+      "scryfall_id": "1bd8e971-c075-4203-8d83-c28f22d4f9b9",
+      "oracle_id": "898da62e-d29a-4ddc-be69-2ddec54614f5",
+      "rarity": "common"
+    },
+    {
+      "name": "Campus Guide",
+      "set": "FDN",
+      "collector_number": "251",
+      "scryfall_id": "43c59814-3167-4b05-bb85-6c736f3956a4",
+      "oracle_id": "5b8e0913-47e9-4d56-971d-abd91b0f7587",
+      "rarity": "common"
+    },
+    {
+      "name": "Cat Collector",
+      "set": "FDN",
+      "collector_number": "4",
+      "scryfall_id": "526fe356-bff1-4211-9e88-bf913ac76b1d",
+      "oracle_id": "52f1b5a4-62ff-44de-80da-503d4e52d312",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Cathar Commando",
+      "set": "FDN",
+      "collector_number": "139",
+      "scryfall_id": "19cf024d-edb6-4a79-8676-73f8db0cdf1f",
+      "oracle_id": "774dce79-67e0-4820-8013-c7a7347993ce",
+      "rarity": "common"
+    },
+    {
+      "name": "Celestial Armor",
+      "set": "FDN",
+      "collector_number": "5",
+      "scryfall_id": "809ee8ad-1573-49e5-9e84-b7cdd29efcae",
+      "oracle_id": "4f1b68d7-7d16-4bb1-af5f-f1708b23ca73",
+      "rarity": "rare"
+    },
+    {
+      "name": "Cephalid Inkmage",
+      "set": "FDN",
+      "collector_number": "32",
+      "scryfall_id": "b7e47680-18c7-4ffb-aac4-c5db6e7095ba",
+      "oracle_id": "8d979a0b-ba04-4abb-8f78-c707ce15351a",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Chandra, Flameshaper",
+      "set": "FDN",
+      "collector_number": "81",
+      "scryfall_id": "a22d21ec-0fb3-4574-a803-6442ec13167e",
+      "oracle_id": "818f908c-9af6-4edc-bb0e-193bc830e2e4",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Claws Out",
+      "set": "FDN",
+      "collector_number": "6",
+      "scryfall_id": "4396049c-b976-4b7f-8ecd-564e24ebd631",
+      "oracle_id": "499d76c1-97ff-4006-922c-be1684a7754c",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Clinquant Skymage",
+      "set": "FDN",
+      "collector_number": "33",
+      "scryfall_id": "36012810-0e83-4640-8ba7-7262229f1b84",
+      "oracle_id": "d9a3207a-a330-4517-967e-f37c9a9f1355",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Condemn",
+      "set": "SPG",
+      "collector_number": "74",
+      "scryfall_id": "ee6a541f-a72e-4aa5-bced-430e5158ca85",
+      "oracle_id": "377d31b5-0a48-4d5b-91bd-b5a62d4f7899",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Consuming Aberration",
+      "set": "FDN",
+      "collector_number": "238",
+      "scryfall_id": "bc2b28fd-66b0-457c-80ea-7caed2cc7926",
+      "oracle_id": "9b55fb72-237d-4935-b645-8ebc6eb4140e",
+      "rarity": "rare"
+    },
+    {
+      "name": "Courageous Goblin",
+      "set": "FDN",
+      "collector_number": "82",
+      "scryfall_id": "8db6819c-666a-409d-85a5-b9ac34d8dd2f",
+      "oracle_id": "c107e271-5741-4a84-bfc4-3bc322972d0d",
+      "rarity": "common"
+    },
+    {
+      "name": "Crackling Cyclops",
+      "set": "FDN",
+      "collector_number": "83",
+      "scryfall_id": "6e5b899a-52f7-471b-ad50-4fa6566758fd",
+      "oracle_id": "16ab9451-f3da-4f61-8e2b-d9c84e0e5428",
+      "rarity": "common"
+    },
+    {
+      "name": "Crypt Feaster",
+      "set": "FDN",
+      "collector_number": "59",
+      "scryfall_id": "3b072811-998a-4a71-b59c-6afecc0dc4b6",
+      "oracle_id": "4c22257e-8a00-40b7-a29b-55fcec7ddbd4",
+      "rarity": "common"
+    },
+    {
+      "name": "Crystal Barricade",
+      "set": "FDN",
+      "collector_number": "7",
+      "scryfall_id": "905d3e02-ea06-45e7-9adb-c8e7583323a2",
+      "oracle_id": "291c7abf-9d64-4ba0-ae21-e3459edc9a95",
+      "rarity": "rare"
+    },
+    {
+      "name": "Curator of Destinies",
+      "set": "FDN",
+      "collector_number": "34",
+      "scryfall_id": "9ff79da7-c3f7-4541-87a0-503544c699b5",
+      "oracle_id": "9938d178-0ce6-45c0-b317-fd5c54231579",
+      "rarity": "rare"
+    },
+    {
+      "name": "Dauntless Veteran",
+      "set": "FDN",
+      "collector_number": "8",
+      "scryfall_id": "7a136f26-ac66-407f-b389-357222d2c4a2",
+      "oracle_id": "97b2fb8b-0c69-4ed2-b2d0-8a780f9b5b97",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Day of Judgment",
+      "set": "FDN",
+      "collector_number": "140",
+      "scryfall_id": "96e84bdc-8a9a-4c58-ba8b-9f052fd60069",
+      "oracle_id": "d057289d-5e28-43d5-8ff3-4a1bc723477d",
+      "rarity": "rare"
+    },
+    {
+      "name": "Dazzling Angel",
+      "set": "FDN",
+      "collector_number": "9",
+      "scryfall_id": "027dc444-e544-4693-8653-3dcdda530162",
+      "oracle_id": "7de464e3-fae3-44cc-8233-776fc727c00a",
+      "rarity": "common"
+    },
+    {
+      "name": "Diregraf Ghoul",
+      "set": "FDN",
+      "collector_number": "171",
+      "scryfall_id": "4682012c-d7e0-4257-b538-3de497507464",
+      "oracle_id": "6048fc70-0dcc-4b54-977d-16e240225f82",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Dismal Backwater",
+      "set": "FDN",
+      "collector_number": "261",
+      "scryfall_id": "dbb0df36-8467-4a41-8e1c-6c3584d4fd10",
+      "oracle_id": "865a2194-fca0-446e-aae3-ca475cd66e00",
+      "rarity": "common"
+    },
+    {
+      "name": "Divine Resilience",
+      "set": "FDN",
+      "collector_number": "10",
+      "scryfall_id": "f3a08245-a535-4d24-b8c0-78759bb9c4b0",
+      "oracle_id": "4f6e2e47-34df-4bf3-a546-e06b42840167",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Doubling Season",
+      "set": "FDN",
+      "collector_number": "216",
+      "scryfall_id": "f2c4f80e-84a0-463b-82c3-5c6503809351",
+      "oracle_id": "01546b7d-a233-4176-8843-d732074dc5b6",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Dragon Trainer",
+      "set": "FDN",
+      "collector_number": "84",
+      "scryfall_id": "91bd75a1-cb54-4e38-9ce1-e8f32a73c6eb",
+      "oracle_id": "328a0691-9453-4f2d-a9c3-5c69da252d20",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Drake Hatcher",
+      "set": "FDN",
+      "collector_number": "35",
+      "scryfall_id": "bcaf4196-6bf3-47fa-b5c7-0e77f45cf820",
+      "oracle_id": "4de0ccab-bb5d-4c7c-827e-36aa1d00b182",
+      "rarity": "rare"
+    },
+    {
+      "name": "Drakuseth, Maw of Flames",
+      "set": "FDN",
+      "collector_number": "193",
+      "scryfall_id": "029b1edb-e1de-4f1c-81df-8d17f4920318",
+      "oracle_id": "060deaff-44d6-4f03-9568-bcb7add80255",
+      "rarity": "rare"
+    },
+    {
+      "name": "Dreadwing Scavenger",
+      "set": "FDN",
+      "collector_number": "118",
+      "scryfall_id": "e24d838b-ab48-410a-9a50-dbfea5da089b",
+      "oracle_id": "bbfd0de0-3558-4833-bae4-8efae44b7fff",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Dwynen's Elite",
+      "set": "FDN",
+      "collector_number": "218",
+      "scryfall_id": "89d94c28-ea2e-4a3d-935f-6b2d9f2efc7a",
+      "oracle_id": "3d4a7dd3-9258-4bd1-adc4-08f0205e196a",
+      "rarity": "common"
+    },
+    {
+      "name": "Dwynen, Gilt-Leaf Daen",
+      "set": "FDN",
+      "collector_number": "217",
+      "scryfall_id": "01c00d7b-7fac-4f8c-a1ea-de2cf4d06627",
+      "oracle_id": "30d0d75f-e94c-460b-b957-9f1d655c0f65",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Eager Trufflesnout",
+      "set": "FDN",
+      "collector_number": "102",
+      "scryfall_id": "a6e8433d-eb2a-43d1-b59b-7d70ff97c8e7",
+      "oracle_id": "7f2ba562-8d5e-4915-967e-54916c3c5876",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Eaten Alive",
+      "set": "FDN",
+      "collector_number": "172",
+      "scryfall_id": "1c4f7b20-b2a8-498c-8c36-dc296863b0b9",
+      "oracle_id": "d437ecc2-2fd3-4ad3-b23e-217f55e58dae",
+      "rarity": "common"
+    },
+    {
+      "name": "Electroduplicate",
+      "set": "FDN",
+      "collector_number": "85",
+      "scryfall_id": "abb06b1c-5d4e-49b9-9c4a-e60ab656a257",
+      "oracle_id": "112f2b3f-32e7-40b1-b80e-0b99184a840c",
+      "rarity": "rare"
+    },
+    {
+      "name": "Elementalist Adept",
+      "set": "FDN",
+      "collector_number": "36",
+      "scryfall_id": "d9768cc6-8f53-4922-ae32-376a2f32d719",
+      "oracle_id": "cf402270-ebc6-481b-b478-0e3acab7002a",
+      "rarity": "common"
+    },
+    {
+      "name": "Elenda, Saint of Dusk",
+      "set": "FDN",
+      "collector_number": "119",
+      "scryfall_id": "24955f5f-093c-4d33-b0c1-911cd36032ce",
+      "oracle_id": "bfd614d5-4c7f-416b-9cb2-bb167c0893a0",
+      "rarity": "rare"
+    },
+    {
+      "name": "Elfsworn Giant",
+      "set": "FDN",
+      "collector_number": "103",
+      "scryfall_id": "5128a5be-ffa6-4998-8488-872d80b24cb2",
+      "oracle_id": "f6abdf34-cfdc-465c-b067-cdebb659406e",
+      "rarity": "common"
+    },
+    {
+      "name": "Elvish Archdruid",
+      "set": "FDN",
+      "collector_number": "219",
+      "scryfall_id": "341da856-7414-403b-b2e3-4bebd58a5aa4",
+      "oracle_id": "6e2c2423-d854-4478-99e6-64f29851f026",
+      "rarity": "rare"
+    },
+    {
+      "name": "Elvish Regrower",
+      "set": "FDN",
+      "collector_number": "104",
+      "scryfall_id": "2694e3cd-26ed-4a10-ae55-fb84d7800253",
+      "oracle_id": "adac526d-1a85-431a-a302-0a4b8f4a0c44",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Embercleave",
+      "set": "SPG",
+      "collector_number": "77",
+      "scryfall_id": "32bee083-859e-407c-99ad-3fb74b1d4233",
+      "oracle_id": "4d6120d6-fcce-40bc-9fc6-e1f5beb6c728",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Empyrean Eagle",
+      "set": "FDN",
+      "collector_number": "239",
+      "scryfall_id": "577e99a7-4a55-4314-8f08-2ae0c33b85c7",
+      "oracle_id": "270d14b2-07bc-46bc-918f-658102265ccf",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Erudite Wizard",
+      "set": "FDN",
+      "collector_number": "37",
+      "scryfall_id": "9273c417-0fcd-4273-b24e-afff76336d0c",
+      "oracle_id": "7d4b6613-9000-4f53-9737-fe0338f3f629",
+      "rarity": "common"
+    },
+    {
+      "name": "Essence Scatter",
+      "set": "FDN",
+      "collector_number": "153",
+      "scryfall_id": "dd05c850-f91e-4ffb-b4cc-8418d49dad90",
+      "oracle_id": "46665089-aa3d-44c3-964d-6638dfbb5782",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Etali, Primal Storm",
+      "set": "FDN",
+      "collector_number": "194",
+      "scryfall_id": "b6af9894-95b5-4c8e-902f-a9ba70f02e4a",
+      "oracle_id": "078def07-ae5d-4591-8db6-d156834aab97",
+      "rarity": "rare"
+    },
+    {
+      "name": "Evolving Wilds",
+      "set": "FDN",
+      "collector_number": "262",
+      "scryfall_id": "3a0b9356-5b91-4542-8802-f0f7275238e1",
+      "oracle_id": "a75445d3-1303-4bb5-89ad-26ea93fecd48",
+      "rarity": "common"
+    },
+    {
+      "name": "Exemplar of Light",
+      "set": "FDN",
+      "collector_number": "11",
+      "scryfall_id": "920c8fc5-fdd2-446a-a676-5c363f96928f",
+      "oracle_id": "9ad730b5-8950-4215-9319-387e2970dd22",
+      "rarity": "rare"
+    },
+    {
+      "name": "Exsanguinate",
+      "set": "FDN",
+      "collector_number": "173",
+      "scryfall_id": "f11d7311-4066-4a5d-ba28-9857fa707a0b",
+      "oracle_id": "8164b1e8-3350-465e-8a17-75f57d326344",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Extravagant Replication",
+      "set": "FDN",
+      "collector_number": "154",
+      "scryfall_id": "6a41dfae-bc7e-4105-8f7e-fd0109197ad8",
+      "oracle_id": "3a646245-b8b7-4f91-a312-d5eea9a9e49a",
+      "rarity": "rare"
+    },
+    {
+      "name": "Faebloom Trick",
+      "set": "FDN",
+      "collector_number": "38",
+      "scryfall_id": "0c3bee8f-f5be-4404-a696-c902637799c3",
+      "oracle_id": "903d114b-1899-4e67-bee3-af0673850388",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Fake Your Own Death",
+      "set": "FDN",
+      "collector_number": "174",
+      "scryfall_id": "693635a6-df50-44c5-9598-0c79b45d4df4",
+      "oracle_id": "ad01df89-29fe-44c7-a133-91425f8ff09c",
+      "rarity": "common"
+    },
+    {
+      "name": "Fanatical Firebrand",
+      "set": "FDN",
+      "collector_number": "195",
+      "scryfall_id": "d1296316-7781-4e98-95e6-7020648be6a5",
+      "oracle_id": "d36e11f1-6ab3-4273-8114-a8fbbe21c1c3",
+      "rarity": "common"
+    },
+    {
+      "name": "Felidar Savior",
+      "set": "FDN",
+      "collector_number": "12",
+      "scryfall_id": "cd092b14-d72f-4de0-8f19-1338661b9e3b",
+      "oracle_id": "2bee2508-cd5d-4c62-a205-12d8bbb3143d",
+      "rarity": "common"
+    },
+    {
+      "name": "Felling Blow",
+      "set": "FDN",
+      "collector_number": "105",
+      "scryfall_id": "96948ae3-b15d-4d6d-aa73-9f52084cd903",
+      "oracle_id": "fbfa19ca-98bb-4c7d-a04e-920a8aafb031",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Fiend Artisan",
+      "set": "SPG",
+      "collector_number": "83",
+      "scryfall_id": "50a31dde-29b0-4c6f-b345-ae3c984cd1c7",
+      "oracle_id": "43b8456a-3333-4936-a09c-324327619c36",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Fiendish Panda",
+      "set": "FDN",
+      "collector_number": "120",
+      "scryfall_id": "4e434d74-cad0-45f5-bc8d-f34aa5e1d879",
+      "oracle_id": "b5d64271-4478-4c55-8c71-ba8f02b47fac",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Fiery Annihilation",
+      "set": "FDN",
+      "collector_number": "86",
+      "scryfall_id": "54fe00aa-d284-48f9-b5a2-1bd4c5fa8e58",
+      "oracle_id": "d44f3724-17b7-48f0-885d-75292669f971",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Firebrand Archer",
+      "set": "FDN",
+      "collector_number": "196",
+      "scryfall_id": "fe0312f1-4c98-4b7f-8a34-0059ea80edef",
+      "oracle_id": "2e9289d6-dbc6-456d-88cf-d1f534e731d6",
+      "rarity": "common"
+    },
+    {
+      "name": "Firespitter Whelp",
+      "set": "FDN",
+      "collector_number": "197",
+      "scryfall_id": "4b3a4c7d-3126-4bde-9dca-cb6a1e2f37c9",
+      "oracle_id": "1cad92ce-55c8-4b78-8d8c-56645ef8e6ee",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Fishing Pole",
+      "set": "FDN",
+      "collector_number": "128",
+      "scryfall_id": "c95ab836-3277-4223-9aaa-ef2c77256b65",
+      "oracle_id": "2c1d3e9e-213e-492a-ad5a-91139d70bc0f",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Flamewake Phoenix",
+      "set": "FDN",
+      "collector_number": "198",
+      "scryfall_id": "a94f008e-48a0-406b-83fa-99cd396831f8",
+      "oracle_id": "9e43805d-3576-47d4-9331-524869ab99d0",
+      "rarity": "rare"
+    },
+    {
+      "name": "Fleeting Distraction",
+      "set": "FDN",
+      "collector_number": "155",
+      "scryfall_id": "c0b86a7b-4912-43a7-ab89-c3432385baa1",
+      "oracle_id": "b36271cb-cda2-434a-a580-6050dc460409",
+      "rarity": "common"
+    },
+    {
+      "name": "Fleeting Flight",
+      "set": "FDN",
+      "collector_number": "13",
+      "scryfall_id": "55139100-9342-41fd-b10a-8e9932e605d4",
+      "oracle_id": "6336401f-4e2d-4ebe-8c5b-24aa6f516abf",
+      "rarity": "common"
+    },
+    {
+      "name": "Forest",
+      "set": "FDN",
+      "collector_number": "280",
+      "scryfall_id": "d232fcc2-12f6-401a-b1aa-ddff11cb9378",
+      "oracle_id": "b34bb2dc-c1af-4d77-b0b3-a0fb342a5fc6",
+      "rarity": "common"
+    },
+    {
+      "name": "Frenzied Goblin",
+      "set": "FDN",
+      "collector_number": "199",
+      "scryfall_id": "d5592573-2889-40b1-b1d5-c2802482549a",
+      "oracle_id": "6ac470a1-c2be-4971-a5ca-10bb189ebe4d",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Garruk's Uprising",
+      "set": "FDN",
+      "collector_number": "220",
+      "scryfall_id": "4805c303-e73b-443b-a09f-49d2c2c88bb5",
+      "oracle_id": "3127ae9b-a7a7-43ec-89d7-688f8445b33d",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Genesis Wave",
+      "set": "FDN",
+      "collector_number": "221",
+      "scryfall_id": "d46f7ddb-f986-4f1f-b096-ae1a02d0bdc8",
+      "oracle_id": "e2487868-f386-438e-a73f-b494f6d35fac",
+      "rarity": "rare"
+    },
+    {
+      "name": "Ghalta, Primal Hunger",
+      "set": "FDN",
+      "collector_number": "222",
+      "scryfall_id": "6a9c39e4-a8cf-42dd-8d0e-45634b335546",
+      "oracle_id": "b0b6be0c-41cf-4757-9f0e-87227b6ba6b3",
+      "rarity": "rare"
+    },
+    {
+      "name": "Giada, Font of Hope",
+      "set": "FDN",
+      "collector_number": "141",
+      "scryfall_id": "8ae6fc26-cfad-4da8-98d9-49c27c24d293",
+      "oracle_id": "48e6d3d8-2f27-4017-acdd-40bce8cdbc02",
+      "rarity": "rare"
+    },
+    {
+      "name": "Giant Growth",
+      "set": "FDN",
+      "collector_number": "223",
+      "scryfall_id": "bd0bf74e-14c1-4428-88d8-2181a080b5d0",
+      "oracle_id": "5748ebf1-24e3-499d-ab7c-c2cebd462a24",
+      "rarity": "common"
+    },
+    {
+      "name": "Gleaming Barrier",
+      "set": "FDN",
+      "collector_number": "252",
+      "scryfall_id": "1b49b009-e6f2-494a-9235-f5c25c2d70a9",
+      "oracle_id": "1eb9e401-8975-447b-839d-f7cd23897465",
+      "rarity": "common"
+    },
+    {
+      "name": "Gnarlid Colony",
+      "set": "FDN",
+      "collector_number": "224",
+      "scryfall_id": "47565d10-96bf-4fb0-820f-f20a44a76b6f",
+      "oracle_id": "e5481431-c952-4ad9-94fe-355076ef632b",
+      "rarity": "common"
+    },
+    {
+      "name": "Goblin Boarders",
+      "set": "FDN",
+      "collector_number": "87",
+      "scryfall_id": "4409a063-bf2a-4a49-803e-3ce6bd474353",
+      "oracle_id": "4c64feae-95d7-426d-9e42-d3b0841d2054",
+      "rarity": "common"
+    },
+    {
+      "name": "Goblin Bushwhacker",
+      "set": "SPG",
+      "collector_number": "78",
+      "scryfall_id": "052df800-9f13-4469-9e8c-16d327025aa0",
+      "oracle_id": "878b6808-48af-4047-ac35-bfc58bf92e7d",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Goblin Negotiation",
+      "set": "FDN",
+      "collector_number": "88",
+      "scryfall_id": "f2016585-e26c-4d13-b09f-af6383c192f7",
+      "oracle_id": "79824266-bffa-476c-bdd3-976e9d789a42",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Goblin Surprise",
+      "set": "FDN",
+      "collector_number": "200",
+      "scryfall_id": "527dd5d4-5f72-40bb-8a9d-1f5ac3f81e2e",
+      "oracle_id": "79cd09e8-d738-47c0-9473-b6281bec6935",
+      "rarity": "common"
+    },
+    {
+      "name": "Goldvein Pick",
+      "set": "FDN",
+      "collector_number": "253",
+      "scryfall_id": "a241317d-2277-467e-a8f9-aa71c944e244",
+      "oracle_id": "c1624d10-8838-4af8-aea1-a96c0fe6fd6b",
+      "rarity": "common"
+    },
+    {
+      "name": "Good-Fortune Unicorn",
+      "set": "FDN",
+      "collector_number": "240",
+      "scryfall_id": "eabbe163-2b15-42e3-89ce-7363e6250d3a",
+      "oracle_id": "1e0cdff3-3ec5-41fc-8053-f072bae156b3",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Gorehorn Raider",
+      "set": "FDN",
+      "collector_number": "89",
+      "scryfall_id": "78ce6c40-3452-4aa0-a45b-dbfd70f8d220",
+      "oracle_id": "41699d92-c209-4fcb-bbd6-685b3437d0c2",
+      "rarity": "common"
+    },
+    {
+      "name": "Grappling Kraken",
+      "set": "FDN",
+      "collector_number": "39",
+      "scryfall_id": "d1f5cab3-3fc0-448d-8252-cd55abf5b596",
+      "oracle_id": "1ba99ade-df8d-4654-882a-a5f4256ada3d",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Grim Tutor",
+      "set": "SPG",
+      "collector_number": "76",
+      "scryfall_id": "2449eab9-b05e-40b6-adac-9132007a1af1",
+      "oracle_id": "e62f8d69-a559-4f13-a5c9-5fb750b4af2c",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Grow from the Ashes",
+      "set": "FDN",
+      "collector_number": "225",
+      "scryfall_id": "42525f8a-aee7-4811-8f05-471b559c2c4a",
+      "oracle_id": "645ab3c7-ee1d-4dd0-811f-2dc7f7c7e792",
+      "rarity": "common"
+    },
+    {
+      "name": "Guarded Heir",
+      "set": "FDN",
+      "collector_number": "14",
+      "scryfall_id": "525ba5c7-3ce5-4e52-b8b5-96c9040a6738",
+      "oracle_id": "63e79a6f-ed98-480a-a740-d44e111046f7",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Gutless Plunderer",
+      "set": "FDN",
+      "collector_number": "60",
+      "scryfall_id": "909d7778-c7f8-4fa4-89f2-8b32e86e96e4",
+      "oracle_id": "31265357-5ecb-4d83-80ff-1795b1dfdecb",
+      "rarity": "common"
+    },
+    {
+      "name": "Hare Apparent",
+      "set": "FDN",
+      "collector_number": "15",
+      "scryfall_id": "9fc6f0e9-eb5f-4bc0-b3d7-756644b66d12",
+      "oracle_id": "3c1619bd-db5e-4df6-a196-0a9d62374f6d",
+      "rarity": "common"
+    },
+    {
+      "name": "Healer's Hawk",
+      "set": "FDN",
+      "collector_number": "142",
+      "scryfall_id": "cc8e4563-04bb-46b5-835e-64ba11c0e972",
+      "oracle_id": "28a52ba1-95da-44e1-8ac5-0dc23c902394",
+      "rarity": "common"
+    },
+    {
+      "name": "Heartfire Immolator",
+      "set": "FDN",
+      "collector_number": "201",
+      "scryfall_id": "3ca38f4d-01f5-4a02-9000-01261a440dbf",
+      "oracle_id": "1e414a4f-6e76-4cbe-9c69-d52852cd5bc0",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Helpful Hunter",
+      "set": "FDN",
+      "collector_number": "16",
+      "scryfall_id": "1b9a0e91-80b5-428f-8f08-931d0631be14",
+      "oracle_id": "c0864adb-e9aa-40b6-91ff-a0646193e887",
+      "rarity": "common"
+    },
+    {
+      "name": "Herald of Eternal Dawn",
+      "set": "FDN",
+      "collector_number": "17",
+      "scryfall_id": "c9fdfebf-98e0-4718-bac3-6eee1cd0623d",
+      "oracle_id": "4080f7e3-06d3-4d3d-9929-4e826cb66713",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Heraldic Banner",
+      "set": "FDN",
+      "collector_number": "254",
+      "scryfall_id": "743ea709-dbb3-4db8-a2ce-544f47eb6339",
+      "oracle_id": "3525e263-e29a-49bf-a29f-fb3ce43bbd33",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Hero's Downfall",
+      "set": "FDN",
+      "collector_number": "175",
+      "scryfall_id": "ad2c01d9-8f54-46c0-9dc9-d4d4764ce1c9",
+      "oracle_id": "03df6a57-37c9-46d3-83b3-4a6240100714",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Heroic Reinforcements",
+      "set": "FDN",
+      "collector_number": "241",
+      "scryfall_id": "6a05e8d5-c2ad-489a-888d-22622886b620",
+      "oracle_id": "c442e8b0-a0a4-4839-8049-125b91b15c99",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Hidetsugu's Second Rite",
+      "set": "FDN",
+      "collector_number": "202",
+      "scryfall_id": "609421da-8d89-4365-b18b-778832d91482",
+      "oracle_id": "749683c9-8cc0-4e8e-8d90-adda5e5f4e93",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "High Fae Trickster",
+      "set": "FDN",
+      "collector_number": "40",
+      "scryfall_id": "7f1b93ea-1ec1-4010-9343-765742f5088b",
+      "oracle_id": "28c1a4a0-f58c-4d07-a918-51ff8a74f050",
+      "rarity": "rare"
+    },
+    {
+      "name": "High-Society Hunter",
+      "set": "FDN",
+      "collector_number": "61",
+      "scryfall_id": "51da4a4b-ea12-4169-a7cf-eb4427f13e84",
+      "oracle_id": "0dc158ba-7ec8-4558-91f5-0a87ef8380d4",
+      "rarity": "rare"
+    },
+    {
+      "name": "Homunculus Horde",
+      "set": "FDN",
+      "collector_number": "41",
+      "scryfall_id": "470c4d03-340a-4e0e-a59f-f19d05497785",
+      "oracle_id": "b3c69bf4-880f-4198-a67c-87d23d9c3d41",
+      "rarity": "rare"
+    },
+    {
+      "name": "Hungry Ghoul",
+      "set": "FDN",
+      "collector_number": "62",
+      "scryfall_id": "790f9433-7565-4f7f-88e8-8af762ea0296",
+      "oracle_id": "4a7a55a3-568c-4c31-9460-5b94dc0121d8",
+      "rarity": "common"
+    },
+    {
+      "name": "Icewind Elemental",
+      "set": "FDN",
+      "collector_number": "42",
+      "scryfall_id": "fd0eba76-3829-408b-828f-0b223c884728",
+      "oracle_id": "5001bf21-9dbb-4229-aeef-25805e71b832",
+      "rarity": "common"
+    },
+    {
+      "name": "Imprisoned in the Moon",
+      "set": "FDN",
+      "collector_number": "156",
+      "scryfall_id": "ee28e147-6622-4399-a314-c14a5c912dd0",
+      "oracle_id": "339a7418-9a29-4eae-a3c2-ea590d175936",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Incinerating Blast",
+      "set": "FDN",
+      "collector_number": "90",
+      "scryfall_id": "d58e20ab-c5ca-4295-884d-78efdaa83243",
+      "oracle_id": "49f0da4a-e046-4220-b90e-e105a5f2ef00",
+      "rarity": "common"
+    },
+    {
+      "name": "Infernal Vessel",
+      "set": "FDN",
+      "collector_number": "63",
+      "scryfall_id": "877b6330-2d0b-4f2f-a848-f10b06fb4ef5",
+      "oracle_id": "0e13c283-f462-441f-a8a5-0c75a59ff1d9",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Infestation Sage",
+      "set": "FDN",
+      "collector_number": "64",
+      "scryfall_id": "d40c73de-7a5f-46f2-a70b-449bc8ecfe24",
+      "oracle_id": "d398dca3-f3a5-44c9-998f-b4fce9e5c2bf",
+      "rarity": "common"
+    },
+    {
+      "name": "Inspiration from Beyond",
+      "set": "FDN",
+      "collector_number": "43",
+      "scryfall_id": "b636fe95-664f-4fb1-aab9-28856edeccd6",
+      "oracle_id": "be87e410-4302-43ee-b880-56eedf2b3648",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Inspiring Call",
+      "set": "FDN",
+      "collector_number": "226",
+      "scryfall_id": "3e241642-5172-4437-b694-f6aa159d5cd9",
+      "oracle_id": "9b9a10ff-5a5d-4df8-88aa-18d84ff9117c",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Inspiring Paladin",
+      "set": "FDN",
+      "collector_number": "18",
+      "scryfall_id": "0763be06-25b2-4d6b-ab33-a1af85aeb443",
+      "oracle_id": "95efbb81-2418-42ed-ae34-5759efff8253",
+      "rarity": "common"
+    },
+    {
+      "name": "Involuntary Employment",
+      "set": "FDN",
+      "collector_number": "203",
+      "scryfall_id": "f3ad3d62-2f24-4562-b3fa-809213dbc4a4",
+      "oracle_id": "7e86fb1e-9987-43ba-b59e-0cb03bbdedb6",
+      "rarity": "common"
+    },
+    {
+      "name": "Island",
+      "set": "FDN",
+      "collector_number": "274",
+      "scryfall_id": "17e2b637-72b1-4457-aaba-66d51107be4c",
+      "oracle_id": "b2c6aa39-2d2a-459c-a555-fb48ba993373",
+      "rarity": "common"
+    },
+    {
+      "name": "Joust Through",
+      "set": "FDN",
+      "collector_number": "19",
+      "scryfall_id": "846adb38-f9bb-4fed-b8ed-36ec7885f989",
+      "oracle_id": "33c21ef1-33eb-447a-a318-a352f163a8a0",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Juggernaut",
+      "set": "FDN",
+      "collector_number": "255",
+      "scryfall_id": "f4468fff-cd6f-428c-b7a0-ff89f5bbea2e",
+      "oracle_id": "4ac9116f-36bc-4d71-b696-d6ee064e1d58",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Jungle Hollow",
+      "set": "FDN",
+      "collector_number": "263",
+      "scryfall_id": "dc758e14-d370-45e4-bbc5-938fb4d21127",
+      "oracle_id": "6de714e1-446d-4fb9-9e3d-bcd3ec6af9ca",
+      "rarity": "common"
+    },
+    {
+      "name": "Kaito, Cunning Infiltrator",
+      "set": "FDN",
+      "collector_number": "44",
+      "scryfall_id": "5dabdea9-2015-49b9-853d-4f7e1262eab3",
+      "oracle_id": "f6d3f145-00e0-47cd-91d8-0381c19a000d",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Kellan, Planar Trailblazer",
+      "set": "FDN",
+      "collector_number": "91",
+      "scryfall_id": "f46a9329-7b91-441d-8653-50c1152c9120",
+      "oracle_id": "e8fd428f-7521-4e6a-86b7-835f20ee3c5c",
+      "rarity": "rare"
+    },
+    {
+      "name": "Kiora, the Rising Tide",
+      "set": "FDN",
+      "collector_number": "45",
+      "scryfall_id": "83f20a32-9f5d-4a68-8995-549e57554da2",
+      "oracle_id": "5d748bce-dff8-46fa-a3d1-633863b7bbff",
+      "rarity": "rare"
+    },
+    {
+      "name": "Koma, World-Eater",
+      "set": "FDN",
+      "collector_number": "121",
+      "scryfall_id": "c3b92caa-3401-4b11-9515-152f3e057c05",
+      "oracle_id": "1ebf2142-f171-40cd-8143-15f50084b707",
+      "rarity": "rare"
+    },
+    {
+      "name": "Krenko, Mob Boss",
+      "set": "FDN",
+      "collector_number": "204",
+      "scryfall_id": "824b2d73-2151-4e5e-9f05-8f63e2bdcaa9",
+      "oracle_id": "68418069-f615-40ef-ae0d-764192acae00",
+      "rarity": "rare"
+    },
+    {
+      "name": "Kykar, Zephyr Awakener",
+      "set": "FDN",
+      "collector_number": "122",
+      "scryfall_id": "6c980998-7124-4ec6-a0b6-e8d9a2364925",
+      "oracle_id": "0156c94b-e64c-49de-a46c-a203c5e05e98",
+      "rarity": "rare"
+    },
+    {
+      "name": "Lathril, Blade of the Elves",
+      "set": "FDN",
+      "collector_number": "242",
+      "scryfall_id": "8d4e5480-a287-4a25-b855-a26dae555b1c",
+      "oracle_id": "9b568c34-ba0a-44a7-a0ee-bee3a37b3396",
+      "rarity": "rare"
+    },
+    {
+      "name": "Leyline Axe",
+      "set": "FDN",
+      "collector_number": "129",
+      "scryfall_id": "b9c03336-a321-4c06-94d1-809f328fabd8",
+      "oracle_id": "4f597675-0f6d-438c-990c-337171927a5e",
+      "rarity": "rare"
+    },
+    {
+      "name": "Lightshell Duo",
+      "set": "FDN",
+      "collector_number": "157",
+      "scryfall_id": "bb75315c-ea8f-4eb0-899e-c73ef75fc396",
+      "oracle_id": "ef8fab12-d7d2-4c21-8b8c-41627048ac8b",
+      "rarity": "common"
+    },
+    {
+      "name": "Liliana, Dreadhorde General",
+      "set": "FDN",
+      "collector_number": "176",
+      "scryfall_id": "cb28d217-795e-4320-a032-cd713f7ecc8a",
+      "oracle_id": "5e958212-6a5b-4288-8d31-f1572619d7dc",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Llanowar Elves",
+      "set": "FDN",
+      "collector_number": "227",
+      "scryfall_id": "6a0b230b-d391-4998-a3f7-7b158a0ec2cd",
+      "oracle_id": "68954295-54e3-4303-a6bc-fc4547a4e3a3",
+      "rarity": "common"
+    },
+    {
+      "name": "Loot, Exuberant Explorer",
+      "set": "FDN",
+      "collector_number": "106",
+      "scryfall_id": "09980ce6-425b-4e03-94d0-0f02043cb361",
+      "oracle_id": "f6476884-f73f-465f-8e7f-ea312a5b306d",
+      "rarity": "rare"
+    },
+    {
+      "name": "Luminous Rebuke",
+      "set": "FDN",
+      "collector_number": "20",
+      "scryfall_id": "621839e1-2756-4cdc-a25c-5f76ea98dd87",
+      "oracle_id": "d96141af-313f-4ea9-a249-d9eb22cd2431",
+      "rarity": "common"
+    },
+    {
+      "name": "Lunar Insight",
+      "set": "FDN",
+      "collector_number": "46",
+      "scryfall_id": "a9a159f6-fecf-4bdd-b2f8-a9665a5cc32d",
+      "oracle_id": "56b4a2f7-2d35-4d05-8d26-4f9f16c5f9f5",
+      "rarity": "rare"
+    },
+    {
+      "name": "Macabre Waltz",
+      "set": "FDN",
+      "collector_number": "177",
+      "scryfall_id": "4d1f3c84-89ba-4426-a80b-d524f172c912",
+      "oracle_id": "cf75dbd8-b65a-48d9-b96b-4afb43f336d1",
+      "rarity": "common"
+    },
+    {
+      "name": "Make Your Move",
+      "set": "FDN",
+      "collector_number": "143",
+      "scryfall_id": "7368f861-3288-4645-90a7-ca35d6da3721",
+      "oracle_id": "8226f31d-6f51-49c3-87f7-0c68f7f4f9ce",
+      "rarity": "common"
+    },
+    {
+      "name": "Marauding Blight-Priest",
+      "set": "FDN",
+      "collector_number": "178",
+      "scryfall_id": "5f70dafc-c638-4ec0-ab5b-62998f752720",
+      "oracle_id": "814b87fe-2a75-4ff2-8637-7e69e3fb285b",
+      "rarity": "common"
+    },
+    {
+      "name": "Meteor Golem",
+      "set": "FDN",
+      "collector_number": "256",
+      "scryfall_id": "d291ea1e-36bc-46b3-b3ae-084fa0ba69eb",
+      "oracle_id": "d9f11aa1-9219-42a8-85a9-a8f204160706",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Micromancer",
+      "set": "FDN",
+      "collector_number": "158",
+      "scryfall_id": "e6af54ea-b57a-4e50-8e46-1747cca14430",
+      "oracle_id": "d2605782-09f1-4d52-b3e7-5ec1442bd9b5",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Midnight Snack",
+      "set": "FDN",
+      "collector_number": "65",
+      "scryfall_id": "c9b7543f-2a45-4db6-b560-d15507a58c91",
+      "oracle_id": "3ddcaee9-a11e-477a-bd19-f5ee10512549",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Mild-Mannered Librarian",
+      "set": "FDN",
+      "collector_number": "228",
+      "scryfall_id": "5389663a-fe25-41b9-8c92-1f4d7721ffc2",
+      "oracle_id": "fb7070ab-c234-4d54-8cdc-caf106bf24a6",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Mischievous Mystic",
+      "set": "FDN",
+      "collector_number": "47",
+      "scryfall_id": "20d89cec-528b-4b2a-87db-e11ce0000622",
+      "oracle_id": "542831c6-6279-4977-9b29-0fb9c0ebf04d",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Mischievous Pup",
+      "set": "FDN",
+      "collector_number": "144",
+      "scryfall_id": "7214d984-6400-44d7-bde6-57d96b606e78",
+      "oracle_id": "e75b187d-0e3b-4d94-a940-8b7e4e7ed1ca",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Mocking Sprite",
+      "set": "FDN",
+      "collector_number": "159",
+      "scryfall_id": "f6792f63-b651-497d-8aa5-cddf4cedeca8",
+      "oracle_id": "013ca531-1ff7-4efc-a280-4bc3ab574072",
+      "rarity": "common"
+    },
+    {
+      "name": "Mossborn Hydra",
+      "set": "FDN",
+      "collector_number": "107",
+      "scryfall_id": "7054a0d7-396f-40b4-ab24-db591c3b08f0",
+      "oracle_id": "84122d81-9634-4d3f-85a5-f6cf4303691a",
+      "rarity": "rare"
+    },
+    {
+      "name": "Mountain",
+      "set": "FDN",
+      "collector_number": "278",
+      "scryfall_id": "279df7e2-2a3b-464a-a7df-e91da28e3a8c",
+      "oracle_id": "a3fb7228-e76b-4e96-a40e-20b5fed75685",
+      "rarity": "common"
+    },
+    {
+      "name": "Muldrotha, the Gravetide",
+      "set": "FDN",
+      "collector_number": "243",
+      "scryfall_id": "51710b19-68e3-4853-901f-e618bde61161",
+      "oracle_id": "e4625704-1d52-44e4-804f-2f45644d76ac",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Needletooth Pack",
+      "set": "FDN",
+      "collector_number": "108",
+      "scryfall_id": "993c1679-e02b-44f2-b34e-12fd6b5142e9",
+      "oracle_id": "ac68fe30-a4a5-45f6-8782-fed57718c42e",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Nessian Hornbeetle",
+      "set": "FDN",
+      "collector_number": "229",
+      "scryfall_id": "3d4d93de-85c6-4653-8ddd-d8bf21516d44",
+      "oracle_id": "ab097f46-a7bf-4cf1-a96c-36b681fe79da",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Nine-Lives Familiar",
+      "set": "FDN",
+      "collector_number": "66",
+      "scryfall_id": "988c23f6-59fe-49f9-a9ce-9881dccb7033",
+      "oracle_id": "5049da27-f38b-4fe6-a387-51510bd1f44e",
+      "rarity": "rare"
+    },
+    {
+      "name": "Niv-Mizzet, Visionary",
+      "set": "FDN",
+      "collector_number": "123",
+      "scryfall_id": "7a69a618-d588-4745-8ede-0ff0a9f356f1",
+      "oracle_id": "d9f1dc61-831e-4244-a2da-aa9da6fd5b50",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Omniscience",
+      "set": "FDN",
+      "collector_number": "161",
+      "scryfall_id": "d33d91d0-1506-45e4-9def-975bf901815e",
+      "oracle_id": "730e39e6-c61d-48b5-8827-bfd952bf1be7",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Overrun",
+      "set": "FDN",
+      "collector_number": "230",
+      "scryfall_id": "1d8e9cbb-8bf4-4a48-a58e-79deb3abdf7f",
+      "oracle_id": "204f9afe-c20b-4933-b5cd-aa572784762a",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Painful Quandary",
+      "set": "FDN",
+      "collector_number": "179",
+      "scryfall_id": "05757669-e8a6-4a2f-8479-d4e2ade822ca",
+      "oracle_id": "c37051cc-6683-4dbb-b5ff-5c3a5bdab1df",
+      "rarity": "rare"
+    },
+    {
+      "name": "Paradise Druid",
+      "set": "SPG",
+      "collector_number": "80",
+      "scryfall_id": "fa8f7b06-48cc-4b89-a3f8-27179aec9fc0",
+      "oracle_id": "e119869d-1f66-402b-8251-d351965cf0d3",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Perforating Artist",
+      "set": "FDN",
+      "collector_number": "124",
+      "scryfall_id": "72980409-53f0-43c1-965e-06f22e7bb608",
+      "oracle_id": "a3643f66-dfa2-4275-a093-23e162496354",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Phyrexian Arena",
+      "set": "FDN",
+      "collector_number": "180",
+      "scryfall_id": "0784b6f0-9ebf-43d2-ba0f-a6bc93ba0c48",
+      "oracle_id": "ee579a32-a048-4335-b966-231ba731cdea",
+      "rarity": "rare"
+    },
+    {
+      "name": "Pilfer",
+      "set": "FDN",
+      "collector_number": "181",
+      "scryfall_id": "8c7c88b5-6d09-453b-b9c1-7dcbba8f1080",
+      "oracle_id": "d13f0907-de39-4a90-940a-831740d7aa9b",
+      "rarity": "common"
+    },
+    {
+      "name": "Plains",
+      "set": "FDN",
+      "collector_number": "272",
+      "scryfall_id": "4ef17ed4-a9b5-4b8e-b4cb-2ecb7e5898c3",
+      "oracle_id": "bc71ebf6-2056-41f7-be35-b2e5c34afa99",
+      "rarity": "common"
+    },
+    {
+      "name": "Preposterous Proportions",
+      "set": "FDN",
+      "collector_number": "109",
+      "scryfall_id": "acb65189-60e4-42e0-9fb1-da6b716b91d7",
+      "oracle_id": "1e03aad2-6426-4d18-a0e5-bc3d8e6b7b11",
+      "rarity": "rare"
+    },
+    {
+      "name": "Prideful Parent",
+      "set": "FDN",
+      "collector_number": "21",
+      "scryfall_id": "b742117a-8a72-43b9-b05d-274829d138a2",
+      "oracle_id": "a90d1d35-6d67-43b3-8256-b0318b3a4b07",
+      "rarity": "common"
+    },
+    {
+      "name": "Progenitus",
+      "set": "FDN",
+      "collector_number": "244",
+      "scryfall_id": "e77fbc87-d78e-4602-baa0-da9b0d464dfb",
+      "oracle_id": "2d7e00b6-12f0-4b03-82a6-50e3d1b5395e",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Quakestrider Ceratops",
+      "set": "FDN",
+      "collector_number": "110",
+      "scryfall_id": "067f72c2-ead6-4879-bc9d-696c9f87c0b2",
+      "oracle_id": "e56629ba-82d4-470f-9a6b-40c29d835af2",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Quick-Draw Katana",
+      "set": "FDN",
+      "collector_number": "130",
+      "scryfall_id": "69beec98-c89c-4673-953c-8b3ef3d81560",
+      "oracle_id": "604ef241-df8f-48f8-8680-f9ed77ff30ae",
+      "rarity": "common"
+    },
+    {
+      "name": "Quilled Greatwurm",
+      "set": "FDN",
+      "collector_number": "111",
+      "scryfall_id": "31b60531-3d33-4e66-923a-29008716b15c",
+      "oracle_id": "01635d21-aeda-4754-9d94-68fcd0cd6556",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Raise the Past",
+      "set": "FDN",
+      "collector_number": "22",
+      "scryfall_id": "6c6be129-56da-4fe7-a6bd-6a1d402c09e1",
+      "oracle_id": "a69a24d0-ca58-4a44-8af1-a3bd1608d2f9",
+      "rarity": "rare"
+    },
+    {
+      "name": "Ravenous Amulet",
+      "set": "FDN",
+      "collector_number": "131",
+      "scryfall_id": "80cadee5-6f26-4440-ad31-a8e573a90436",
+      "oracle_id": "87424e20-00ab-4f6d-a905-1955897b358e",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Reassembling Skeleton",
+      "set": "FDN",
+      "collector_number": "182",
+      "scryfall_id": "28e84b1b-1c05-4e1b-93b8-9cc2ca73509d",
+      "oracle_id": "9dbc3530-b278-4c8d-b2cc-a09dfac9d5e5",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Reclamation Sage",
+      "set": "FDN",
+      "collector_number": "231",
+      "scryfall_id": "1918ea65-ab7f-4d40-97fd-a656c892a2a1",
+      "oracle_id": "032ec6e2-6cc3-4a97-9cc7-3233f5e11904",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Refute",
+      "set": "FDN",
+      "collector_number": "48",
+      "scryfall_id": "38806934-dd9c-4ad4-a59c-a16dce03a14a",
+      "oracle_id": "eb1dfa29-7371-4cb6-bfa2-16f7820b69be",
+      "rarity": "common"
+    },
+    {
+      "name": "Resolute Reinforcements",
+      "set": "FDN",
+      "collector_number": "145",
+      "scryfall_id": "940f3989-77cc-49a9-92e0-095a75d80f0f",
+      "oracle_id": "eaaed253-9b11-47e2-8624-0340ab2207f6",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Revenge of the Rats",
+      "set": "FDN",
+      "collector_number": "67",
+      "scryfall_id": "1f463c55-39a0-4f2f-aae3-0c5540bde5b7",
+      "oracle_id": "29e3a3d9-4839-44d0-ad48-159c01645a6a",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Rise of the Dark Realms",
+      "set": "FDN",
+      "collector_number": "183",
+      "scryfall_id": "8645bf0c-631f-4003-bd24-3e069ae23513",
+      "oracle_id": "e5223a09-f732-4747-8914-e6546ab0ef4c",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Rite of the Dragoncaller",
+      "set": "FDN",
+      "collector_number": "92",
+      "scryfall_id": "673e4561-8dfd-46db-b492-878009666ac7",
+      "oracle_id": "5097f4e6-50af-4641-909f-db44abf0ce32",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Rogue's Passage",
+      "set": "FDN",
+      "collector_number": "264",
+      "scryfall_id": "a2a424ea-ef32-4ac5-8f8c-3ea1839f01d4",
+      "oracle_id": "f29dc596-2121-4421-8463-15f6c2e8b9b3",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Ruby, Daring Tracker",
+      "set": "FDN",
+      "collector_number": "245",
+      "scryfall_id": "fe3e7dd2-b66d-4218-9fde-f84bec26b7bf",
+      "oracle_id": "5d1b0eee-3a7a-4f22-a40d-7658a368962a",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Rugged Highlands",
+      "set": "FDN",
+      "collector_number": "265",
+      "scryfall_id": "fd6eaf8e-8881-4d7b-bafc-75e4ca5cbef6",
+      "oracle_id": "6c922206-6e68-4dcd-9559-88da1074f2c4",
+      "rarity": "common"
+    },
+    {
+      "name": "Run Away Together",
+      "set": "FDN",
+      "collector_number": "162",
+      "scryfall_id": "e598eb7b-10dc-49e6-ac60-2fefa987173e",
+      "oracle_id": "290faa28-450e-4797-9a8f-642d8af3f82a",
+      "rarity": "common"
+    },
+    {
+      "name": "Rune-Scarred Demon",
+      "set": "FDN",
+      "collector_number": "184",
+      "scryfall_id": "1eae3165-554d-4759-8f18-794e2a7d8464",
+      "oracle_id": "14aefe99-fb60-4f1c-a71f-7ffbe94c8b13",
+      "rarity": "rare"
+    },
+    {
+      "name": "Rune-Sealed Wall",
+      "set": "FDN",
+      "collector_number": "49",
+      "scryfall_id": "da0f147b-95ed-4f32-9b46-6a633ae31976",
+      "oracle_id": "74d31e99-ab48-483a-a62e-5b424b27d017",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Sanguine Syphoner",
+      "set": "FDN",
+      "collector_number": "68",
+      "scryfall_id": "b1daf5bb-c8e9-4e79-a532-ca92a9a885cd",
+      "oracle_id": "b81a748b-f7a6-4ec4-8b18-40a1819745f6",
+      "rarity": "common"
+    },
+    {
+      "name": "Savannah Lions",
+      "set": "FDN",
+      "collector_number": "146",
+      "scryfall_id": "9c9ac1bc-cdf3-4fa6-8319-a7ea164e9e47",
+      "oracle_id": "60ba93eb-39e6-4af2-9c66-cd38f72daff2",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Scavenging Ooze",
+      "set": "FDN",
+      "collector_number": "232",
+      "scryfall_id": "8c504c23-1e9a-411b-9cfe-4180d0c744f6",
+      "oracle_id": "1ff25f67-36a7-4cfa-a2b1-2135b5b6fb67",
+      "rarity": "rare"
+    },
+    {
+      "name": "Scoured Barrens",
+      "set": "FDN",
+      "collector_number": "266",
+      "scryfall_id": "2632a4b2-9ca6-4b67-9a99-14f52ad3dc41",
+      "oracle_id": "d37f858e-03c8-4594-9b92-cd03699a1591",
+      "rarity": "common"
+    },
+    {
+      "name": "Scrawling Crawler",
+      "set": "FDN",
+      "collector_number": "132",
+      "scryfall_id": "a1176dcf-40ee-4342-aa74-791b8352e99a",
+      "oracle_id": "1d60c80d-9a95-4051-bbf7-02ca51ee1be2",
+      "rarity": "rare"
+    },
+    {
+      "name": "Searslicer Goblin",
+      "set": "FDN",
+      "collector_number": "93",
+      "scryfall_id": "94ad0b97-a318-4e76-ac79-b3e83417c333",
+      "oracle_id": "86ec0b56-497f-481c-a03a-c4e64e8e7404",
+      "rarity": "rare"
+    },
+    {
+      "name": "Secluded Courtyard",
+      "set": "FDN",
+      "collector_number": "267",
+      "scryfall_id": "d13373d2-139b-48c7-a8c9-828cefc4f150",
+      "oracle_id": "79ba18fd-f184-43c1-86df-56ee18ce806c",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Seeker's Folly",
+      "set": "FDN",
+      "collector_number": "69",
+      "scryfall_id": "bc359da6-8b7f-45ec-b530-ce159fc35953",
+      "oracle_id": "223794f2-67a3-4ab5-81c5-046c63307c6c",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Seismic Rupture",
+      "set": "FDN",
+      "collector_number": "205",
+      "scryfall_id": "2519a51a-26a0-4884-9ba8-9db135c9ee49",
+      "oracle_id": "3b1f1a57-d83a-443f-b190-03df63d2bfe6",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Self-Reflection",
+      "set": "FDN",
+      "collector_number": "163",
+      "scryfall_id": "e1e6abc9-25b2-4d51-b519-2525079eab51",
+      "oracle_id": "5c68853e-4fb8-465e-b262-e6dbaf972533",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Serra Angel",
+      "set": "FDN",
+      "collector_number": "147",
+      "scryfall_id": "3cee9303-9d65-45a2-93d4-ef4aba59141b",
+      "oracle_id": "4b7ac066-e5c7-43e6-9e7e-2739b24a905d",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Shivan Dragon",
+      "set": "FDN",
+      "collector_number": "206",
+      "scryfall_id": "1fcff1e0-2745-448d-a27b-e31719e222e9",
+      "oracle_id": "711eea87-0fa3-46e0-a42b-fa5a86455f04",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Sire of Seven Deaths",
+      "set": "FDN",
+      "collector_number": "1",
+      "scryfall_id": "8d8432a7-1c8a-4cfb-947c-ecf9791063eb",
+      "oracle_id": "a15547d0-bbcb-41ee-a9ae-8325a9e7fe1f",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Skyknight Squire",
+      "set": "FDN",
+      "collector_number": "23",
+      "scryfall_id": "fcfe4e62-c153-47b8-8e09-cedaf91f53d8",
+      "oracle_id": "7e497f6b-69e1-4fab-bb04-f687c99a8310",
+      "rarity": "rare"
+    },
+    {
+      "name": "Skyship Buccaneer",
+      "set": "FDN",
+      "collector_number": "50",
+      "scryfall_id": "62958fc3-55dc-4b97-a070-490d6ed27820",
+      "oracle_id": "5951f734-05d3-41ad-94ee-19bd310077d2",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Slagstorm",
+      "set": "FDN",
+      "collector_number": "207",
+      "scryfall_id": "9db2e3a9-b90d-44cd-a2bd-eeb7dbe255b0",
+      "oracle_id": "2ed1879a-83b8-48df-a6d2-fe28e912b4c5",
+      "rarity": "rare"
+    },
+    {
+      "name": "Slumbering Cerberus",
+      "set": "FDN",
+      "collector_number": "94",
+      "scryfall_id": "9d06faa8-201d-45db-b398-ad56f7b01848",
+      "oracle_id": "39cae244-96e1-4ea3-899a-3aa871cca31c",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Snakeskin Veil",
+      "set": "FDN",
+      "collector_number": "233",
+      "scryfall_id": "6cc4c21d-9bdc-4490-9203-17f51db0ddd1",
+      "oracle_id": "1e6a24be-8281-41c1-a5ba-b68f0ef1d7b8",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Solemn Simulacrum",
+      "set": "FDN",
+      "collector_number": "257",
+      "scryfall_id": "5383f45e-3da2-40fb-beee-801448bbb60f",
+      "oracle_id": "00c0543c-2a1f-4425-8283-4062d74a1637",
+      "rarity": "rare"
+    },
+    {
+      "name": "Soul-Shackled Zombie",
+      "set": "FDN",
+      "collector_number": "70",
+      "scryfall_id": "deea5690-6eb2-4353-b917-cbbf840e4e71",
+      "oracle_id": "f81ca3a5-356d-4b5d-afc2-a33aa774816b",
+      "rarity": "common"
+    },
+    {
+      "name": "Soulstone Sanctuary",
+      "set": "FDN",
+      "collector_number": "133",
+      "scryfall_id": "642553a7-6d0f-483d-a873-3a703786db42",
+      "oracle_id": "3c0f99b8-0222-4fac-932a-eb5d77826564",
+      "rarity": "rare"
+    },
+    {
+      "name": "Sower of Chaos",
+      "set": "FDN",
+      "collector_number": "95",
+      "scryfall_id": "7ff50606-491c-4946-8d03-719b01cfad77",
+      "oracle_id": "2ec1860b-89cc-4529-8b8c-fb47f79f2b4b",
+      "rarity": "common"
+    },
+    {
+      "name": "Spectral Sailor",
+      "set": "FDN",
+      "collector_number": "164",
+      "scryfall_id": "03a49535-c5f3-4a6f-b333-7ac7bffdc9ae",
+      "oracle_id": "a8fdbcdf-479d-4582-9ad5-9fbd4c740c29",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Sphinx of Forgotten Lore",
+      "set": "FDN",
+      "collector_number": "51",
+      "scryfall_id": "af6e46b8-62ed-4bca-ba38-a821f225b59f",
+      "oracle_id": "ddb7e868-8f1d-4d57-9ee2-ebadb17b398a",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Sphinx's Tutelage",
+      "set": "SPG",
+      "collector_number": "75",
+      "scryfall_id": "94a3673b-6003-4612-a8f6-02829aa9de7d",
+      "oracle_id": "158db438-52ba-4c30-b7bf-d1c4f76da917",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Spinner of Souls",
+      "set": "FDN",
+      "collector_number": "112",
+      "scryfall_id": "f50a8dec-b079-4192-9098-6cdc1026c693",
+      "oracle_id": "6883e79e-0b4f-4fb8-aee3-a3905246a408",
+      "rarity": "rare"
+    },
+    {
+      "name": "Spitfire Lagac",
+      "set": "FDN",
+      "collector_number": "208",
+      "scryfall_id": "30f600cd-b696-4f49-9cbc-5a33aa43d04c",
+      "oracle_id": "7215ca87-bbff-4c14-a1f5-de5ddd97c875",
+      "rarity": "common"
+    },
+    {
+      "name": "Squad Rallier",
+      "set": "FDN",
+      "collector_number": "24",
+      "scryfall_id": "65e1ee86-6f08-4aa0-bf63-ae12028ef080",
+      "oracle_id": "e0b15374-b4f6-48e0-8477-4eb5d5c2a938",
+      "rarity": "common"
+    },
+    {
+      "name": "Stab",
+      "set": "FDN",
+      "collector_number": "71",
+      "scryfall_id": "6859a5ba-1c1c-4631-bba8-f9900b827178",
+      "oracle_id": "b4ee6843-bb79-4665-9763-83f656863dc5",
+      "rarity": "common"
+    },
+    {
+      "name": "Strix Lookout",
+      "set": "FDN",
+      "collector_number": "52",
+      "scryfall_id": "fbd2422e-8e84-4c39-af29-3b4d38baee63",
+      "oracle_id": "5a6d01c8-47b6-43e5-a6e9-c48088286007",
+      "rarity": "common"
+    },
+    {
+      "name": "Stroke of Midnight",
+      "set": "FDN",
+      "collector_number": "148",
+      "scryfall_id": "ab135925-d924-456d-851a-6ccdaaf27271",
+      "oracle_id": "9a107e48-3d50-4941-95b1-10f2b29a4245",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Stromkirk Bloodthief",
+      "set": "FDN",
+      "collector_number": "185",
+      "scryfall_id": "485d6a5a-2054-47d5-91b8-71ce308ed4dc",
+      "oracle_id": "c85987b4-090e-472e-b9af-1114cce56ffb",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Strongbox Raider",
+      "set": "FDN",
+      "collector_number": "96",
+      "scryfall_id": "b2223eb8-59f9-489b-a3f3-b6496218cb79",
+      "oracle_id": "ba5a2689-3578-4b1a-99d6-6b6d2356330e",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Sun-Blessed Healer",
+      "set": "FDN",
+      "collector_number": "25",
+      "scryfall_id": "323d029e-9a88-4188-b3a4-38ef32cffc9f",
+      "oracle_id": "1729c6f2-2452-4fbc-a1bc-3e625f2ad8e1",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Sure Strike",
+      "set": "FDN",
+      "collector_number": "209",
+      "scryfall_id": "5de6a1e4-5c66-43e6-9f2a-2635bdab03f6",
+      "oracle_id": "fb694e7e-f66e-4958-b6ed-aa74bc9ac43e",
+      "rarity": "common"
+    },
+    {
+      "name": "Swamp",
+      "set": "FDN",
+      "collector_number": "276",
+      "scryfall_id": "319bc1f0-ee42-44e5-b08b-735613ded2ba",
+      "oracle_id": "56719f6a-1a6c-4c0a-8d21-18f7d7350b68",
+      "rarity": "common"
+    },
+    {
+      "name": "Swiftblade Vindicator",
+      "set": "FDN",
+      "collector_number": "246",
+      "scryfall_id": "f94618ec-000c-4371-b925-05ff82bfe221",
+      "oracle_id": "44240b1e-c104-4eb4-8ab9-0d56607ba241",
+      "rarity": "rare"
+    },
+    {
+      "name": "Swiftfoot Boots",
+      "set": "FDN",
+      "collector_number": "258",
+      "scryfall_id": "41040541-b129-4cf4-9411-09b1d9d32c19",
+      "oracle_id": "c8b143ad-43ec-4e0d-a440-e348daa31391",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Swiftwater Cliffs",
+      "set": "FDN",
+      "collector_number": "268",
+      "scryfall_id": "fb88667d-7088-4889-960f-317486ebe856",
+      "oracle_id": "2f4ad084-2062-44c0-9975-15f100204531",
+      "rarity": "common"
+    },
+    {
+      "name": "Sylvan Scavenging",
+      "set": "FDN",
+      "collector_number": "113",
+      "scryfall_id": "c35b683c-d3b2-46a1-876a-81b34e8ba2fc",
+      "oracle_id": "398afdf2-4a12-430e-85c9-c68847230939",
+      "rarity": "rare"
+    },
+    {
+      "name": "Tatyova, Benthic Druid",
+      "set": "FDN",
+      "collector_number": "247",
+      "scryfall_id": "eabc978a-0666-472d-bdc6-d4b29d29eca4",
+      "oracle_id": "0715e860-3b3b-4331-9718-207973e94fee",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Temporal Manipulation",
+      "set": "SPG",
+      "collector_number": "82",
+      "scryfall_id": "15993df2-e33d-4c0f-9f41-fc1ec4044271",
+      "oracle_id": "6b6ac99a-7548-4cad-9fe5-ea611618ab9e",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Think Twice",
+      "set": "FDN",
+      "collector_number": "165",
+      "scryfall_id": "d88faaa1-eb41-40f7-991c-5c06e1138f3d",
+      "oracle_id": "fa85c5a2-8e83-4624-a35a-a0bbf17ecbb4",
+      "rarity": "common"
+    },
+    {
+      "name": "Thornwood Falls",
+      "set": "FDN",
+      "collector_number": "269",
+      "scryfall_id": "42799f51-0f8c-444b-974e-dae281a5c697",
+      "oracle_id": "ec96cde2-f1e6-495c-94e2-3e8ae79e556c",
+      "rarity": "common"
+    },
+    {
+      "name": "Thousand-Year Storm",
+      "set": "FDN",
+      "collector_number": "248",
+      "scryfall_id": "76c48a67-1410-40f1-9b93-0172d85e4688",
+      "oracle_id": "dd4cf149-2fae-40e5-b50b-639f6bcec65e",
+      "rarity": "rare"
+    },
+    {
+      "name": "Thrill of Possibility",
+      "set": "FDN",
+      "collector_number": "210",
+      "scryfall_id": "882b348c-076b-41d8-b505-063480636669",
+      "oracle_id": "1cb0610b-a731-42c2-b93f-0a29f63cebf4",
+      "rarity": "common"
+    },
+    {
+      "name": "Time Stop",
+      "set": "FDN",
+      "collector_number": "166",
+      "scryfall_id": "d938603b-0f1e-44c4-b86e-38e15f4a0d27",
+      "oracle_id": "55bc6a7e-2356-48f0-a93a-8bf19044ee4b",
+      "rarity": "rare"
+    },
+    {
+      "name": "Tinybones, Bauble Burglar",
+      "set": "FDN",
+      "collector_number": "72",
+      "scryfall_id": "ff3d85bc-ef2d-4251-baf4-a14bd0cee61e",
+      "oracle_id": "fd335b2f-e6a2-45ac-949e-a67278b21cb6",
+      "rarity": "rare"
+    },
+    {
+      "name": "Tolarian Terror",
+      "set": "FDN",
+      "collector_number": "167",
+      "scryfall_id": "2569d4f3-55ed-4f99-9592-34c7df0aab72",
+      "oracle_id": "b9d0f2e1-62c2-44fd-ad38-471daf17bb0a",
+      "rarity": "common"
+    },
+    {
+      "name": "Tragic Banshee",
+      "set": "FDN",
+      "collector_number": "73",
+      "scryfall_id": "30df3e33-2f17-4067-99f1-5db6b0f41fd4",
+      "oracle_id": "888f58c0-1860-4df4-ad75-53e634150680",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Tranquil Cove",
+      "set": "FDN",
+      "collector_number": "270",
+      "scryfall_id": "7c9cabca-5bcc-4b97-b2ac-a345ad3ee43c",
+      "oracle_id": "5d641bf6-0f93-4189-8dc1-ec7ea446dade",
+      "rarity": "common"
+    },
+    {
+      "name": "Treetop Snarespinner",
+      "set": "FDN",
+      "collector_number": "114",
+      "scryfall_id": "88e68fa3-159d-49a6-8ac6-afc9bd6f1718",
+      "oracle_id": "2f57a220-9f64-4143-979a-d6aaf63d49b2",
+      "rarity": "common"
+    },
+    {
+      "name": "Twinblade Blessing",
+      "set": "FDN",
+      "collector_number": "26",
+      "scryfall_id": "ecf01cbe-9fcb-4f35-bc6b-2280620b06ff",
+      "oracle_id": "b3e1674f-dba1-4570-9990-e5dc643e237d",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Twinflame Tyrant",
+      "set": "FDN",
+      "collector_number": "97",
+      "scryfall_id": "1eb34f51-0bd2-43c3-af95-2ce8dabcc7bb",
+      "oracle_id": "321b5cc6-8df6-4292-97a0-a6a3a22f3b55",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Uncharted Voyage",
+      "set": "FDN",
+      "collector_number": "53",
+      "scryfall_id": "e0846820-e595-4743-8a28-29c57d728677",
+      "oracle_id": "1d6796ce-9316-430a-8126-8b0414cf181c",
+      "rarity": "common"
+    },
+    {
+      "name": "Valkyrie's Call",
+      "set": "FDN",
+      "collector_number": "27",
+      "scryfall_id": "0e1f1ff2-fa8f-4d38-b631-2d6e08e614c8",
+      "oracle_id": "27400927-9aba-4fb3-90c4-490d01969e60",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Vampire Gourmand",
+      "set": "FDN",
+      "collector_number": "74",
+      "scryfall_id": "917514c0-9cd5-4b97-85b9-c4f753560ad4",
+      "oracle_id": "3386414c-32fa-40ae-9b30-dab976a158c1",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Vampire Nighthawk",
+      "set": "FDN",
+      "collector_number": "186",
+      "scryfall_id": "0a1934ab-3171-4fc6-8033-ad998899ba73",
+      "oracle_id": "feb244f8-bcb1-44cf-9940-2719221a7309",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Vampire Soulcaller",
+      "set": "FDN",
+      "collector_number": "75",
+      "scryfall_id": "2d076293-3b45-4878-8f67-978927cc1f68",
+      "oracle_id": "bbea8ade-a641-4132-b306-f39fe2f14311",
+      "rarity": "common"
+    },
+    {
+      "name": "Vanguard Seraph",
+      "set": "FDN",
+      "collector_number": "28",
+      "scryfall_id": "4329c861-fc16-4a96-9c03-25af6ac2adc8",
+      "oracle_id": "3250466f-82a4-45e1-9722-ff247ddf8c15",
+      "rarity": "common"
+    },
+    {
+      "name": "Vengeful Bloodwitch",
+      "set": "FDN",
+      "collector_number": "76",
+      "scryfall_id": "bd0c12dd-f138-45c0-9614-d83a1d8e8399",
+      "oracle_id": "4cdbc466-42fc-471f-beab-397caec18101",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Vivien Reid",
+      "set": "FDN",
+      "collector_number": "234",
+      "scryfall_id": "38769247-42a1-4571-9071-6d59fe28650a",
+      "oracle_id": "b5f20a6d-8c3e-452f-9d98-4886f0fa052a",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Wardens of the Cycle",
+      "set": "FDN",
+      "collector_number": "125",
+      "scryfall_id": "83ea9b2c-5723-4eff-88ac-6669975939e3",
+      "oracle_id": "fa7d09aa-2ebc-4571-81da-836cd80cf554",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Wary Thespian",
+      "set": "FDN",
+      "collector_number": "235",
+      "scryfall_id": "a3d62d04-0974-4cb5-9a35-5e996c6456e2",
+      "oracle_id": "448cc829-1596-4aec-b180-c0c1e0566f6b",
+      "rarity": "common"
+    },
+    {
+      "name": "Wildwood Scourge",
+      "set": "FDN",
+      "collector_number": "236",
+      "scryfall_id": "36359fb6-fb8c-4382-8555-e348422f116c",
+      "oracle_id": "b9dec104-c636-4770-a7fc-7a3331face15",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Wind-Scarred Crag",
+      "set": "FDN",
+      "collector_number": "271",
+      "scryfall_id": "759e99df-11a8-4aee-b6bc-344e84e10d94",
+      "oracle_id": "b0af0c54-2a59-4075-8543-d41ff20c4c87",
+      "rarity": "common"
+    },
+    {
+      "name": "Witness Protection",
+      "set": "FDN",
+      "collector_number": "168",
+      "scryfall_id": "f231e981-0069-43ce-ac1c-c85ced613e93",
+      "oracle_id": "a5f5e71e-83a7-468d-829a-6392b764c76e",
+      "rarity": "common"
+    },
+    {
+      "name": "Youthful Valkyrie",
+      "set": "FDN",
+      "collector_number": "149",
+      "scryfall_id": "9d795f79-c3a5-4ea1-a5cf-1ce73d6837b6",
+      "oracle_id": "6d37ba4b-ff56-4eec-9dc2-2d7f357dc9c9",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Zimone, Paradox Sculptor",
+      "set": "FDN",
+      "collector_number": "126",
+      "scryfall_id": "20ccbfdd-ddae-440c-9bc0-38b15a56fdd1",
+      "oracle_id": "9dd674a7-becf-4106-b53f-bca88426d92d",
+      "rarity": "mythic"
+    },
+    {
+      "name": "Zombify",
+      "set": "FDN",
+      "collector_number": "187",
+      "scryfall_id": "dc798e6f-13c4-457c-b052-b7b65bc83cfe",
+      "oracle_id": "bb95db4d-5017-4121-bf79-d68476602d8c",
+      "rarity": "uncommon"
+    },
+    {
+      "name": "Zul Ashur, Lich Lord",
+      "set": "FDN",
+      "collector_number": "77",
+      "scryfall_id": "34ad4fdb-9805-45b3-ba20-e47a15d6ff38",
+      "oracle_id": "a7c6c9b3-91f2-4ecf-b2b0-b0edd96974d9",
+      "rarity": "rare"
+    }
+  ],
+  "token_dependencies": [
+    {
+      "id": "2885d54c-9fb2-4f01-8937-54f8ac1ce5bc",
+      "name": "Cat",
+      "type_line": "Token Creature — Cat",
+      "required_by": [
+        "Arahbo, the First Fang",
+        "Cat Collector",
+        "Prideful Parent"
+      ]
+    },
+    {
+      "id": "d16213b5-c0da-4a24-9f2e-b9432652859e",
+      "name": "Cat",
+      "type_line": "Token Creature — Cat",
+      "required_by": [
+        "Ajani, Caller of the Pride"
+      ]
+    },
+    {
+      "id": "fc586e46-b7d0-4c84-8678-3542cd390de1",
+      "name": "Copy",
+      "type_line": "Token",
+      "required_by": [
+        "Abyssal Harvester",
+        "Chandra, Flameshaper",
+        "Electroduplicate",
+        "Extravagant Replication",
+        "Homunculus Horde",
+        "Self-Reflection"
+      ]
+    },
+    {
+      "id": "55c6be20-b65a-4b1e-8133-4c2d88c1f6f9",
+      "name": "Dragon",
+      "type_line": "Token Creature — Dragon",
+      "required_by": [
+        "Dragon Trainer"
+      ]
+    },
+    {
+      "id": "a5d4dd3b-0a5f-4d2c-aa6b-3c47e71e8c39",
+      "name": "Dragon",
+      "type_line": "Token Creature — Dragon",
+      "required_by": [
+        "Rite of the Dragoncaller"
+      ]
+    },
+    {
+      "id": "f4a73034-e20f-4e7e-ac15-3460b1e9c69b",
+      "name": "Drake",
+      "type_line": "Token Creature — Drake",
+      "required_by": [
+        "Drake Hatcher"
+      ]
+    },
+    {
+      "id": "315c45f4-7bc9-45d5-bbf5-2533cf80af60",
+      "name": "Elf Warrior",
+      "type_line": "Token Creature — Elf Warrior",
+      "required_by": [
+        "Dwynen's Elite",
+        "Elfsworn Giant",
+        "Lathril, Blade of the Elves"
+      ]
+    },
+    {
+      "id": "d1c0556e-ba3c-4a8e-b704-8eaa7c4dba1c",
+      "name": "Faerie",
+      "type_line": "Token Creature — Faerie",
+      "required_by": [
+        "Faebloom Trick",
+        "Mischievous Mystic"
+      ]
+    },
+    {
+      "id": "44057462-40b7-4709-afac-2ce03d53d525",
+      "name": "Fish",
+      "type_line": "Token Creature — Fish",
+      "required_by": [
+        "Fishing Pole"
+      ]
+    },
+    {
+      "id": "6f1077f8-9e2a-4155-a7f0-4604bc0f94e8",
+      "name": "Food",
+      "type_line": "Token Artifact — Food",
+      "required_by": [
+        "Bake into a Pie",
+        "Cat Collector",
+        "Eager Trufflesnout",
+        "Midnight Snack"
+      ]
+    },
+    {
+      "id": "70f8a1de-cd4c-4afa-bf03-0245d375d42e",
+      "name": "Goblin",
+      "type_line": "Token Creature — Goblin",
+      "required_by": [
+        "Goblin Negotiation",
+        "Goblin Surprise",
+        "Krenko, Mob Boss",
+        "Searslicer Goblin"
+      ]
+    },
+    {
+      "id": "06af3d5a-7b38-42f6-822f-da4e04a7f265",
+      "name": "Human",
+      "type_line": "Token Creature — Human",
+      "required_by": [
+        "Stroke of Midnight"
+      ]
+    },
+    {
+      "id": "59c2cbd7-79bb-4d93-b2b6-5d3abe88a012",
+      "name": "Insect",
+      "type_line": "Token Creature — Insect",
+      "required_by": [
+        "Infestation Sage"
+      ]
+    },
+    {
+      "id": "0d287806-07bb-4709-9260-b9ef34fe2a13",
+      "name": "Knight",
+      "type_line": "Token Creature — Knight",
+      "required_by": [
+        "Guarded Heir"
+      ]
+    },
+    {
+      "id": "cef25434-cd23-4dcf-b77e-36e648a8de23",
+      "name": "Koma's Coil",
+      "type_line": "Token Creature — Serpent",
+      "required_by": [
+        "Koma, World-Eater"
+      ]
+    },
+    {
+      "id": "aeec04b1-475c-4e55-b72f-327ea5258146",
+      "name": "Ninja",
+      "type_line": "Token Creature — Ninja",
+      "required_by": [
+        "Kaito, Cunning Infiltrator"
+      ]
+    },
+    {
+      "id": "63ae4f9c-ad6e-4d6a-89f1-653916bf5373",
+      "name": "Rabbit",
+      "type_line": "Token Creature — Rabbit",
+      "required_by": [
+        "Hare Apparent"
+      ]
+    },
+    {
+      "id": "1b8d8730-d6bd-4525-96e9-0513ed02de37",
+      "name": "Raccoon",
+      "type_line": "Token Creature — Raccoon",
+      "required_by": [
+        "Sylvan Scavenging"
+      ]
+    },
+    {
+      "id": "5cad84b0-2bbf-479c-ae46-f725892d04d1",
+      "name": "Rat",
+      "type_line": "Token Creature — Rat",
+      "required_by": [
+        "Revenge of the Rats"
+      ]
+    },
+    {
+      "id": "26c478f7-b426-4055-8d06-e5782226c826",
+      "name": "Scion of the Deep",
+      "type_line": "Token Legendary Creature — Octopus",
+      "required_by": [
+        "Kiora, the Rising Tide"
+      ]
+    },
+    {
+      "id": "d093322e-a717-4e2d-8199-fa560792bcf6",
+      "name": "Soldier",
+      "type_line": "Token Creature — Soldier",
+      "required_by": [
+        "Heroic Reinforcements",
+        "Resolute Reinforcements"
+      ]
+    },
+    {
+      "id": "278adad2-49a6-4baa-8dbe-93474545eef7",
+      "name": "Spirit",
+      "type_line": "Token Creature — Spirit",
+      "required_by": [
+        "Kykar, Zephyr Awakener"
+      ]
+    },
+    {
+      "id": "21210145-8edd-41f5-9a64-9f0b5be79864",
+      "name": "Treasure",
+      "type_line": "Token Artifact — Treasure",
+      "required_by": [
+        "An Offer You Can't Refuse",
+        "Brass's Bounty",
+        "Fake Your Own Death",
+        "Gleaming Barrier",
+        "Goldvein Pick",
+        "Involuntary Employment"
+      ]
+    },
+    {
+      "id": "e29a360b-11fd-42ba-82ba-de8f7e136c20",
+      "name": "Zombie",
+      "type_line": "Token Creature — Zombie",
+      "required_by": [
+        "Liliana, Dreadhorde General"
+      ]
+    }
+  ],
+  "card_names_sha256": "7a6ab02ccd88652bae0e299cdd6b9db33ef1890f1e537b7708c6887a9de84730",
+  "metadata_sha256": "864eb39784605b9a94b0a123c23f705c736a402767509354b52cfa18add9fdb0"
+}

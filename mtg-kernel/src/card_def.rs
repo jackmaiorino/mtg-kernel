@@ -1859,6 +1859,7 @@ mod tests {
     use crate::state::Zone;
 
     #[test]
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
     fn card_defs_len_matches_pool() {
         // Hero Token remains id 159 and Clue Token remains id 160. Skeleton
         // Token is appended as id 161 without renumbering earlier ids.
@@ -1981,6 +1982,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
     fn card_db_hash_v61_fdn_is_frozen() {
         const EXPECTED_FDN: u64 = 0x949b_eb8c_995c_006c;
@@ -2215,6 +2217,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
     fn capability_is_the_fail_closed_source_for_programs_and_deck_preflight() {
         let full = CARD_DEFS
             .iter()
