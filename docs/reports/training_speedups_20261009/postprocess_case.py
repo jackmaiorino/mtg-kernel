@@ -72,6 +72,19 @@ def files_in_tree(root):
     return sorted(files)
 
 
+def verify_native_recovery(native, archive):
+    """Bind the current raw bytes to this case's verified recovery inventory."""
+    expected = {}
+    for shard in archive['shards']:
+        for name, digest in shard['files'].items():
+            require(name not in expected, 'duplicate recovery member: ' + name)
+            expected[name] = digest
+    files = {path.relative_to(native).as_posix(): path for path in files_in_tree(native)}
+    require(set(files) == set(expected), 'native recovery inventory differs')
+    for name, path in files.items():
+        require(pin(path)['sha256'] == expected[name], 'native recovery bytes differ: ' + name)
+
+
 def physical_stats(root):
     require(os.name == 'nt', 'physical allocation measurement requires Windows')
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
@@ -129,6 +142,7 @@ def inputs(args):
 def inspect(args):
     began = time.monotonic()
     _, request_pin, request, dispatch_root, cold, native, report_pin, report, out = inputs(args)
+    verify_native_recovery(native, read_pinned(report['archive']))
     require(not out.exists(), 'preserve existing inspection; choose a new output root')
     out.mkdir(parents=True)
     decks = checked_path(args.decks)
@@ -198,7 +212,7 @@ def inspect(args):
 
 def retain(args):
     began = time.monotonic()
-    _, request_pin, _, _, _, native, report_pin, _, out = inputs(args)
+    _, request_pin, _, _, _, native, report_pin, report, out = inputs(args)
     require(args.cold_copy_receipt and args.cold_copy_sha256, 'explicit pinned independent copy receipt required')
     require(not (out / 'retain.json').exists(), 'retention already recorded')
     inspection = read_pinned(pin(out / 'inspect.json'))
@@ -236,6 +250,10 @@ def retain(args):
     retained = out / 'retained'
     require(not retained.exists(), 'preserve partial retention; manual investigation required')
     phase = time.monotonic()
+    # The shared native path may have been replaced since inspection or since
+    # this call checked its case/transport receipts. Verify immediately before
+    # the retainer can copy a sample and recursively prune the raw tree.
+    verify_native_recovery(native, read_pinned(report['archive']))
     manifest = campaign.retain_block(SimpleNamespace(retained=retained, prune_log=out / 'PRUNE.jsonl'),
                                      'r5', 1, native, read_pinned(inspection['exposure']))
     retention_seconds = time.monotonic() - phase
