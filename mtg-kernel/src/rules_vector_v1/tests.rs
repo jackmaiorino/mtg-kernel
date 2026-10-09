@@ -74,20 +74,26 @@ fn event_time_programs_keep_their_owning_trigger_without_duplicate_inventory() {
         to_player: true,
         host: false,
     });
+    let draw = Atom::Effect(
+        EffectAtom::moving(Some(ZoneF::Library), ZoneF::Hand)
+            .player(RelF::You)
+            .obj(ObjF::AnyCard)
+            .amount(AmtF::fixed(1)),
+    );
+    let discard = Atom::Effect(
+        EffectAtom::moving(Some(ZoneF::Hand), ZoneF::Graveyard)
+            .player(RelF::You)
+            .obj(ObjF::AnyCard)
+            .amount(AmtF::fixed(1)),
+    );
     for ability in &abilities {
         assert!(ability.atoms.contains(&trigger));
-        assert!(ability
-            .atoms
-            .iter()
-            .any(|a| matches!(a, Atom::Effect(e) if e.ev == EvF::Draw)));
+        assert!(ability.atoms.contains(&draw));
     }
     assert_eq!(
         abilities
             .iter()
-            .filter(|a| a
-                .atoms
-                .iter()
-                .any(|a| matches!(a, Atom::Effect(e) if e.ev == EvF::Discard)))
+            .filter(|a| a.atoms.contains(&discard))
             .count(),
         1
     );
