@@ -483,26 +483,27 @@ mod tests {
     #[cfg(feature = "gameplay-checkpoint-reconstruction-v1")]
     #[test]
     fn suite_deserializes_and_validates_actual_producer_envelope() {
-        // Static fixture data only: no session, replay, model or forward call.
-        let golden: Value = serde_json::from_str(include_str!(
-            "../../../data/flat_policy_v2/python_full_features_v2.json"
-        ))
-        .unwrap();
-        let mut observation: Value = serde_json::from_str(
-            golden["cases"][0]["canonical_observation_json"]
-                .as_str()
-                .unwrap(),
-        )
-        .unwrap();
-        observation["schema_version"] = json!(OBSERVATION_SCHEMA_VERSION_V6);
-        observation["card_db_hash"] = json!(KERNEL_CARDDB_HASH);
-        observation["acting_player"] = json!("p0");
-        observation["step_index"] = json!(1);
-        observation["physical_decision_id"] = json!(1);
-        observation["substep_index"] = json!(0);
-        observation["substep_count"] = json!(1);
-        observation["extensions"] = serde_json::to_value(
-            crate::policy_observation_v6::PolicyObservationExtensionsV6::default(),
+        // Use the producer's absolute-seat observation, including full card
+        // references. The Python tensor golden is an actor-relative projection
+        // and cannot stand in for the engine envelope. No replay or forward call.
+        let mut state = crate::policy_observation_v6::tests::ready_state();
+        crate::policy_observation_v6::tests::put(
+            &mut state,
+            crate::ids::PlayerId::P0,
+            "Island",
+            crate::state::Zone::Hand,
+        );
+        let observation = serde_json::to_value(
+            crate::rl::observe_policy_v6(
+                &state,
+                &crate::policy_surface_v5::PolicySurfaceV5::new(),
+                crate::ids::PlayerId::P0,
+                1,
+                1,
+                0,
+                1,
+            )
+            .unwrap(),
         )
         .unwrap();
         let actions = json!([
@@ -533,6 +534,9 @@ mod tests {
         .unwrap();
         assert!(record["card_db_hash"].is_string());
         assert!(record["observation"]["card_db_hash"].is_u64());
+        let mut relative = record.clone();
+        relative["observation"]["own_hand"][0]["stable"]["owner"] = json!("self");
+        assert!(serde_json::from_value::<CorrectedInput>(relative).is_err());
         let mut wrong = record;
         wrong["card_db_hash"] = json!(KERNEL_CARDDB_HASH);
         assert!(serde_json::from_value::<CorrectedInput>(wrong).is_err());
