@@ -74,8 +74,82 @@ fn v3_search_handles_library_roots_in_both_contracts_and_maps_physical_indices()
                 let (adapted, mapping) = session.kernel_search_v4_root_clone_v3(d).unwrap();
                 let before = session.diagnostic_current_action_semantics().unwrap();
                 let after = adapted.diagnostic_current_action_semantics().unwrap();
+                let extensions = crate::rl::policy_observation_extensions_v6(
+                    adapted.kernel_search_state_v1(),
+                    actor,
+                )
+                .unwrap();
+                let historical = extensions.historical_public_sources.iter().find(|row|
+                    row.context == crate::policy_observation_v6::HistoricalSourceContextV6::PendingEffect);
+                if form != 1 {
+                    let source = &historical
+                        .expect("moved source retains public authority")
+                        .source;
+                    assert_eq!(
+                        source.zone,
+                        if form == 0 {
+                            Zone::Hand
+                        } else {
+                            Zone::Battlefield
+                        }
+                    );
+                    assert_eq!(source.zone_change_count, 0);
+                    assert_eq!(
+                        adapted
+                            .kernel_search_state_v1()
+                            .objects
+                            .get(ObjectId(source.arena_id))
+                            .zone,
+                        Zone::Graveyard
+                    );
+                }
+                assert_eq!(
+                    mapping
+                        .iter()
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .len(),
+                    mapping.len()
+                );
                 for (new, old) in mapping.iter().enumerate() {
-                    assert_eq!(after[new], before[*old as usize]);
+                    // V3 authenticates the historical public source, while V2
+                    // retains the live source incarnation in its raw semantic.
+                    // Targets and executable commands must still match exactly.
+                    let mut expected = before[*old as usize].clone();
+                    if let Some(historical) = historical {
+                        match &mut expected {
+                            ActionSemanticV1::ChooseEffectTarget { source, .. }
+                            | ActionSemanticV1::FinishEffectSelection { source, .. } => {
+                                *source = historical.source.clone();
+                            }
+                            other => panic!("unexpected library action {other:?}"),
+                        }
+                    }
+                    assert_eq!(after[new], expected);
+                    if let (
+                        ActionSemanticV1::ChooseEffectTarget {
+                            target: before_target,
+                            ..
+                        },
+                        ActionSemanticV1::ChooseEffectTarget {
+                            target: after_target,
+                            ..
+                        },
+                    ) = (&before[*old as usize], &after[new])
+                    {
+                        assert_eq!(before_target, after_target);
+                    }
+                    let mut live = session.clone();
+                    let mut canonical = adapted.clone();
+                    live.step(d.episode_id, d.step, *old).unwrap();
+                    canonical.step(d.episode_id, d.step, new as u32).unwrap();
+                    assert_eq!(
+                        live.kernel_search_state_v1(),
+                        canonical.kernel_search_state_v1()
+                    );
+                    assert_eq!(
+                        live.privileged_core_environment_hash(),
+                        canonical.privileged_core_environment_hash()
+                    );
                 }
             }
         }
