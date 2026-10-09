@@ -129,7 +129,7 @@ pub(crate) fn linked_exile_target_fixture_v1() -> crate::state::GameState {
     let mut state = ready_state();
     // The departure trigger has finished; only the outstanding linked exile
     // authenticates the source's old Battlefield incarnation.
-    for name in ["Lightning Bolt", "Dark Ritual"] {
+    for name in ["Lightning Bolt", "Counterspell"] {
         let fiend = put(&mut state, PlayerId::P1, "Mesmeric Fiend", Zone::Graveyard);
         state.objects.get_mut(fiend).zone_change_count = 1;
         let exiled = put(&mut state, PlayerId::P0, name, Zone::Hand);
