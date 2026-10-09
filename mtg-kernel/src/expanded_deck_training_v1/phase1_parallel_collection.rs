@@ -22,6 +22,9 @@ struct WorkerTimingV1 {
     worker: usize,
     completed_episodes: usize,
     busy_seconds: f64,
+    /// Schedule indices, including failed attempts inside each job's span.
+    /// Reuses the worker clock already read for busy_seconds.
+    episode_seconds: Vec<(usize, f64)>,
 }
 
 struct CollectorV1 {
@@ -61,6 +64,7 @@ where
                 .spawn_scoped(scope, move || {
                     let mut results = Vec::new();
                     let mut busy_seconds = 0.0;
+                    let mut episode_seconds = Vec::new();
                     while !cancelled.load(Ordering::Acquire) {
                         let index = next.fetch_add(1, Ordering::Relaxed);
                         if index >= job_count || cancelled.load(Ordering::Acquire) {
@@ -68,7 +72,9 @@ where
                         }
                         let started = Instant::now();
                         let result = catch_unwind(AssertUnwindSafe(|| work(&mut context, index)));
-                        busy_seconds += started.elapsed().as_secs_f64();
+                        let seconds = started.elapsed().as_secs_f64();
+                        busy_seconds += seconds;
+                        episode_seconds.push((index, seconds));
                         match result {
                             Ok(Ok(value)) => results.push((index, value)),
                             Ok(Err(error)) => {
@@ -89,6 +95,7 @@ where
                         worker,
                         completed_episodes: results.len(),
                         busy_seconds,
+                        episode_seconds,
                     };
                     Ok((results, timing))
                 });
@@ -204,16 +211,12 @@ pub(super) fn collect_parallel_v1(
             // Current-self opponents need a private policy, but not another
             // disk parse and validation of the same learner checkpoint.
             if episode.opponent.as_ref() == Some(&source)
-                && !collector
-                    .opponent_cache
-                    .entry
-                    .as_ref()
-                    .is_some_and(|entry| entry.behavior.source == source)
+                && !collector.opponent_cache.contains(&source)
             {
                 // A frozen opponent keeps its production sampler even when
                 // it shares the learner's source (for example `initial`
                 // at the first update), exactly as the serial loader does.
-                collector.opponent_cache.entry = Some(LoadedOpponentV1 {
+                collector.opponent_cache.insert(LoadedOpponentV1 {
                     policy: collector
                         .policy
                         .fork_for_collection_v3()?
