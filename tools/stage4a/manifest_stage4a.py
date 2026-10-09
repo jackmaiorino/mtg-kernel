@@ -23,6 +23,13 @@ VARIANTS = {
                   "commit": "bb156f36 (branch claude/stage4a-gy-unordered)", "frozen": "frozen-gy",
                   "corpus": {"r1": "out/corpus-gy-r1.jsonl", "r2": "out/corpus-gy-r2.jsonl"},
                   "graveyards": "unordered (sorted by handle-masked content)"},
+    "contents": {"binary": "E:/pinned-binaries/fcd72fa988b60b462feed66fc73b47baf50626fbd5538a71cd7a2649591c7d0d/regret_census_v1.exe",
+                 "commit": "0c567f86 (branch claude/stage4a-gy-unordered)", "frozen": "frozen-final",
+                 "corpus": {"r1": "out/corpus-final-r1.jsonl", "r2": "out/corpus-final-r2.jsonl"},
+                 "graveyards": "contents only (unordered) because no card in the nine registered decks reads "
+                               "graveyard order (the engine's only order-reading rule is delve; Gurmag Angler is in "
+                               "no registered deck); the binary keeps arrival order if any registered deck has delve; "
+                               "final focal graveyard order recorded per evaluation rollout"},
 }
 BASES = {"r1": 2026100941, "r2": 2026100942}
 
