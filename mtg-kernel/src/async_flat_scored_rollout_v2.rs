@@ -380,6 +380,7 @@ pub enum AsyncFlatScoredRolloutErrorV2 {
         error: FastCategoricalError,
     },
     SchedulerDeadlineExceeded,
+    UnsupportedSearchTrajectoryContract,
     BrokerProtocolViolation,
     WorkerPanicked {
         worker_id: usize,
@@ -403,6 +404,9 @@ impl From<AsyncFlatScoredRolloutErrorV1> for AsyncFlatScoredRolloutErrorV2 {
                 logical_lanes,
             },
             AsyncFlatScoredRolloutErrorV1::InvalidSchedulerTimeout => Self::InvalidSchedulerTimeout,
+            AsyncFlatScoredRolloutErrorV1::UnsupportedSearchTrajectoryContract => {
+                Self::UnsupportedSearchTrajectoryContract
+            }
             AsyncFlatScoredRolloutErrorV1::EmptyEpisodeRange => Self::EmptyEpisodeRange,
             AsyncFlatScoredRolloutErrorV1::EpisodeRangeOverflow => Self::EpisodeRangeOverflow,
             AsyncFlatScoredRolloutErrorV1::EpisodeCountExceedsAddressSpace { requested } => {
@@ -482,6 +486,7 @@ impl fmt::Display for AsyncFlatScoredRolloutErrorV2 {
                 formatter,
                 "broker_batch_target {requested} is outside 1..={logical_lanes}"
             ),
+            Self::UnsupportedSearchTrajectoryContract => write!(formatter, "search v3 requires a fresh trajectory contract; native rollout receipts bind Flat Action V2"),
             Self::InvalidSchedulerTimeout => write!(formatter, "scheduler timeout is invalid"),
             Self::EmptyEpisodeRange => write!(formatter, "episode_count must be positive"),
             Self::EpisodeRangeOverflow => write!(formatter, "episode id range overflows u64"),
