@@ -408,7 +408,7 @@ mod tests {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NativeLaneTrajectoryReceiptV3 {
     Legacy(NativeTrainingTrajectoryReceiptV2),
     Search(NativeSearchTrajectoryReceiptV3),
