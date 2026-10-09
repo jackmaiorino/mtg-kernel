@@ -31,7 +31,10 @@ at Untap independently of changes to the round number or active seat.
 Immediately after each positive `LifeGain` commit, first-gain abilities
 capture existing `PendingTrigger` data with controller, definition ability
 index, source incarnation and effect. The optional queue also binds each
-capture to its committed gain history index. After resolution, validated
+capture to its committed gain history index. Collection requires that exact
+index in the unprocessed positive-gain suffix of the current event batch;
+restoring an already processed capture cannot replay its historical gain.
+After resolution, validated
 captures join the ordinary waiting-trigger group before SBAs and APNAP
 ordering, and drain once. Generic final-battlefield matching skips this
 condition. A later ETB cannot see an earlier gain; a later departure,
@@ -51,8 +54,9 @@ ledger/captures exactly; neither hidden family presence nor ledger presence
 may change actor-visible keys. Prepared tests compare actor-identical
 hidden pools, validate legacy omission/hash behavior, exercise per-seat
 ordinals, batches and turn resets, and cover event-time entry/departure,
-source control changes, Food costs, Cat identity, and pending capture/surveil
-restore. Hosted tests will supply actual results after the prior versions
+source control changes, Food costs, Cat identity, pending capture/surveil
+restore, stale capture replay after drain, and valid captures followed by
+later atomic events. Hosted tests will supply actual results after the prior versions
 integrate. Pinned rustfmt and diff checks are the only local Rust checks;
 Stage4a's desktop reservation, paid-run authority and frozen evidence remain
 untouched.

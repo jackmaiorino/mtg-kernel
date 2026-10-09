@@ -287,13 +287,42 @@ pub(crate) fn take_captures(state: &mut GameState) -> Result<Vec<PendingTrigger>
     let Some(ledger) = state.life_gain_turn_v1.as_ref() else {
         return Ok(Vec::new());
     };
+    // A historical first gain alone cannot authorize another delivery. Match
+    // captures to the positive-gain suffix that is still awaiting collection.
+    // Values are checked against history before using its exact event indices.
+    let pending_gain_indices: std::collections::BTreeSet<_> = if let Some(capture) =
+        ledger.captures.first()
+    {
+        event_ordinals(state, &state.engine.event_log).map_err(|_| capture.pending.source)?;
+        let pending_count = state
+            .engine
+            .event_log
+            .iter()
+            .filter(|event| matches!(event, CommittedEvent::LifeGain { amount, .. } if *amount > 0))
+            .count();
+        state
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .rev()
+            .filter_map(|(index, event)| {
+                matches!(event, CommittedEvent::LifeGain { amount, .. } if *amount > 0)
+                    .then_some(index)
+            })
+            .take(pending_count)
+            .collect()
+    } else {
+        Default::default()
+    };
     let mut seen = std::collections::BTreeSet::new();
     for capture in &ledger.captures {
         let generation = capture
             .pending
             .source_contract
             .map(|contract| contract.zone_change_count);
-        if validate_capture(state, capture).is_err()
+        if !pending_gain_indices.contains(&capture.gain_history_index)
+            || validate_capture(state, capture).is_err()
             || !seen.insert((
                 capture.gain_history_index,
                 capture.pending.source,
