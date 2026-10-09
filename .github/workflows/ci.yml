@@ -158,6 +158,11 @@ jobs:
       - name: Run CUDA backend feature Clippy (compile gate, no device)
         run: cargo clippy --release --locked -p mtg-kernel --all-targets --features experimental-burn-net8-packed-cuda-v1 -- -D warnings
 
+      - name: Check rules-vector trigger context and event classes
+        run: |
+          cargo test --release --locked -p mtg-kernel --lib rules_vector_v1::tests
+          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib rules_vector_v1::tests
+
   # Each group builds a different feature set, so they run as parallel
   # jobs; `rust-tests` below keeps the per-OS check names.
   rust-test-groups:
