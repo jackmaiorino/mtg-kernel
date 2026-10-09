@@ -20,7 +20,7 @@ use crate::flat_policy_v3::{
     FlatDecisionLocalLibraryV3, FlatFinalizedChosenCreatureCostV3, FlatPendingCastObjectCostV3,
     FlatPendingChosenCreatureCostV3, FlatQueuedWardPaymentV3, FlatWardPaymentV3,
 };
-use crate::policy_observation_v7::HistoricalSourceContextV7;
+pub use crate::policy_observation_v7::HistoricalSourceContextV7;
 use crate::rl::StackItemKindV2;
 use crate::rl_session::{FastActorDecisionV1, FastActorSessionV1, FlatActionDecisionBindingV3};
 

@@ -236,9 +236,11 @@ mod visible_first_key_tests {
     use super::*;
     #[test]
     fn fixed_key_excludes_table_offsets_and_has_fixed_scalar_bytes() {
-        let mut core = FlatActionCoreV1::default();
-        core.flags = 0x0102;
-        core.number = -2;
+        let mut core = FlatActionCoreV1 {
+            flags: 0x0102,
+            number: -2,
+            ..FlatActionCoreV1::default()
+        };
         let mut expected = vec![0; 38];
         expected[1..3].copy_from_slice(&[1, 2]);
         expected[17..21].copy_from_slice(&[255, 255, 255, 254]);
