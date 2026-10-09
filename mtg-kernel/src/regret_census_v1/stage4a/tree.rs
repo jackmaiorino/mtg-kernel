@@ -154,15 +154,17 @@ fn masked(v: &Value) -> String {
     x.to_string()
 }
 
-/// Observation lists whose order carries no information (hands, battlefield,
-/// exile, known hand cards, effects, relations, permissions, historical
-/// sources, a library search's offered cards) but can follow engine handles.
-/// Every other list keeps engine order: graveyards (arrival order), stack,
-/// targets, combat orders, pending triggers. Never applied to the menu.
-const UNORDERED_LISTS: [&str; 9] = [
+/// Observation lists whose order carries no game information in this card
+/// pool (hands, battlefield, graveyards, exile, known hand cards, effects,
+/// relations, permissions, historical sources, a library search's offered
+/// cards) but can follow engine handles or hidden draw order (a mill reveals
+/// the library in its sampled order). Every other list keeps engine order:
+/// stack, targets, combat orders, pending triggers. Never applied to the menu.
+const UNORDERED_LISTS: [&str; 10] = [
     "own_hand",
     "known_hand_cards",
     "battlefield",
+    "graveyards",
     "exile",
     "continuous_effects",
     "object_relations",
@@ -584,7 +586,7 @@ mod tests {
             "stack":[{"n":"q"},{"n":"p"}]});
         sort_object_lists(&mut v);
         assert_eq!(v["player_status"][0]["x"], 2);
-        assert_eq!(v["graveyards"][0][0]["n"], "b");
+        assert_eq!(v["graveyards"][0][0]["n"], "a");
         assert_eq!(v["battlefield"][0][0]["n"], "a");
         assert_eq!(v["battlefield"][1][0]["n"], "c");
         assert_eq!(v["own_hand"][0]["n"], "y");
