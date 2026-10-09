@@ -22,7 +22,9 @@ VARIANTS = {
     "unordered": {"binary": "E:/pinned-binaries/558838b01e326c5cb86f7c0b588c44925a670ddd468634aaa0fdf409f40ff769/regret_census_v1.exe",
                   "commit": "bb156f36 (branch claude/stage4a-gy-unordered)", "frozen": "frozen-gy",
                   "corpus": {"r1": "out/corpus-gy-r1.jsonl", "r2": "out/corpus-gy-r2.jsonl"},
-                  "graveyards": "unordered (sorted by handle-masked content)"},
+                  "graveyards": "unordered (sorted by handle-masked content): graveyard order is not in E's node "
+                                "keys, by Jack's decision on 2026-10-09 (revisit later: rare cards read graveyard "
+                                "order; see collab LANES/stage4a-execution-20261009/REVISIT-GRAVEYARD-ORDER.md)"},
     "contents": {"binary": "E:/pinned-binaries/fcd72fa988b60b462feed66fc73b47baf50626fbd5538a71cd7a2649591c7d0d/regret_census_v1.exe",
                  "commit": "0c567f86 (branch claude/stage4a-gy-unordered)", "frozen": "frozen-final",
                  "corpus": {"r1": "out/corpus-final-r1.jsonl", "r2": "out/corpus-final-r2.jsonl"},
