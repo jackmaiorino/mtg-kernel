@@ -462,6 +462,7 @@ mod tests {
         let swamp = crate::card_def::card_id_by_name("Swamp").unwrap();
         resampled.objects.get_mut(id).card_def = swamp;
         resampled.objects.get_mut(id).name = "Swamp".into();
+        resampled.objects.get_mut(id).v4 = crate::state::ObjectStateV4::from_card_def(swamp);
         assert_eq!(resampled.life_gain_turn_v1, state.life_gain_turn_v1);
         assert_eq!(
             crate::rl::observe_v1(&resampled, PlayerId::P0, 0).unwrap(),
