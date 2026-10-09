@@ -438,6 +438,25 @@ class AnalyzeCrossStage3Test(unittest.TestCase):
                 res = json.load(f)
         self.assertEqual((res["rejected"], res["roots"], res["long_follow"]), (1, 4, "improved:turn+4"))
 
+    def test_main_leaves_out_roots_with_no_kept_evaluation(self):
+        rows = [full_cross_row(i, i, self.wins(t1__improved_turn4=2)) for i in range(4)]
+        dead = full_cross_row(9, 9, self.wins())
+        for j in dead["eval"]["jobs"]:
+            j["scores"], j["transitions"], j["wall"] = [], [], []
+        dead["eval"].update(failed_playouts=4, failures=["StaleEnvironmentBinding"])
+        with tempfile.TemporaryDirectory() as d:
+            rows_path, out = os.path.join(d, "cross.jsonl"), os.path.join(d, "out.json")
+            with open(rows_path, "w") as f:
+                for r in rows + [dead]:
+                    f.write(json.dumps(r) + "\n")
+            with contextlib.redirect_stdout(io.StringIO()):
+                analyze_cross_main([rows_path, "--json", out, "--boot", "50"])
+            with open(out) as f:
+                res = json.load(f)
+        self.assertEqual(res["roots"], 4)
+        self.assertEqual([e["root"] for e in res["no_evaluation"]], ["r9"])
+        self.assertTrue(all(v == v for v in res["cells"].values()))
+
 
 def analyze_cross_main(argv):
     import sys
@@ -657,6 +676,37 @@ class DispositionsAndAdequacyTest(unittest.TestCase):
         self.assertEqual(res["mechanism/spy"]["roots"], 8)
         self.assertEqual(res["mechanism/spy_cast"]["roots"], 4)
         self.assertIn("adequacy", res["mechanism/spy"])
+
+    def test_main_leaves_out_roots_with_no_kept_evaluation(self):
+        rows = [adequate_row(i, i // 2, BASE_WINS, score=float(i % 2)) for i in range(24)]
+        dead = [adequate_row(50 + i, 50 + i, BASE_WINS) for i in range(2)]
+        for r in dead:
+            for j in r["eval"]["jobs"]:
+                j["scores"], j["natural"], j["transitions"], j["wall"] = [], [], [], []
+            r["eval"].update(playouts=0, failed_playouts=4, failures=["StaleEnvironmentBinding"])
+        with tempfile.TemporaryDirectory() as d:
+            path, freeze, out = (os.path.join(d, x) for x in ("cond.jsonl", "freeze.json", "out.json"))
+            with open(path, "w") as f:
+                for r in rows + dead:
+                    f.write(json.dumps(r) + "\n")
+            with open(freeze, "w") as f:
+                json.dump({"strata_outcomes": {"own_main|action": {"won": 10, "lost": 30, "other": 0}}}, f)
+            old = __import__("sys").argv
+            __import__("sys").argv = ["analyze_search.py", path, "--freeze", freeze, "--json", out, "--boot", "50"]
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    analyze_search.main()
+            finally:
+                __import__("sys").argv = old
+            with open(out) as f:
+                res = json.load(f)
+        self.assertEqual([e["root"] for e in res["no_evaluation"]], ["r50", "r51"])
+        self.assertEqual(res["no_evaluation"][0]["failures"], ["StaleEnvironmentBinding"])
+        for name in ("representative/all", "representative/own_main|action"):
+            self.assertEqual(res[name]["roots"], 24)
+            for k in ("D-A@400", "B-A@400"):
+                e = res[name]["contrasts"][k]
+                self.assertTrue(all(x == x for x in (e["diff"], e["lo"], e["hi"])), (name, k))
 
 
 def compare_files(old_rows, new_rows, *extra):
