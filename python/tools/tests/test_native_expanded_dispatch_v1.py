@@ -121,6 +121,27 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
             changed = copy.deepcopy(self.config); changed[key] = value
             self.assertNotEqual(dispatch.workload(changed, "training"), dispatch.workload(self.config, "training"))
 
+    def test_single_pass_pinned_reader_rejects_same_path_replacement(self):
+        item = self.save({"value": 1})
+        validated = {}
+        self.assertEqual(dispatch.read_pinned_json(item, validated_files=validated), {"value": 1})
+        self.assertEqual(validated[str(Path(item["path"]).resolve())], item["sha256"])
+        Path(item["path"]).write_text('{"value": 2}', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "changed pinned input"):
+            dispatch.read_pinned_json(item, validated_files=validated)
+
+    def test_single_pass_recovery_reader_checks_local_bytes(self):
+        source = self.root / "absent-source"
+        recovered = self.root / "recovered"
+        recovered.mkdir()
+        local = self.save({"value": 1}, recovered / "checkpoint.json")
+        item = {**local, "path": str(source / "checkpoint.json")}
+        resolver = dispatch.artifact_reader([{"source_root": str(source), "local_root": str(recovered)}])
+        self.assertEqual(dispatch.read_pinned_json(item, resolver), {"value": 1})
+        Path(local["path"]).write_text('{"value": 2}', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "changed pinned input"):
+            dispatch.read_pinned_json(item, resolver)
+
     def test_serial_parallel_identical_saved_learning_outputs(self):
         first, second = dispatch.read(self.trial(1, 10)["path"]), dispatch.read(self.trial(2, 6)["path"])
         self.assertEqual(first["fingerprint"], second["fingerprint"])
@@ -128,6 +149,10 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
         receipt = dispatch.read(result["iterations"][0]["path"])
         update = dispatch.read(receipt["update"]["path"])
         checkpoint = dispatch.read(update["checkpoint"]["path"])
+        legacy_checkpoint = copy.deepcopy(checkpoint)
+        legacy_checkpoint["trajectories"] = [item["sha256"] for item in checkpoint["trajectories"]]
+        self.assertEqual(second["fingerprint"]["iterations"][0]["checkpoint_bits"],
+                         dispatch.digest(legacy_checkpoint))
         checkpoint["first_moments"][0] += 1
         update["checkpoint"] = self.save(checkpoint)
         receipt["update"] = self.save(update)

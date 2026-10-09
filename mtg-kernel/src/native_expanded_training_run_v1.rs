@@ -353,8 +353,20 @@ fn pin(path: &Path) -> Result<PinnedFileV1, String> {
     })
 }
 fn read_pin(pin: &PinnedFileV1) -> Result<Value, String> {
-    verify_pin(pin)?;
-    read_json(&pin.path, SMALL_CAP)
+    read_pin_bounded(pin, SMALL_CAP)
+}
+fn read_pin_bounded(pin: &PinnedFileV1, cap: u64) -> Result<Value, String> {
+    let file = File::open(&pin.path).map_err(err)?;
+    let meta = file.metadata().map_err(err)?;
+    check(
+        meta.is_file() && meta.len() <= cap,
+        "artifact is not a bounded regular file",
+    )?;
+    let mut bytes = Vec::with_capacity(meta.len() as usize);
+    file.take(cap + 1).read_to_end(&mut bytes).map_err(err)?;
+    check(bytes.len() as u64 <= cap, "artifact grew beyond bound")?;
+    check(digest(&bytes) == pin.sha256, "pinned artifact hash differs")?;
+    serde_json::from_slice(&bytes).map_err(err)
 }
 fn publish(
     directory: &Path,
@@ -448,6 +460,35 @@ fn collection_non_natural_ledger_pin(
     }
 }
 
+/// Reuse semantic checks only while all their pinned bytes still match.
+/// This is invocation-local evidence, never a persisted or metadata cache.
+fn reverify_validated_collection(
+    collection: &PinnedFileV1,
+    trajectories: &[PinnedFileV1],
+) -> Result<(), String> {
+    if let Some(ledger) = collection_non_natural_ledger_pin(collection)? {
+        verify_pin(&ledger)?;
+    }
+    let checked: Vec<Result<(), String>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = trajectories
+            .iter()
+            .map(|trajectory| scope.spawn(move || verify_pin(trajectory)))
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|_| Err("collection verification worker panicked".to_string()))
+            })
+            .collect()
+    });
+    for result in checked {
+        result?;
+    }
+    Ok(())
+}
+
 fn validate_collection(
     collection: &PinnedFileV1,
     source: &ExpandedModelSourceV1,
@@ -518,8 +559,7 @@ fn validate_collection_episodes_with_sampler_v1(
             .iter()
             .map(|trajectory| {
                 scope.spawn(move || -> Result<Value, String> {
-                    verify_pin(trajectory)?;
-                    read_json(&trajectory.path, ARTIFACT_CAP)
+                    read_pin_bounded(trajectory, ARTIFACT_CAP)
                 })
             })
             .collect();
@@ -897,6 +937,9 @@ pub fn run_native_expanded_training_v1(
         attempts.sort_by_key(|entry| entry.0);
         let mut collection_pin = None;
         let mut update_pin = None;
+        // Only a collection fully validated in this invocation may reuse its
+        // parsed schedule checks. Its bytes are still reverified after update.
+        let mut validated_trajectories = None;
         for (_, attempt) in &attempts {
             let saved_command = attempt.join("collect-command.json");
             if !saved_command.exists() {
@@ -993,6 +1036,7 @@ pub fn run_native_expanded_training_v1(
                 config.collection_sampler,
             )?;
             collection_validation_seconds += started.elapsed().as_secs_f64();
+            validated_trajectories = Some(trajectories.clone());
             publish(
                 &attempt,
                 "update-input.json",
@@ -1009,13 +1053,20 @@ pub fn run_native_expanded_training_v1(
         let collection = collection_pin.unwrap();
         let update = update_pin.unwrap();
         let started = Instant::now();
-        let trajectories = validate_collection(
-            &collection,
-            &current,
-            &episodes,
-            &current_identity,
-            config.collection_sampler,
-        )?;
+        let trajectories = if let Some(trajectories) = validated_trajectories {
+            // Hash every referenced file again to reject post-update changes,
+            // including any tolerant-collection ledger. Never trust mtime.
+            reverify_validated_collection(&collection, &trajectories)?;
+            trajectories
+        } else {
+            validate_collection(
+                &collection,
+                &current,
+                &episodes,
+                &current_identity,
+                config.collection_sampler,
+            )?
+        };
         collection_validation_seconds += started.elapsed().as_secs_f64();
         let started = Instant::now();
         let (next, after) = validate_update(
@@ -1099,6 +1150,32 @@ mod tests {
         ));
         fs::create_dir(&directory).unwrap();
         directory
+    }
+
+    #[test]
+    fn bounded_pinned_parse_and_reverification_reject_changed_bytes() {
+        let root = temporary_directory("reverify");
+        let trajectory = publish(&root, "trajectory.json", &json!({"episode":1})).unwrap();
+        let ledger = publish(&root, "ledger.json", &json!({"entries":[]})).unwrap();
+        let collection = publish(
+            &root,
+            "collection.json",
+            &json!({"trajectories":[trajectory], "non_natural_ledger":ledger}),
+        )
+        .unwrap();
+        assert!(read_pin_bounded(&trajectory, 1).is_err());
+        assert_eq!(
+            read_pin_bounded(&trajectory, ARTIFACT_CAP).unwrap(),
+            json!({"episode":1})
+        );
+        reverify_validated_collection(&collection, &[trajectory.clone()]).unwrap();
+        fs::write(&trajectory.path, b"{\"episode\":2}").unwrap();
+        assert!(read_pin_bounded(&trajectory, ARTIFACT_CAP).is_err());
+        assert!(reverify_validated_collection(&collection, &[trajectory.clone()]).is_err());
+        fs::write(&trajectory.path, b"{\"episode\":1}").unwrap();
+        fs::write(&ledger.path, b"{\"entries\":[1]}").unwrap();
+        assert!(reverify_validated_collection(&collection, &[trajectory]).is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
