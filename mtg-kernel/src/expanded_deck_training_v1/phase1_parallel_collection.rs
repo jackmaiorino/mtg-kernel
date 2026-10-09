@@ -179,12 +179,13 @@ pub(super) fn collect_parallel_v1(
         identity: inference_identity_v1(&source, &policy, &state)?,
     };
     drop(state);
+    let verified_sources = verify_collection_opponent_sources_v1(&episodes)?;
     let worker_count = workers.min(episodes.len());
     let contexts = (0..worker_count)
         .map(|_| {
             Ok(CollectorV1 {
                 policy: policy.fork_for_collection_v3()?,
-                opponent_cache: OpponentCacheV1::default(),
+                opponent_cache: OpponentCacheV1::for_collection(verified_sources.clone()),
             })
         })
         .collect::<Result<Vec<_>, String>>()?;

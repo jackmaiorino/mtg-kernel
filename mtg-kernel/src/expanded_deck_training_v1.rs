@@ -538,9 +538,17 @@ const OPPONENT_CACHE_CAPACITY_V1: usize = 8;
 #[derive(Default)]
 struct OpponentCacheV1 {
     entries: Vec<LoadedOpponentV1>,
+    verified_sources: Vec<ExpandedModelSourceV1>,
 }
 
 impl OpponentCacheV1 {
+    fn for_collection(verified_sources: Vec<ExpandedModelSourceV1>) -> Self {
+        Self {
+            entries: Vec::new(),
+            verified_sources,
+        }
+    }
+
     fn contains(&self, source: &ExpandedModelSourceV1) -> bool {
         self.entries
             .iter()
@@ -575,13 +583,94 @@ impl OpponentCacheV1 {
             if self.entries.len() == OPPONENT_CACHE_CAPACITY_V1 {
                 self.entries.remove(0);
             }
-            let (opponent, _) = ordered_update_preparation::load_opponent_cached_v1(source)?;
+            let opponent = if self.verified_sources.contains(source) {
+                ordered_update_preparation::load_opponent_cached_v1(source)?.0
+            } else {
+                // Unrecognized import schemas retain their original complete
+                // loader validation rather than trusting a process cache hit.
+                let (policy, identity) = load_expanded_inference_v1(source)?;
+                LoadedOpponentV1 {
+                    policy,
+                    behavior: ExpandedSeatBehaviorV1 {
+                        source: source.clone(),
+                        identity,
+                    },
+                }
+            };
             self.insert(opponent);
         }
         self.entries
             .last_mut()
             .ok_or_else(|| "opponent cache is empty".into())
     }
+}
+
+/// Revalidate every external byte pin once at a collection boundary before
+/// reusing a process-cached model. Schema-specific semantic validation remains
+/// the cache miss loader's responsibility; changed bytes cannot hit that cache.
+fn verify_collection_opponent_sources_v1(
+    episodes: &[ExpandedEpisodeV1],
+) -> Result<Vec<ExpandedModelSourceV1>, String> {
+    let mut verified = Vec::new();
+    let mut checked = Vec::new();
+    for source in episodes
+        .iter()
+        .filter_map(|episode| episode.opponent.as_ref())
+    {
+        if checked.contains(source) {
+            continue;
+        }
+        checked.push(source.clone());
+        let bytes = read_pinned_bytes(&source.play_import)?;
+        if let Some(pin) = &source.checkpoint {
+            read_pinned_bytes(pin)?;
+        }
+        let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
+        let schema = probe.get("schema").and_then(Value::as_str);
+        if schema == Some(fresh_initialization_source::SOURCE_SCHEMA) {
+            let descriptor = fresh_initialization_source::parse_source_v1(&bytes)?;
+            read_pinned_bytes(&descriptor.initialization)?;
+            read_pinned_bytes(&descriptor.parameters)?;
+        } else if schema.is_none() {
+            let import: FrozenPlayPolicyImportV1 = serde_json::from_slice(&bytes).map_err(err)?;
+            let metadata = read_pinned_bytes(&PinnedFileV1 {
+                path: import.export_directory.join("metadata.json"),
+                sha256: import.expected_metadata_sha256,
+            })?;
+            let metadata: Value = serde_json::from_slice(&metadata).map_err(err)?;
+            for (path, expected) in [
+                (
+                    import.source_run_path,
+                    metadata
+                        .pointer("/identity/loaded_run_sha256")
+                        .and_then(Value::as_str)
+                        .ok_or("source run pin missing")?
+                        .to_owned(),
+                ),
+                (
+                    import.source_registry_path,
+                    import.expected_source_registry_sha256,
+                ),
+                (
+                    import.export_directory.join("parameters.f32le"),
+                    metadata
+                        .pointer("/parameter_section_sha256")
+                        .and_then(Value::as_str)
+                        .ok_or("parameter pin missing")?
+                        .to_owned(),
+                ),
+            ] {
+                read_pinned_bytes(&PinnedFileV1 {
+                    path,
+                    sha256: expected,
+                })?;
+            }
+        } else {
+            continue;
+        }
+        verified.push(source.clone());
+    }
+    Ok(verified)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -2389,7 +2478,8 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 identity: inference_identity_v1(&source, &policy, &state)?,
             };
             drop(state);
-            let mut opponent_cache = OpponentCacheV1::default();
+            let verified_sources = verify_collection_opponent_sources_v1(&episodes)?;
+            let mut opponent_cache = OpponentCacheV1::for_collection(verified_sources);
             let initialization_seconds = collection_started.elapsed().as_secs_f64();
             fs::create_dir(&output_directory).map_err(err)?;
             let mut outputs = Vec::new();
@@ -3241,7 +3331,10 @@ fn execute_update_v1(
             }
         }
     };
-    let learner_update_seconds = learner_started.elapsed().as_secs_f64();
+    let learner_elapsed = learner_started.elapsed();
+    gae_phase_recorder
+        .finish_update_v1(u64::try_from(learner_elapsed.as_nanos()).unwrap_or(u64::MAX));
+    let learner_update_seconds = learner_elapsed.as_secs_f64();
     // Restore every frozen tensor and its moments before any publication;
     // from_snapshot_v1 revalidates the manifest and the canonical gauge.
     let frozen_tensor_sha256 = match masked_before {
@@ -3574,6 +3667,65 @@ pub(crate) mod tests {
         });
         assert!(!cache.contains(&changed));
         assert!(cache.load(&changed).is_err());
+    }
+
+    #[test]
+    fn collection_cache_boundary_rejects_same_path_mutation_of_all_pins() {
+        let root = std::env::temp_dir().join(format!(
+            "collection-cache-pins-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        fs::create_dir(&root).unwrap();
+        let write_pin = |name: &str, bytes: &[u8]| {
+            let path = root.join(name);
+            fs::write(&path, bytes).unwrap();
+            PinnedFileV1 {
+                path,
+                sha256: sha(bytes),
+            }
+        };
+        let initialization = write_pin("initialization.json", b"initialization fixture");
+        let parameters = write_pin("parameters.f32le", b"parameter fixture");
+        let checkpoint = write_pin("checkpoint.json", b"checkpoint fixture");
+        let descriptor = json!({
+            "schema": fresh_initialization_source::SOURCE_SCHEMA,
+            "initialization": initialization,
+            "parameters": parameters,
+        });
+        let import = write_pin("source.json", &serde_json::to_vec(&descriptor).unwrap());
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let (mut trajectory, mut behavior, _) = replay_fixture(&mut policy, None, 0, &[0, 1]);
+        behavior.source.play_import = import.clone();
+        behavior.source.checkpoint = Some(checkpoint.clone());
+        trajectory.episode.opponent = Some(behavior.source.clone());
+        let episodes = [trajectory.episode];
+        let verified = verify_collection_opponent_sources_v1(&episodes).unwrap();
+        let mut cache = OpponentCacheV1::for_collection(verified);
+        cache.insert(LoadedOpponentV1 {
+            policy,
+            behavior: behavior.clone(),
+        });
+        assert!(cache.contains(&behavior.source));
+        for pin in [import, initialization, parameters, checkpoint] {
+            let original = fs::read(&pin.path).unwrap();
+            fs::write(&pin.path, b"changed at the same path").unwrap();
+            // The cached policy still exists. A new collection must reject
+            // changed pinned bytes before that cached entry can be used.
+            assert!(cache.contains(&behavior.source));
+            assert!(verify_collection_opponent_sources_v1(&episodes)
+                .unwrap_err()
+                .contains("input file SHA differs"));
+            fs::write(&pin.path, original).unwrap();
+        }
+        assert_eq!(
+            verify_collection_opponent_sources_v1(&episodes).unwrap(),
+            vec![behavior.source]
+        );
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
