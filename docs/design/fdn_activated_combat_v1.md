@@ -3,8 +3,9 @@
 Issue #110 batch claim: Shivan Dragon, Axgard Cavalry and Rogue's Passage,
 append IDs 327-329 after v60. The coordinator reserves catalog v61. The full
 booster target remains 286 names; registration coverage becomes 130 full,
-one partial and 155 missing. Native qualification and the frozen v61 checksum
-are pending hosted CI; this document makes no gameplay-completion claim yet.
+one partial and 155 missing. Hosted compilation emitted v61 checksum
+`949beb8c995c006c`; affected gameplay/profile checks remain pending, so this
+document makes no gameplay-completion claim yet.
 
 | Card | Printed activation | Existing interpreter machinery |
 | --- | --- | --- |
@@ -28,8 +29,10 @@ invalid targets, exact source/target incarnation changes, expiry, real haste
 attack eligibility, unblockability, mana ability separation, and pending
 target/stack snapshot restore.
 
-The v60 native-store profile must remain readable and fail publication or
-resume against the new live catalog. A v61 profile will be pinned only after
-the generated checksum is captured from hosted compilation. No local
+The v60 native-store profile retains its frozen literals and remains readable;
+publication/resume refuse it against the new live catalog. The independent
+v61 profile is pinned to the generated checksum from [hosted build job
+113990960984](https://github.com/jackmaiorino/mtg-kernel/actions/runs/37980736036/job/113990960984).
+All four store/science classifiers include the new profile. No local
 Cargo/native check, training, paid run or reservation takeover is used while
 Stage4a reserves the desktop.
