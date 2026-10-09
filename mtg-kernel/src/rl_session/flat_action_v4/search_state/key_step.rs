@@ -5,6 +5,12 @@ use super::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct V4SearchActionTokenV1(FlatActionDecisionSliceV3);
 
+impl V4SearchActionTokenV1 {
+    pub(crate) fn commitment(self) -> [u8; 16] {
+        self.0.binding.0.candidate_order_commitment
+    }
+}
+
 fn hash_visible(
     mut observation: crate::policy_observation_v6::ObservationV6,
     semantics: Vec<ActionSemanticV1>,
@@ -22,7 +28,133 @@ fn hash_visible(
     Ok(hash.finalize().into())
 }
 
+/// Fixed big-endian field sequence for the V3 collection rejection rule.
+/// Excludes action/object table offsets, raw handles and private state.
+fn visible_first_key_v1(
+    core: FlatActionCoreV1,
+    references: impl IntoIterator<Item = (FlatActionRefV2, FlatActionObjectV2)>,
+) -> Vec<u8> {
+    let FlatActionCoreV1 {
+        kind,
+        flags,
+        ability_index,
+        remaining,
+        mode_index,
+        mode_count,
+        option_index,
+        option_count,
+        selected_count,
+        min_targets,
+        max_targets,
+        number,
+        minimum,
+        maximum,
+        mana_choice,
+        color,
+        cast_mode,
+        cost_kind,
+        optional_cost_choice,
+        target_kind,
+        target_player,
+        ref_start: _,
+        ref_len,
+    } = core;
+    let mut key = vec![kind as u8];
+    key.extend_from_slice(&flags.to_be_bytes());
+    key.extend_from_slice(&[ability_index, remaining, mode_index, mode_count]);
+    for value in [
+        option_index,
+        option_count,
+        selected_count,
+        min_targets,
+        max_targets,
+    ] {
+        key.extend_from_slice(&value.to_be_bytes());
+    }
+    for value in [number, minimum, maximum] {
+        key.extend_from_slice(&value.to_be_bytes());
+    }
+    key.extend_from_slice(&[
+        mana_choice,
+        color,
+        cast_mode,
+        cost_kind,
+        optional_cost_choice,
+        target_kind,
+        target_player,
+    ]);
+    key.extend_from_slice(&ref_len.to_be_bytes());
+    for (reference, object) in references {
+        let FlatActionRefV2 {
+            action_index: _,
+            role,
+            order_index,
+            associated_order,
+            card_token,
+            object_index: _,
+        } = reference;
+        let FlatActionObjectV2 {
+            card_token: object_card_token,
+            group,
+            actor_visible_ordinal,
+            owner_relative,
+            controller_relative,
+            zone,
+            zone_change_count,
+        } = object;
+        key.push(role as u8);
+        key.extend_from_slice(&order_index.to_be_bytes());
+        key.extend_from_slice(&associated_order.to_be_bytes());
+        key.extend_from_slice(&card_token.to_be_bytes());
+        key.extend_from_slice(&object_card_token.to_be_bytes());
+        key.push(group as u8);
+        key.extend_from_slice(&actor_visible_ordinal.to_be_bytes());
+        key.extend_from_slice(&[owner_relative, controller_relative, zone]);
+        key.extend_from_slice(&zone_change_count.to_be_bytes());
+    }
+    key
+}
+
 impl FastActorSessionV1 {
+    pub(crate) fn kernel_search_canonical_visible_first_v4(
+        &self,
+        expected: FastActorDecisionV1,
+    ) -> Result<u32, Error> {
+        self.kernel_search_action_token_v4(expected)?;
+        let count = expected.legal_action_count as usize;
+        let capacity = count
+            .checked_mul(FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1)
+            .ok_or(Error::InvalidVisibleBinding)?
+            .max(256);
+        let mut actions = vec![FlatActionCoreV1::default(); count];
+        let mut refs = vec![FlatActionRefV2::default(); capacity];
+        let mut objects = vec![FlatActionObjectV2::default(); capacity];
+        self.encode_current_flat_action_slice_v4(
+            expected,
+            &mut FlatActionDecisionSliceBuffersV2 {
+                actions: &mut actions,
+                refs: &mut refs,
+                objects: &mut objects,
+            },
+        )
+        .map_err(|_| Error::InvalidVisibleBinding)?;
+        let mut keys = Vec::with_capacity(count);
+        for (index, action) in actions.iter().copied().enumerate() {
+            let key = visible_first_key_v1(
+                action,
+                refs[action.ref_start as usize
+                    ..action.ref_start as usize + action.ref_len as usize]
+                    .iter()
+                    .map(|reference| (*reference, objects[reference.object_index as usize])),
+            );
+            keys.push((key, index as u32));
+        }
+        keys.into_iter()
+            .min()
+            .map(|(_, index)| index)
+            .ok_or(Error::InvalidVisibleBinding)
+    }
+
     pub(crate) fn kernel_search_visible_key_v4(&self, depth: u32) -> Result<[u8; 32], Error> {
         if self.flat_action_contract_mode != FlatActionContractModeV1::V3 {
             return Err(Error::UnsupportedActionContract);
@@ -96,6 +228,32 @@ impl FastActorSessionV1 {
             }
         }
         Ok(response)
+    }
+}
+
+#[cfg(test)]
+mod visible_first_key_tests {
+    use super::*;
+    #[test]
+    fn fixed_key_excludes_table_offsets_and_has_fixed_scalar_bytes() {
+        let mut core = FlatActionCoreV1 {
+            flags: 0x0102,
+            number: -2,
+            ..FlatActionCoreV1::default()
+        };
+        let mut expected = vec![0; 38];
+        expected[1..3].copy_from_slice(&[1, 2]);
+        expected[17..21].copy_from_slice(&[255, 255, 255, 254]);
+        assert_eq!(visible_first_key_v1(core, []), expected);
+        core.ref_start = 71;
+        assert_eq!(visible_first_key_v1(core, []), expected);
+        let reference = FlatActionRefV2::default();
+        let object = FlatActionObjectV2::default();
+        let before = visible_first_key_v1(core, [(reference, object)]);
+        let mut moved = reference;
+        moved.action_index = 23;
+        moved.object_index = 19;
+        assert_eq!(visible_first_key_v1(core, [(moved, object)]), before);
     }
 }
 

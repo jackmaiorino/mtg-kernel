@@ -1,0 +1,2861 @@
+{
+  "inventory": {
+    "desktop": {
+      "observed_utc": "2026-10-09T21:03:36.9711563Z",
+      "cpu": [
+        {
+          "Name": "13th Gen Intel(R) Core(TM) i7-13700K",
+          "NumberOfCores": 16,
+          "NumberOfLogicalProcessors": 24,
+          "LoadPercentage": 85
+        }
+      ],
+      "memory": {
+        "Caption": "Microsoft Windows 11 Home",
+        "TotalVisibleMemorySize": 134025436,
+        "FreePhysicalMemory": 89506736,
+        "LastBootUpTime": "2026-10-08T08:00:33.5-04:00"
+      },
+      "gpu": [
+        "index, name, uuid, driver_version, memory.total [MiB], memory.used [MiB], utilization.gpu [%], power.draw [W], temperature.gpu",
+        "0, NVIDIA GeForce RTX 4070 SUPER, GPU-3502709e-6aef-8ed7-4abe-562838793e3d, 596.36, 12282 MiB, 1812 MiB, 8 %, 36.63 W, 51",
+        "1, NVIDIA GeForce RTX 3050, GPU-0642d3ca-e3d4-ba16-96ab-c561c6da90e3, 596.36, 6144 MiB, 13 MiB, 0 %, 6.45 W, 27"
+      ],
+      "volumes": [
+        {
+          "DeviceID": "C:",
+          "FileSystem": "NTFS",
+          "Size": 999136686080,
+          "FreeSpace": 75055214592
+        },
+        {
+          "DeviceID": "D:",
+          "FileSystem": "NTFS",
+          "Size": 1000186310656,
+          "FreeSpace": 326385033216
+        },
+        {
+          "DeviceID": "E:",
+          "FileSystem": "NTFS",
+          "Size": 4000768323584,
+          "FreeSpace": 738233237504
+        }
+      ],
+      "disks": [
+        {
+          "FriendlyName": "Samsung SSD 870 EVO 1TB",
+          "MediaType": "SSD",
+          "BusType": "SATA",
+          "Size": 1000204886016,
+          "HealthStatus": "Healthy"
+        },
+        {
+          "FriendlyName": "Samsung SSD 870 EVO 1TB",
+          "MediaType": "SSD",
+          "BusType": "SATA",
+          "Size": 1000204886016,
+          "HealthStatus": "Healthy"
+        },
+        {
+          "FriendlyName": "ST4000DM004-2U9104",
+          "MediaType": "HDD",
+          "BusType": "SATA",
+          "Size": 4000787030016,
+          "HealthStatus": "Healthy"
+        }
+      ],
+      "local_reservation": {
+        "schema": "mtg-host-reservation/v1",
+        "host": "DESKTOP-DJ1C40R",
+        "generation": 411,
+        "lane": "claude-stage4a-20261009",
+        "work_id": "stage4a-formal-resume",
+        "acquired_at": "2026-10-09T14:43:10.635-04:00",
+        "release_condition": "stage 4a queue complete or failed"
+      },
+      "reservation": {
+        "generation": 411,
+        "lane": "claude-stage4a-20261009",
+        "work_id": "stage4a-formal-resume",
+        "acquired_at": "2026-10-09T14:43:10.635-04:00",
+        "release_condition": "stage 4a queue complete or failed"
+      },
+      "source": {
+        "path": "C:\\Users\\Jack\\.codex\\temporary\\training-throughput-audit-20261009\\resource-agent\\desktop-snapshot.json",
+        "sha256": "65c26f90eca9cc7d45a613f8a4f60759d022433a9602158c7d99a07d0866753f"
+      }
+    },
+    "computehost": {
+      "observed_utc": "2026-10-09T21:04:39.4287945Z",
+      "cpu": [
+        {
+          "Name": "AMD Ryzen 7 3700X 8-Core Processor             ",
+          "NumberOfCores": 8,
+          "NumberOfLogicalProcessors": 16,
+          "LoadPercentage": 2
+        }
+      ],
+      "memory": {
+        "Caption": "Microsoft Windows 11 Home",
+        "TotalVisibleMemorySize": 33478692,
+        "FreePhysicalMemory": 10974952
+      },
+      "gpu": [
+        "index, name, uuid, driver_version, memory.total [MiB], memory.used [MiB], utilization.gpu [%], power.draw [W]",
+        "0, NVIDIA GeForce RTX 4060, GPU-17eeab7a-ad2e-5a59-4c42-8cd26a0d7223, 591.86, 8188 MiB, 1578 MiB, 2 %, [N/A]"
+      ],
+      "volumes": [
+        {
+          "DeviceID": "C:",
+          "Size": 999123054592,
+          "FreeSpace": 74072522752
+        }
+      ],
+      "source": {
+        "path": "C:\\Users\\Jack\\.codex\\temporary\\training-throughput-audit-20261009\\resource-agent\\haley-snapshot.json",
+        "sha256": "bb55881d0a9c8b3bb542c1bcc49254d52ba1ecdf622add70aab68ab4379ab399"
+      }
+    },
+    "runpod": {
+      "observed_utc": "2026-10-09T21:03:52.963110+00:00",
+      "http_status": 200,
+      "pod_count": 5,
+      "statuses": [
+        "EXITED",
+        "EXITED",
+        "EXITED",
+        "EXITED",
+        "EXITED"
+      ],
+      "new_paid_authority": false,
+      "source": {
+        "path": "C:\\Users\\Jack\\.codex\\temporary\\training-throughput-audit-20261009\\resource-agent\\runpod-snapshot.json",
+        "sha256": "869380cee62f024c76126a9cdd5e21d158a627e1c00faa65c958a4a5a328d051"
+      }
+    }
+  },
+  "state_sources": [
+    {
+      "path": "C:\\Users\\Jack\\.codex\\temporary\\training-throughput-audit-20261009\\resource-agent\\haley-state-timing.json",
+      "sha256": "b8bec9d69a5e250911884b3cc19d0f89ef756e64fcc67022fbfca696edfd0731"
+    },
+    {
+      "path": "D:\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r4.json",
+      "sha256": "57507848a37a9496322d2b4720689a72b2c54ed8716895c507a23af7e3e86988"
+    },
+    {
+      "path": "D:\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r5.json",
+      "sha256": "e6e9cf2ac81569e7b43c9ba8399839192ba7f813dd882238e299284b996bc8c1"
+    },
+    {
+      "path": "D:\\nine-deck-baseline-20261007\\campaign\\state\\runs\\r6.json",
+      "sha256": "7c5e9381874140d9dccc11efdf8bf132053ded02bfb25283d5f0357360b16f13"
+    }
+  ],
+  "run_timing": {
+    "r1": {
+      "started": "2026-10-07T16:48:56.512873+00:00",
+      "last_successful_attempt_finished": "2026-10-08T00:12:21.166629+00:00",
+      "complete_state_updated": "2026-10-08T00:14:20.693070+00:00",
+      "calendar_envelope_seconds": 26724.180197000504,
+      "successful_attempt_seconds_sum": 24149.9451482296,
+      "attempts": 20,
+      "completed_blocks": 20
+    },
+    "r2": {
+      "started": "2026-10-08T00:24:19.070711+00:00",
+      "last_successful_attempt_finished": "2026-10-08T07:54:27.415892+00:00",
+      "complete_state_updated": "2026-10-08T07:56:33.318781+00:00",
+      "calendar_envelope_seconds": 27134.248070001602,
+      "successful_attempt_seconds_sum": 23689.949869155884,
+      "attempts": 20,
+      "completed_blocks": 20
+    },
+    "r3": {
+      "started": "2026-10-08T07:57:39.700188+00:00",
+      "last_successful_attempt_finished": "2026-10-08T16:12:26.040318+00:00",
+      "complete_state_updated": "2026-10-08T16:14:43.402745+00:00",
+      "calendar_envelope_seconds": 29823.702557086945,
+      "successful_attempt_seconds_sum": 26872.250358581543,
+      "attempts": 20,
+      "completed_blocks": 20
+    },
+    "r4": {
+      "started": "2026-10-08T07:57:39.701185+00:00",
+      "last_successful_attempt_finished": "2026-10-08T16:21:42.926620+00:00",
+      "complete_state_updated": "2026-10-08T16:23:33.814215+00:00",
+      "calendar_envelope_seconds": 30354.113029956818,
+      "successful_attempt_seconds_sum": 16228.154975891113,
+      "attempts": 22,
+      "completed_blocks": 20
+    },
+    "r5": {
+      "started": "2026-10-08T12:09:06.830639+00:00",
+      "last_successful_attempt_finished": "2026-10-08T17:19:55.122233+00:00",
+      "complete_state_updated": "2026-10-08T17:21:57.318239+00:00",
+      "calendar_envelope_seconds": 18770.48760008812,
+      "successful_attempt_seconds_sum": 15455.577646493912,
+      "attempts": 21,
+      "completed_blocks": 20
+    },
+    "r6": {
+      "started": "2026-10-08T12:09:06.830484+00:00",
+      "last_successful_attempt_finished": "2026-10-08T16:31:59.071508+00:00",
+      "complete_state_updated": "2026-10-08T16:32:58.534253+00:00",
+      "calendar_envelope_seconds": 15831.703768968582,
+      "successful_attempt_seconds_sum": 14522.301535606384,
+      "attempts": 20,
+      "completed_blocks": 20
+    }
+  },
+  "calendar": {
+    "first_dispatch": "2026-10-07T16:48:56.512873+00:00",
+    "last_complete_state": "2026-10-08T17:21:57.318239+00:00",
+    "envelope_seconds": 88380.80536603928,
+    "scope": "Recorded first training dispatch through last completed training state; includes maintenance, interruptions, host scheduling and idle gaps; excludes prelaunch qualification and later evaluation."
+  },
+  "surviving_desktop_archive_subset": [
+    {
+      "run": "r4",
+      "block": 4,
+      "archive_seconds": 54.76645830000007,
+      "post_execution_seconds": 169.87278220000007,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r4\\b04-a3\\archive.json",
+        "sha256": "2dcd9d6b402c184c2f13305b20c5404d2aa8a12fcfacd8e1aac5556697d63271"
+      }
+    },
+    {
+      "run": "r4",
+      "block": 5,
+      "archive_seconds": 54.69191300000011,
+      "post_execution_seconds": 165.43470819999993,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r4\\b05-a1\\archive.json",
+        "sha256": "97332fd24fde7d07e72fd596dbdad370b1e3448333d38bed2b0da6e9fe3180ab"
+      }
+    },
+    {
+      "run": "r4",
+      "block": 6,
+      "archive_seconds": 69.73508750000019,
+      "post_execution_seconds": 191.71369619999996,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r4\\b06-a1\\archive.json",
+        "sha256": "530a525cd5a20880b762de45fa68879bff91d7d1bde4ad61bd3c027cfb1c8f61"
+      }
+    },
+    {
+      "run": "r4",
+      "block": 7,
+      "archive_seconds": 53.93101899999965,
+      "post_execution_seconds": 161.7158583999999,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r4\\b07-a1\\archive.json",
+        "sha256": "b36723b431caafb663d791173d37bd62260a69d2f9c558d97b799d2ec54b10d9"
+      }
+    },
+    {
+      "run": "r4",
+      "block": 8,
+      "archive_seconds": 56.9437467000007,
+      "post_execution_seconds": 165.03037700000004,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r4\\b08-a1\\archive.json",
+        "sha256": "4e9839f19708f51a5683cd028d05c76557f3fdc71f2c845a3416de2a86845cea"
+      }
+    },
+    {
+      "run": "r4",
+      "block": 9,
+      "archive_seconds": 48.83377089999976,
+      "post_execution_seconds": 158.00294120000035,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r4\\b09-a1\\archive.json",
+        "sha256": "461361afd43ae787855d83c45296056fd783e112e7426f5cf60760ddb60f585a"
+      }
+    },
+    {
+      "run": "r4",
+      "block": 10,
+      "archive_seconds": 50.86290250000002,
+      "post_execution_seconds": 160.3998100000008,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r4\\b10-a1\\archive.json",
+        "sha256": "4df75fc0cc0ffd6c7cff6ed7334c253624b2193ea554ae1f88ce082c0067f9a7"
+      }
+    },
+    {
+      "run": "r4",
+      "block": 11,
+      "archive_seconds": 53.88754479999989,
+      "post_execution_seconds": 165.56722629999967,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r4\\b11-a1\\archive.json",
+        "sha256": "414866c1130e48ab7f0201ae90aa4ecb75c37e03db2e9d0813d2eeae8d1296b7"
+      }
+    },
+    {
+      "run": "r4",
+      "block": 12,
+      "archive_seconds": 51.22569309999926,
+      "post_execution_seconds": 161.0694055999993,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r4\\b12-a1\\archive.json",
+        "sha256": "450d922f3fe50ac9b7c46ab13cf72024def2d3b08c46c01653b9c3f71f0dfe45"
+      }
+    },
+    {
+      "run": "r4",
+      "block": 13,
+      "archive_seconds": 58.43318149999868,
+      "post_execution_seconds": 167.20788060000086,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r4\\b13-a1\\archive.json",
+        "sha256": "086f9f86094c822ce42e01c0f4bf94a1737606a5f0390b44ef6da716f36b2b91"
+      }
+    },
+    {
+      "run": "r4",
+      "block": 14,
+      "archive_seconds": 52.90110629999981,
+      "post_execution_seconds": 162.22391400000015,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r4\\b14-a1\\archive.json",
+        "sha256": "b0fa75669f54b447122e2af7644e86e218a8f685a265fd76f34f6811ceae0101"
+      }
+    },
+    {
+      "run": "r4",
+      "block": 15,
+      "archive_seconds": 56.970506400000886,
+      "post_execution_seconds": 169.7871391000008,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r4\\b15-a1\\archive.json",
+        "sha256": "331f8330140bacff00fc0711e616a649ecea87d70f5659b63d1b1ee95b85c3ae"
+      }
+    },
+    {
+      "run": "r4",
+      "block": 16,
+      "archive_seconds": 60.39720630000011,
+      "post_execution_seconds": 169.55278439999893,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r4\\b16-a1\\archive.json",
+        "sha256": "36299e3ea91273873ea8da23bf6362ed7972406e7c2eb4fdba5271ccd3b96d60"
+      }
+    },
+    {
+      "run": "r4",
+      "block": 17,
+      "archive_seconds": 53.03907479999907,
+      "post_execution_seconds": 163.75922119999996,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r4\\b17-a1\\archive.json",
+        "sha256": "3476896f10f09af52674b245755db89a285f989cdc1970d51f375704f6d29f0c"
+      }
+    },
+    {
+      "run": "r4",
+      "block": 18,
+      "archive_seconds": 57.400484400001005,
+      "post_execution_seconds": 168.47636950000015,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r4\\b18-a1\\archive.json",
+        "sha256": "5057f165ab7008d04e52a950d23f9a8432ba6940b17a21aa3b1141892470bc32"
+      }
+    },
+    {
+      "run": "r4",
+      "block": 19,
+      "archive_seconds": 70.97488010000052,
+      "post_execution_seconds": 191.28811850000056,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r4\\b19-a1\\archive.json",
+        "sha256": "9c7f5545914f170316d40c4163de5e762ff9f336db8d38fd6b110ad0a939230e"
+      }
+    },
+    {
+      "run": "r4",
+      "block": 20,
+      "archive_seconds": 51.961573900000076,
+      "post_execution_seconds": 164.4555507999994,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r4\\b20-a1\\archive.json",
+        "sha256": "c34e547d2b189ae028e6ad385e1a31d6894ae0b32c88e60f5b67eed2afb51be7"
+      }
+    },
+    {
+      "run": "r5",
+      "block": 1,
+      "archive_seconds": 75.95155569999997,
+      "post_execution_seconds": 204.03706920000013,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r5\\b01-a1\\archive.json",
+        "sha256": "4d4a4e473cf719c2671cf059d819b5048c7c1d28c0283ef8248fcc7ef24f4279"
+      }
+    },
+    {
+      "run": "r5",
+      "block": 2,
+      "archive_seconds": 53.838225200000124,
+      "post_execution_seconds": 176.3401961999998,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r5\\b02-a2\\archive.json",
+        "sha256": "b53607c24ddeaba73481a507e3fbaa381ec224ff0b76e90888f7ce2ea84c6300"
+      }
+    },
+    {
+      "run": "r5",
+      "block": 3,
+      "archive_seconds": 78.23268700000017,
+      "post_execution_seconds": 191.7867652,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r5\\b03-a1\\archive.json",
+        "sha256": "df863d3c3b40bf2f3a20b9b3f6521e84b959871f396da736e3dc29c378bc37ae"
+      }
+    },
+    {
+      "run": "r5",
+      "block": 4,
+      "archive_seconds": 52.671404199999415,
+      "post_execution_seconds": 167.00038089999998,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r5\\b04-a1\\archive.json",
+        "sha256": "46d83d9d3b74b3ef297b365c38dad0df23b0c0e71e9b846da7f2679fdb880449"
+      }
+    },
+    {
+      "run": "r5",
+      "block": 5,
+      "archive_seconds": 56.1924113999994,
+      "post_execution_seconds": 173.2621111999997,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r5\\b05-a1\\archive.json",
+        "sha256": "c9e8bd7c35c6609c7a8eccb6682679aee3bdcc94871e3b41fb5fc1d9370c29b0"
+      }
+    },
+    {
+      "run": "r5",
+      "block": 6,
+      "archive_seconds": 55.236639699999614,
+      "post_execution_seconds": 173.47058760000073,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r5\\b06-a1\\archive.json",
+        "sha256": "8b87d1ec6ab0e7ff16759bfe82a3211173914f5b22d7cc25e4f4da7520e44cc4"
+      }
+    },
+    {
+      "run": "r5",
+      "block": 7,
+      "archive_seconds": 66.24022640000021,
+      "post_execution_seconds": 180.06524809999974,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r5\\b07-a1\\archive.json",
+        "sha256": "aeb78894bc5a947653260210693646d371b209f358dd91979ec6b45fa5172b7c"
+      }
+    },
+    {
+      "run": "r5",
+      "block": 8,
+      "archive_seconds": 62.44983360000151,
+      "post_execution_seconds": 176.88973909999913,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r5\\b08-a1\\archive.json",
+        "sha256": "b89e5ab77d5b14970ac6b52d2f597da98c2c1424c85ff06db5ffb84abdab115d"
+      }
+    },
+    {
+      "run": "r5",
+      "block": 9,
+      "archive_seconds": 49.58303519999936,
+      "post_execution_seconds": 162.24625940000078,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r5\\b09-a1\\archive.json",
+        "sha256": "0f6f225f44f11a746ed7544f037e39d4313294aed091627c16203bde7437b31b"
+      }
+    },
+    {
+      "run": "r5",
+      "block": 10,
+      "archive_seconds": 52.801853500001016,
+      "post_execution_seconds": 166.96557060000123,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r5\\b10-a1\\archive.json",
+        "sha256": "3537dc5a8f386c536d7d9b20e200d7158367d30971f77f00eae0e7ced558a1ac"
+      }
+    },
+    {
+      "run": "r5",
+      "block": 11,
+      "archive_seconds": 53.1400246000012,
+      "post_execution_seconds": 168.81595019999986,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r5\\b11-a1\\archive.json",
+        "sha256": "6fb8b00664fc7b977dbf22650227b37b77a57a7f45b109244e63973ccd2953a7"
+      }
+    },
+    {
+      "run": "r5",
+      "block": 12,
+      "archive_seconds": 56.499988000001395,
+      "post_execution_seconds": 178.77462899999955,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r5\\b12-a1\\archive.json",
+        "sha256": "90e4267f56fad2a68955bd61ea86290031a9b0f90f1710f6871deba6718667d7"
+      }
+    },
+    {
+      "run": "r5",
+      "block": 13,
+      "archive_seconds": 53.164846800000305,
+      "post_execution_seconds": 173.05357210000147,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r5\\b13-a1\\archive.json",
+        "sha256": "8288aa46035b805ada66f8a3264088dc7a9c7114ea705f250085a2009c341ce4"
+      }
+    },
+    {
+      "run": "r5",
+      "block": 14,
+      "archive_seconds": 58.021343599999454,
+      "post_execution_seconds": 176.00063059999957,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r5\\b14-a1\\archive.json",
+        "sha256": "6f6c22eef2107196b7ef270cc732f4917c44f8ee1b0e2de84f922086113b1253"
+      }
+    },
+    {
+      "run": "r5",
+      "block": 15,
+      "archive_seconds": 71.15944339999987,
+      "post_execution_seconds": 198.35186219999923,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r5\\b15-a1\\archive.json",
+        "sha256": "07b1ee9dfbfc68182cd3bcc64952b8f296ab7314f5f7ee8450d1952cd67775ee"
+      }
+    },
+    {
+      "run": "r5",
+      "block": 16,
+      "archive_seconds": 53.394341299999724,
+      "post_execution_seconds": 177.52194309999868,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r5\\b16-a1\\archive.json",
+        "sha256": "0003d473ef68d44acc796056ae812b3d69f45cb2b4eb54f322fbfc124584bf16"
+      }
+    },
+    {
+      "run": "r5",
+      "block": 17,
+      "archive_seconds": 53.90175380000073,
+      "post_execution_seconds": 167.0966664000007,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r5\\b17-a1\\archive.json",
+        "sha256": "b23a7355fc3454674f3a6d48ad25446d10cf7ab8177c9242b8d44e16757ed42d"
+      }
+    },
+    {
+      "run": "r5",
+      "block": 18,
+      "archive_seconds": 54.98317899999893,
+      "post_execution_seconds": 169.27910669999983,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r5\\b18-a1\\archive.json",
+        "sha256": "6b03276efed5f4276a19cc1dbc1d9137e03ca20f31f70621bcffa554a3a10e75"
+      }
+    },
+    {
+      "run": "r5",
+      "block": 19,
+      "archive_seconds": 53.371308199999476,
+      "post_execution_seconds": 170.6231975999981,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r5\\b19-a1\\archive.json",
+        "sha256": "a3b39056e9a3ca2c407eccfa88917649d6cae436d95701e95dcedb219ba7fc4e"
+      }
+    },
+    {
+      "run": "r5",
+      "block": 20,
+      "archive_seconds": 55.12147470000127,
+      "post_execution_seconds": 172.0519710999979,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r5\\b20-a1\\archive.json",
+        "sha256": "625a1248d5ea03d277d6e7256e79c8837cd7b05765c5958cd517c0260cae5ba5"
+      }
+    },
+    {
+      "run": "r6",
+      "block": 1,
+      "archive_seconds": 78.04932340000005,
+      "post_execution_seconds": 209.3782953,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r6\\b01-a1\\archive.json",
+        "sha256": "378b1ca26f7a514e0b9842d2d72131e61191ac65aaa4a662f9608295ad7b5c72"
+      }
+    },
+    {
+      "run": "r6",
+      "block": 2,
+      "archive_seconds": 54.437751299999945,
+      "post_execution_seconds": 176.69852570000012,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r6\\b02-a1\\archive.json",
+        "sha256": "3cb854917d4b22c7565dd8b7ff98ebf154000f636d39a91d1cf3330b2131c734"
+      }
+    },
+    {
+      "run": "r6",
+      "block": 3,
+      "archive_seconds": 49.02644290000035,
+      "post_execution_seconds": 160.42161319999968,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r6\\b03-a1\\archive.json",
+        "sha256": "fd2015ac87ef36f88b5788e9ca05795dc1a81bcbd8c67c3d4e5ab461d4581eae"
+      }
+    },
+    {
+      "run": "r6",
+      "block": 4,
+      "archive_seconds": 58.99922120000019,
+      "post_execution_seconds": 169.24052729999994,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r6\\b04-a1\\archive.json",
+        "sha256": "2e935e95d4eb259f3c15f47a3884e9fdaf751d8341aaf269348147006a81b20f"
+      }
+    },
+    {
+      "run": "r6",
+      "block": 5,
+      "archive_seconds": 50.84801460000017,
+      "post_execution_seconds": 160.88928560000022,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r6\\b05-a1\\archive.json",
+        "sha256": "b014ba90e2044a14f6cef6bbcea525fc472ab9c475744209f423140a66ac959d"
+      }
+    },
+    {
+      "run": "r6",
+      "block": 6,
+      "archive_seconds": 50.64376269999957,
+      "post_execution_seconds": 161.55988939999952,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r6\\b06-a1\\archive.json",
+        "sha256": "e02cfafe51ef6ea41efd59eb2b2fdf81aa9b95716b4c7f5f793d16105830bbad"
+      }
+    },
+    {
+      "run": "r6",
+      "block": 7,
+      "archive_seconds": 55.05197119999957,
+      "post_execution_seconds": 167.6876883999994,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r6\\b07-a1\\archive.json",
+        "sha256": "18b16259bcb8d5d5e5e6c9b2086d9339b4c3f18437db8188b1bd7a402f9f2a2b"
+      }
+    },
+    {
+      "run": "r6",
+      "block": 8,
+      "archive_seconds": 50.21192200000041,
+      "post_execution_seconds": 160.87830469999972,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r6\\b08-a1\\archive.json",
+        "sha256": "518936fbbf23ed442cff8b917acb9a30e500bf99ef3c5a15a3c2db74e36aebe0"
+      }
+    },
+    {
+      "run": "r6",
+      "block": 9,
+      "archive_seconds": 51.61915059999956,
+      "post_execution_seconds": 161.20768140000018,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r6\\b09-a1\\archive.json",
+        "sha256": "40ee63811139b5dabbcfaa6c8702ca92666cc2118c702d4929b956a5505572a3"
+      }
+    },
+    {
+      "run": "r6",
+      "block": 10,
+      "archive_seconds": 67.10572649999995,
+      "post_execution_seconds": 176.03919139999925,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r6\\b10-a1\\archive.json",
+        "sha256": "170086f67e356f24eebf0925e5747501e9848da13e97b2c8e39a6cb9e8de02f7"
+      }
+    },
+    {
+      "run": "r6",
+      "block": 11,
+      "archive_seconds": 49.37581569999929,
+      "post_execution_seconds": 158.93145040000127,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r6\\b11-a1\\archive.json",
+        "sha256": "a69318d5405e32599a804446d66c4a3bf3b22e598bf804a7cd840651e01de69d"
+      }
+    },
+    {
+      "run": "r6",
+      "block": 12,
+      "archive_seconds": 51.75726939999913,
+      "post_execution_seconds": 159.11318490000122,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r6\\b12-a1\\archive.json",
+        "sha256": "b989e2dd8988f79ccb9d2c0440d75810fc6e6f8ca8441e7802b8b8e537df385f"
+      }
+    },
+    {
+      "run": "r6",
+      "block": 13,
+      "archive_seconds": 53.109978200000114,
+      "post_execution_seconds": 165.28807130000132,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r6\\b13-a1\\archive.json",
+        "sha256": "b5861ebdd7f0432963d2e22b325ad860619686f33a41dbfb22c13678e5db6dd4"
+      }
+    },
+    {
+      "run": "r6",
+      "block": 14,
+      "archive_seconds": 57.66439769999852,
+      "post_execution_seconds": 166.23142370000096,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r6\\b14-a1\\archive.json",
+        "sha256": "b2f7dde3dcc9bf9162878a1650737d0008f61e7a2b68e0393e3d9652ed2fbb9a"
+      }
+    },
+    {
+      "run": "r6",
+      "block": 15,
+      "archive_seconds": 53.62446230000023,
+      "post_execution_seconds": 162.67584879999959,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r6\\b15-a1\\archive.json",
+        "sha256": "b8c5ce9bbce183c22220e5abb387ad8d6e0f754023f33f98386c35937acf39cd"
+      }
+    },
+    {
+      "run": "r6",
+      "block": 16,
+      "archive_seconds": 59.187280800000735,
+      "post_execution_seconds": 172.28762319999987,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r6\\b16-a1\\archive.json",
+        "sha256": "270473c5f8a529413bf057ad6e0fb07ee453eafbbbff9a2d2ef02f7a5fae2d8a"
+      }
+    },
+    {
+      "run": "r6",
+      "block": 17,
+      "archive_seconds": 62.971152600001005,
+      "post_execution_seconds": 174.5361496000005,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r6\\b17-a1\\archive.json",
+        "sha256": "8a7248942a89eb71a3d6d6a2ad0690a8669c0424c7e7ace0a7da5f667971e97a"
+      }
+    },
+    {
+      "run": "r6",
+      "block": 18,
+      "archive_seconds": 53.22511769999983,
+      "post_execution_seconds": 190.38326299999972,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r6\\b18-a1\\archive.json",
+        "sha256": "faf61cbda8ca15fe49468d54faab2ed2f6d442d9ec3cddcff1eeac20cf4b4863"
+      }
+    },
+    {
+      "run": "r6",
+      "block": 19,
+      "archive_seconds": 53.23855090000143,
+      "post_execution_seconds": 166.97439000000122,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r6\\b19-a1\\archive.json",
+        "sha256": "5c19aab81dae2dae171905af846aea2a33461ec194b921b4d32599b93ca901c1"
+      }
+    },
+    {
+      "run": "r6",
+      "block": 20,
+      "archive_seconds": 58.36588099999972,
+      "post_execution_seconds": 170.64775349999945,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\campaign\\cold\\r6\\b20-a1\\archive.json",
+        "sha256": "bb0bcc160cc324237f78e1106c2b4dd94ee17c6631fea7877ad705450ab3c0d1"
+      }
+    }
+  ],
+  "haley_archive_metadata": {
+    "observed_utc": "2026-10-09T21:15:02.058780+00:00",
+    "host": "HALEYSPC",
+    "attempted_blocks": 63,
+    "blocks": [
+      {
+        "run": "r1",
+        "block": "b01-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b01-a1\\dispatch\\report.json",
+          "sha256": "a7dc64c6fb669a776769fb50e957bcb8e8f6ec44422f2883897cfa56b97e8a27"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r1\\b01-a1\\archive.json",
+          "sha256": "9823767008a5e85af9c5839e60f02adf0962c10171263de6b50681e328f8bf55"
+        },
+        "present": false,
+        "verified": false,
+        "missing": "report-pinned archive metadata absent on Haley"
+      },
+      {
+        "run": "r1",
+        "block": "b02-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b02-a1\\dispatch\\report.json",
+          "sha256": "1347111ce36f839d5eac9cccf8db0c744c49ad57bf5530c4887cd041464d3736"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r1\\b02-a1\\archive.json",
+          "sha256": "fcb10fb26da5a40d4a6cdad1c44e7d87c56538646d5e744c97402e9f3582ee01"
+        },
+        "present": false,
+        "verified": false,
+        "missing": "report-pinned archive metadata absent on Haley"
+      },
+      {
+        "run": "r1",
+        "block": "b03-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b03-a1\\dispatch\\report.json",
+          "sha256": "caf5bb02d12ad4aa60bfa2cf2fd048846027a82ebdbf2be486c9352fb8737850"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r1\\b03-a1\\archive.json",
+          "sha256": "e5933c5568768779d33be602e52a8bf3cbf162df6f3510257a4e850483e49f08"
+        },
+        "present": false,
+        "verified": false,
+        "missing": "report-pinned archive metadata absent on Haley"
+      },
+      {
+        "run": "r1",
+        "block": "b04-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b04-a1\\dispatch\\report.json",
+          "sha256": "f9caa75f0bed9ede9961319bac7e153433e1c1f86639c4470b88dc8665444008"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r1\\b04-a1\\archive.json",
+          "sha256": "2b8034a37236f0625e1ff77d4cf2953f9ffa8930012ef6bfbd10acf1c5a937be"
+        },
+        "present": false,
+        "verified": false,
+        "missing": "report-pinned archive metadata absent on Haley"
+      },
+      {
+        "run": "r1",
+        "block": "b05-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b05-a1\\dispatch\\report.json",
+          "sha256": "6268dc1c2d1a252d4e11b0f9db4bd37164668a881961ec84e9e7d17041b6d104"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r1\\b05-a1\\archive.json",
+          "sha256": "942118c1d70e1f1c34ddbcd68b26071d6307fb0d57628757fd24d9290f50c637"
+        },
+        "present": false,
+        "verified": false,
+        "missing": "report-pinned archive metadata absent on Haley"
+      },
+      {
+        "run": "r1",
+        "block": "b06-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b06-a1\\dispatch\\report.json",
+          "sha256": "8f017f3de5525b466c8a10034456e79bae2394134b9ecc6621198ca8c0a1fb28"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r1\\b06-a1\\archive.json",
+          "sha256": "f596192d38b1526a895e986526c916a9c698b75c227dde31c6bbfef1ae50aae7"
+        },
+        "present": false,
+        "verified": false,
+        "missing": "report-pinned archive metadata absent on Haley"
+      },
+      {
+        "run": "r1",
+        "block": "b07-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b07-a1\\dispatch\\report.json",
+          "sha256": "64410f4df69dc14e0f4fe2bd8552132fcbc0608cfba06914352c7f7ce7728f67"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r1\\b07-a1\\archive.json",
+          "sha256": "dbd4a6b40989dbdc56ac50a188d596f32bd7e13ad04db07b3be458d9ed4e8e7c"
+        },
+        "present": false,
+        "verified": false,
+        "missing": "report-pinned archive metadata absent on Haley"
+      },
+      {
+        "run": "r1",
+        "block": "b08-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b08-a1\\dispatch\\report.json",
+          "sha256": "85dba57f11c3233a084a05a372e0e7614dda8671b6e635a280bd12a147c2e0dd"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r1\\b08-a1\\archive.json",
+          "sha256": "9218527cf5d4d2cf41252ff5e5a142f8968119e69a5a22337991cc597dd8e04b"
+        },
+        "present": false,
+        "verified": false,
+        "missing": "report-pinned archive metadata absent on Haley"
+      },
+      {
+        "run": "r1",
+        "block": "b09-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b09-a1\\dispatch\\report.json",
+          "sha256": "7577e5fd33441f8a48b21cece345a7988f20c22a1c1e2c19d500a5d5ebdf9266"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r1\\b09-a1\\archive.json",
+          "sha256": "ecaa42febb7343ed4d8193e4fb8d4edc0a97fd20fd1b29d5035891a2f9236dd1"
+        },
+        "present": false,
+        "verified": false,
+        "missing": "report-pinned archive metadata absent on Haley"
+      },
+      {
+        "run": "r1",
+        "block": "b10-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b10-a1\\dispatch\\report.json",
+          "sha256": "a9b73854d71e5dc3f838df85a257794dcd6b8d3b254aa1f28906c1fcdc327c7e"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r1\\b10-a1\\archive.json",
+          "sha256": "7f75d59c792a4b836a15a611cc3329984089c7185de62a87962c1038fcb32676"
+        },
+        "present": false,
+        "verified": false,
+        "missing": "report-pinned archive metadata absent on Haley"
+      },
+      {
+        "run": "r1",
+        "block": "b11-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b11-a1\\dispatch\\report.json",
+          "sha256": "3a88337f96d09a4bfa7b6723ce3d2507aded03ee825d982681623811e1d9acbd"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r1\\b11-a1\\archive.json",
+          "sha256": "ee94d6a920c066842a5de669a87ce902305f82274a764d679caa0eb0ce22d5c5"
+        },
+        "present": false,
+        "verified": false,
+        "missing": "report-pinned archive metadata absent on Haley"
+      },
+      {
+        "run": "r1",
+        "block": "b12-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b12-a1\\dispatch\\report.json",
+          "sha256": "bf501b83a8e7d5ae5e60a5f0f10707636b3ae4c358d8aef5128f31e83fa3dcd3"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r1\\b12-a1\\archive.json",
+          "sha256": "13d6914c7dc07d1121bc16e3b8484428dcfa8881cf16ac5000cb5e35d53eb8cb"
+        },
+        "present": false,
+        "verified": false,
+        "missing": "report-pinned archive metadata absent on Haley"
+      },
+      {
+        "run": "r1",
+        "block": "b13-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b13-a1\\dispatch\\report.json",
+          "sha256": "cf7ad65fb01e1e0592ad3b34b929231755875948e1d59f8d28bbc4176f372c3f"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r1\\b13-a1\\archive.json",
+          "sha256": "78821c99f232a1bf166491da9e535aef72b24d4f469fbd06f7d9ad405e4bf78e"
+        },
+        "present": false,
+        "verified": false,
+        "missing": "report-pinned archive metadata absent on Haley"
+      },
+      {
+        "run": "r1",
+        "block": "b14-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b14-a1\\dispatch\\report.json",
+          "sha256": "c835f725080637809f747812dd78d6b894ed1a14913cd340d2fbdfb8d16dc548"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r1\\b14-a1\\archive.json",
+          "sha256": "0a7eb4314c35e796f050be63609872cac88b6b00a78999a130a31e6f36fcc19e"
+        },
+        "present": false,
+        "verified": false,
+        "missing": "report-pinned archive metadata absent on Haley"
+      },
+      {
+        "run": "r1",
+        "block": "b15-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b15-a1\\dispatch\\report.json",
+          "sha256": "1132329b0be426140b7fd5aeb94afe988b221a1c0ae58f43de4186892c5da8a4"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r1\\b15-a1\\archive.json",
+          "sha256": "d7edcb8190411c8985f24c6483cd7e7cad2785ce9b78fb805ffd542049766cd4"
+        },
+        "present": false,
+        "verified": false,
+        "missing": "report-pinned archive metadata absent on Haley"
+      },
+      {
+        "run": "r1",
+        "block": "b16-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b16-a1\\dispatch\\report.json",
+          "sha256": "1a179d899584c97a0621dfe15de23d67f5106a710d207785b719561da6078f4b"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r1\\b16-a1\\archive.json",
+          "sha256": "fa96f57511ed676c159534a78d8fc9fece14ebf21a8ae868876b4af8c9466366"
+        },
+        "present": false,
+        "verified": false,
+        "missing": "report-pinned archive metadata absent on Haley"
+      },
+      {
+        "run": "r1",
+        "block": "b17-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b17-a1\\dispatch\\report.json",
+          "sha256": "39c56b83a2dd84dde2e37b31f680d46dfad43696596f1e69ee5239428af2e846"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r1\\b17-a1\\archive.json",
+          "sha256": "5688060c4bc7b54a3f876ed9c74e02a068f671c47e2f91505c05836ec675d7e2"
+        },
+        "present": false,
+        "verified": false,
+        "missing": "report-pinned archive metadata absent on Haley"
+      },
+      {
+        "run": "r1",
+        "block": "b18-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b18-a1\\dispatch\\report.json",
+          "sha256": "b44c714449f01ea6360b596f7e638b66f9c736a40047ae60b07881664e1baac5"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r1\\b18-a1\\archive.json",
+          "sha256": "19f7205eac5de243cc7752977c881e0ba4c95f52fa4bf73d995379ff6be4d4dd"
+        },
+        "present": false,
+        "verified": false,
+        "missing": "report-pinned archive metadata absent on Haley"
+      },
+      {
+        "run": "r1",
+        "block": "b19-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b19-a1\\dispatch\\report.json",
+          "sha256": "f20daeb1f49027ccea3d6e73b8ba854ffae24ba4904acf1af29dbd8492fe552c"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r1\\b19-a1\\archive.json",
+          "sha256": "7ecea6f37358341de835cff3409be22f6354515151512b1fd16aaa689dba25ee"
+        },
+        "present": false,
+        "verified": false,
+        "missing": "report-pinned archive metadata absent on Haley"
+      },
+      {
+        "run": "r1",
+        "block": "b20-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r1\\b20-a1\\dispatch\\report.json",
+          "sha256": "9a9975c5990c0979fd278a24553649518b74b1cbc889d481373f5114d60336db"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r1\\b20-a1\\archive.json",
+          "sha256": "9e4f81c0092df975dc1c4983f8ab0e041a4c74695d5fb48232a67f5b126e30e5"
+        },
+        "present": false,
+        "verified": false,
+        "missing": "report-pinned archive metadata absent on Haley"
+      },
+      {
+        "run": "r2",
+        "block": "b01-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b01-a1\\dispatch\\report.json",
+          "sha256": "b93f7108d9a78f386061699d90b12d3addb66992a26486da7dd219ffed555ae7"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r2\\b01-a1\\archive.json",
+          "sha256": "fc1a53313237ff2605712cd2c1a8da1714405053e81d408b4d6191ae3ab71835"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "fc1a53313237ff2605712cd2c1a8da1714405053e81d408b4d6191ae3ab71835",
+        "bytes": 396920,
+        "archive_seconds": 100.20300000003772,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r2",
+        "block": "b02-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b02-a1\\dispatch\\report.json",
+          "sha256": "e1b8f40615c7871ebbaa1f9cb7e316f4205573e272b7474f8b089511d14f2572"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r2\\b02-a1\\archive.json",
+          "sha256": "f22bfa466ab49fda85824b73e2b088e4fe7072f309c5f8d3fb37871eff650ead"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "f22bfa466ab49fda85824b73e2b088e4fe7072f309c5f8d3fb37871eff650ead",
+        "bytes": 396918,
+        "archive_seconds": 93.40600000001723,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r2",
+        "block": "b03-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b03-a1\\dispatch\\report.json",
+          "sha256": "a210543cc5bd6b84ee1f9b52d1aa61b60acce51e48a76b941b13e1581054a8bb"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r2\\b03-a1\\archive.json",
+          "sha256": "55347f46cefeb9add416442e73a12cb5e7ec43b2f8268c576b0945bc704613c4"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "55347f46cefeb9add416442e73a12cb5e7ec43b2f8268c576b0945bc704613c4",
+        "bytes": 396918,
+        "archive_seconds": 88.15600000001723,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r2",
+        "block": "b04-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b04-a1\\dispatch\\report.json",
+          "sha256": "f6cce0608cd9e3b51e5b7e1f226c056d7d2a1af2b8ac8bde0cd53672de140949"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r2\\b04-a1\\archive.json",
+          "sha256": "a2f12be60aeb27a25382eb76fad677cc210e5acece0cd9a00d58f4ca22d76140"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "a2f12be60aeb27a25382eb76fad677cc210e5acece0cd9a00d58f4ca22d76140",
+        "bytes": 396918,
+        "archive_seconds": 91.45299999997951,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r2",
+        "block": "b05-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b05-a1\\dispatch\\report.json",
+          "sha256": "1ba60acdebdc81260f22b291d6f1618d7b17b955085c30404494cc37055dfe08"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r2\\b05-a1\\archive.json",
+          "sha256": "4fbc5bc0361f5ad078dbc7baff38dc5c73ec5681dfcfa6bd7e287abfd17c0046"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "4fbc5bc0361f5ad078dbc7baff38dc5c73ec5681dfcfa6bd7e287abfd17c0046",
+        "bytes": 396918,
+        "archive_seconds": 91.93699999997625,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r2",
+        "block": "b06-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b06-a1\\dispatch\\report.json",
+          "sha256": "23d02befa3ce3df51d841b57f6e163d6366c75fa01321e87dc05e6333777db7d"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r2\\b06-a1\\archive.json",
+          "sha256": "0f6d51f79b6bffb767518cd6555b676eda1742221197b8a470f9d45218f392e1"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "0f6d51f79b6bffb767518cd6555b676eda1742221197b8a470f9d45218f392e1",
+        "bytes": 396918,
+        "archive_seconds": 91.51499999995576,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r2",
+        "block": "b07-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b07-a1\\dispatch\\report.json",
+          "sha256": "02c0fd43a90782cdacbc9a6a769ed26853d08f311437f0704fb279545a5dd9a2"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r2\\b07-a1\\archive.json",
+          "sha256": "df5a41db0abb6023d2bb53e8418883a4ddabc66dc8a898ede56f2795d8614cb2"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "df5a41db0abb6023d2bb53e8418883a4ddabc66dc8a898ede56f2795d8614cb2",
+        "bytes": 396918,
+        "archive_seconds": 90.57799999997951,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r2",
+        "block": "b08-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b08-a1\\dispatch\\report.json",
+          "sha256": "e41d879a16ae492fbe941c753a631e06fb722b0384c0cd586edda40fbc388fef"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r2\\b08-a1\\archive.json",
+          "sha256": "0d24ec04753fee82f3763d682d58c000a11af886344b72af31b47d60e3c9cdfc"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "0d24ec04753fee82f3763d682d58c000a11af886344b72af31b47d60e3c9cdfc",
+        "bytes": 396906,
+        "archive_seconds": 89.25,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r2",
+        "block": "b09-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b09-a1\\dispatch\\report.json",
+          "sha256": "808b6fdffef9b6eaa4b440c5932ed1c64ab1dba3b944e814071d4d0461a6d820"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r2\\b09-a1\\archive.json",
+          "sha256": "0daba130f8f00e5a30861327ade06cf888c64706f71fc25c80d34acb82c2c37a"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "0daba130f8f00e5a30861327ade06cf888c64706f71fc25c80d34acb82c2c37a",
+        "bytes": 396918,
+        "archive_seconds": 88.81300000002375,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r2",
+        "block": "b10-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b10-a1\\dispatch\\report.json",
+          "sha256": "1b32ccab72a687cb80e3b58fc97fd788a68e13f70e6703d1c612903488ed93f8"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r2\\b10-a1\\archive.json",
+          "sha256": "78e1b5ef8fc80eedd9e4a9ba5d4b1e300a3a82b806799cd1450dd3f8726fa42c"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "78e1b5ef8fc80eedd9e4a9ba5d4b1e300a3a82b806799cd1450dd3f8726fa42c",
+        "bytes": 396918,
+        "archive_seconds": 91.35899999999674,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r2",
+        "block": "b11-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b11-a1\\dispatch\\report.json",
+          "sha256": "98d36612d09da44b9c3051de7a3304a4cbae3b5c037d8b90ecb0d73e2dae43d3"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r2\\b11-a1\\archive.json",
+          "sha256": "8d0fde8227851152735f8e33ff831cfc05641e28525a726b55891b0e2bf9426e"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "8d0fde8227851152735f8e33ff831cfc05641e28525a726b55891b0e2bf9426e",
+        "bytes": 396918,
+        "archive_seconds": 88.68800000002375,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r2",
+        "block": "b12-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b12-a1\\dispatch\\report.json",
+          "sha256": "02dcd70059ca634d283b7bbc1c3ca78ab7f61e8a0d2700be2820e2bcba4bd2e3"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r2\\b12-a1\\archive.json",
+          "sha256": "69115b961393b47c027377a1d72d5afd9de86c2ab203294464906ef1b8e8d5ba"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "69115b961393b47c027377a1d72d5afd9de86c2ab203294464906ef1b8e8d5ba",
+        "bytes": 396918,
+        "archive_seconds": 92.54699999996228,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r2",
+        "block": "b13-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b13-a1\\dispatch\\report.json",
+          "sha256": "fcb5b3da426898104624418c14d0f42d60b72d3292ac434e6cb194ce2f8727a6"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r2\\b13-a1\\archive.json",
+          "sha256": "8fd9e7486490b9925f96898beb91f4228ac94a933469616476a341a77d18670b"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "8fd9e7486490b9925f96898beb91f4228ac94a933469616476a341a77d18670b",
+        "bytes": 396918,
+        "archive_seconds": 91.04700000002049,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r2",
+        "block": "b14-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b14-a1\\dispatch\\report.json",
+          "sha256": "85e8dc39e83edca9f21b091c22819e651aaafb5ae2aaae66d3ae5928da481eed"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r2\\b14-a1\\archive.json",
+          "sha256": "def4b577934aae2f32b681a6fd4cf9187318c0a029db136a8786776b9efc29e8"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "def4b577934aae2f32b681a6fd4cf9187318c0a029db136a8786776b9efc29e8",
+        "bytes": 396918,
+        "archive_seconds": 89.96799999999348,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r2",
+        "block": "b15-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b15-a1\\dispatch\\report.json",
+          "sha256": "3572766c6da25757e70d73ebec1e361d95388b06e227c740facc7e70c21d36ab"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r2\\b15-a1\\archive.json",
+          "sha256": "d0d80ef381738fe14c81d56f8b086a4e3822bf1dfc51625ce5df45d91dd7537e"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "d0d80ef381738fe14c81d56f8b086a4e3822bf1dfc51625ce5df45d91dd7537e",
+        "bytes": 396918,
+        "archive_seconds": 87.71899999998277,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r2",
+        "block": "b16-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b16-a1\\dispatch\\report.json",
+          "sha256": "4196412e5c127cf8cfea1f428fdd6f2cb9007296343030ac3d0df9980f87db33"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r2\\b16-a1\\archive.json",
+          "sha256": "d7daa14e0f942ee2ffd7b1646485cbfb030e1d139a66befa5ea19d6bcf5f48e6"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "d7daa14e0f942ee2ffd7b1646485cbfb030e1d139a66befa5ea19d6bcf5f48e6",
+        "bytes": 396918,
+        "archive_seconds": 89.98499999998603,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r2",
+        "block": "b17-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b17-a1\\dispatch\\report.json",
+          "sha256": "241ae1faec5d186f05d7d9164d914201fb9b3a9c6bab91b2f4c615de00befdd0"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r2\\b17-a1\\archive.json",
+          "sha256": "d30aad1c4b24353bf3ed7013e10dd4cf57af795d2892954dbb4465c8eb13251e"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "d30aad1c4b24353bf3ed7013e10dd4cf57af795d2892954dbb4465c8eb13251e",
+        "bytes": 396906,
+        "archive_seconds": 90.25,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r2",
+        "block": "b18-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b18-a1\\dispatch\\report.json",
+          "sha256": "a7bc4dec2ba461f1c6c4d684687cde75e18ae90843a37f4743a90df46c052d4c"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r2\\b18-a1\\archive.json",
+          "sha256": "d9e571af33d2f202858f49487f8e6f091060829f4f85adf074c8427e49e74b08"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "d9e571af33d2f202858f49487f8e6f091060829f4f85adf074c8427e49e74b08",
+        "bytes": 396907,
+        "archive_seconds": 93.625,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r2",
+        "block": "b19-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b19-a1\\dispatch\\report.json",
+          "sha256": "fd12519b75ff49176e895aad845e01a1efdcd832d8798d8510dee065db0fabc2"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r2\\b19-a1\\archive.json",
+          "sha256": "0ad2bf3cb09169217a40a6eb36670e15040aacc14b243cd4e9a1af88aa8ca21c"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "0ad2bf3cb09169217a40a6eb36670e15040aacc14b243cd4e9a1af88aa8ca21c",
+        "bytes": 396918,
+        "archive_seconds": 88.70299999997951,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r2",
+        "block": "b20-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r2\\b20-a1\\dispatch\\report.json",
+          "sha256": "4975fff4a17a611de434a31667320b525ff4a328b992206b6ec7999910e6687a"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r2\\b20-a1\\archive.json",
+          "sha256": "72e1a61b7d61dfafd26ff8dc34adf5f33c28fe4728ce20ff9b0b6bdbbe23b829"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "72e1a61b7d61dfafd26ff8dc34adf5f33c28fe4728ce20ff9b0b6bdbbe23b829",
+        "bytes": 396918,
+        "archive_seconds": 91.42200000002049,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r3",
+        "block": "b01-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b01-a1\\dispatch\\report.json",
+          "sha256": "e9967012638358aa994d31772bd3671029af69e543e2eac1be37ecc291e87562"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r3\\b01-a1\\archive.json",
+          "sha256": "115bc8599a1e631992bb458cb9d70397359295ed81c2f265fdbc4745e0e4c17b"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "115bc8599a1e631992bb458cb9d70397359295ed81c2f265fdbc4745e0e4c17b",
+        "bytes": 396920,
+        "archive_seconds": 105.57799999997951,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r3",
+        "block": "b02-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b02-a1\\dispatch\\report.json",
+          "sha256": "01ec0e5a65e7e48dd9b07b68538a39293ecbbe552cfb2d1216470a75d4d9414c"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r3\\b02-a1\\archive.json",
+          "sha256": "14b62ad5b57e015418c335e226b23aeabda5af4825c9e758b35cd5030ce57c1f"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "14b62ad5b57e015418c335e226b23aeabda5af4825c9e758b35cd5030ce57c1f",
+        "bytes": 396920,
+        "archive_seconds": 112.59299999999348,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r3",
+        "block": "b03-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b03-a1\\dispatch\\report.json",
+          "sha256": "0133bd71d102800b947f515675aed3ae7586ba94d9814660d1c6fce5fd6adfd5"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r3\\b03-a1\\archive.json",
+          "sha256": "683d24ef939e73e591aea6b6cfd637cf294fe2fd4f18f168c839e86cb4ea0a84"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "683d24ef939e73e591aea6b6cfd637cf294fe2fd4f18f168c839e86cb4ea0a84",
+        "bytes": 396920,
+        "archive_seconds": 112.81300000002375,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r3",
+        "block": "b04-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b04-a1\\dispatch\\report.json",
+          "sha256": "2f1eebd5bd8b5f129e95cc39ae33944354c4cadd0b172c383109350be56d062e"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r3\\b04-a1\\archive.json",
+          "sha256": "6e34c215b31e6d737aa0216df5e6f34edfad353320e4d3620105427414a933d2"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "6e34c215b31e6d737aa0216df5e6f34edfad353320e4d3620105427414a933d2",
+        "bytes": 396920,
+        "archive_seconds": 102.65600000001723,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r3",
+        "block": "b05-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b05-a1\\dispatch\\report.json",
+          "sha256": "2aa18fc6931b8927c853a7a3e0c9dbf1f5db9e241d2d260d04914e62040acd34"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r3\\b05-a1\\archive.json",
+          "sha256": "58b3ab9e2a3f8bbdfdf1b0bbefe3ab40203cb9ead5a690e4adec305c6f073071"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "58b3ab9e2a3f8bbdfdf1b0bbefe3ab40203cb9ead5a690e4adec305c6f073071",
+        "bytes": 396920,
+        "archive_seconds": 102.07799999997951,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r3",
+        "block": "b06-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b06-a1\\dispatch\\report.json",
+          "sha256": "26941a289fe9ed1fa4c948fa0ad1665290d92ce94181342df36ad3e629bbcd16"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r3\\b06-a1\\archive.json",
+          "sha256": "609d1c6ed93715492eb71853bf312fd21e6b9f8ac0265f0b82cc10c33915d69d"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "609d1c6ed93715492eb71853bf312fd21e6b9f8ac0265f0b82cc10c33915d69d",
+        "bytes": 396920,
+        "archive_seconds": 100.95299999997951,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r3",
+        "block": "b07-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b07-a1\\dispatch\\report.json",
+          "sha256": "8669047b72043ac0dd7af59759b4b778af6766e5a5eb7f3804f0e743c3ecd144"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r3\\b07-a1\\archive.json",
+          "sha256": "89849042b0d76be28695d6cef5bf295c37a1c0415c5a7b4f96823206aa188bf8"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "89849042b0d76be28695d6cef5bf295c37a1c0415c5a7b4f96823206aa188bf8",
+        "bytes": 396919,
+        "archive_seconds": 99.71799999999348,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r3",
+        "block": "b08-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b08-a1\\dispatch\\report.json",
+          "sha256": "1d7b0c89144f0fe3573612ac1e445e3c33afc295f90c22718e77e8d5ded5c1f5"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r3\\b08-a1\\archive.json",
+          "sha256": "449b71d935b5e9e0cd23c3a3a619134e6b70ac1f1d09b550836ab2ed396b08b6"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "449b71d935b5e9e0cd23c3a3a619134e6b70ac1f1d09b550836ab2ed396b08b6",
+        "bytes": 396918,
+        "archive_seconds": 94.71900000004098,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r3",
+        "block": "b09-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b09-a1\\dispatch\\report.json",
+          "sha256": "6baf656ffe45178f4aee46035f7a96dc6cbfe46ba97612bcaf63ef7cbcc226ad"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r3\\b09-a1\\archive.json",
+          "sha256": "abbb913a19b0b627f5bf504a6161dada67af6956a5283cf1e5adc2a80cf7f5a8"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "abbb913a19b0b627f5bf504a6161dada67af6956a5283cf1e5adc2a80cf7f5a8",
+        "bytes": 396918,
+        "archive_seconds": 89.01499999995576,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r3",
+        "block": "b10-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b10-a1\\dispatch\\report.json",
+          "sha256": "4b7534f58193b12d09c32c73c54f7890e16a0c0c35ce85d7d6db7e99ffb6d09f"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r3\\b10-a1\\archive.json",
+          "sha256": "3f81461edcc96662735a47de866b9afced59e59365bbb3242e9c2e08d1ca4e55"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "3f81461edcc96662735a47de866b9afced59e59365bbb3242e9c2e08d1ca4e55",
+        "bytes": 396918,
+        "archive_seconds": 90.67199999996228,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r3",
+        "block": "b11-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b11-a1\\dispatch\\report.json",
+          "sha256": "541d7b002fb6d149eca0da9e74bfc955cdab3e4620a0b23924818e0645e4ab5b"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r3\\b11-a1\\archive.json",
+          "sha256": "6bd60c45775b598d98be66b42ab0677f60088616c6f4e3d11e8e32dcb21ad489"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "6bd60c45775b598d98be66b42ab0677f60088616c6f4e3d11e8e32dcb21ad489",
+        "bytes": 396918,
+        "archive_seconds": 88.93699999997625,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r3",
+        "block": "b12-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b12-a1\\dispatch\\report.json",
+          "sha256": "984d0a3712bc32bf3bdbfa4b5138602818c0f95669b5d96c4fb4bf926be9f6f7"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r3\\b12-a1\\archive.json",
+          "sha256": "5f4a931892dcbda467a35efe694ad7b8bd752dc03c5f6f72d8a6430c4f929f28"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "5f4a931892dcbda467a35efe694ad7b8bd752dc03c5f6f72d8a6430c4f929f28",
+        "bytes": 396905,
+        "archive_seconds": 89.5,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r3",
+        "block": "b13-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b13-a1\\dispatch\\report.json",
+          "sha256": "aaad43a3a77c958e5d766d4e837d93796b3c6442122d38f3a813d39423df4467"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r3\\b13-a1\\archive.json",
+          "sha256": "7e10859ea128b105fa988b4c3b23532ce5855764361f70e7bd8669ae23edab33"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "7e10859ea128b105fa988b4c3b23532ce5855764361f70e7bd8669ae23edab33",
+        "bytes": 396918,
+        "archive_seconds": 97.71900000004098,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r3",
+        "block": "b14-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b14-a1\\dispatch\\report.json",
+          "sha256": "a115a1c3b110eb320aa9aaa2da88761f7256d963eb707a531d1f1aa5db768226"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r3\\b14-a1\\archive.json",
+          "sha256": "5166bfa05726d1e0689836b3f8e894ea3da95be0fb69fc19acaafa44bdaad8a7"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "5166bfa05726d1e0689836b3f8e894ea3da95be0fb69fc19acaafa44bdaad8a7",
+        "bytes": 396918,
+        "archive_seconds": 89.29700000002049,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r3",
+        "block": "b15-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b15-a1\\dispatch\\report.json",
+          "sha256": "e10fe06945cebb2cf24693da124c041e9e27377bfd00f11520c639b3ed9f3bc6"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r3\\b15-a1\\archive.json",
+          "sha256": "b1dbb8239b4e61a3240a959f2c0f1628f85aefe6fdc93b43d5fed782da5effbf"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "b1dbb8239b4e61a3240a959f2c0f1628f85aefe6fdc93b43d5fed782da5effbf",
+        "bytes": 396918,
+        "archive_seconds": 91.51600000000326,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r3",
+        "block": "b16-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b16-a1\\dispatch\\report.json",
+          "sha256": "ffbc6296d1bcac78e4cc3efc50d84515e921a887631e8cd65050e291d7c0b246"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r3\\b16-a1\\archive.json",
+          "sha256": "c95df8f3fe136bb6397fe1542ff1e85e55b8b008c2ee5400c2d92856879a1360"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "c95df8f3fe136bb6397fe1542ff1e85e55b8b008c2ee5400c2d92856879a1360",
+        "bytes": 396918,
+        "archive_seconds": 90.65599999995902,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r3",
+        "block": "b17-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b17-a1\\dispatch\\report.json",
+          "sha256": "a3ce574cd31854a567dd417bfbe831cbc1e40b5e44c35c6c377a4f2849a3dced"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r3\\b17-a1\\archive.json",
+          "sha256": "35fd239758b97c9a83bad9a941e0ff9642b42724448fba9aa762bde852c21148"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "35fd239758b97c9a83bad9a941e0ff9642b42724448fba9aa762bde852c21148",
+        "bytes": 396918,
+        "archive_seconds": 89.42200000002049,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r3",
+        "block": "b18-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b18-a1\\dispatch\\report.json",
+          "sha256": "dc306b7fa60a37af48549beed5f20536e1b8bd20c29d8e8af7c7d1462718eab5"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r3\\b18-a1\\archive.json",
+          "sha256": "7bef75a3313041fcae92826b7eb6e255a35c1930363c8aeafdc1838d32418a29"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "7bef75a3313041fcae92826b7eb6e255a35c1930363c8aeafdc1838d32418a29",
+        "bytes": 396918,
+        "archive_seconds": 89.53100000007544,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r3",
+        "block": "b19-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b19-a1\\dispatch\\report.json",
+          "sha256": "cf58509c742f2a67fddda723d441d4a786d69137b097c11e890c77527ffd2327"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r3\\b19-a1\\archive.json",
+          "sha256": "2112975a3f5832afc5220341e24c531d6dd8bcf4f32650b3dab2a320f77821ea"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "2112975a3f5832afc5220341e24c531d6dd8bcf4f32650b3dab2a320f77821ea",
+        "bytes": 396907,
+        "archive_seconds": 90.875,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r3",
+        "block": "b20-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r3\\b20-a1\\dispatch\\report.json",
+          "sha256": "95576ae06d6ff25ec88ae768b49ca8e18e6c419a33eaa701ec7c9e73a6ad22aa"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r3\\b20-a1\\archive.json",
+          "sha256": "b795cc1ae653e6f1dfeeb369fc80accaa3999dd81be9e6f4f2574b713f781749"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "b795cc1ae653e6f1dfeeb369fc80accaa3999dd81be9e6f4f2574b713f781749",
+        "bytes": 396918,
+        "archive_seconds": 91.85999999998603,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r4",
+        "block": "b01-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r4\\b01-a1\\dispatch\\report.json",
+          "sha256": "6f6122a4e9812d52db948769d6c553cd7441f7458638c8fc207d50963125f9fb"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r4\\b01-a1\\archive.json",
+          "sha256": "817a990bc50fad41fb9e03dfd86d177f889dbf17cc4071803ef893d8bde4c7f8"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "817a990bc50fad41fb9e03dfd86d177f889dbf17cc4071803ef893d8bde4c7f8",
+        "bytes": 396918,
+        "archive_seconds": 92.42200000002049,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r4",
+        "block": "b02-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r4\\b02-a1\\dispatch\\report.json",
+          "sha256": "d4487d3448d8c9b69eefcda49b8ff9d3e95a4a7682c2ef53b912930983dc64b8"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r4\\b02-a1\\archive.json",
+          "sha256": "278c704006a0917945e021d7bb4484c68553ef069b7dd7cd83ce0d00f52d09ee"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "278c704006a0917945e021d7bb4484c68553ef069b7dd7cd83ce0d00f52d09ee",
+        "bytes": 396918,
+        "archive_seconds": 93.07799999997951,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      },
+      {
+        "run": "r4",
+        "block": "b03-a1",
+        "report_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\r4\\b03-a1\\dispatch\\report.json",
+          "sha256": "69f2db749af7b703acbe913eb46a0c49f9a32e24722567ca1cf4b960cc89d10d"
+        },
+        "archive_pin": {
+          "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\cold\\r4\\b03-a1\\archive.json",
+          "sha256": "8070cc92c70626cbf3a4cc072f79c2be935dca0a81d7d416bcfceebcb4dcee9d"
+        },
+        "present": true,
+        "verified": true,
+        "observed_sha256": "8070cc92c70626cbf3a4cc072f79c2be935dca0a81d7d416bcfceebcb4dcee9d",
+        "bytes": 396918,
+        "archive_seconds": 93.89000000001397,
+        "archive_fields": [
+          "scheme",
+          "native_root",
+          "seconds",
+          "source_files",
+          "source_bytes",
+          "compressed_bytes",
+          "shards",
+          "mismatches",
+          "raw_native_files_retained"
+        ]
+      }
+    ],
+    "note": "Read report.json and pinned archive.json metadata only. No ZIP or trajectory read."
+  },
+  "recovered_r1_archives": [
+    {
+      "run": "r1",
+      "block": "b01-a1",
+      "seconds": 94.01600000000326,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\computehost-campaign\\cold\\r1\\b01-a1\\archive.json",
+        "sha256": "9823767008a5e85af9c5839e60f02adf0962c10171263de6b50681e328f8bf55"
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b02-a1",
+      "seconds": 89.92200000002049,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\computehost-campaign\\cold\\r1\\b02-a1\\archive.json",
+        "sha256": "fcb10fb26da5a40d4a6cdad1c44e7d87c56538646d5e744c97402e9f3582ee01"
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b03-a1",
+      "seconds": 89.07799999997951,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\computehost-campaign\\cold\\r1\\b03-a1\\archive.json",
+        "sha256": "e5933c5568768779d33be602e52a8bf3cbf162df6f3510257a4e850483e49f08"
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b04-a1",
+      "seconds": 91.625,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\computehost-campaign\\cold\\r1\\b04-a1\\archive.json",
+        "sha256": "2b8034a37236f0625e1ff77d4cf2953f9ffa8930012ef6bfbd10acf1c5a937be"
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b05-a1",
+      "seconds": 89.15600000001723,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\computehost-campaign\\cold\\r1\\b05-a1\\archive.json",
+        "sha256": "942118c1d70e1f1c34ddbcd68b26071d6307fb0d57628757fd24d9290f50c637"
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b06-a1",
+      "seconds": 88.67200000002049,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\computehost-campaign\\cold\\r1\\b06-a1\\archive.json",
+        "sha256": "f596192d38b1526a895e986526c916a9c698b75c227dde31c6bbfef1ae50aae7"
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b07-a1",
+      "seconds": 90.40700000000652,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\computehost-campaign\\cold\\r1\\b07-a1\\archive.json",
+        "sha256": "dbd4a6b40989dbdc56ac50a188d596f32bd7e13ad04db07b3be458d9ed4e8e7c"
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b08-a1",
+      "seconds": 87.81299999996554,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\computehost-campaign\\cold\\r1\\b08-a1\\archive.json",
+        "sha256": "9218527cf5d4d2cf41252ff5e5a142f8968119e69a5a22337991cc597dd8e04b"
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b09-a1",
+      "seconds": 91.25,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\computehost-campaign\\cold\\r1\\b09-a1\\archive.json",
+        "sha256": "ecaa42febb7343ed4d8193e4fb8d4edc0a97fd20fd1b29d5035891a2f9236dd1"
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b10-a1",
+      "seconds": 88.89100000000326,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\computehost-campaign\\cold\\r1\\b10-a1\\archive.json",
+        "sha256": "7f75d59c792a4b836a15a611cc3329984089c7185de62a87962c1038fcb32676"
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b11-a1",
+      "seconds": 91.40600000001723,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\computehost-campaign\\cold\\r1\\b11-a1\\archive.json",
+        "sha256": "ee94d6a920c066842a5de669a87ce902305f82274a764d679caa0eb0ce22d5c5"
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b12-a1",
+      "seconds": 90.71799999999348,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\computehost-campaign\\cold\\r1\\b12-a1\\archive.json",
+        "sha256": "13d6914c7dc07d1121bc16e3b8484428dcfa8881cf16ac5000cb5e35d53eb8cb"
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b13-a1",
+      "seconds": 90.70400000002701,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\computehost-campaign\\cold\\r1\\b13-a1\\archive.json",
+        "sha256": "78821c99f232a1bf166491da9e535aef72b24d4f469fbd06f7d9ad405e4bf78e"
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b14-a1",
+      "seconds": 89.45299999997951,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\computehost-campaign\\cold\\r1\\b14-a1\\archive.json",
+        "sha256": "0a7eb4314c35e796f050be63609872cac88b6b00a78999a130a31e6f36fcc19e"
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b15-a1",
+      "seconds": 89.78100000001723,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\computehost-campaign\\cold\\r1\\b15-a1\\archive.json",
+        "sha256": "d7edcb8190411c8985f24c6483cd7e7cad2785ce9b78fb805ffd542049766cd4"
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b16-a1",
+      "seconds": 89.89100000000326,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\computehost-campaign\\cold\\r1\\b16-a1\\archive.json",
+        "sha256": "fa96f57511ed676c159534a78d8fc9fece14ebf21a8ae868876b4af8c9466366"
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b17-a1",
+      "seconds": 88.29699999996228,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\computehost-campaign\\cold\\r1\\b17-a1\\archive.json",
+        "sha256": "5688060c4bc7b54a3f876ed9c74e02a068f671c47e2f91505c05836ec675d7e2"
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b18-a1",
+      "seconds": 90.42200000002049,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\computehost-campaign\\cold\\r1\\b18-a1\\archive.json",
+        "sha256": "19f7205eac5de243cc7752977c881e0ba4c95f52fa4bf73d995379ff6be4d4dd"
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b19-a1",
+      "seconds": 88.95299999997951,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\computehost-campaign\\cold\\r1\\b19-a1\\archive.json",
+        "sha256": "7ecea6f37358341de835cff3409be22f6354515151512b1fd16aaa689dba25ee"
+      }
+    },
+    {
+      "run": "r1",
+      "block": "b20-a1",
+      "seconds": 87.98499999998603,
+      "source": {
+        "path": "E:\\nine-deck-baseline-20261007\\computehost-campaign\\cold\\r1\\b20-a1\\archive.json",
+        "sha256": "9e4f81c0092df975dc1c4983f8ab0e041a4c74695d5fb48232a67f5b126e30e5"
+      }
+    }
+  ],
+  "archive_summary": {
+    "blocks": 120,
+    "seconds": 9059.986917499979
+  },
+  "qualifications": [
+    {
+      "host": "desktop",
+      "workers": 1,
+      "cpu_affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "seconds": 7.432304199999976,
+      "fingerprint_sha256": "70b535ccfa066074d15d5b49698b8834aac095483b2e9051666f8ce69e9e6802",
+      "source": {
+        "path": "D:\\nine-deck-baseline-20261007\\campaign\\hot\\qual\\desktop-c16-w1\\report.json",
+        "sha256": "c166ebb21f9bcff5eca8b57b250b5004bd69c980d5e333cbfd7e425bd4fef3df"
+      }
+    },
+    {
+      "host": "desktop",
+      "workers": 2,
+      "cpu_affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "seconds": 5.751776099999972,
+      "fingerprint_sha256": "70b535ccfa066074d15d5b49698b8834aac095483b2e9051666f8ce69e9e6802",
+      "source": {
+        "path": "D:\\nine-deck-baseline-20261007\\campaign\\hot\\qual\\desktop-c16-w2\\report.json",
+        "sha256": "af0d8106d05edb1b6043a5b8d0f558b9a1d787342f126afaab4971bb944a62b6"
+      }
+    },
+    {
+      "host": "desktop",
+      "workers": 4,
+      "cpu_affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "seconds": 5.336316600000032,
+      "fingerprint_sha256": "70b535ccfa066074d15d5b49698b8834aac095483b2e9051666f8ce69e9e6802",
+      "source": {
+        "path": "D:\\nine-deck-baseline-20261007\\campaign\\hot\\qual\\desktop-c16-w4\\report.json",
+        "sha256": "cf983793f16cec4af7b5e7f305d8012a10186dae461e224f1241ad6c2418e361"
+      }
+    },
+    {
+      "host": "desktop",
+      "workers": 8,
+      "cpu_affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "seconds": 5.2638057000000344,
+      "fingerprint_sha256": "70b535ccfa066074d15d5b49698b8834aac095483b2e9051666f8ce69e9e6802",
+      "source": {
+        "path": "D:\\nine-deck-baseline-20261007\\campaign\\hot\\qual\\desktop-c16-w8\\report.json",
+        "sha256": "e02b86f77f2207f2c5f8ba0f6f00eb939d1969b07762987eb95d402e296d057c"
+      }
+    },
+    {
+      "host": "computehost",
+      "workers": 1,
+      "cpu_affinity": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "seconds": 12.421999999962281,
+      "source": {
+        "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\qual\\computehost-c4-w1\\report.json",
+        "sha256": "37d069d31e78295a098adcc6c3b4188afdb0353f49d67238da436692c168f761",
+        "bytes": 3456
+      }
+    },
+    {
+      "host": "computehost",
+      "workers": 2,
+      "cpu_affinity": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "seconds": 10.905999999959022,
+      "source": {
+        "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\qual\\computehost-c4-w2\\report.json",
+        "sha256": "247e02a7d014164198cc0c5860c9c42d225777dae46ecdd1e706ae3ba44d1cd6",
+        "bytes": 3456
+      }
+    },
+    {
+      "host": "computehost",
+      "workers": 4,
+      "cpu_affinity": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "seconds": 10.75,
+      "source": {
+        "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\qual\\computehost-c4-w4\\report.json",
+        "sha256": "43ed05cdd3c280c70b146ec48abcd6cf462337bdd0637ccd0b75ddedb0fe141c",
+        "bytes": 3443
+      }
+    },
+    {
+      "host": "computehost",
+      "workers": 1,
+      "cpu_affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "seconds": 12.296999999962281,
+      "source": {
+        "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\qual\\computehost-c8-w1\\report.json",
+        "sha256": "6a89596ddd023dd14ece4ad5fe3c9e8fe6f9216025042e622b34ba43dc903c0b",
+        "bytes": 3496
+      }
+    },
+    {
+      "host": "computehost",
+      "workers": 2,
+      "cpu_affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "seconds": 10.84399999998277,
+      "source": {
+        "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\qual\\computehost-c8-w2\\report.json",
+        "sha256": "98a250083916045e3b246a1af046d200e29254bf9ac7c55c6dd947f1804a31f5",
+        "bytes": 3495
+      }
+    },
+    {
+      "host": "computehost",
+      "workers": 4,
+      "cpu_affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "seconds": 10.530999999959022,
+      "source": {
+        "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\qual\\computehost-c8-w4\\report.json",
+        "sha256": "c5bdcb11bdfad42d83e199a8de0f141869505f904865435815b06a439f77f1f0",
+        "bytes": 3496
+      }
+    },
+    {
+      "host": "computehost",
+      "workers": 1,
+      "cpu_affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "seconds": 10.375,
+      "source": {
+        "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\qual\\computehost-w1\\report.json",
+        "sha256": "19489bb8f50852817a05c1a7b8b2576baf9d65662b32943f7adb03308100144b",
+        "bytes": 3552
+      }
+    },
+    {
+      "host": "computehost",
+      "workers": 2,
+      "cpu_affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "seconds": 8.702999999979511,
+      "source": {
+        "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\qual\\computehost-w2\\report.json",
+        "sha256": "1d3c78901c66783039f5a4b98f08771440abd83d22f4e51811c39b128b764da2",
+        "bytes": 3563
+      }
+    },
+    {
+      "host": "computehost",
+      "workers": 4,
+      "cpu_affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "seconds": 8.46799999999348,
+      "source": {
+        "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\qual\\computehost-w4\\report.json",
+        "sha256": "149011c6f00f16f460deedd357ba0f0d3784a77144be16bb470351ed4abe5420",
+        "bytes": 3562
+      }
+    },
+    {
+      "host": "computehost",
+      "workers": 8,
+      "cpu_affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "seconds": 8.73399999999674,
+      "source": {
+        "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\qual\\computehost-w8\\report.json",
+        "sha256": "2408ab9b253b6d492807e245f557c37e330f336de31328c8c6ece0b7b82b27e4",
+        "bytes": 3562
+      }
+    },
+    {
+      "host": "computehost",
+      "workers": 4,
+      "cpu_affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "seconds": 31.14100000000326,
+      "source": {
+        "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\qual\\conc-c8-w4-k2-0\\report.json",
+        "sha256": "d49b3dad8ed67a296ea35d03001c2793d539269c13f23fe835076f5fa1c25791",
+        "bytes": 3483
+      }
+    },
+    {
+      "host": "computehost",
+      "workers": 4,
+      "cpu_affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "seconds": 30.39100000000326,
+      "source": {
+        "path": "C:\\mtg-node\\nine-deck-baseline-20261007\\campaign\\hot\\qual\\conc-c8-w4-k2-1\\report.json",
+        "sha256": "82e3e6735a378a84db31891000e3b1bae98f294ccd0b1ee23cd248e1d83e20c6",
+        "bytes": 3483
+      }
+    }
+  ]
+}

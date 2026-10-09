@@ -47,6 +47,8 @@ pub mod card_def;
 pub mod combat_damage_v1;
 pub(crate) mod continuous_characteristics_v1;
 pub mod legend_rule_v1;
+pub mod native_search_collection_v3;
+pub mod native_search_trajectory_v3;
 pub mod planeswalker_v1;
 // Fail-closed canonical JSON codec shared by the native training store's
 // records. Schema validation remains a separate layer.

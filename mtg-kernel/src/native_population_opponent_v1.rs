@@ -202,6 +202,12 @@ impl fmt::Debug for PopulationOpponentEngineV1 {
 }
 
 impl PopulationOpponentEngineV1 {
+    pub(crate) fn supports_search_collection_v3(&self) -> bool {
+        self.handles.iter().all(|handle| matches!(handle,
+            PopulationSlotOccupantV1::Search(search)
+                if search.authority().uses_v4_contract_v3() && search.authority().validate().is_ok()
+        ))
+    }
     pub(crate) fn new_v1(
         weights: PopulationWeightVectorV1,
         handles: [PopulationSlotOccupantV1; POPULATION_OPPONENT_SLOT_COUNT_V1],

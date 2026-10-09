@@ -298,8 +298,10 @@ pub(crate) use flat_action_v3::{
     shuffle_trigger_source_into_library_v1,
 };
 pub use flat_action_v3::{FlatActionDecisionBindingV3, FlatActionDecisionSliceV3};
+#[cfg(test)]
+pub(crate) use flat_action_v4::search_library_fixture_v3;
+pub(crate) use flat_action_v4::V4SearchActionTokenV1;
 pub(crate) use flat_action_v4::V4SearchSampleMode;
-#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub(crate) use flat_action_v4::V4SearchStateErrorV1;
 #[cfg(test)]
 pub(crate) use flat_action_v4::{
@@ -6487,9 +6489,89 @@ impl FastActorSessionV1 {
         &self.state
     }
 
+    /// Disposable V4 search view. V2 executable candidates can exist even when
+    /// their flat cache rejects an undisclosed library reference. Never read
+    /// that cache here. Map canonical search actions back to the live menu.
+    pub(crate) fn kernel_search_v4_root_clone_v3(
+        &self,
+        expected: FastActorDecisionV1,
+    ) -> Result<(Self, Vec<u32>), crate::kernel_native_search_opponent_v1::KernelNativeSearchErrorV1>
+    {
+        use crate::kernel_native_search_opponent_v1::KernelNativeSearchErrorV1 as Error;
+        if self.current_response() != FastActorResponseV1::Decision(expected) {
+            return Err(Error::InvalidDecision);
+        }
+        if !matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::V2 | FlatActionContractModeV1::V3
+        ) {
+            return Err(Error::UnsupportedFlatActionContract);
+        }
+        let original = &self
+            .current
+            .as_ref()
+            .ok_or(Error::InvalidDecision)?
+            .candidates;
+        let mut copy = self.clone();
+        copy.flat_action_contract_mode = FlatActionContractModeV1::V3;
+        let mut current = copy.current.take().ok_or(Error::InvalidDecision)?;
+        current.flat_action_cache = None;
+        current.flat_action_cache_error = None;
+        current.flat_action_cache_v2 = None;
+        current.flat_action_cache_error_v2 = None;
+        // V3 normalization supplies ordering; V4 derives fresh rows even when
+        // the V3 cache rejects a frozen hidden trigger source.
+        let cache = flat_action_v3::prepare_and_build_v3(&copy, &mut current);
+        flat_install_action_cache_build_result_v2(&mut current, cache);
+        if current.candidates.len() != original.len() {
+            return Err(Error::HiddenStateContract);
+        }
+        let mut used = vec![false; original.len()];
+        let mut indices = Vec::with_capacity(original.len());
+        // PolicyActionV5 contains the complete executable command, including
+        // physical object handles. FastActorCurrentCandidateProofV1 copies
+        // exactly this command into the mutation path. Equal commands therefore
+        // have equal engine behavior even if visible semantic normalization
+        // differs. The used-index mask keeps any equal commands bijective.
+        for candidate in &current.candidates {
+            let index = original
+                .iter()
+                .enumerate()
+                .position(|(index, before)| {
+                    !used[index] && before.policy_action == candidate.policy_action
+                })
+                .ok_or(Error::HiddenStateContract)?;
+            used[index] = true;
+            indices.push(u32::try_from(index).map_err(|_| Error::CorruptTree)?);
+        }
+        copy.flat_action_cache_spare = None;
+        copy.flat_action_cache_spare_v2 = None;
+        copy.current = Some(current);
+        copy.kernel_search_action_token_v4(expected)?;
+        Ok((copy, indices))
+    }
+
     #[cfg(test)]
     pub(crate) fn kernel_search_state_mut_for_test_v1(&mut self) -> &mut crate::state::GameState {
         &mut self.state
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_v2_search_fixture_state_v3(state: crate::state::GameState) -> Self {
+        let mut session = Self::from_v3_fixture_state(state);
+        session.flat_action_contract_mode = FlatActionContractModeV1::V2;
+        let mut current = session.current.take().unwrap();
+        current.candidates = flat_scan_menu_v2(
+            &session.surface,
+            &session.state,
+            &current.origin_decision,
+            core_policy_action_candidates_v5(&current.origin_decision, &session.state).unwrap(),
+        )
+        .unwrap();
+        let cache = flat_build_action_cache_v2(&session, &current, None);
+        flat_install_action_cache_build_result_v2(&mut current, cache);
+        session.current = Some(current);
+        session
     }
 
     pub(crate) fn kernel_search_private_diagnostic_identity_v1(&self) -> &str {
@@ -6677,6 +6759,22 @@ impl FastActorSessionV1 {
         let mut sampled = self.clone();
         redeterminize_hidden_zones_pinned_v1(&mut sampled.state, actor, seed, &pinned)
             .map_err(|error| error.to_string())?;
+        // Reject provenance linked to relabeled hidden sources. Do not pin a
+        // hidden source to its real slot, or keep redrawing until it survives.
+        let changed: Vec<_> = self
+            .state
+            .objects
+            .iter()
+            .filter_map(|(id, before)| {
+                let after = sampled.state.objects.get(id);
+                (matches!(before.zone, Zone::Hand | Zone::Library)
+                    && before.card_def != after.card_def)
+                    .then_some(id)
+            })
+            .collect();
+        if flat_action_v4::census_hidden_source_conflicts_v1(&self.state, &changed) {
+            return Err("hidden-source provenance conflict".to_string());
+        }
         Ok(sampled)
     }
 
