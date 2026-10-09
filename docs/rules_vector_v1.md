@@ -84,7 +84,20 @@ The breakdown in the FDN report explains it:
 
 Information content (7) moves the same way: 76% of Pauper cards hold a feature no other card has, against 47% for op names. The specific families behave like per-card IDs. For step 2, this argues for feeding the coarse families, or hierarchical features with dropout, and treating the full tuples and pairs as optional.
 
-Backward chaining (10) finds 8 lines in the Spy deck, all scaling. It also overgenerates: Winding Way appears as a graveyard enabler, which it is only partly. It finds nothing in CawGates, Elves, Faeries or Terror, because combat damage is engine behaviour (rule 510), not a card effect, so the chainer has no step for "attack with creatures".
+Backward chaining (10) is a diagnostic only, per the independent review of it (collab `CODEX-ASTRA-BACKWARD-SEARCH-REVIEW-20261009.md`). Nothing in play, search or training reads it. That review found four bugs, all now fixed and tested:
+- circular proofs were accepted;
+- creature-only damage counted as hitting the opponent;
+- flashback was never linked to the graveyard;
+- pump signs were lost.
+
+After the fixes it finds 40 well-founded proofs in the Spy deck, all scaling. They use five card sets: Spy + Lotleth, Spy + Dread Return + Lotleth, and three with Winding Way, which can mill creatures by naming Land. Other decks get only direct-damage lines, or none: CawGates, Elves, Faeries and Terror get none, because combat damage is engine behaviour (rule 510), not a card effect.
+
+Known gaps:
+- costs and timing are not regressed;
+- target limits and choice branches are merged;
+- "scaling" only means the damage amount is dynamic.
+
+The review's view, which this design adopts, is that the regression relations are a hand-picked abstraction. A principled version would regress over the engine's real transitions, which is what forward engine search does.
 
 ## Not in v1
 
