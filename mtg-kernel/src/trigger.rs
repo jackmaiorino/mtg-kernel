@@ -310,6 +310,12 @@ const GLEAMING_BARRIER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef
     ..etb_trigger(gleaming_barrier_effect)
 }];
 const BIGFIN_BOUNCER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(bigfin_bouncer_effect)];
+const RUNE_SCARRED_DEMON_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(rune_scarred_demon_effect)];
+const TATYOVA_BENTHIC_DRUID_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControlledLandEnters,
+    ..etb_trigger(tatyova_benthic_druid_effect)
+}];
 
 /// Prowess (702.108a): "Whenever you cast a noncreature spell, this
 /// creature gets +1/+1 until end of turn."
@@ -340,6 +346,22 @@ fn phyrexian_arena_effect() -> EffectOp {
             amount: 1,
         },
     ])
+}
+
+/// Rune-Scarred Demon: "When this creature enters, search your library for
+/// a card, put it into your hand, then shuffle." The found card is not
+/// revealed, matching Grim Tutor's search.
+fn rune_scarred_demon_effect() -> EffectOp {
+    EffectOp::SearchLibraryToHand {
+        player: PlayerRef::Controller,
+        filter: crate::effect::LibraryCardFilter::AnyCard,
+    }
+}
+
+/// Tatyova, Benthic Druid: "Whenever a land you control enters, you gain 1
+/// life and draw a card."
+fn tatyova_benthic_druid_effect() -> EffectOp {
+    EffectOp::Sequence(vec![gain_one_life_effect(), ichor_wellspring_draw_effect()])
 }
 
 fn gleaming_barrier_effect() -> EffectOp {
@@ -1891,6 +1913,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Gleaming Barrier" => &GLEAMING_BARRIER_TRIGGERS,
         "Angel of Finality" => &BOJUKA_BOG_TRIGGERS,
         "Bigfin Bouncer" => &BIGFIN_BOUNCER_TRIGGERS,
+        "Rune-Scarred Demon" => &RUNE_SCARRED_DEMON_TRIGGERS,
+        "Tatyova, Benthic Druid" => &TATYOVA_BENTHIC_DRUID_TRIGGERS,
         "Dazzling Angel" => &DAZZLING_ANGEL_TRIGGERS,
         "Clinquant Skymage" => &CLINQUANT_SKYMAGE_TRIGGERS,
         "Mischievous Mystic" => &MISCHIEVOUS_MYSTIC_TRIGGERS,

@@ -3074,6 +3074,8 @@ enum AbilityEffectRecipe {
     /// numeric definition id at runtime via a generated `card_id_by_name`
     /// call.
     EachPlayerControllingNamedPermanentDrawsCard(&'static str),
+    /// The controller surveils this many cards (Rune-Sealed Wall).
+    Surveil(u8),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3124,6 +3126,7 @@ fn special_for(name: &str) -> Special {
         },
         "Thoughtcast" => Special::DrawCards(2),
         "Think Twice" => Special::DrawCards(1),
+        "Thrill of Possibility" => Special::DrawCards(2),
         "Giant Growth" => Special::PumpCreature {
             power: 3,
             toughness: 3,
@@ -3242,7 +3245,7 @@ fn special_for(name: &str) -> Special {
             amount: 2,
             excluded_subtype: "Dragon",
         },
-        "Dread Return" => Special::ReturnOwnGraveyardCreatureToBattlefield,
+        "Dread Return" | "Zombify" => Special::ReturnOwnGraveyardCreatureToBattlefield,
         "Land Grant" => Special::SearchForestToHand,
         "Grim Tutor" => Special::GrimTutor,
         "Revenge of the Rats" => Special::RevengeOfTheRats,
@@ -3733,7 +3736,7 @@ fn keywords_for(card: &CardJson) -> String {
             keywords.push("Keywords::DEATHTOUCH");
             keywords.push("Keywords::LIFELINK");
         }
-        "Icewind Elemental" | "Insect Token" | "Angel of Finality" => {
+        "Icewind Elemental" | "Insect Token" | "Angel of Finality" | "Rune-Scarred Demon" => {
             keywords.push("Keywords::FLYING")
         }
         "Elementalist Adept" => keywords.push("Keywords::FLASH"),
@@ -3975,7 +3978,7 @@ fn alt_cost_for(name: &str) -> &'static str {
 /// cast this spell, discard a card.").
 fn additional_cost_for(name: &str) -> &'static str {
     match name {
-        "Grab the Prize" => "Some(&[CostComponent::DiscardCards(1)])",
+        "Grab the Prize" | "Thrill of Possibility" => "Some(&[CostComponent::DiscardCards(1)])",
         "Fanatical Offering" | "Reckoner's Bargain" | "Eviscerator's Insight" => {
             "Some(&[CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::ArtifactOrCreature }])"
         }
@@ -4123,6 +4126,15 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_zone: "Battlefield",
             sorcery_speed_only: false,
             target_spec: "ArtifactOrEnchantmentPermanent",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Rune-Sealed Wall" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Tap],
+            effect: AbilityEffectRecipe::Surveil(1),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
@@ -4920,6 +4932,7 @@ fn permanent_filter_token(filter: PermanentFilterRecipe) -> &'static str {
 fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
     match effect {
         AbilityEffectRecipe::DrawCards(count) => format!("draw_cards:{count}"),
+        AbilityEffectRecipe::Surveil(count) => format!("surveil:{count}"),
         AbilityEffectRecipe::GainLife(amount) => format!("gain_life:{amount}"),
         AbilityEffectRecipe::CreateToken(name) => format!("create_token:{name}"),
         AbilityEffectRecipe::DamageTarget(amount) => format!("damage_target:{amount}"),
@@ -5037,6 +5050,7 @@ fn library_search_filter_src(filter: LibrarySearchFilterRecipe) -> String {
 fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
     match effect {
         AbilityEffectRecipe::DrawCards(count) => format!("ability_effect_draw_{count}"),
+        AbilityEffectRecipe::Surveil(count) => format!("ability_effect_surveil_{count}"),
         AbilityEffectRecipe::GainLife(amount) => format!("ability_effect_gain_life_{amount}"),
         AbilityEffectRecipe::CreateToken("Samurai Token") => {
             "ability_effect_create_samurai_token".to_string()
@@ -5528,6 +5542,8 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Gleaming Barrier" => "dies:create_treasure_token:1",
         "Angel of Finality" => "etb:target_player:exile_graveyard",
         "Bigfin Bouncer" => "etb:target_opponent_controlled_creature:return_to_owners_hand",
+        "Rune-Scarred Demon" => "etb:search_library_any_card_to_hand_unrevealed",
+        "Tatyova, Benthic Druid" => "controlled_land_enters:gain_life:1:then_draw:1",
         "Dazzling Angel" => "other_controlled_creature_enters:gain_life:1",
         "Beast-Kin Ranger" => "other_controlled_creature_enters:pump_bound_source:1:0:end_of_turn",
         "Dwynen, Gilt-Leaf Daen" => "source_declared_attacker:gain_life_current_attacking_elf_count",
@@ -6070,6 +6086,13 @@ fn codegen(cards: &[CardJson]) -> String {
                 writeln!(
                     out,
                     "    EffectOp::GainLife {{ player: PlayerRef::Controller, amount: {amount} }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::Surveil(count) => {
+                writeln!(
+                    out,
+                    "    EffectOp::Surveil {{ player: PlayerRef::Controller, count: {count} }}"
                 )
                 .unwrap();
             }
@@ -8470,7 +8493,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v59\n"
+            "kernel_carddb/v60\n"
         } else {
             "kernel_carddb/v34\n"
         },
@@ -8832,6 +8855,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Cyclops" => "Subtype::Cyclops",
         "Shark" => "Subtype::Shark",
         "Elk" => "Subtype::Elk",
+        "Demon" => "Subtype::Demon",
         "Pirate" => "Subtype::Pirate",
         "Plains" => "Subtype::Plains",
         "ROGUE" => "Subtype::RogueAllCaps",

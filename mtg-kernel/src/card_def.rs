@@ -270,6 +270,8 @@ pub enum Subtype {
     Shark,
     /// Appended for Burnished Hart; existing ids remain fixed.
     Elk,
+    /// Appended for Rune-Scarred Demon; existing ids remain fixed.
+    Demon,
 }
 
 impl Subtype {
@@ -379,6 +381,8 @@ impl Subtype {
         Subtype::Shark,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Elk,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Demon,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -511,6 +515,7 @@ impl Subtype {
                 | Subtype::Golem
                 | Subtype::Shark
                 | Subtype::Elk
+                | Subtype::Demon
         )
     }
 }
@@ -1868,11 +1873,11 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 321 (library-search, kicker and flashback cards).
+        // batches append through id 326 (simple triggers and graveyard spells).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                322
+                327
             } else {
                 192
             }
@@ -1968,8 +1973,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v59_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0xfd7a_00c2_1413_488b;
+    fn card_db_hash_v60_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x63e4_c9bf_208f_49e0;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

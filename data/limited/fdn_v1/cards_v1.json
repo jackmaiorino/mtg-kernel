@@ -3856,6 +3856,160 @@
       "mechanics": [],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/RatToken.java",
       "is_token": true
+    },
+    {
+      "name": "Zombify",
+      "engine_capability": "full",
+      "mana_cost": "{3}{B}",
+      "mana_value": 4,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_simple_triggers.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "reanimation"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/z/Zombify.java"
+    },
+    {
+      "name": "Rune-Scarred Demon",
+      "engine_capability": "full",
+      "mana_cost": "{5}{B}{B}",
+      "mana_value": 7,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Demon"
+      ],
+      "supertypes": [],
+      "power": 6,
+      "toughness": 6,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_simple_triggers.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying",
+        "etb_trigger",
+        "library_search"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RuneScarredDemon.java"
+    },
+    {
+      "name": "Tatyova, Benthic Druid",
+      "engine_capability": "full",
+      "mana_cost": "{3}{G}{U}",
+      "mana_value": 5,
+      "colors": [
+        "G",
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Merfolk",
+        "Druid"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_simple_triggers.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "landfall",
+        "life_gain",
+        "draw"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TatyovaBenthicDruid.java"
+    },
+    {
+      "name": "Thrill of Possibility",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_simple_triggers.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "additional_cost",
+        "discard",
+        "draw"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/ThrillOfPossibility.java"
+    },
+    {
+      "name": "Rune-Sealed Wall",
+      "engine_capability": "full",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Wall"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 6,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_simple_triggers.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "defender",
+        "activated_ability",
+        "surveil"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RuneSealedWall.java"
     }
   ]
 }
