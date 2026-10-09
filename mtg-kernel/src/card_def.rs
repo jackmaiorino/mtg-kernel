@@ -272,6 +272,9 @@ pub enum Subtype {
     Elk,
     /// Appended for Rune-Scarred Demon; existing ids remain fixed.
     Demon,
+    /// Appended for Axgard Cavalry; existing ids remain fixed.
+    Dwarf,
+    Berserker,
 }
 
 impl Subtype {
@@ -383,6 +386,10 @@ impl Subtype {
         Subtype::Elk,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Demon,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Dwarf,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Berserker,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -516,6 +523,8 @@ impl Subtype {
                 | Subtype::Shark
                 | Subtype::Elk
                 | Subtype::Demon
+                | Subtype::Dwarf
+                | Subtype::Berserker
         )
     }
 }
@@ -1873,11 +1882,11 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 326 (simple triggers and graveyard spells).
+        // batches append through id 329 (activated combat abilities).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                327
+                330
             } else {
                 192
             }
