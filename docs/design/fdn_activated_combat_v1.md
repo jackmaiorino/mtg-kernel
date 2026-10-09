@@ -5,7 +5,13 @@ append IDs 327-329 after v60. The coordinator reserves catalog v61. The full
 booster target remains 286 names; registration coverage becomes 130 full,
 one partial and 155 missing. Hosted compilation emitted v61 checksum
 `949beb8c995c006c`; affected gameplay/profile checks remain pending, so this
-document makes no gameplay-completion claim yet.
+document makes no gameplay-completion claim yet. The first final-profile
+focused Linux run executed ten new cases: seven passed and three expiry cases
+failed because the test helper assigned Cleanup directly, skipping its entry
+action. The repaired helper passes the real End window into Cleanup and asserts
+the next turn plus cleared temporary effects. Required hosted rerun is pending;
+the failed [job 113996712270](https://github.com/jackmaiorino/mtg-kernel/actions/runs/37981912915/job/113996712270)
+remains retained. This test-only repair does not alter the generated checksum.
 
 | Card | Printed activation | Existing interpreter machinery |
 | --- | --- | --- |

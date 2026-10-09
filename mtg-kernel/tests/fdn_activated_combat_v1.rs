@@ -74,11 +74,24 @@ fn choose(state: &mut GameState, target: ObjectId) {
 }
 
 fn cleanup(state: &mut GameState) {
-    state.step = Step::Cleanup;
-    state.players[0].hand.clear();
-    state.players[1].hand.clear();
-    next(state);
-    assert!(state.engine.until_end_of_turn.is_empty());
+    assert!(state.stack.is_empty());
+    assert!(!state.engine.until_end_of_turn.is_empty());
+    let active = state.active_player;
+    // Expiry runs when the engine enters Cleanup, not when a fixture assigns
+    // that step directly. Pass the real End window to execute the entry action.
+    state.step = Step::End;
+    state.priority_player = active;
+    state.engine.priority_passes = [false, false];
+    for _ in 0..8 {
+        assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
+        if state.active_player != active {
+            assert_eq!(state.active_player, active.opponent());
+            assert!(state.engine.until_end_of_turn.is_empty());
+            return;
+        }
+        engine::step(state, Action::Pass).unwrap();
+    }
+    panic!("End passes did not enter Cleanup and the next turn");
 }
 
 #[test]
