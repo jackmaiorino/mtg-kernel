@@ -96,7 +96,7 @@ pub(crate) fn act(
         return Ok(0);
     }
     c.inference += 1;
-    p.select_fast_session_v1(s).map_err(PlayErr::Fault)
+    super::prof::timed(super::prof::INFER, || p.select_fast_session_v1(s)).map_err(PlayErr::Fault)
 }
 
 /// Applies one action, charging the meter first; updates the suffix labels
@@ -112,7 +112,7 @@ pub(crate) fn apply(
 ) -> Result<(), PlayErr> {
     meter.charge()?;
     let before = labels.as_ref().map(|l| {
-        let mut b = Before::take(s.game_state(), focal, defs);
+        let mut b = super::prof::timed(super::prof::LABELS, || Before::take(s.game_state(), focal, defs));
         b.self_chosen_now = l.self_pending;
         if l.cast_pending {
             b.watch_spy_cast(s.game_state(), focal, defs);
@@ -142,10 +142,10 @@ pub(crate) fn apply(
             l.history_len += 1;
         }
     }
-    s.step(d.episode_id, d.step, a)
+    super::prof::timed(super::prof::STEP, || s.step(d.episode_id, d.step, a))
         .map_err(|e| PlayErr::Fault(format!("step {} action {a}: {e:?}", d.step)))?;
     if let (Some(l), Some(b)) = (labels, before) {
-        l.apply(events(&b, s.game_state(), focal, defs));
+        super::prof::timed(super::prof::LABELS, || l.apply(events(&b, s.game_state(), focal, defs)));
         l.self_pending = false;
         l.cast_pending = false;
     }
@@ -161,9 +161,11 @@ pub(crate) fn observe(
     defs: &SpyDefs,
 ) {
     if let Some(l) = labels {
-        if let Some(sem) = s.diagnostic_current_action_semantics() {
-            l.observe_menu(s, &sem, a as usize, focal, defs);
-        }
+        super::prof::timed(super::prof::LABELS, || {
+            if let Some(sem) = s.diagnostic_current_action_semantics() {
+                l.observe_menu(s, &sem, a as usize, focal, defs);
+            }
+        });
     }
 }
 

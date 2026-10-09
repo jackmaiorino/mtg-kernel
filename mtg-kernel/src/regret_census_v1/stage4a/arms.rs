@@ -95,7 +95,7 @@ fn sample_world(
     stats: &mut SamplerStats,
 ) -> Result<FastActorSessionV1, String> {
     let t = Instant::now();
-    let r = sample(s, seed, ctx.prior);
+    let r = super::prof::timed(super::prof::SAMPLE, || sample(s, seed, ctx.prior));
     stats.seconds += t.elapsed().as_secs_f64();
     match r {
         Ok(x) => {
@@ -426,7 +426,7 @@ impl Roles {
             .policy("D", index, &format!("{tag}-inner/{ordinal}/opp"));
         let mut means = Vec::with_capacity(cands.len());
         for &cand in &cands {
-            let mut w = world.clone();
+            let mut w = super::prof::timed(super::prof::CLONE, || world.clone());
             self.inner_focal.reset_sampling_v1(fs);
             self.inner_opps[ctx.opp].reset_sampling_v1(os);
             apply(&mut w, &d, cand as u32, meter, ctx.focal, None, &ctx.defs)?;
@@ -577,7 +577,7 @@ impl Roles {
             let mut scores = Vec::with_capacity(n);
             let mut ok = true;
             for &cand in cands {
-                let mut s = world.clone();
+                let mut s = super::prof::timed(super::prof::CLONE, || world.clone());
                 self.reset_main(ctx, arm, index, "select");
                 let mut suffix = Suffix::new(ctx.cast_root);
                 let mut dstats = DStats::default();
@@ -682,9 +682,10 @@ impl Roles {
                         last_phys = Some(d.physical_decision_id);
                     }
                     let a = if in_tree && depth <= MAX_DEPTH {
-                        let cn = canon(&s, d)?;
+                        let cn = super::prof::timed(super::prof::CANON, || canon(&s, d))?;
                         let key = child_key(&parent.0, &parent.1, &cn);
-                        let (edge_index, edge) = match tree.find(&key, &parent.0, &parent.1, &cn)? {
+                        let found = super::prof::timed(super::prof::TREE, || tree.find(&key, &parent.0, &parent.1, &cn))?;
+                        let (edge_index, edge) = match found {
                             Found::Hit(node) => {
                                 let e = node.select();
                                 (e, cn.edges[e].clone())
@@ -756,7 +757,7 @@ impl Roles {
                 Ok((path, new, End::Natural { win })) => {
                     sel.discovery
                         .add(&suffix, Some(End::Natural { win }), index);
-                    tree.backup(&path, new, win);
+                    super::prof::timed(super::prof::TREE, || tree.backup(&path, new, win));
                     sel.completed += 1;
                 }
                 Ok((_, _, End::NonNatural)) => {
@@ -793,7 +794,7 @@ impl Roles {
         tree: Option<&Tree>,
         sampler: &mut SamplerStats,
     ) -> EvalOut {
-        let mut s = world.clone();
+        let mut s = super::prof::timed(super::prof::CLONE, || world.clone());
         self.reset_main(ctx, arm, e, "eval");
         let mut meter = Meter::new(ctx.limits.eval_cap);
         let mut c = Counters::default();
@@ -877,7 +878,7 @@ impl Roles {
                     }
                     let root = std::mem::replace(&mut first, false);
                     let a = if matching && depth <= MAX_DEPTH {
-                        let cn = canon(s, d)?;
+                        let cn = super::prof::timed(super::prof::CANON, || canon(s, d))?;
                         let key = child_key(&parent.0, &parent.1, &cn);
                         if !root {
                             stats.nonroot_lookups += 1;

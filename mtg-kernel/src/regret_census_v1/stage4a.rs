@@ -19,6 +19,7 @@
 mod arms;
 mod labels;
 mod play;
+mod prof;
 mod seeds;
 mod tree;
 mod world;
@@ -347,11 +348,15 @@ fn run_root(
         probs: probs.clone(),
         limits: shared.limits,
     };
+    let _ = prof::take();
     let (e_sel, e_tree) = roles.select_e(&ctx);
+    let prof_e = prof::take();
     let a_cands = arms::a_candidates(&probs);
     let a_sel = roles.select_rounds(&ctx, "A", &a_cands);
+    let prof_a = prof::take();
     let d_cands = arms::d_candidates(&probs, &seeds);
     let d_sel = roles.select_rounds(&ctx, "D", &d_cands);
+    let prof_d = prof::take();
     let eval_started = Instant::now();
     let mut eval_sampler = SamplerStats::default();
     let mut worlds = Vec::new();
@@ -411,6 +416,7 @@ fn run_root(
         }
     }
     let eval_wall = eval_started.elapsed().as_secs_f64();
+    let prof_eval = prof::take();
     let sel = [&e_sel, &a_sel, &d_sel];
     let mut arms_json = serde_json::Map::new();
     for (i, arm) in ARMS.iter().enumerate() {
@@ -441,6 +447,7 @@ fn run_root(
         "timing":{"replay":replay_secs,"selection_wall":{"E":e_sel.wall,"A":a_sel.wall,"D":d_sel.wall},
             "selection_sampler_seconds":{"E":e_sel.sampler.seconds,"A":a_sel.sampler.seconds,"D":d_sel.sampler.seconds},
             "eval_wall":eval_wall,"eval_sampler_seconds":eval_sampler.seconds,
+            "profile":{"E":prof_e,"A":prof_a,"D":prof_d,"eval":prof_eval},
             "root_wall":started.elapsed().as_secs_f64()}});
     row["primary_sha256"] = json!(primary_hash(&row));
     Ok(row)
