@@ -88,3 +88,14 @@ Jack generation 413 belongs to `claude-stage4a-20261009`. The failed controller
 receipt is preserved. This preflight failure is not a timing sample. The next
 attempt requires an observed reservation release and the same guarded launch.
 Coordination and current state are recorded in collab PR127.
+
+At 22:55:44 UTC, one bounded qualification waiter started on Haley as PID
+132784 (creation time `134360601440142588`). Its observed state was
+`waiting-reservation`, with generation 156 still held by live adopted work.
+`resume_qualifications.py` waits on canonical lock-directory events, then
+uses the existing supported dispatcher for atomic admission. It preserves
+the first refused receipt, stops on a failed case and has a two-hour waiting
+deadline. The waiter covers eight qualifications and allocation measurement;
+it cannot launch full comparison blocks. Its job and current-state receipts
+are under `C:/mtg-node/training-speedups-20261009/qualification-resume-*.json`.
+No measured speedup is available while those qualifications are pending.

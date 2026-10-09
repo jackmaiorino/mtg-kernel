@@ -4,7 +4,8 @@ Manifest: {"sequential_nonoverlapping": true, "cases": [
  {"id":"A1", "variant":"baseline", "report": <file>, "execution": <file>,
   "archive": <file>, "inspect": <file>, "transport": <file>, "retain": <file>,
   "scheduler_stdout": <optional JSONL>, "update_reports": [<optional 162 files>],
-  "controller": <optional JSON with seconds>}], "qualifications": [<optional cases>]}
+  "controller": <optional case_driver receipt>,
+  "retained_root": <optional retained block root>, "retained_manifest": <required RETAINED.json when retained_root>}], "qualifications": [<optional cases>]}
 Each file is a path or {"path": ..., "sha256": ...}; local paths may be relative
  to --root. Explicit local files avoid remapping captured remote source paths.
 Case phases must be sequential, report-bound, and complete. Controller polling
@@ -81,6 +82,49 @@ def scheduler(reader, ref, count):
             "nested": "collection/update/validation timers partition iteration wall; do not add to dispatch or child"}
 
 
+def captured_path(value):
+    # Captured Windows paths remain source identities even in a local mirror.
+    return str(value).replace("\\", "/").rstrip("/").casefold()
+
+
+def retained_update_refs(reader, local_root, kept, manifest_pin, count):
+    native = captured_path(kept["native_root"])
+    captured_retained = captured_path(manifest_pin["path"]).rsplit("/", 1)[0]
+    mapping = {}
+    targets = set()
+    for item in kept["files"]:
+        source, target = captured_path(item["from"]), captured_path(item["to"])
+        require(source not in mapping and target not in targets, "duplicate retained mapping")
+        require(source.startswith(native + "/") and target.startswith(captured_retained + "/"),
+                "retained mapping escapes case roots")
+        require(source[len(native):] == target[len(captured_retained):], "retained mapping changes relative path")
+        mapping[source] = item
+        targets.add(target)
+    def selected(relative):
+        source = native + "/" + relative.casefold()
+        require(source in mapping, "case retained manifest omits selected receipt: " + relative)
+        item = mapping[source]
+        require(captured_path(item["to"]) == captured_retained + "/" + relative.casefold(),
+                "retained target differs from selected receipt")
+        return {"path": str(local_root / Path(relative)), "sha256": item["sha256"]}
+    refs = []
+    for index in range(count):
+        prefix = f"iterations/{index:06d}/"
+        completion, _ = reader.json(selected(prefix + "complete.json"))
+        require(completion["iteration"] == index, "retained completion index differs")
+        update_pin = completion["update"]
+        source = captured_path(update_pin["path"])
+        require(source.startswith(native + "/" + prefix), "retained update belongs to another case/iteration")
+        relative = source[len(native) + 1:]
+        require(".." not in Path(relative).parts, "unsafe retained relative path")
+        ref = selected(relative)
+        require(ref["sha256"] == update_pin["sha256"], "completion update pin differs from case retained mapping")
+        # Reading the pinned selected receipt happens before aggregating timing.
+        reader.bytes(ref)
+        refs.append(ref)
+    return refs
+
+
 def read_case(reader, case, formal):
     report, report_sha = reader.json(case["report"])
     execution, execution_sha = reader.json(case["execution"])
@@ -142,21 +186,17 @@ def read_case(reader, case, formal):
         result["scheduler"] = scheduler(reader, case["scheduler_stdout"], updates)
     update_refs = case.get("update_reports")
     if "retained_root" in case:
+        require(formal, "retained timing requires formal case retention")
         require(update_refs is None, "choose retained_root or explicit update_reports")
+        require("retained_manifest" in case, "case retained_manifest required with retained_root")
+        kept, kept_sha = reader.json(case["retained_manifest"])
+        linked(retain["retained_manifest"], kept_sha, "case retained manifest")
+        require(kept["native_root"] == inspect["native_root"] == archive["native_root"],
+                "retained manifest native root differs from case")
         retained = Path(case["retained_root"])
         if not retained.is_absolute():
             retained = reader.root / retained
-        update_refs = []
-        for index in range(updates):
-            folder = retained / "iterations" / f"{index:06d}"
-            completion, _ = reader.json(str(folder / "complete.json"))
-            require(completion["iteration"] == index, "retained completion index differs")
-            source = completion["update"]["path"].replace("\\", "/")
-            marker = f"/iterations/{index:06d}/"
-            require(source.count(marker) == 1, "retained update belongs to another iteration")
-            relative = Path(source.split(marker, 1)[1])
-            require(not relative.is_absolute() and ".." not in relative.parts, "unsafe retained relative path")
-            update_refs.append({"path": str(folder / relative), "sha256": completion["update"]["sha256"]})
+        update_refs = retained_update_refs(reader, retained, kept, retain["retained_manifest"], updates)
     if update_refs is not None:
         require(len(update_refs) == updates, "partial learner timing coverage")
         totals = {}
@@ -177,7 +217,10 @@ def read_case(reader, case, formal):
         result["learner_nested_seconds"] = totals
     if "controller" in case:
         controller, _ = reader.json(case["controller"])
-        result["controller_envelope_seconds"] = seconds(controller["seconds"], "controller", True)
+        require(controller["complete"] is True, "incomplete case controller")
+        linked(controller["report"], report_sha, "controller case report")
+        result["controller_envelope_seconds"] = seconds(
+            controller["controller_seconds_including_observation"], "controller including observation", True)
     return result
 
 
