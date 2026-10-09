@@ -9,7 +9,8 @@ use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::{ManaColor, Pip};
-use mtg_kernel::rl::{observe_v2, PendingEffectChoiceSemanticV4};
+use mtg_kernel::policy_surface_v5::PolicySurfaceV5;
+use mtg_kernel::rl::{observe_policy_v6, observe_v2, PendingEffectChoiceSemanticV4};
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 use mtg_kernel::surface_v2::HarnessSurfaceV2;
 use mtg_kernel::trigger;
@@ -347,6 +348,67 @@ fn pending_and_answered_stages_restore_identically_before_any_moves() {
             state.players[0].library,
             [original[2], original[0], original[3], original[4]]
         );
+    }
+}
+
+#[test]
+fn nonchooser_public_and_typed_contexts_match_across_subsets_and_all_private_stages() {
+    let mut state = ready(5);
+    let original = state.players[0].library.clone();
+    enter(&mut state, "Cephalid Inkmage");
+    settle(&mut state).unwrap();
+    let public = observe_v2(&state, &HarnessSurfaceV2::new(), PlayerId::P1, 0).unwrap();
+    let typed =
+        observe_policy_v6(&state, &PolicySurfaceV5::new(), PlayerId::P1, 0, 0, 0, 1).unwrap();
+    let check = |instance: &GameState| {
+        assert_eq!(
+            public.visible_projection_hash,
+            observe_v2(instance, &HarnessSurfaceV2::new(), PlayerId::P1, 0)
+                .unwrap()
+                .visible_projection_hash
+        );
+        let view =
+            observe_policy_v6(instance, &PolicySurfaceV5::new(), PlayerId::P1, 0, 0, 0, 1).unwrap();
+        assert_eq!(typed.projection, view.projection);
+        assert_eq!(typed.extensions, view.extensions);
+        assert_eq!(typed.visible_projection_hash, view.visible_projection_hash);
+    };
+    for mask in 0..8 {
+        let mut copy = restored(&state);
+        let graveyard = original[..3]
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| mask & (1 << i) != 0)
+            .map(|(_, id)| *id)
+            .collect::<Vec<_>>();
+        let kept = original[..3]
+            .iter()
+            .copied()
+            .filter(|id| !graveyard.contains(id))
+            .collect::<Vec<_>>();
+        for &card in &graveyard {
+            engine::step(&mut copy, Action::ChooseEffectTarget(Target::Object(card))).unwrap();
+            check(&copy);
+        }
+        if copy
+            .engine
+            .pending_effect
+            .as_ref()
+            .unwrap()
+            .choice
+            .is_some()
+        {
+            engine::step(&mut copy, Action::FinishEffectSelection).unwrap();
+        }
+        check(&copy);
+        if kept.len() >= 2 {
+            settle(&mut copy).unwrap();
+            check(&copy);
+            for &card in kept.iter().rev() {
+                engine::step(&mut copy, Action::ChooseEffectTarget(Target::Object(card))).unwrap();
+                check(&copy);
+            }
+        }
     }
 }
 
