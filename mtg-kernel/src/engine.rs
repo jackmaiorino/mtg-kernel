@@ -1995,6 +1995,12 @@ fn validate_equipment_granted_trigger_contract(
     Ok(())
 }
 
+/// Whether a definition has Storm (702.40). The pool's only storm card is
+/// keyed here; `rules_vector_v1` reads this instead of the card's name.
+pub(crate) fn has_storm(definition: &card_def::CardDef) -> bool {
+    definition.name == "Weather the Storm"
+}
+
 /// Authenticates Weather the Storm's historical producing cast contract.
 /// The source may still be the unique live spell or may have changed zones
 /// after its independent Storm trigger was put on the stack.
@@ -2029,7 +2035,7 @@ fn storm_source_contract_is_structurally_valid(
         | SpellCastRouteV4::GraveyardEscape
         | SpellCastRouteV4::AdventureExile => false,
     };
-    definition.name == "Weather the Storm"
+    has_storm(definition)
         && definition.is_executable()
         && definition.is_castable()
         && contract.zone == Zone::Stack
