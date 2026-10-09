@@ -5,6 +5,7 @@ use mtg_kernel::card_def::{card_id_by_name, CardCapability, Keywords, Subtype, C
 use mtg_kernel::engine::{self, Action, Decision, UnsupportedMechanic};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
+use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 use mtg_kernel::trigger::{self, PendingTrigger};
 
@@ -121,6 +122,7 @@ fn first_lifegain_definitions_append_and_preserve_printed_characteristics() {
     let cat = &CARD_DEFS[card_id_by_name("Cat Token").unwrap() as usize];
     assert_eq!((cat.power, cat.toughness), (Some(1), Some(1)));
     assert_eq!(cat.subtypes, &[Subtype::Cat]);
+    assert_eq!(cat.colors, &[ManaColor::W]);
     assert!(cat.is_token);
 }
 
@@ -373,4 +375,81 @@ fn first_lifegain_distinct_lifelink_sources_share_only_one_first_trigger() {
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].source, seraph);
     assert_eq!(state.players[0].life, 24);
+}
+
+#[test]
+fn first_lifegain_prevented_lifelink_damage_does_not_consume_first_gain() {
+    let mut state = ready(PlayerId::P0);
+    let seraph = put(
+        &mut state,
+        PlayerId::P0,
+        "Vanguard Seraph",
+        Zone::Battlefield,
+    );
+    let vampire = put(
+        &mut state,
+        PlayerId::P0,
+        "Vampire Nighthawk",
+        Zone::Battlefield,
+    );
+    state
+        .engine
+        .active_replacements
+        .push(event::ActiveReplacement {
+            id: 1,
+            source: seraph,
+            kind: event::ReplacementEffectKind::PreventNextDamage {
+                target: Target::Player(PlayerId::P1),
+                remaining: 2,
+            },
+        });
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::damage(vampire, Target::Player(PlayerId::P1), 2),
+    );
+    assert_eq!(state.players[0].life, 20);
+    assert!(collected(&mut state).is_empty());
+    gain(&mut state, PlayerId::P0, 1);
+    let pending = collected(&mut state);
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].source, seraph);
+}
+
+#[test]
+fn first_lifegain_real_next_turn_resets_both_seats_and_own_turn_gate() {
+    let mut state = ready(PlayerId::P0);
+    let p0_seraph = put(
+        &mut state,
+        PlayerId::P0,
+        "Vanguard Seraph",
+        Zone::Battlefield,
+    );
+    let p1_seraph = put(
+        &mut state,
+        PlayerId::P1,
+        "Vanguard Seraph",
+        Zone::Battlefield,
+    );
+    put(&mut state, PlayerId::P0, "Cat Collector", Zone::Battlefield);
+    let p1_collector = put(&mut state, PlayerId::P1, "Cat Collector", Zone::Battlefield);
+    gain(&mut state, PlayerId::P0, 1);
+    gain(&mut state, PlayerId::P1, 1);
+    queue(&mut state);
+    settle(&mut state);
+    let old_anchor = state.life_gain_turn_v1.as_ref().unwrap().history_index;
+    state.step = Step::Cleanup;
+    next(&mut state);
+    assert_eq!(state.active_player, PlayerId::P1);
+    let ledger = state.life_gain_turn_v1.as_ref().unwrap();
+    assert_eq!(ledger.active_player, PlayerId::P1);
+    assert!(ledger.history_index > old_anchor);
+    gain(&mut state, PlayerId::P0, 1);
+    gain(&mut state, PlayerId::P1, 1);
+    let pending = collected(&mut state);
+    let mut actual: Vec<_> = pending.iter().map(|ability| ability.source).collect();
+    let mut expected = vec![p0_seraph, p1_seraph, p1_collector];
+    actual.sort();
+    expected.sort();
+    assert_eq!(actual, expected);
+    assert_eq!(pending.first().unwrap().controller, PlayerId::P1);
 }

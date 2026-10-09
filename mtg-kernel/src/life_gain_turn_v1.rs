@@ -364,6 +364,7 @@ mod tests {
         gain(&mut state, PlayerId::P0, 3);
         state.engine.event_log.clear();
         // An actual Untap entry is authoritative even with unchanged seat/round.
+        state.step = Step::Untap;
         reset_at_untap(&mut state);
         gain(&mut state, PlayerId::P0, 4);
         assert_eq!(
