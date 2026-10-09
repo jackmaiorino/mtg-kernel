@@ -6,7 +6,8 @@ Usage: python stage4a_queue.py ROOT BINARY QUEUE.json
 QUEUE.json: [job or {"parallel": [job, ...]}], job = {"name", "mode": "s4a-corpus"|"s4a-run", "model": "r1"|"r2",
   "workers", "base_seed", and for corpus "first_game", "games"; for run
   "roots" and optionally "limits"; any job may set "max_cpu_seconds" (its share of the
-  global CPU-worker-second cap, polled every 30 s) or "max_wall_seconds"; the job is killed and
+  global CPU-worker-second cap, polled every 30 s), or jobs of one parallel group may share
+  "group_max_cpu_seconds", or "max_wall_seconds"; the job is killed and
   recorded incomplete there, ("select_cap,eval_worlds,eval_cap", cost-only
   engineering checks)}]. Jobs run in order. Each process runs at BelowNormal
 priority with Windows power throttling (EcoQoS) switched off, so it uses the
@@ -80,6 +81,10 @@ def cpu_seconds(pid):
     return (t[2].value + t[3].value) / 1e7 if ok else None
 
 
+# CPU seconds of the live jobs of a parallel group that shares one budget.
+GROUP_CPU = {}
+
+
 def run_job(item):
     out = OUT / f"{item['name']}.jsonl"
     env = {k: v for k, v in os.environ.items() if k not in ("S4A_LIMITS", "ROOTS")}
@@ -115,6 +120,11 @@ def run_job(item):
             except subprocess.TimeoutExpired:
                 cpu = cpu_seconds(p.pid) or cpu
                 over_cpu = item.get("max_cpu_seconds") and cpu and cpu > item["max_cpu_seconds"]
+                if item.get("group_max_cpu_seconds") and cpu:
+                    # One budget for the whole parallel group (finished jobs
+                    # keep their last reading in GROUP_CPU).
+                    GROUP_CPU[item["name"]] = cpu
+                    over_cpu = over_cpu or sum(GROUP_CPU.values()) > item["group_max_cpu_seconds"]
                 over_wall = item.get("max_wall_seconds") and time.monotonic() - started > item["max_wall_seconds"]
                 if over_cpu or over_wall:
                     p.kill()
