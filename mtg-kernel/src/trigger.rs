@@ -5141,6 +5141,49 @@ mod tests {
         );
     }
 
+    #[test]
+    fn cast_union_is_one_predicate_and_selected_face_does_not_inherit_subtypes() {
+        let note = crate::card_def::card_id_by_name("Mental Note").unwrap();
+        let fang = crate::card_def::card_id_by_name("Fang Dragon").unwrap();
+        let mut state = GameState::new_from_libraries(
+            &[note, fang],
+            &[note],
+            |id| crate::card_def::CARD_DEFS[id as usize].name.into(),
+            1,
+        );
+        let note_object = state.players[0].library[0];
+        let dragon = state.players[0].library[1];
+        // A synthetic noncreature Dragon deliberately satisfies both terms.
+        state.objects.get_mut(note_object).v4.effective_subtype_ids =
+            vec![Subtype::Dragon.stable_id()];
+        assert!(selected_spell_has_subtype(
+            &state,
+            note_object,
+            Subtype::Dragon
+        ));
+        assert!(trigger_matches(
+            TriggerCondition::CastNoncreatureOrSubtype(Subtype::Dragon),
+            &CommittedEvent::SpellCast {
+                spell: note_object,
+                controller: PlayerId::P0
+            },
+            dragon,
+            PlayerId::P0,
+            &state,
+            0,
+        ));
+        assert!(selected_spell_has_subtype(&state, dragon, Subtype::Dragon));
+        state.objects.get_mut(dragon).v4.spell_cast_origin =
+            Some(crate::state::SpellCastOriginV4 {
+                origin_zone: Zone::Hand,
+                origin_zone_change_count: 0,
+                route: crate::state::SpellCastRouteV4::Hand,
+                finalized_method: Some(crate::state::CastMethodV4::Omen),
+            });
+        assert!(!selected_spell_has_subtype(&state, dragon, Subtype::Dragon));
+        assert_eq!(selected_spell_types(&state, dragon), &[CardType::Sorcery]);
+    }
+
     // Lethal-damage creature death is exercised end-to-end in
     // `engine::tests::lethal_damage_kills_creature_via_sba`, using a real
     // `CARD_DEFS` creature (card-def ids here are synthetic and don't map

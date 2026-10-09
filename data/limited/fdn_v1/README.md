@@ -120,3 +120,7 @@ Bite Down's planeswalker recipient. Ajani has entry loyalty and damage
 handling but no loyalty abilities or combat defender support. It is marked
 partial and refused by deck admission. It is excluded from original-deck
 coverage counts.
+
+`FDN_reference_casting_triggers.dck` prepares Balmor and Firespitter Whelp
+with noncreature cast support. Serial catalog v66 qualification is pending;
+see `docs/design/fdn_casting_triggers_v1.md` for the source-preparation scope.
