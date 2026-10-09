@@ -1071,6 +1071,7 @@ pub enum AsyncFlatScoredRolloutErrorV1 {
         error: FastCategoricalError,
     },
     SchedulerDeadlineExceeded,
+    UnsupportedSearchTrajectoryContract,
     BrokerProtocolViolation,
     WorkerPanicked {
         worker_id: usize,
@@ -1095,6 +1096,7 @@ impl fmt::Display for AsyncFlatScoredRolloutErrorV1 {
                 formatter,
                 "broker_batch_target {requested} is outside 1..={logical_lanes}"
             ),
+            Self::UnsupportedSearchTrajectoryContract => write!(formatter, "search v3 requires a fresh trajectory contract; native rollout receipts bind Flat Action V2"),
             Self::InvalidSchedulerTimeout => write!(formatter, "scheduler timeout is invalid"),
             Self::EmptyEpisodeRange => write!(formatter, "episode_count must be positive"),
             Self::EpisodeRangeOverflow => write!(formatter, "episode id range overflows u64"),
@@ -3385,6 +3387,21 @@ pub(crate) fn run_async_flat_scored_rollout_core_with_population_v1<
 ) -> Result<(AsyncFlatScoredRolloutResultV1, O::Output), AsyncFlatScoredObservedRunErrorV1<O::Error>>
 {
     let api_started = Instant::now();
+    // The fresh search API can bind library candidates that V2 receipts
+    // cannot encode. Reject at admission instead of launching a worker that
+    // would fail later or laundering V4 authority into a frozen V2 receipt.
+    if search_opponent
+        .as_ref()
+        .is_some_and(|search| search.authority().uses_v4_contract_v3())
+        || population_opponent.as_ref().is_some_and(|population| {
+            (0..crate::native_population_opponent_v1::POPULATION_OPPONENT_SLOT_COUNT_V1)
+                .filter_map(PopulationSlotV1::from_index_v1)
+                .filter_map(|slot| population.search_authority_for_slot_v1(slot))
+                .any(|search| search.authority().uses_v4_contract_v3())
+        })
+    {
+        return Err(AsyncFlatScoredRolloutErrorV1::UnsupportedSearchTrajectoryContract.into());
+    }
     // Fail closed: at most one opponent authority may be installed for a
     // run. Pairwise, not just ladder/population -- the kernel-native search
     // authority (`kernel-native-search-opponent-v1`) is a third mutually
@@ -4221,6 +4238,40 @@ mod tests {
         calls: u64,
         decisions: u64,
         logits: u64,
+    }
+
+    #[test]
+    fn v3_search_is_rejected_before_frozen_trajectory_workers_spawn() {
+        use crate::kernel_native_search_opponent_v1::{
+            KernelNativeSearchAuthorityV1, KernelNativeSearchTierV1,
+            KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1,
+        };
+        let authority = KernelNativeSearchAuthorityV1::current_v3(
+            KernelNativeSearchTierV1::T512,
+            KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1[0],
+            crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
+        )
+        .unwrap();
+        let search = Arc::new(KernelNativeSearchOpponentV1::new(authority).unwrap());
+        let mut scorer = ZeroScorer::default();
+        let result =
+            run_async_flat_scored_rollout_core_with_population_v1::<FlatScoredFamilyV1, _, _>(
+                config(1, 1, 1, 1),
+                FlatScoredExecutionScheduleV1::Legacy,
+                None,
+                None,
+                None,
+                Some(search),
+                &mut FlatBatchScorerAdapterV1(&mut scorer),
+                FlatScoredTrajectoryObserverAdapterV1(NoopFlatScoredTrajectoryObserverV1),
+            );
+        assert!(matches!(
+            result,
+            Err(AsyncFlatScoredObservedRunErrorV1::Rollout(
+                AsyncFlatScoredRolloutErrorV1::UnsupportedSearchTrajectoryContract
+            ))
+        ));
+        assert_eq!(scorer.calls, 0);
     }
 
     impl FlatBatchScorerV1 for ZeroScorer {
