@@ -31,8 +31,9 @@ implementation speedup claim.
 At 2026-10-09 21:58 UTC, Jack's PC held stage4a reservation generation412 and
 all configured shared build cores were claimed. Haley had no reservation or
 shared core claims, 16 logical CPUs, 22.35 GiB available memory and 69.68 GiB
-free on C:. A four-core BelowNormal baseline build is running under Haley's
-canonical `host_slots_v1` wrapper. An initial build-helper attempt stopped at
+free on C:. Four-core BelowNormal release builds of both variants passed under
+Haley's canonical `host_slots_v1` wrapper. The candidate native tests are pending.
+An initial build-helper attempt stopped at
 an interactive linker help command; that owned process tree was stopped and
 the helper repaired before compilation. No training measurement was started
 by that attempt. The local queued baseline build was cancelled before work.
@@ -45,8 +46,9 @@ will accompany measured results.
 
 ## Verification and remaining work
 
-Python dispatcher/storage tests and formatting passed in the implementation
-lanes. Native parity tests, corruption regression checks, guarded qualification,
+Pinned Python 3.13.14 checks passed: 26 dispatcher tests, four archive tests,
+and three storage tests; four Linux-only dispatcher tests were skipped.
+Native parity tests, guarded qualification,
 complete matched blocks, current-diff review and integration remain pending.
 Review found and repaired two collector issues: a zero enclosing profiler
 duration and source-pin verification across cached collection invocations.
@@ -54,3 +56,25 @@ duration and source-pin verification across cached collection invocations.
 Full canonical checkpoint encoding, real continuation-loader readback, final
 byte reverification and durable recovery are preserved. Overlap or removal of
 those stages is not counted as an implemented or measured speedup.
+
+## Reproduction and storage accounting
+
+`prepare_requests.py` creates pinned requests and plans without execution.
+Every executable comparison plan uses `case_driver.py`, which invokes the
+supported reserved launcher and records the immediate logical preflight.
+Run the baseline launcher with only the three-line child elapsed-time
+instrumentation applied after its immutable binary build. Preserve its hash.
+The shared formal native-output path is intentional: later trajectories pin
+earlier checkpoint paths, so distinct native paths would alter output bytes.
+Dispatch receipts and recovery roots remain unique to each case.
+
+The previous r5 first block wrote 10,430,088,126 raw bytes and 3,498,824,608
+recovery bytes. The full logical projection must cover at least their sum.
+Both variants use the same NTFS-compressed parent directories. Any smaller
+physical projection must come from measured allocated bytes and include
+recovery, temporary writes and margin. The launcher dual-uses its projection
+for physical reserve and logical accounting; the case driver additionally
+enforces current logical bytes plus the full logical projection against the
+192 GiB allowance. The 60 GiB physical reserve remains unchanged. First-block
+physical growth must be reconciled before continuing. A storage admission
+failure does not authorize lowering an unmeasured projection.

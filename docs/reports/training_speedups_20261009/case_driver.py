@@ -10,6 +10,7 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import importlib.util
+import importlib
 import json
 from pathlib import Path
 import subprocess
@@ -44,6 +45,18 @@ def main():
     if root.exists() or Path(request['cold_root']).exists():
         raise ValueError('case roots already exist; no automatic retries')
     tools = args.launcher_root / 'python/tools'
+    sys.path.insert(0, str(tools))
+    dispatch = importlib.import_module('native_expanded_dispatch_v1')
+    # The existing launcher dual-uses one projection for logical and physical
+    # accounting. This comparison supplies measured physical growth there and
+    # additionally enforces the full logical growth bound immediately before
+    # launch. Neither the disk reserve nor the logical allowance is relaxed.
+    logical_projection = request['comparison_logical_projection_bytes']
+    if type(logical_projection) is not int or logical_projection <= 0:
+        raise ValueError('positive logical artifact projection required')
+    observed = dispatch.validate_storage(request['storage'])
+    if observed['logical_bytes'] + logical_projection > request['storage']['max_logical_bytes']:
+        raise ValueError('current plus projected logical artifacts exceed allowance')
     spec = importlib.util.spec_from_file_location('case_reservation', tools / 'host_reservation_v1.py')
     reservations = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = reservations
@@ -55,7 +68,10 @@ def main():
     began = time.monotonic()
     receipt = {'schema': 'training-speedup-case/v1', 'action': args.action,
                'request': pin(args.request), 'launcher': pin(command[2]),
-               'started_utc': datetime.now(timezone.utc).isoformat()}
+               'started_utc': datetime.now(timezone.utc).isoformat(),
+               'logical_preflight': {'current_bytes': observed['logical_bytes'],
+                                     'additional_bytes': logical_projection,
+                                     'cap_bytes': request['storage']['max_logical_bytes']}}
     try:
         child = subprocess.run(command, text=True, capture_output=True, check=True)
         dispatched = json.loads(child.stdout.strip().splitlines()[-1])
