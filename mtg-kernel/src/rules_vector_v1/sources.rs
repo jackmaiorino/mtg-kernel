@@ -700,67 +700,69 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
             intervening_if_controls_another_source_card,
             effect,
         } = *trigger;
-        let program = effect();
-        let spec =
-            crate::trigger::target_spec_for_trigger(card_id, &program).unwrap_or(TargetSpec::None);
-        let optional_cost =
-            crate::trigger::required_optional_additional_cost_for_trigger(card_id, &program);
-        walk.rec(
-            "trigger",
-            json!({
-                "condition": format!("{condition:?}"),
-                "home_zone": home_zone,
-                "if_kicked": intervening_if_kicked,
-                "if_controls_another_source_card": intervening_if_controls_another_source_card,
-                "target_spec": spec,
-                "program": program_value(&program),
-                "optional_cost": format!("{optional_cost:?}"),
-            }),
-        );
-        let env = Env { target_spec: spec };
-        walk.ability(CtxF::Trigger, |out| {
-            triggers_costs::trigger_condition(condition, out);
-            if home_zone != Zone::Battlefield {
-                out.atoms.push(Atom::TriggersFrom(home_zone.into()));
-            }
-            if intervening_if_kicked {
-                out.control(ControlF::Conditional);
-            }
-            if intervening_if_controls_another_source_card {
-                out.control(ControlF::Conditional);
-                out.read(
-                    RelF::You,
-                    Some(ZoneF::Battlefield),
-                    Some(ObjF::SpecificCard),
-                    AggF::Any,
-                );
-            }
-            if let Some(optional) = optional_cost {
-                optional_cost_facts(optional, out);
-            }
-            match crate::trigger::unselected_trigger_modes(card_id, &program) {
-                // A modal trigger: each mode carries its own target spec.
-                Some(modes) => {
-                    out.control(ControlF::ChooseBranch);
-                    for (mode_spec, mode) in modes {
-                        let mode_env = Env {
-                            target_spec: mode_spec,
-                        };
-                        meaning::effect_op(&mode, &mode_env, out);
-                        targets::target_spec(mode_spec, out);
+        let event_programs = crate::trigger::event_time_trigger_programs(card_id, condition);
+        let programs = if event_programs.is_empty() {
+            vec![effect()]
+        } else {
+            event_programs
+        };
+        for program in programs {
+            let spec = crate::trigger::target_spec_for_trigger(card_id, &program)
+                .unwrap_or(TargetSpec::None);
+            let optional_cost =
+                crate::trigger::required_optional_additional_cost_for_trigger(card_id, &program);
+            walk.rec(
+                "trigger",
+                json!({
+                    "condition": format!("{condition:?}"),
+                    "home_zone": home_zone,
+                    "if_kicked": intervening_if_kicked,
+                    "if_controls_another_source_card": intervening_if_controls_another_source_card,
+                    "target_spec": spec,
+                    "program": program_value(&program),
+                    "optional_cost": format!("{optional_cost:?}"),
+                }),
+            );
+            let env = Env { target_spec: spec };
+            walk.ability(CtxF::Trigger, |out| {
+                triggers_costs::trigger_condition(condition, out);
+                if home_zone != Zone::Battlefield {
+                    out.atoms.push(Atom::TriggersFrom(home_zone.into()));
+                }
+                if intervening_if_kicked {
+                    out.control(ControlF::Conditional);
+                }
+                if intervening_if_controls_another_source_card {
+                    out.control(ControlF::Conditional);
+                    out.read(
+                        RelF::You,
+                        Some(ZoneF::Battlefield),
+                        Some(ObjF::SpecificCard),
+                        AggF::Any,
+                    );
+                }
+                if let Some(optional) = optional_cost {
+                    optional_cost_facts(optional, out);
+                }
+                match crate::trigger::unselected_trigger_modes(card_id, &program) {
+                    // A modal trigger: each mode carries its own target spec.
+                    Some(modes) => {
+                        out.control(ControlF::ChooseBranch);
+                        for (mode_spec, mode) in modes {
+                            let mode_env = Env {
+                                target_spec: mode_spec,
+                            };
+                            meaning::effect_op(&mode, &mode_env, out);
+                            targets::target_spec(mode_spec, out);
+                        }
+                    }
+                    None => {
+                        meaning::effect_op(&program, &env, out);
+                        targets::target_spec(spec, out);
                     }
                 }
-                None => {
-                    meaning::effect_op(&program, &env, out);
-                    targets::target_spec(spec, out);
-                }
-            }
-        });
-    }
-    for program in crate::trigger::event_time_trigger_programs(card_id) {
-        let spec =
-            crate::trigger::target_spec_for_trigger(card_id, &program).unwrap_or(TargetSpec::None);
-        walk.program(CtxF::Trigger, "event_time_trigger", spec, &program);
+            });
+        }
     }
     if crate::engine::has_storm(def) {
         walk.rec("storm", Value::Bool(true));
@@ -876,10 +878,10 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 );
             }
             if noncreature_spell_damage_to_each_opponent > 0 {
-                out.trigger(TrigF::SpellCast {
-                    by: RelF::You,
-                    obj: ObjF::NonlandPermanent,
-                });
+                triggers_costs::trigger_condition(
+                    crate::trigger::TriggerCondition::CastNoncreatureSpell,
+                    out,
+                );
                 out.effect(
                     EffectAtom::new(EvF::Damage)
                         .player(RelF::EachOpponent)

@@ -57,6 +57,65 @@ fn nine_deck_cards() -> BTreeSet<u16> {
 // 1. Determinism.
 
 #[test]
+fn event_time_programs_keep_their_owning_trigger_without_duplicate_inventory() {
+    let hacker = rules("Moon-Circuit Hacker");
+    let abilities: Vec<_> = hacker
+        .abilities
+        .iter()
+        .filter(|a| a.ctx == CtxF::Trigger)
+        .collect();
+    assert_eq!(
+        abilities.len(),
+        2,
+        "two event-time variants replace the default program"
+    );
+    let trigger = Atom::Trigger(TrigF::DealsDamage {
+        combat: true,
+        to_player: true,
+        host: false,
+    });
+    for ability in &abilities {
+        assert!(ability.atoms.contains(&trigger));
+        assert!(ability
+            .atoms
+            .iter()
+            .any(|a| matches!(a, Atom::Effect(e) if e.ev == EvF::Draw)));
+    }
+    assert_eq!(
+        abilities
+            .iter()
+            .filter(|a| a
+                .atoms
+                .iter()
+                .any(|a| matches!(a, Atom::Effect(e) if e.ev == EvF::Discard)))
+            .count(),
+        1
+    );
+    let id = card_id("Moon-Circuit Hacker");
+    assert!(
+        crate::trigger::event_time_trigger_programs(id, crate::trigger::TriggerCondition::Etb)
+            .is_empty()
+    );
+}
+
+#[test]
+#[cfg(feature = "limited-fdn-fixtures")]
+fn equipment_noncreature_spell_trigger_matches_the_ordinary_trigger_class() {
+    let rod = atoms(&rules("Black Mage's Rod"));
+    let archer = atoms(&rules("Firebrand Archer"));
+    let event = Atom::Trigger(TrigF::SpellCast {
+        by: RelF::You,
+        obj: ObjF::Spell,
+    });
+    assert!(rod.contains(&event));
+    assert!(archer.contains(&event));
+    assert!(!rod.contains(&Atom::Trigger(TrigF::SpellCast {
+        by: RelF::You,
+        obj: ObjF::NonlandPermanent
+    })));
+}
+
+#[test]
 fn table_is_deterministic() {
     let a = build_table();
     let b = build_table();
