@@ -6549,7 +6549,7 @@ impl FastActorSessionV1 {
     }
 
     #[cfg(test)]
-    pub(crate) fn from_v2_search_fixture_state_v3(state: GameState) -> Self {
+    pub(crate) fn from_v2_search_fixture_state_v3(state: crate::state::GameState) -> Self {
         let mut session = Self::from_v3_fixture_state(state);
         session.flat_action_contract_mode = FlatActionContractModeV1::V2;
         let mut current = session.current.take().unwrap();
