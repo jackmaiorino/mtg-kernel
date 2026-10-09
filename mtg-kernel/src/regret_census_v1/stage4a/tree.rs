@@ -154,22 +154,53 @@ fn masked(v: &Value) -> String {
     x.to_string()
 }
 
-/// Observation lists of objects (hands, zones, known cards, effects) can be
-/// ordered by engine handles; order them by masked content instead. Lists
-/// whose order is information carry it as a field (stack and library
-/// positions), so sorting by content keeps it. Never applied to the menu.
+/// Observation lists whose order carries no information (hands, battlefield,
+/// exile, known hand cards, effects, relations, permissions, historical
+/// sources, a library search's offered cards) but can follow engine handles.
+/// Every other list keeps engine order: graveyards (arrival order), stack,
+/// targets, combat orders, pending triggers. Never applied to the menu.
+const UNORDERED_LISTS: [&str; 9] = [
+    "own_hand",
+    "known_hand_cards",
+    "battlefield",
+    "exile",
+    "continuous_effects",
+    "object_relations",
+    "exile_play_permissions",
+    "historical_public_sources",
+    "cards",
+];
+
+fn sort_by_content(a: &mut Vec<Value>) {
+    if a.len() > 1 && a.iter().all(Value::is_object) {
+        let mut keyed: Vec<(String, Value)> = a.drain(..).map(|x| (masked(&x), x)).collect();
+        keyed.sort_by(|x, y| x.0.cmp(&y.0));
+        a.extend(keyed.into_iter().map(|(_, x)| x));
+    }
+}
+
 fn sort_object_lists(v: &mut Value) {
     match v {
-        Value::Object(m) => m.values_mut().for_each(sort_object_lists),
-        Value::Array(a) => {
-            a.iter_mut().for_each(sort_object_lists);
-            if a.len() > 1 && a.iter().all(Value::is_object) {
-                let mut keyed: Vec<(String, Value)> =
-                    a.drain(..).map(|x| (masked(&x), x)).collect();
-                keyed.sort_by(|x, y| x.0.cmp(&y.0));
-                a.extend(keyed.into_iter().map(|(_, x)| x));
+        Value::Object(m) => {
+            for (k, x) in m.iter_mut() {
+                sort_object_lists(x);
+                if UNORDERED_LISTS.contains(&k.as_str()) {
+                    if let Value::Array(a) = x {
+                        // Per-seat pairs ([[..], [..]]) sort within each seat.
+                        if a.iter().all(Value::is_array) {
+                            for inner in a.iter_mut() {
+                                if let Value::Array(i) = inner {
+                                    sort_by_content(i);
+                                }
+                            }
+                        } else {
+                            sort_by_content(a);
+                        }
+                    }
+                }
             }
         }
+        Value::Array(a) => a.iter_mut().for_each(sort_object_lists),
         _ => {}
     }
 }
@@ -237,7 +268,11 @@ pub(crate) fn canon(s: &FastActorSessionV1, d: FastActorDecisionV1) -> Result<Ca
     sort_object_lists(&mut obs);
     let mut handles = Handles::default();
     collect_ids(&obs, &mut handles);
-    for x in &sem {
+    // Handles named only by the menu are indexed in content order, not in
+    // live candidate order (which can follow handles).
+    let mut by_content: Vec<&Value> = sem.iter().collect();
+    by_content.sort_by_cached_key(|x| masked(x));
+    for x in by_content {
         collect_ids(x, &mut handles);
     }
     rewrite(&mut obs, &handles);
@@ -537,5 +572,22 @@ mod tests {
             serde_json::json!([{"timestamp":1},{"timestamp":0},{"timestamp":1}])
         );
         assert_eq!(w["p"], serde_json::json!({"object":{"arena_id":1}}));
+    }
+
+    #[test]
+    fn only_unordered_lists_are_sorted() {
+        let mut v = serde_json::json!({
+            "player_status":[{"has_lost":false,"x":2},{"has_lost":false,"x":1}],
+            "graveyards":[[{"n":"b"},{"n":"a"}],[]],
+            "battlefield":[[{"n":"b"},{"n":"a"}],[{"n":"d"},{"n":"c"}]],
+            "own_hand":[{"n":"z"},{"n":"y"}],
+            "stack":[{"n":"q"},{"n":"p"}]});
+        sort_object_lists(&mut v);
+        assert_eq!(v["player_status"][0]["x"], 2);
+        assert_eq!(v["graveyards"][0][0]["n"], "b");
+        assert_eq!(v["battlefield"][0][0]["n"], "a");
+        assert_eq!(v["battlefield"][1][0]["n"], "c");
+        assert_eq!(v["own_hand"][0]["n"], "y");
+        assert_eq!(v["stack"][0]["n"], "q");
     }
 }
