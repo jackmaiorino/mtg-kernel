@@ -19,7 +19,7 @@ def finish(root, prior):
     plan = read(checked(choice['plan']))
     assert choice['schema'] == 'cpu-bo3-allocation/v4' and choice['selected'] is None
     root.mkdir()
-    fresh = {h: inventory(h) for h in ('jack', 'haleyspc')}
+    fresh = {h: inventory(h) for h in ('desktop', 'computehost')}
     for host, snapshot in fresh.items():
         old = read(checked(choice['inventory'][host]['evidence']))
         assert not snapshot['active'] and choice['inventory'][host]['eligible']

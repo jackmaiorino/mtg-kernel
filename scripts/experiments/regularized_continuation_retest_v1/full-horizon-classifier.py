@@ -704,7 +704,7 @@ def _fixture_artifact(seed: int, arm: str, generation: int, pairs: int, ranks: S
 def _run_self_test() -> int:
     """Exercise advancing, collapse-not-reproduced, and CRN mismatch paths."""
     here = Path(__file__).resolve()
-    eb_path = Path(r"C:\Users\Jack\IdeaProjects\collab\eb_cs_reference_v1.py")
+    eb_path = Path(r"C:\Users\user\IdeaProjects\collab\eb_cs_reference_v1.py")
     with tempfile.TemporaryDirectory(prefix="full-horizon-classifier-test-") as temp:
         root = Path(temp)
 

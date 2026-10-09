@@ -22,13 +22,13 @@ def validate_index(prior):
     for ref in prior['evidence']:
         proof = read(checked(ref))
         if proof.get('kind') == 'missing_local_launcher_and_children':
-            kind, host = 'interruption', 'jack'
+            kind, host = 'interruption', 'desktop'
             require(proof['actual_processes'] == [] and not proof['worker_completion_present'],
                     'Local interruption proof differs')
             rows = proof['receipt_store_checks']
         elif proof.get('schema') == 'g115-d3-shard-result/v1':
             kind, host = 'terminal', proof['host']
-            require(host == 'haleyspc', 'Expected the original Haley terminal receipt')
+            require(host == 'computehost', 'Expected the original compute host terminal receipt')
             rows = proof['rows']
         else:
             raise ValueError('Unrecognized retained terminal evidence')

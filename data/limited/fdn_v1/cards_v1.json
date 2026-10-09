@@ -2290,6 +2290,1726 @@
       ],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/InsectBlackGreenFlyingToken.java",
       "is_token": true
+    },
+    {
+      "name": "Burst Lightning",
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_equipment_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "kicker",
+        "burn"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BurstLightning.java"
+    },
+    {
+      "name": "Evolving Wilds",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_equipment_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "tap_ability",
+        "sacrifice_cost",
+        "fetch_effect"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EvolvingWilds.java"
+    },
+    {
+      "name": "Solemn Simulacrum",
+      "engine_capability": "full",
+      "mana_cost": "{4}",
+      "mana_value": 4,
+      "colors": [],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Golem"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_equipment_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "etb_trigger",
+        "fetch_effect",
+        "dies_trigger",
+        "may_draw"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SolemnSimulacrum.java"
+    },
+    {
+      "name": "Swiftfoot Boots",
+      "engine_capability": "full",
+      "mana_cost": "{2}",
+      "mana_value": 2,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Equipment"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_equipment_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "equipment",
+        "keyword_grant",
+        "equip"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SwiftfootBoots.java"
+    },
+    {
+      "name": "Grim Tutor",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_equipment_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "tutor",
+        "life_loss"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GrimTutor.java"
+    },
+    {
+      "name": "Quick-Draw Katana",
+      "engine_capability": "full",
+      "mana_cost": "{2}",
+      "mana_value": 2,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Equipment"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_equipment_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "equipment",
+        "conditional_static_pump",
+        "keyword_grant",
+        "equip"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/q/QuickDrawKatana.java"
+    },
+    {
+      "name": "Adventuring Gear",
+      "engine_capability": "full",
+      "mana_cost": "{1}",
+      "mana_value": 1,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Equipment"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_equipment_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "equipment",
+        "landfall",
+        "attached_pump_until_end_of_turn",
+        "equip"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AdventuringGear.java"
+    },
+    {
+      "name": "Goldvein Pick",
+      "engine_capability": "full",
+      "mana_cost": "{2}",
+      "mana_value": 2,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Equipment"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_equipment_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "equipment",
+        "static_pump",
+        "attached_combat_damage_trigger",
+        "treasure_token",
+        "equip"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GoldveinPick.java"
+    },
+    {
+      "name": "Dragon Trainer",
+      "engine_capability": "full",
+      "mana_cost": "{3}{R}{R}",
+      "mana_value": 5,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_tokens_auras.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "etb_token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DragonTrainer.java"
+    },
+    {
+      "name": "Resolute Reinforcements",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_tokens_auras.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flash",
+        "etb_token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/ResoluteReinforcements.java"
+    },
+    {
+      "name": "Elfsworn Giant",
+      "engine_capability": "full",
+      "mana_cost": "{3}{G}{G}",
+      "mana_value": 5,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Giant"
+      ],
+      "supertypes": [],
+      "power": 5,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_tokens_auras.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "reach",
+        "landfall",
+        "create_token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/ElfswornGiant.java"
+    },
+    {
+      "name": "Eager Trufflesnout",
+      "engine_capability": "full",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Boar"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_tokens_auras.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "trample",
+        "combat_damage_trigger",
+        "create_token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EagerTrufflesnout.java"
+    },
+    {
+      "name": "Rite of the Dragoncaller",
+      "engine_capability": "full",
+      "mana_cost": "{4}{R}{R}",
+      "mana_value": 6,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_tokens_auras.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "spell_cast_trigger",
+        "create_token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RiteOfTheDragoncaller.java"
+    },
+    {
+      "name": "Heroic Reinforcements",
+      "engine_capability": "full",
+      "mana_cost": "{2}{R}{W}",
+      "mana_value": 4,
+      "colors": [
+        "R",
+        "W"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_tokens_auras.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "create_token",
+        "boost_controlled",
+        "grant_haste"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HeroicReinforcements.java"
+    },
+    {
+      "name": "Goblin Surprise",
+      "engine_capability": "full",
+      "mana_cost": "{2}{R}",
+      "mana_value": 3,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_tokens_auras.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "modal",
+        "boost_controlled",
+        "create_token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GoblinSurprise.java"
+    },
+    {
+      "name": "Twinblade Blessing",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [
+        "Aura"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_tokens_auras.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flash",
+        "enchant_creature",
+        "grant_double_strike"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TwinbladeBlessing.java"
+    },
+    {
+      "name": "Blanchwood Armor",
+      "engine_capability": "full",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [
+        "Aura"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_tokens_auras.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "enchant_creature",
+        "boost_per_controlled_forest"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BlanchwoodArmor.java"
+    },
+    {
+      "name": "Dragon Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dragon"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/DragonToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Dragon 5/5 Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dragon"
+      ],
+      "supertypes": [],
+      "power": 5,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/Dragon55Token.java",
+      "is_token": true
+    },
+    {
+      "name": "Soldier Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/SoldierToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Goblin Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Goblin"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/GoblinToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Sure Strike",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "temporary_power_change",
+        "grant_first_strike"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SureStrike.java"
+    },
+    {
+      "name": "Snakeskin Veil",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "plus_one_counter",
+        "grant_hexproof"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SnakeskinVeil.java"
+    },
+    {
+      "name": "Seismic Rupture",
+      "engine_capability": "full",
+      "mana_cost": "{2}{R}",
+      "mana_value": 3,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "damage_each_creature"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SeismicRupture.java"
+    },
+    {
+      "name": "Boltwave",
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "damage_each_opponent"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/Boltwave.java"
+    },
+    {
+      "name": "Day of Judgment",
+      "engine_capability": "full",
+      "mana_cost": "{2}{W}{W}",
+      "mana_value": 4,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "destroy_all_creatures"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DayOfJudgment.java"
+    },
+    {
+      "name": "Incinerating Blast",
+      "engine_capability": "full",
+      "mana_cost": "{4}{R}",
+      "mana_value": 5,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "damage_target_creature",
+        "may_discard_then_draw"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/i/IncineratingBlast.java"
+    },
+    {
+      "name": "Slagstorm",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}{R}",
+      "mana_value": 3,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "modal",
+        "damage_each_creature",
+        "damage_each_player"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/Slagstorm.java"
+    },
+    {
+      "name": "Abrade",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "modal",
+        "damage_target_creature",
+        "artifact_destruction"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/Abrade.java"
+    },
+    {
+      "name": "Preposterous Proportions",
+      "engine_capability": "full",
+      "mana_cost": "{5}{G}{G}",
+      "mana_value": 7,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "boost_controlled_creatures",
+        "grant_vigilance"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/p/PreposterousProportions.java"
+    },
+    {
+      "name": "Bake into a Pie",
+      "engine_capability": "full",
+      "mana_cost": "{2}{B}{B}",
+      "mana_value": 4,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "destroy_target_creature",
+        "create_food_token"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BakeIntoAPie.java"
+    },
+    {
+      "name": "Hero's Downfall",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "destroy_target_creature_or_planeswalker"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HerosDownfall.java"
+    },
+    {
+      "name": "Broken Wings",
+      "engine_capability": "full",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "destroy_artifact_enchantment_or_flying_creature"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BrokenWings.java"
+    },
+    {
+      "name": "Make Your Move",
+      "engine_capability": "full",
+      "mana_cost": "{2}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "destroy_artifact_enchantment_or_power_four_creature"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MakeYourMove.java"
+    },
+    {
+      "name": "Meteor Golem",
+      "engine_capability": "full",
+      "mana_cost": "{7}",
+      "mana_value": 7,
+      "colors": [],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Golem"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "etb_trigger",
+        "destroy_opponent_nonland_permanent"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MeteorGolem.java"
+    },
+    {
+      "name": "Reclamation Sage",
+      "engine_capability": "full",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elf",
+        "Shaman"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "etb_trigger",
+        "may_destroy_artifact_enchantment"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/ReclamationSage.java"
+    },
+    {
+      "name": "Fanatical Firebrand",
+      "engine_capability": "full",
+      "mana_cost": "{R}",
+      "mana_value": 1,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Goblin",
+        "Pirate"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "haste",
+        "activated_sacrifice_self",
+        "damage_any_target"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FanaticalFirebrand.java"
+    },
+    {
+      "name": "Dauntless Veteran",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Soldier"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "attack_trigger",
+        "boost_controlled_creatures"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DauntlessVeteran.java"
+    },
+    {
+      "name": "Crackling Cyclops",
+      "engine_capability": "full",
+      "mana_cost": "{2}{R}",
+      "mana_value": 3,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Cyclops",
+        "Wizard"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_removal_tricks.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "cast_noncreature_trigger",
+        "temporary_power_change"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CracklingCyclops.java"
+    },
+    {
+      "name": "Elementalist Adept",
+      "engine_capability": "full",
+      "mana_cost": "{1}{U}",
+      "mana_value": 2,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Wizard"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_counters_threats.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flash",
+        "prowess"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/ElementalistAdept.java"
+    },
+    {
+      "name": "Crypt Feaster",
+      "engine_capability": "full",
+      "mana_cost": "{3}{B}",
+      "mana_value": 4,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Zombie"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_counters_threats.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "menace",
+        "attack_trigger",
+        "threshold",
+        "self_pump"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CryptFeaster.java"
+    },
+    {
+      "name": "Erudite Wizard",
+      "engine_capability": "full",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Wizard"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_counters_threats.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "draw_trigger",
+        "plus_one_counter"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EruditeWizard.java"
+    },
+    {
+      "name": "Phyrexian Arena",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_counters_threats.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "upkeep_trigger",
+        "draw",
+        "life_loss"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/p/PhyrexianArena.java"
+    },
+    {
+      "name": "Gleaming Barrier",
+      "engine_capability": "full",
+      "mana_cost": "{2}",
+      "mana_value": 2,
+      "colors": [],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Wall"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_counters_threats.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "defender",
+        "dies_trigger",
+        "treasure"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GleamingBarrier.java"
+    },
+    {
+      "name": "Angel of Finality",
+      "engine_capability": "full",
+      "mana_cost": "{3}{W}",
+      "mana_value": 4,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Angel"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_counters_threats.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying",
+        "etb_trigger",
+        "graveyard_exile"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AngelOfFinality.java"
+    },
+    {
+      "name": "Bigfin Bouncer",
+      "engine_capability": "full",
+      "mana_cost": "{3}{U}",
+      "mana_value": 4,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Shark",
+        "Pirate"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_counters_threats.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "etb_trigger",
+        "bounce"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BigfinBouncer.java"
+    },
+    {
+      "name": "Essence Scatter",
+      "engine_capability": "full",
+      "mana_cost": "{1}{U}",
+      "mana_value": 2,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_counters_threats.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "counterspell"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EssenceScatter.java"
+    },
+    {
+      "name": "Refute",
+      "engine_capability": "full",
+      "mana_cost": "{1}{U}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_counters_threats.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "counterspell",
+        "draw",
+        "discard"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/Refute.java"
+    },
+    {
+      "name": "Macabre Waltz",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_counters_threats.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "graveyard_return",
+        "discard"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MacabreWaltz.java"
+    },
+    {
+      "name": "Campus Guide",
+      "engine_capability": "full",
+      "mana_cost": "{2}",
+      "mana_value": 2,
+      "colors": [],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Golem"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_library_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "etb_trigger",
+        "fetch_effect"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CampusGuide.java"
+    },
+    {
+      "name": "Burnished Hart",
+      "engine_capability": "full",
+      "mana_cost": "{3}",
+      "mana_value": 3,
+      "colors": [],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Elk"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_library_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "activated_ability",
+        "sacrifice_cost",
+        "fetch_effect"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BurnishedHart.java"
+    },
+    {
+      "name": "Grow from the Ashes",
+      "engine_capability": "full",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_library_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "kicker",
+        "fetch_effect"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GrowFromTheAshes.java"
+    },
+    {
+      "name": "Revenge of the Rats",
+      "engine_capability": "full",
+      "mana_cost": "{2}{B}{B}",
+      "mana_value": 4,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_library_search.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "token_creation",
+        "flashback"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RevengeOfTheRats.java"
+    },
+    {
+      "name": "Rat Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Rat"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/RatToken.java",
+      "is_token": true
+    },
+    {
+      "name": "Zombify",
+      "engine_capability": "full",
+      "mana_cost": "{3}{B}",
+      "mana_value": 4,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_simple_triggers.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "reanimation"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/z/Zombify.java"
+    },
+    {
+      "name": "Rune-Scarred Demon",
+      "engine_capability": "full",
+      "mana_cost": "{5}{B}{B}",
+      "mana_value": 7,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Demon"
+      ],
+      "supertypes": [],
+      "power": 6,
+      "toughness": 6,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_simple_triggers.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying",
+        "etb_trigger",
+        "library_search"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RuneScarredDemon.java"
+    },
+    {
+      "name": "Tatyova, Benthic Druid",
+      "engine_capability": "full",
+      "mana_cost": "{3}{G}{U}",
+      "mana_value": 5,
+      "colors": [
+        "G",
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Merfolk",
+        "Druid"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_simple_triggers.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "landfall",
+        "life_gain",
+        "draw"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TatyovaBenthicDruid.java"
+    },
+    {
+      "name": "Thrill of Possibility",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_simple_triggers.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "additional_cost",
+        "discard",
+        "draw"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/ThrillOfPossibility.java"
+    },
+    {
+      "name": "Rune-Sealed Wall",
+      "engine_capability": "full",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Wall"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 6,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_simple_triggers.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "defender",
+        "activated_ability",
+        "surveil"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RuneSealedWall.java"
     }
   ]
 }

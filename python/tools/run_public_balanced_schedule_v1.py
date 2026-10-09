@@ -17,7 +17,7 @@ def audit(group_pin, manifest, root, remote_only=False):
     group = read(checked(group_pin))
     assert set(group["jobs"]) == {"control", "balanced"}
     if remote_only:
-        recovery_path = checked(group_pin).parent / "haleyspc/recovery-verification.json"
+        recovery_path = checked(group_pin).parent / "computehost/recovery-verification.json"
         archived = read(recovery_path)
         assert archived["mismatches"] == 0
         archive = recovery_path.parent / "results.zip"
@@ -33,7 +33,7 @@ def audit(group_pin, manifest, root, remote_only=False):
     for arm, report_pin in group["jobs"].items():
         report = read(checked(report_pin))
         if remote_only:
-            assert report["placement"]["host"] == "haleyspc"
+            assert report["placement"]["host"] == "computehost"
         assert report["config"] == manifest["training_configs"][arm]
         execution = read(checked(report["execution"]))
         assert execution["exit_code"] == 0 and not execution["timeout"]

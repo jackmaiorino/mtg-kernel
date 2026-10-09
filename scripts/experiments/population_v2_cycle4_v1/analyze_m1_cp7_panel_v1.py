@@ -24,7 +24,7 @@ and the contrast is then ALSO evaluated under the pre-registration's
 worst-case missing-outcome bound: every dropped root scored as the endpoint
 losing both legs and the reference winning both (delta -1). With any voided
 root present, the milestone requires BOTH the complete-case gate and the
-worst-case gate (this rule is submitted to Jack for ratification; with zero
+worst-case gate (this rule is submitted to desktop for ratification; with zero
 voids, the expected case after the bridge fault fix, the two coincide).
 
 Provenance, all checked before any statistic is computed (fail-closed):

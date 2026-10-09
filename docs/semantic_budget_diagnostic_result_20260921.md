@@ -33,7 +33,7 @@ Source **6174d2a7** adds `SemanticBudgetDiagnostic` as a separate explicit conti
 
 Engineering reproduced all64 previously verified predecessor training logits/value bits exactly before updates. For each arm, one-worker continuous and four-worker resumed update34 checkpoints and final training scores matched exactly. The native mode rejected an unqualified128-update launch, a wrong-arm predecessor, an altered optimizer state, and use through the old diagnostic mode. Across all nine measured placements, both update33/34 checkpoint files were byte-identical. Final recovery verified all192 new checkpoint files with zero mismatches and both complete endpoint receipts. The independent analyzer recomputes argmax and target CE from saved logits and was hashed before launch.
 
-These are meaningful state, replay and numerical checks. They do not test playing strength. Fable's independent review remains unavailable under the recorded zero-source-readHTTP429 through September22 07:00EDT. It was not repeatedly retried or treated as endorsement. That review gap remains explicit under Jack's bounded research/execution assignment.
+These are meaningful state, replay and numerical checks. They do not test playing strength. Fable's independent review remains unavailable under the recorded zero-source-readHTTP429 through September22 07:00EDT. It was not repeatedly retried or treated as endorsement. That review gap remains explicit under the maintainer's bounded research/execution assignment.
 
 ## Actual compute and a publication bottleneck
 
@@ -41,17 +41,17 @@ The supported launcher `E:/mtg-meta-recovery-20260921/semantic-budget-diagnostic
 
 | Measured placement | Forecast total |
 |---|---:|
-| Jack1 worker, arms serial | 109.12s |
-| Jack4 workers, arms serial | 100.41s |
-| Jack1 worker, arms concurrent | 90.65s |
-| **Jack4 workers, arms concurrent** | **78.88s** |
-| HaleysPC1 worker, arms serial | 314.22s |
-| HaleysPC4 workers, arms serial | 298.80s |
-| HaleysPC1 worker, arms concurrent | 293.35s |
-| HaleysPC4 workers, arms concurrent | 278.88s |
+| Desktop1 worker, arms serial | 109.12s |
+| Desktop4 workers, arms serial | 100.41s |
+| Desktop1 worker, arms concurrent | 90.65s |
+| **Desktop4 workers, arms concurrent** | **78.88s** |
+| ComputeHost1 worker, arms serial | 314.22s |
+| ComputeHost4 workers, arms serial | 298.80s |
+| ComputeHost1 worker, arms concurrent | 293.35s |
+| ComputeHost4 workers, arms concurrent | 278.88s |
 | Both PCs4 workers, one arm per PC | 220.20s |
 
-The selected allocation was fastest among these measured candidates. The two-host case assigned zero-beta to Jack and retained to HaleysPC; its reversed orientation was not benchmarked, so no global-optimal-placement claim is made. Hardware, storage, memory and GPUs were inventoried. RunPod returnedHTTP403 at20:34:43UTC, with no allocation or spending. The retained continuation has no qualified CUDA path; no GPU speedup claim follows.
+The selected allocation was fastest among these measured candidates. The two-host case assigned zero-beta to the maintainer's and retained to the compute host; its reversed orientation was not benchmarked, so no global-optimal-placement claim is made. Hardware, storage, memory and GPUs were inventoried. RunPod returnedHTTP403 at20:34:43UTC, with no allocation or spending. The retained continuation has no qualified CUDA path; no GPU speedup claim follows.
 
 **Actual stage times:** staging2.762s, execution52.946s, recovery113.098s, total168.806s, plus separate ownership checks. The read-only controller/telemetry wrapper lasted184.074s. Native learners finished in19.991s and52.684s respectively. The two-update forecast substantially underestimated recovery, so it is not reliable for another run with the same volume. The build cost153.154s using4BelowNormalCargo jobs and E target/temp storage. Native execution/checkpoints used the D SSD; recovered evidence used E.
 

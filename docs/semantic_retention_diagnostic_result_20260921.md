@@ -46,10 +46,10 @@ Supported launcher: `E:/mtg-meta-recovery-20260921/semantic-retention-diagnostic
 
 | Placement | Forecast complete turnaround |
 |---|---:|
-| Jack, one native worker | 16.28 s |
-| **Jack, four native workers** | **15.59 s** |
-| HaleysPC, one native worker | 63.44 s |
-| HaleysPC, four native workers | 62.39 s |
+| The maintainer, one native worker | 16.28 s |
+| **The maintainer, four native workers** | **15.59 s** |
+| The compute host, one native worker | 63.44 s |
+| The compute host, four native workers | 62.39 s |
 
 Actual selected run: 2.831 seconds staging, 7.300 seconds execution, 1.631 seconds recovery, **11.761 seconds total**, excluding separate ownership checks. Remote preparation cost 2.925 seconds. Native build cost 150.992 seconds, with four BelowNormal Cargo jobs and E-drive target/temp storage. Local execution/checkpoints used the D SSD with recovered evidence on E. Both hosts' CPU, storage, memory, GPU and competing-process inventories were checked. There is one new sequential learner with four deterministic local backward partitions; a two-host gradient split is not implemented, and the matched baseline was already complete. No duplicate learner was launched to create occupancy. The new diagnostic has no qualified CUDA execution path, so no GPU speedup is claimed. RunPod inventory returned HTTP403 on September 21 at 20:21:59 UTC; no allocation or spending occurred.
 
@@ -59,6 +59,6 @@ The original retained comparison remains **no-advance**, with the semantic-contr
 
 The result removes retention as the sole explanation for inadequate fit at 32 updates. It leaves the amount of optimization and the network's state-conditioned player-target discrimination unresolved. Since the training loss is still declining, the next useful bounded question is whether a fixed longer **training-only** budget fits these same labels without changing the optimizer or architecture. Predeclare that budget and comparison separately, keep evaluation panels closed, and measure training adequacy before designing any new strength experiment. Do not label this run a plateau or automatically start a broad campaign.
 
-Independent Fable review remains unavailable under the known zero-source-read HTTP429 until September 22 at 07:00 EDT; it was not retried or counted as endorsement. The residual review gap remains explicit under Jack's research authority. CP7 information is excluded. Human/league competence, current-engine match strength and generalization beyond these fixtures remain unproven.
+Independent Fable review remains unavailable under the known zero-source-read HTTP429 until September 22 at 07:00 EDT; it was not retried or counted as endorsement. The residual review gap remains explicit under the maintainer's research authority. CP7 information is excluded. Human/league competence, current-engine match strength and generalization beyond these fixtures remain unproven.
 
 Evidence roots: `E:/mtg-meta-recovery-20260921/semantic-retention-diagnostic-001` and `semantic-retention-diagnostic-compute-001`. Key receipts are `plan.json`, `analysis-before-launch.json`, `completion.json`, `analysis.json`, `choice.json`, `engineering/completion.json` and `after-launch.json`. The training binary SHA is `1bed6d1f498e593d293daac2a760ca356f2a13e81f71a31bec47625d491a25ce`. Frozen prior outputs and the seven idle human sessions remain preserved. The heartbeat remains paused.

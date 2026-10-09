@@ -23,7 +23,7 @@ import hashlib
 import json
 from pathlib import Path
 
-PAYLOAD = Path('E:/mtg-g115-lineage-20260923/d3-attempt004-preparation-001/haley-binding/payload')
+PAYLOAD = Path('E:/mtg-g115-lineage-20260923/d3-attempt004-preparation-001/computehost-binding/payload')
 # The two anchors: the D3 declaration and the D3 formal collection record.
 D3_DECLARATION = (PAYLOAD / 'sources.json', 'b1ad4fa11eb300cf0d3a729ce19f26e8fcfee0e95b23204ee88b82f17b26155f')
 D3_EXECUTION = (Path('E:/mtg-g115-lineage-20260923/d3-attempt004-collection-001/execution.json'),

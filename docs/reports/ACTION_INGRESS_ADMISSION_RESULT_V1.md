@@ -54,7 +54,7 @@ reliance, or that any model is strong at Magic.
 - Branch:
   `codex/observation-diagnostics-v1`
 - Worktree:
-  `C:\Users\Jack\IdeaProjects\mtg-kernel-observation-diagnostics-codex`
+  `C:\Users\user\IdeaProjects\mtg-kernel-observation-diagnostics-codex`
 
 The V2 builder mechanically accepted the exact licensed 15-path diff from
 the invalid-record commit, all 23 frozen inputs, all 21 implementation-source

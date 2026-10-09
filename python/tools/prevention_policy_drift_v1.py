@@ -126,7 +126,7 @@ def qualify(root):
     p = validate_plan(root)
     remote = read(root/"remote-staging.json")
     availability = {}
-    for host in ["jack", "haleyspc"]:
+    for host in ["desktop", "computehost"]:
         current = inventory(host)
         write(root/f"{host}-inventory.json", current)
         availability[host] = dict(evidence=pin(root/f"{host}-inventory.json"), eligible=not current["active"],
@@ -134,7 +134,7 @@ def qualify(root):
     cloud = Path("E:/mtg-meta-recovery-20260920/public-device-placement-001/runpod-inventory.json")
     availability["runpod"] = dict(evidence=pin(cloud), eligible=False, reason="Latest authenticated inventory HTTP403; no new paid compute authority")
     write(root/"availability.json", availability)
-    hosts = [h for h in ["jack", "haleyspc"] if availability[h]["eligible"]]
+    hosts = [h for h in ["desktop", "computehost"] if availability[h]["eligible"]]
     assert hosts, "No idle eligible host"
     host = hosts[0]
     for index, q in enumerate(p["qualifications"]):
@@ -160,7 +160,7 @@ def qualify(root):
             hashes = r["fingerprints"]
             assert baseline is None or hashes == baseline, "parallel or host change altered diagnostic outputs"
             baseline = hashes
-            setup = remote["seconds"] if host == "haleyspc" else 0
+            setup = remote["seconds"] if host == "computehost" else 0
             projection = setup+r["staging_seconds"]+len(p["panel"])/len(mini)*(r["execution_seconds"]+r["recovery_seconds"])
             measurements.append(dict(id=label, host=host, workers=workers, report=pin(root/label/"result.json"), projected_seconds=projection))
             print(dict(qualified=label, seconds=r["seconds"], projected_seconds=projection), flush=True)
@@ -177,7 +177,7 @@ def require_choice(root, p):
     for key in ["behavior_replay_exact", "duplicate_zero", "corrupted_behavior_rejected", "unused_metadata_invariant", "all_parallel_outputs_exact"]:
         assert q[key] is True
     available = read(checked(q["availability"]))
-    assert set(available) == {"jack", "haleyspc", "runpod"}
+    assert set(available) == {"desktop", "computehost", "runpod"}
     for a in available.values(): checked(a["evidence"])
     counts = defaultdict(set)
     for m in q["measurements"]:
@@ -192,7 +192,7 @@ def require_choice(root, p):
         execution = read(checked(r["execution"]))
         assert execution["exit_code"] == 0 and not execution["timeout"]
         assert execution["binary"] == p["binary"] and execution["request"] == r["request"]
-        projection = (q["remote_setup_seconds"] if m["host"] == "haleyspc" else 0)+r["staging_seconds"]+10*(r["execution_seconds"]+r["recovery_seconds"])
+        projection = (q["remote_setup_seconds"] if m["host"] == "computehost" else 0)+r["staging_seconds"]+10*(r["execution_seconds"]+r["recovery_seconds"])
         assert m["projected_seconds"] == projection and 0 < projection < 1800
         counts[m["host"]].add(m["workers"])
     assert all(v == set(p["worker_counts"]) for v in counts.values())

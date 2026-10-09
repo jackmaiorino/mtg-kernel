@@ -1,6 +1,6 @@
 """Bounded timing replay of a completed panel, never new scientific outcomes.
 
-First qualification scope is the currently idle Haley host. Reject if Jack is
+First qualification scope is the currently idle compute host host. Reject if the maintainer is
 also eligible rather than silently omitting it from the allocation comparison.
 The guard itself supports any fully measured allocation and storage inventory.
 """
@@ -88,7 +88,7 @@ def qualify(root, reference, target_plan=None):
     assert reference_plan['binary'] == plan['binary']
     result_pin = completion['dispatch']
     completed = read(checked(result_pin))
-    assert set(completed['allocation']) == {'haleyspc'}
+    assert set(completed['allocation']) == {'computehost'}
     assert len(completed['jobs']) == reference_plan['expected_jobs']
     source_recovery_pin = completed['jobs'][0]['recovery']
     source_recovery = read(checked(source_recovery_pin))
@@ -96,18 +96,18 @@ def qualify(root, reference, target_plan=None):
     root.mkdir()
     availability = {}
     snapshots = {}
-    for host in ('jack','haleyspc'):
+    for host in ('desktop','computehost'):
         snap = inventory(host)
         write(root/f'{host}-inventory.json',snap)
         snapshots[host] = snap
         availability[host] = dict(checked_at=snap['at'], evidence=pin(root/f'{host}-inventory.json'),
                                   eligible=not snap['active'], reason='Actual native ownership at bounded replay qualification.')
-    assert not availability['jack']['eligible'], 'Jack is now available; extend qualification to all local storage and both-host placements'
-    assert availability['haleyspc']['eligible'], 'preserve active Haley work'
+    assert not availability['desktop']['eligible'], 'the maintainer is now available; extend qualification to all local storage and both-host placements'
+    assert availability['computehost']['eligible'], 'preserve active compute host work'
     cloud = Path('E:/mtg-meta-recovery-20260920/public-device-placement-001/runpod-inventory.json')
     availability['runpod'] = dict(checked_at=read(cloud)['checked_at'], evidence=pin(cloud), eligible=False,
                                   reason='Authenticated inventory HTTP403; no new paid allocation authorized.')
-    disk = storage(snapshots['haleyspc'],'C')
+    disk = storage(snapshots['computehost'],'C')
     settings = dict(drive='C',disk_serial=disk['disk_serial'],disk_name=disk['disk_name'])
     write(root/'design.json',dict(plan=plan_pin,reference_plan=reference_pin,source_recovery=source_recovery_pin,source_dispatch=result_pin,
           question='Separate measured full-output recovery from repeated native throughput to avoid multiplying fixed recovery overhead by the match scale.',
@@ -127,7 +127,7 @@ def qualify(root, reference, target_plan=None):
         receipt,last = full_recovery(root,remote,source_recovery['native_directory'],source_recovery['hashes'],reference_pin,i)
         samples.append(receipt)
     calibration = dict(schema='full-panel-recovery-calibration/v1', plan=reference_pin,binary=plan['binary'],
-          placements={'haleyspc':settings},allocation_weights={'haleyspc':1},jobs=reference_plan['expected_jobs'],
+          placements={'computehost':settings},allocation_weights={'computehost':1},jobs=reference_plan['expected_jobs'],
           matches=reference_plan['expected_matches'],files=last['verified_files'],uncompressed_bytes=last['uncompressed_bytes'],
           source_fingerprint=last['source_fingerprint'],source_recovery=source_recovery_pin,source_dispatch=result_pin,samples=samples)
     write(root/'recovery-calibration.json',calibration)
@@ -135,16 +135,16 @@ def qualify(root, reference, target_plan=None):
     # Reverse parallel order in repetition two; retain a serial baseline first.
     for repeat, counts in enumerate(((1,8,16),(16,8,1))):
         for workers in counts:
-            identifier=f'haley-w{workers}-r{repeat}'
-            allocation={'haleyspc':dict(settings,workers=workers,job_weight=1)}
+            identifier=f'computehost-w{workers}-r{repeat}'
+            allocation={'computehost':dict(settings,workers=workers,job_weight=1)}
             report = dispatch(root,identifier,plan['binary'],plan['qualification_jobs'],allocation,remote,300)
-            candidates.append(dict(id=identifier,allocation_id=f'haley-w{workers}',report=report))
+            candidates.append(dict(id=identifier,allocation_id=f'computehost-w{workers}',report=report))
             r=read(checked(report))
             print(dict(case=identifier,execution=r['execution_seconds'],sample_recovery=r['recovery_seconds']),flush=True)
     choice=dict(schema='cpu-bo3-allocation/v2',plan=plan_pin,binary=plan['binary'],inventory=availability,
-          eligible_storage=[('haleyspc','C',settings['disk_serial'])],remote_setup_seconds=remote['seconds'],
+          eligible_storage=[('computehost','C',settings['disk_serial'])],remote_setup_seconds=remote['seconds'],
           candidates=candidates,selected=None,
-          recovery_calibrations={f'haley-w{n}':pin(root/'recovery-calibration.json') for n in (1,8,16)},
+          recovery_calibrations={f'computehost-w{n}':pin(root/'recovery-calibration.json') for n in (1,8,16)},
           dependencies=[pin(Path(__file__).with_name(n)) for n in ('evaluation_throughput_v2.py','public_evaluation_dispatch_v1.py','public_evaluation_dispatch_v2.py')])
     write(root/'choice-draft.json',choice)
     selected=require_choice(root/'choice-draft.json',plan_pin,plan['binary'])

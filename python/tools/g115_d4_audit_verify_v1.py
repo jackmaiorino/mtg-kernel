@@ -13,7 +13,7 @@ from windows_owned_child_policy_v1 import configure_owned_child
 
 
 def admission(plan, host):
-    require(os.name == 'nt' and host in ('jack', 'haleyspc'), 'Windows audit verification only')
+    require(os.name == 'nt' and host in ('desktop', 'computehost'), 'Windows audit verification only')
     require(plan['schema'] == 'g115-d4-audit-verification/v1', 'Wrong verification schema')
     require(pinned(plan['documents']['launcher']) == Path(__file__).resolve(), 'Wrong owner')
     pinned(plan['transport']['dispatcher'])
@@ -29,11 +29,11 @@ def admission(plan, host):
     require(completion['complete'] and not completion['pending'], 'Source shard not complete')
     require(120 <= plan['total_seconds'] <= 3600, 'Verification bound must be 120..3600 seconds')
     root = Path(plan['worker_root']).resolve()
-    require(root.is_absolute() and root.drive.lower() == ('e:' if host == 'jack' else 'c:')
+    require(root.is_absolute() and root.drive.lower() == ('e:' if host == 'desktop' else 'c:')
             and not root.exists() and not root.is_relative_to(source), 'Fresh separate host root required')
     require(0 < plan['output_cap_bytes'] <= 2*1024**3, 'Bounded verification outputs required')
     require(shutil.disk_usage(root.anchor).free >= 60*1024**3 + plan['output_cap_bytes'], 'Disk reserve unavailable')
-    require(available_memory() >= (32 if host == 'jack' else 8)*1024**3, 'Memory reserve unavailable')
+    require(available_memory() >= (32 if host == 'desktop' else 8)*1024**3, 'Memory reserve unavailable')
     return verifier, source, root
 
 

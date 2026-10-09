@@ -1,6 +1,6 @@
 # Chosen-creature value observations, revision 2
 
-Jack assigned this bounded observation repair while the independent native
+The maintainer assigned this bounded observation repair while the independent native
 screen continues on its frozen inputs. No screen configuration, outcome,
 training Store or native campaign worktree is changed.
 

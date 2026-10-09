@@ -65,7 +65,7 @@ def run(root, compute):
             if attempts:
                 native = Path(read(attempts[-1])["native_root"])
                 for arm in m["training_configs"]:
-                    folder = native/"jack/jobs"/arm/"outputs"
+                    folder = native/"desktop/jobs"/arm/"outputs"
                     receipts = sorted(folder.glob("*/receipt.json"))
                     row = dict(completed_updates=len(receipts))
                     if receipts:

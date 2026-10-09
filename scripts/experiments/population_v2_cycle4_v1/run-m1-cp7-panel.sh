@@ -34,12 +34,12 @@ PAIRS_TOTAL=2048
 SHARD_PAIRS=128
 ARMS='E:\mtg-kernel-cycle4-arms-lead'
 EVIDENCE="$ARMS\\cp7-evidence"
-RUNNER='C:\Users\Jack\IdeaProjects\mtg-kernel-cp7-scorer-v3\scripts\current_net8_cp7_population_store_panel_v2\run_cp7_store_panel_v2.py'
+RUNNER='C:\Users\user\IdeaProjects\mtg-kernel-cp7-scorer-v3\scripts\current_net8_cp7_population_store_panel_v2\run_cp7_store_panel_v2.py'
 SCORER='D:\cargo-target-cp7-scorer-v5\release\checkpoint_shadow_stdio_v1-f5a9a0aa.exe'
-MAGE='C:\Users\Jack\IdeaProjects\mage-cp7-mapper-fix'
+MAGE='C:\Users\user\IdeaProjects\mage-cp7-mapper-fix'
 CARDDB='E:\mtg-kernel-population-v2-cycle3-cp7-anchor-reads\carddb-staging\cards.h2.mv.db'
 MAVEN='C:\Program Files\apache-maven-3.9.8\bin\mvn.cmd'
-PY='C:\Users\Jack\AppData\Local\Programs\Python\Python311\python.exe'
+PY='C:\Users\user\AppData\Local\Programs\Python\Python311\python.exe'
 CYCLE3='E:\mtg-kernel-population-v2-cycle3\lineage\real-attempt-003\run-0\store'
 
 expected_scorer=f5a9a0aa95f9a4f823d23a5e06f29b8c1626e427f51b15c7769c2aaed6d3de6d

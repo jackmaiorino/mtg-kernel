@@ -2277,6 +2277,9 @@ fn policy_observation_extensions_with_text_v6(
             let library_owner = match purpose {
                 EffectTargetSelectionPurpose::SearchLibraryToHand { player, .. }
                 | EffectTargetSelectionPurpose::SearchLibraryToHandMany { player, .. }
+                | EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
+                    player, ..
+                }
                 | EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
                     player, ..
                 } => Some(*player),
@@ -5877,11 +5880,13 @@ fn continuous_effects_public_v2(
         }
         for (equipment_id, equipment) in engine::attached_equipment_profiles(state, host_id) {
             let equipment_object = state.objects.get(equipment_id);
-            let keywords = if state.active_player == equipment_object.controller {
+            let controller_turn = state.active_player == equipment_object.controller;
+            let keywords = if controller_turn {
                 equipment.controller_turn_keywords
             } else {
                 equipment.other_turn_keywords
             };
+            let (power_delta, toughness_delta) = equipment.pt_deltas(controller_turn);
             let mut layers = engine::Layers::POWER_TOUGHNESS.0;
             if equipment.add_subtype.is_some() {
                 layers |= engine::Layers::TYPE_CHANGING.0;
@@ -5899,8 +5904,8 @@ fn continuous_effects_public_v2(
                 timestamp: (u64::from(equipment_id.0) << 32)
                     | u64::from(equipment_object.zone_change_count),
                 duration: EffectDurationV2::WhileAttached,
-                power_delta: i32::from(equipment.power_delta),
-                toughness_delta: i32::from(equipment.toughness_delta),
+                power_delta: i32::from(power_delta),
+                toughness_delta: i32::from(toughness_delta),
                 grants_haste: keywords.has(Keywords::HASTE),
                 set_power: None,
                 set_toughness: None,
@@ -6543,6 +6548,9 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany {
                                 ..
                             }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
+                                ..
+                            }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
                                 ..
                             }
@@ -6550,14 +6558,14 @@ fn pending_effect_semantic_v4(
                     let search_for_chooser = matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
-                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. } | crate::effect::EffectTargetSelectionPurpose::SearchLibraryCardsToDestination { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped { .. }
                     ) && acting_player == *player;
                     let redact_search_shape = matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
                             | crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest { .. }
-                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. } | crate::effect::EffectTargetSelectionPurpose::SearchLibraryCardsToDestination { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped { .. }
                     ) && acting_player != *player;
                     let visible_targets = |candidates: &[crate::effect::EffectTargetCandidate]| {
@@ -6636,6 +6644,9 @@ fn pending_effect_semantic_v4(
                                 ..
                             }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
                                 ..
                             }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {

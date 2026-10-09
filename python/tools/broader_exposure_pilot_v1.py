@@ -126,7 +126,7 @@ def prepare(root):
             'A48 has a distinct fresh initialization but is familiar training opposition. One g115 lineage, no independent replication.',
             'All training/evaluation preboard or Keep-sideboard, Keep7, no search. Learned openings, actual postboard competence, rules parity and human/meta evidence remain open.',
             'Retention is an aggregate seven-list gate, not simultaneous per-archetype confirmation.',
-            'Fable known zero-read HTTP429 until Sep22 07:00 EDT; no repeated retry/endorsement. Jack authorized bounded local continuation.',
+            'Fable known zero-read HTTP429 until Sep22 07:00 EDT; no repeated retry/endorsement. The maintainer authorized bounded local continuation.',
             'No CP7 outcome selection, paid compute or broad campaign.']}
     write(root/'manifest.json',manifest)
     print({'prepared_training_games_per_arm':2000,'substitutions':1000,'evaluation_matches':3864},flush=True)

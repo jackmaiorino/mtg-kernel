@@ -6,42 +6,42 @@
       "bytes": 3,
       "sha256": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354",
       "retained_cold": "E:\\mtg-fdn-fixtures\\fdn-armor-external-001\\external.exit",
-      "second_copy": "C:\\Users\\Jack\\fdn-armor-external-001-sealed\\external.exit"
+      "second_copy": "C:\\Users\\user\\fdn-armor-external-001-sealed\\external.exit"
     },
     {
       "path": "D:\\e-scratch\\fdn-armor-external-001\\external.json",
       "bytes": 2337,
       "sha256": "bf55d906e47bf0ad438f25048aee614de64d956bb64798280956d78fe19a620f",
       "retained_cold": "E:\\mtg-fdn-fixtures\\fdn-armor-external-001\\external.json",
-      "second_copy": "C:\\Users\\Jack\\fdn-armor-external-001-sealed\\external.json"
+      "second_copy": "C:\\Users\\user\\fdn-armor-external-001-sealed\\external.json"
     },
     {
       "path": "D:\\e-scratch\\fdn-armor-external-001\\external.manifest.json",
       "bytes": 1641,
       "sha256": "5d78b8cba5aecdbec8fc69cfdaddf34f7b9965a1cb620a01a406a188b0e0aab7",
       "retained_cold": "E:\\mtg-fdn-fixtures\\fdn-armor-external-001\\external.manifest.json",
-      "second_copy": "C:\\Users\\Jack\\fdn-armor-external-001-sealed\\external.manifest.json"
+      "second_copy": "C:\\Users\\user\\fdn-armor-external-001-sealed\\external.manifest.json"
     },
     {
       "path": "D:\\e-scratch\\fdn-armor-external-001\\external.pid",
       "bytes": 7,
       "sha256": "ac9c75ef369d9ccc3c65b51e94e2b748a0c618bd583f7abcac7d57a6ceee2a1f",
       "retained_cold": "E:\\mtg-fdn-fixtures\\fdn-armor-external-001\\external.pid",
-      "second_copy": "C:\\Users\\Jack\\fdn-armor-external-001-sealed\\external.pid"
+      "second_copy": "C:\\Users\\user\\fdn-armor-external-001-sealed\\external.pid"
     },
     {
       "path": "D:\\e-scratch\\fdn-armor-external-001\\external.stderr",
       "bytes": 0,
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "retained_cold": "E:\\mtg-fdn-fixtures\\fdn-armor-external-001\\external.stderr",
-      "second_copy": "C:\\Users\\Jack\\fdn-armor-external-001-sealed\\external.stderr"
+      "second_copy": "C:\\Users\\user\\fdn-armor-external-001-sealed\\external.stderr"
     },
     {
       "path": "D:\\e-scratch\\fdn-armor-external-001\\external.stdout",
       "bytes": 1894,
       "sha256": "c878a45a102525fda138cbc16710f0e920722d0e7878b4fcdb96a980565aaac5",
       "retained_cold": "E:\\mtg-fdn-fixtures\\fdn-armor-external-001\\external.stdout",
-      "second_copy": "C:\\Users\\Jack\\fdn-armor-external-001-sealed\\external.stdout"
+      "second_copy": "C:\\Users\\user\\fdn-armor-external-001-sealed\\external.stdout"
     }
   ],
   "retained": "All source records, evaluated binary, guarded launchers and failures",

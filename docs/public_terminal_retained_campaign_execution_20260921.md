@@ -12,17 +12,17 @@ Nine CPU placements were measured using identical two-update jobs for all three 
 
 | Placement | Projected complete campaign |
 | --- | ---: |
-| Jack: one worker, serial arms | 62.95 s |
-| Jack: four workers, serial arms | 54.69 s |
-| Jack: one worker, three concurrent arms | 34.63 s |
-| Jack: four workers, three concurrent arms | **30.13 s** |
-| HaleysPC: one worker, serial arms | 160.90 s |
-| HaleysPC: four workers, serial arms | 149.96 s |
-| HaleysPC: one worker, three concurrent arms | 122.50 s |
-| HaleysPC: four workers, three concurrent arms | 115.25 s |
+| The maintainer: one worker, serial arms | 62.95 s |
+| The maintainer: four workers, serial arms | 54.69 s |
+| The maintainer: one worker, three concurrent arms | 34.63 s |
+| The maintainer: four workers, three concurrent arms | **30.13 s** |
+| The compute host: one worker, serial arms | 160.90 s |
+| The compute host: four workers, serial arms | 149.96 s |
+| The compute host: one worker, three concurrent arms | 122.50 s |
+| The compute host: four workers, three concurrent arms | 115.25 s |
 | Both PCs: four workers, up to two arms per host | 106.40 s |
 
-The selected allocation used Jack's D-drive Samsung SSD with three concurrent arms and four native backward workers each. Actual staging was 2.973 seconds, native execution 18.402 seconds, and recovery 9.641 seconds: **31.016 seconds total**, excluding separate ownership checks. Each learner preserves fixed reduction order and sequential updates. Once an arm finishes, there is no extra planned independent work to launch merely to raise utilization.
+The selected allocation used the maintainer's D-drive Samsung SSD with three concurrent arms and four native backward workers each. Actual staging was 2.973 seconds, native execution 18.402 seconds, and recovery 9.641 seconds: **31.016 seconds total**, excluding separate ownership checks. Each learner preserves fixed reduction order and sequential updates. Once an arm finishes, there is no extra planned independent work to launch merely to raise utilization.
 
 Qualification took 193.93 seconds in its completed root, including 3.16 seconds of remote setup. It cost more than the short formal campaign; preserve this evidence when compatible rather than repeating the grid without cause. Native build cost was 191.86 seconds with four BelowNormal Cargo jobs on E drive. All execution was BelowNormal. Final inventories found no active owned native jobs on either PC and preserved seven existing idle human sessions.
 
@@ -45,4 +45,4 @@ Evidence:
 - `E:/mtg-meta-recovery-20260921/retained-campaign-v2.py`: pinned supported launcher. Original attempt roots `retained-campaign-001` and `retained-campaign-compute-001` remain preserved.
 - `E:/mtg-meta-recovery-20260921/retained-campaign-tools-001`: binary SHA `6cf463d6581509ba09bb58cd6f5e0430163e5c886a72d6d2ccbd26d2368f580f`.
 
-Next, implement the final-only evaluator for these distinct checkpoint identities and apply the already-frozen comparison plan to the 48 tactical cases and 100 reserved retention games. Do not decode these checkpoints as the old teacher objective, change the arms/gates, select intermediate endpoints, or infer improvement from training loss. Independent Fable review remains missing under the recorded zero-read quota error until September 22 at 07:00 EDT. Execution proceeded under Jack's explicit authority with that review gap recorded. No CP7 outcome selection, model promotion or human-preview change occurred.
+Next, implement the final-only evaluator for these distinct checkpoint identities and apply the already-frozen comparison plan to the 48 tactical cases and 100 reserved retention games. Do not decode these checkpoints as the old teacher objective, change the arms/gates, select intermediate endpoints, or infer improvement from training loss. Independent Fable review remains missing under the recorded zero-read quota error until September 22 at 07:00 EDT. Execution proceeded under the maintainer's explicit authority with that review gap recorded. No CP7 outcome selection, model promotion or human-preview change occurred.

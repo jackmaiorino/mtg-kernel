@@ -78,7 +78,7 @@ def build(output):
     started = time.monotonic()
     records = read({'path': str(B/'d4-continuation-records-003/analysis.json'),
                     'sha256': '24c9c199182d458d540d15545422a945970df84f3975b0ab70ff7c544587f1e3'})
-    old_portable = B/'d4-replay-haley-preparation-001/payload'
+    old_portable = B/'d4-replay-computehost-preparation-001/payload'
     old_remote = 'C:/mtg-node/g115-d4-replay-timing-20260925-001'
     relocation_map = {}
     for item in json.loads((old_portable/'relocations.json').read_bytes()):
@@ -95,12 +95,12 @@ def build(output):
         return copy.deepcopy(value)
     report = {'hosts': [], 'archive_transfers': {}, 'checkpoint_relocations': []}
     snapshots = json.loads((B/'d4-signal-batch-001/analysis.json').read_bytes())['source_snapshots']
-    for host in ['jack', 'haleyspc']:
+    for host in ['desktop', 'computehost']:
         folder = output/host
         folder.mkdir()
         def host_pin(path):
             ref = pin(path)
-            if host == 'haleyspc':
+            if host == 'computehost':
                 ref['path'] = REMOTE+'/packet/'+path.relative_to(folder).as_posix()
             return ref
         def imported(ref):
@@ -111,19 +111,19 @@ def build(output):
                 shutil.copyfile(ref['path'], target)
             return host_pin(target)
         action_sources = {'policy':snapshots[0], 'tensorizer':snapshots[1]}
-        if host == 'haleyspc':
+        if host == 'computehost':
             action_sources = {k:imported(v) for k,v in action_sources.items()}
         groups, commands, signals, templates = [], [], [], []
         archive_cache = {}
         metadata_files = {}
         metadata_archive = folder/'checkpoint-metadata.zip'
-        metadata_zip = zipfile.ZipFile(metadata_archive, 'x', compression=zipfile.ZIP_DEFLATED) if host == 'haleyspc' else None
-        selected = [r for r in records['runs'] if (r['endpoint'] in REMOTE_ENDPOINTS) == (host == 'haleyspc')]
+        metadata_zip = zipfile.ZipFile(metadata_archive, 'x', compression=zipfile.ZIP_DEFLATED) if host == 'computehost' else None
+        selected = [r for r in records['runs'] if (r['endpoint'] in REMOTE_ENDPOINTS) == (host == 'computehost')]
         for run in selected:
             endpoint = run['endpoint']
             config = read(run['config']);original_config_hash = digest(canonical_config(config))
             config_ref = run['config']
-            if host == 'haleyspc':
+            if host == 'computehost':
                 config = copy.deepcopy(config);config['source'] = relocate(config['source'])
                 save(folder/'configs'/f'{endpoint}.json', config)
                 config_ref = host_pin(folder/'configs'/f'{endpoint}.json')
@@ -141,12 +141,12 @@ def build(output):
                         for name, sha in shard['files'].items():
                             info = handle.getinfo(name)
                             members[name] = (handle, info.file_size, sha, original)
-                        if host == 'haleyspc':
+                        if host == 'computehost':
                             destination = REMOTE+'/archives/'+original['sha256']+'/'+Path(original['path']).name
                             report['archive_transfers'][original['sha256']] = {'source':original, 'destination':destination, 'bytes':Path(original['path']).stat().st_size}
                             shard['archive'] = {'path':destination, 'sha256':original['sha256']}
                     index_ref = mapping['archive_index']
-                    if host == 'haleyspc':
+                    if host == 'computehost':
                         save(folder/'indexes'/f'{key}.json', index)
                         index_ref = host_pin(folder/'indexes'/f'{key}.json')
                     archive_cache[key] = (members, handles, index_ref, index)
@@ -168,7 +168,7 @@ def build(output):
                         if name == 'checkpoint.json':
                             raw = z.read(member);require(digest(raw) == sha, 'Checkpoint member changed');checkpoint = json.loads(raw)
                             require(checkpoint['config_sha256'] == original_config_hash and checkpoint['next_update'] == update+1, 'Checkpoint/config/update differs')
-                            if host == 'haleyspc':
+                            if host == 'computehost':
                                 original_sha = sha
                                 checkpoint['config_sha256'] = config_hash
                                 raw = (json.dumps(checkpoint, separators=(',', ':'))+'\n').encode()
@@ -203,7 +203,7 @@ def build(output):
                 save(cp,command);save(sp,signal);commands.append(host_pin(cp));signals.append(host_pin(sp));templates.append(command)
         for members, handles, _, _ in archive_cache.values():
             for handle in handles:handle.close()
-        if host == 'jack':
+        if host == 'desktop':
             for arm in ['control','broader']:
                 root = Path('E:/mtg-postboard-campaign-20260920/broader-exposure-pilot-001')/arm
                 config_ref = pin(root/'config.json');config = read(config_ref)
@@ -230,13 +230,13 @@ def build(output):
         plan = json.loads((B/'d4-audit-signal-plan-001'/host/'manifest.json').read_bytes())
         evidence = B/'d4-audit-signal-cross-host-001'
         for field,name in [('throughput',host+'-throughput.json'),('allocation','allocation-selection.json'),('cross_host_signal_verification','verification.json')]:
-            plan[field] = pin(evidence/name) if host=='jack' else imported(pin(evidence/name))
-        plan.update(mode='production',workers=[8],total_seconds=21600,cap_bytes=60_000_000_000 if host=='jack' else 40_000_000_000,
-                    workload=host_pin(folder/'workload.json'),worker_root=str(B/'d4-audit-production-jack-worker-001') if host=='jack' else REMOTE+'/worker',
-                    retained_roots=[str(folder)] if host=='jack' else [REMOTE+'/packet',REMOTE+'/archives'],
+            plan[field] = pin(evidence/name) if host=='desktop' else imported(pin(evidence/name))
+        plan.update(mode='production',workers=[8],total_seconds=21600,cap_bytes=60_000_000_000 if host=='desktop' else 40_000_000_000,
+                    workload=host_pin(folder/'workload.json'),worker_root=str(B/'d4-audit-production-desktop-worker-001') if host=='desktop' else REMOTE+'/worker',
+                    retained_roots=[str(folder)] if host=='desktop' else [REMOTE+'/packet',REMOTE+'/archives'],
                     scope='Full archived audit, all3200 updates across two shards; no games/training;16 systematic choice rows per trajectory maximum plus all-record signal scans.')
         limits(plan,work,templates)
-        if host=='jack':signal_limits(plan,work,templates,host)
+        if host=='desktop':signal_limits(plan,work,templates,host)
         save(folder/'manifest.json',plan)
         save(folder/'file-hashes.json',{p.relative_to(folder).as_posix():pin(p)['sha256'] for p in folder.rglob('*') if p.is_file()})
         report['hosts'].append({'host':host,'manifest':host_pin(folder/'manifest.json'),'commands':len(commands),'signals':len(signals),'groups':len(groups),'input_bytes':sum(f['bytes'] for g in groups for f in g['files']),'payload_bytes':sum(p.stat().st_size for p in folder.rglob('*') if p.is_file()),'native_started':False})

@@ -1,4 +1,4 @@
-"""Qualify/run replica two on idle Haley while replica one owns Jack's GPU1."""
+"""Qualify/run replica two on idle compute host while replica one owns the desktop's GPU1."""
 import argparse
 import copy
 from concurrent.futures import ThreadPoolExecutor
@@ -23,29 +23,29 @@ def qualify(root, pilot, other):
     manifest = read(pilot / "manifest.json")
     assert manifest["replica"] == 2 and read(other / "manifest.json")["replica"] == 1
     checked(read(other / "training-launch.json")["pilot"])
-    local = inventory("jack")
+    local = inventory("desktop")
     dispatch_request = read(other / "entropy-replica-1-training/dispatch-0.json")
     native = Path(dispatch_request["native_root"])
     owned = []
-    for started in (native / "jack/jobs").glob("*/started.json"):
+    for started in (native / "desktop/jobs").glob("*/started.json"):
         receipt = read(started)
         for process in local["active"]:
             if process["ProcessId"] == receipt["pid"] and str(started.parent).replace("\\", "/").lower() in process["CommandLine"].replace("\\", "/").lower():
                 owned.append(process)
     assert owned, "replica one is not confirmed live; re-evaluate all currently eligible hosts"
-    remote = inventory("haleyspc")
+    remote = inventory("computehost")
     assert not remote["active"]
-    gpu = preflight("haleyspc", [place("haleyspc", 0, 1)])
+    gpu = preflight("computehost", [place("computehost", 0, 1)])
     root.mkdir()
-    write(root / "jack-inventory.json", local)
-    write(root / "haley-inventory.json", dict(hardware=remote, gpu=gpu))
+    write(root / "desktop-inventory.json", local)
+    write(root / "computehost-inventory.json", dict(hardware=remote, gpu=gpu))
     cloud = Path("E:/mtg-meta-recovery-20260920/public-device-placement-001/runpod-inventory.json")
     available = dict(
-        jack=dict(checked_at=local["at"], evidence=pin(root / "jack-inventory.json"), eligible=False,
+        desktop=dict(checked_at=local["at"], evidence=pin(root / "desktop-inventory.json"), eligible=False,
             reason="Identity-verified healthy frozen replica one owns formal GPU1; preserve its execution. GPU0 retains desktop reservation.", devices=[]),
-        haleyspc=dict(checked_at=remote["at"], evidence=pin(root / "haley-inventory.json"), eligible=True,
-            reason="Idle sole GPU and native CPU; independent replica avoids waiting for Jack's ongoing measurement.",
-            devices=[dict(ordinal=0, uuid=place("haleyspc", 0, 1)["gpu_uuid"], eligible=True, reason="Current device idle/free-VRAM check passed.")]),
+        computehost=dict(checked_at=remote["at"], evidence=pin(root / "computehost-inventory.json"), eligible=True,
+            reason="Idle sole GPU and native CPU; independent replica avoids waiting for the maintainer's ongoing measurement.",
+            devices=[dict(ordinal=0, uuid=place("computehost", 0, 1)["gpu_uuid"], eligible=True, reason="Current device idle/free-VRAM check passed.")]),
         runpod=dict(checked_at=read(cloud)["checked_at"], evidence=pin(cloud), eligible=False,
             reason="Latest authenticated inventory HTTP403; no new paid compute authorized.", devices=[]))
     configs, binary = manifest["training_configs"], manifest["training_binary"]
@@ -53,10 +53,10 @@ def qualify(root, pilot, other):
         runner=pin(__file__), binary=binary, configs=configs, own_live_processes=owned,
         workers=[1, 4, 10], initial_updates=3, unique_arm_games=60, maximum_executed_games=180,
         dependencies=[pin(Path(__file__).with_name(n)) for n in ["public_training_dispatch_v2.py", "compute_throughput_v2.py", "qualify_public_entropy_compute_v1.py"]],
-        non_claim="Availability-conditioned placement. Jack is occupied by a verified healthy measurement, not assumed permanently unavailable."))
+        non_claim="Availability-conditioned placement. The maintainer is occupied by a verified healthy measurement, not assumed permanently unavailable."))
     reference, projections, candidates, learning = {}, {}, [], {}
     for count in [1, 4, 10]:
-        placement = {arm: place("haleyspc", 0, count) for arm in configs}
+        placement = {arm: place("computehost", 0, count) for arm in configs}
         group_pin = dispatch_qualification(root / f"{root.name}-w{count}", binary, configs, placement, "sequential", updates=3)
         group = read(checked(group_pin))
         estimate = 0
@@ -72,7 +72,7 @@ def qualify(root, pilot, other):
             if count == 1:
                 assert execution["seconds"] < 120, "cheap timing envelope exceeded"
             estimate += execution["seconds"] + 197 * sum(row["seconds"] for row in completion["receipts"][1:]) / 2
-        label = f"haley-w{count}"
+        label = f"computehost-w{count}"
         projections[label] = estimate + group["staging_seconds"] + group["recovery_seconds"] * 200 / 3
         candidates.append(dict(id=label, benchmark=group_pin))
         print(label, "complete; projected replica seconds", round(projections[label], 2), flush=True)
@@ -92,12 +92,12 @@ def run(root, pilot, scorer):
     assert q["complete"] and qm["pilot"] == pin(pilot / "manifest.json")
     for item in [qm["runner"], *qm["dependencies"], m["runner"], m["design"], *m["dependencies"]]:
         checked(item)
-    # Recheck that the competing allocation still exists before treating Jack
+    # Recheck that the competing allocation still exists before treating desktop
     # as unavailable. If it ended, another local comparison can now be useful.
     other = checked(q["concurrent_pilot"]).parent
-    local = inventory("jack")
+    local = inventory("desktop")
     native = Path(read(other / "entropy-replica-1-training/dispatch-0.json")["native_root"])
-    assert any(str(native).replace("\\", "/").lower() in p["CommandLine"].replace("\\", "/").lower() for p in local["active"]), "Jack's measured run ended; reconsider availability before launch"
+    assert any(str(native).replace("\\", "/").lower() in p["CommandLine"].replace("\\", "/").lower() for p in local["active"]), "the maintainer's measured run ended; reconsider availability before launch"
     selected = require_allocation(root / "compute-choice.json", m["training_binary"]["sha256"], jobs_for(m["training_configs"]))
     assert selected == q["selected"] and selected["projected_seconds"] < 2700
     sq = read(scorer / "qualification.json")
@@ -124,11 +124,11 @@ def run(root, pilot, scorer):
         while not future.done():
             row = dict(elapsed_seconds=time.monotonic()-started)
             try:
-                row["haleyspc"] = snapshot("haleyspc")
+                row["computehost"] = snapshot("computehost")
             except Exception as error:
                 row["telemetry_error"] = str(error)
             write(telemetry / f"{tick:04}.json", row)
-            print("replica two telemetry", round(row["elapsed_seconds"]), row.get("haleyspc", {}).get("cpu_percent"), flush=True)
+            print("replica two telemetry", round(row["elapsed_seconds"]), row.get("computehost", {}).get("cpu_percent"), flush=True)
             tick += 1
             for _ in range(30):
                 if future.done(): break

@@ -3,6 +3,8 @@
 Qualification runs one complete initial update, or at most 20 evaluation games.
 Production requires compatible measured serial/parallel receipts and the fastest
 eligible allocation. The runtime binding is independent of the launcher's commit.
+Runs on the two Windows hosts and, as the ``runpod`` placement, on a rented
+Linux pod with live lease-guard evidence (docs/native_expanded_dispatch_v1.md).
 """
 from __future__ import annotations
 
@@ -16,6 +18,7 @@ import math
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -25,8 +28,19 @@ from public_training_dispatch_v2 import checked, pin, read, write, DISK_RESERVE_
 
 SCHEMA = "native-expanded-cpu-dispatch/v1"
 CHOICE = "native-expanded-cpu-allocation/v1"
-HOSTS = {"jack": "DESKTOP-DJ1C40R", "haleyspc": "HALEYSPC"}
+# The compute host's machine name is site configuration, not a public constant.
+HOSTS = {"desktop": "DESKTOP-DJ1C40R", "computehost": os.environ.get("COMPUTE_HOST_NAME", "COMPUTEHOST").upper()}
+PLACEMENTS = ("desktop", "computehost", "runpod")
 CAP = 192 * 1024**3
+WINDOWS = os.name == "nt"
+# A Linux runtime also pins the system libraries its output bits depend on
+# (f32::tanh goes through libm): phase1_cloud/runtime_observation.LIBRARIES.
+PLATFORM = "linux-x86_64"
+LIBRARIES = ("ld-linux-x86-64.so.2", "libc.so.6", "libm.so.6", "libgcc_s.so.1")
+# runpod: the pod's resident guard state (phase1_cloud/lease_guard.py --state),
+# holding its guard.json and a copy of its lease as lease.json.
+LEASE_GUARD_ENV = "MTG_LEASE_GUARD_DIR"
+PROC = Path("/proc")
 
 
 @lru_cache(maxsize=16)
@@ -44,8 +58,12 @@ def inference_shape(source):
 
 
 def runtime_identity(runtime):
-    return {key: runtime[key] for key in ("engine_commit", "tracked_tree_sha256")} | {
+    identity = {key: runtime[key] for key in ("engine_commit", "tracked_tree_sha256")} | {
         "binary_sha256": runtime["binary"]["sha256"]}
+    if "platform" in runtime:  # Linux only, so never equal to a Windows identity
+        identity |= {"platform": runtime["platform"],
+                     "library_sha256": {name: item["sha256"] for name, item in runtime["libraries"].items()}}
+    return identity
 
 
 def artifact_reader(mappings):
@@ -78,14 +96,26 @@ def positive(value, name):
     return value
 
 
-def workload(config, kind, keep_seeds=False):
+SCHEDULE_FAMILIES = (None, "permuted-units-v1")
+
+
+def workload(config, kind, keep_seeds=False, family=None):
     """Bind complete scientific schedules while permitting paired seed replicas.
 
     IDs/seeds and output placement do not alter batch shape. Training keeps
     source bits and optimizer settings. Evaluation permits new admitted weights
     with the same import, feature contract and parameter layout, retaining the
     complete deck/opponent/seat schedule. Actual endpoint pins stay in each job.
+
+    A training request may opt into ``family="permuted-units-v1"`` for chained
+    blocks of one balanced schedule. Every block must then hold the identical
+    multiset of scheduled episodes (decks, seats, starting player, opponent
+    assignment, limits) and the same number of episodes in each update, in a
+    block-specific order, and start from admitted weights with the same import,
+    feature contract and parameter layout. Everything else stays bound.
     """
+    require(family in SCHEDULE_FAMILIES, "unknown schedule family")
+    require(family is None or kind == "training", "schedule families apply to training only")
     value = copy.deepcopy(config)
     value.pop("output_directory")
     if kind == "training":
@@ -107,6 +137,12 @@ def workload(config, kind, keep_seeds=False):
         for episode in episodes:
             episode.pop("id")
             episode.pop("seed")
+        if family == "permuted-units-v1":
+            value["initial_source"]["checkpoint"] = inference_shape(value["initial_source"])
+            shapes = sorted(json.dumps(item, sort_keys=True, separators=(",", ":"))
+                            for update in value["iterations"] for item in update["episodes"])
+            value["iterations"] = {"sizes": [len(update["episodes"]) for update in value["iterations"]],
+                                   "episode_multiset_sha256": digest(shapes)}
     return digest(value)
 
 
@@ -130,7 +166,11 @@ def validate_storage(storage, extra=None):
             for path in root.rglob("*"):
                 require(not path.is_symlink() and not path.is_junction(), "accounting tree contains a link")
                 if path.is_file():
-                    logical += path.stat().st_size
+                    try:
+                        logical += path.stat().st_size
+                    except FileNotFoundError:
+                        # Jobs sharing this root delete their own outputs; a file gone mid-walk is freed space.
+                        pass
         anchor = root
         while not anchor.exists():
             anchor = anchor.parent
@@ -153,18 +193,78 @@ def runtime_for(request, resolve=checked):
     runtime = read(resolve(request["runtime"]))
     require(len(runtime["engine_commit"]) == 40 and len(runtime["tracked_tree_sha256"]) == 64,
             "missing compiled runtime identity")
+    require("platform" not in runtime or runtime["platform"] == PLATFORM
+            and sorted(runtime["libraries"]) == sorted(LIBRARIES)
+            and all(item["path"].startswith("/") and len(item["sha256"]) == 64
+                    for item in runtime["libraries"].values()), "Linux runtime needs loader/libc/libm/libgcc_s pins")
     resolve(runtime["binary"])
     return runtime
+
+
+def host_runtime(runtime):
+    """A Linux runtime runs only on Linux with its pinned libraries; a Windows one only on Windows."""
+    require(runtime.get("platform") == (None if WINDOWS else PLATFORM), "runtime platform differs from this host")
+    if not WINDOWS:
+        require(sys.platform.startswith("linux") and platform.machine() == "x86_64",
+                "runtime platform differs from this host")
+        for item in runtime["libraries"].values():
+            checked(item)
+        # An interposed or redirected library would change native output bits unseen.
+        require(not any(value and (name.startswith("LD_") or name == "GLIBC_TUNABLES")
+                        for name, value in os.environ.items()), "dynamic loader environment override")
+
+
+def lease_guard():
+    """phase1_cloud/lease_guard.py (its modules import their siblings by bare name)."""
+    folder = str(Path(__file__).resolve().parent / "phase1_cloud")
+    if folder not in sys.path:
+        sys.path.append(folder)
+    import lease_guard
+    return lease_guard
+
+
+def runpod_lease(work_seconds, now=None):
+    """Lease evidence for a runpod placement: this Linux pod (RUNPOD_POD_ID), whose
+    resident guard in $MTG_LEASE_GUARD_DIR is fresh, unlatched, provider- and
+    funds-verified, has no stop request, and leaves work_seconds before the
+    lease deadline less recovery_seconds (when the guard latches 'deadline')."""
+    now = time.time() if now is None else now
+    pod, folder = os.environ.get("RUNPOD_POD_ID"), os.environ.get(LEASE_GUARD_ENV)
+    require(not WINDOWS and sys.platform.startswith("linux") and pod and folder,
+            "runpod placement needs this pod's lease guard")
+    folder = Path(folder)
+    lease, guard = read(folder/"lease.json"), read(folder/"guard.json")
+    lease_guard().validate(lease)
+    require(guard["pod_id"] == pod and guard["name"] == lease["name"], "lease guard belongs to another pod")
+    # The guard rewrites guard.json every poll, after up to two 15 s provider requests.
+    require(-5 <= now - guard["epoch"] <= 3 * lease["poll_seconds"] + 30, "lease guard is stale")
+    require(not guard["latched"] and guard["release_epoch"] is None and guard["provider_ok"] is True
+            and guard["allow_new_dispatch"] is True and not (folder/"stop-request.json").exists(),
+            "lease guard has stopped new work")
+    available = lease["deadline_epoch"] - lease["recovery_seconds"] - now
+    require(available >= positive(work_seconds, "lease work seconds"), "lease time exhausted")
+    return {"pod_id": pod, "lease": lease["name"], "available_seconds": available}
+
+
+def require_host(request):
+    """desktop/computehost only on that Windows machine; runpod only on its own leased pod."""
+    host = request["placement"]["host"]
+    require(host in PLACEMENTS, "no paid or unknown placement")
+    if host == "runpod":
+        wall = positive(request["wall_seconds"], "wall-time limit")
+        runpod_lease(min(positive(request.get("lease_work_seconds", wall), "lease work seconds"), wall))
+    else:
+        require(WINDOWS and HOSTS[host] == platform.node().upper(), "wrong target host")
 
 
 def validate_request(request, qualification):
     require(request["schema"] == SCHEMA, "unsupported request")
     require(request["kind"] in ("training", "evaluation"), "unsupported native workload")
     runtime = runtime_for(request)
+    host_runtime(runtime)
     config = read(checked(request["config"]))
     placement = request["placement"]
-    require(placement["host"] in HOSTS, "no paid or unknown placement")
-    require(HOSTS[placement["host"]] == platform.node().upper(), "wrong target host")
+    require_host(request)
     workers = placement["workers"]
     require(type(workers) is int and 1 <= workers <= 64, "invalid worker count")
     cpus = placement["cpu_affinity"]
@@ -182,8 +282,16 @@ def validate_request(request, qualification):
     for path in outputs:
         require(any(path.resolve().is_relative_to(p) for p in accounting),
                 "output is outside storage accounting")
-    require(config.get("max_non_natural_episode_fraction", 0) == 0,
-            "non-natural game tolerance is not supported")
+    family = request.get("schedule_family")
+    require(family in SCHEDULE_FAMILIES and (family is None or request["kind"] == "training"),
+            "unknown or non-training schedule family")
+    # Tolerance is opt-in: the request must restate the config's fraction, so
+    # an old request can never admit a tolerant config by accident.
+    fraction = config.get("max_non_natural_episode_fraction", 0)
+    tolerance = request.get("non_natural_tolerance")
+    require(fraction == 0 and tolerance is None
+            or request["kind"] == "training" and type(fraction) in (int, float) and 0 < fraction < 1
+            and tolerance == fraction, "non-natural game tolerance must be declared by a training request")
     if request["kind"] == "training":
         require(config.get("update_backend", {"kind": "cpu"}) == {"kind": "cpu"}, "CPU runtime required")
         prep = placement["preparation_workers"]
@@ -231,11 +339,26 @@ def placed_config(request, config, qualification):
     return result
 
 
-def collection_fingerprint(path, expected, resolve=checked):
+def collection_fingerprint(path, expected, resolve=checked, ledgers=None):
+    """Ordered trajectory hashes of a complete, all-natural collection.
+
+    A tolerant training collection may also pin a non-natural ledger of
+    discarded attempts (the kept retries are still natural trajectories).
+    Its SHA256 is appended to ``ledgers`` so serial/parallel parity covers the
+    discarded attempts too; without ``ledgers`` any ledger is refused.
+    """
     collection = read(resolve(path))
     require(collection["complete"] and len(collection["trajectories"]) == expected,
             "incomplete ordered collection")
-    require("non_natural_ledger" not in collection, "non-natural collection attempt")
+    if "non_natural_ledger" in collection:
+        require(ledgers is not None, "non-natural collection attempt")
+        ledger = read(resolve(collection["non_natural_ledger"]))
+        require(ledger["schema"] == "mtg-kernel-non-natural-collection-ledger/v1"
+                and all(0 <= entry["slot"] < expected for entry in ledger["entries"]),
+                "invalid non-natural ledger")
+        ledgers.append(collection["non_natural_ledger"]["sha256"])
+    elif ledgers is not None:
+        ledgers.append(None)
     hashes = []
     for item in collection["trajectories"]:
         trajectory = read(resolve(item))
@@ -260,12 +383,14 @@ def output_fingerprint(config, kind, result, runtime, qualification, resolve=che
             and len(result["iterations"]) == count
             and result["complete"] == (count == len(config["iterations"])),
             "incomplete native update coverage")
+    tolerant = config.get("max_non_natural_episode_fraction", 0) > 0
     fingerprints = []
     for index, item in enumerate(result["iterations"]):
         receipt = read(resolve(item))
         require(receipt["iteration"] == index, "unordered update receipts")
+        ledgers = [] if tolerant else None
         trajectories = collection_fingerprint(receipt["collection"],
-                                              len(config["iterations"][index]["episodes"]), resolve)
+                                              len(config["iterations"][index]["episodes"]), resolve, ledgers)
         update = read(resolve(receipt["update"]))
         require(update["complete"], "incomplete optimizer update")
         checkpoint = read(resolve(update["checkpoint"]))
@@ -274,7 +399,10 @@ def output_fingerprint(config, kind, result, runtime, qualification, resolve=che
         # Read the complete parameter and Adam tensors. Only the output-root
         # metadata in trajectory pins differs between serial/parallel trials.
         checkpoint["trajectories"] = trajectories
-        fingerprints.append({"trajectories": trajectories, "checkpoint_bits": digest(checkpoint)})
+        entry = {"trajectories": trajectories, "checkpoint_bits": digest(checkpoint)}
+        if tolerant:
+            entry["non_natural_ledger"] = ledgers[0]
+        fingerprints.append(entry)
     return {"iterations": fingerprints}
 
 
@@ -288,8 +416,8 @@ def require_choice(path, request, verify_outputs=False):
     choice = read(checked(path))
     require(choice["schema"] == CHOICE, "unsupported throughput choice")
     config, runtime = validate_request(request, False)
-    family = workload(config, request["kind"])
-    require(set(choice["inventory"]) == {"jack", "haleyspc", "runpod"},
+    family = workload(config, request["kind"], family=request.get("schedule_family"))
+    require(set(choice["inventory"]) == {"desktop", "computehost", "runpod"},
             "inspect all three placement options")
     eligible = set()
     for host, status in choice["inventory"].items():
@@ -298,7 +426,7 @@ def require_choice(path, request, verify_outputs=False):
         require(0 <= age <= 86400 and type(status["eligible"]) is bool and status["reason"],
                 "stale or incomplete placement inventory")
         if status["eligible"]:
-            require(host in HOSTS and status["cpu_affinity"], "paid/unknown or empty eligible placement")
+            require(host in PLACEMENTS and status["cpu_affinity"], "paid/unknown or empty eligible placement")
             eligible.add(host)
     candidates, worker_counts, fingerprints = [], {}, {}
     for entry in choice["qualifications"]:
@@ -315,7 +443,8 @@ def require_choice(path, request, verify_outputs=False):
         other_runtime = runtime_for(original, resolve)
         require(runtime_identity(other_runtime) == runtime_identity(runtime)
                 and runtime_identity(report["runtime"]) == runtime_identity(runtime), "qualification runtime differs")
-        require(workload(original_config, request["kind"]) == family
+        require(original.get("schedule_family") == request.get("schedule_family")
+                and workload(original_config, request["kind"], family=original.get("schedule_family")) == family
                 and actual_config == placed_config(original, original_config, True),
                 "qualification workload or placement differs")
         actual = report["fingerprint"]
@@ -383,6 +512,10 @@ def require_choice(path, request, verify_outputs=False):
 
 
 def set_affinity(cpus):
+    if not WINDOWS:  # inherited by the native child
+        os.sched_setaffinity(0, cpus)
+        require(os.sched_getaffinity(0) == set(cpus), "cannot bind eligible CPU affinity")
+        return
     import ctypes
     kernel = ctypes.windll.kernel32
     kernel.GetCurrentProcess.restype = ctypes.c_void_p
@@ -392,6 +525,14 @@ def set_affinity(cpus):
 
 
 def process_sample(child):
+    if not WINDOWS:
+        # VmRSS is the resident set (Windows: working set), absent once the child
+        # has exited; utime+stime sum every thread, as GetProcessTimes does.
+        status = (PROC/str(child.pid)/"status").read_text()
+        rss = next((int(line.split()[1]) * 1024 for line in status.splitlines() if line.startswith("VmRSS:")), 0)
+        fields = (PROC/str(child.pid)/"stat").read_text().rsplit(")", 1)[1].split()
+        return {"at_unix": time.time(), "pid": child.pid, "rss_bytes": rss,
+                "cpu_seconds": (int(fields[11]) + int(fields[12])) / os.sysconf("SC_CLK_TCK")}
     import ctypes
     from ctypes import wintypes
     handle = wintypes.HANDLE(int(child._handle))
@@ -407,6 +548,37 @@ def process_sample(child):
             "cannot read owned native CPU time")
     return {"at_unix": time.time(), "pid": child.pid, "rss_bytes": memory.rss,
             "cpu_seconds": sum((t.dwHighDateTime << 32) + t.dwLowDateTime for t in times[2:]) / 1e7}
+
+
+def require_mapped_libraries(child, runtime, timeout=30.0):
+    """One /proc/<pid>/maps observation, once the loader has mapped all four pinned
+    libraries: each mapping must resolve to its pinned file, else the launch fails."""
+    pinned = {name: os.path.realpath(item["path"]) for name, item in runtime["libraries"].items()}
+    names = {Path(real).name: name for name, real in pinned.items()} | {name: name for name in pinned}
+    deadline = time.monotonic() + timeout
+    while True:
+        mapped = {}
+        for line in (PROC/str(child.pid)/"maps").read_text().splitlines():
+            parts = line.split(maxsplit=5)
+            name = names.get(Path(parts[-1].removesuffix(" (deleted)")).name) if len(parts) == 6 else None
+            if name:
+                mapped.setdefault(name, set()).add(parts[-1])
+        if set(mapped) == set(pinned):
+            break
+        require(child.poll() is None and time.monotonic() < deadline, "pinned runtime libraries were not mapped")
+        time.sleep(0.01)
+    require(all({os.path.realpath(path) for path in paths} == {pinned[name]} for name, paths in mapped.items()),
+            "mapped runtime library differs from its pin")
+    return mapped
+
+
+def busy_pattern(binary=None):
+    """Image names that make the host busy. Linux image names carry no .exe, so
+    there the pinned binary's own file name joins the pattern."""
+    pattern = r"native_expanded_training|expanded_deck_training|cargo|rustc|trainer\.exe"
+    if WINDOWS:
+        return pattern
+    return pattern + r"|^trainer$" + ("|^" + re.escape(Path(binary).name) + "$" if binary else "")
 
 
 def execute(request_path, qualification):
@@ -432,12 +604,16 @@ def execute(request_path, qualification):
     failure = None
     with (root/"stdout.jsonl").open("x") as stdout, (root/"stderr.log").open("x") as stderr, \
             (root/"telemetry.jsonl").open("x") as telemetry:
-        child = subprocess.Popen(command, stdout=stdout, stderr=stderr,
-                                 creationflags=subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW)
+        # Linux: nice 10 before exec, so every native thread inherits it.
+        options = ({"creationflags": subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW}
+                   if WINDOWS else {"preexec_fn": lambda: os.nice(10)})
+        child = subprocess.Popen(command, stdout=stdout, stderr=stderr, **options)
         reservations.record_descendant(token, child.pid)
         write(root/"started.json", {"pid": child.pid, "started_unix": time.time(),
                                     "placement": request["placement"], "request": pin(request_path)})
         try:
+            if not WINDOWS:
+                require_mapped_libraries(child, runtime)
             while child.poll() is None:
                 remaining = request["wall_seconds"] - (time.monotonic() - started)
                 require(remaining > 0, "native wall-time limit exceeded")
@@ -479,7 +655,7 @@ def execute(request_path, qualification):
               "request": pin(request_path), "executed_config": pin(root/"config.json"),
               "execution": pin(root/"execution.json"),
               "native_result": pin(root/"native-result.json"), "runtime": runtime,
-              "launcher_sha256": pin(__file__)["sha256"], "workload": workload(config, request["kind"]),
+              "launcher_sha256": pin(__file__)["sha256"], "workload": workload(config, request["kind"], family=request.get("schedule_family")),
               "placement": request["placement"], "fingerprint": fingerprint,
               "completed_games": games, "completed_updates": (1 if qualification else len(config["iterations"]))
                   if request["kind"] == "training" else 0,
@@ -499,7 +675,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("qualify", "dispatch", "_qualify", "_dispatch", "check-choice"))
     parser.add_argument("request", type=Path)
+    # WMI-created supervisors inherit no environment: the launching shell's
+    # COMPUTE_HOST_NAME travels to the guarded child on its command line.
+    parser.add_argument("--compute-host-name")
     args = parser.parse_args()
+    if args.compute_host_name:
+        HOSTS["computehost"] = args.compute_host_name.upper()
     require(args.request.is_absolute(), "absolute request path required")
     request = read(args.request)
     qualification = args.action in ("qualify", "_qualify")
@@ -511,16 +692,17 @@ def main():
               "selected": selected, "outputs_verified": True, "launcher": pin(__file__)})
         print(json.dumps(selected))
     else:
-        validate_request(request, qualification)
+        _, runtime = validate_request(request, qualification)
         if not qualification:
             require_choice(request["choice"], request)
         import host_reservation_v1 as reservations
         result = reservations.dispatch(
             lane=request["lane"], work_id=Path(request["root"]).name,
             release_condition="native-expanded process, durable archive and guarded receipt complete or fail",
-            command=[sys.executable, "-B", str(Path(__file__).resolve()), "_" + args.action, str(args.request)],
+            command=[sys.executable, "-B", str(Path(__file__).resolve()), "_" + args.action, str(args.request)]
+                    + ["--compute-host-name", HOSTS["computehost"]],
             cwd=str(Path(__file__).resolve().parents[2]),
-            busy_pattern=r"native_expanded_training|expanded_deck_training|cargo|rustc|trainer\.exe")
+            busy_pattern=busy_pattern(runtime["binary"]["path"]))
         print(json.dumps(result))
 
 

@@ -15,7 +15,7 @@ The five-deck development run stopped after116completed updates because a pendin
 
 Read [diagnosis and tests](E:/mtg-kernel-learned-sideboarding-evidence/overnight-development-001/failure-iteration116-001/RESULT.md), [final independent acceptance](E:/mtg-kernel-learned-sideboarding-evidence/overnight-development-001/continuation-003/REVIEW.md), and [live run paths](E:/mtg-kernel-learned-sideboarding-evidence/overnight-development-001/continuation-003/LAUNCH.md). Both stopped runs and their partial collections remain untouched. A two-hour read-only heartbeat tracks the new continuation. Shared resource guards remain eight hours of native execution,100GBoutput and8GiBprocess memory. No GPU, paid allocation or promotion occurred.
 
-The corrected [human feedback package](E:/mtg-kernel-learned-sideboarding-evidence/native-human-002/RESULT.md) is available at http://127.0.0.1:56128/. It retains Adam3, model Keep7/Keep and native priority abstractions. Old001sessions are intact; zero actual Jack games are verified at delivery.
+The corrected [human feedback package](E:/mtg-kernel-learned-sideboarding-evidence/native-human-002/RESULT.md) is available at http://127.0.0.1:56128/. It retains Adam3, model Keep7/Keep and native priority abstractions. Old001sessions are intact; zero actual desktop games are verified at delivery.
 
 Fable's fresh session6df9b959-6126-482c-90cd-4e0fe494ad05 failed weeklyHTTP429 with no reads or substantive feedback. Independent Codex review accepted the actual repair and artifacts; it is not a Fable endorsement. The diagnostic review also led to redacting raw origin/action details outside ordinary priority. Diagnostic files remain backend-only and never feed model inputs or training records.
 

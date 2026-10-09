@@ -1,10 +1,12 @@
-"""Atomic host reservation for supported Windows launchers (v1).
+"""Atomic host reservation for supported Windows and Linux launchers (v1).
 
 One reservation per work host, held in one canonical lock file on the machine
 that does the work: C:/mtg-node/host-lock/<HOST>.lock, the same for every user,
-worktree and transport (a lock on Jack's PC reserves nothing on HaleysPC; a
-HaleysPC reservation is taken by running this module on HaleysPC). Windows
-only, standard library only (Win32 calls through ctypes).
+worktree and transport (a lock on the primary desktop reserves nothing on the compute host; a
+compute host reservation is taken by running this module on the compute host). Windows
+and Linux, standard library only (Win32 calls through ctypes; /proc on Linux).
+The contract below is stated for Windows; the Linux backend at the end of
+these notes keeps its CLI, files and rules with weaker containment.
 
 Contract (collab GOALS/opus-search-opponent-20260927.md, amendment 01:35):
 1. Target-host authority: the lock path above; HOST is this machine's name.
@@ -40,9 +42,12 @@ Contract (collab GOALS/opus-search-opponent-20260927.md, amendment 01:35):
    finds it gone or held by the winner) and acquires a new generation. It
    needs positive evidence: a changed boot id, or every recorded process
    (supervisors, their direct children, nested supervisors) absent by pid
-   and creation time. The process-tree walk is an extra conservative check,
-   never proof of absence. An unreadable or incomplete record or event means
-   unknown, never dead; age never counts.
+   and creation time. When Windows refuses to open a recorded pid (a service
+   or another user's process now holds it), the system process list decides:
+   a pid missing from it, or listed with another creation time, is absent.
+   The process-tree walk is an extra conservative check, never proof of
+   absence. An unreadable or incomplete record or event means unknown, never
+   dead; age never counts.
 7. Coverage: native tests, throughput checks, builds during announced quiet
    windows and formal runs acquire; status never acquires. Nested wrappers
    share the reservation through MTG_HOST_RESERVATION_TOKEN; a nested
@@ -66,16 +71,39 @@ CLI (JSON on stdout; exit 0 ok, 3 held, 4 reclaimable, 5 unknown, 6 refused):
                                         supervisor's own act, after it contains itself)
   note --token T --kind KIND [--detail TEXT]
   release --token T --outcome success|failure|cancelled|spawn-failed [--detail TEXT]
+          [--ignore-descendant PID:CREATION]  (repeat for audited false positives)
   reclaim --lane L --work-id W --release-condition TEXT [--transport-record JSON] [--owner-pid PID]
   status [--token T] [--line]          exempt-pids --token T
   supervise --token T [--nested] [--cwd DIR] -- COMMAND...
+
+Linux backend (same CLI, records, events, exit codes and rules):
+- Root: $MTG_HOST_LOCK_ROOT, else /var/lib/mtg-node/host-lock (the test
+  root still wins). Keep it on a local filesystem with hard links and flock.
+- Identity: pid plus start time, /proc/<pid>/stat field 22 (clock ticks
+  after boot); an exited, unreaped (zombie) process is absent. A pid with no
+  /proc entry is absent only if kill(pid, 0) also finds none. Boot id:
+  /proc/sys/kernel/random/boot_id.
+- Acquire links the complete temp file to the lock name (link fails if the
+  name exists; POSIX rename would replace it). State changes hold an
+  exclusive flock on the lock file in place of the read-only share mode; the
+  flock binds only processes that use this module.
+- Spawn: a detached process in a new session (stdin, stdout and stderr on
+  /dev/null, the caller's environment without the token) in place of WMI.
+  Busy refusal: image names (the executable's file name) from /proc.
+- Containment: the supervisor becomes a child subreaper and starts the work
+  in a new session. Its job is that session and process group plus every
+  live descendant of the supervisor (orphans are reparented to it, also
+  after setsid). It releases once the job is empty; SIGTERM, SIGINT, SIGHUP
+  or its own exit kills the job. Weaker than a job object: SIGKILL of the
+  supervisor kills nothing. Session members then keep the reservation held
+  (session ids are never reused while a member lives), but a descendant that
+  called setsid itself is no longer seen, so absence of the recorded
+  processes is weaker evidence than on Windows.
 """
 from __future__ import annotations
 
 import argparse
-import ctypes
 import json
-import struct
 import os
 import platform
 import re
@@ -83,18 +111,28 @@ import subprocess
 import sys
 import time
 import uuid
-from ctypes import wintypes
 from datetime import datetime, timezone
 from pathlib import Path
 
-if os.name != "nt":
-    raise SystemExit("host_reservation_v1 is Windows-only")
-
-import winreg  # noqa: E402  (Windows-only standard library module)
+if os.name == "nt":
+    import ctypes
+    import struct
+    import winreg
+    from ctypes import wintypes
+elif sys.platform.startswith("linux"):
+    import atexit
+    import collections
+    import ctypes
+    import fcntl
+    import shlex
+    import signal
+else:
+    raise SystemExit("host_reservation_v1 supports Windows and Linux only")
 
 SCHEMA = "mtg-host-reservation/v1"
 EVENT_SCHEMA = "mtg-host-reservation-event/v1"
-CANONICAL_ROOT = "C:/mtg-node/host-lock"
+CANONICAL_ROOT = "C:/mtg-node/host-lock" if os.name == "nt" else "/var/lib/mtg-node/host-lock"
+ROOT_ENV = "MTG_HOST_LOCK_ROOT"  # Linux only: moves the canonical root (a rented host's disk layout)
 TEST_ROOT_ENV = "MTG_HOST_RESERVATION_TEST_ROOT"
 TOKEN_ENV = "MTG_HOST_RESERVATION_TOKEN"
 OUTCOMES = ("success", "failure", "cancelled", "spawn-failed")
@@ -116,320 +154,777 @@ class Refused(Exception):
 
 # ---------------------------------------------------------------- Win32 layer
 
-_k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-HANDLE = wintypes.HANDLE
-INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
-PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-SYNCHRONIZE = 0x00100000
-PROCESS_TERMINATE = 0x0001
-WAIT_OBJECT_0, WAIT_TIMEOUT = 0x0, 0x102
-ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND = 2, 3
-ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION, ERROR_INVALID_PARAMETER = 5, 32, 87
-GENERIC_READ, DELETE = 0x80000000, 0x00010000
-FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_SHARE_DELETE = 1, 2, 4
-OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL = 3, 0x80
-FILE_RENAME_INFO_CLASS = 3
-TH32CS_SNAPPROCESS = 0x2
-JOB_OBJECT_BASIC_PROCESS_ID_LIST = 3
-JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
-JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+if os.name == "nt":
+    _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    HANDLE = wintypes.HANDLE
+    INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    SYNCHRONIZE = 0x00100000
+    PROCESS_TERMINATE = 0x0001
+    WAIT_OBJECT_0, WAIT_TIMEOUT = 0x0, 0x102
+    ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND = 2, 3
+    ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION, ERROR_INVALID_PARAMETER = 5, 32, 87
+    GENERIC_READ, DELETE = 0x80000000, 0x00010000
+    FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_SHARE_DELETE = 1, 2, 4
+    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL = 3, 0x80
+    FILE_RENAME_INFO_CLASS = 3
+    TH32CS_SNAPPROCESS = 0x2
+    JOB_OBJECT_BASIC_PROCESS_ID_LIST = 3
+    JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 
 
-class PROCESSENTRY32W(ctypes.Structure):
-    _fields_ = [
-        ("dwSize", wintypes.DWORD),
-        ("cntUsage", wintypes.DWORD),
-        ("th32ProcessID", wintypes.DWORD),
-        ("th32DefaultHeapID", ctypes.c_size_t),
-        ("th32ModuleID", wintypes.DWORD),
-        ("cntThreads", wintypes.DWORD),
-        ("th32ParentProcessID", wintypes.DWORD),
-        ("pcPriClassBase", ctypes.c_long),
-        ("dwFlags", wintypes.DWORD),
-        ("szExeFile", ctypes.c_wchar * 260),
-    ]
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_size_t),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", ctypes.c_wchar * 260),
+        ]
 
 
-class FILE_RENAME_INFO(ctypes.Structure):
-    _fields_ = [
-        ("ReplaceIfExists", wintypes.BOOLEAN),
-        ("RootDirectory", HANDLE),
-        ("FileNameLength", wintypes.DWORD),
-        ("FileName", wintypes.WCHAR * 1),
-    ]
+    class FILE_RENAME_INFO(ctypes.Structure):
+        _fields_ = [
+            ("ReplaceIfExists", wintypes.BOOLEAN),
+            ("RootDirectory", HANDLE),
+            ("FileNameLength", wintypes.DWORD),
+            ("FileName", wintypes.WCHAR * 1),
+        ]
 
 
-class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
-    _fields_ = [
-        ("PerProcessUserTimeLimit", ctypes.c_longlong),
-        ("PerJobUserTimeLimit", ctypes.c_longlong),
-        ("LimitFlags", wintypes.DWORD),
-        ("MinimumWorkingSetSize", ctypes.c_size_t),
-        ("MaximumWorkingSetSize", ctypes.c_size_t),
-        ("ActiveProcessLimit", wintypes.DWORD),
-        ("Affinity", ctypes.c_size_t),
-        ("PriorityClass", wintypes.DWORD),
-        ("SchedulingClass", wintypes.DWORD),
-    ]
+    class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_longlong),
+            ("PerJobUserTimeLimit", ctypes.c_longlong),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        ]
 
 
-class IO_COUNTERS(ctypes.Structure):
-    _fields_ = [(name, ctypes.c_ulonglong) for name in (
-        "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
-        "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+    class IO_COUNTERS(ctypes.Structure):
+        _fields_ = [(name, ctypes.c_ulonglong) for name in (
+            "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+            "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
 
 
-class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
-    _fields_ = [
-        ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
-        ("IoInfo", IO_COUNTERS),
-        ("ProcessMemoryLimit", ctypes.c_size_t),
-        ("JobMemoryLimit", ctypes.c_size_t),
-        ("PeakProcessMemoryUsed", ctypes.c_size_t),
-        ("PeakJobMemoryUsed", ctypes.c_size_t),
-    ]
+    class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+            ("IoInfo", IO_COUNTERS),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
 
 
-def _fn(name, restype, *argtypes):
-    f = getattr(_k32, name)
-    f.restype, f.argtypes = restype, argtypes
-    return f
+    def _fn(name, restype, *argtypes):
+        f = getattr(_k32, name)
+        f.restype, f.argtypes = restype, argtypes
+        return f
 
 
-_FT = ctypes.POINTER(wintypes.FILETIME)
-_OpenProcess = _fn("OpenProcess", HANDLE, wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
-_GetProcessTimes = _fn("GetProcessTimes", wintypes.BOOL, HANDLE, _FT, _FT, _FT, _FT)
-_WaitForSingleObject = _fn("WaitForSingleObject", wintypes.DWORD, HANDLE, wintypes.DWORD)
-_TerminateProcess = _fn("TerminateProcess", wintypes.BOOL, HANDLE, wintypes.UINT)
-_CloseHandle = _fn("CloseHandle", wintypes.BOOL, HANDLE)
-_GetCurrentProcess = _fn("GetCurrentProcess", HANDLE)
-_CreateToolhelp32Snapshot = _fn("CreateToolhelp32Snapshot", HANDLE, wintypes.DWORD, wintypes.DWORD)
-_Process32FirstW = _fn("Process32FirstW", wintypes.BOOL, HANDLE, ctypes.POINTER(PROCESSENTRY32W))
-_Process32NextW = _fn("Process32NextW", wintypes.BOOL, HANDLE, ctypes.POINTER(PROCESSENTRY32W))
-_CreateFileW = _fn("CreateFileW", HANDLE, wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
-                   wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, HANDLE)
-_ReadFile = _fn("ReadFile", wintypes.BOOL, HANDLE, wintypes.LPVOID, wintypes.DWORD,
-                ctypes.POINTER(wintypes.DWORD), wintypes.LPVOID)
-_SetFileInformationByHandle = _fn("SetFileInformationByHandle", wintypes.BOOL, HANDLE, ctypes.c_int,
-                                  wintypes.LPVOID, wintypes.DWORD)
-_CreateJobObjectW = _fn("CreateJobObjectW", HANDLE, wintypes.LPVOID, wintypes.LPCWSTR)
-_SetInformationJobObject = _fn("SetInformationJobObject", wintypes.BOOL, HANDLE, ctypes.c_int,
-                               wintypes.LPVOID, wintypes.DWORD)
-_AssignProcessToJobObject = _fn("AssignProcessToJobObject", wintypes.BOOL, HANDLE, HANDLE)
-_QueryInformationJobObject = _fn("QueryInformationJobObject", wintypes.BOOL, HANDLE, ctypes.c_int,
-                                 wintypes.LPVOID, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD))
+    _FT = ctypes.POINTER(wintypes.FILETIME)
+    _OpenProcess = _fn("OpenProcess", HANDLE, wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    _GetProcessTimes = _fn("GetProcessTimes", wintypes.BOOL, HANDLE, _FT, _FT, _FT, _FT)
+    _WaitForSingleObject = _fn("WaitForSingleObject", wintypes.DWORD, HANDLE, wintypes.DWORD)
+    _TerminateProcess = _fn("TerminateProcess", wintypes.BOOL, HANDLE, wintypes.UINT)
+    _CloseHandle = _fn("CloseHandle", wintypes.BOOL, HANDLE)
+    _GetCurrentProcess = _fn("GetCurrentProcess", HANDLE)
+    _GetSystemTimePreciseAsFileTime = _fn("GetSystemTimePreciseAsFileTime", None, _FT)
+    _QueryFullProcessImageNameW = _fn("QueryFullProcessImageNameW", wintypes.BOOL, HANDLE,
+                                    wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD))
+    _CreateToolhelp32Snapshot = _fn("CreateToolhelp32Snapshot", HANDLE, wintypes.DWORD, wintypes.DWORD)
+    _Process32FirstW = _fn("Process32FirstW", wintypes.BOOL, HANDLE, ctypes.POINTER(PROCESSENTRY32W))
+    _Process32NextW = _fn("Process32NextW", wintypes.BOOL, HANDLE, ctypes.POINTER(PROCESSENTRY32W))
+    _CreateFileW = _fn("CreateFileW", HANDLE, wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                       wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, HANDLE)
+    _ReadFile = _fn("ReadFile", wintypes.BOOL, HANDLE, wintypes.LPVOID, wintypes.DWORD,
+                    ctypes.POINTER(wintypes.DWORD), wintypes.LPVOID)
+    _SetFileInformationByHandle = _fn("SetFileInformationByHandle", wintypes.BOOL, HANDLE, ctypes.c_int,
+                                      wintypes.LPVOID, wintypes.DWORD)
+    _CreateJobObjectW = _fn("CreateJobObjectW", HANDLE, wintypes.LPVOID, wintypes.LPCWSTR)
+    _SetInformationJobObject = _fn("SetInformationJobObject", wintypes.BOOL, HANDLE, ctypes.c_int,
+                                   wintypes.LPVOID, wintypes.DWORD)
+    _AssignProcessToJobObject = _fn("AssignProcessToJobObject", wintypes.BOOL, HANDLE, HANDLE)
+    _QueryInformationJobObject = _fn("QueryInformationJobObject", wintypes.BOOL, HANDLE, ctypes.c_int,
+                                     wintypes.LPVOID, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD))
 
 
-def _filetime(ft: wintypes.FILETIME) -> int:
-    return (ft.dwHighDateTime << 32) | ft.dwLowDateTime
+    def _filetime(ft: wintypes.FILETIME) -> int:
+        return (ft.dwHighDateTime << 32) | ft.dwLowDateTime
 
 
-def _creation_of(handle) -> int | None:
-    c, e, k, u = (wintypes.FILETIME() for _ in range(4))
-    if not _GetProcessTimes(handle, ctypes.byref(c), ctypes.byref(e), ctypes.byref(k), ctypes.byref(u)):
+    def _creation_of(handle) -> int | None:
+        c, e, k, u = (wintypes.FILETIME() for _ in range(4))
+        if not _GetProcessTimes(handle, ctypes.byref(c), ctypes.byref(e), ctypes.byref(k), ctypes.byref(u)):
+            return None
+        return _filetime(c)
+
+
+    def self_identity() -> tuple[int, int]:
+        """This process's pid and creation time (FILETIME, 100 ns since 1601)."""
+        creation = _creation_of(_GetCurrentProcess())
+        if creation is None:
+            raise OSError(ctypes.get_last_error(), "GetProcessTimes failed on the current process")
+        return os.getpid(), creation
+
+
+    _ntdll = ctypes.WinDLL("ntdll")
+    _NtQuerySystemInformation = _ntdll.NtQuerySystemInformation
+    _NtQuerySystemInformation.restype = ctypes.c_long
+    _NtQuerySystemInformation.argtypes = (ctypes.c_ulong, wintypes.LPVOID, ctypes.c_ulong,
+                                          ctypes.POINTER(ctypes.c_ulong))
+    SYSTEM_PROCESS_INFORMATION = 5
+    STATUS_INFO_LENGTH_MISMATCH = ctypes.c_long(0xC0000004).value
+
+
+    def system_creation_times() -> dict[int, int] | None:
+        """{pid: creation time} of every live process, from the system process
+        list (NtQuerySystemInformation, SystemProcessInformation). It opens no
+        process, so it also covers processes OpenProcess refuses (services,
+        other users). None if the query fails or the layout is unknown."""
+        if ctypes.sizeof(ctypes.c_void_p) != 8:
+            return None  # the offsets below are the 64-bit layout
+        size = 1 << 20
+        for _ in range(8):
+            buf = ctypes.create_string_buffer(size)
+            needed = ctypes.c_ulong(0)
+            status = _NtQuerySystemInformation(SYSTEM_PROCESS_INFORMATION, buf, size, ctypes.byref(needed))
+            if status == STATUS_INFO_LENGTH_MISMATCH:
+                size = max(2 * size, needed.value + (1 << 16))
+                continue
+            if status != 0:
+                return None
+            out, offset = {}, 0
+            while True:
+                (next_entry,) = struct.unpack_from("<I", buf, offset)
+                (created,) = struct.unpack_from("<q", buf, offset + 0x20)  # CreateTime
+                (pid,) = struct.unpack_from("<Q", buf, offset + 0x50)  # UniqueProcessId
+                out[pid] = created
+                if not next_entry:
+                    return out
+                offset += next_entry
         return None
-    return _filetime(c)
 
 
-def self_identity() -> tuple[int, int]:
-    """This process's pid and creation time (FILETIME, 100 ns since 1601)."""
-    creation = _creation_of(_GetCurrentProcess())
-    if creation is None:
-        raise OSError(ctypes.get_last_error(), "GetProcessTimes failed on the current process")
-    return os.getpid(), creation
-
-
-def creation_time(pid: int) -> int | None:
-    """Creation time of the process now holding this pid, or None if absent or unreadable."""
-    handle = _OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-    if not handle:
-        return None
-    try:
-        return _creation_of(handle)
-    finally:
-        _CloseHandle(handle)
-
-
-def process_state(pid, creation) -> str:
-    """'alive', 'absent' or 'unknown' for the process named by pid and creation time.
-    Absent needs positive evidence: no such pid, the pid names a process created
-    at another time, or the process has exited. Anything else is unknown."""
-    if not isinstance(pid, int) or not isinstance(creation, int) or pid <= 0 or creation <= 0:
-        return "unknown"
-    handle = _OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, False, pid)
-    if not handle:
-        return "absent" if ctypes.get_last_error() == ERROR_INVALID_PARAMETER else "unknown"
-    try:
-        actual = _creation_of(handle)
-        if actual is None:
+    def _listed_state(pid: int, creation: int) -> str:
+        """State of a process OpenProcess refuses, from the system process list:
+        a live process is always listed, so a pid missing from the list or listed
+        with another creation time is absent; a match is alive."""
+        listed = system_creation_times()
+        if listed is None:
             return "unknown"
-        if actual != creation:
-            return "absent"
-        wait = _WaitForSingleObject(handle, 0)
-        return {WAIT_OBJECT_0: "absent", WAIT_TIMEOUT: "alive"}.get(wait, "unknown")
-    finally:
-        _CloseHandle(handle)
+        return "alive" if listed.get(pid) == creation else "absent"
 
 
-def terminate(pid: int, creation: int) -> bool:
-    """Terminate the process named by pid and creation time (tests and cancellation)."""
-    handle = _OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE, False, pid)
-    if not handle:
-        return False
-    try:
-        return _creation_of(handle) == creation and bool(_TerminateProcess(handle, 1))
-    finally:
-        _CloseHandle(handle)
+    def creation_time(pid: int) -> int | None:
+        """Creation time of the process now holding this pid, or None if absent or unreadable."""
+        handle = _OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            if ctypes.get_last_error() == ERROR_INVALID_PARAMETER:
+                return None
+            return (system_creation_times() or {}).get(pid)
+        try:
+            return _creation_of(handle)
+        finally:
+            _CloseHandle(handle)
 
 
-def process_table() -> list[tuple[int, int, str]]:
-    """(pid, parent pid, image name) of every process (Toolhelp snapshot)."""
-    snap = _CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
-    if snap == INVALID_HANDLE_VALUE or not snap:
-        raise OSError(ctypes.get_last_error(), "CreateToolhelp32Snapshot failed")
-    try:
-        entry = PROCESSENTRY32W()
-        entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
-        rows = []
-        ok = _Process32FirstW(snap, ctypes.byref(entry))
-        while ok:
-            rows.append((int(entry.th32ProcessID), int(entry.th32ParentProcessID), entry.szExeFile))
-            ok = _Process32NextW(snap, ctypes.byref(entry))
-        return rows
-    finally:
-        _CloseHandle(snap)
+    def process_state(pid, creation) -> str:
+        """'alive', 'absent' or 'unknown' for the process named by pid and creation time.
+        Absent needs positive evidence: no such pid, the pid names a process created
+        at another time, or the process has exited. When OpenProcess refuses the pid,
+        the system process list decides (see _listed_state). Anything else is unknown."""
+        if not isinstance(pid, int) or not isinstance(creation, int) or pid <= 0 or creation <= 0:
+            return "unknown"
+        handle = _OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, False, pid)
+        if not handle:
+            return "absent" if ctypes.get_last_error() == ERROR_INVALID_PARAMETER else _listed_state(pid, creation)
+        try:
+            actual = _creation_of(handle)
+            if actual is None:
+                return _listed_state(pid, creation)
+            if actual != creation:
+                return "absent"
+            wait = _WaitForSingleObject(handle, 0)
+            return {WAIT_OBJECT_0: "absent", WAIT_TIMEOUT: "alive"}.get(wait, "unknown")
+        finally:
+            _CloseHandle(handle)
 
 
-def live_descendants(roots, exclude=()) -> list[dict]:
-    """Live processes descended from any (pid, creation) root, also through
-    exited intermediates (an orphan keeps its dead parent's pid). A child
-    counts only if it was created after its parent; if the root's pid now
-    names a newer process, children created after that newer process are its
-    own. A child whose creation time cannot be read counts (unknown is live)."""
-    children: dict[int, list[tuple[int, str]]] = {}
-    for pid, parent, image in process_table():
-        if pid != parent:
-            children.setdefault(parent, []).append((pid, image))
-    found, seen = [], set(exclude)
-    frontier = [(pid, creation) for pid, creation in roots if isinstance(pid, int) and isinstance(creation, int)]
-    while frontier:
-        pid, creation = frontier.pop()
-        holder = creation_time(pid)
-        newer = holder if holder is not None and holder != creation else None
-        for child, image in children.get(pid, []):
-            if child in seen:
-                continue
-            born = creation_time(child)
-            if born is not None and (born < creation or (newer is not None and born >= newer)):
-                continue
-            seen.add(child)
-            found.append({"pid": child, "image": image, "creation_time": born})
-            if born is not None:
-                frontier.append((child, born))
-    return found
+    def terminate(pid: int, creation: int) -> bool:
+        """Terminate the process named by pid and creation time (tests and cancellation)."""
+        handle = _OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE, False, pid)
+        if not handle:
+            return False
+        try:
+            return _creation_of(handle) == creation and bool(_TerminateProcess(handle, 1))
+        finally:
+            _CloseHandle(handle)
 
 
-def contain_self():
-    """Put this process in a new job that kills every member when its last
-    handle closes and allows no breakaway: every descendant created from now
-    on stays in the job (through exited intermediates too) and dies with
-    this process. The handle is not inheritable, so only this process keeps
-    the job alive. Returns the job handle."""
-    job = _CreateJobObjectW(None, None)
-    if not job:
-        raise OSError(ctypes.get_last_error(), "CreateJobObjectW failed")
-    info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
-    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-    if not _SetInformationJobObject(job, JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, ctypes.byref(info),
-                                    ctypes.sizeof(info)):
-        err = ctypes.get_last_error()
-        _CloseHandle(job)
-        raise OSError(err, "SetInformationJobObject failed")
-    if not _AssignProcessToJobObject(job, _GetCurrentProcess()):
-        err = ctypes.get_last_error()
-        _CloseHandle(job)
-        raise OSError(err, "AssignProcessToJobObject failed")
-    return job
+    def _audit_descendant(pid: int, creation: int) -> dict | None:
+        """Read the image and identity through one handle, resisting snapshot/pid races."""
+        handle = _OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, False, pid)
+        if not handle:
+            return None
+        try:
+            if _creation_of(handle) != creation or _WaitForSingleObject(handle, 0) != WAIT_TIMEOUT:
+                return None
+            size = wintypes.DWORD(32768)
+            image = ctypes.create_unicode_buffer(size.value)
+            if not _QueryFullProcessImageNameW(handle, 0, image, ctypes.byref(size)):
+                return None
+            return {"pid": pid, "creation_time": creation, "image": image.value}
+        finally:
+            _CloseHandle(handle)
 
 
-def job_members(job=None) -> list[int]:
-    """Pids of the live processes in a job (None: the caller's own job)."""
-    capacity = 8192
-    size = 8 + 8 * capacity
-    buf = ctypes.create_string_buffer(size)
-    if not _QueryInformationJobObject(job, JOB_OBJECT_BASIC_PROCESS_ID_LIST, buf, size, None):
-        raise OSError(ctypes.get_last_error(), "QueryInformationJobObject failed")
-    _, listed = struct.unpack_from("<II", buf, 0)
-    return list(struct.unpack_from(f"<{listed}Q", buf, 8))
+    def process_table() -> list[tuple[int, int, str]]:
+        """(pid, parent pid, image name) of every process (Toolhelp snapshot)."""
+        snap = _CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        if snap == INVALID_HANDLE_VALUE or not snap:
+            raise OSError(ctypes.get_last_error(), "CreateToolhelp32Snapshot failed")
+        try:
+            entry = PROCESSENTRY32W()
+            entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+            rows = []
+            ok = _Process32FirstW(snap, ctypes.byref(entry))
+            while ok:
+                rows.append((int(entry.th32ProcessID), int(entry.th32ParentProcessID), entry.szExeFile))
+                ok = _Process32NextW(snap, ctypes.byref(entry))
+            return rows
+        finally:
+            _CloseHandle(snap)
 
 
-def boot_id() -> str:
-    """Windows' boot counter (Memory Management PrefetchParameters BootId)."""
-    key = r"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters"
-    try:
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key) as k:
-            value, _ = winreg.QueryValueEx(k, "BootId")
-        return f"bootid:{int(value)}"
-    except OSError:
-        return "unavailable"
+    def live_descendants(roots, exclude=(), exit_times=None) -> list[dict]:
+        """Live processes descended from any (pid, creation) root, also through
+        exited intermediates (an orphan keeps its dead parent's pid). A child
+        counts only if it was created after its parent; if the root's pid now
+        names a newer process, children created after that newer process are its
+        own. A dead root with a recorded exit bounds children by that exit,
+        including when both it and a later holder of its pid have exited.
+        A child whose creation time cannot be read counts (unknown is live).
+        This walk adds refusals; job containment supplies absence evidence."""
+        exit_times = exit_times or {}
+        children: dict[int, list[tuple[int, str]]] = {}
+        for pid, parent, image in process_table():
+            if pid != parent:
+                children.setdefault(parent, []).append((pid, image))
+        found, seen = [], set(exclude)
+        frontier = [(pid, creation) for pid, creation in roots if isinstance(pid, int) and isinstance(creation, int)]
+        while frontier:
+            pid, creation = frontier.pop()
+            holder = creation_time(pid)
+            newer = holder if holder is not None and holder != creation else None
+            ended = exit_times.get((pid, creation)) if process_state(pid, creation) == "absent" else None
+            for child, image in children.get(pid, []):
+                if child in seen:
+                    continue
+                born = creation_time(child)
+                if born is not None and (born < creation or (newer is not None and born >= newer)
+                                         or (ended is not None and born > ended)):
+                    continue
+                seen.add(child)
+                found.append({"pid": child, "image": image, "creation_time": born})
+                if born is not None:
+                    frontier.append((child, born))
+        return found
 
 
-class _Handle:
-    """A Win32 file handle; transition handles share read only, so while one is
-    open no other process can rename, delete or write the file."""
-
-    def __init__(self, path: Path, transition: bool):
-        self.path = path
-        access = GENERIC_READ | (DELETE if transition else 0)
-        share = FILE_SHARE_READ if transition else FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
-        deadline = time.monotonic() + (TRANSITION_WAIT_SECONDS if transition else 5.0)
-        while True:
-            h = _CreateFileW(str(path), access, share, None, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, None)
-            if h != INVALID_HANDLE_VALUE and h:
-                self.handle = h
-                return
+    def contain_self():
+        """Put this process in a new job that kills every member when its last
+        handle closes and allows no breakaway: every descendant created from now
+        on stays in the job (through exited intermediates too) and dies with
+        this process. The handle is not inheritable, so only this process keeps
+        the job alive. Returns the job handle."""
+        job = _CreateJobObjectW(None, None)
+        if not job:
+            raise OSError(ctypes.get_last_error(), "CreateJobObjectW failed")
+        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not _SetInformationJobObject(job, JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, ctypes.byref(info),
+                                        ctypes.sizeof(info)):
             err = ctypes.get_last_error()
-            if err in (ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND):
-                raise FileNotFoundError(str(path))
-            if err not in (ERROR_SHARING_VIOLATION, ERROR_ACCESS_DENIED) or time.monotonic() > deadline:
-                raise OSError(err, f"cannot open {path} (Win32 error {err})")
-            time.sleep(0.05)
+            _CloseHandle(job)
+            raise OSError(err, "SetInformationJobObject failed")
+        if not _AssignProcessToJobObject(job, _GetCurrentProcess()):
+            err = ctypes.get_last_error()
+            _CloseHandle(job)
+            raise OSError(err, "AssignProcessToJobObject failed")
+        return job
 
-    def read(self) -> bytes:
-        chunks, buf, got = [], ctypes.create_string_buffer(65536), wintypes.DWORD()
-        while True:
-            if not _ReadFile(self.handle, buf, len(buf), ctypes.byref(got), None):
-                raise OSError(ctypes.get_last_error(), f"ReadFile failed on {self.path}")
-            if got.value == 0:
-                return b"".join(chunks)
-            chunks.append(buf.raw[: got.value])
 
-    def rename(self, new_name: str) -> None:
-        """Rename this exact file within its directory (fails if the name exists).
-        The target is a full path: a bare name resolves against the current
-        directory, not the file's."""
-        target = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(self.path)), new_name))
-        encoded = target.encode("utf-16-le")
-        size = ctypes.sizeof(FILE_RENAME_INFO) + len(encoded)
+    def job_members(job=None) -> list[int]:
+        """Pids of the live processes in a job (None: the caller's own job)."""
+        capacity = 8192
+        size = 8 + 8 * capacity
         buf = ctypes.create_string_buffer(size)
-        info = ctypes.cast(buf, ctypes.POINTER(FILE_RENAME_INFO)).contents
-        info.ReplaceIfExists = False
-        info.RootDirectory = None
-        info.FileNameLength = len(encoded)
-        ctypes.memmove(ctypes.addressof(info) + FILE_RENAME_INFO.FileName.offset, encoded, len(encoded))
-        if not _SetFileInformationByHandle(self.handle, FILE_RENAME_INFO_CLASS, buf, size):
-            raise OSError(ctypes.get_last_error(), f"rename of {self.path} to {new_name} failed")
+        if not _QueryInformationJobObject(job, JOB_OBJECT_BASIC_PROCESS_ID_LIST, buf, size, None):
+            raise OSError(ctypes.get_last_error(), "QueryInformationJobObject failed")
+        _, listed = struct.unpack_from("<II", buf, 0)
+        return list(struct.unpack_from(f"<{listed}Q", buf, 8))
 
-    def close(self) -> None:
-        if self.handle:
-            _CloseHandle(self.handle)
-            self.handle = None
 
-    def __enter__(self):
-        return self
+    def boot_id() -> str:
+        """Windows' boot counter (Memory Management PrefetchParameters BootId)."""
+        key = r"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters"
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key) as k:
+                value, _ = winreg.QueryValueEx(k, "BootId")
+            return f"bootid:{int(value)}"
+        except OSError:
+            return "unavailable"
 
-    def __exit__(self, *_):
-        self.close()
+
+    class _Handle:
+        """A Win32 file handle; transition handles share read only, so while one is
+        open no other process can rename, delete or write the file."""
+
+        def __init__(self, path: Path, transition: bool):
+            self.path = path
+            access = GENERIC_READ | (DELETE if transition else 0)
+            share = FILE_SHARE_READ if transition else FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
+            deadline = time.monotonic() + (TRANSITION_WAIT_SECONDS if transition else 5.0)
+            while True:
+                h = _CreateFileW(str(path), access, share, None, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, None)
+                if h != INVALID_HANDLE_VALUE and h:
+                    self.handle = h
+                    return
+                err = ctypes.get_last_error()
+                if err in (ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND):
+                    raise FileNotFoundError(str(path))
+                if err not in (ERROR_SHARING_VIOLATION, ERROR_ACCESS_DENIED) or time.monotonic() > deadline:
+                    raise OSError(err, f"cannot open {path} (Win32 error {err})")
+                time.sleep(0.05)
+
+        def read(self) -> bytes:
+            chunks, buf, got = [], ctypes.create_string_buffer(65536), wintypes.DWORD()
+            while True:
+                if not _ReadFile(self.handle, buf, len(buf), ctypes.byref(got), None):
+                    raise OSError(ctypes.get_last_error(), f"ReadFile failed on {self.path}")
+                if got.value == 0:
+                    return b"".join(chunks)
+                chunks.append(buf.raw[: got.value])
+
+        def rename(self, new_name: str) -> None:
+            """Rename this exact file within its directory (fails if the name exists).
+            The target is a full path: a bare name resolves against the current
+            directory, not the file's."""
+            target = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(self.path)), new_name))
+            encoded = target.encode("utf-16-le")
+            size = ctypes.sizeof(FILE_RENAME_INFO) + len(encoded)
+            buf = ctypes.create_string_buffer(size)
+            info = ctypes.cast(buf, ctypes.POINTER(FILE_RENAME_INFO)).contents
+            info.ReplaceIfExists = False
+            info.RootDirectory = None
+            info.FileNameLength = len(encoded)
+            ctypes.memmove(ctypes.addressof(info) + FILE_RENAME_INFO.FileName.offset, encoded, len(encoded))
+            if not _SetFileInformationByHandle(self.handle, FILE_RENAME_INFO_CLASS, buf, size):
+                raise OSError(ctypes.get_last_error(), f"rename of {self.path} to {new_name} failed")
+
+        def close(self) -> None:
+            if self.handle:
+                _CloseHandle(self.handle)
+                self.handle = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            self.close()
+
+    _publish = os.rename  # fails if the lock exists
+    command_line = subprocess.list2cmdline
+
+    def _child_creation(child) -> int | None:
+        """The work child's creation time. The Popen handle keeps the process
+        object, so it is readable even if the child has already exited."""
+        return _creation_of(HANDLE(int(child._handle)))
+
+
+    def _child_exit(child) -> int | None:
+        """Actual exit FILETIME from the retained child handle, never a reused pid."""
+        c, e, k, u = (wintypes.FILETIME() for _ in range(4))
+        if not _GetProcessTimes(HANDLE(int(child._handle)), ctypes.byref(c), ctypes.byref(e),
+                                ctypes.byref(k), ctypes.byref(u)):
+            return None
+        return _filetime(e) or None
+
+
+    def _exit_upper_bound() -> int:
+        """Bound further child creation after nested-done; that path spawns nothing."""
+        now = wintypes.FILETIME()
+        _GetSystemTimePreciseAsFileTime(ctypes.byref(now))
+        return _filetime(now)
+
+
+    def _spawn_contained(job, command, cwd, env):
+        """Start the work; it is created in the supervisor's job."""
+        return subprocess.Popen(command, cwd=cwd, env=env)
+
+else:
+    # ------------------------------------------------------------ Linux layer
+    # A process is (pid, start time from /proc/<pid>/stat field 22). State
+    # changes take an exclusive flock where Windows opens with a read-only
+    # share mode; the work runs in its own session, watched by a subreaper
+    # supervisor, where Windows uses a job object (see the module notes).
+
+    EXITED = ("Z", "X", "x")  # zombie or dead: the process has exited
+    STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+    PR_SET_CHILD_SUBREAPER = 36
+    BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
+    TERMINATE_GRACE_SECONDS = 10.0
+    KILL_WAIT_SECONDS = 5.0
+    _Proc = collections.namedtuple("_Proc", "pid state ppid pgrp session start comm")
+    _detached: list = []  # created supervisors, kept so exited ones are reaped
+
+    def _stat(pid: int) -> _Proc:
+        """One /proc/<pid>/stat row. FileNotFoundError or ProcessLookupError when
+        no such pid is visible; ValueError or IndexError when malformed."""
+        text = Path(f"/proc/{pid}/stat").read_bytes().decode("utf-8", "replace")
+        head, _, tail = text.rpartition(")")  # comm may itself contain ")"
+        if not head:
+            raise ValueError(f"malformed /proc/{pid}/stat")
+        f = tail.split()
+        return _Proc(pid, f[0], int(f[1]), int(f[2]), int(f[3]), int(f[19]), head.partition("(")[2])
+
+    def _rows(exited: bool = False) -> list:
+        """Every visible process; exited (unreaped) ones only if asked."""
+        rows = []
+        for name in os.listdir("/proc"):
+            if name.isdigit():
+                try:
+                    row = _stat(int(name))
+                except (OSError, ValueError, IndexError):
+                    continue  # gone since the listing, or unreadable
+                if exited or row.state not in EXITED:
+                    rows.append(row)
+        return rows
+
+    def self_identity() -> tuple[int, int]:
+        """This process's pid and start time (clock ticks after boot)."""
+        return os.getpid(), _stat(os.getpid()).start
+
+    def creation_time(pid: int) -> int | None:
+        """Start time of the process now holding this pid (also an exited,
+        unreaped one), or None if absent or unreadable."""
+        try:
+            return _stat(pid).start
+        except (OSError, ValueError, IndexError):
+            return None
+
+    def process_state(pid, creation) -> str:
+        """'alive', 'absent' or 'unknown', by the same rules as on Windows: absent
+        needs no such pid, another start time, or an exited process."""
+        if not isinstance(pid, int) or not isinstance(creation, int) or pid <= 0 or creation <= 0:
+            return "unknown"
+        try:
+            row = _stat(pid)
+        except (FileNotFoundError, ProcessLookupError):
+            try:
+                os.kill(pid, 0)  # /proc can hide a live pid (hidepid); the kernel cannot
+            except ProcessLookupError:
+                return "absent"
+            except (OSError, OverflowError):
+                return "unknown"
+            return "unknown"
+        except (OSError, ValueError, IndexError):
+            return "unknown"
+        if row.start != creation or row.state in EXITED:
+            return "absent"
+        return "alive"
+
+    def terminate(pid: int, creation: int) -> bool:
+        """Stop the process named by pid and start time (tests and cancellation):
+        SIGTERM, so a supervisor kills its job first, then SIGKILL after
+        TERMINATE_GRACE_SECONDS. False if that process is not alive."""
+        if process_state(pid, creation) != "alive":
+            return False
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            return False
+        deadline = time.monotonic() + TERMINATE_GRACE_SECONDS
+        while process_state(pid, creation) == "alive":
+            if time.monotonic() > deadline:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+                break
+            time.sleep(0.05)
+        return True
+
+    def live_descendants(roots, exclude=(), exit_times=None) -> list[dict]:
+        """Live processes descended from any (pid, creation) root, and every live
+        member of a session or process group such a process leads. Linux
+        reparents an orphan, so after an intermediate exits only its session
+        still names it (unless it called setsid). A session or group id is never
+        reused while a member lives. A process counts only if it started no
+        earlier than its root; if the root's pid now names a newer process,
+        processes started after that one are its own."""
+        rows = {r.pid: r for r in _rows()}
+        linked: dict[int, set[int]] = {}
+        for r in rows.values():
+            for key in (r.ppid, r.session, r.pgrp):
+                linked.setdefault(key, set()).add(r.pid)
+        found, seen = [], set(exclude)
+        frontier = [(pid, creation) for pid, creation in roots if isinstance(pid, int) and isinstance(creation, int)]
+        while frontier:
+            pid, creation = frontier.pop()
+            holder = creation_time(pid)
+            newer = holder if holder is not None and holder != creation else None
+            for child in sorted(linked.get(pid, ())):
+                if child == pid or child in seen:
+                    continue
+                born = rows[child].start
+                if born < creation or (newer is not None and born >= newer):
+                    continue
+                seen.add(child)
+                found.append({"pid": child, "image": rows[child].comm, "creation_time": born})
+                frontier.append((child, born))
+        return found
+
+    class _SessionJob:
+        """The supervisor's job on Linux: the work's session and process group
+        (named by the work child's pid) and every live descendant of the
+        supervisor, which is a child subreaper."""
+
+        def __init__(self):
+            self.sid = self.start = None
+
+    def contain_self():
+        """Make this process a child subreaper, so every orphaned descendant
+        (also one that called setsid) is reparented to it while it lives, and
+        return its job; the work starts in a new session (_spawn_contained).
+        Weaker than a job object: nothing kills the job if this process is
+        killed with SIGKILL."""
+        try:
+            prctl = ctypes.CDLL(None, use_errno=True).prctl
+        except (OSError, AttributeError) as exc:
+            raise OSError(f"prctl unavailable: {exc}") from None
+        if prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0:
+            raise OSError(ctypes.get_errno(), "prctl(PR_SET_CHILD_SUBREAPER) failed")
+        return _SessionJob()
+
+    def _job_rows(job) -> list:
+        """Live members of a _SessionJob, never the supervisor itself. Reaps
+        the exited orphans it adopted, never the work child (Popen waits)."""
+        me = os.getpid()
+        live, children = {}, {}
+        for r in _rows(exited=True):
+            if r.state in EXITED:
+                if r.ppid == me and job.sid is not None and r.pid != job.sid:
+                    try:
+                        os.waitpid(r.pid, os.WNOHANG)
+                    except ChildProcessError:
+                        pass
+                continue
+            live[r.pid] = r
+            children.setdefault(r.ppid, []).append(r.pid)
+        # The work's session id names another session only if its pid now
+        # holds a different process (it is not reused while a member lives).
+        ours = job.sid is not None and creation_time(job.sid) in (None, job.start)
+        members = {p for p, r in live.items() if ours and job.sid in (r.session, r.pgrp)}
+        tree, frontier = set(), [me]
+        while frontier:
+            for child in children.get(frontier.pop(), ()):
+                if child not in tree:
+                    tree.add(child)
+                    frontier.append(child)
+        members = (members | tree) - {me}
+        return [live[p] for p in sorted(members)]
+
+    def job_members(job=None) -> list[int]:
+        """Pids of the live processes in a job (None: the caller's own session,
+        which is its supervisor's work session)."""
+        if job is None:
+            sid = os.getsid(0)
+            return sorted(r.pid for r in _rows() if r.session == sid)
+        return [r.pid for r in _job_rows(job)]
+
+    def _kill_job(job) -> None:
+        """SIGKILL every member of the job, again while members fork, until none
+        is live or KILL_WAIT_SECONDS pass."""
+        deadline = time.monotonic() + KILL_WAIT_SECONDS
+        while True:
+            rows = _job_rows(job)
+            if not rows or time.monotonic() > deadline:
+                return
+            if any(r.pgrp == job.sid for r in rows):
+                try:
+                    os.killpg(job.sid, signal.SIGKILL)
+                except OSError:
+                    pass
+            for r in rows:
+                if creation_time(r.pid) == r.start:
+                    try:
+                        os.kill(r.pid, signal.SIGKILL)
+                    except OSError:
+                        pass
+            time.sleep(0.02)
+
+    def _spawn_contained(job, command, cwd, env):
+        """Start the work in a new session, so its session and process group are
+        named by its pid. From now on a stop signal (SIGTERM, SIGINT, SIGHUP)
+        or this process's exit kills the whole job, as closing a job does."""
+        def stop(signum, _frame):
+            for each in STOP_SIGNALS:
+                signal.signal(each, signal.SIG_IGN)
+            _kill_job(job)
+            os._exit(128 + signum)
+
+        for each in STOP_SIGNALS:
+            signal.signal(each, stop)
+        atexit.register(_kill_job, job)
+        child = subprocess.Popen(command, cwd=cwd, env=env, start_new_session=True)
+        job.sid, job.start = child.pid, creation_time(child.pid)
+        return child
+
+    def _child_creation(child) -> int | None:
+        """The work child's start time; an exited child stays readable until
+        Popen reaps it."""
+        return creation_time(child.pid)
+
+
+    def _child_exit(child) -> None:
+        return None  # Linux reparenting/session semantics use no FILETIME bounds.
+
+
+    def _exit_upper_bound() -> None:
+        return None
+
+
+    def boot_id() -> str:
+        """The kernel's boot id, a random UUID new at every boot."""
+        try:
+            value = Path(BOOT_ID_PATH).read_text(encoding="ascii").strip()
+        except (OSError, UnicodeDecodeError):
+            return "unavailable"
+        return f"bootid:{value}" if value else "unavailable"
+
+    class _Handle:
+        """A lock file opened for reading. A transition handle also holds an
+        exclusive flock and is open on the file the path names (checked after
+        the flock), so while one is open no other change by this module can
+        rename or replace it. Readers take no lock and never block a change."""
+
+        def __init__(self, path: Path, transition: bool):
+            self.path, self.handle = path, None
+            deadline = time.monotonic() + TRANSITION_WAIT_SECONDS
+            while True:
+                fd = os.open(path, os.O_RDONLY)  # FileNotFoundError when free
+                if not transition:
+                    self.handle = fd
+                    return
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    if os.path.samestat(os.fstat(fd), os.stat(path)):
+                        self.handle = fd
+                        return
+                except BlockingIOError:
+                    pass
+                except BaseException:
+                    os.close(fd)
+                    raise
+                os.close(fd)  # held by another change, or renamed meanwhile
+                if time.monotonic() > deadline:
+                    raise OSError(f"cannot open {path} for a state change: another change holds it")
+                time.sleep(0.05)
+
+        def read(self) -> bytes:
+            chunks = []
+            while True:
+                chunk = os.read(self.handle, 65536)
+                if not chunk:
+                    return b"".join(chunks)
+                chunks.append(chunk)
+
+        def rename(self, new_name: str) -> None:
+            """Rename this exact file within its directory (fails if the name
+            exists). Only a transition handle renames; its flock keeps every other
+            change out, so the check and the atomic rename cannot interleave."""
+            target = os.path.join(os.path.dirname(os.path.abspath(self.path)), new_name)
+            if not os.path.samestat(os.fstat(self.handle), os.stat(self.path)):
+                raise OSError(f"{self.path} no longer names the file this handle holds")
+            if os.path.lexists(target):
+                raise FileExistsError(target)
+            os.rename(self.path, target)
+
+        def close(self) -> None:
+            if self.handle is not None:
+                os.close(self.handle)
+                self.handle = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            self.close()
+
+    def _publish(tmp, target) -> None:
+        """Give the complete temp file the lock's name, failing if that name
+        exists (os.rename would replace it on POSIX)."""
+        os.link(tmp, target)
+        os.unlink(tmp)
+
+    command_line = shlex.join
+
+    def spawn_detached(command_line: str, cwd: str, timeout: float = 60.0) -> dict:
+        """The Linux wmi_create: start a supervisor_command line as a detached
+        process in a new session, so it survives the caller and no signal to the
+        caller's terminal or group reaches it. stdin, stdout and stderr are
+        /dev/null, as for a hidden WMI process; it inherits the caller's
+        environment without the token. A failed creation is definite (the
+        errno as return_value), never a lost response."""
+        env = dict(os.environ)
+        env.pop(TOKEN_ENV, None)
+        try:
+            proc = subprocess.Popen(shlex.split(command_line), cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        except OSError as exc:
+            return {"return_value": exc.errno or 1, "pid": 0}
+        _detached[:] = [p for p in _detached if p.poll() is None] + [proc]
+        return {"return_value": 0, "pid": proc.pid}
+
+    def _image_name(row) -> str:
+        """The executable's file name, as Win32_Process.Name gives it: from
+        /proc/<pid>/exe, else argv[0], else the kernel's (truncated) comm."""
+        try:
+            return os.path.basename(os.readlink(f"/proc/{row.pid}/exe")).removesuffix(" (deleted)")
+        except OSError:
+            pass
+        try:
+            argv0 = Path(f"/proc/{row.pid}/cmdline").read_bytes().split(b"\0", 1)[0]
+        except OSError:
+            argv0 = b""
+        return os.path.basename(argv0.decode("utf-8", "replace")) or row.comm
+
+    def proc_busy(pattern: str, exempt: list[int]) -> list[dict]:
+        """The Linux cim_busy: live processes whose image name matches the regex
+        (case-insensitively, as PowerShell's -match does), other than the
+        exempt pids. Rows keep cim_busy's keys."""
+        regex, skip, rows = re.compile(pattern, re.IGNORECASE), set(exempt), []
+        for row in _rows():
+            if row.pid not in skip:
+                name = _image_name(row)
+                if regex.search(name):
+                    rows.append({"ProcessId": row.pid, "Name": name})
+        return rows
 
 
 # ---------------------------------------------------------------- records
@@ -444,7 +939,9 @@ FATE_NAME = re.compile(r"^(?P<host>[A-Z0-9-]+)\.g(?P<generation>\d{8})\.(?P<toke
 
 
 def root_dir() -> Path:
-    return Path(os.environ.get(TEST_ROOT_ENV) or CANONICAL_ROOT)
+    if os.name == "nt":
+        return Path(os.environ.get(TEST_ROOT_ENV) or CANONICAL_ROOT)
+    return Path(os.environ.get(TEST_ROOT_ENV) or os.environ.get(ROOT_ENV) or CANONICAL_ROOT)
 
 
 def lock_path() -> Path:
@@ -493,6 +990,12 @@ def read_events(token: str) -> tuple[list[dict], list[str]]:
             event = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(event, dict) or event.get("schema") != EVENT_SCHEMA or event.get("token") != token:
                 raise ValueError("not an event of this reservation")
+            if event.get("kind") == "child-exited":
+                identity = (event.get("pid"), event.get("creation_time"))
+                _validate_exit(identity, event.get("exit_time"))
+            elif event.get("kind") == "nested-done" and event.get("exit_upper_bound") is not None:
+                identity = (event.get("by_pid"), event.get("by_process_creation_time"))
+                _validate_exit(identity, event["exit_upper_bound"])
             events.append(event)
         except (OSError, ValueError, UnicodeDecodeError):
             unreadable.append(path.name)
@@ -507,7 +1010,7 @@ def _write_event(token: str, kind: str, **fields) -> dict:
              "by_pid": pid, "by_process_creation_time": creation, **fields}
     stamp = f"{time.time_ns():020d}-{pid}-{kind}"
     tmp = directory / f".{stamp}.tmp"
-    fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_BINARY, 0o644)
+    fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0), 0o644)
     with os.fdopen(fd, "wb") as f:
         f.write(_dump(event))
         f.flush()
@@ -528,6 +1031,29 @@ def _work_roots(events: list[dict]) -> list[tuple[int, int]]:
     # handoff-unverified names a pid whose process had already exited; the
     # supervisor's adopt event identifies the work instead.
     return roots
+
+
+def _validate_exit(identity, ended) -> None:
+    pid, creation = identity
+    if any(not isinstance(v, int) or isinstance(v, bool) or v <= 0 for v in (pid, creation, ended)) \
+            or ended < creation:
+        raise ValueError("incomplete process exit identity or time")
+
+
+def _exit_times(events: list[dict]) -> dict[tuple[int, int], int]:
+    """Exact child exits and nested completion bounds, tied to process identity.
+    Old reservations lack these events and retain the conservative walk."""
+    bounds = {}
+    for e in events:
+        if e.get("kind") == "child-exited":
+            identity, ended = (e["pid"], e["creation_time"]), e["exit_time"]
+        elif e.get("kind") == "nested-done" and e.get("exit_upper_bound") is not None:
+            identity = (e["by_pid"], e["by_process_creation_time"])
+            ended = e["exit_upper_bound"]
+        else:
+            continue
+        bounds[identity] = max(bounds.get(identity, ended), ended)
+    return bounds
 
 
 def assess(record: dict | None, events: list[dict], unreadable: list[str], exclude_self: bool = False) -> dict:
@@ -555,7 +1081,7 @@ def assess(record: dict | None, events: list[dict], unreadable: list[str], exclu
             continue
         states[label] = {"pid": pid, "creation_time": creation, "state": process_state(pid, creation)}
     exclude = [me[0]] if me else []
-    descendants = live_descendants(work, exclude=exclude)
+    descendants = live_descendants(work, exclude=exclude, exit_times=_exit_times(events))
     alive = [k for k, v in states.items() if v["state"] == "alive"]
     unknown = [k for k, v in states.items() if v["state"] == "unknown"]
     out = {"processes": states, "live_descendants": descendants}
@@ -629,13 +1155,13 @@ def acquire(lane: str, work_id: str, release_condition: str, transport_record: d
         "release_condition": release_condition,
     }
     tmp = root / f".{HOST}.acquire.{token}.tmp"
-    fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_BINARY, 0o644)
+    fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0), 0o644)
     with os.fdopen(fd, "wb") as f:
         f.write(_dump(record))
         f.flush()
         os.fsync(f.fileno())
     try:
-        os.rename(tmp, lock_path())
+        _publish(tmp, lock_path())
     except FileExistsError:
         os.remove(tmp)
         holder, _ = read_lock()
@@ -691,16 +1217,19 @@ def record_descendant(token: str, pid: int, creation: int | None = None) -> dict
 
 
 def note(token: str, kind: str, detail: str = "") -> dict:
-    if kind in ("handoff", "handoff-unverified", "adopt", "descendant", "members", "nested-done", "release", "reclaim"):
+    if kind in ("handoff", "handoff-unverified", "adopt", "descendant", "child-exited", "members", "nested-done", "release", "reclaim"):
         raise ValueError(f"{kind} is not a note")
     return _change(token, kind, detail=detail)
 
 
-def release(token: str, outcome: str, detail: str = "") -> dict:
+def release(token: str, outcome: str, detail: str = "", ignore_descendants=()) -> dict:
     """Owner-only release: the token must hold the lock and no recorded work
-    other than the caller may be live (a surviving descendant keeps it held)."""
+    other than the caller may be live. An exact audited Windows descendant
+    override changes only the extra tree refusal, never the absence proof."""
     if outcome not in OUTCOMES:
         raise ValueError(f"outcome must be one of {OUTCOMES}")
+    if ignore_descendants and os.name != "nt":
+        raise Refused("descendant overrides require Windows job containment")
     try:
         handle, record = _transition(token)
     except FileNotFoundError:
@@ -708,13 +1237,41 @@ def release(token: str, outcome: str, detail: str = "") -> dict:
     with handle:
         events, unreadable = read_events(token)
         me = self_identity()
-        work = [w for w in _work_roots(events) if w != me]
+        roots = _work_roots(events)
+        work = [w for w in roots if w != me]
         live = [w for w in work if process_state(*w) != "absent"]
-        descendants = live_descendants(work, exclude=[me[0]])
+        descendants = live_descendants(work, exclude=[me[0]], exit_times=_exit_times(events))
+        ignored = []
+        if ignore_descendants:
+            # The tree walk is only an extra refusal. Overrides never change
+            # the recorded identities used as job containment/absence proof.
+            if unreadable or live:
+                raise Refused("cannot ignore descendants while recorded work is live or unknown")
+            if any(e.get("kind") == "adopt" and e.get("contained")
+                   and (e.get("pid"), e.get("creation_time")) == me for e in events):
+                try:
+                    members = set(job_members(None)) - {me[0]}
+                except OSError as exc:
+                    raise Refused(f"cannot verify caller job membership: {exc}") from exc
+                if members:
+                    raise Refused(f"caller job still holds work: {sorted(members)}")
+            requested = set(ignore_descendants)
+            for identity in sorted(requested):
+                pid, creation = identity
+                if identity in roots or process_state(pid, creation) != "alive":
+                    raise Refused(f"ignored descendant identity is recorded, absent or unknown: {identity}")
+                match = next((d for d in descendants if (d["pid"], d["creation_time"]) == identity), None)
+                if match is None or not match.get("image") or creation_time(pid) != creation:
+                    raise Refused(f"ignored descendant identity changed or is not in the refusal walk: {identity}")
+                audit = _audit_descendant(pid, creation)
+                if audit is None:
+                    raise Refused(f"cannot audit ignored descendant image and exact identity: {identity}")
+                ignored.append(audit)
+            descendants = [d for d in descendants if (d["pid"], d["creation_time"]) not in requested]
         if unreadable or live or descendants:
             raise Refused(f"work still live or unknown: processes {live}, descendants "
                           f"{[d['pid'] for d in descendants]}, unreadable events {unreadable}")
-        _write_event(token, "release", outcome=outcome, detail=detail)
+        _write_event(token, "release", outcome=outcome, detail=detail, ignored_descendants=ignored)
         handle.rename(f"{HOST}.g{record['generation']:08d}.{token}.released.json")
     return {"token": token, "outcome": outcome, "generation": record["generation"]}
 
@@ -778,7 +1335,7 @@ def exempt_pids(token: str) -> list[int]:
     events, _ = read_events(token)
     work = _work_roots(events)
     pids = [pid for pid, creation in work if process_state(pid, creation) == "alive"]
-    pids += [d["pid"] for d in live_descendants(work)]
+    pids += [d["pid"] for d in live_descendants(work, exit_times=_exit_times(events))]
     if os.environ.get(TOKEN_ENV) == token:
         try:
             pids += job_members(None)  # a nested caller's own supervisor job
@@ -791,7 +1348,7 @@ def _finish(token: str, nested: bool, outcome: str, detail: str) -> None:
     """Outer supervisors release; nested ones only record that they are done."""
     try:
         if nested:
-            _change(token, "nested-done", outcome=outcome, detail=detail)
+            _change(token, "nested-done", outcome=outcome, detail=detail, exit_upper_bound=_exit_upper_bound())
         else:
             release(token, outcome, detail=detail)
     except Refused as exc:
@@ -819,14 +1376,18 @@ def supervise(token: str, command: list[str], cwd: str | None = None, nested: bo
         return EXIT_REFUSED
     env = dict(os.environ, **{TOKEN_ENV: token})
     try:
-        child = subprocess.Popen(command, cwd=cwd, env=env)
+        child = _spawn_contained(job, command, cwd, env)
     except OSError as exc:
         _finish(token, nested, "spawn-failed", f"{type(exc).__name__}: {exc}")
         return 127
-    # The Popen handle keeps the process object, so its creation time is
-    # readable even if the child has already exited.
-    record_descendant(token, child.pid, _creation_of(HANDLE(int(child._handle))))
+    # Read through the child's own handle, so an exited child is readable too.
+    child_creation = _child_creation(child)
+    record_descendant(token, child.pid, child_creation)
     code = child.wait()
+    child_exit = _child_exit(child)
+    if child_exit is not None:
+        _validate_exit((child.pid, child_creation), child_exit)
+        _change(token, "child-exited", pid=child.pid, creation_time=child_creation, exit_time=child_exit)
     outcome, detail = ("success" if code == 0 else "failure"), f"exit code {code}"
     me, listed = os.getpid(), False
     while True:
@@ -891,12 +1452,17 @@ def cim_busy(pattern: str, exempt: list[int]) -> list[dict]:
     return [r for r in rows if int(r["ProcessId"]) not in set(exempt)]
 
 
+# This platform's process creation and busy refusal (Linux: see the Linux layer).
+create_process = wmi_create if os.name == "nt" else spawn_detached
+busy_processes = cim_busy if os.name == "nt" else proc_busy
+
+
 def dispatch(lane: str, work_id: str, release_condition: str, command: list[str], cwd: str,
              busy_pattern: str | None = None, transport_record: dict | None = None, create=None,
              python: str | None = None) -> dict:
     """The launcher sequence: acquire, the busy refusal (exempting this
-    reservation's own work), then WMI creation of the supervisor and the
-    handoff. Acquire in the process that dispatches: it is the owner until
+    reservation's own work), then WMI creation of the supervisor (Linux:
+    spawn_detached) and the handoff. Acquire in the process that dispatches: it is the owner until
     the supervisor adopts, so a separate acquire whose process exits first
     leaves a lock that is reclaimable (its late supervisor then refuses).
     Inside a reservation (nested) the supervisor is created with --nested
@@ -904,13 +1470,13 @@ def dispatch(lane: str, work_id: str, release_condition: str, command: list[str]
     so the outer supervisor holds the host until it ends even if this caller
     dies or never hears the creation response; it never releases the outer
     lock. A lost creation response is never retried."""
-    create = create or wmi_create
+    create = create or create_process
     python = supervisor_python(python)  # refused before anything is acquired
     record = acquire(lane, work_id, release_condition, transport_record)
     token, nested = record["token"], bool(record.get("shared"))
     if busy_pattern:
         try:
-            busy = cim_busy(busy_pattern, exempt_pids(token))
+            busy = busy_processes(busy_pattern, exempt_pids(token))
         except BaseException:
             if not nested:
                 release(token, "cancelled", detail="busy refusal could not run")
@@ -959,12 +1525,13 @@ def supervisor_python(python: str | None = None) -> str:
 def supervisor_command(token: str, command: list[str], python: str | None = None, nested: bool = False) -> str:
     """The WMI command line that runs `command` under this module's supervisor.
     WMI-created processes do not inherit the caller's environment, so the
-    token (and a test root) travel on the command line."""
+    token (and a test root) travel on the command line. On Linux it is a
+    POSIX-quoted line for spawn_detached."""
     parts = [supervisor_python(python), os.path.abspath(__file__)]
     if os.environ.get(TEST_ROOT_ENV):
         parts += ["--test-root", os.environ[TEST_ROOT_ENV]]
     parts += ["supervise", "--token", token] + (["--nested"] if nested else []) + ["--", *command]
-    return subprocess.list2cmdline(parts)
+    return command_line(parts)
 
 
 # ---------------------------------------------------------------- CLI
@@ -978,6 +1545,12 @@ def _transport(value: str | None) -> dict:
     if not isinstance(parsed, dict):
         raise ValueError("transport record must be a JSON object")
     return parsed
+
+
+def _descendant_identity(value: str) -> tuple[int, int]:
+    if not re.fullmatch(r"[1-9][0-9]*:[1-9][0-9]*", value):
+        raise argparse.ArgumentTypeError("expected PID:CREATION with positive integer identity fields")
+    return tuple(int(part) for part in value.split(":"))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1007,6 +1580,8 @@ def main(argv: list[str] | None = None) -> int:
         if op == "release":
             p.add_argument("--outcome", required=True, choices=OUTCOMES)
             p.add_argument("--detail", default="")
+            p.add_argument("--ignore-descendant", action="append", type=_descendant_identity, default=[],
+                           help="audit and ignore this exact false positive in the descendant walk only")
         if op == "supervise":
             p.add_argument("--cwd")
             p.add_argument("--nested", action="store_true")
@@ -1026,7 +1601,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.op == "note":
             result = note(args.token, args.kind, args.detail)
         elif args.op == "release":
-            result = release(args.token, args.outcome, args.detail)
+            result = release(args.token, args.outcome, args.detail, args.ignore_descendant)
         elif args.op == "exempt-pids":
             print(" ".join(str(p) for p in exempt_pids(args.token)))
             return EXIT_OK

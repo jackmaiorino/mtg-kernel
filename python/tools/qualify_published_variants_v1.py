@@ -156,7 +156,7 @@ def run(root):
                     'Keep7 and Keep sideboarding. Registered sideboards are validated but their cards are not necessarily played. This does not qualify postboard competence.',
                     'g115 plays both seats. This does not supply an independent opponent or measure competitive strength.',
                     'Static Full declarations and natural completion do not establish rules parity or whole-field coverage.',
-                    'Fable zero-read HTTP429 review gap until September22 07:00 EDT; no retry or endorsement. Jack authorized bounded local continuation.'],
+                    'Fable zero-read HTTP429 review gap until September22 07:00 EDT; no retry or endorsement. The maintainer authorized bounded local continuation.'],
                 'no_cp7_selection': True, 'paid_compute': False}
     write(root / 'manifest.json', manifest)
     preflight = execute(root, {'name': 'preflight', 'config': pin(root / 'configs/preflight.json')}, manifest)

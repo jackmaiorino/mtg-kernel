@@ -15,6 +15,7 @@ fn main() {
         mode: "decisions".into(),
         pilot_deck: 0,
     };
+    let mut max_actions_set = false;
     for arg in std::env::args().skip(1) {
         let (k, v) = arg.split_once('=').expect("key=value arguments");
         match k {
@@ -25,13 +26,20 @@ fn main() {
             "base_seed" => cfg.base_seed = v.parse().unwrap(),
             "root_prob" => cfg.root_prob = v.parse().unwrap(),
             "rollouts" => cfg.rollouts = v.parse().unwrap(),
-            "max_actions" => cfg.max_actions = v.parse().unwrap(),
+            "max_actions" => {
+                cfg.max_actions = v.parse().unwrap();
+                max_actions_set = true;
+            }
             "workers" => cfg.workers = v.parse().unwrap(),
             "mode" => cfg.mode = v.into(),
             "pilot_deck" => cfg.pilot_deck = v.parse().unwrap(),
             "decks" => cfg.decks = v.split(',').map(|x| x.parse().unwrap()).collect(),
             other => panic!("unknown argument {other}"),
         }
+    }
+    // The search modes (roots, cond, cross) default to K = 4 root candidates.
+    if !max_actions_set && matches!(cfg.mode.as_str(), "roots" | "cond" | "cross") {
+        cfg.max_actions = 4;
     }
     if let Err(e) = run_v1(cfg) {
         eprintln!("error: {e}");

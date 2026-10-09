@@ -2,7 +2,7 @@
 
 Branch `claude/rules-fix-goad-menace-linked-exile` from `main` 54725398:
 `c064e9c1` (linked exile) and `9171c9b5` (scan answers). Not merged; the
-lane owner (Codex) and Jack decide. Source report: Spellbench launch
+lane owner (Codex) and the maintainer's decide. Source report: Spellbench launch
 benchmark, task B, sections 2 and 3.
 
 ## Root causes (confirmed in source and by failing tests)

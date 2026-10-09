@@ -69,6 +69,8 @@ pub enum CreatureFilter {
     /// strictly two-player kernel, "not controlled by the effect's
     /// controller" and "controlled by the opponent" are the same set).
     OpponentControlled,
+    /// Every creature on both battlefields (Slagstorm).
+    All,
 }
 
 /// Battlefield creature restriction for a player-directed sacrifice.
@@ -82,6 +84,17 @@ pub enum CreatureSacrificeFilter {
 /// Islandcycling, whose Oracle filter is a physical land card carrying the
 /// Island subtype (basic or nonbasic). This remains definition data and can
 /// grow with other typecycling/basic-search shapes without card-name logic.
+/// Where `EffectOp::SearchLibraryCardsToDestination` puts the selected
+/// cards. Appended for the FDN library-search batch (Burnished Hart, Grow
+/// from the Ashes, Campus Guide).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum LibrarySearchDestinationV1 {
+    /// Onto the battlefield, tapped or untapped, then shuffle.
+    Battlefield { tapped: bool },
+    /// Reveal the selected card, shuffle, then put it on top of the library.
+    LibraryTopAfterShuffle,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LibraryCardFilter {
     /// The card must currently have the requested effective subtype and be
@@ -111,6 +124,21 @@ pub enum LibraryCardFilter {
     /// land such as Bojuka Bog is an equally legal find). Appended for
     /// pauper meta wave 2 Task 3; existing discriminants remain fixed.
     AnyLand,
+    /// Any card at all (Grim Tutor: "Search your library for a card").
+    /// The printed text has no reveal clause, so the library-search moves
+    /// leave a card found with this filter hidden in its owner's hand; it
+    /// is the only filter whose result is not publicly revealed. Appended
+    /// for the FDN library-search batch.
+    AnyCard,
+}
+
+impl LibraryCardFilter {
+    /// Whether a search-to-hand publicly reveals the card it finds. Every
+    /// filtered tutor in the pool says "reveal it"; an unrestricted "search
+    /// for a card" does not.
+    pub(crate) fn reveals_selected_card(self) -> bool {
+        !matches!(self, LibraryCardFilter::AnyCard)
+    }
 }
 
 /// How long an impulse-drawn card (`EffectOp::ImpulseDraw`) stays playable
@@ -156,6 +184,8 @@ pub enum TargetRef {
     /// (Guttersnipe, Voldaren Epicure, Grab the Prize) never needs a
     /// chosen target -- it's always exactly `ctx.controller.opponent()`.
     Opponent,
+    /// The effect's controller ("each player" damage such as Slagstorm).
+    Controller,
 }
 
 /// Which player's battlefield `EffectOp::PumpAllUntilEndOfTurn` reads.
@@ -1065,6 +1095,37 @@ pub enum EffectOp {
     SurveilOne {
         player: PlayerRef,
     },
+    /// The creature this ability's source Equipment is attached to gets
+    /// +power/+toughness until end of turn (Adventuring Gear's landfall).
+    /// The host is read at resolution: the source's current attachment
+    /// while it is the same battlefield incarnation, otherwise its
+    /// last-known attachment. An unattached source does nothing.
+    BoostAttachedCreatureUntilEndOfTurn {
+        power: i32,
+        toughness: i32,
+    },
+    /// Destroy every creature on both battlefields as one simultaneous
+    /// zone-change batch (Day of Judgment). Indestructible creatures stay.
+    DestroyAllCreatures,
+    /// Search for zero through `max_targets` cards matching `filter` and put
+    /// them at `destination`, then shuffle (the top-of-library destination
+    /// reveals the card and places it after the shuffle). Zero selection is
+    /// always legal.
+    SearchLibraryCardsToDestination {
+        player: PlayerRef,
+        filter: LibraryCardFilter,
+        max_targets: u16,
+        destination: LibrarySearchDestinationV1,
+    },
+    /// Creates `count` tokens of `token_def` for `controller`, tapped when
+    /// `tapped` is set. `count` is sampled once at resolution (Revenge of
+    /// the Rats).
+    CreateTokensDynamic {
+        token_def: u16,
+        controller: PlayerRef,
+        count: crate::card_def::DynamicValueDef,
+        tapped: bool,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -1361,6 +1422,20 @@ pub enum EffectFrame {
         then: Box<EffectOp>,
         path: Vec<u16>,
     },
+    /// Commits a variable-cardinality private search to a non-hand
+    /// destination while retaining the original library and every selected
+    /// incarnation.
+    SearchLibraryCardsToDestination {
+        player: PlayerId,
+        filter: LibraryCardFilter,
+        filter_fingerprint: u64,
+        original_library: Vec<EffectObjectBinding>,
+        selected: Vec<EffectObjectBinding>,
+        max_targets: u16,
+        destination: LibrarySearchDestinationV1,
+        path: Vec<u16>,
+        canonical_path: Vec<u16>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -1581,6 +1656,17 @@ pub enum EffectTargetSelectionPurpose {
         original_library: Vec<EffectObjectBinding>,
         canonical_path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
+    },
+    /// Optional zero-through-N private search whose result goes to a
+    /// non-hand destination. Projects like `SearchLibraryToHandMany`.
+    SearchLibraryCardsToDestination {
+        player: PlayerId,
+        filter: LibraryCardFilter,
+        filter_fingerprint: u64,
+        original_library: Vec<EffectObjectBinding>,
+        max_targets: u16,
+        destination: LibrarySearchDestinationV1,
+        canonical_path: Vec<u16>,
     },
 }
 
@@ -2006,6 +2092,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::Scry { .. }
         | EffectOp::SearchLibraryToHand { .. }
         | EffectOp::SearchLibraryToHandUpTo { .. }
+        | EffectOp::SearchLibraryCardsToDestination { .. }
         | EffectOp::UntapUpToLands { .. }
         | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. }
         | EffectOp::PutObjectInOwnersLibraryTopOrBottom { .. }
@@ -2286,6 +2373,10 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
         player: search_player,
         ..
     }
+    | EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
+        player: search_player,
+        ..
+    }
     | EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
         player: search_player,
         ..
@@ -2363,6 +2454,10 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
                 ..
             }
             | EffectTargetSelectionPurpose::SearchLibraryToHandMany {
+                player: search_player,
+                ..
+            }
+            | EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
                 player: search_player,
                 ..
             }
@@ -3131,6 +3226,35 @@ fn complete_resumable_target_selection(
                     canonical_path,
                 });
         }
+        EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
+            player,
+            filter,
+            filter_fingerprint,
+            original_library,
+            max_targets,
+            destination,
+            canonical_path,
+        } => {
+            if path != canonical_path {
+                return Err("multi-card library-search prompt structural path changed".to_string());
+            }
+            if objects.len() > usize::from(max_targets) {
+                return Err("multi-card library search exceeded its maximum".to_string());
+            }
+            continuation
+                .frames
+                .push(EffectFrame::SearchLibraryCardsToDestination {
+                    player,
+                    filter,
+                    filter_fingerprint,
+                    original_library,
+                    selected: objects,
+                    max_targets,
+                    destination,
+                    path: canonical_path.clone(),
+                    canonical_path,
+                });
+        }
         EffectTargetSelectionPurpose::SearchLibraryToHandMany {
             player,
             filter,
@@ -3826,6 +3950,7 @@ fn validate_counter_target_unless_pays_program(
             | crate::card_def::TargetSpec::ArtifactOrEnchantmentSpellOnStack
             | crate::card_def::TargetSpec::SorcerySpellOnStack
             | crate::card_def::TargetSpec::NoncreatureSpellOnStack
+            | crate::card_def::TargetSpec::CreatureSpellOnStack
             | crate::card_def::TargetSpec::ArtifactSpellOnStack
     ) {
         return Err("counter-unless-pay resolving spell has a nonspell target filter".to_string());
@@ -5906,6 +6031,15 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     original_library,
                     max_targets: purpose_max,
                     canonical_path,
+                }
+                | EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
+                    player: library_player,
+                    filter,
+                    filter_fingerprint,
+                    original_library,
+                    max_targets: purpose_max,
+                    canonical_path,
+                    ..
                 } => {
                     if chooser != library_player || path != canonical_path {
                         return Err("multi-card library-search player or path changed".to_string());
@@ -7443,7 +7577,9 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                             state,
                             event::ProposedEvent::zone_change(binding.object, Zone::Hand),
                         );
-                        if state.objects.get(binding.object).zone == Zone::Hand {
+                        if filter.reveals_selected_card()
+                            && state.objects.get(binding.object).zone == Zone::Hand
+                        {
                             for observer in [PlayerId::P0, PlayerId::P1] {
                                 state
                                     .reveal_hand_card(observer, player, binding.object)
@@ -7718,6 +7854,95 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         }
                     }
                 }
+                EffectFrame::SearchLibraryCardsToDestination {
+                    player,
+                    filter,
+                    filter_fingerprint,
+                    original_library,
+                    selected,
+                    max_targets,
+                    destination,
+                    path,
+                    canonical_path,
+                } => {
+                    if path != canonical_path || max_targets == 0 {
+                        return Err(
+                            "multi-card library-search coordinator metadata changed".to_string()
+                        );
+                    }
+                    if filter_fingerprint != library_filter_fingerprint(filter)
+                        || selected.len() > usize::from(max_targets)
+                        || (destination == LibrarySearchDestinationV1::LibraryTopAfterShuffle
+                            && selected.len() > 1)
+                    {
+                        return Err("multi-card library-search contract changed".to_string());
+                    }
+                    validate_library_search_live_metadata(
+                        state,
+                        player,
+                        filter,
+                        &original_library,
+                    )?;
+                    let candidates =
+                        library_search_candidates(state, player, filter, &original_library)?;
+                    let mut seen = Vec::with_capacity(selected.len());
+                    for binding in &selected {
+                        if !candidates.contains(binding) || seen.contains(&binding.object) {
+                            return Err(
+                                "multi-card library-search result is not a unique canonical match"
+                                    .to_string(),
+                            );
+                        }
+                        seen.push(binding.object);
+                    }
+                    let shuffle_token = state
+                        .preflight_library_shuffle(player)
+                        .map_err(|error| error.to_string())?;
+                    match destination {
+                        LibrarySearchDestinationV1::Battlefield { tapped } => {
+                            for &binding in &selected {
+                                validate_effect_object_binding(state, binding)?;
+                            }
+                            let events = selected
+                                .iter()
+                                .map(|binding| {
+                                    if tapped {
+                                        event::ProposedEvent::zone_change_to_battlefield_tapped(
+                                            binding.object,
+                                        )
+                                    } else {
+                                        event::ProposedEvent::zone_change(
+                                            binding.object,
+                                            Zone::Battlefield,
+                                        )
+                                    }
+                                })
+                                .collect();
+                            event::propose_and_commit_batch(state, events);
+                            state
+                                .commit_library_shuffle(player, shuffle_token)
+                                .map_err(|error| error.to_string())?;
+                        }
+                        LibrarySearchDestinationV1::LibraryTopAfterShuffle => {
+                            state
+                                .commit_library_shuffle(player, shuffle_token)
+                                .map_err(|error| error.to_string())?;
+                            if let Some(binding) = selected.first() {
+                                validate_effect_object_binding(state, *binding)?;
+                                let library = &mut state.players[player.index()].library;
+                                let position = library
+                                    .iter()
+                                    .position(|id| *id == binding.object)
+                                    .ok_or("searched card left the library before placement")?;
+                                let card = library.remove(position);
+                                library.insert(0, card);
+                                for observer in [PlayerId::P0, PlayerId::P1] {
+                                    state.reveal_library_position(observer, player, 0);
+                                }
+                            }
+                        }
+                    }
+                }
                 EffectFrame::SearchLibraryToHandMany {
                     player,
                     filter,
@@ -7761,7 +7986,9 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         .map_err(|error| error.to_string())?;
                     commit_zone_change_batch(state, &selected, Zone::Hand, false)?;
                     for binding in selected {
-                        if state.objects.get(binding.object).zone == Zone::Hand {
+                        if filter.reveals_selected_card()
+                            && state.objects.get(binding.object).zone == Zone::Hand
+                        {
                             for observer in [PlayerId::P0, PlayerId::P1] {
                                 state
                                     .reveal_hand_card(observer, player, binding.object)
@@ -8568,6 +8795,33 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     return Ok(ResumableProgress::Suspended);
                 }
             }
+            EffectOp::SearchLibraryCardsToDestination {
+                player,
+                filter,
+                max_targets,
+                destination,
+            } => {
+                if max_targets == 0 {
+                    return Err("multi-card library search requires a positive maximum".to_string());
+                }
+                let player = continuation.ctx.resolve_player(player, state);
+                let original_library = bind_library_exact(state, player);
+                validate_library_search_live_metadata(state, player, filter, &original_library)?;
+                let candidates =
+                    library_search_candidates(state, player, filter, &original_library)?;
+                stage_library_search_to_destination_choice(
+                    &mut continuation,
+                    player,
+                    filter,
+                    original_library,
+                    candidates,
+                    max_targets,
+                    destination,
+                    path,
+                );
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
             EffectOp::SearchLibraryToHandUpTo {
                 player,
                 filter,
@@ -9234,6 +9488,7 @@ impl ExecCtx {
             TargetRef::ThisSource => Target::Object(self.source),
             TargetRef::Target(i) => self.targets[i as usize],
             TargetRef::Opponent => Target::Player(self.controller.opponent()),
+            TargetRef::Controller => Target::Player(self.controller),
         }
     }
 
@@ -9634,6 +9889,43 @@ fn stage_duress_discard_choice(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
+fn stage_library_search_to_destination_choice(
+    continuation: &mut EffectContinuation,
+    player: PlayerId,
+    filter: LibraryCardFilter,
+    original_library: Vec<EffectObjectBinding>,
+    candidates: Vec<EffectObjectBinding>,
+    max_targets: u16,
+    destination: LibrarySearchDestinationV1,
+    canonical_path: Vec<u16>,
+) {
+    continuation.choice = Some(PendingEffectChoice::SelectTargets {
+        player,
+        path: canonical_path.clone(),
+        selected: Vec::new(),
+        legal: candidates
+            .into_iter()
+            .map(|binding| EffectTargetCandidate {
+                target: Target::Object(binding.object),
+                expected_object: Some(binding),
+            })
+            .collect(),
+        min_targets: 0,
+        max_targets,
+        ordered: false,
+        purpose: EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
+            player,
+            filter,
+            filter_fingerprint: library_filter_fingerprint(filter),
+            original_library,
+            max_targets,
+            destination,
+            canonical_path,
+        },
+    });
+}
+
 fn stage_library_search_many_choice(
     continuation: &mut EffectContinuation,
     player: PlayerId,
@@ -10002,6 +10294,7 @@ fn library_filter_matches(
                     .any(|subtype| subtype_ids.binary_search(&subtype.stable_id()).is_ok())
         }
         LibraryCardFilter::AnyLand => def.has_type(CardType::Land),
+        LibraryCardFilter::AnyCard => true,
     })
 }
 
@@ -10026,6 +10319,7 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
                 fnv1a_u64(hash, u64::from(subtype.stable_id()))
             }),
         LibraryCardFilter::AnyLand => fnv1a_u64(0xcbf2_9ce4_8422_2325, 5),
+        LibraryCardFilter::AnyCard => fnv1a_u64(0xcbf2_9ce4_8422_2325, 6),
     }
 }
 
@@ -10799,6 +11093,7 @@ fn creature_matches_filter(
             !crate::engine::has_effective_keyword(state, object, *keyword)
         }
         CreatureFilter::OpponentControlled => live.controller != caster,
+        CreatureFilter::All => true,
     }
 }
 
@@ -11193,6 +11488,46 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 );
             }
         }
+        EffectOp::BoostAttachedCreatureUntilEndOfTurn { power, toughness } => {
+            let Some(source_contract) = ctx.ability_source_contract else {
+                return;
+            };
+            let live_source = state.objects.try_get(ctx.source);
+            let source_is_same_battlefield_incarnation = live_source.is_some_and(|source| {
+                source.zone == Zone::Battlefield
+                    && source.zone_change_count == source_contract.zone_change_count
+            });
+            let link = if source_is_same_battlefield_incarnation {
+                live_source.and_then(|source| source.v4.attached_to)
+            } else {
+                source_contract.attached_to
+            };
+            let Some(link) = link else {
+                return;
+            };
+            let Some(attached) = state.objects.try_get(link.object) else {
+                return;
+            };
+            if attached.zone != Zone::Battlefield
+                || attached.zone_change_count != link.zone_change_count
+                || !crate::engine::object_has_type(state, link.object, CardType::Creature)
+                || (source_is_same_battlefield_incarnation
+                    && !attached.attachments.contains(&ctx.source))
+            {
+                return;
+            }
+            install_temporary_boost(
+                state,
+                EffectObjectBinding {
+                    object: link.object,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: link.zone_change_count,
+                },
+                *power,
+                *toughness,
+                Keywords::NONE,
+            );
+        }
         EffectOp::BackupTarget { target, keyword } => {
             let target_index = match target {
                 ObjectRef::Target(index) => usize::from(*index),
@@ -11572,6 +11907,38 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 event::ProposedEvent::create_token(*token_def, controller),
             );
         }
+        EffectOp::CreateTokensDynamic {
+            token_def,
+            controller,
+            count,
+            tapped,
+        } => {
+            let token = crate::card_def::CARD_DEFS
+                .get(*token_def as usize)
+                .unwrap_or_else(|| {
+                    panic!("CreateTokensDynamic references unknown definition {token_def}")
+                });
+            assert!(
+                token.is_token && token.is_executable() && token.has_full_support(),
+                "CreateTokensDynamic requires a fully supported executable token definition, got {}",
+                token.name
+            );
+            let controller = ctx.resolve_player(*controller, state);
+            let count = crate::engine::evaluate_dynamic_value(state, *count, ctx.controller).max(0);
+            for _ in 0..count {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::create_token(*token_def, controller),
+                );
+                if *tapped {
+                    if let Some(crate::event::CommittedEvent::CreateToken { object, .. }) =
+                        state.engine.event_log.last().cloned()
+                    {
+                        state.objects.get_mut(object).tapped = true;
+                    }
+                }
+            }
+        }
         EffectOp::MayPayCostThen {
             discard,
             sacrifice_lands,
@@ -11662,6 +12029,22 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 .iter()
                 .copied()
                 .map(|object| event::ProposedEvent::zone_change(object, Zone::Exile))
+                .collect();
+            event::propose_and_commit_batch(state, events);
+        }
+        EffectOp::DestroyAllCreatures => {
+            let events = [PlayerId::P0, PlayerId::P1]
+                .into_iter()
+                .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
+                .filter(|&object| {
+                    crate::engine::object_has_type(state, object, CardType::Creature)
+                        && !crate::engine::has_effective_keyword(
+                            state,
+                            object,
+                            crate::card_def::Keywords::INDESTRUCTIBLE,
+                        )
+                })
+                .map(|object| event::ProposedEvent::zone_change(object, Zone::Graveyard))
                 .collect();
             event::propose_and_commit_batch(state, events);
         }
@@ -12568,6 +12951,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::Scry { .. }
         | EffectOp::SearchLibraryToHand { .. }
         | EffectOp::SearchLibraryToHandUpTo { .. }
+        | EffectOp::SearchLibraryCardsToDestination { .. }
         | EffectOp::UntapUpToLands { .. }
         | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. }
         | EffectOp::PutObjectInOwnersLibraryTopOrBottom { .. }

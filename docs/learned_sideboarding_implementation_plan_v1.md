@@ -1,6 +1,6 @@
 # Learned sideboarding integration, September 12, 2026
 
-Owner: Codex, explicitly assigned by Jack. Base1ebb3b6b preserves completed card wave1 and the harness, excluding unfinished Urzatron. Worktree E:/mtg-kernel-learned-sideboarding-codex. Fable's card tree and the active science lane remain independently owned.
+Owner: Codex, explicitly assigned by the maintainer. Base1ebb3b6b preserves completed card wave1 and the harness, excluding unfinished Urzatron. Worktree E:/mtg-kernel-learned-sideboarding-codex. Fable's card tree and the active science lane remain independently owned.
 
 Deliver a real frozen checkpoint playing cross-archetype BO3 with a learned legal sideboard policy. Begin with supported Rally, Affinity and Terror, then Elves; this is engineering coverage, not an outcome-selected scientific panel. Include both seats and some mirrors. Brewing remains a destination through card-set inputs, configuration identities and arbitrary-deck episode construction.
 

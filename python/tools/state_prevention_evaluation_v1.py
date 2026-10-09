@@ -65,7 +65,7 @@ def qualify(root):
     plan = read(root/"plan.json")
     remote = read(root/"remote-staging.json")
     snapshots, available, stores = {}, {}, []
-    for host, drives in [("jack", ["C", "D", "E"]), ("haleyspc", ["C"])]:
+    for host, drives in [("desktop", ["C", "D", "E"]), ("computehost", ["C"])]:
         snapshot = inventory(host)
         assert not snapshot["active"], "wait for healthy native training to finish"
         path = root/f"{host}-inventory.json"
@@ -86,8 +86,8 @@ def qualify(root):
         for workers in [1, 4, 8, 16] for host, drive, disk in stores]
     disk_for = {(host, drive): disk for host, drive, disk in stores}
     for workers in [8, 16]:
-        cases.append((f"both-d-w{workers}", dict(**placements("jack", "D", disk_for["jack", "D"], workers),
-            **placements("haleyspc", "C", disk_for["haleyspc", "C"], workers))))
+        cases.append((f"both-d-w{workers}", dict(**placements("desktop", "D", disk_for["desktop", "D"], workers),
+            **placements("computehost", "C", disk_for["computehost", "C"], workers))))
     write(root/"qualification-design.json", dict(plan=pin(root/"plan.json"), cases=cases,
         matches_per_case=36, executions=36*len(cases), outcome_selection=False,
         exact_match_bytes_required=True, maximum_group_seconds=300,
@@ -98,7 +98,7 @@ def qualify(root):
         result = read(checked(result_pin))
         assert baseline is None or baseline == result["fingerprints"], "qualification changed exact gameplay"
         baseline = result["fingerprints"]
-        projected = (remote["seconds"] if "haleyspc" in allocation else 0)+result["staging_seconds"]+(result["execution_seconds"]+result["recovery_seconds"])*2616/36
+        projected = (remote["seconds"] if "computehost" in allocation else 0)+result["staging_seconds"]+(result["execution_seconds"]+result["recovery_seconds"])*2616/36
         projections[label] = projected
         candidates.append(dict(id=label, report=result_pin))
         print(label, "complete; projected panel seconds", round(projected, 2), flush=True)

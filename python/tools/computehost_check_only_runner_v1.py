@@ -1,9 +1,9 @@
-"""HaleysPC check-only runner (version 1): the owner command the host reservation's supervisor runs on HaleysPC.
+"""The compute host check-only runner (version 1): the owner command the host reservation's supervisor runs on the compute host.
 
-haley_check_only_dispatch_v1.py calls host_reservation_v1.dispatch, which acquires the HaleysPC lock and creates
-through WMI: python host_reservation_v1.py supervise --token T -- python -u haley_check_only_runner_v1.py --manifest
-PLAN --host haleyspc --root WORKER_ROOT. The supervisor's job therefore contains this runner and cargo, and the lock
-releases when they end (CLAUDE #574). The runner checks the plan (schema haley-check-only-plan/v1), every pinned
+computehost_check_only_dispatch_v1.py calls host_reservation_v1.dispatch, which acquires the compute host lock and creates
+through WMI: python host_reservation_v1.py supervise --token T -- python -u computehost_check_only_runner_v1.py --manifest
+PLAN --host computehost --root WORKER_ROOT. The supervisor's job therefore contains this runner and cargo, and the lock
+releases when they end (CLAUDE #574). The runner checks the plan (schema computehost-check-only-plan/v1), every pinned
 file and that its token holds this lane's lock for this run, prepares a clean detached git checkout of the pinned
 commit from the staged bundle, and runs the one cargo command at BelowNormal priority with an isolated target
 directory. The compiler is selected by --config build.rustc=<absolute rustc> with RUSTC unset (CLAUDE #526
@@ -25,8 +25,8 @@ import subprocess
 import sys
 from pathlib import Path, PureWindowsPath
 
-PLAN_SCHEMA = 'haley-check-only-plan/v1'
-COMPLETION_SCHEMA = 'haley-check-only-completion/v1'
+PLAN_SCHEMA = 'computehost-check-only-plan/v1'
+COMPLETION_SCHEMA = 'computehost-check-only-completion/v1'
 ROOT = 'C:/mtg-line-a/check-only/'
 BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
 MIN_RESERVE_BYTES = 60 * 2 ** 30  # artifact law clause 1, every volume
@@ -36,7 +36,7 @@ OVERRIDES = ('RUSTC', 'RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'CARGO_BUILD_RUSTF
              'CARGO_BUILD_RUSTC', 'CARGO_BUILD_TARGET', 'CARGO_TARGET_DIR', 'CARGO_BUILD_TARGET_DIR', 'RUSTDOCFLAGS')
 # Cargo reads any configuration key from CARGO_<KEY>; these families change the profile, build or target settings.
 OVERRIDE_PREFIXES = ('CARGO_PROFILE_', 'CARGO_BUILD_', 'CARGO_TARGET_', 'CARGO_ENCODED_')
-# Jack's PC checks out under Git for Windows' system default core.autocrlf=true. The clone pins the same value so the
+# The primary desktop checks out under Git for Windows' system default core.autocrlf=true. The clone pins the same value so the
 # files that .gitattributes leaves to text=auto get the same bytes on both hosts (the *.rs, *.toml and *.dek rules
 # pin their own endings).
 LINE_ENDINGS = ('core.autocrlf', 'true')
@@ -68,7 +68,7 @@ def under_root(path):
 def check_plan(plan):
     """Plan shape and path rules; returns nothing, refuses on any violation."""
     require(plan.get('schema') == PLAN_SCHEMA, 'plan schema')
-    require(plan.get('host') == 'haleyspc', 'plan host')
+    require(plan.get('host') == 'computehost', 'plan host')
     require(re.fullmatch(r'[0-9a-f]{40}', plan.get('commit', '')) is not None, 'plan commit is not 40 lowercase hex')
     require(re.fullmatch(r'[a-z0-9][a-z0-9-]{0,63}', plan.get('lane', '')) is not None, 'plan lane')
     require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,95}', plan.get('run_id', '')) is not None, 'plan run id')
@@ -212,14 +212,14 @@ def main():
     parser.add_argument('--host', required=True)
     parser.add_argument('--root', required=True)
     args = parser.parse_args()
-    require(args.host == 'haleyspc', 'this runner admits HaleysPC only')
+    require(args.host == 'computehost', 'this runner admits the compute host only')
     plan_bytes = Path(args.manifest).read_bytes()
     plan = json.loads(plan_bytes)
     check_plan(plan)
     require(str(PureWindowsPath(args.root)) == str(PureWindowsPath(plan['worker_root'])), 'root differs from the plan')
     root = Path(args.root)
     root.mkdir(parents=True)  # a second start of the same plan stops here
-    record = {'schema': COMPLETION_SCHEMA, 'host': 'haleyspc', 'lane': plan['lane'], 'run_id': plan['run_id'],
+    record = {'schema': COMPLETION_SCHEMA, 'host': 'computehost', 'lane': plan['lane'], 'run_id': plan['run_id'],
               'plan_sha256': hashlib.sha256(plan_bytes).hexdigest(), 'commit': plan['commit'], 'started_utc': now(),
               'nonclaims': ['check-only pass or fail evidence for the suite owner',
                             'not a timing or identity receipt', 'no GPU test is in scope']}

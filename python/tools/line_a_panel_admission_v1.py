@@ -26,7 +26,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 SEALED = Path('E:/mtg-line-a-panel-imports-20260927')
-COLLAB = Path('C:/Users/Jack/IdeaProjects/collab')
+COLLAB = Path.home() / 'IdeaProjects/collab'
 SCHEMA = 'mtg-kernel-line-a-panel-admission/v1'
 V3 = {'feature_contract_digest': '9319fbd41e6b42ec90d565c13f3b4f75a3898dafe3816387453c08419ba9cc68',
       'feature_encoding_digest': 'c4662291ca9a75525b51b51f3b5d512671340c05b69fd33fb0827c0c8af70a2b'}

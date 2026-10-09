@@ -44,7 +44,7 @@ JOB_SET_SCHEMAS = {'qualification': 'g115-line-a-qualification-manifest/v1',
                    'screen-evaluation': manifest.SCHEMAS['screen-evaluation']}
 CHILD_ENV_KEYS = ('PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'COMSPEC')
 COMPLETION_SCHEMA = 'g115-line-a-evaluation-completion/v1'
-COLLAB = 'C:/Users/Jack/IdeaProjects/collab'
+COLLAB = (Path.home() / 'IdeaProjects/collab').as_posix()
 CATALOG_TOOL = COLLAB + '/tools/artifact_register.py'
 
 
@@ -310,7 +310,7 @@ def check(launch, host, now=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--manifest', type=Path, required=True)
-    parser.add_argument('--host', choices=['jack', 'haleyspc'], required=True)
+    parser.add_argument('--host', choices=['desktop', 'computehost'], required=True)
     parser.add_argument('--root', type=Path)
     parser.add_argument('--check-only', action='store_true')
     args = parser.parse_args()

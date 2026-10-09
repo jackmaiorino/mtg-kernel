@@ -47,8 +47,8 @@ a checkpoint selected using CP7 outcomes.
 ```json
 {
   "mode": "validate_import",
-  "play_import": "C:/Users/Jack/IdeaProjects/sideboarding-integration-20260912/engineering-001/play-policy-import.json",
-  "output_directory": "C:/Users/Jack/IdeaProjects/sideboarding-integration-20260912/validate-cli-001"
+  "play_import": "C:/Users/user/IdeaProjects/sideboarding-integration-20260912/engineering-001/play-policy-import.json",
+  "output_directory": "C:/Users/user/IdeaProjects/sideboarding-integration-20260912/validate-cli-001"
 }
 ```
 
@@ -75,8 +75,8 @@ This baseline keeps each seat's current configuration between games:
 ```json
 {
   "mode": "run_batch",
-  "play_import": "C:/Users/Jack/IdeaProjects/sideboarding-integration-20260912/engineering-001/play-policy-import.json",
-  "output_directory": "C:/Users/Jack/IdeaProjects/sideboarding-integration-20260912/keep-batch-001",
+  "play_import": "C:/Users/user/IdeaProjects/sideboarding-integration-20260912/engineering-001/play-policy-import.json",
+  "output_directory": "C:/Users/user/IdeaProjects/sideboarding-integration-20260912/keep-batch-001",
   "policies": [{ "kind": "keep" }, { "kind": "keep" }],
   "matches": [
     {
@@ -179,8 +179,8 @@ shape; replace the paths and SHA placeholders with actual generated artifacts:
 ```json
 {
   "mode": "train_imitation",
-  "play_import": "C:/Users/Jack/IdeaProjects/sideboarding-integration-20260912/engineering-001/play-policy-import.json",
-  "output_directory": "C:/Users/Jack/IdeaProjects/sideboarding-integration-20260912/imitation-001",
+  "play_import": "C:/Users/user/IdeaProjects/sideboarding-integration-20260912/engineering-001/play-policy-import.json",
+  "output_directory": "C:/Users/user/IdeaProjects/sideboarding-integration-20260912/imitation-001",
   "examples": { "path": "C:/path/to/imitation-examples.jsonl", "sha256": "REPLACE_WITH_ACTUAL_FILE_SHA256" },
   "teacher_provenance": {
     "source_kind": "hand_authored_warm_start",
@@ -261,7 +261,7 @@ existing rules test is
 `mtg-kernel/tests/affinity_wildfire_value.rs::map_explore_handles_land_nonland_and_empty_libraries`.
 
 Exact engineering reproduction config:
-`C:/Users/Jack/IdeaProjects/sideboarding-integration-20260912/engineering-001/diagnose-affinity-002.json`.
+`C:/Users/user/IdeaProjects/sideboarding-integration-20260912/engineering-001/diagnose-affinity-002.json`.
 Its failure is retained under
 `E:/mtg-kernel-learned-sideboarding-evidence/engineering-001/diagnose-affinity-002/failure.json`,
 with the short identifying diagnostic in the sibling C-drive
@@ -299,7 +299,7 @@ stopped at the separate activation-zone problem.
 acting player 1, with 11 legal actions. Evidence is
 `E:/mtg-kernel-learned-sideboarding-evidence/engineering-001/static-teacher-elves-002/failure.json`;
 the pinned config is
-`C:/Users/Jack/IdeaProjects/sideboarding-integration-20260912/engineering-001/run-static-teacher-elves-002.json`.
+`C:/Users/user/IdeaProjects/sideboarding-integration-20260912/engineering-001/run-static-teacher-elves-002.json`.
 V5's `pending_effect_semantic_v4` already grants only the chooser temporary
 access to search candidates. Flat V2's
 `rl_session.rs::flat_visible_action_object_components_v1` instead requires

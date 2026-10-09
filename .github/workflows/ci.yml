@@ -29,9 +29,11 @@ env:
 jobs:
   detect-changes:
     name: Detect changed paths
-    # A few seconds of git work: run it on the self-hosted Linux runner so
-    # the self-hosted test groups never wait in GitHub's hosted queue.
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted", "mtg-ci-linux"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 10
+    # A few seconds of git work. It stays on a hosted runner: the
+    # self-hosted runners hold every job while their host is reserved for
+    # other work, and the Python shards wait on this job.
+    runs-on: ubuntu-24.04
     outputs:
       python_relevant: ${{ steps.classify.outputs.python_relevant }}
       rust_relevant: ${{ steps.classify.outputs.rust_relevant }}
@@ -88,6 +90,7 @@ jobs:
   rust-quality:
     name: Rust formatting and lint
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -143,6 +146,9 @@ jobs:
     name: Rust tests (${{ matrix.os }}, ${{ matrix.group }})
     needs: detect-changes
     if: needs.detect-changes.outputs.rust_relevant == 'true'
+    # The limit includes any wait in the self-hosted job-started hook; a
+    # cold Windows build has taken about 45 minutes.
+    timeout-minutes: 120
     defaults:
       run:
         shell: bash
@@ -162,14 +168,21 @@ jobs:
           - saved-input
           - limited-store
         include:
+          # Linux groups use GitHub's hosted runners, which are free for
+          # this public repository: the WSL runners can't be pinned to
+          # cores, so they pause for any host reservation.
           - os: ubuntu-24.04
-            runner: '["self-hosted", "mtg-ci-linux"]'
+            runner: '"ubuntu-24.04"'
+          # Windows groups also default to hosted runners. The self-hosted
+          # Windows runners go offline whenever their host is reserved, which
+          # left these jobs queued for hours. Setting the repository variable
+          # MTG_CI_WINDOWS_RUNNER to '["self-hosted", "mtg-ci-windows"]'
+          # sends them to the self-hosted runners (the primary desktop, the
+          # compute host), which keep a per-group cargo target directory
+          # between runs, so most builds are incremental.
           - os: windows-2025
-            runner: '["self-hosted", "mtg-ci-windows"]'
-    # Self-hosted runners (Jack's PC, HaleysPC) keep a per-group cargo target
-    # directory between runs, so most builds are incremental, and they avoid
-    # GitHub's hosted-runner queue. Pull requests from forks never run on the
-    # self-hosted runners.
+            runner: ${{ vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"' }}
+    # Pull requests from forks never run on the self-hosted runners.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.runner) || matrix.os }}
     steps:
       # Windows can resolve `bash` to the WSL launcher in System32 first;
@@ -243,6 +256,10 @@ jobs:
               target_dir="$(cygpath -w "$(cygpath -u "$MTG_CI_TARGET_ROOT")/${{ matrix.group }}")"
             fi
             printf 'CARGO_TARGET_DIR=%s\n' "$target_dir" >> "$GITHUB_ENV"
+            # With a persistent target directory, incremental compilation
+            # rebuilds only the changed parts of the mtg-kernel crate. It
+            # does not change program semantics.
+            echo 'CARGO_PROFILE_RELEASE_INCREMENTAL=true' >> "$GITHUB_ENV"
           fi
 
       - name: Cache cargo registry
@@ -266,6 +283,12 @@ jobs:
         run: |
           cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test london_mulligans_v1 -- --nocapture
           cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib london_session_snapshot_restores
+
+      - name: Validate MageZero Standard catalog
+        if: matrix.group == 'limited'
+        run: |
+          cargo test --release --locked -p mtg-kernel --features standard-magezero-fixtures --test standard_magezero_catalog_v1
+          python python/tools/run_rust_lib_filters.py --features standard-magezero-fixtures card_def::
 
       - name: Run Rust release tests
         if: matrix.group == 'workspace'
@@ -292,7 +315,7 @@ jobs:
       - name: Validate FDN Limited gameplay and catalog separation
         if: matrix.group == 'limited'
         run: |
-          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test fdn_fixture_batch_a_v1 --test fdn_fixture_batch_b_v1 --test limited_session_v1 --test limited_priority_v1 --test limited_combat_v1 --test fdn_combat_cards_v1 --test fdn_legend_rule_v1 --test fdn_targeted_spells_v1 --test fdn_counter_creatures_v1 --test fdn_lifegain_creatures_v1 --test fdn_draw_creatures_v1 --test fdn_homunculus_creature_v1 --test fdn_koma_creature_v1 --test fdn_kiora_creature_v1 --test fdn_prowler_creature_v1 --test fdn_luminous_rebuke_v1 --test fdn_uncharted_voyage_v1 --test fdn_sylvan_scavenging_v1 --test fdn_celestial_armor_v1 --test fdn_keyword_creatures_v1 --test fdn_gainlands_lifegain_v1 --test fdn_triggers_tricks_v1
+          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test fdn_fixture_batch_a_v1 --test fdn_fixture_batch_b_v1 --test limited_session_v1 --test limited_priority_v1 --test limited_combat_v1 --test fdn_combat_cards_v1 --test fdn_legend_rule_v1 --test fdn_targeted_spells_v1 --test fdn_counter_creatures_v1 --test fdn_lifegain_creatures_v1 --test fdn_draw_creatures_v1 --test fdn_homunculus_creature_v1 --test fdn_koma_creature_v1 --test fdn_kiora_creature_v1 --test fdn_prowler_creature_v1 --test fdn_luminous_rebuke_v1 --test fdn_uncharted_voyage_v1 --test fdn_sylvan_scavenging_v1 --test fdn_celestial_armor_v1 --test fdn_keyword_creatures_v1 --test fdn_gainlands_lifegain_v1 --test fdn_triggers_tricks_v1 --test fdn_equipment_search_v1 --test fdn_tokens_auras_v1 --test fdn_removal_tricks_v1 --test fdn_counters_threats_v1 --test fdn_library_search_v1 --test fdn_simple_triggers_v1
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures limited_session_v1::tests rl_session::tests card_def:: koma_spell_protection threshold_counts_graveyard native_training_store_run_v2::
 
       - name: Validate FDN profiles under the native Store feature
@@ -309,12 +332,13 @@ jobs:
     name: Rust tests (${{ matrix.os }})
     needs: [detect-changes, rust-test-groups]
     if: always() && needs.detect-changes.outputs.rust_relevant == 'true'
+    timeout-minutes: 10
     strategy:
       matrix:
         os:
           - ubuntu-24.04
           - windows-2025
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted", "mtg-ci-linux"]') || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     steps:
       - name: Require every Rust test group
         run: test "${{ needs.rust-test-groups.result }}" = success
@@ -323,20 +347,18 @@ jobs:
     name: Python tests (${{ matrix.os }}, shard ${{ matrix.shard }})
     needs: detect-changes
     if: needs.detect-changes.outputs.python_relevant == 'true'
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-24.04
-          - windows-2025
-        shard:
-          - 0
-          - 1
+        # Windows runs the suite about twice as slowly, so it gets one more
+        # shard to finish alongside the Ubuntu shards.
         include:
-          - os: ubuntu-24.04
-            kernel_bin: target/release/kernel_rl_env
-          - os: windows-2025
-            kernel_bin: target/release/kernel_rl_env.exe
+          - {os: ubuntu-24.04, shard: 0, shard_count: 2, kernel_bin: target/release/kernel_rl_env}
+          - {os: ubuntu-24.04, shard: 1, shard_count: 2, kernel_bin: target/release/kernel_rl_env}
+          - {os: windows-2025, shard: 0, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe}
+          - {os: windows-2025, shard: 1, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe}
+          - {os: windows-2025, shard: 2, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe}
     runs-on: ${{ matrix.os }}
     env:
       MTG_KERNEL_RL_ENV_BIN: ${{ github.workspace }}/${{ matrix.kernel_bin }}
@@ -386,4 +408,4 @@ jobs:
         run: cargo build --release --locked --bin kernel_rl_env
 
       - name: Run Python test shard against the real Rust environment
-        run: uv run --no-sync python python/tools/run_python_test_shard.py --shard-index ${{ matrix.shard }} --shard-count 2
+        run: uv run --no-sync python python/tools/run_python_test_shard.py --shard-index ${{ matrix.shard }} --shard-count ${{ matrix.shard_count }}

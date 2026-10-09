@@ -62,7 +62,7 @@ def prepare(root):
         'limits':['A48 is a familiar training opponent despite different fresh initialization.',
             'Crossover balances these deck assignments, but cannot separate intrinsic deck quality from shared policy blind spots, model/deck interactions or engine/observation errors.',
             'Keep7, Keep sideboards, sampled policy, no search; no learned-opening/postboard or human-strength claim.',
-            'Fable zero-read HTTP429 until Sep22 07:00 EDT; no retry or endorsement. Jack authorized bounded local continuation.',
+            'Fable zero-read HTTP429 until Sep22 07:00 EDT; no retry or endorsement. The maintainer authorized bounded local continuation.',
             'No CP7 selection, paid compute, training or model promotion.']}
     write(root/'manifest.json',manifest)
 

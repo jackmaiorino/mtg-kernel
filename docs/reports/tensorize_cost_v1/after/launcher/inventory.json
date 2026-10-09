@@ -1,6 +1,6 @@
 {
   "hosts": {
-    "haleyspc": {
+    "computehost": {
       "checked_at": "2026-09-24T05:06:49.146890+00:00",
       "detail": {
         "competing": 0,
@@ -13,7 +13,7 @@
       "eligible": true,
       "reason": "reachable; idle; GPUs present"
     },
-    "jack": {
+    "desktop": {
       "checked_at": "2026-09-24T05:06:49.146890+00:00",
       "detail": {
         "competing_processes": [],

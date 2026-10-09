@@ -21,6 +21,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 mod duel;
+mod search;
 mod validity;
 
 const MAX_PHYSICAL: u64 = 4096;
@@ -1055,8 +1056,16 @@ pub fn run_v1(cfg: CensusConfigV1) -> Result<(), String> {
             .open(&cfg.out)
             .map_err(|e| e.to_string())?,
     );
+    let search = if search::is_search_mode(&cfg.mode) {
+        Some(search::SearchSharedV1::load(&cfg)?)
+    } else {
+        None
+    };
     let next = AtomicU64::new(cfg.first_game);
-    let end = cfg.first_game + cfg.games;
+    let end = match &search {
+        Some(s) if cfg.mode != "roots" => (cfg.first_game + cfg.games).min(s.root_count()),
+        _ => cfg.first_game + cfg.games,
+    };
     let started = std::time::Instant::now();
     let done = AtomicU64::new(0);
     std::thread::scope(|scope| -> Result<(), String> {
@@ -1065,7 +1074,8 @@ pub fn run_v1(cfg: CensusConfigV1) -> Result<(), String> {
             let mut base = policy.fork_for_collection_v3()?;
             let mut roll = policy.fork_for_collection_v3()?;
             let mut refp = reference.fork_for_collection_v3()?;
-            let (cfg, sink, next, done) = (&cfg, &sink, &next, &done);
+            let mut sw = search.as_ref().map(|s| s.fork(&policy)).transpose()?;
+            let (cfg, sink, next, done, search) = (&cfg, &sink, &next, &done, search.as_ref());
             handles.push(scope.spawn(move || -> Result<(), String> {
                 loop {
                     let g = next.fetch_add(1, Ordering::SeqCst);
@@ -1086,6 +1096,12 @@ pub fn run_v1(cfg: CensusConfigV1) -> Result<(), String> {
                         validity::run_validity_game(cfg, g, &mut base, &mut roll, sink)
                     } else if cfg.mode == "pilot" {
                         run_pilot_game(cfg, g, &mut base, &mut roll, sink)
+                    } else if let (Some(shared), Some(sw)) = (search, sw.as_mut()) {
+                        match cfg.mode.as_str() {
+                            "roots" => search::run_roots_game(cfg, shared, sw, g, sink),
+                            "cond" => search::run_cond_root(cfg, shared, sw, g, sink),
+                            _ => search::run_cross_root(cfg, shared, sw, g, sink),
+                        }
                     } else {
                         run_game(cfg, g, &mut base, &mut roll, sink)
                     };

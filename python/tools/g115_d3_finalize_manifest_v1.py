@@ -53,7 +53,7 @@ def finalize(base, evidence, inventory, lease):
     require(qualified, 'No qualified allocation')
     excluded = evidence['excluded_hosts']
     require(set(qualified).isdisjoint(excluded) and
-            set(qualified) | set(excluded) == {'jack', 'haleyspc', 'runpod'},
+            set(qualified) | set(excluded) == {'desktop', 'computehost', 'runpod'},
             'Account for all three hosts')
     for host, item in excluded.items():
         require(item['reason'].strip(), 'Explain unqualified host: ' + host)

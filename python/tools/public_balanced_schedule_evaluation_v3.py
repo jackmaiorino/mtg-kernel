@@ -93,7 +93,7 @@ def run(root, compute=None):
     assert qualification["complete"] and selected == qualification["selected"]
     assert selected["projected_seconds"] < plan["projection_cap_seconds"]
     choice = read(compute / "compute-choice.json")
-    fresh = {host: inventory(host) for host in ["jack", "haleyspc"]}
+    fresh = {host: inventory(host) for host in ["desktop", "computehost"]}
     assert all(snapshot["active"] or choice["inventory"][host]["eligible"] for host, snapshot in fresh.items()), "availability expanded: qualify newly available hosts before launch"
     write(root / "launch.json", dict(plan=pin(root / "plan.json"), launcher=pin(__file__), choice=pin(compute / "compute-choice.json"),
         qualification=pin(compute / "qualification.json"), selected=selected, current_inventory=fresh))

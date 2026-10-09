@@ -86,15 +86,15 @@ Original UG/WG external games, exact replay and pending London restore passed
 on Ubuntu in London PR139's full Rust job at d43d59a2 and on Windows in PR140's
 compatible Bash step, job 111036127744 at 36d54594, completed 22:12:10 UTC.
 
-At 12:30 EDT October 2 both PCs had actual live reservations. Haley supervisor
-37648 held the sequential training-comparison window; Jack qualification and
+At 12:30 EDT October 2 both PCs had actual live reservations. The compute host supervisor
+37648 held the sequential training-comparison window; the maintainer's qualification and
 Spellbench work remained live. No heavy local/remote engine build, training,
 GPU work or paid allocation was started by this batch. Hosted CI will execute
 Rust validation. Preserve other owners and reservations before subsequent jobs.
 
 Catalog probe and focused launcher logs are sealed in
 `E:/mtg-fdn-fixtures/fdn-witness-preflight-001`, with a hash-verified independent
-mirror at `C:/Users/Jack/fdn-witness-preflight-001-sealed`. The pinned probe
+mirror at `C:/Users/user/fdn-witness-preflight-001-sealed`. The pinned probe
 executable is recorded by SHA-256 in `seal.json`. Two raw executions reproduced
 identical output bytes; the earlier PowerShell log has the same two identities
 with CRLF line endings. All failed hosted attempt logs remain sealed too.
@@ -133,7 +133,7 @@ contention. This test checks sentinel coverage for a selected two-device
 allocation, not host speed. Give that test deterministic projected ranking
 inputs while still running every prefix/full-length process, output comparison,
 and rejection mutation. Production ranking and the separate fastest-allocation
-test stay unchanged. The repaired focused test passed on Jack's PC in 11.616s.
+test stay unchanged. The repaired focused test passed on the primary desktop in 11.616s.
 Hosted Windows shard 111036193230 at Armor source f13fd955 passed the repaired
 case and all 286 tests; all four current Python shards passed. Armor is ready
 for review using its unchanged Rust code's passing Ubuntu/Windows evidence.

@@ -23,11 +23,11 @@ def run(root,pilot):
     root.mkdir()
     m=read(pilot/"manifest.json"); binary=m["training_binary"]; configs=m["training_configs"]
     checks=read(pilot/"replication-check.json"); assert checks["complete"]
-    hardware={host:inventory(host) for host in ["jack","haleyspc"]}
+    hardware={host:inventory(host) for host in ["desktop","computehost"]}
     assert all(not item["active"] for item in hardware.values())
     placements={}
     available={}
-    for host,devices in [("jack",[0,1]),("haleyspc",[0])]:
+    for host,devices in [("desktop",[0,1]),("computehost",[0])]:
         statuses=[]
         for d in devices:
             try:
@@ -44,22 +44,22 @@ def run(root,pilot):
         path=root/f"{host}-inventory.json";write(path,snapshot)
         placements[host]=dict(checked_at=snapshot["at"],eligible=True,reason="Idle native/GPU resources under whole-PC assignment.",
             evidence=pin(path),devices=statuses)
-    assert available["jack",1] and available["haleyspc",0], "need both dedicated devices for this qualification"
-    local_mode="parallel" if available["jack",0] else "sequential"
-    treatment_device=0 if available["jack",0] else 1
+    assert available["desktop",1] and available["computehost",0], "need both dedicated devices for this qualification"
+    local_mode="parallel" if available["desktop",0] else "sequential"
+    treatment_device=0 if available["desktop",0] else 1
     cloud_path=Path("E:/mtg-meta-recovery-20260920/public-device-placement-001/runpod-inventory.json")
     cloud=read(cloud_path)
     placements["runpod"]=dict(checked_at=cloud["checked_at"],eligible=False,evidence=pin(cloud_path),devices=[],
         reason="Latest read-only authenticated inventory HTTP403, no paid allocation.")
-    stores={drive:storage(hardware["jack"],drive) for drive in ["C","D","E"]}
+    stores={drive:storage(hardware["desktop"],drive) for drive in ["C","D","E"]}
     cases=[]
     for drive,counts in [("C",[1,10]),("D",[1,4,10]),("E",[1,10])]:
         for n in counts:
-            cases.append((f"local-{drive.lower()}-w{n}",stores[drive],dict(control=place("jack",1,n),structured=place("jack",treatment_device,n)),local_mode))
+            cases.append((f"local-{drive.lower()}-w{n}",stores[drive],dict(control=place("desktop",1,n),structured=place("desktop",treatment_device,n)),local_mode))
     for n in [1,10]:
-        cases.append((f"cross-d-w{n}",stores["D"],dict(control=place("jack",1,n),structured=place("haleyspc",0,n)),"parallel"))
-    if available["jack",0]:
-        cases.append(("cross-fast-d-w10",stores["D"],dict(control=place("jack",0,10),structured=place("haleyspc",0,10)),"parallel"))
+        cases.append((f"cross-d-w{n}",stores["D"],dict(control=place("desktop",1,n),structured=place("computehost",0,n)),"parallel"))
+    if available["desktop",0]:
+        cases.append(("cross-fast-d-w10",stores["D"],dict(control=place("desktop",0,10),structured=place("computehost",0,10)),"parallel"))
     write(root/"manifest.json",dict(pilot=pin(pilot/"manifest.json"),runner=pin(__file__),binary=binary,configs=configs,
         dependencies=[pin(Path(__file__).with_name(name)) for name in ["public_training_storage_v1.py","compute_throughput_v2.py","public_training_dispatch_v2.py","qualify_state_prevention_compute_v1.py"]],
         cases=[dict(id=name,storage=s,placements=p,mode=mode) for name,s,p,mode in cases],prefix_updates=3,
@@ -90,8 +90,8 @@ def run(root,pilot):
     # Independently restart from update0, then compare updates1 and2 exactly.
     restart=root/"restart";restart.mkdir(); replay_comparisons=0
     for arm in ["control","structured"]:
-        folder=restart/arm;folder.mkdir();p=place("jack",1,10)
-        write(folder/"preflight.json",idle_preflight("jack",[p]))
+        folder=restart/arm;folder.mkdir();p=place("desktop",1,10)
+        write(folder/"preflight.json",idle_preflight("desktop",[p]))
         request=dict(config=read(checked(configs[arm])),output_directory=str(folder/"outputs"),
             resume=first_reports[arm]["outputs"]["0000/checkpoint.json"],stop_after=3,collector_workers=10,execution_gpu_ordinal=1)
         write(folder/"request.json",request)

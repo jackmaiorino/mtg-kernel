@@ -95,7 +95,7 @@ def qualify(root, evidence=None, reuse_choice=None):
     if prior:
         assert prior["plan"] == pin(root / "plan.json") and prior["binary"] == plan["binary"]
     availability, stores = {}, {}
-    for host, drives in [("jack", ["C", "D", "E"]), ("haleyspc", ["C"])]:
+    for host, drives in [("desktop", ["C", "D", "E"]), ("computehost", ["C"])]:
         snapshot = inventory(host)
         eligible = not snapshot["active"]
         path = evidence / f"{host}-inventory.json"
@@ -114,15 +114,15 @@ def qualify(root, evidence=None, reuse_choice=None):
         store = stores[host, drive]
         return dict(drive=drive, disk_serial=store["disk_serial"], disk_name=store["disk_name"], workers=workers, job_weight=weight)
     cases = []
-    if availability["jack"]["eligible"]:
-        cases += [(f"jack-{drive.lower()}-w{count}", dict(jack=placement("jack", drive, count)))
+    if availability["desktop"]["eligible"]:
+        cases += [(f"desktop-{drive.lower()}-w{count}", dict(desktop=placement("desktop", drive, count)))
                   for drive in ["C", "D", "E"] for count in [1, 16]]
-        cases += [("jack-d-w24", dict(jack=placement("jack", "D", 24)))]
-    if availability["haleyspc"]["eligible"]:
-        cases += [(f"haley-w{count}", dict(haleyspc=placement("haleyspc", "C", count))) for count in [1, 8, 16]]
-    if availability["jack"]["eligible"] and availability["haleyspc"]["eligible"]:
-        cases += [(f"both-weight{weight}", dict(jack=placement("jack", "D", 24, weight),
-            haleyspc=placement("haleyspc", "C", 16))) for weight in [1, 3]]
+        cases += [("desktop-d-w24", dict(desktop=placement("desktop", "D", 24)))]
+    if availability["computehost"]["eligible"]:
+        cases += [(f"computehost-w{count}", dict(computehost=placement("computehost", "C", count))) for count in [1, 8, 16]]
+    if availability["desktop"]["eligible"] and availability["computehost"]["eligible"]:
+        cases += [(f"both-weight{weight}", dict(desktop=placement("desktop", "D", 24, weight),
+            computehost=placement("computehost", "C", 16))) for weight in [1, 3]]
     assert cases, "no currently eligible host"
     count = len(plan["qualification_jobs"])
     write(evidence / "qualification-design.json", dict(plan=pin(root / "plan.json"), cases=cases,
@@ -141,7 +141,7 @@ def qualify(root, evidence=None, reuse_choice=None):
         reference = result["fingerprints"]
         if not candidates:
             assert result["execution_seconds"] < 180, "cheap serial timing envelope exceeded"
-        projections[label] = (remote["seconds"] if "haleyspc" in allocation else 0) + result["staging_seconds"] + (result["execution_seconds"]+result["recovery_seconds"]) * 64
+        projections[label] = (remote["seconds"] if "computehost" in allocation else 0) + result["staging_seconds"] + (result["execution_seconds"]+result["recovery_seconds"]) * 64
         candidates.append(dict(id=label, report=result_pin))
         print(label, "complete; projected full-panel seconds", round(projections[label], 2), flush=True)
     choice = dict(schema="cpu-bo3-allocation/v1", plan=pin(root / "plan.json"), binary=plan["binary"],
@@ -164,7 +164,7 @@ def run(root, compute=None):
     assert qualification["complete"] and selected == qualification["selected"]
     assert selected["projected_seconds"] < plan["projection_cap_seconds"]
     choice = read(compute / "compute-choice.json")
-    fresh = {host: inventory(host) for host in ["jack", "haleyspc"]}
+    fresh = {host: inventory(host) for host in ["desktop", "computehost"]}
     assert all(snapshot["active"] or choice["inventory"][host]["eligible"] for host, snapshot in fresh.items()), "availability expanded: qualify newly available hosts before launch"
     write(root / "launch.json", dict(plan=pin(root / "plan.json"), choice=pin(compute / "compute-choice.json"),
         qualification=pin(compute / "qualification.json"), selected=selected, current_inventory=fresh))

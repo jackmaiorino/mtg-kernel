@@ -17,11 +17,11 @@ def main():
     ap=argparse.ArgumentParser();ap.add_argument('--spec',type=P,required=True);ap.add_argument('--inventory',type=P,required=True);ap.add_argument('--root',type=P,required=True);a=ap.parse_args()
     spec=read(a.spec);inv=read(a.inventory);host=spec['host']
     require(spec['schema']=='g115-d3-parity-precheck-spec/v1' and spec['formal_measurement'] is False,'Baseline engineering only')
-    require(host in ('jack','haleyspc') and inv[host]['complete'],'Unavailable Windows host')
-    require(set(inv)=={'jack','haleyspc','runpod'} and inv['runpod']['complete'] and inv['runpod']['http_status']==200,'Corrected-UA fleet inventory required')
+    require(host in ('desktop','computehost') and inv[host]['complete'],'Unavailable Windows host')
+    require(set(inv)=={'desktop','computehost','runpod'} and inv['runpod']['complete'] and inv['runpod']['http_status']==200,'Corrected-UA fleet inventory required')
     require(all(0<=time.time()-inv[h]['checked_unix']<=600 for h in inv),'Stale inventory')
     require(not inv[host]['data']['competing_native'] and inv[host]['data']['competing_controllers']==[],'Occupied host')
-    other='jack' if host=='haleyspc' else 'haleyspc'
+    other='desktop' if host=='computehost' else 'computehost'
     require(not inv[other]['complete'] or bool(inv[other]['data']['competing_native'] or inv[other]['data']['competing_controllers']), 'Other Windows host is clear: compare its qualification before selecting this finite single-host pass')
     require(spec['panel']['sha256']==PANEL,'Changed shared panel')
     panel=read(checked(spec['panel']));expected={j['id']:j for j in panel['jobs'] if j['arm']=='baseline'}
@@ -37,7 +37,7 @@ def main():
         require(command['sources'][seat]['source']['checkpoint']['sha256']=='88c0b997708c2b5156b44f3940ad9d5d682f78ac24d346978bb3c9f34c59e8d1','Wrong g115')
         require(command['sources'][1-seat]['kind']=='legacy' and command['sources'][1-seat]['v3_forced_actions'] and command['sources'][1-seat]['v3_spell_target_reference_adapter'],'Wrong opponent route')
         checked(spec['references'][identifier])
-    reserve=(32 if host=='jack' else 8)*2**30
+    reserve=(32 if host=='desktop' else 8)*2**30
     owners(reserve,host);require(psutil.disk_usage(a.root.anchor).free>=16*2**30,'Disk reserve unavailable')
     a.root.mkdir();write(a.root/'manifest.json',dict(spec=pin(a.spec),inventory=pin(a.inventory),source=SOURCE,reverse_source=REVERSE,workers=[1,4,8],controls=CONTROLS,per_job_timeout_seconds=60,whole_precheck_timeout_seconds=3600,launcher=pin(__file__),formal_measurement=False,gpu_ordinal=None))
     original=read(checked(spec['v3_source']));env=read(checked(original['transfer_envelope']))

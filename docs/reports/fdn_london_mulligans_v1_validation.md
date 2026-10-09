@@ -85,12 +85,12 @@ Observed checks:
   built from source in04:01minutes. Source Git blobs, downloaded output hashes
   and both XML reports were verified. Retained source:
   `E:/mtg-fdn-fixtures/fdn-mage-witness-hosted-001`, with an independent verified
-  mirror at `C:/Users/Jack/fdn-mage-witness-hosted-001-sealed`.
+  mirror at `C:/Users/user/fdn-mage-witness-hosted-001-sealed`.
 - Mage run37049882555 at 5cc4decd8ffe passed all 146 cases in16 classes, including
   the four new Foundations allocation positions and24 existing combat cases.
   All source/output hashes and XML counts were independently verified. Sealed
   evidence: `E:/mtg-fdn-fixtures/fdn-fixture-final-reference-002`; independent
-  mirror: `C:/Users/Jack/fdn-fixture-final-reference-002-sealed`.
+  mirror: `C:/Users/user/fdn-fixture-final-reference-002-sealed`.
 - Pinned Rust 1.94.1 formatting and `git diff --check`: passed.
 - `py -3.11 -m unittest python.tests.test_limited_decks_v1 python.tests.test_limited_session_v1`:
   22 passed in 2.166 seconds. These include schema-4 protocol identity and
@@ -111,8 +111,8 @@ the next announcement round begins. This follows CR103.5 and the inspected
 XMage `LondonMulligan.java` implementation. No new Java mulligan implementation
 or playing-strength comparison is claimed.
 
-Both PCs remain reserved for other owners' measurement windows. Jack PID47760
-was confirmed live while preparing this batch, and the Haley Q006 owner posted
+Both PCs remain reserved for other owners' measurement windows. The maintainer PID47760
+was confirmed live while preparing this batch, and the compute host Q006 owner posted
 continued actual activity at13:25EDT. No heavy local/remote kernel or main Java
 build was started. Hosted CI supplies Rust and bounded reference verification;
 all subsequent local checks preserve those owners and actual release sequencing.

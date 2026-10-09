@@ -16,15 +16,15 @@ def controllers():
                 allocations=[argv[i+1] for i,a in enumerate(argv[:-1]) if a=='--allocation']
                 for allocation in allocations:
                     for item in allocation.split('+'):
-                        target=item.split('@',1)[1];hosts.add(target.split(':',1)[0] if ':' in target else 'jack')
+                        target=item.split('@',1)[1];hosts.add(target.split(':',1)[0] if ':' in target else 'desktop')
             else:
                 choice=P(argv[argv.index('--choice')+1])
                 if not choice.is_absolute():choice=P(proc.cwd())/choice
                 raw=choice.read_bytes();data=json.loads(raw)
                 selected=next(c for c in data['candidates'] if c['id']==data['selected'])
                 hosts.update(selected['hosts']);row.update(choice_path=str(choice),choice_sha256=hashlib.sha256(raw).hexdigest())
-            row['hosts']=sorted(hosts or {'jack','haleyspc'});result.append(row)
+            row['hosts']=sorted(hosts or {'desktop','computehost'});result.append(row)
         except (psutil.NoSuchProcess,psutil.AccessDenied):continue
         except (OSError,ValueError,KeyError,IndexError,StopIteration) as error:
-            result.append(dict(pid=proc.pid,hosts=['jack','haleyspc'],placement_error=str(error)))
+            result.append(dict(pid=proc.pid,hosts=['desktop','computehost'],placement_error=str(error)))
     return result

@@ -8,8 +8,9 @@
 //! in this module close that audit gap for the checked runtime pool.
 
 use crate::card_def::{CardType, Keywords, CARD_DEFS, KERNEL_CARDDB_HASH};
+use crate::effect::PendingEffectChoice;
 use crate::engine::{effective_power, effective_toughness, has_effective_keyword};
-use crate::ids::PlayerId;
+use crate::ids::{ObjectId, PlayerId};
 use crate::rl::{
     ActionSemanticV1, ObservationV5, PlayerSeatV1, TerminalClassificationV1, TerminalOutcomeV1,
 };
@@ -18,16 +19,23 @@ use crate::rl_session::{
     RlSessionError,
 };
 use crate::runtime_decks::RUNTIME_DECK_CATALOG_FILE_SHA256;
-use crate::state::{GameState, ObjectStateV4, SplitMix64, UndercityRoomV1, Zone};
+use crate::state::{GameState, ObjectStateV4, SplitMix64, Target, UndercityRoomV1, Zone};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
+#[cfg(test)]
+mod library_v3_tests;
 
 pub const KERNEL_NATIVE_SEARCH_AUTHORITY_SCHEMA_V1: &str =
     "kernel_native_search_opponent_authority/v1";
 pub const KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1: &str = "kernel-native-search-opponent-v1";
 pub const KERNEL_NATIVE_SEARCH_ALGORITHM_V1: &str =
     "deterministic-per-simulation-redeterminized-is-mcts-integer-ucb/v1";
+/// Fresh instrument with decision-local library authority, whole-object
+/// determinization and independent future chance. The registered v1 is unchanged.
+pub const KERNEL_NATIVE_SEARCH_ALGORITHM_V3: &str =
+    "deterministic-redeterminized-is-mcts-integer-ucb-v4-future-chance/v3";
+pub const KERNEL_NATIVE_SEARCH_NODE_KEY_V3: &str = "mtg-kernel/v4-search-visible-key/v1";
 pub const KERNEL_NATIVE_SEARCH_NODE_KEY_V1: &str =
     "sha256-serde-json-observation-v5-actions-remaining-depth/v1";
 pub const KERNEL_NATIVE_SEARCH_SEED_DOMAIN_V1: &str =
@@ -55,7 +63,7 @@ pub const KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1: [u64; 4] =
 /// merged into the calibration-only array above.
 ///
 /// PLACEHOLDER, per the sheet's own Section 13 open item: this literal is
-/// NOT the real cycle-3 launch base_seed. That value is Jack's own
+/// NOT the real cycle-3 launch base_seed. That value is the maintainer's own
 /// launch-parameter decision and is not assigned by the countersigned
 /// sheet. This placeholder exists only so the rest of the pool-registration
 /// mechanism (this file's `validate`, the manifest schema, resolution, and
@@ -124,11 +132,43 @@ impl KernelNativeSearchAuthorityV1 {
         action_seed: u64,
         private_diagnostic_identity: &str,
     ) -> Result<Self, KernelNativeSearchErrorV1> {
+        Self::current_with_algorithm_v1(
+            KERNEL_NATIVE_SEARCH_ALGORITHM_V1,
+            tier,
+            action_seed,
+            private_diagnostic_identity,
+        )
+    }
+
+    pub fn current_v3(
+        tier: KernelNativeSearchTierV1,
+        action_seed: u64,
+        private_diagnostic_identity: &str,
+    ) -> Result<Self, KernelNativeSearchErrorV1> {
+        Self::current_with_algorithm_v1(
+            KERNEL_NATIVE_SEARCH_ALGORITHM_V3,
+            tier,
+            action_seed,
+            private_diagnostic_identity,
+        )
+    }
+
+    fn current_with_algorithm_v1(
+        algorithm_identity: &str,
+        tier: KernelNativeSearchTierV1,
+        action_seed: u64,
+        private_diagnostic_identity: &str,
+    ) -> Result<Self, KernelNativeSearchErrorV1> {
         let record = Self {
             schema: KERNEL_NATIVE_SEARCH_AUTHORITY_SCHEMA_V1.to_string(),
             authority_kind: KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1.to_string(),
-            algorithm_identity: KERNEL_NATIVE_SEARCH_ALGORITHM_V1.to_string(),
-            node_key_identity: KERNEL_NATIVE_SEARCH_NODE_KEY_V1.to_string(),
+            algorithm_identity: algorithm_identity.to_string(),
+            node_key_identity: if algorithm_identity == KERNEL_NATIVE_SEARCH_ALGORITHM_V3 {
+                KERNEL_NATIVE_SEARCH_NODE_KEY_V3
+            } else {
+                KERNEL_NATIVE_SEARCH_NODE_KEY_V1
+            }
+            .to_string(),
             tier,
             transition_budget: tier.transition_budget(),
             policy_step_depth_cap: KERNEL_NATIVE_SEARCH_DEPTH_CAP_V1,
@@ -152,8 +192,16 @@ impl KernelNativeSearchAuthorityV1 {
                 == crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2;
         if self.schema != KERNEL_NATIVE_SEARCH_AUTHORITY_SCHEMA_V1
             || self.authority_kind != KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1
-            || self.algorithm_identity != KERNEL_NATIVE_SEARCH_ALGORITHM_V1
-            || self.node_key_identity != KERNEL_NATIVE_SEARCH_NODE_KEY_V1
+            || !matches!(
+                self.algorithm_identity.as_str(),
+                KERNEL_NATIVE_SEARCH_ALGORITHM_V1 | KERNEL_NATIVE_SEARCH_ALGORITHM_V3
+            )
+            || self.node_key_identity
+                != if self.uses_v4_contract_v3() {
+                    KERNEL_NATIVE_SEARCH_NODE_KEY_V3
+                } else {
+                    KERNEL_NATIVE_SEARCH_NODE_KEY_V1
+                }
             || self.transition_budget != self.tier.transition_budget()
             || self.policy_step_depth_cap != KERNEL_NATIVE_SEARCH_DEPTH_CAP_V1
             || self.seed_domain != KERNEL_NATIVE_SEARCH_SEED_DOMAIN_V1
@@ -177,6 +225,10 @@ impl KernelNativeSearchAuthorityV1 {
         let bytes =
             serde_json::to_vec(self).map_err(|_| KernelNativeSearchErrorV1::InvalidAuthority)?;
         Ok(Sha256::digest(bytes).into())
+    }
+
+    pub fn uses_v4_contract_v3(&self) -> bool {
+        self.algorithm_identity == KERNEL_NATIVE_SEARCH_ALGORITHM_V3
     }
 
     /// Independently reconstructs a fresh authority from just this record's
@@ -203,7 +255,8 @@ impl KernelNativeSearchAuthorityV1 {
     /// accept can still be caught by this method on its own, because the
     /// comparison never asks `validate` for an opinion at all.
     pub(crate) fn matches_fresh_reconstruction_v1(&self) -> bool {
-        let Ok(reconstructed) = Self::current(
+        let Ok(reconstructed) = Self::current_with_algorithm_v1(
+            &self.algorithm_identity,
             self.tier,
             self.action_seed,
             &self.private_diagnostic_identity,
@@ -224,6 +277,7 @@ pub enum KernelNativeSearchErrorV1 {
     UnsupportedFlatActionContract,
     BudgetSmallerThanRootActionCount { budget: u32, root_actions: u32 },
     HiddenStateContract,
+    DeterminizationReferenceConflict,
     StaleOrTamperedBinding,
     NonNaturalTerminal,
     CorruptTree,
@@ -246,6 +300,18 @@ impl From<FlatActionDecisionSliceErrorV1> for KernelNativeSearchErrorV1 {
 impl From<RlSessionError> for KernelNativeSearchErrorV1 {
     fn from(_: RlSessionError) -> Self {
         Self::StaleOrTamperedBinding
+    }
+}
+
+impl From<crate::rl_session::V4SearchStateErrorV1> for KernelNativeSearchErrorV1 {
+    fn from(error: crate::rl_session::V4SearchStateErrorV1) -> Self {
+        use crate::rl_session::V4SearchStateErrorV1;
+        match error {
+            V4SearchStateErrorV1::UnsupportedActionContract => Self::UnsupportedFlatActionContract,
+            V4SearchStateErrorV1::NoLiveDecision => Self::InvalidDecision,
+            V4SearchStateErrorV1::HiddenReferenceConflict => Self::DeterminizationReferenceConflict,
+            _ => Self::HiddenStateContract,
+        }
     }
 }
 
@@ -288,6 +354,26 @@ impl KernelNativeSearchOpponentV1 {
         session: &FastActorSessionV1,
         expected: FastActorDecisionV1,
     ) -> Result<KernelNativeSearchDecisionV1, KernelNativeSearchErrorV1> {
+        if self.authority.uses_v4_contract_v3() {
+            let (adapted, root_indices) = session.kernel_search_v4_root_clone_v3(expected)?;
+            let FastActorResponseV1::Decision(adapted_decision) = adapted.current_response() else {
+                return Err(KernelNativeSearchErrorV1::InvalidDecision);
+            };
+            let mut result = self.select_action_with_budget_v1(
+                &adapted,
+                adapted_decision,
+                self.authority.transition_budget,
+                self.authority.policy_step_depth_cap,
+            )?;
+            result.selected_index = root_indices[result.selected_index as usize];
+            for stat in &mut result.root_action_stats {
+                stat.flat_action_index = root_indices[stat.flat_action_index as usize];
+            }
+            result
+                .root_action_stats
+                .sort_by_key(|stat| stat.flat_action_index);
+            return Ok(result);
+        }
         self.select_action_with_budget_v1(
             session,
             expected,
@@ -323,7 +409,8 @@ impl KernelNativeSearchOpponentV1 {
         }
 
         let root_player = player_id_v1(expected.acting_player);
-        let root_key = search_node_key_v1(session, expected, depth_cap)?;
+        let v4 = self.authority.uses_v4_contract_v3();
+        let root_key = search_node_key_for_contract_v3(session, expected, depth_cap, v4)?;
         let mut tree = SearchTreeV1::new(root_key, root_player, expected.legal_action_count)?;
         let authority_digest = self.authority.digest()?;
         let authoritative_hash_before = session.privileged_core_environment_hash();
@@ -338,8 +425,15 @@ impl KernelNativeSearchOpponentV1 {
                 u64::from(simulations),
                 root_player,
             );
-            let mut sampled = session.kernel_search_redeterminized_clone_v1(simulation_seed)?;
-            if search_node_key_v1(&sampled, expected, depth_cap)? != root_key {
+            let mut sampled = if v4 {
+                session.kernel_search_redeterminized_clone_mode_v4(
+                    simulation_seed,
+                    crate::rl_session::V4SearchSampleMode::FutureChanceV3,
+                )?
+            } else {
+                session.kernel_search_redeterminized_clone_v1(simulation_seed)?
+            };
+            if search_node_key_for_contract_v3(&sampled, expected, depth_cap, v4)? != root_key {
                 return Err(KernelNativeSearchErrorV1::HiddenStateContract);
             }
             let forced_root_action =
@@ -352,6 +446,7 @@ impl KernelNativeSearchOpponentV1 {
                 transition_budget,
                 &mut transitions_used,
                 forced_root_action,
+                v4,
             )?;
             simulations = simulations
                 .checked_add(1)
@@ -481,6 +576,7 @@ impl SearchTreeV1 {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_simulation_v1(
     tree: &mut SearchTreeV1,
     session: &mut FastActorSessionV1,
@@ -489,6 +585,7 @@ fn run_simulation_v1(
     transition_budget: u32,
     transitions_used: &mut u32,
     forced_root_action: Option<u32>,
+    v4: bool,
 ) -> Result<(), KernelNativeSearchErrorV1> {
     let mut node_index = 0usize;
     let mut remaining_depth = depth_cap;
@@ -508,7 +605,7 @@ fn run_simulation_v1(
             .nodes
             .get(node_index)
             .ok_or(KernelNativeSearchErrorV1::CorruptTree)?;
-        let expected_key = search_node_key_v1(session, decision, remaining_depth)?;
+        let expected_key = search_node_key_for_contract_v3(session, decision, remaining_depth, v4)?;
         if node.key != expected_key || node.actor != player_id_v1(decision.acting_player) {
             return Err(KernelNativeSearchErrorV1::CorruptTree);
         }
@@ -525,9 +622,13 @@ fn run_simulation_v1(
         if action_index >= node.actions.len() {
             return Err(KernelNativeSearchErrorV1::CorruptTree);
         }
-        let binding = session.native_full_trajectory_current_binding_v2(decision)?;
-        let response =
-            session.consume_current_flat_action_slice_v2(binding, action_index as u32)?;
+        let response = if v4 {
+            let token = session.kernel_search_action_token_v4(decision)?;
+            session.kernel_search_consume_v4(decision, token, action_index as u32)?
+        } else {
+            let binding = session.native_full_trajectory_current_binding_v2(decision)?;
+            session.consume_current_flat_action_slice_v2(binding, action_index as u32)?
+        };
         *transitions_used = transitions_used
             .checked_add(1)
             .ok_or(KernelNativeSearchErrorV1::CorruptTree)?;
@@ -544,7 +645,8 @@ fn run_simulation_v1(
                     value = evaluate_state_v1(session.kernel_search_state_v1(), root_player);
                     break;
                 }
-                let next_key = search_node_key_v1(session, next_decision, remaining_depth)?;
+                let next_key =
+                    search_node_key_for_contract_v3(session, next_decision, remaining_depth, v4)?;
                 let next_actor = player_id_v1(next_decision.acting_player);
                 let next_index = if let Some(existing) = tree.find_node(next_key) {
                     existing
@@ -734,6 +836,19 @@ struct SearchNodeKeyEnvelopeV1<'a> {
 /// (not a re-derivation) so the two algorithms' tree keys are structurally
 /// guaranteed identical, not just identically labeled. Visibility-only
 /// change; behavior is untouched.
+fn search_node_key_for_contract_v3(
+    session: &FastActorSessionV1,
+    decision: FastActorDecisionV1,
+    remaining_depth: u16,
+    v4: bool,
+) -> Result<[u8; 32], KernelNativeSearchErrorV1> {
+    if v4 {
+        Ok(session.kernel_search_visible_key_v4(u32::from(remaining_depth))?)
+    } else {
+        search_node_key_v1(session, decision, remaining_depth)
+    }
+}
+
 pub(crate) fn search_node_key_v1(
     session: &FastActorSessionV1,
     decision: FastActorDecisionV1,
@@ -1038,6 +1153,62 @@ pub(crate) fn redeterminize_hidden_zones_v1(
     root_actor: PlayerId,
     simulation_seed: u64,
 ) -> Result<(), KernelNativeSearchErrorV1> {
+    redeterminize_hidden_zones_pinned_v1(state, root_actor, simulation_seed, &[])
+}
+
+/// Hand and library objects that the root actor's own pending effect
+/// selection offers or has already selected (for example every card a
+/// library search can find). The actor sees these cards in order to choose
+/// among them, and the engine revalidates the stored candidate set against
+/// their identities, so a determinization of this decision must keep them.
+pub(crate) fn pending_selection_hidden_objects_v1(
+    state: &GameState,
+    root_actor: PlayerId,
+) -> Vec<ObjectId> {
+    let Some(PendingEffectChoice::SelectTargets {
+        player,
+        selected,
+        legal,
+        ..
+    }) = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .and_then(|pending| pending.choice.as_ref())
+    else {
+        return Vec::new();
+    };
+    if *player != root_actor {
+        return Vec::new();
+    }
+    let mut objects: Vec<ObjectId> = selected
+        .iter()
+        .chain(legal)
+        .filter_map(|candidate| match candidate.target {
+            Target::Object(id) => Some(id),
+            Target::Player(_) => None,
+        })
+        .filter(|&id| {
+            state
+                .objects
+                .try_get(id)
+                .is_some_and(|object| matches!(object.zone, Zone::Hand | Zone::Library))
+        })
+        .collect();
+    objects.sort_unstable();
+    objects.dedup();
+    objects
+}
+
+/// [`redeterminize_hidden_zones_v1`] with `pinned` objects treated as known:
+/// they keep their identities and stay out of the resampled pool. With no
+/// pins this is exactly the unpinned sampler, draw for draw.
+pub(crate) fn redeterminize_hidden_zones_pinned_v1(
+    state: &mut GameState,
+    root_actor: PlayerId,
+    simulation_seed: u64,
+    pinned: &[ObjectId],
+) -> Result<(), KernelNativeSearchErrorV1> {
     if root_actor != PlayerId::P0 && root_actor != PlayerId::P1 {
         return Err(KernelNativeSearchErrorV1::HiddenStateContract);
     }
@@ -1053,7 +1224,7 @@ pub(crate) fn redeterminize_hidden_zones_v1(
                     .any(|entry| {
                         entry.object == id && entry.zone_change_count == object.zone_change_count
                     });
-                if !known {
+                if !known && !pinned.contains(&id) {
                     unknown_slots.push(id);
                 }
             }
@@ -1068,7 +1239,7 @@ pub(crate) fn redeterminize_hidden_zones_v1(
                         && entry.object == id
                         && entry.zone_change_count == object.zone_change_count
                 });
-            if !known {
+            if !known && !pinned.contains(&id) {
                 unknown_slots.push(id);
             }
         }

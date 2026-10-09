@@ -8,4 +8,4 @@ There must be exactly three legal targets: self, opponent and Cat. Prove natural
 
 Record actual V4 tensors, logits/value, semantic target indices, argmax and float64 softmax diagnostic mass. Require identical actor-visible projection, actions, tensors, logits/value and witnesses across both hidden orders and a byte-identical fresh-process replay. Report eight public states, not sixteen independent samples. A selected unresolved action in a state with a certified immediate win is a missed immediate-win diagnostic, not proof the chosen line loses eventually. Nonlethal controls have no declared optimal target.
 
-No training, candidate selection, reward change or paid compute. Fable's recorded zero-read HTTP429 remains unavailable until September 22 at 07:00 EDT; bounded continuation is under Jack's authority with that review gap, not endorsement. CP7 outcomes are excluded.
+No training, candidate selection, reward change or paid compute. Fable's recorded zero-read HTTP429 remains unavailable until September 22 at 07:00 EDT; bounded continuation is under the maintainer's authority with that review gap, not endorsement. CP7 outcomes are excluded.

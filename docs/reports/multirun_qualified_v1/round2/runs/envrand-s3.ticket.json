@@ -1,5 +1,5 @@
 {
-  "allocation": "2@jack:0+2@jack:1+2@haleyspc:0",
+  "allocation": "2@desktop:0+2@desktop:1+2@computehost:0",
   "compute_choice_sha256": "a9f4017ccd030b45109b7b3d960beece8d9a633dd8516366ca0848c9c5f8a80b",
   "executable_sha256": "62bf66b1a917b643fdd9f4ba8b1da08955b205c7c61f46b6669e1825b2975504",
   "expected_resume_generation": null,

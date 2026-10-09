@@ -98,6 +98,7 @@ impl Scan<'_> {
             | ExilePlayersGraveyard { .. }
             | ExileOneFromPlayersGraveyard { .. }
             | ExileAllGraveyards
+            | DestroyAllCreatures
             | DamageAllTargets { .. }
             | ExileAllArtifactTargets
             | DealDamageByControlledCreatureCount { .. }
@@ -114,6 +115,9 @@ impl Scan<'_> {
             | PreventCombatDamageToTargetThisTurn { .. }
             | PutSourceOntoBattlefieldAttachedToTarget { .. }
             | TapAttachedCreatureAndDamageControllerByPower
+            | BoostAttachedCreatureUntilEndOfTurn { .. }
+            | SearchLibraryCardsToDestination { .. }
+            | CreateTokensDynamic { .. }
             | BackupTarget { .. }
             | PutSourceOntoBattlefieldTappedAndAttacking
             | UntapUpToLands { .. }
@@ -226,6 +230,11 @@ impl Scan<'_> {
                     }
             }
             SearchLibraryToHandMany {
+                original_library,
+                selected,
+                ..
+            }
+            | SearchLibraryCardsToDestination {
                 original_library,
                 selected,
                 ..
@@ -361,6 +370,9 @@ impl Scan<'_> {
                 original_library, ..
             }
             | SearchLibraryToHandMany {
+                original_library, ..
+            }
+            | SearchLibraryCardsToDestination {
                 original_library, ..
             }
             | SearchLibraryToBattlefieldTapped {

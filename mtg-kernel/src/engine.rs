@@ -1445,6 +1445,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::ArtifactOrEnchantmentSpellOnStack
         | TargetSpec::SorcerySpellOnStack
         | TargetSpec::NoncreatureSpellOnStack
+        | TargetSpec::CreatureSpellOnStack
         | TargetSpec::ArtifactSpellOnStack
         | TargetSpec::ArtifactPermanent
         | TargetSpec::CreatureOrLandCardInGraveyard
@@ -1462,7 +1463,11 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::CreatureOtherThanSource
         | TargetSpec::NonblackCreature
         | TargetSpec::ArtifactOrEnchantmentPermanent
-        | TargetSpec::AttackingOrBlockingCreature => 1,
+        | TargetSpec::AttackingOrBlockingCreature
+        | TargetSpec::CreatureOrPlaneswalker
+        | TargetSpec::ArtifactEnchantmentOrFlyingCreature
+        | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour
+        | TargetSpec::OpponentNonlandPermanent => 1,
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
@@ -2628,6 +2633,9 @@ fn legal_targets_for_controller_from_source(
         TargetSpec::NoncreatureSpellOnStack => {
             spell_targets_without_type(state, CardType::Creature)
         }
+        TargetSpec::CreatureSpellOnStack => {
+            spell_targets_with_any_type(state, &[CardType::Creature])
+        }
         TargetSpec::ArtifactSpellOnStack => {
             spell_targets_with_any_type(state, &[CardType::Artifact])
         }
@@ -2732,6 +2740,34 @@ fn legal_targets_for_controller_from_source(
                 .map(Target::Object)
                 .collect()
         }
+        TargetSpec::CreatureOrPlaneswalker => battlefield_objects(state)
+            .filter(|&id| {
+                object_has_type(state, id, CardType::Creature)
+                    || object_has_type(state, id, CardType::Planeswalker)
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::ArtifactEnchantmentOrFlyingCreature
+        | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour => battlefield_objects(state)
+            .filter(|&id| {
+                object_has_type(state, id, CardType::Artifact)
+                    || object_has_type(state, id, CardType::Enchantment)
+                    || (object_has_type(state, id, CardType::Creature)
+                        && if spec == TargetSpec::ArtifactEnchantmentOrFlyingCreature {
+                            has_effective_keyword(state, id, Keywords::FLYING)
+                        } else {
+                            effective_power(state, id) >= 4
+                        })
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::OpponentNonlandPermanent => battlefield_objects(state)
+            .filter(|&id| {
+                state.objects.get(id).controller != controller
+                    && !object_has_type(state, id, CardType::Land)
+            })
+            .map(Target::Object)
+            .collect(),
         TargetSpec::AttackingOrBlockingCreature => battlefield_objects(state)
             .filter(|&id| {
                 object_has_type(state, id, CardType::Creature)
@@ -3839,10 +3875,12 @@ fn can_pay_components(
                 let obj = state.objects.get(source);
                 let def = &card_def::CARD_DEFS[obj.card_def as usize];
                 // 302.6: a *creature's* tap-cost ability needs continuous
-                // control since the turn began. Irrelevant to every
-                // tap-cost ability in this pool (Blood is an artifact),
-                // kept for correctness if a future card needs it.
-                !(obj.tapped || (def.has_type(CardType::Creature) && obj.summoning_sick))
+                // control since the turn began, unless it has haste
+                // (702.10c; Fanatical Firebrand).
+                !(obj.tapped
+                    || (def.has_type(CardType::Creature)
+                        && obj.summoning_sick
+                        && !has_effective_keyword(state, source, Keywords::HASTE)))
             }
             CostComponent::SacrificeSelf | CostComponent::ExileSelf => true,
             CostComponent::DiscardSelf => {
@@ -5393,70 +5431,77 @@ fn is_castable_now(
                 && can_pay_components(escape.cost, player, id, state)
         }),
         CastMethodV4::Normal => {
-            let normal_ok = main_timing_ok
-                && normal_cast_target_prefix_is_payable(
-                    def,
-                    id,
-                    def.target_spec,
-                    player,
-                    &[],
-                    state,
-                );
-            let alt_ok = def
-                .alt_cost
-                .map(|alt| {
-                    main_timing_ok
-                        && alt_cost_condition_met(alt.condition, player, state)
+            // Every check below is a pure read of `state`, so they are
+            // ordered cheapest-first and short-circuit: a spell outside its
+            // timing window never pays for target or mana enumeration.
+            let normal_ok = || {
+                normal_cast_target_prefix_is_payable(def, id, def.target_spec, player, &[], state)
+            };
+            let alt_ok = || {
+                def.alt_cost.is_some_and(|alt| {
+                    alt_cost_condition_met(alt.condition, player, state)
                         && can_pay_components(alt.components, player, id, state)
                 })
-                .unwrap_or(false);
-            let main_ok = !viable_printed_spell_modes(def, id, player, state).is_empty()
-                && (normal_ok || alt_ok)
+            };
+            let main_ok = main_timing_ok
+                && (normal_ok() || alt_ok())
                 && def
                     .additional_cost
-                    .is_none_or(|add| can_pay_components(add, player, id, state));
-            let omen_ok = supported_omen(def).is_some_and(|omen| {
-                matches!(state.objects.get(id).zone, Zone::Hand | Zone::Exile)
-                    && cast_form_timing_ok(omen.types, Keywords::NONE, player, state)
-                    && target_prefix_can_complete_for_controller_and_source(
-                        omen.target_spec,
-                        &[],
-                        player,
-                        targeting_source_for_object(state, id),
-                        state,
-                    )
-                    && mana::can_pay(&omen.cost, 0, player, state).is_some()
-            });
-            let bestow_ok = supported_bestow(def).is_some_and(|bestow| {
-                matches!(state.objects.get(id).zone, Zone::Hand | Zone::Exile)
-                    && cast_form_timing_ok(&[CardType::Enchantment], Keywords::NONE, player, state)
-                    && target_prefix_can_complete_for_controller_and_source(
-                        bestow.target_spec,
-                        &[],
-                        player,
-                        targeting_source_for_object(state, id),
-                        state,
-                    )
-                    && mana::can_pay(&bestow.cost, 0, player, state).is_some()
-            });
+                    .is_none_or(|add| can_pay_components(add, player, id, state))
+                && !viable_printed_spell_modes(def, id, player, state).is_empty();
+            let omen_ok = || {
+                supported_omen(def).is_some_and(|omen| {
+                    matches!(state.objects.get(id).zone, Zone::Hand | Zone::Exile)
+                        && cast_form_timing_ok(omen.types, Keywords::NONE, player, state)
+                        && target_prefix_can_complete_for_controller_and_source(
+                            omen.target_spec,
+                            &[],
+                            player,
+                            targeting_source_for_object(state, id),
+                            state,
+                        )
+                        && mana::can_pay(&omen.cost, 0, player, state).is_some()
+                })
+            };
+            let bestow_ok = || {
+                supported_bestow(def).is_some_and(|bestow| {
+                    matches!(state.objects.get(id).zone, Zone::Hand | Zone::Exile)
+                        && cast_form_timing_ok(
+                            &[CardType::Enchantment],
+                            Keywords::NONE,
+                            player,
+                            state,
+                        )
+                        && target_prefix_can_complete_for_controller_and_source(
+                            bestow.target_spec,
+                            &[],
+                            player,
+                            targeting_source_for_object(state, id),
+                            state,
+                        )
+                        && mana::can_pay(&bestow.cost, 0, player, state).is_some()
+                })
+            };
             // The Adventure side is only ever offered from Hand -- unlike
             // Omen/Bestow above, exile never legalizes it: a card sitting in
             // exile with `on_adventure` set offers only its creature face
             // (already covered by `main_ok`, zone-agnostic), never the
             // Adventure spell again.
-            let adventure_ok = supported_adventure(def).is_some_and(|adventure| {
-                state.objects.get(id).zone == Zone::Hand
-                    && cast_form_timing_ok(adventure.types, Keywords::NONE, player, state)
-                    && target_prefix_can_complete_for_controller_and_source(
-                        adventure.target_spec,
-                        &[],
-                        player,
-                        targeting_source_for_object(state, id),
-                        state,
-                    )
-                    && mana::can_pay(&adventure.cost, 0, player, state).is_some()
-            });
-            main_ok || omen_ok || bestow_ok || adventure_ok
+            let adventure_ok = || {
+                supported_adventure(def).is_some_and(|adventure| {
+                    state.objects.get(id).zone == Zone::Hand
+                        && cast_form_timing_ok(adventure.types, Keywords::NONE, player, state)
+                        && target_prefix_can_complete_for_controller_and_source(
+                            adventure.target_spec,
+                            &[],
+                            player,
+                            targeting_source_for_object(state, id),
+                            state,
+                        )
+                        && mana::can_pay(&adventure.cost, 0, player, state).is_some()
+                })
+            };
+            main_ok || omen_ok() || bestow_ok() || adventure_ok()
         }
         CastMethodV4::Alternative
         | CastMethodV4::Madness
@@ -11117,8 +11162,12 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
             }
         }
     }
-    for (_, equipment) in attached_equipment_profiles(state, id) {
-        power += i32::from(equipment.power_delta);
+    for (equipment_id, equipment) in attached_equipment_profiles(state, id) {
+        let controller_turn = state.active_player == state.objects.get(equipment_id).controller;
+        power += i32::from(equipment.pt_deltas(controller_turn).0);
+    }
+    for (aura, profile) in attached_static_aura_profiles(state, id) {
+        power += i32::from(profile.power) * static_aura_multiplier(state, aura, profile);
     }
     for eff in &state.engine.until_end_of_turn {
         match eff {
@@ -11167,8 +11216,12 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
             }
         }
     }
-    for (_, equipment) in attached_equipment_profiles(state, id) {
-        toughness += i32::from(equipment.toughness_delta);
+    for (equipment_id, equipment) in attached_equipment_profiles(state, id) {
+        let controller_turn = state.active_player == state.objects.get(equipment_id).controller;
+        toughness += i32::from(equipment.pt_deltas(controller_turn).1);
+    }
+    for (aura, profile) in attached_static_aura_profiles(state, id) {
+        toughness += i32::from(profile.toughness) * static_aura_multiplier(state, aura, profile);
     }
     for eff in &state.engine.until_end_of_turn {
         match eff {
@@ -11284,6 +11337,16 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     {
         return true;
     }
+    if attached_static_aura_profiles(state, id).any(|(aura, profile)| {
+        profile.keywords.has(kw)
+            && crate::continuous_characteristics_v1::grant_survives(
+                state,
+                id,
+                state.objects.get(aura).v4.layer_timestamp.unwrap_or(0),
+            )
+    }) {
+        return true;
+    }
     if state.engine.until_next_turn_keywords.iter().any(|effect| {
         effect.object_id == id
             && obj.zone == Zone::Battlefield
@@ -11360,6 +11423,57 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
         }
     }
     false
+}
+
+/// Static creature Auras validly attached to `host`'s current incarnation
+/// whose own abilities are active.
+pub(crate) fn attached_static_aura_profiles(
+    state: &GameState,
+    host: ObjectId,
+) -> impl Iterator<Item = (ObjectId, card_def::AuraCreatureStaticDef)> + '_ {
+    let host_object = state
+        .objects
+        .try_get(host)
+        .filter(|host_object| host_object.zone == Zone::Battlefield);
+    let host_link = host_object.map(|host_object| crate::state::ObjectLinkV4 {
+        object: host,
+        zone_change_count: host_object.zone_change_count,
+    });
+    host_object
+        .into_iter()
+        .flat_map(|host_object| host_object.attachments.iter().copied())
+        .filter_map(move |aura_id| {
+            let aura = state.objects.try_get(aura_id)?;
+            if aura.zone != Zone::Battlefield || aura.v4.attached_to != host_link {
+                return None;
+            }
+            let definition = card_def::CARD_DEFS.get(aura.card_def as usize)?;
+            if !definition.is_executable()
+                || !crate::continuous_characteristics_v1::printed_abilities_active(state, aura_id)
+            {
+                return None;
+            }
+            match definition.attachment? {
+                card_def::AttachmentDef::AuraCreatureStatic(profile) => Some((aura_id, profile)),
+                _ => None,
+            }
+        })
+}
+
+fn static_aura_multiplier(
+    state: &GameState,
+    aura: ObjectId,
+    profile: card_def::AuraCreatureStaticDef,
+) -> i32 {
+    let Some(subtype) = profile.per_controlled_subtype else {
+        return 1;
+    };
+    let controller = state.objects.get(aura).controller;
+    state.players[controller.index()]
+        .battlefield
+        .iter()
+        .filter(|id| subtype.is_in_subtype_ids(&effective_subtype_ids(state, **id)))
+        .count() as i32
 }
 
 pub(crate) fn attached_equipment_profiles(

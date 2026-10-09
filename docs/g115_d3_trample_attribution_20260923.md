@@ -16,15 +16,15 @@ The fixed diagnostic includes every mismatch from the invalid collector plus the
 | Four-case four-worker time | 1.281 s |
 | Full 45-case four-worker time | 14.312 s |
 
-Local admission refused another lane's training. Fresh three-host inventory then found Haley clear, Jack occupied and RunPod HTTP200 with zero Pods using the corrected User-Agent. The bounded diagnostic ran on Haley through `check-d3-trample-attribution.py`: CPU only, BelowNormal, eight-GiB reserve, 60-second per-job bound, fixed four-case serial/parallel qualification, and refusal if the projected 45-case pass exceeded 60 seconds. No paid allocation. The first offline package preparation followed historical provenance too deeply and failed before dispatch; its directory is retained. The corrected package relocates runtime descriptors only and copies model/evidence bytes exactly.
+Local admission refused another lane's training. Fresh three-host inventory then found compute host clear, the maintainer's occupied and RunPod HTTP200 with zero Pods using the corrected User-Agent. The bounded diagnostic ran on the compute host through `check-d3-trample-attribution.py`: CPU only, BelowNormal, eight-GiB reserve, 60-second per-job bound, fixed four-case serial/parallel qualification, and refusal if the projected 45-case pass exceeded 60 seconds. No paid allocation. The first offline package preparation followed historical provenance too deeply and failed before dispatch; its directory is retained. The corrected package relocates runtime descriptors only and copies model/evidence bytes exactly.
 
 Evidence under `E:/mtg-g115-lineage-20260923/`:
 
 - `d3-trample-diagnostic-build-001/`: build, source and toolchain receipts.
 - `d3-trample-diagnostic-inventory-003.json`: fresh host inventory.
 - `d3-trample-portable-002.zip`: SHA `1459e320ea4c968d3bf2fc4a0b2604ca6468caa21250b2f11f8022687fa8ac51`.
-- `d3-trample-haley-controller-001/recovery.zip`: SHA `adddc74eb52be30f159cdfd1b403a08c6d73efe8d8a2ab42596a9258ab125623`.
-- `d3-trample-haley-controller-001/recovered/run/completion.json`: SHA `f6551f81d7682430ac488cbeca04e0c98d8ccaccf0cb58895ea1d8d3e646bd91`.
+- `d3-trample-computehost-controller-001/recovery.zip`: SHA `adddc74eb52be30f159cdfd1b403a08c6d73efe8d8a2ab42596a9258ab125623`.
+- `d3-trample-computehost-controller-001/recovered/run/completion.json`: SHA `f6551f81d7682430ac488cbeca04e0c98d8ccaccf0cb58895ea1d8d3e646bd91`.
 - `d3-trample-attribution-verification-001.json`: independent local verification of all 53 stores, including the eight qualification executions.
 
 Disposition: the original attempt stays technically invalid. A reviewed correction must reconcile the historical parity requirement with legitimate corrected-engine behavior, without restoring the trample defect, dropping affected conditions or silently broadening normalization. The search timeout still needs diagnosis and an independently reviewed feasible execution contract. No ADVANCE, NO-ADVANCE, power closure or D4 selection follows from this diagnostic.

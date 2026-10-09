@@ -20,7 +20,7 @@ def require_choice(choice_path, plan_pin, binary):
     checked(binary)
     _require((choice["binary"] == binary))
     for dependency in choice["dependencies"]: checked(dependency)
-    _require((set(choice["inventory"]) == {"jack", "haleyspc", "runpod"}))
+    _require((set(choice["inventory"]) == {"desktop", "computehost", "runpod"}))
     for host, item in choice["inventory"].items():
         when = datetime.fromisoformat(item["checked_at"])
         _require((when.tzinfo and 0 <= (datetime.now(timezone.utc)-when).total_seconds() < 86400))
@@ -75,7 +75,7 @@ def require_choice(choice_path, plan_pin, binary):
         _require((all(report[field] >= 0 for field in ["staging_seconds", "execution_seconds", "recovery_seconds"])))
         _require((report["execution_seconds"] > 0))
         # Includes input placement and full-result recovery, not just native compute.
-        remote_setup = choice["remote_setup_seconds"] if "haleyspc" in report["allocation"] else 0
+        remote_setup = choice["remote_setup_seconds"] if "computehost" in report["allocation"] else 0
         projected = remote_setup+report["staging_seconds"]+scale*(report["execution_seconds"]+report["recovery_seconds"])
         options.append(dict(id=candidate["id"], allocation=report["allocation"], projected_seconds=projected))
     _require((set(measured) == {tuple(row) for row in choice["eligible_storage"]}))

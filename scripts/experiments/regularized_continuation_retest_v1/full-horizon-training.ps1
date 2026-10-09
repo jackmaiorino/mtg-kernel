@@ -3,7 +3,7 @@ param(
     [string]$Gate3ManifestPath = 'D:\mtg-kernel-regularized-continuation-retest-v1\development\seed-1940001\coefficient-screen\attempt-002\coefficient-manifest.json',
     [string]$Gate4ManifestPath = 'D:\mtg-kernel-regularized-continuation-retest-v1\development\seed-1942001\gross-safety\attempt-001\gross-safety-manifest.json',
     [string]$ThroughputManifestPath = 'D:\mtg-kernel-regularized-continuation-retest-v1\preflight\seed-969999\throughput-screen\attempt-007\throughput-manifest.json',
-    [string]$DesignDocumentPath = 'C:\Users\Jack\IdeaProjects\mtg-kernel-composed-factorial-v1-codex\docs\native_regularized_continuation_retest_v1.md',
+    [string]$DesignDocumentPath = "$env:USERPROFILE\IdeaProjects\mtg-kernel-composed-factorial-v1-codex\docs\native_regularized_continuation_retest_v1.md",
     [switch]$PreflightOnly
 )
 

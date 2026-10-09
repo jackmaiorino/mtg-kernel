@@ -20,6 +20,10 @@ gameplay-decision-trace-v1 = []
 # Append the FDN registry to the frozen Pauper registry. Off by default so
 # existing Pauper provenance, commitments and store bytes keep their identity.
 limited-fdn-fixtures = []
+# Append the MageZero Standard registry to the frozen Pauper registry instead of
+# the FDN one. It enables `limited-fdn-fixtures` only for that feature's rules
+# behavior; build.rs selects the Standard card file and catalog identity.
+standard-magezero-fixtures = ["limited-fdn-fixtures"]
 # PERFORMANCE-ONLY instrumentation for examples/bench_kernel.rs (section 5,
 # allocator profile): installs a counting global allocator wrapping the
 # system allocator. Off by default; no effect on any normal build/test.
