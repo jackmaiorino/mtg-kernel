@@ -85,6 +85,25 @@ fn settle(state: &mut GameState) {
     panic!("did not settle");
 }
 
+fn pass_end_into_cleanup(state: &mut GameState) {
+    assert!(state.stack.is_empty());
+    assert!(!state.engine.until_end_of_turn.is_empty());
+    let active = state.active_player;
+    state.step = Step::End;
+    state.priority_player = active;
+    state.engine.priority_passes = [false, false];
+    for _ in 0..8 {
+        assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
+        if state.active_player != active {
+            assert_eq!(state.active_player, active.opponent());
+            assert!(state.engine.until_end_of_turn.is_empty());
+            return;
+        }
+        engine::step(state, Action::Pass).unwrap();
+    }
+    panic!("End passes did not enter Cleanup and the next turn");
+}
+
 fn cast_targeted(state: &mut GameState, name: &str, target: ObjectId) -> ObjectId {
     let spell = put(state, PlayerId::P0, name, Zone::Hand);
     state.players[0].mana_pool = [5; 6];
@@ -248,8 +267,7 @@ fn eagle_uses_layered_flying_and_team_boost_applies_after_base_override() {
         Zone::Battlefield,
     );
     assert_eq!(stats(&state, elf), (5, 5));
-    state.step = Step::Cleanup;
-    next(&mut state);
+    pass_end_into_cleanup(&mut state);
     assert!(!engine::has_effective_keyword(
         &state,
         elf,

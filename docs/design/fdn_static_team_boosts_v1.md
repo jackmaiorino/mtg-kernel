@@ -43,7 +43,8 @@ apply this feature-gated team table.
 Nine prepared focused regressions cover printed metadata and costs, both seats,
 late entrants, noncreatures, reach versus flying, other-only and cumulative
 lords, source/recipient control and zone changes, source suppression, flying
-grants before/after removal and expiry, layer-7b base overrides, lethal damage
+grants before/after removal and expiry through real End-to-Cleanup passes,
+layer-7b base overrides, lethal damage
 after source departure, actual unblocked combat, and pending-cast JSON/snapshot
 restore. These tests are unexecuted and require the future registry definitions.
 Pinned Rust 1.94.1 formatting and diff checks are the available source checks.
