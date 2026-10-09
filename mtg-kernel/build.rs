@@ -3401,7 +3401,6 @@ fn fdn_program_for(name: &str) -> Option<Special> {
     })
 }
 
-
 const DESTROY_TARGET0_ON_BATTLEFIELD: &str = "EffectOp::Conditional { cond: EffectCond::TargetInZone(0, Zone::Battlefield), then: Box::new(EffectOp::DestroyObject { object: ObjectRef::Target(0) }), else_: Box::new(EffectOp::Sequence(vec![])) }";
 
 /// MageZero Standard spells that compose generic effect operations.
