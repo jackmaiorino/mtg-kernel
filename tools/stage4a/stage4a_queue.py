@@ -47,7 +47,13 @@ def no_ecoqos(pid):
     class State(ctypes.Structure):
         _fields_ = [("Version", ctypes.c_ulong), ("ControlMask", ctypes.c_ulong), ("StateMask", ctypes.c_ulong)]
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.restype = ctypes.c_void_p
+    k32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+    k32.SetProcessInformation.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_ulong]
+    k32.CloseHandle.argtypes = [ctypes.c_void_p]
     h = k32.OpenProcess(0x0200, False, pid)
+    if not h:
+        return False
     s = State(1, 1, 0)
     ok = k32.SetProcessInformation(h, 4, ctypes.byref(s), ctypes.sizeof(s))
     k32.CloseHandle(h)
@@ -72,7 +78,13 @@ def run_job(item):
     with (OUT / f"{item['name']}.log").open("a") as stream:
         flags = subprocess.BELOW_NORMAL_PRIORITY_CLASS if os.name == "nt" else 0
         p = subprocess.Popen(command, env=env, stdout=stream, stderr=subprocess.STDOUT, creationflags=flags)
-        log(f"{item['name']} pid {p.pid} ecoqos off {no_ecoqos(p.pid)}")
+        eco = no_ecoqos(p.pid)
+        log(f"{item['name']} pid {p.pid} ecoqos off {eco}")
+        if eco is False:
+            # BelowNormal work left under EcoQoS runs on E-cores only: fail loudly.
+            p.kill()
+            p.wait()
+            log(f"{item['name']} killed: could not switch EcoQoS off")
         code = p.wait()
     kinds = Counter()
     if out.exists():

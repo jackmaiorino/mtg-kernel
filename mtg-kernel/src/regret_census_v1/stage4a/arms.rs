@@ -295,7 +295,7 @@ impl Selection {
             "simulations_attempted":self.attempted,"completed_natural":self.completed,
             "nonnatural":self.nonnatural,"cap_reached":self.cap_reached,"incomplete":self.incomplete,
             "faults":self.faults,"sampler":self.sampler.json(),"discovery":self.discovery.json(),
-            "d_continuation":self.d.json(),"fallback":self.choice.is_none() && self.extra.get("tree").is_none(),
+            "d_continuation":self.d.json(),"no_completed_evidence":self.completed == 0,"fallback":self.choice.is_none() && self.extra.get("tree").is_none(),
             "extra":self.extra})
     }
 }
@@ -610,11 +610,12 @@ impl Roles {
                         break 'rounds;
                     }
                     Err(PlayErr::Fault(e)) => {
-                        if sel.faults.len() < 8 {
-                            sel.faults.push(e.chars().take(300).collect());
-                        }
-                        ok = false;
-                        break;
+                        // An instrument fault invalidates the root: stop
+                        // (a fault before any transition would otherwise
+                        // repeat without charging the ceiling).
+                        sel.faults.push(e.chars().take(300).collect());
+                        sel.incomplete = true;
+                        break 'rounds;
                     }
                 }
             }
@@ -686,7 +687,7 @@ impl Roles {
                         let (edge_index, edge) = match tree.find(&key, &parent.0, &parent.1, &cn)? {
                             Found::Hit(node) => {
                                 let e = node.select();
-                                (e, cn.menu[e].clone())
+                                (e, cn.edges[e].clone())
                             }
                             Found::Miss => {
                                 let node = Node::new(
@@ -700,7 +701,7 @@ impl Roles {
                                 let e = node.select();
                                 new = Some((key, node));
                                 in_tree = false;
-                                (e, cn.menu[e].clone())
+                                (e, cn.edges[e].clone())
                             }
                         };
                         path.push((key, edge_index));
@@ -767,9 +768,9 @@ impl Roles {
                     break;
                 }
                 Err(PlayErr::Fault(e)) => {
-                    if sel.faults.len() < 8 {
-                        sel.faults.push(e.chars().take(300).collect());
-                    }
+                    sel.faults.push(e.chars().take(300).collect());
+                    sel.incomplete = true;
+                    break;
                 }
             }
         }
@@ -797,6 +798,7 @@ impl Roles {
         let mut meter = Meter::new(ctx.limits.eval_cap);
         let mut c = Counters::default();
         let mut suffix = Suffix::new(ctx.cast_root);
+        suffix.history = Some([0u8; 32]);
         if arm == "E" {
             let mut stats = EStats::default();
             let r = self.frozen(
@@ -892,7 +894,7 @@ impl Roles {
                                             stats.root_qualified = true;
                                         }
                                         stats.executed.push((depth, node.n[e]));
-                                        live_index(&cn, &cn.menu[e])?
+                                        live_index(&cn, &cn.edges[e])?
                                     }
                                     None => {
                                         stats.fallbacks += 1;

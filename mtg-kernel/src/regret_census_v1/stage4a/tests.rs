@@ -292,3 +292,255 @@ fn small_root_package_is_deterministic_and_within_ceilings() {
     };
     assert_eq!(run(), run());
 }
+
+#[test]
+#[ignore = "diagnostic: lists numeric observation fields"]
+fn list_numeric_observation_fields() {
+    fn walk(v: &serde_json::Value, path: &str, out: &mut std::collections::BTreeMap<String, u64>) {
+        match v {
+            serde_json::Value::Object(m) => {
+                for (k, x) in m {
+                    walk(x, &format!("{path}.{k}"), out)
+                }
+            }
+            serde_json::Value::Array(a) => {
+                a.iter().for_each(|x| walk(x, &format!("{path}[]"), out))
+            }
+            serde_json::Value::Number(_) => *out.entry(path.to_owned()).or_default() += 1,
+            _ => {}
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    for game in 0..81u64 {
+        each_decision(game, |s, d| {
+            if let Ok((o, sem)) = s.actor_visible_decision_v4(*d) {
+                walk(&serde_json::to_value(&o).unwrap(), "obs", &mut out);
+                walk(&serde_json::to_value(&sem).unwrap(), "sem", &mut out);
+            }
+        });
+    }
+    for (k, n) in out {
+        eprintln!("FIELD {k} {n}");
+    }
+}
+
+/// Node keys follow the focal player's visible history, not engine handles:
+/// swapping two hidden library objects of the same card (own and opponent
+/// library) changes which handles are drawn but nothing visible, so every
+/// focal node key, edge set and executed edge along the same play matches.
+#[test]
+fn node_keys_ignore_hidden_engine_handles() {
+    let mut checked = 0u64;
+    let mut swapped_draws = 0u64;
+    for game in [3u64, 13, 23, 33, 43] {
+        let mut root = None;
+        let mut n = 0;
+        each_decision(game, |s, d| {
+            n += 1;
+            if root.is_none() && n > 30 && d.legal_action_count >= 2 {
+                root = Some(s.clone());
+            }
+        });
+        let a0 = root.expect("a root");
+        let d0 = play::decision(&a0).unwrap();
+        let focal = play::acting(&d0);
+        let mut pairs = Vec::new();
+        {
+            let st = a0.game_state();
+            for owner in [focal, focal.opponent()] {
+                let lib = &st.players[owner.index()].library;
+                let known: Vec<u32> = st
+                    .known_library_cards(focal, owner)
+                    .iter()
+                    .map(|k| k.position)
+                    .collect();
+                let unknown: Vec<usize> = (0..lib.len())
+                    .filter(|i| !known.contains(&(*i as u32)))
+                    .collect();
+                'pair: for (x, &i) in unknown.iter().enumerate() {
+                    for &j in &unknown[x + 1..] {
+                        if st.objects.get(lib[i]).card_def == st.objects.get(lib[j]).card_def {
+                            pairs.push((owner, i, j));
+                            break 'pair;
+                        }
+                    }
+                }
+            }
+        }
+        let swaps = pairs.len();
+        let b0 = a0.census_edited_clone_v1(|st| {
+            for &(owner, i, j) in &pairs {
+                st.players[owner.index()].library.swap(i, j);
+            }
+        });
+        if swaps == 0 {
+            continue;
+        }
+        swapped_draws += 1;
+        let (mut a, mut b) = (a0.clone(), b0);
+        let mut pa = (fixture(), fixture());
+        let mut pb = (fixture(), fixture());
+        for p in [&mut pa.0, &mut pa.1, &mut pb.0, &mut pb.1] {
+            p.reset_sampling_v1([7, 8]);
+        }
+        let (mut ka, mut kb) = (([0u8; 32], b"root".to_vec()), ([0u8; 32], b"root".to_vec()));
+        let mut meter = Meter::new(u64::MAX);
+        let defs = spy_defs();
+        let mut c = play::Counters::default();
+        for _ in 0..400 {
+            let (Some(da), Some(db)) = (play::decision(&a), play::decision(&b)) else {
+                assert_eq!(play::terminal(&a, focal), play::terminal(&b, focal));
+                break;
+            };
+            assert_eq!(play::acting(&da), play::acting(&db));
+            let (ia, ib) = if play::acting(&da) == focal && da.legal_action_count >= 2 {
+                let (ca, cb) = (tree::canon(&a, da).unwrap(), tree::canon(&b, db).unwrap());
+                let key_a = tree::child_key(&ka.0, &ka.1, &ca);
+                let key_b = tree::child_key(&kb.0, &kb.1, &cb);
+                if ca.obs != cb.obs {
+                    let (x, y) = (
+                        String::from_utf8_lossy(&ca.obs),
+                        String::from_utf8_lossy(&cb.obs),
+                    );
+                    let i = x
+                        .bytes()
+                        .zip(y.bytes())
+                        .position(|(p, q)| p != q)
+                        .unwrap_or(0);
+                    let lo = i.saturating_sub(300);
+                    panic!(
+                        "observation bytes differ at {i}:
+A ...{}
+B ...{}",
+                        &x[lo..(i + 200).min(x.len())],
+                        &y[lo..(i + 200).min(y.len())]
+                    );
+                }
+                assert_eq!(ca.edges, cb.edges, "edge sets differ");
+                assert_eq!(key_a, key_b);
+                checked += 1;
+                let ia = play::act(&mut pa.0, &a, &da, &mut c).unwrap();
+                let edge = ca.menu[ia as usize].clone();
+                let ib = tree::live_index(&cb, &edge).unwrap();
+                ka = (key_a, edge.clone());
+                kb = (key_b, edge);
+                (ia, ib)
+            } else if da.legal_action_count >= 2 {
+                // Opponent (or forced-free) choices bind by canonical action
+                // from the actor's own view, never by live index.
+                let actor_policy = if play::acting(&da) == focal {
+                    &mut pa.0
+                } else {
+                    &mut pa.1
+                };
+                let ia = play::act(actor_policy, &a, &da, &mut c).unwrap();
+                let (ca, cb) = (tree::canon(&a, da).unwrap(), tree::canon(&b, db).unwrap());
+                assert_eq!(ca.edges, cb.edges, "actor edge sets differ");
+                let ib = tree::live_index(&cb, &ca.menu[ia as usize]).unwrap();
+                (ia, ib)
+            } else {
+                (0, 0)
+            };
+            play::apply(&mut a, &da, ia, &mut meter, focal, None, &defs).unwrap();
+            play::apply(&mut b, &db, ib, &mut meter, focal, None, &defs).unwrap();
+        }
+    }
+    eprintln!("handle-invariance: {checked} focal nodes over {swapped_draws} swapped games");
+    assert!(
+        checked > 20 && swapped_draws >= 2,
+        "{checked} {swapped_draws}"
+    );
+}
+
+/// Scripted Spy line on the real engine: the suffix labels record each
+/// resolution in order; targeting the opponent instead never completes.
+fn scripted_spy_line(self_target: bool) -> labels::Suffix {
+    use crate::card_def::{CardType, CARD_DEFS};
+    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::rl::{ActionSemanticV1, PlayerSeatV1, TargetRefV1};
+    use crate::state::Zone;
+    let defs = spy_defs();
+    let spy_deck = &RUNTIME_DECKS[spy_index()];
+    let creatures: Vec<&str> = spy_deck
+        .card_ids
+        .iter()
+        .map(|&c| &CARD_DEFS[c as usize])
+        .filter(|c| {
+            c.types.contains(&CardType::Creature)
+                && !matches!(c.name, "Balustrade Spy" | "Lotleth Giant")
+        })
+        .map(|c| c.name)
+        .collect();
+    let mut st = ready_state();
+    let me = PlayerId::P0;
+    put(&mut st, me, "Balustrade Spy", Zone::Hand);
+    st.players[0].mana_pool[crate::mana::ManaColor::B.pool_index()] = 4;
+    put(&mut st, me, creatures[0], Zone::Battlefield);
+    put(&mut st, me, creatures[0], Zone::Battlefield);
+    for name in ["Dread Return", "Lotleth Giant", creatures[0], creatures[0]] {
+        put(&mut st, me, name, Zone::Library);
+    }
+    for _ in 0..10 {
+        put(&mut st, me.opponent(), "Swamp", Zone::Library);
+    }
+    let mut s = crate::rl_session::FastActorSessionV1::from_v3_fixture_state(st);
+    let mut suffix = labels::Suffix::new(true);
+    let mut meter = Meter::new(10_000);
+    for _ in 0..300 {
+        let Some(d) = play::decision(&s) else { break };
+        let sem = s.diagnostic_current_action_semantics().unwrap();
+        let pick = |pred: &dyn Fn(&ActionSemanticV1) -> bool| sem.iter().position(pred);
+        let is_src = |src: &crate::rl::CardStableRefV1, def: u16| src.card_db_id == def;
+        let a = if play::acting(&d) == me {
+            pick(&|x| matches!(x, ActionSemanticV1::CastSpell { source, .. } if is_src(source, defs.spy) || is_src(source, defs.dread_return)))
+                .or_else(|| {
+                    pick(&|x| match x {
+                        ActionSemanticV1::ChooseTarget { source, target, .. } if is_src(source, defs.spy) => {
+                            matches!(target, TargetRefV1::Player { player } if (*player == PlayerSeatV1::P0) == self_target)
+                        }
+                        ActionSemanticV1::ChooseTarget { source, target, .. } if is_src(source, defs.dread_return) => {
+                            matches!(target, TargetRefV1::Object { object } if object.card_db_id == defs.giant)
+                        }
+                        _ => false,
+                    })
+                })
+                .or_else(|| pick(&|x| !matches!(x, ActionSemanticV1::Pass { .. } | ActionSemanticV1::CastSpell { .. } | ActionSemanticV1::ActivateAbility { .. } | ActionSemanticV1::PlayLand { .. })))
+                .or_else(|| pick(&|x| matches!(x, ActionSemanticV1::Pass { .. })))
+                .unwrap_or(0)
+        } else {
+            pick(&|x| matches!(x, ActionSemanticV1::Pass { .. })).unwrap_or(0)
+        };
+        if play::acting(&d) == me && d.legal_action_count >= 2 {
+            play::observe(Some(&mut suffix), &s, a as u32, me, &defs);
+        }
+        play::apply(
+            &mut s,
+            &d,
+            a as u32,
+            &mut meter,
+            me,
+            Some(&mut suffix),
+            &defs,
+        )
+        .unwrap();
+        if suffix.complete() || s.game_state().turn > 1 {
+            break;
+        }
+    }
+    suffix
+}
+
+#[test]
+fn suffix_labels_follow_a_scripted_spy_line() {
+    let done = scripted_spy_line(true);
+    assert!(done.spy_resolved, "{done:?}");
+    assert!(done.self_target_resolved, "{done:?}");
+    assert!(done.dr_giant_resolved, "{done:?}");
+    assert!(done.complete(), "{done:?}");
+    let other = scripted_spy_line(false);
+    assert!(
+        other.spy_resolved && !other.self_target_resolved,
+        "{other:?}"
+    );
+    assert!(!other.complete(), "{other:?}");
+}

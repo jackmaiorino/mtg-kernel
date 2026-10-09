@@ -477,6 +477,19 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
     } else {
         HashSet::new()
     };
+    // A kill can leave a partial last line; cut it so the next row starts
+    // on its own line (its root is simply rerun).
+    if let Ok(bytes) = std::fs::read(&cfg.out) {
+        if !bytes.is_empty() && !bytes.ends_with(b"\n") {
+            let keep = bytes.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+            std::fs::write(&cfg.out, &bytes[..keep]).map_err(|e| e.to_string())?;
+            eprintln!(
+                "cut a partial last line ({} bytes) from {}",
+                bytes.len() - keep,
+                cfg.out
+            );
+        }
+    }
     let sink = Mutex::new(
         std::fs::OpenOptions::new()
             .create(true)

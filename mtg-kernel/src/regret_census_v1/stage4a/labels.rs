@@ -63,6 +63,18 @@ pub(crate) struct Before {
     pub(crate) self_chosen_now: bool,
 }
 
+impl Before {
+    /// The focal player chose to cast Spy in this transition: the spell can
+    /// be cast, finalized and resolved within it, so watch its hand objects.
+    pub(crate) fn watch_spy_cast(&mut self, state: &GameState, focal: PlayerId, d: &SpyDefs) {
+        for &o in &state.players[focal.index()].hand {
+            if state.objects.get(o).card_def == d.spy && !self.spy_spells.contains(&o) {
+                self.spy_spells.push(o);
+            }
+        }
+    }
+}
+
 fn is_spell(item: &StackItem, state: &GameState) -> bool {
     item.inline_effect.is_none() && state.objects.get(item.source).zone == Zone::Stack
 }
@@ -204,6 +216,14 @@ pub(crate) struct Suffix {
     /// Set by `observe_menu` when the focal player chooses the Spy
     /// self-target; read and cleared by the next transition.
     pub(crate) self_pending: bool,
+    /// Set by `observe_menu` when the focal player chooses to cast Spy; read
+    /// and cleared by the next transition.
+    pub(crate) cast_pending: bool,
+    /// Evaluation only: SHA-256 chain over every transition's acting seat
+    /// and chosen action semantic (both players), for retained-failure
+    /// diagnosis without rerunning. `None` in selection playouts.
+    pub(crate) history: Option<[u8; 32]>,
+    pub(crate) history_len: u64,
 }
 
 impl Suffix {
@@ -252,6 +272,7 @@ impl Suffix {
             self.self_offered |= own;
             self.self_chosen |= own && chosen;
             self.self_pending |= own && chosen;
+            self.cast_pending |= cast && chosen;
             self.dr_giant_offered |= dr;
             self.dr_giant_chosen |= dr && chosen;
         }
@@ -263,7 +284,9 @@ impl Suffix {
             "self_offered":self.self_offered,"self_chosen":self.self_chosen,
             "dr_giant_offered":self.dr_giant_offered,"dr_giant_chosen":self.dr_giant_chosen,
             "spy_resolved":self.spy_resolved,"self_target_resolved":self.self_target_resolved,
-            "dr_giant_resolved":self.dr_giant_resolved,"dr_giant_stacked":self.dr_giant_stacked})
+            "dr_giant_resolved":self.dr_giant_resolved,"dr_giant_stacked":self.dr_giant_stacked,
+            "action_history_sha256":self.history.map(|h| h.iter().map(|b| format!("{b:02x}")).collect::<String>()),
+            "action_history_len":self.history_len})
     }
 }
 

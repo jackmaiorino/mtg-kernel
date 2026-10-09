@@ -40,47 +40,174 @@ pub(crate) struct Canon {
     /// Canonical bytes per live candidate, in live order, with an occurrence
     /// ordinal appended to exact duplicates.
     pub(crate) menu: Vec<Vec<u8>>,
+    /// The same canonical actions, sorted: a node's edges.
+    pub(crate) edges: Vec<Vec<u8>>,
 }
 
-fn collect_ids(v: &Value, order: &mut Vec<u64>, min_zcc: &mut HashMap<u64, u64>) {
+/// Engine handles and counters found in one observation (first pass).
+#[derive(Default)]
+struct Handles {
+    /// Object handles in order of first appearance (`arena_id` fields and
+    /// `attachments` lists).
+    order: Vec<u64>,
+    /// Smallest `zone_change_count` shown per object.
+    min_zcc: HashMap<u64, u64>,
+    /// Distinct continuous-effect `timestamp` values (sorted later).
+    stamps: Vec<u64>,
+}
+
+impl Handles {
+    fn see(&mut self, id: u64) {
+        if !self.order.contains(&id) {
+            self.order.push(id);
+        }
+    }
+
+    fn index(&self, id: u64) -> u64 {
+        self.order.iter().position(|&x| x == id).expect("collected") as u64
+    }
+}
+
+fn collect_ids(v: &Value, h: &mut Handles) {
     match v {
         Value::Object(m) => {
             if let Some(id) = m.get("arena_id").and_then(Value::as_u64) {
-                if !order.contains(&id) {
-                    order.push(id);
-                }
+                h.see(id);
                 if let Some(z) = m.get("zone_change_count").and_then(Value::as_u64) {
-                    let e = min_zcc.entry(id).or_insert(z);
+                    let e = h.min_zcc.entry(id).or_insert(z);
                     *e = (*e).min(z);
                 }
             }
+            if let Some(Value::Array(a)) = m.get("attachments") {
+                a.iter().filter_map(Value::as_u64).for_each(|id| h.see(id));
+            }
+            if let Some(t) = m.get("timestamp").and_then(Value::as_u64) {
+                if !h.stamps.contains(&t) {
+                    h.stamps.push(t);
+                }
+            }
             for x in m.values() {
-                collect_ids(x, order, min_zcc);
+                collect_ids(x, h);
             }
         }
-        Value::Array(a) => a.iter().for_each(|x| collect_ids(x, order, min_zcc)),
+        Value::Array(a) => a.iter().for_each(|x| collect_ids(x, h)),
         _ => {}
     }
 }
 
-fn rewrite(v: &mut Value, order: &[u64], min_zcc: &HashMap<u64, u64>) {
+/// Second pass: object handles become first-appearance indices, incarnation
+/// counters become offsets from the smallest shown for that object, effect
+/// timestamps become their rank within the observation, and exile-permission
+/// generations (absolute counters) are dropped.
+fn rewrite(v: &mut Value, h: &Handles) {
     match v {
         Value::Object(m) => {
             if let Some(id) = m.get("arena_id").and_then(Value::as_u64) {
-                let idx = order.iter().position(|&x| x == id).expect("collected") as u64;
-                m.insert("arena_id".into(), Value::from(idx));
+                m.insert("arena_id".into(), Value::from(h.index(id)));
                 if let Some(z) = m.get("zone_change_count").and_then(Value::as_u64) {
-                    let base = min_zcc.get(&id).copied().unwrap_or(z);
+                    let base = h.min_zcc.get(&id).copied().unwrap_or(z);
                     m.insert("zone_change_count".into(), Value::from(z - base));
                 }
             }
-            for x in m.values_mut() {
-                rewrite(x, order, min_zcc);
+            if let Some(Value::Array(a)) = m.get_mut("attachments") {
+                for x in a.iter_mut() {
+                    if let Some(id) = x.as_u64() {
+                        *x = Value::from(h.index(id));
+                    }
+                }
+            }
+            if let Some(t) = m.get("timestamp").and_then(Value::as_u64) {
+                let rank = h.stamps.iter().filter(|&&s| s < t).count() as u64;
+                m.insert("timestamp".into(), Value::from(rank));
+            }
+            m.remove("zone_change_generation");
+            for (k, x) in m.iter_mut() {
+                if k != "attachments" {
+                    rewrite(x, h);
+                }
             }
         }
-        Value::Array(a) => a.iter_mut().for_each(|x| rewrite(x, order, min_zcc)),
+        Value::Array(a) => a.iter_mut().for_each(|x| rewrite(x, h)),
         _ => {}
     }
+}
+
+/// Sort key of an observation element: its JSON with engine handles and
+/// incarnation counters masked.
+fn masked(v: &Value) -> String {
+    fn mask(v: &mut Value) {
+        match v {
+            Value::Object(m) => {
+                for k in ["arena_id", "zone_change_count", "attachments"] {
+                    if m.contains_key(k) {
+                        m.insert(k.into(), Value::Null);
+                    }
+                }
+                m.values_mut().for_each(mask);
+            }
+            Value::Array(a) => a.iter_mut().for_each(mask),
+            _ => {}
+        }
+    }
+    let mut x = v.clone();
+    mask(&mut x);
+    x.to_string()
+}
+
+/// Observation lists of objects (hands, zones, known cards, effects) can be
+/// ordered by engine handles; order them by masked content instead. Lists
+/// whose order is information carry it as a field (stack and library
+/// positions), so sorting by content keeps it. Never applied to the menu.
+fn sort_object_lists(v: &mut Value) {
+    match v {
+        Value::Object(m) => m.values_mut().for_each(sort_object_lists),
+        Value::Array(a) => {
+            a.iter_mut().for_each(sort_object_lists);
+            if a.len() > 1 && a.iter().all(Value::is_object) {
+                let mut keyed: Vec<(String, Value)> =
+                    a.drain(..).map(|x| (masked(&x), x)).collect();
+                keyed.sort_by(|x, y| x.0.cmp(&y.0));
+                a.extend(keyed.into_iter().map(|(_, x)| x));
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Timestamps become their rank within the observation; exile-permission
+/// generations are dropped (both are absolute engine counters).
+fn rank_counters(v: &mut Value) {
+    fn stamps(v: &Value, out: &mut Vec<u64>) {
+        match v {
+            Value::Object(m) => {
+                if let Some(t) = m.get("timestamp").and_then(Value::as_u64) {
+                    out.push(t);
+                }
+                m.values().for_each(|x| stamps(x, out));
+            }
+            Value::Array(a) => a.iter().for_each(|x| stamps(x, out)),
+            _ => {}
+        }
+    }
+    fn apply(v: &mut Value, all: &[u64]) {
+        match v {
+            Value::Object(m) => {
+                if let Some(t) = m.get("timestamp").and_then(Value::as_u64) {
+                    let rank = all.iter().filter(|&&s| s < t).count() as u64;
+                    m.insert("timestamp".into(), Value::from(rank));
+                }
+                m.remove("zone_change_generation");
+                m.values_mut().for_each(|x| apply(x, all));
+            }
+            Value::Array(a) => a.iter_mut().for_each(|x| apply(x, all)),
+            _ => {}
+        }
+    }
+    let mut all = Vec::new();
+    stamps(v, &mut all);
+    all.sort_unstable();
+    all.dedup();
+    apply(v, &all);
 }
 
 /// Canonical bytes of the current focal decision.
@@ -103,14 +230,19 @@ pub(crate) fn canon(s: &FastActorSessionV1, d: FastActorDecisionV1) -> Result<Ca
         .iter()
         .map(|x| serde_json::to_value(x).map_err(|e| PlayErr::Fault(e.to_string())))
         .collect::<Result<_, _>>()?;
-    let (mut order, mut min_zcc) = (Vec::new(), HashMap::new());
-    collect_ids(&obs, &mut order, &mut min_zcc);
-    for x in &sem {
-        collect_ids(x, &mut order, &mut min_zcc);
-    }
-    rewrite(&mut obs, &order, &min_zcc);
+    rank_counters(&mut obs);
     for x in &mut sem {
-        rewrite(x, &order, &min_zcc);
+        rank_counters(x);
+    }
+    sort_object_lists(&mut obs);
+    let mut handles = Handles::default();
+    collect_ids(&obs, &mut handles);
+    for x in &sem {
+        collect_ids(x, &mut handles);
+    }
+    rewrite(&mut obs, &handles);
+    for x in &mut sem {
+        rewrite(x, &handles);
     }
     let obs = serde_json::to_vec(&obs).map_err(|e| PlayErr::Fault(e.to_string()))?;
     let mut raw: Vec<Vec<u8>> = Vec::with_capacity(sem.len());
@@ -127,7 +259,11 @@ pub(crate) fn canon(s: &FastActorSessionV1, d: FastActorDecisionV1) -> Result<Ca
         }
         menu.push(m);
     }
-    Ok(Canon { obs, menu })
+    // Live candidate order can follow engine handles (identical cards), so
+    // the node's edge list is the sorted set of canonical actions.
+    let mut edges = menu.clone();
+    edges.sort();
+    Ok(Canon { obs, menu, edges })
 }
 
 pub(crate) fn child_key(parent: &Key, edge: &[u8], c: &Canon) -> Key {
@@ -140,8 +276,8 @@ pub(crate) fn child_key(parent: &Key, edge: &[u8], c: &Canon) -> Key {
     put(parent);
     put(edge);
     put(&c.obs);
-    put(&(c.menu.len() as u64).to_le_bytes());
-    for m in &c.menu {
+    put(&(c.edges.len() as u64).to_le_bytes());
+    for m in &c.edges {
         put(m);
     }
     h.finalize().into()
@@ -188,7 +324,7 @@ impl Node {
         depth: u32,
         seeds: &RootSeeds,
     ) -> Self {
-        let k = canon.menu.len();
+        let k = canon.edges.len();
         Self {
             parent,
             edge,
@@ -238,7 +374,10 @@ impl Node {
     }
 
     fn same(&self, parent: &Key, edge: &[u8], canon: &Canon) -> bool {
-        self.parent == *parent && self.edge == edge && self.canon == *canon
+        self.parent == *parent
+            && self.edge == edge
+            && self.canon.obs == canon.obs
+            && self.canon.edges == canon.edges
     }
 }
 
@@ -324,9 +463,11 @@ mod tests {
             model: "r1".into(),
             root: "t".into(),
         };
+        let menu: Vec<Vec<u8>> = (0..k).map(|i| vec![i as u8]).collect();
         let canon = Canon {
             obs: vec![],
-            menu: (0..k).map(|i| vec![i as u8]).collect(),
+            edges: menu.clone(),
+            menu,
         };
         Node::new(&[1; 32], [0; 32], vec![], canon, 1, &seeds)
     }
@@ -375,14 +516,26 @@ mod tests {
     fn canonical_ids_are_first_appearance_and_zcc_relative() {
         let mut v = serde_json::json!({"a":{"arena_id":90,"zone_change_count":7},
             "b":[{"arena_id":12,"zone_change_count":3},{"arena_id":90,"zone_change_count":9}]});
-        let (mut o, mut z) = (Vec::new(), HashMap::new());
-        collect_ids(&v, &mut o, &mut z);
-        rewrite(&mut v, &o, &z);
+        let mut h = Handles::default();
+        collect_ids(&v, &mut h);
+        rewrite(&mut v, &h);
         assert_eq!(v["a"]["arena_id"], 0);
         assert_eq!(v["a"]["zone_change_count"], 0);
         assert_eq!(v["b"][0]["arena_id"], 1);
         assert_eq!(v["b"][0]["zone_change_count"], 0);
         assert_eq!(v["b"][1]["arena_id"], 0);
         assert_eq!(v["b"][1]["zone_change_count"], 2);
+        let mut w = serde_json::json!({"c":{"arena_id":5,"attachments":[9,5]},
+            "e":[{"timestamp":700},{"timestamp":40},{"timestamp":700}],
+            "p":{"object":{"arena_id":9},"zone_change_generation":31}});
+        let mut h = Handles::default();
+        collect_ids(&w, &mut h);
+        rewrite(&mut w, &h);
+        assert_eq!(w["c"]["attachments"], serde_json::json!([1, 0]));
+        assert_eq!(
+            w["e"],
+            serde_json::json!([{"timestamp":1},{"timestamp":0},{"timestamp":1}])
+        );
+        assert_eq!(w["p"], serde_json::json!({"object":{"arena_id":1}}));
     }
 }

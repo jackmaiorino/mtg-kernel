@@ -114,13 +114,40 @@ pub(crate) fn apply(
     let before = labels.as_ref().map(|l| {
         let mut b = Before::take(s.game_state(), focal, defs);
         b.self_chosen_now = l.self_pending;
+        if l.cast_pending {
+            b.watch_spy_cast(s.game_state(), focal, defs);
+        }
         b
     });
+    let mut labels = labels;
+    if let Some(l) = labels.as_deref_mut() {
+        if let Some(h) = l.history {
+            use sha2::{Digest, Sha256};
+            let sem = s
+                .diagnostic_current_action_semantics()
+                .and_then(|v| {
+                    v.get(a as usize)
+                        .map(|x| serde_json::to_vec(x).unwrap_or_default())
+                })
+                .unwrap_or_default();
+            let mut x = Sha256::new();
+            x.update(h);
+            x.update([match d.acting_player {
+                crate::rl::PlayerSeatV1::P0 => 0u8,
+                crate::rl::PlayerSeatV1::P1 => 1u8,
+            }]);
+            x.update((sem.len() as u64).to_le_bytes());
+            x.update(&sem);
+            l.history = Some(x.finalize().into());
+            l.history_len += 1;
+        }
+    }
     s.step(d.episode_id, d.step, a)
         .map_err(|e| PlayErr::Fault(format!("step {} action {a}: {e:?}", d.step)))?;
     if let (Some(l), Some(b)) = (labels, before) {
         l.apply(events(&b, s.game_state(), focal, defs));
         l.self_pending = false;
+        l.cast_pending = false;
     }
     Ok(())
 }
