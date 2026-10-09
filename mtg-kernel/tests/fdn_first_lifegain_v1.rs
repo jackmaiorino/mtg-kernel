@@ -360,6 +360,80 @@ fn first_lifegain_malformed_ledger_and_restored_capture_fail_explicitly() {
 }
 
 #[test]
+fn first_lifegain_processed_capture_cannot_replay_in_a_later_batch() {
+    for later_event in 0..3 {
+        let mut state = ready(PlayerId::P0);
+        let seraph = put(
+            &mut state,
+            PlayerId::P0,
+            "Vanguard Seraph",
+            Zone::Battlefield,
+        );
+        gain(&mut state, PlayerId::P0, 1);
+        let old_capture = state.life_gain_turn_v1.as_ref().unwrap().captures[0].clone();
+        assert_eq!(collected(&mut state).len(), 1);
+        assert!(state.engine.event_log.is_empty());
+        assert!(state
+            .life_gain_turn_v1
+            .as_ref()
+            .unwrap()
+            .captures
+            .is_empty());
+        match later_event {
+            0 => {} // Even an empty continuation cannot redeliver the old gain.
+            1 => move_to(&mut state, seraph, Zone::Hand),
+            // Matching player/amount cannot substitute a different event index.
+            _ => gain(&mut state, PlayerId::P0, 1),
+        }
+        state
+            .life_gain_turn_v1
+            .as_mut()
+            .unwrap()
+            .captures
+            .push(old_capture);
+        let bytes = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
+        assert!(trigger::collect_and_process(&mut restored).is_empty());
+        assert_eq!(
+            restored.engine.halted,
+            Some((UnsupportedMechanic::InvalidFirstLifeGainHistory, seraph))
+        );
+        assert_eq!(
+            restored.life_gain_turn_v1.as_ref().unwrap().captures.len(),
+            1
+        );
+    }
+}
+
+#[test]
+fn first_lifegain_pending_capture_restores_with_later_atomic_events() {
+    let mut state = ready(PlayerId::P0);
+    let seraph = put(
+        &mut state,
+        PlayerId::P0,
+        "Vanguard Seraph",
+        Zone::Battlefield,
+    );
+    gain(&mut state, PlayerId::P0, 1);
+    move_to(&mut state, seraph, Zone::Hand);
+    gain(&mut state, PlayerId::P1, 2);
+    gain(&mut state, PlayerId::P0, 1);
+    let capture_index = state.life_gain_turn_v1.as_ref().unwrap().captures[0].gain_history_index;
+    assert!(capture_index < state.engine.event_history.len() - 1);
+    let snapshot = state.snapshot();
+    let bytes = serde_json::to_vec(&state).unwrap();
+    let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
+    let expected = collected(&mut state);
+    assert_eq!(expected.len(), 1);
+    assert_eq!(expected[0].source, seraph);
+    assert_eq!(expected, collected(&mut restored));
+    assert!(collected(&mut restored).is_empty());
+    state.restore(&snapshot);
+    assert_eq!(expected, collected(&mut state));
+    assert!(collected(&mut state).is_empty());
+}
+
+#[test]
 fn first_lifegain_distinct_lifelink_sources_share_only_one_first_trigger() {
     let mut state = ready(PlayerId::P0);
     let seraph = put(
