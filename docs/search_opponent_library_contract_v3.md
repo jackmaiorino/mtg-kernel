@@ -25,20 +25,21 @@ seeds or convert failed simulations to outcomes. It also catches historical
 sources whose zone-change generation advanced when they entered the library.
 The census's inherited future-RNG limitation remains.
 
-## Remaining native population migration
+## Explicit native population migration
 
 The native async rollout's full-episode receipt binds frozen Flat Action V2
 commitments for learner and opponent decisions. Its trajectory V2 envelope
-delegates to unchanged V1 decision rows. There is no native V3 scored family
-or fresh action-contract receipt. Passing V4 bytes under
+delegates to unchanged V1 decision rows. Passing V4 bytes under
 `flat_action_v2_commitment` would mislabel provenance.
 
-The native async runner therefore rejects search v3 at admission with
+The legacy native async runner therefore rejects search v3 at admission with
 `UnsupportedSearchTrajectoryContract`, before workers or games start. The
 supported caller is the public `select_action` API followed by the returned
 physical index in `FastActorSessionV1::step`; both V2 and V3 sessions work.
-Issue #187 remains open for a fresh native worker/trajectory contract that
-supports library-search decisions throughout collection and receipt replay.
+The separate [native search collection V3](native_search_collection_v3.md)
+consumer supplies a fresh V4 scorer and receipt contract for both learner and
+opponent library-search decisions throughout native collection and replay.
+Callers explicitly opt in; existing V2 trainer and Store identities remain frozen.
 
 Engineering checks cover Ent forestcycling, Hawk, basic-land fetches, both
 seats, V2 cache failure, V3 inputs, physical index mapping, repeatability,

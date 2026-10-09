@@ -229,11 +229,19 @@ impl FlatScoredFamilyCore for Family {
     #[cfg(test)]
     fn test_safe_packet_payload(packet: &Packet) -> String {
         format!(
-            "{:?}|{:?}|{:?}|{:?}",
+            "{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}",
             packet.view().common().globals(),
             packet.objects,
+            packet.relations,
+            packet.object_subtypes,
+            packet.ability_uses,
+            packet.goads,
+            packet.dungeons,
+            packet.changes,
+            packet.paths,
             packet.actions,
-            packet.refs
+            packet.refs,
+            packet.view().extensions()
         )
     }
     fn consume(

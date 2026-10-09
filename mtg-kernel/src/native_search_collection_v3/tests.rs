@@ -64,6 +64,22 @@ fn fresh_learner_and_population_dispatch_bind_library_roots_without_v2_cache() {
                     .native_full_trajectory_current_binding_v2(d)
                     .is_err());
             }
+            let (adapted, physical_indices) =
+                original_v2.kernel_search_v4_root_clone_v3(d).unwrap();
+            // Duplicate card names still refer to distinct executable objects.
+            // Each mapped command must produce the identical physical state.
+            for (canonical, physical) in physical_indices.iter().enumerate() {
+                let mut live = original_v2.clone();
+                let mut canonical_live = adapted.clone();
+                live.step(d.episode_id, d.step, *physical).unwrap();
+                canonical_live
+                    .step(d.episode_id, d.step, canonical as u32)
+                    .unwrap();
+                assert_eq!(
+                    live.privileged_core_environment_hash(),
+                    canonical_live.privileged_core_environment_hash()
+                );
+            }
             let before = session.privileged_core_environment_hash();
             let packet = Family::encode_packet(
                 &session,
@@ -152,6 +168,11 @@ fn fresh_native_eight_slot_collection_finishes_and_replays_receipts() {
     let replay =
         collect_native_search_population_v3(config, 7101, population(), &mut ZeroScorer).unwrap();
     assert_eq!(first.receipts.len(), 1);
+    assert_eq!(
+        first.result.episodes[0].terminal.terminal_classification,
+        crate::rl::TerminalClassificationV1::Natural
+    );
+    assert!(first.receipts[0].opponent_policy_step_count() > 0);
     assert_eq!(first.receipts, replay.receipts);
     assert_eq!(first.result.episodes, replay.result.episodes);
     assert!(!first.learner_decisions.is_empty());
@@ -171,11 +192,12 @@ fn fresh_native_eight_slot_collection_finishes_and_replays_receipts() {
 
 #[test]
 fn lawful_reference_rejection_uses_validated_visible_menu_once() {
+    let mut paired = None;
     for reverse in [false, true] {
         let mut state = crate::rl_session::search_library_fixture_v3(
             PlayerId::P0,
             0,
-            &["Forest", "Island", "Snow-Covered Forest", "Lightning Bolt"],
+            &["Forest", "Forest", "Snow-Covered Forest", "Lightning Bolt"],
             reverse,
             false,
             false,
@@ -199,6 +221,34 @@ fn lawful_reference_rejection_uses_validated_visible_menu_once() {
             select_search_root_for_collection_v3(&search, &session, d, true).unwrap();
         assert!(rejected);
         assert_eq!(before, session.privileged_core_environment_hash());
+        let packet = Family::encode_packet(
+            &session,
+            d,
+            &mut FlatDecisionEncoderV4::default(),
+            Packet::default(),
+        )
+        .unwrap();
+        let action = packet.actions[selected as usize];
+        let selected_visible_action = (
+            action,
+            packet.refs
+                [action.ref_start as usize..action.ref_start as usize + action.ref_len as usize]
+                .iter()
+                .map(|reference| {
+                    (
+                        *reference,
+                        packet.objects[reference.model_object_index as usize],
+                    )
+                })
+                .collect::<Vec<_>>(),
+        );
+        let visible = Family::test_safe_packet_payload(&packet);
+        if let Some((previous_view, previous_action)) = &paired {
+            assert_eq!(&visible, previous_view);
+            assert_eq!(&selected_visible_action, previous_action);
+        } else {
+            paired = Some((visible, selected_visible_action));
+        }
         let mut stale = d;
         stale.step += 1;
         assert_eq!(

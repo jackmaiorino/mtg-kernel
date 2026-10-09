@@ -6526,6 +6526,11 @@ impl FastActorSessionV1 {
         }
         let mut used = vec![false; original.len()];
         let mut indices = Vec::with_capacity(original.len());
+        // PolicyActionV5 contains the complete executable command, including
+        // physical object handles. FastActorCurrentCandidateProofV1 copies
+        // exactly this command into the mutation path. Equal commands therefore
+        // have equal engine behavior even if visible semantic normalization
+        // differs. The used-index mask keeps any equal commands bijective.
         for candidate in &current.candidates {
             let index = original
                 .iter()

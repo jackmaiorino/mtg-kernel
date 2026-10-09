@@ -56,7 +56,7 @@ pub(crate) struct FlatDecisionV4 {
 }
 
 /// The common value types are storage layouts, not a V2 identity assertion.
-/// Callers cannot construct or extract this view outside the crate.
+/// Construction is crate-private. Public accessors expose validated scorer data.
 #[derive(Clone, Copy)]
 pub struct FlatScoringDecisionViewV4<'a> {
     common: FlatScoringDecisionViewV2<'a>,
@@ -89,8 +89,7 @@ impl FastActorSessionV1 {
     /// V4 sibling of `encode_current_flat_scoring_decision_owned_v3`,
     /// reachable (compiles, callable, tested) from the same
     /// `expanded_deck_training_v1`-family scoring entry point shape without
-    /// switching any existing caller to it: no production call site invokes
-    /// this yet.
+    /// switching existing callers. Native search collection V3 explicitly opts in.
     pub(crate) fn encode_current_flat_scoring_decision_owned_v4(
         &self,
         expected: FastActorDecisionV1,

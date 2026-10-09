@@ -24,12 +24,20 @@ the scorer view and collection rows.
 The search opponent maps its canonical menu back to live physical action
 indices. Each chosen command is consumed by the real session. A precise
 `HiddenReferenceConflict` rejection from the fresh sampler invokes the
-fixed `hidden-reference-conflict-canonical-visible-first-no-retry/v1`
+fixed `hidden-reference-conflict-canonical-visible-first-fixed-be-fields-no-retry/v1`
 collection rule: choose the minimum validated handle-free V4 action-row
 key, then map that index to the live menu. The rejected seed is not retried;
 no hidden source is pinned and no search backup or outcome is invented.
 Other sampler, key, binding, authority and engine errors fail collection.
 The receipt records the rejection tag and counts each fallback separately.
+
+The minimum key uses lexicographic bytes: action kind, flags, ability/remaining/
+mode fields, option/selection/target bounds, numeric fields, mana/color/cast/cost/
+target fields and reference count, followed by each reference's role/order/card
+token and its visible object's card/group/ordinal/owner/controller/zone/incarnation.
+Integers use fixed-width big-endian bytes, including two's-complement signed
+numeric fields. Action and object table offsets are excluded. Equal keys choose
+the first canonical V4 menu index. Enum ids follow the fixed action-row vocabulary.
 
 `NativeSearchTrajectoryReceiptV3` binds a fresh digest domain, the V4 action
 contract, episode/seed/deck/seat metadata, the selected search authority
@@ -38,6 +46,8 @@ and the natural terminal. The old group/count/provenance validator is
 reused internally with zero placeholder commitments; its resulting digest
 is discarded and never claimed as V1/V2 action provenance. Foreign
 episodes, stale groups, invalid indices and non-natural terminals reject.
+Terminal bytes encode episode id, explicit outcome/classification/code/winner
+ids, rewards and policy/physical counts; formatting does not affect the digest.
 
 The result contains ordered learner selections/logits and opaque fresh
 receipts. This is an opt-in collection consumer, not an automatic migration

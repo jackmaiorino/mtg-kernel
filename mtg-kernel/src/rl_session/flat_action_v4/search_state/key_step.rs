@@ -28,6 +28,93 @@ fn hash_visible(
     Ok(hash.finalize().into())
 }
 
+/// Fixed big-endian field sequence for the V3 collection rejection rule.
+/// Excludes action/object table offsets, raw handles and private state.
+fn visible_first_key_v1(
+    core: FlatActionCoreV1,
+    references: impl IntoIterator<Item = (FlatActionRefV2, FlatActionObjectV2)>,
+) -> Vec<u8> {
+    let FlatActionCoreV1 {
+        kind,
+        flags,
+        ability_index,
+        remaining,
+        mode_index,
+        mode_count,
+        option_index,
+        option_count,
+        selected_count,
+        min_targets,
+        max_targets,
+        number,
+        minimum,
+        maximum,
+        mana_choice,
+        color,
+        cast_mode,
+        cost_kind,
+        optional_cost_choice,
+        target_kind,
+        target_player,
+        ref_start: _,
+        ref_len,
+    } = core;
+    let mut key = vec![kind as u8];
+    key.extend_from_slice(&flags.to_be_bytes());
+    key.extend_from_slice(&[ability_index, remaining, mode_index, mode_count]);
+    for value in [
+        option_index,
+        option_count,
+        selected_count,
+        min_targets,
+        max_targets,
+    ] {
+        key.extend_from_slice(&value.to_be_bytes());
+    }
+    for value in [number, minimum, maximum] {
+        key.extend_from_slice(&value.to_be_bytes());
+    }
+    key.extend_from_slice(&[
+        mana_choice,
+        color,
+        cast_mode,
+        cost_kind,
+        optional_cost_choice,
+        target_kind,
+        target_player,
+    ]);
+    key.extend_from_slice(&ref_len.to_be_bytes());
+    for (reference, object) in references {
+        let FlatActionRefV2 {
+            action_index: _,
+            role,
+            order_index,
+            associated_order,
+            card_token,
+            object_index: _,
+        } = reference;
+        let FlatActionObjectV2 {
+            card_token: object_card_token,
+            group,
+            actor_visible_ordinal,
+            owner_relative,
+            controller_relative,
+            zone,
+            zone_change_count,
+        } = object;
+        key.push(role as u8);
+        key.extend_from_slice(&order_index.to_be_bytes());
+        key.extend_from_slice(&associated_order.to_be_bytes());
+        key.extend_from_slice(&card_token.to_be_bytes());
+        key.extend_from_slice(&object_card_token.to_be_bytes());
+        key.push(group as u8);
+        key.extend_from_slice(&actor_visible_ordinal.to_be_bytes());
+        key.extend_from_slice(&[owner_relative, controller_relative, zone]);
+        key.extend_from_slice(&zone_change_count.to_be_bytes());
+    }
+    key
+}
+
 impl FastActorSessionV1 {
     pub(crate) fn kernel_search_canonical_visible_first_v4(
         &self,
@@ -53,18 +140,13 @@ impl FastActorSessionV1 {
         .map_err(|_| Error::InvalidVisibleBinding)?;
         let mut keys = Vec::with_capacity(count);
         for (index, action) in actions.iter().copied().enumerate() {
-            let mut core = action;
-            core.ref_start = 0;
-            let mut key = format!("{core:?}");
-            for reference in &refs
-                [action.ref_start as usize..action.ref_start as usize + action.ref_len as usize]
-            {
-                let object = objects[reference.object_index as usize];
-                let mut role = *reference;
-                role.action_index = 0;
-                role.object_index = 0;
-                key.push_str(&format!("{role:?}{object:?}"));
-            }
+            let key = visible_first_key_v1(
+                action,
+                refs[action.ref_start as usize
+                    ..action.ref_start as usize + action.ref_len as usize]
+                    .iter()
+                    .map(|reference| (*reference, objects[reference.object_index as usize])),
+            );
             keys.push((key, index as u32));
         }
         keys.into_iter()
@@ -146,6 +228,30 @@ impl FastActorSessionV1 {
             }
         }
         Ok(response)
+    }
+}
+
+#[cfg(test)]
+mod visible_first_key_tests {
+    use super::*;
+    #[test]
+    fn fixed_key_excludes_table_offsets_and_has_fixed_scalar_bytes() {
+        let mut core = FlatActionCoreV1::default();
+        core.flags = 0x0102;
+        core.number = -2;
+        let mut expected = vec![0; 38];
+        expected[1..3].copy_from_slice(&[1, 2]);
+        expected[17..21].copy_from_slice(&[255, 255, 255, 254]);
+        assert_eq!(visible_first_key_v1(core, []), expected);
+        core.ref_start = 71;
+        assert_eq!(visible_first_key_v1(core, []), expected);
+        let reference = FlatActionRefV2::default();
+        let object = FlatActionObjectV2::default();
+        let before = visible_first_key_v1(core, [(reference, object)]);
+        let mut moved = reference;
+        moved.action_index = 23;
+        moved.object_index = 19;
+        assert_eq!(visible_first_key_v1(core, [(moved, object)]), before);
     }
 }
 

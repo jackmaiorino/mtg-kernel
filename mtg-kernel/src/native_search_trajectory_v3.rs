@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 pub const NATIVE_SEARCH_TRAJECTORY_IDENTITY_V3: &str = "mtg-kernel-native-search-trajectory/v3";
 pub const NATIVE_SEARCH_ACTION_CONTRACT_V3: &str = "flat-action-v4-visible-menu/v3";
 pub const NATIVE_SEARCH_REJECTION_RULE_V3: &str =
-    "hidden-reference-conflict-canonical-visible-first-no-retry/v1";
+    "hidden-reference-conflict-canonical-visible-first-fixed-be-fields-no-retry/v1";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct NativeSearchTrajectoryReceiptV3 {
@@ -262,11 +262,36 @@ impl NativeSearchTrajectoryAccumulatorV3 {
         ] {
             frame(&mut self.digest, tag, &value.to_be_bytes());
         }
-        frame(
-            &mut self.digest,
-            b"terminal",
-            format!("{terminal:?}").as_bytes(),
-        );
+        let mut terminal_bytes = Vec::new();
+        terminal_bytes.extend_from_slice(&terminal.episode_id.to_be_bytes());
+        terminal_bytes.push(match terminal.terminal_outcome {
+            crate::rl::TerminalOutcomeV1::P0Win => 0,
+            crate::rl::TerminalOutcomeV1::P1Win => 1,
+            crate::rl::TerminalOutcomeV1::Draw => 2,
+            crate::rl::TerminalOutcomeV1::Truncated => 3,
+            crate::rl::TerminalOutcomeV1::Halted => 4,
+        });
+        terminal_bytes.push(match terminal.terminal_classification {
+            crate::rl::TerminalClassificationV1::Natural => 0,
+            crate::rl::TerminalClassificationV1::Truncated => 1,
+            crate::rl::TerminalClassificationV1::Halted => 2,
+        });
+        terminal_bytes.push(match terminal.terminal_code {
+            crate::rl::TerminalSafeCodeV2::NaturalGameOver => 0,
+            crate::rl::TerminalSafeCodeV2::DecisionCap => 1,
+            crate::rl::TerminalSafeCodeV2::FailClosed => 2,
+        });
+        terminal_bytes.push(match terminal.winner {
+            None => 0,
+            Some(PlayerSeatV1::P0) => 1,
+            Some(PlayerSeatV1::P1) => 2,
+        });
+        for reward in terminal.terminal_reward {
+            terminal_bytes.extend_from_slice(&reward.to_be_bytes());
+        }
+        terminal_bytes.extend_from_slice(&terminal.policy_step_count.to_be_bytes());
+        terminal_bytes.extend_from_slice(&terminal.physical_decision_count.to_be_bytes());
+        frame(&mut self.digest, b"terminal", &terminal_bytes);
         // The metadata-only V1 digest is discarded, never exposed as provenance.
         metadata.trajectory_sha256 = [0; 32];
         Ok(NativeSearchTrajectoryReceiptV3 {
