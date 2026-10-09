@@ -12,6 +12,7 @@ import hashlib
 import importlib.util
 import importlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -28,6 +29,49 @@ def save(path, value):
     with Path(path).open('x', encoding='utf-8') as stream:
         json.dump(value, stream, indent=2, allow_nan=False)
         stream.write('\n')
+
+
+def wait_for_release(reservations, dispatched, deadline):
+    """Observe the owned supervisor's exit without leaving a polling gap."""
+    token = dispatched['token']
+    state = reservations.status(token)
+    handle = None
+    if os.name == 'nt' and state.get('token_fate') == 'holds':
+        record = state['record']
+        if record['owner_pid'] == dispatched['pid']:
+            handle = reservations._OpenProcess(
+                reservations.PROCESS_QUERY_LIMITED_INFORMATION | reservations.SYNCHRONIZE,
+                False, dispatched['pid'])
+            if handle and reservations._creation_of(handle) != record['owner_process_creation_time']:
+                reservations._CloseHandle(handle)
+                handle = None
+    checks = 0
+    try:
+        while True:
+            fate = state.get('token_fate', 'unknown')
+            if fate.startswith('released'):
+                return fate
+            if fate != 'holds' or time.monotonic() > deadline:
+                raise RuntimeError('case needs investigation: ' + fate)
+            if handle:
+                # The dispatcher already owns runtime/storage supervision.
+                # This waits for completion, then verifies canonical release.
+                while time.monotonic() < deadline:
+                    result = reservations._WaitForSingleObject(handle, 60_000)
+                    if result == reservations.WAIT_OBJECT_0:
+                        break
+                    if result != reservations.WAIT_TIMEOUT:
+                        raise RuntimeError('cannot wait for owned supervisor')
+                state = reservations.status(token)
+                if state.get('token_fate') == 'holds':
+                    raise RuntimeError('supervisor ended or deadline elapsed without canonical release')
+            else:
+                time.sleep(30 if checks < 2 else 60)
+                checks += 1
+                state = reservations.status(token)
+    finally:
+        if handle:
+            reservations._CloseHandle(handle)
 
 
 def main():
@@ -79,19 +123,8 @@ def main():
                                ('state', 'pid', 'generation', 'nested') if k in dispatched}
         if dispatched.get('nested') or dispatched['state'] == 'spawn-unconfirmed':
             raise ValueError('case driver requires confirmed standalone reservation')
-        token = dispatched['token']
         deadline = began + request['wall_seconds'] + 1800
-        checks = 0
-        while True:
-            state = reservations.status(token)
-            fate = state.get('token_fate', 'unknown')
-            if fate.startswith('released'):
-                receipt['reservation_fate'] = fate
-                break
-            if fate != 'holds' or time.monotonic() > deadline:
-                raise RuntimeError('case needs investigation: ' + fate)
-            time.sleep(30 if checks < 2 else 60)
-            checks += 1
+        receipt['reservation_fate'] = wait_for_release(reservations, dispatched, deadline)
         report = root / 'report.json'
         value = json.loads(report.read_bytes())
         if not value['complete']:
