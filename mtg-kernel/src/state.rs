@@ -904,7 +904,11 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::Land
                 | TargetSpec::OpponentArtifactOrEnchantmentPermanent
                 | TargetSpec::ArtifactOrEnchantmentPermanent
-                | TargetSpec::AttackingOrBlockingCreature,
+                | TargetSpec::AttackingOrBlockingCreature
+                | TargetSpec::CreatureOrPlaneswalker
+                | TargetSpec::ArtifactEnchantmentOrFlyingCreature
+                | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour
+                | TargetSpec::OpponentNonlandPermanent,
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Battlefield,
@@ -951,6 +955,7 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::ArtifactOrEnchantmentSpellOnStack
                 | TargetSpec::SorcerySpellOnStack
                 | TargetSpec::NoncreatureSpellOnStack
+                | TargetSpec::CreatureSpellOnStack
                 | TargetSpec::ArtifactSpellOnStack
                 | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. },
             0,

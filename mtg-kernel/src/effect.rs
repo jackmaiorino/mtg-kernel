@@ -69,6 +69,8 @@ pub enum CreatureFilter {
     /// strictly two-player kernel, "not controlled by the effect's
     /// controller" and "controlled by the opponent" are the same set).
     OpponentControlled,
+    /// Every creature on both battlefields (Slagstorm).
+    All,
 }
 
 /// Battlefield creature restriction for a player-directed sacrifice.
@@ -171,6 +173,8 @@ pub enum TargetRef {
     /// (Guttersnipe, Voldaren Epicure, Grab the Prize) never needs a
     /// chosen target -- it's always exactly `ctx.controller.opponent()`.
     Opponent,
+    /// The effect's controller ("each player" damage such as Slagstorm).
+    Controller,
 }
 
 /// Which player's battlefield `EffectOp::PumpAllUntilEndOfTurn` reads.
@@ -1089,6 +1093,9 @@ pub enum EffectOp {
         power: i32,
         toughness: i32,
     },
+    /// Destroy every creature on both battlefields as one simultaneous
+    /// zone-change batch (Day of Judgment). Indestructible creatures stay.
+    DestroyAllCreatures,
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -3850,6 +3857,7 @@ fn validate_counter_target_unless_pays_program(
             | crate::card_def::TargetSpec::ArtifactOrEnchantmentSpellOnStack
             | crate::card_def::TargetSpec::SorcerySpellOnStack
             | crate::card_def::TargetSpec::NoncreatureSpellOnStack
+            | crate::card_def::TargetSpec::CreatureSpellOnStack
             | crate::card_def::TargetSpec::ArtifactSpellOnStack
     ) {
         return Err("counter-unless-pay resolving spell has a nonspell target filter".to_string());
@@ -9262,6 +9270,7 @@ impl ExecCtx {
             TargetRef::ThisSource => Target::Object(self.source),
             TargetRef::Target(i) => self.targets[i as usize],
             TargetRef::Opponent => Target::Player(self.controller.opponent()),
+            TargetRef::Controller => Target::Player(self.controller),
         }
     }
 
@@ -10829,6 +10838,7 @@ fn creature_matches_filter(
             !crate::engine::has_effective_keyword(state, object, *keyword)
         }
         CreatureFilter::OpponentControlled => live.controller != caster,
+        CreatureFilter::All => true,
     }
 }
 
@@ -11732,6 +11742,22 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 .iter()
                 .copied()
                 .map(|object| event::ProposedEvent::zone_change(object, Zone::Exile))
+                .collect();
+            event::propose_and_commit_batch(state, events);
+        }
+        EffectOp::DestroyAllCreatures => {
+            let events = [PlayerId::P0, PlayerId::P1]
+                .into_iter()
+                .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
+                .filter(|&object| {
+                    crate::engine::object_has_type(state, object, CardType::Creature)
+                        && !crate::engine::has_effective_keyword(
+                            state,
+                            object,
+                            crate::card_def::Keywords::INDESTRUCTIBLE,
+                        )
+                })
+                .map(|object| event::ProposedEvent::zone_change(object, Zone::Graveyard))
                 .collect();
             event::propose_and_commit_batch(state, events);
         }

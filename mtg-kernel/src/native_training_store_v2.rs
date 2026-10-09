@@ -713,7 +713,10 @@ fn publish_generation_v2(
         | NativeRunCatalogProfileV1::FdnKeywordCreatures
         | NativeRunCatalogProfileV1::FdnGainlandsLifegain
         | NativeRunCatalogProfileV1::FdnTriggersTricks
-        | NativeRunCatalogProfileV1::FdnEquipmentSearch => {
+        | NativeRunCatalogProfileV1::FdnEquipmentSearch
+        | NativeRunCatalogProfileV1::FdnTokensAuras
+        | NativeRunCatalogProfileV1::FdnRemovalTricks
+        | NativeRunCatalogProfileV1::FdnCountersThreats => {
             if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
                 return Err(publisher_error_v2(
                     NativeTrainingStorePublisherV2ErrorKind::CurrentCatalogProfileLiveMismatch,
@@ -2570,6 +2573,75 @@ mod windows_publisher_tests {
         assert_eq!(
             run.catalog_profile_v1(),
             NativeRunCatalogProfileV1::FdnTriggersTricks
+        );
+        let live = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        let executor = fresh_executor_v2(&live);
+        let genesis = genesis_authorities_v2(&live, &executor);
+        let result = publish_genesis_v2(&root, &run, &genesis);
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStorePublisherV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+        assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Run).exists());
+        assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Latest).exists());
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn publish_rejects_prior_fdn_batch_equipment_search_before_mutating_any_store_files() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_equipment_search_v1;
+        let store = TestStoreV2::with_skeleton("prior-fdn-equipment-search");
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_equipment_search_v1()).unwrap();
+        assert_eq!(
+            run.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnEquipmentSearch
+        );
+        let live = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        let executor = fresh_executor_v2(&live);
+        let genesis = genesis_authorities_v2(&live, &executor);
+        let result = publish_genesis_v2(&root, &run, &genesis);
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStorePublisherV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+        assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Run).exists());
+        assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Latest).exists());
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn publish_rejects_prior_fdn_batch_tokens_auras_before_mutating_any_store_files() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_tokens_auras_v1;
+        let store = TestStoreV2::with_skeleton("prior-fdn-tokens-auras");
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_tokens_auras_v1()).unwrap();
+        assert_eq!(
+            run.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnTokensAuras
+        );
+        let live = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        let executor = fresh_executor_v2(&live);
+        let genesis = genesis_authorities_v2(&live, &executor);
+        let result = publish_genesis_v2(&root, &run, &genesis);
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStorePublisherV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+        assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Run).exists());
+        assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Latest).exists());
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn publish_rejects_prior_fdn_batch_removal_tricks_before_mutating_any_store_files() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_removal_tricks_v1;
+        let store = TestStoreV2::with_skeleton("prior-fdn-removal-tricks");
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_removal_tricks_v1()).unwrap();
+        assert_eq!(
+            run.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnRemovalTricks
         );
         let live = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
         let executor = fresh_executor_v2(&live);
