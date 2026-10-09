@@ -171,24 +171,40 @@ fn first_lifegain_before_etb_is_consumed_even_without_live_sources() {
 
 #[test]
 fn first_lifegain_atomic_gain_then_etb_is_not_retroactive() {
-    let mut state = ready(PlayerId::P0);
-    let seraph = put(&mut state, PlayerId::P0, "Vanguard Seraph", Zone::Hand);
-    gain(&mut state, PlayerId::P0, 1);
-    move_to(&mut state, seraph, Zone::Battlefield);
-    gain(&mut state, PlayerId::P0, 1);
-    assert!(collected(&mut state).is_empty());
+    for name in ["Vanguard Seraph", "Cat Collector"] {
+        let mut state = ready(PlayerId::P0);
+        let source = put(&mut state, PlayerId::P0, name, Zone::Hand);
+        gain(&mut state, PlayerId::P0, 1);
+        move_to(&mut state, source, Zone::Battlefield);
+        gain(&mut state, PlayerId::P0, 1);
+        let pending = collected(&mut state);
+        if name == "Cat Collector" {
+            assert_eq!(pending.len(), 1);
+            assert_eq!(
+                pending[0].effect,
+                mtg_kernel::effect::EffectOp::CreateToken {
+                    token_def: card_id_by_name("Food Token").unwrap(),
+                    controller: mtg_kernel::effect::PlayerRef::Controller,
+                }
+            );
+        } else {
+            assert!(pending.is_empty());
+        }
+    }
 }
 
 #[test]
 fn first_lifegain_atomic_etb_then_gain_captures_the_live_incarnation() {
-    let mut state = ready(PlayerId::P0);
-    let seraph = put(&mut state, PlayerId::P0, "Vanguard Seraph", Zone::Hand);
-    move_to(&mut state, seraph, Zone::Battlefield);
-    gain(&mut state, PlayerId::P0, 1);
-    let pending = collected(&mut state);
-    assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].source, seraph);
-    assert_eq!(pending[0].source_contract.unwrap().zone_change_count, 1);
+    for (name, count) in [("Vanguard Seraph", 1), ("Cat Collector", 2)] {
+        let mut state = ready(PlayerId::P0);
+        let source = put(&mut state, PlayerId::P0, name, Zone::Hand);
+        move_to(&mut state, source, Zone::Battlefield);
+        gain(&mut state, PlayerId::P0, 1);
+        let pending = collected(&mut state);
+        assert_eq!(pending.len(), count);
+        assert!(pending.iter().all(|ability| ability.source == source
+            && ability.source_contract.unwrap().zone_change_count == 1));
+    }
 }
 
 #[test]
