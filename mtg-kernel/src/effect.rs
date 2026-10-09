@@ -1630,15 +1630,6 @@ pub enum EffectFrame {
         path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
     },
-    SurveilLibraryMany {
-        player: PlayerId,
-        requested_count: u8,
-        original_library: Vec<EffectObjectBinding>,
-        graveyard_order: Vec<EffectObjectBinding>,
-        kept_order: Option<Vec<EffectObjectBinding>>,
-        path: Vec<u16>,
-        expected_remaining_frames: Vec<EffectFrame>,
-    },
     /// Authenticated post-answer completion for Delver of Secrets' reveal
     /// choice. The actual public reveal and predicate check are deferred to
     /// this frame (matching `choose_resumable_boolean`'s "the next engine
@@ -1689,6 +1680,16 @@ pub enum EffectFrame {
         selected: Option<EffectObjectBinding>,
         path: Vec<u16>,
         canonical_path: Vec<u16>,
+    },
+    /// Appended so existing continuation Hash discriminants remain fixed.
+    SurveilLibraryMany {
+        player: PlayerId,
+        requested_count: u8,
+        original_library: Vec<EffectObjectBinding>,
+        graveyard_order: Vec<EffectObjectBinding>,
+        kept_order: Option<Vec<EffectObjectBinding>>,
+        path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
     },
 }
 
@@ -1911,16 +1912,6 @@ pub enum EffectTargetSelectionPurpose {
         canonical_path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
     },
-    SurveilLibraryMany {
-        player: PlayerId,
-        requested_count: u8,
-        original_library: Vec<EffectObjectBinding>,
-        /// None selects and orders the graveyard subset; Some orders only
-        /// the kept complement. Both stages precede every zone change.
-        graveyard_order: Option<Vec<EffectObjectBinding>>,
-        canonical_path: Vec<u16>,
-        expected_remaining_frames: Vec<EffectFrame>,
-    },
     /// Optional zero-through-N private search whose result goes to a
     /// non-hand destination. Projects like `SearchLibraryToHandMany`.
     SearchLibraryCardsToDestination {
@@ -1963,6 +1954,17 @@ pub enum EffectTargetSelectionPurpose {
         max_mana_value: u16,
         original_prefix: Vec<EffectObjectBinding>,
         canonical_path: Vec<u16>,
+    },
+    /// Appended so existing choice Hash discriminants remain fixed.
+    SurveilLibraryMany {
+        player: PlayerId,
+        requested_count: u8,
+        original_library: Vec<EffectObjectBinding>,
+        /// None selects and orders the graveyard subset; Some orders only
+        /// the kept complement. Both stages precede every zone change.
+        graveyard_order: Option<Vec<EffectObjectBinding>>,
+        canonical_path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
     },
 }
 
