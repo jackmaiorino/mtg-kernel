@@ -1,6 +1,6 @@
 {
   "schema": "flat-policy-v2-independent-goldens-v1",
-  "inventory_sha256": "7bcbc3efdf3624c58803f2311d250eb7b4256ce018ffd7fd12fc8a3a4e4c9daa",
+  "inventory_sha256": "573d6f58a32d828876a0288bf2be5295336916df23404dc42c4190b4bece57b6",
   "action_contract_binding": {
     "source_sha256": "946f495d6ba029f01b781e05b6ee70f1fe2a83f4a13167d02363ad383fe64a75",
     "canonical_sha256": "bbac470c2352819c53ea5772314d1966ba88c8235e918f8678cc78b27ec1a10f"
@@ -869,5 +869,5 @@
     "u16_max_v2_token": 65536,
     "v1_u16_max_card_db_id_disposition": "reject_checked_integer_range"
   },
-  "payload_sha256": "bc853288f001d1b9b5b9152ac2e9281aa64e209ff63071e0bf96673371d35a5c"
+  "payload_sha256": "c4f0c8d5cfbea5af86ec7efc0afaa4c6c09c7c4dc16b1ab9cab0065daca51e29"
 }

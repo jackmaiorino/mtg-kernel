@@ -129,30 +129,32 @@ pub(crate) fn linked_exile_target_fixture_v1() -> crate::state::GameState {
     let mut state = ready_state();
     // The departure trigger has finished; only the outstanding linked exile
     // authenticates the source's old Battlefield incarnation.
-    let fiend = put(&mut state, PlayerId::P1, "Mesmeric Fiend", Zone::Graveyard);
-    state.objects.get_mut(fiend).zone_change_count = 1;
-    let exiled = put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
-    event::propose_and_commit(&mut state, ProposedEvent::zone_change(exiled, Zone::Exile));
-    let exiled_zone_change_count = state.objects.get(exiled).zone_change_count;
-    state.objects.get_mut(exiled).v4.exiled_by = Some(ObjectLinkV4 {
-        object: fiend,
-        zone_change_count: 0,
-    });
-    state.engine.linked_exile_records.push(LinkedExileRecordV4 {
-        source: AbilitySourceContractV4 {
-            source: fiend,
-            card_def: state.objects.get(fiend).card_def,
-            owner: PlayerId::P1,
-            controller: PlayerId::P1,
-            zone: Zone::Battlefield,
+    for name in ["Lightning Bolt", "Dark Ritual"] {
+        let fiend = put(&mut state, PlayerId::P1, "Mesmeric Fiend", Zone::Graveyard);
+        state.objects.get_mut(fiend).zone_change_count = 1;
+        let exiled = put(&mut state, PlayerId::P0, name, Zone::Hand);
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(exiled, Zone::Exile));
+        let exiled_zone_change_count = state.objects.get(exiled).zone_change_count;
+        state.objects.get_mut(exiled).v4.exiled_by = Some(ObjectLinkV4 {
+            object: fiend,
             zone_change_count: 0,
-            attached_to: None,
-        },
-        exiled,
-        exiled_card_def: state.objects.get(exiled).card_def,
-        exiled_owner: PlayerId::P0,
-        exiled_zone_change_count,
-    });
+        });
+        state.engine.linked_exile_records.push(LinkedExileRecordV4 {
+            source: AbilitySourceContractV4 {
+                source: fiend,
+                card_def: state.objects.get(fiend).card_def,
+                owner: PlayerId::P1,
+                controller: PlayerId::P1,
+                zone: Zone::Battlefield,
+                zone_change_count: 0,
+                attached_to: None,
+            },
+            exiled,
+            exiled_card_def: state.objects.get(exiled).card_def,
+            exiled_owner: PlayerId::P0,
+            exiled_zone_change_count,
+        });
+    }
     // Keep a real priority choice, avoiding the old V4 fixture's auto-pass
     // through empty libraries to terminal before its assertion.
     put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
