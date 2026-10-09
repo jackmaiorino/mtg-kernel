@@ -10,7 +10,9 @@ use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::{ManaColor, Pip};
 use mtg_kernel::policy_surface_v5::PolicySurfaceV5;
-use mtg_kernel::rl::{observe_policy_v6, observe_v2, PendingEffectChoiceSemanticV4};
+use mtg_kernel::rl::{
+    observe_policy_v6, observe_v2, PendingEffectChoiceSemanticV4, TargetSelectionPurposeV4,
+};
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 use mtg_kernel::surface_v2::HarnessSurfaceV2;
 use mtg_kernel::trigger;
@@ -283,12 +285,23 @@ fn chooser_private_candidates_and_shape_stay_hidden_at_both_stages() {
                 .unwrap()
                 .visible_projection_hash
         );
-        let Some(PendingEffectChoiceSemanticV4::Targets { legal_targets, .. }) =
-            own.projection.engine_context.pending_effect.unwrap().choice
+        let Some(PendingEffectChoiceSemanticV4::Targets {
+            legal_targets,
+            purpose,
+            ..
+        }) = own.projection.engine_context.pending_effect.unwrap().choice
         else {
             panic!("chooser prompt");
         };
         assert_eq!(legal_targets.len(), 3 - stage);
+        assert_eq!(
+            purpose,
+            if stage == 0 {
+                TargetSelectionPurposeV4::CardSelection
+            } else {
+                TargetSelectionPurposeV4::LibraryOrder
+            }
+        );
         let Some(PendingEffectChoiceSemanticV4::Targets {
             legal_targets,
             selected_targets,
