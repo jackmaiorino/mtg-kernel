@@ -22,7 +22,7 @@
   "storage": {
     "kind": "committed small report and derived metadata; no bulk training artifacts",
     "report_cap_bytes": 4194304,
-    "bytes": 1515564
+    "bytes": 1515574
   },
   "files": [
     {
@@ -102,8 +102,8 @@
     },
     {
       "path": "remote_archive_timing.py",
-      "bytes": 2054,
-      "sha256": "2ec5fc75aef413102addb3c03515320eec824891231632e8dc851722c88b916c"
+      "bytes": 2064,
+      "sha256": "14c821317eb153dc7e084cce80686efa6ea7079a08ff6510a2c4b86ee2544afb"
     },
     {
       "path": "remote_breakdown.py",

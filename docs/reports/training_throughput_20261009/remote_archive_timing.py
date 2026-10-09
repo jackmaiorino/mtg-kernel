@@ -1,4 +1,5 @@
 import json,pathlib,subprocess,hashlib
+import os
 root=pathlib.Path(__file__).parent
 code=r'''
 import pathlib,json,datetime,hashlib
