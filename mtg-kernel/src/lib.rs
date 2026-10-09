@@ -444,6 +444,7 @@ pub mod sideboard_search_campaign_v1;
 // the real read-only `validate_native_training_store_v2` genesis-to-latest
 // walk against an externally supplied Store copy. Test-only, ignored by
 // default, never built into the product binary.
+pub(crate) mod life_gain_turn_v1;
 pub mod phase_profile;
 pub mod policy_surface_v5;
 pub(crate) mod private_physical_trajectory_core;

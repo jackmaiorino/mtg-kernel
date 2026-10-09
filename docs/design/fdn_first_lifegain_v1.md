@@ -1,0 +1,58 @@
+# FDN first actual life gain each turn
+
+Source preparation for issue #110, claimed in
+[comment 6087899788](https://github.com/jackmaiorino/mtg-kernel/issues/110#issuecomment-6087899788).
+The coordinator tentatively reserves v63 / IDs 332-333 after v61 activated
+combat and v62 surveil. Registry append, live profile pins, focused CI wiring
+and native qualification remain pending serial integration. No card support
+or passing native check is claimed by this preparation.
+
+| Card | Exact printed behavior | Existing effect |
+| --- | --- | --- |
+| Vanguard Seraph, {3}{W}, Angel Warrior, 3/3 flying | First life gain each turn: surveil 1 | Controller surveil, count 1 |
+| Cat Collector, {2}{W}, Human Citizen, 3/2 | ETB Food; first life gain during each own turn: one white 1/1 Cat | Existing Food and Cat token definitions |
+
+Oracle/printing identities and wording come from the retained Scryfall FDN
+pages in the coordinator scratch directory. Primary XMage implementations
+are [Vanguard Seraph](https://github.com/jackmaiorino/mage/blob/a5c90fe180021e70e2a644ade00eeab07f857a40/Mage.Sets/src/mage/cards/v/VanguardSeraph.java),
+[Cat Collector](https://github.com/jackmaiorino/mage/blob/a5c90fe180021e70e2a644ade00eeab07f857a40/Mage.Sets/src/mage/cards/c/CatCollector.java)
+and [the game-scoped positive-gain watcher](https://github.com/jackmaiorino/mage/blob/a5c90fe180021e70e2a644ade00eeab07f857a40/Mage/src/main/java/mage/abilities/common/GainLifeFirstTimeTriggeredAbility.java).
+Those files are clean at the cited local reference commit.
+
+`GameState::life_gain_turn_v1` is an optional engine-only ledger, enabled
+when a first-gain definition exists anywhere in the initial pool. It stores
+turn, active seat, exact permanent-history boundary index, and omitted-empty
+event-time captures. Construction and each real Untap append an anchored
+`LifeGainTurnBeganV1` history marker. Every positive committed gain consumes
+its player's ordinal, even with no family source on the battlefield; zero,
+negative and prevented lifelink damage do not consume it. Extra turns reset
+at Untap independently of changes to the round number or active seat.
+
+Immediately after each positive `LifeGain` commit, first-gain abilities
+capture existing `PendingTrigger` data with controller, definition ability
+index, source incarnation and effect. The optional queue also binds each
+capture to its committed gain history index. After resolution, validated
+captures join the ordinary waiting-trigger group before SBAs and APNAP
+ordering, and drain once. Generic final-battlefield matching skips this
+condition. A later ETB cannot see an earlier gain; a later departure,
+blink or control change cannot erase or relabel an already captured ability.
+
+Snapshots retain the ledger, atomic-batch captures and private surveil
+continuation. Missing/corrupt boundaries or malformed captures reject the
+new family explicitly as `InvalidFirstLifeGainHistory`; historical gains
+and trigger families retain their wire shapes and construction behavior.
+The new history variant is appended after all old enum variants, preserving
+their derived Hash discriminants. Absent ledger fields serialize identically
+and add no hash input; present ledgers use a manual tagged hash extension.
+
+This batch adds no public first-gain flag. Existing public projections and
+frozen flat encoders remain unchanged. Hidden resampling must clone the
+ledger/captures exactly; neither hidden family presence nor ledger presence
+may change actor-visible keys. Prepared tests compare actor-identical
+hidden pools, validate legacy omission/hash behavior, exercise per-seat
+ordinals, batches and turn resets, and cover event-time entry/departure,
+source control changes, Food costs, Cat identity, and pending capture/surveil
+restore. Hosted tests will supply actual results after the prior versions
+integrate. Pinned rustfmt and diff checks are the only local Rust checks;
+Stage4a's desktop reservation, paid-run authority and frozen evidence remain
+untouched.
