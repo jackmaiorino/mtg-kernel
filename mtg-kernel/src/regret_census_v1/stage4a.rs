@@ -131,17 +131,6 @@ fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
         limits,
         prior: world::DeckPrior::new(&cfg.decks),
     })
-    .inspect(|_| {
-        let unordered = tree::set_graveyard_keying(&cfg.decks);
-        eprintln!(
-            "graveyard keying: {}",
-            if unordered {
-                "unordered (no registered card reads graveyard order)"
-            } else {
-                "arrival order (a registered card reads graveyard order)"
-            }
-        );
-    })
 }
 
 fn write_line(sink: &Mutex<std::fs::File>, row: &Value) -> Result<(), String> {
@@ -442,8 +431,7 @@ fn run_root(
         "step":root["step"],"opp_model":root["opp_model"],"focal_seat":setup.focal,
         "starting_player":setup.starting,"opp_deck":RUNTIME_DECKS[setup.decks[1-setup.focal]].id,
         "probs":probs,"k":d.legal_action_count,
-        "config":{"limits":shared.limits.json(),
-            "graveyard_keying":if tree::graveyard_unordered() { "unordered" } else { "arrival" },"sampler":world::SAMPLER_VERSION,
+        "config":{"limits":shared.limits.json(),"sampler":world::SAMPLER_VERSION,
             "prior_decks":shared.prior.ids(),"opponents":shared.labels,"seed_namespace":seeds::NAMESPACE},
         "arms":arms_json,"eval_worlds":worlds,"rejected_eval_worlds":rejected_worlds,
         "eval_sampler":eval_sampler.json(),"invalid":invalid,

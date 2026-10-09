@@ -154,13 +154,11 @@ fn masked(v: &Value) -> String {
     x.to_string()
 }
 
-/// Observation lists whose order carries no game information (hands,
-/// battlefield, exile, known hand cards, effects, relations, permissions,
-/// historical sources, a library search's offered cards) but can follow
-/// engine handles or hidden draw order. Graveyards join them only when no
-/// card in the registered decks reads graveyard order (`graveyard_unordered`):
-/// a mill reveals the library in its sampled order, which would otherwise
-/// make every simulation a new node. Every other list keeps engine order:
+/// Observation lists whose order carries no game information in this card
+/// pool (hands, battlefield, graveyards, exile, known hand cards, effects,
+/// relations, permissions, historical sources, a library search's offered
+/// cards) but can follow engine handles or hidden draw order (a mill reveals
+/// the library in its sampled order). Every other list keeps engine order:
 /// stack, targets, combat orders, pending triggers. Never applied to the menu.
 const UNORDERED_LISTS: [&str; 10] = [
     "own_hand",
@@ -183,39 +181,12 @@ fn sort_by_content(a: &mut Vec<Value>) {
     }
 }
 
-/// The only engine rule that reads graveyard order is delve (it exiles the
-/// oldest cards). Graveyards are keyed as unordered only when no card in the
-/// registered experiment decks has delve; set once per process.
-static GRAVEYARD_UNORDERED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-
-pub(crate) fn graveyard_unordered_for(decks: &[usize]) -> bool {
-    !decks.iter().any(|&d| {
-        crate::runtime_decks::RUNTIME_DECKS[d]
-            .card_ids
-            .iter()
-            .any(|&c| crate::card_def::CARD_DEFS[c as usize].delve)
-    })
-}
-
-/// Fixes the graveyard keying for this process from the registered decks.
-pub(crate) fn set_graveyard_keying(decks: &[usize]) -> bool {
-    *GRAVEYARD_UNORDERED.get_or_init(|| graveyard_unordered_for(decks))
-}
-
-pub(crate) fn graveyard_unordered() -> bool {
-    *GRAVEYARD_UNORDERED.get_or_init(|| {
-        graveyard_unordered_for(&(0..crate::runtime_decks::RUNTIME_DECKS.len()).collect::<Vec<_>>())
-    })
-}
-
 fn sort_object_lists(v: &mut Value) {
     match v {
         Value::Object(m) => {
             for (k, x) in m.iter_mut() {
                 sort_object_lists(x);
-                if UNORDERED_LISTS.contains(&k.as_str())
-                    && (k != "graveyards" || graveyard_unordered())
-                {
+                if UNORDERED_LISTS.contains(&k.as_str()) {
                     if let Value::Array(a) = x {
                         // Per-seat pairs ([[..], [..]]) sort within each seat.
                         if a.iter().all(Value::is_array) {
@@ -603,18 +574,6 @@ mod tests {
             serde_json::json!([{"timestamp":1},{"timestamp":0},{"timestamp":1}])
         );
         assert_eq!(w["p"], serde_json::json!({"object":{"arena_id":1}}));
-    }
-
-    #[test]
-    fn graveyard_order_guard_follows_delve() {
-        // No registered experiment deck reads graveyard order...
-        assert!(graveyard_unordered_for(&(0..9).collect::<Vec<_>>()));
-        // ...and the guard is live: the pool's delve card exists and has delve.
-        let angler = crate::card_def::CARD_DEFS
-            .iter()
-            .find(|c| c.name == "Gurmag Angler")
-            .expect("Gurmag Angler is defined");
-        assert!(angler.delve);
     }
 
     #[test]

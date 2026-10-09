@@ -314,27 +314,13 @@ pub(crate) struct EvalOut {
     pub(crate) d: DStats,
     pub(crate) e: Value,
     pub(crate) fault: Option<String>,
-    /// The focal graveyard's card definitions in arrival order at the end of
-    /// the rollout (recorded because node keys treat graveyards as unordered).
-    pub(crate) graveyard_order: Vec<u16>,
-}
-
-/// Focal graveyard card definitions in arrival order.
-fn focal_graveyard(s: &FastActorSessionV1, focal: PlayerId) -> Vec<u16> {
-    let st = s.game_state();
-    st.players[focal.index()]
-        .graveyard
-        .iter()
-        .map(|&o| st.objects.get(o).card_def)
-        .collect()
 }
 
 impl EvalOut {
     pub(crate) fn json(&self) -> Value {
         let mut v = json!({"end":self.end,"w":self.w,"j":self.j,"unknown":self.unknown,
             "transitions":self.transitions,"inference_calls":self.inference,
-            "suffix":self.suffix.json(),"root_fallback":self.fallback_root,
-            "focal_graveyard_order":self.graveyard_order});
+            "suffix":self.suffix.json(),"root_fallback":self.fallback_root});
         if self.d.improved > 0 || self.d.inner_rejections > 0 {
             v["d_continuation"] = self.d.json();
         }
@@ -368,7 +354,6 @@ fn finish(end: Result<End, PlayErr>, suffix: Suffix, meter: &Meter, c: &Counters
         d: DStats::default(),
         e: Value::Null,
         fault,
-        graveyard_order: Vec::new(),
     }
 }
 
@@ -828,7 +813,6 @@ impl Roles {
             let mut out = finish(r, suffix, &meter, &c);
             out.fallback_root = !stats.root_qualified;
             out.e = stats.json();
-            out.graveyard_order = focal_graveyard(&s, ctx.focal);
             return out;
         }
         let mut dstats = DStats::default();
@@ -858,7 +842,6 @@ impl Roles {
         let mut out = finish(r, suffix, &meter, &c);
         out.fallback_root = fallback;
         out.d = dstats;
-        out.graveyard_order = focal_graveyard(&s, ctx.focal);
         out
     }
 
