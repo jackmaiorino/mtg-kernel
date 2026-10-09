@@ -36,6 +36,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fmt;
 
+pub mod census_future_v2;
 pub(crate) mod human_opening_v1;
 
 pub const RL_SESSION_SCHEMA_VERSION: u32 = 5;
