@@ -3223,6 +3223,99 @@ fn flat_validate_current_binding_header_v1(
     flat_validate_current_decision_relations_v1(current, &session.state)
 }
 
+/// The combat scan answers a flat-action V2 session offers: the raw
+/// `[include: false, include: true]` pair without any answer the policy
+/// surface would refuse (`feasible_scan_answers`, the rule fast-actor
+/// prevalidation applies), such as declining a goaded creature that is able
+/// to attack. A forced step offers its one answer at index 0. Surface
+/// decisions pass through unchanged. V1 keeps the raw pair.
+fn flat_scan_menu_v2(
+    surface: &PolicySurfaceV5,
+    state: &crate::state::GameState,
+    origin: &PolicyDecisionV5,
+    mut candidates: Vec<CorePolicyActionCandidateV1>,
+) -> Result<Vec<CorePolicyActionCandidateV1>, String> {
+    if matches!(origin, PolicyDecisionV5::Surface(_)) {
+        return Ok(candidates);
+    }
+    let feasible = surface.feasible_scan_answers(state, origin)?;
+    candidates.retain(|candidate| match candidate.policy_action {
+        PolicyActionV5::ChooseAttackerInclusion { include, .. }
+        | PolicyActionV5::ChooseBlockerInclusion { include, .. } => feasible[usize::from(include)],
+        PolicyActionV5::Surface(_) => true,
+    });
+    Ok(candidates)
+}
+
+/// Whether `current` is a V2-mode combat scan step, whose candidates are
+/// [`flat_scan_menu_v2`]'s filtered list rather than the raw origin pair.
+fn flat_scan_menu_is_filtered_v2(
+    session: &FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+) -> bool {
+    session.flat_action_contract_mode == FlatActionContractModeV1::V2
+        && !matches!(current.origin_decision, PolicyDecisionV5::Surface(_))
+}
+
+/// V2 sibling of [`flat_validate_current_binding_header_v1`]. At a combat
+/// scan step the shape and origin checks still run on the raw pair,
+/// re-derived from `origin_decision` (the technique
+/// `flat_action_v3::build_with_extensions` uses), and the live candidates
+/// must equal that pair after [`flat_scan_menu_v2`].
+fn flat_validate_current_binding_header_v2(
+    session: &FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    if !flat_scan_menu_is_filtered_v2(session, current) {
+        return flat_validate_current_binding_header_v1(session, current);
+    }
+    let invalid = || FlatActionDecisionSliceErrorV1::InvalidDecisionRelation;
+    let raw = core_policy_action_candidates_v5(&current.origin_decision, &session.state)
+        .map_err(|_| invalid())?;
+    let original = FastActorCurrentDecisionV1 {
+        actor: current.actor,
+        decision_kind: current.decision_kind,
+        origin_decision: current.origin_decision.clone(),
+        physical_decision_id: current.physical_decision_id,
+        substep_index: current.substep_index,
+        substep_count: current.substep_count,
+        candidates: raw,
+        environment_revision: current.environment_revision,
+        bound_policy_step_count: current.bound_policy_step_count,
+        bound_physical_decision_count: current.bound_physical_decision_count,
+        flat_action_cache: None,
+        flat_action_cache_error: None,
+        flat_action_cache_v2: None,
+        flat_action_cache_error_v2: None,
+    };
+    flat_validate_current_binding_header_v1(session, &original)?;
+    flat_validate_origin_decision_v1(&original, &session.state)?;
+    let offered = flat_scan_menu_v2(
+        &session.surface,
+        &session.state,
+        &original.origin_decision,
+        original.candidates,
+    )
+    .map_err(|_| invalid())?;
+    if offered.is_empty() || offered != current.candidates {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+/// V2 sibling of [`flat_validate_origin_decision_v1`]: a filtered combat scan
+/// step's origin was already proven on its raw pair by
+/// [`flat_validate_current_binding_header_v2`].
+fn flat_validate_origin_decision_v2(
+    session: &FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    if flat_scan_menu_is_filtered_v2(session, current) {
+        return Ok(());
+    }
+    flat_validate_origin_decision_v1(current, &session.state)
+}
+
 fn flat_action_binding_v1(
     session: &FastActorSessionV1,
     current: &FastActorCurrentDecisionV1,
@@ -3504,7 +3597,7 @@ fn flat_build_action_cache_v2(
     current: &FastActorCurrentDecisionV1,
     reusable: Option<FlatActionDecisionCacheV2>,
 ) -> Result<FlatActionDecisionCacheV2, FlatActionDecisionSliceErrorV1> {
-    flat_validate_current_binding_header_v1(session, current)?;
+    flat_validate_current_binding_header_v2(session, current)?;
     let action_count_u32 = u32::try_from(current.candidates.len())
         .map_err(|_| FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
     let actor: PlayerSeatV1 = current.actor.into();
@@ -3579,7 +3672,7 @@ fn flat_build_action_cache_v2(
         )?;
         actions.push(core);
     }
-    flat_validate_origin_decision_v1(current, &session.state)?;
+    flat_validate_origin_decision_v2(session, current)?;
 
     resolved_objects.sort_unstable_by_key(|candidate| candidate.object.canonical_key());
     if resolved_objects
@@ -3824,7 +3917,7 @@ fn flat_validate_action_cache_v2(
     current: &FastActorCurrentDecisionV1,
     cache: &FlatActionDecisionCacheV2,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
-    flat_validate_current_binding_header_v1(session, current)?;
+    flat_validate_current_binding_header_v2(session, current)?;
     let actor: PlayerSeatV1 = current.actor.into();
     let mut validated_ref_count = 0_usize;
     for candidate in &current.candidates {
@@ -3844,7 +3937,7 @@ fn flat_validate_action_cache_v2(
             .checked_add(usize::from(core.ref_len))
             .ok_or(FlatActionDecisionSliceErrorV1::CheckedIntegerRange)?;
     }
-    flat_validate_origin_decision_v1(current, &session.state)?;
+    flat_validate_origin_decision_v2(session, current)?;
 
     let mut ref_cursor = 0_usize;
     for (action_index, candidate) in current.candidates.iter().enumerate() {
@@ -6484,6 +6577,15 @@ impl FastActorSessionV1 {
             .ok_or(KernelNativeSearchErrorV1::InvalidDecision)?;
         let candidates =
             core_policy_action_candidates_v5(&refreshed.origin_decision, &sampled.state)
+                .and_then(|raw| {
+                    flat_scan_menu_v2(
+                        &sampled.surface,
+                        &sampled.state,
+                        &refreshed.origin_decision,
+                        raw,
+                    )
+                    .map_err(RlContractError)
+                })
                 .map_err(|_| KernelNativeSearchErrorV1::HiddenStateContract)?;
         let after_semantics: Vec<ActionSemanticV1> = candidates
             .iter()
@@ -6867,7 +6969,15 @@ impl FastActorSessionV1 {
             ));
             return;
         };
-        let candidates = match core_policy_action_candidates_v5(&surfaced, &self.state) {
+        let candidates = core_policy_action_candidates_v5(&surfaced, &self.state).and_then(|raw| {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::V2 {
+                flat_scan_menu_v2(&self.surface, &self.state, &surfaced, raw)
+                    .map_err(RlContractError)
+            } else {
+                Ok(raw)
+            }
+        });
+        let candidates = match candidates {
             Ok(candidates) => candidates,
             Err(err) => {
                 self.terminal = Some(halted_terminal(
@@ -9516,7 +9626,7 @@ mod tests {
         }
     }
 
-    /// The fast actor still offers the original pair. Declining a goaded
+    /// A flat-action V1 fast actor still offers the original pair. Declining a goaded
     /// attacker is rejected before mutation by the same rule the policy
     /// session filters with, and stays retryable instead of halting the
     /// episode as an internal apply failure.
@@ -9550,6 +9660,152 @@ mod tests {
             combat_damage_to_player_sources(&session.state),
             vec![goaded]
         );
+    }
+
+    fn flat_v2_session_from_state(state: GameState) -> FastActorSessionV1 {
+        let mut session = FastActorSessionV1::reset_with_limits(23, 91, 8, 8);
+        session.state = state;
+        session.surface = PolicySurfaceV5::new();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.flat_action_cache_spare = None;
+        session.flat_action_cache_spare_v2 = None;
+        session.terminal = None;
+        session.flat_action_contract_mode = FlatActionContractModeV1::V2;
+        session.advance_to_decision_or_terminal();
+        session
+    }
+
+    fn fast_offered_includes(session: &FastActorSessionV1) -> Vec<bool> {
+        session
+            .current
+            .as_ref()
+            .expect("live decision")
+            .candidates
+            .iter()
+            .map(|candidate| match candidate.policy_action {
+                PolicyActionV5::ChooseAttackerInclusion { include, .. }
+                | PolicyActionV5::ChooseBlockerInclusion { include, .. } => include,
+                ref other => panic!("expected a combat scan answer, got {other:?}"),
+            })
+            .collect()
+    }
+
+    /// Flat-action V2 counterpart of
+    /// `assert_session_offers_exactly_the_completable_answers`: each scan
+    /// step offers exactly the answers with a legal completion, its V2 cache
+    /// validates, and each offered answer is accepted.
+    fn assert_flat_v2_offers_exactly_the_completable_answers(
+        session: &FastActorSessionV1,
+        label: &str,
+    ) {
+        if !session.surface.scan_active() {
+            return;
+        }
+        let offered = fast_offered_includes(session);
+        let completable: Vec<bool> = [false, true]
+            .into_iter()
+            .filter(|include| {
+                crate::policy_surface_v5::scan_answer_has_legal_completion_for_test(
+                    &session.surface,
+                    &session.state,
+                    *include,
+                )
+            })
+            .collect();
+        assert_eq!(offered, completable, "{label}");
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("{label}: expected a decision");
+        };
+        session
+            .native_full_trajectory_current_binding_v2(expected)
+            .unwrap_or_else(|error| panic!("{label}: V2 cache refused: {error:?}"));
+        for index in 0..offered.len() {
+            let mut next = session.clone();
+            next.step(23, session.policy_step_count, index as u32)
+                .unwrap_or_else(|error| panic!("{label}: offered answer refused: {error:?}"));
+            assert_flat_v2_offers_exactly_the_completable_answers(&next, label);
+        }
+    }
+
+    /// Issue #186 (Affinity vs Elves, goad): flat-action V2 sessions, which
+    /// training uses, offered declining a goaded attacker, which
+    /// prevalidation then refused. V2 now offers only the inclusion, while
+    /// its cache still proves the raw origin pair.
+    #[test]
+    fn flat_v2_offers_only_the_inclusion_of_a_goaded_attacker() {
+        let mut state = attacker_state(2);
+        let goaded = state.players[0].battlefield[0];
+        goad(&mut state, goaded);
+        let mut session = flat_v2_session_from_state(state);
+        assert_eq!(fast_offered_includes(&session), vec![true]);
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("expected the goaded attacker's scan step");
+        };
+        assert_eq!((expected.substep_index, expected.substep_count), (0, 2));
+        assert_eq!(expected.legal_action_count, 1);
+        let binding = session
+            .native_full_trajectory_current_binding_v2(expected)
+            .unwrap();
+
+        // The unfiltered pair no longer matches the V2 contract.
+        let mut tampered = session.clone();
+        let current = tampered.current.as_mut().unwrap();
+        current.candidates =
+            core_policy_action_candidates_v5(&current.origin_decision, &tampered.state).unwrap();
+        let current = tampered.current.as_ref().unwrap();
+        assert_eq!(
+            flat_validate_action_cache_v2(
+                &tampered,
+                current,
+                current.flat_action_cache_v2.as_ref().unwrap()
+            ),
+            Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)
+        );
+
+        session
+            .consume_current_flat_action_slice_v2(binding, 0)
+            .unwrap();
+        assert_eq!(fast_offered_includes(&session), vec![false, true]);
+        session.step(23, 1, 0).unwrap();
+        // Combat has ended (511.3 cleared its record): only the goaded
+        // creature attacked.
+        assert_eq!(
+            combat_damage_to_player_sources(&session.state),
+            vec![goaded]
+        );
+    }
+
+    #[test]
+    fn flat_v2_offers_exactly_the_scan_answers_that_keep_a_legal_completion() {
+        for count in 1..=3 {
+            for goad_mask in 0..(1usize << count) {
+                let mut state = attacker_state(count);
+                for index in 0..count {
+                    if goad_mask & (1 << index) != 0 {
+                        let id = state.players[0].battlefield[index];
+                        goad(&mut state, id);
+                    }
+                }
+                assert_flat_v2_offers_exactly_the_completable_answers(
+                    &flat_v2_session_from_state(state),
+                    &format!("attackers count={count} goad_mask={goad_mask:#05b}"),
+                );
+            }
+        }
+        for count in 1..=3 {
+            for minimum in 1..=3u8 {
+                let mut state = blocker_state(count);
+                let attacker = state.engine.combat.attackers[0];
+                state.objects.get_mut(attacker).v4.minimum_blockers_override = Some(minimum);
+                assert_flat_v2_offers_exactly_the_completable_answers(
+                    &flat_v2_session_from_state(state),
+                    &format!("blockers count={count} minimum={minimum}"),
+                );
+            }
+        }
     }
 
     #[test]
