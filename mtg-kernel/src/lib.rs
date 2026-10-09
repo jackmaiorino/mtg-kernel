@@ -152,12 +152,12 @@ pub(crate) mod native_flat_cpu_reference_v1;
 pub(crate) mod deterministic_math_v1;
 // Auditable CPU inference reference for Python kernel-policy-value-net-8;
 // deliberately not a production or performance backend.
+#[cfg(feature = "gameplay-checkpoint-reconstruction-v1")]
+pub mod gameplay_checkpoint_reconstruction_v1;
 #[allow(dead_code)]
 pub(crate) mod native_policy_value_net_v1;
 #[cfg(feature = "saved-input-scalar-diagnostic")]
 pub mod saved_input_scalar_diagnostic;
-#[cfg(feature = "gameplay-checkpoint-reconstruction-v1")]
-pub mod gameplay_checkpoint_reconstruction_v1;
 // Shared cfg(test) helper: gates tests that read machine-local sealed
 // evidence (real, already-published run/store artifacts under absolute
 // D:\ / C:\ paths) so they skip cleanly on hosted CI runners instead of
