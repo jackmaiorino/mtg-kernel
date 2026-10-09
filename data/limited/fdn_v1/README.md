@@ -20,9 +20,10 @@ additional fixture cards. After fixture batches A and B and the combat and
 legend-rule, targeted-spell, counter-creature, life-gain, draw, Horde, Koma, Kiora,
 Prowler, Rebuke, Voyage, Scavenging, Armor and Witness slices and the first
 milestone-5 keyword-creature, gainland/life-gain, trigger/trick,
-equipment/library-search, token/Aura, removal/combat-trick and
-counterspell/threat batches, 118 reference names have full registry support,
-one reference planeswalker is partial and 167 remain missing. Both original decks resolve all 40
+equipment/library-search, token/Aura, removal/combat-trick,
+counterspell/threat and library-search/flashback batches, 122 reference names
+have full registry support, one reference planeswalker is partial and 163
+remain missing. Both original decks resolve all 40
 mainboard copies, covering all 39 unique fixture names. Dwynen includes its Elf bonuses, attack
 trigger and a real resumable legend-rule choice.
 Printed collector numbers are not a safe
@@ -34,7 +35,7 @@ unchanged 192-definition Pauper registry. The importer combines both files in
 that order and reports their separate SHA-256s. Build the gameplay binary with
 `cargo build --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_env`.
 Default builds retain the Pauper catalog and its v34 identity; the
-Limited feature selects the appended definitions and their v58 identity.
+Limited feature selects the appended definitions and their v59 identity.
 Earlier FDN catalog tuples remain readable and are rejected for mutation
 when they do not match the actual build.
 
@@ -103,6 +104,12 @@ Auras; see `docs/design/fdn_tokens_auras_v1.md`.
 `FDN_reference_removal_tricks.dck` covers thirteen removal, damage and
 combat-trick spells and five creatures with matching triggers or abilities;
 see `docs/design/fdn_removal_tricks_v1.md`.
+
+`FDN_reference_library_search.dck` is a synthetic 40-card fixture with nine
+of each basic land except Mountain and one copy each of Campus Guide,
+Burnished Hart, Grow from the Ashes and Revenge of the Rats. It resolves
+fully and is excluded from original-deck coverage counts. See
+`docs/design/fdn_library_search_v1.md`.
 
 `FDN_reference_planeswalker.dck` is a synthetic correctness fixture for
 Bite Down's planeswalker recipient. Ajani has entry loyalty and damage

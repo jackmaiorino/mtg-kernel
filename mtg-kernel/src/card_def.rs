@@ -268,6 +268,8 @@ pub enum Subtype {
     Cyclops,
     /// Appended for Bigfin Bouncer; existing ids remain fixed.
     Shark,
+    /// Appended for Burnished Hart; existing ids remain fixed.
+    Elk,
 }
 
 impl Subtype {
@@ -375,6 +377,8 @@ impl Subtype {
         Subtype::Cyclops,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Shark,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Elk,
     ];
 
     /// Schema-v4 observation id. Existing discriminants are append-only:
@@ -506,6 +510,7 @@ impl Subtype {
                 | Subtype::Lizard
                 | Subtype::Golem
                 | Subtype::Shark
+                | Subtype::Elk
         )
     }
 }
@@ -1863,11 +1868,11 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 316 (counterspells, threats and simple trigger cards).
+        // batches append through id 321 (library-search, kicker and flashback cards).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                317
+                322
             } else {
                 192
             }
@@ -1963,8 +1968,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v58_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0xf248_c83c_818b_d26a;
+    fn card_db_hash_v59_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0xfd7a_00c2_1413_488b;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

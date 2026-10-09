@@ -1166,6 +1166,18 @@ fn solemn_simulacrum_etb_effect() -> EffectOp {
     }
 }
 
+fn campus_guide_etb_effect() -> EffectOp {
+    // "When this creature enters, you may search your library for a basic
+    // land card, reveal it, then shuffle and put that card on top." The
+    // zero-card selection is the "may".
+    EffectOp::SearchLibraryCardsToDestination {
+        player: PlayerRef::Controller,
+        filter: crate::effect::LibraryCardFilter::BasicLand,
+        max_targets: 1,
+        destination: crate::effect::LibrarySearchDestinationV1::LibraryTopAfterShuffle,
+    }
+}
+
 fn solemn_simulacrum_dies_effect() -> EffectOp {
     // "When this creature dies, you may draw a card."
     EffectOp::Choice {
@@ -1564,6 +1576,14 @@ const GOLDVEIN_PICK_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     effect: goldvein_pick_combat_damage_effect,
 }];
 
+const CAMPUS_GUIDE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: campus_guide_etb_effect,
+}];
+
 const SOLEMN_SIMULACRUM_TRIGGERS: [TriggeredAbilityDef; 2] = [
     TriggeredAbilityDef {
         condition: TriggerCondition::Etb,
@@ -1912,6 +1932,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Faerie Seer" => &FAERIE_SEER_TRIGGERS,
         "Outlaw Medic" => &OUTLAW_MEDIC_TRIGGERS,
         "Solemn Simulacrum" => &SOLEMN_SIMULACRUM_TRIGGERS,
+        "Campus Guide" => &CAMPUS_GUIDE_TRIGGERS,
         "Adventuring Gear" => &ADVENTURING_GEAR_TRIGGERS,
         "Goldvein Pick" => &GOLDVEIN_PICK_TRIGGERS,
         "Refurbished Familiar" => &REFURBISHED_FAMILIAR_TRIGGERS,

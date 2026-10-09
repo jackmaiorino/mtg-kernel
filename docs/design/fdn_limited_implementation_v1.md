@@ -45,7 +45,9 @@ library-search batch (`fdn_equipment_search_v1.md`) reaches 81/286, token
 makers and creature Auras (`fdn_tokens_auras_v1.md`) reach 90/286, and removal,
 damage and combat tricks (`fdn_removal_tricks_v1.md`) reach 108/286, and
 counterspells and simple threats (`fdn_counters_threats_v1.md`) reach
-**118/286**. One reference planeswalker remains partial and 167 names are
+118/286, and the library-search, kicker and flashback follow-up
+(`fdn_library_search_v1.md`) reaches **122/286**. One reference planeswalker
+remains partial and 163 names are
 missing from the wider reference; `../reports/fdn_remaining_pool_inventory_v1.md` sizes them.
 
 Milestone 3's opt-in engine priority presentation is implemented on

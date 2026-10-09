@@ -2476,6 +2476,13 @@ enum Special {
     /// "Kicker {4}. Burst Lightning deals 2 damage to any target. If this
     /// spell was kicked, it deals 4 damage instead." (FDN Burst Lightning).
     BurstLightning,
+    /// "Create a tapped 1/1 black Rat creature token for each creature card
+    /// in your graveyard. Flashback {2}{B}{B}" (FDN Revenge of the Rats).
+    RevengeOfTheRats,
+    /// "Kicker {2}. Search your library for a basic land card, put it onto
+    /// the battlefield, then shuffle. If this spell was kicked, instead
+    /// search for two basic land cards" (FDN Grow from the Ashes).
+    GrowFromTheAshes,
     /// "Create two 1/1 white Human Soldier creature tokens. Humans you
     /// control gain haste until end of turn." (Rally at the Hornburg,
     /// Rally-only -- the card the deck is named for).
@@ -2926,6 +2933,8 @@ impl Special {
             }
             Special::SearchForestToHand => "search_forest_to_hand".to_string(),
             Special::GrimTutor => "grim_tutor".to_string(),
+            Special::RevengeOfTheRats => "revenge_of_the_rats".to_string(),
+            Special::GrowFromTheAshes => "grow_from_the_ashes".to_string(),
             Special::AddPlusOnePlusOneAndLifelinkCounters => {
                 "add_plus_one_plus_one_and_lifelink_counters".to_string()
             }
@@ -3051,6 +3060,13 @@ enum AbilityEffectRecipe {
     AddPlusOnePlusOneCounters(u8),
     SearchLibraryToBattlefieldTapped {
         filter: LibrarySearchFilterRecipe,
+    },
+    /// Search for up to `max` matching cards and put them onto the
+    /// battlefield (Burnished Hart: two basic lands, tapped).
+    SearchLibraryUpToToBattlefield {
+        filter: LibrarySearchFilterRecipe,
+        max: u8,
+        tapped: bool,
     },
     /// Each player who controls a permanent with this exact printed name
     /// draws a card (Bonder's Ornament). The printed name is fixed at
@@ -3229,6 +3245,8 @@ fn special_for(name: &str) -> Special {
         "Dread Return" => Special::ReturnOwnGraveyardCreatureToBattlefield,
         "Land Grant" => Special::SearchForestToHand,
         "Grim Tutor" => Special::GrimTutor,
+        "Revenge of the Rats" => Special::RevengeOfTheRats,
+        "Grow from the Ashes" => Special::GrowFromTheAshes,
         "Unexpected Fangs" => Special::AddPlusOnePlusOneAndLifelinkCounters,
         "Bind the Monster" | "Witness Protection" | "Twinblade Blessing" | "Blanchwood Armor" => {
             Special::BindTheMonster
@@ -3557,6 +3575,8 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::ReturnOwnGraveyardCreatureToBattlefield => "target=CreatureCardInOwnGraveyard;spell=MoveObject(Target0,Battlefield);mana=None".to_string(),
         Special::SearchForestToHand => "target=None;spell=SearchLibraryToHand(Controller,LandWithSubtype(Forest));mana=None".to_string(),
         Special::GrimTutor => "target=None;spell=Sequence(SearchLibraryToHand(Controller,AnyCard,unrevealed),LoseLife(Controller,3));mana=None".to_string(),
+        Special::RevengeOfTheRats => "target=None;spell=CreateTokensDynamic(Rat Token,Controller,ControllerGraveyardCardsWithType(Creature),tapped);mana=None".to_string(),
+        Special::GrowFromTheAshes => "target=None;spell=Conditional(WasKicked,SearchLibraryCardsToDestination(Controller,BasicLand,2,battlefield_untapped),SearchLibraryCardsToDestination(Controller,BasicLand,1,battlefield_untapped));mana=None".to_string(),
         Special::AddPlusOnePlusOneAndLifelinkCounters => "target=Creature;spell=AddCounters(Target0,+1/+1=1,lifelink=1);mana=None".to_string(),
         Special::BindTheMonster => {
             "target=Creature;spell=PutSourceOntoBattlefieldAttachedToTarget(Target0);mana=None"
@@ -3915,6 +3935,7 @@ fn kicker_cost_for(name: &str) -> String {
         "Gnarlid Colony" => cost_src("{2}{G}"),
         "Sun-Blessed Healer" => cost_src("{1}{W}"),
         "Burst Lightning" => cost_src("{4}"),
+        "Grow from the Ashes" => cost_src("{2}"),
         _ => "None".to_string(),
     }
 }
@@ -4002,6 +4023,13 @@ fn flashback_for(name: &str) -> String {
             let (pips, generic, x_count) = parse_cost("{1}{U}");
             format!(
                 "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }}), CostComponent::PayLife(3)] }})",
+                pips.join(", ")
+            )
+        }
+        "Revenge of the Rats" => {
+            let (pips, generic, x_count) = parse_cost("{2}{B}{B}");
+            format!(
+                "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})] }})",
                 pips.join(", ")
             )
         }
@@ -4624,6 +4652,25 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
+        "Burnished Hart" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 3,
+                },
+                AbilityCostRecipe::SacrificeSelf,
+            ],
+            effect: AbilityEffectRecipe::SearchLibraryUpToToBattlefield {
+                filter: LibrarySearchFilterRecipe::BasicLand,
+                max: 2,
+                tapped: true,
+            },
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Evolving Wilds" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Tap, AbilityCostRecipe::SacrificeSelf],
             effect: AbilityEffectRecipe::SearchLibraryToBattlefieldTapped {
@@ -4936,6 +4983,11 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
             "search_library_to_battlefield_tapped:{}",
             library_search_filter_token(filter)
         ),
+        AbilityEffectRecipe::SearchLibraryUpToToBattlefield { filter, max, tapped } => format!(
+            "search_library_up_to_to_battlefield:{}:{max}:{}",
+            library_search_filter_token(filter),
+            if tapped { "tapped" } else { "untapped" }
+        ),
         AbilityEffectRecipe::EachPlayerControllingNamedPermanentDrawsCard(name) => {
             format!("each_player_controlling_named_permanent_draws_card:{name}")
         }
@@ -5093,6 +5145,17 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
             library_search_filter_token(filter)
                 .replace([':', '|'], "_")
                 .to_ascii_lowercase()
+        ),
+        AbilityEffectRecipe::SearchLibraryUpToToBattlefield {
+            filter,
+            max,
+            tapped,
+        } => format!(
+            "ability_effect_search_up_to_{max}_{}_to_battlefield_{}",
+            library_search_filter_token(filter)
+                .replace([':', '|'], "_")
+                .to_ascii_lowercase(),
+            if tapped { "tapped" } else { "untapped" }
         ),
         AbilityEffectRecipe::EachPlayerControllingNamedPermanentDrawsCard(name) => {
             format!(
@@ -5494,6 +5557,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Faerie Seer" => "etb:scry:2",
         "Outlaw Medic" => "dies:draw:1",
         "Solemn Simulacrum" => "etb:search_basic_land_to_battlefield_tapped;dies:may_draw:1",
+        "Campus Guide" => "etb:may_search_basic_land_reveal_shuffle_put_on_top",
         "Adventuring Gear" => "controlled_land_enters:boost_attached_creature:2:2:end_of_turn",
         "Goldvein Pick" => "equipped_creature_combat_damage_player:create_treasure_token:1",
         "Refurbished Familiar" => "etb:opponent_discard_else_draw",
@@ -6157,6 +6221,14 @@ fn codegen(cards: &[CardJson]) -> String {
             AbilityEffectRecipe::SearchLibraryToBattlefieldTapped { filter } => {
                 let filter = library_search_filter_src(filter);
                 writeln!(out, "    EffectOp::SearchLibraryToBattlefieldTapped {{ player: PlayerRef::Controller, filter: {filter} }}").unwrap();
+            }
+            AbilityEffectRecipe::SearchLibraryUpToToBattlefield {
+                filter,
+                max,
+                tapped,
+            } => {
+                let filter = library_search_filter_src(filter);
+                writeln!(out, "    EffectOp::SearchLibraryCardsToDestination {{ player: PlayerRef::Controller, filter: {filter}, max_targets: {max}, destination: crate::effect::LibrarySearchDestinationV1::Battlefield {{ tapped: {tapped} }} }}").unwrap();
             }
             AbilityEffectRecipe::EachPlayerControllingNamedPermanentDrawsCard(name) => {
                 writeln!(out, "    let named = crate::card_def::card_id_by_name({name:?}).expect(\"{name} in CARD_DEFS\");").unwrap();
@@ -7336,6 +7408,36 @@ fn codegen(cards: &[CardJson]) -> String {
 
     if cards
         .iter()
+        .any(|card| matches!(special_for(&card.name), Special::RevengeOfTheRats))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_revenge_of_the_rats() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    let token = crate::card_def::card_id_by_name(\"Rat Token\").expect(\"Rat Token in CARD_DEFS\");").unwrap();
+        writeln!(out, "    Some(EffectOp::CreateTokensDynamic {{ token_def: token, controller: PlayerRef::Controller, count: DynamicValueDef::ControllerGraveyardCardsWithType(CardType::Creature), tapped: true }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::GrowFromTheAshes))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_grow_from_the_ashes() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    let search = |max_targets| EffectOp::SearchLibraryCardsToDestination {{ player: PlayerRef::Controller, filter: LibraryCardFilter::BasicLand, max_targets, destination: crate::effect::LibrarySearchDestinationV1::Battlefield {{ tapped: false }} }};").unwrap();
+        writeln!(out, "    Some(EffectOp::Conditional {{ cond: EffectCond::WasKicked, then: Box::new(search(2)), else_: Box::new(search(1)) }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
         .any(|card| matches!(special_for(&card.name), Special::GrimTutor))
     {
         writeln!(out, "fn spell_effect_grim_tutor() -> Option<EffectOp> {{").unwrap();
@@ -7921,6 +8023,16 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_grim_tutor".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::RevengeOfTheRats => (
+                "TargetSpec::None",
+                "spell_effect_revenge_of_the_rats".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::GrowFromTheAshes => (
+                "TargetSpec::None",
+                "spell_effect_grow_from_the_ashes".to_string(),
+                "no_effect".to_string(),
+            ),
             Special::AddPlusOnePlusOneAndLifelinkCounters => (
                 "TargetSpec::Creature",
                 "spell_effect_add_plus_one_plus_one_and_lifelink_counters".to_string(),
@@ -8358,7 +8470,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v58\n"
+            "kernel_carddb/v59\n"
         } else {
             "kernel_carddb/v34\n"
         },
@@ -8719,6 +8831,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Boar" => "Subtype::Boar",
         "Cyclops" => "Subtype::Cyclops",
         "Shark" => "Subtype::Shark",
+        "Elk" => "Subtype::Elk",
         "Pirate" => "Subtype::Pirate",
         "Plains" => "Subtype::Plains",
         "ROGUE" => "Subtype::RogueAllCaps",

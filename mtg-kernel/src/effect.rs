@@ -84,6 +84,17 @@ pub enum CreatureSacrificeFilter {
 /// Islandcycling, whose Oracle filter is a physical land card carrying the
 /// Island subtype (basic or nonbasic). This remains definition data and can
 /// grow with other typecycling/basic-search shapes without card-name logic.
+/// Where `EffectOp::SearchLibraryCardsToDestination` puts the selected
+/// cards. Appended for the FDN library-search batch (Burnished Hart, Grow
+/// from the Ashes, Campus Guide).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum LibrarySearchDestinationV1 {
+    /// Onto the battlefield, tapped or untapped, then shuffle.
+    Battlefield { tapped: bool },
+    /// Reveal the selected card, shuffle, then put it on top of the library.
+    LibraryTopAfterShuffle,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LibraryCardFilter {
     /// The card must currently have the requested effective subtype and be
@@ -1096,6 +1107,25 @@ pub enum EffectOp {
     /// Destroy every creature on both battlefields as one simultaneous
     /// zone-change batch (Day of Judgment). Indestructible creatures stay.
     DestroyAllCreatures,
+    /// Search for zero through `max_targets` cards matching `filter` and put
+    /// them at `destination`, then shuffle (the top-of-library destination
+    /// reveals the card and places it after the shuffle). Zero selection is
+    /// always legal.
+    SearchLibraryCardsToDestination {
+        player: PlayerRef,
+        filter: LibraryCardFilter,
+        max_targets: u16,
+        destination: LibrarySearchDestinationV1,
+    },
+    /// Creates `count` tokens of `token_def` for `controller`, tapped when
+    /// `tapped` is set. `count` is sampled once at resolution (Revenge of
+    /// the Rats).
+    CreateTokensDynamic {
+        token_def: u16,
+        controller: PlayerRef,
+        count: crate::card_def::DynamicValueDef,
+        tapped: bool,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -1392,6 +1422,20 @@ pub enum EffectFrame {
         then: Box<EffectOp>,
         path: Vec<u16>,
     },
+    /// Commits a variable-cardinality private search to a non-hand
+    /// destination while retaining the original library and every selected
+    /// incarnation.
+    SearchLibraryCardsToDestination {
+        player: PlayerId,
+        filter: LibraryCardFilter,
+        filter_fingerprint: u64,
+        original_library: Vec<EffectObjectBinding>,
+        selected: Vec<EffectObjectBinding>,
+        max_targets: u16,
+        destination: LibrarySearchDestinationV1,
+        path: Vec<u16>,
+        canonical_path: Vec<u16>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -1612,6 +1656,17 @@ pub enum EffectTargetSelectionPurpose {
         original_library: Vec<EffectObjectBinding>,
         canonical_path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
+    },
+    /// Optional zero-through-N private search whose result goes to a
+    /// non-hand destination. Projects like `SearchLibraryToHandMany`.
+    SearchLibraryCardsToDestination {
+        player: PlayerId,
+        filter: LibraryCardFilter,
+        filter_fingerprint: u64,
+        original_library: Vec<EffectObjectBinding>,
+        max_targets: u16,
+        destination: LibrarySearchDestinationV1,
+        canonical_path: Vec<u16>,
     },
 }
 
@@ -2037,6 +2092,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::Scry { .. }
         | EffectOp::SearchLibraryToHand { .. }
         | EffectOp::SearchLibraryToHandUpTo { .. }
+        | EffectOp::SearchLibraryCardsToDestination { .. }
         | EffectOp::UntapUpToLands { .. }
         | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. }
         | EffectOp::PutObjectInOwnersLibraryTopOrBottom { .. }
@@ -2317,6 +2373,10 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
         player: search_player,
         ..
     }
+    | EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
+        player: search_player,
+        ..
+    }
     | EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
         player: search_player,
         ..
@@ -2394,6 +2454,10 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
                 ..
             }
             | EffectTargetSelectionPurpose::SearchLibraryToHandMany {
+                player: search_player,
+                ..
+            }
+            | EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
                 player: search_player,
                 ..
             }
@@ -3158,6 +3222,35 @@ fn complete_resumable_target_selection(
                     original_prefix,
                     progress,
                     progress_fingerprint,
+                    path: canonical_path.clone(),
+                    canonical_path,
+                });
+        }
+        EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
+            player,
+            filter,
+            filter_fingerprint,
+            original_library,
+            max_targets,
+            destination,
+            canonical_path,
+        } => {
+            if path != canonical_path {
+                return Err("multi-card library-search prompt structural path changed".to_string());
+            }
+            if objects.len() > usize::from(max_targets) {
+                return Err("multi-card library search exceeded its maximum".to_string());
+            }
+            continuation
+                .frames
+                .push(EffectFrame::SearchLibraryCardsToDestination {
+                    player,
+                    filter,
+                    filter_fingerprint,
+                    original_library,
+                    selected: objects,
+                    max_targets,
+                    destination,
                     path: canonical_path.clone(),
                     canonical_path,
                 });
@@ -5938,6 +6031,15 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     original_library,
                     max_targets: purpose_max,
                     canonical_path,
+                }
+                | EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
+                    player: library_player,
+                    filter,
+                    filter_fingerprint,
+                    original_library,
+                    max_targets: purpose_max,
+                    canonical_path,
+                    ..
                 } => {
                     if chooser != library_player || path != canonical_path {
                         return Err("multi-card library-search player or path changed".to_string());
@@ -7752,6 +7854,95 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         }
                     }
                 }
+                EffectFrame::SearchLibraryCardsToDestination {
+                    player,
+                    filter,
+                    filter_fingerprint,
+                    original_library,
+                    selected,
+                    max_targets,
+                    destination,
+                    path,
+                    canonical_path,
+                } => {
+                    if path != canonical_path || max_targets == 0 {
+                        return Err(
+                            "multi-card library-search coordinator metadata changed".to_string()
+                        );
+                    }
+                    if filter_fingerprint != library_filter_fingerprint(filter)
+                        || selected.len() > usize::from(max_targets)
+                        || (destination == LibrarySearchDestinationV1::LibraryTopAfterShuffle
+                            && selected.len() > 1)
+                    {
+                        return Err("multi-card library-search contract changed".to_string());
+                    }
+                    validate_library_search_live_metadata(
+                        state,
+                        player,
+                        filter,
+                        &original_library,
+                    )?;
+                    let candidates =
+                        library_search_candidates(state, player, filter, &original_library)?;
+                    let mut seen = Vec::with_capacity(selected.len());
+                    for binding in &selected {
+                        if !candidates.contains(binding) || seen.contains(&binding.object) {
+                            return Err(
+                                "multi-card library-search result is not a unique canonical match"
+                                    .to_string(),
+                            );
+                        }
+                        seen.push(binding.object);
+                    }
+                    let shuffle_token = state
+                        .preflight_library_shuffle(player)
+                        .map_err(|error| error.to_string())?;
+                    match destination {
+                        LibrarySearchDestinationV1::Battlefield { tapped } => {
+                            for &binding in &selected {
+                                validate_effect_object_binding(state, binding)?;
+                            }
+                            let events = selected
+                                .iter()
+                                .map(|binding| {
+                                    if tapped {
+                                        event::ProposedEvent::zone_change_to_battlefield_tapped(
+                                            binding.object,
+                                        )
+                                    } else {
+                                        event::ProposedEvent::zone_change(
+                                            binding.object,
+                                            Zone::Battlefield,
+                                        )
+                                    }
+                                })
+                                .collect();
+                            event::propose_and_commit_batch(state, events);
+                            state
+                                .commit_library_shuffle(player, shuffle_token)
+                                .map_err(|error| error.to_string())?;
+                        }
+                        LibrarySearchDestinationV1::LibraryTopAfterShuffle => {
+                            state
+                                .commit_library_shuffle(player, shuffle_token)
+                                .map_err(|error| error.to_string())?;
+                            if let Some(binding) = selected.first() {
+                                validate_effect_object_binding(state, *binding)?;
+                                let library = &mut state.players[player.index()].library;
+                                let position = library
+                                    .iter()
+                                    .position(|id| *id == binding.object)
+                                    .ok_or("searched card left the library before placement")?;
+                                let card = library.remove(position);
+                                library.insert(0, card);
+                                for observer in [PlayerId::P0, PlayerId::P1] {
+                                    state.reveal_library_position(observer, player, 0);
+                                }
+                            }
+                        }
+                    }
+                }
                 EffectFrame::SearchLibraryToHandMany {
                     player,
                     filter,
@@ -8603,6 +8794,33 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     state.engine.pending_effect = Some(continuation);
                     return Ok(ResumableProgress::Suspended);
                 }
+            }
+            EffectOp::SearchLibraryCardsToDestination {
+                player,
+                filter,
+                max_targets,
+                destination,
+            } => {
+                if max_targets == 0 {
+                    return Err("multi-card library search requires a positive maximum".to_string());
+                }
+                let player = continuation.ctx.resolve_player(player, state);
+                let original_library = bind_library_exact(state, player);
+                validate_library_search_live_metadata(state, player, filter, &original_library)?;
+                let candidates =
+                    library_search_candidates(state, player, filter, &original_library)?;
+                stage_library_search_to_destination_choice(
+                    &mut continuation,
+                    player,
+                    filter,
+                    original_library,
+                    candidates,
+                    max_targets,
+                    destination,
+                    path,
+                );
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
             }
             EffectOp::SearchLibraryToHandUpTo {
                 player,
@@ -9666,6 +9884,43 @@ fn stage_duress_discard_choice(
             player,
             original_hand,
             eligible,
+            canonical_path,
+        },
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn stage_library_search_to_destination_choice(
+    continuation: &mut EffectContinuation,
+    player: PlayerId,
+    filter: LibraryCardFilter,
+    original_library: Vec<EffectObjectBinding>,
+    candidates: Vec<EffectObjectBinding>,
+    max_targets: u16,
+    destination: LibrarySearchDestinationV1,
+    canonical_path: Vec<u16>,
+) {
+    continuation.choice = Some(PendingEffectChoice::SelectTargets {
+        player,
+        path: canonical_path.clone(),
+        selected: Vec::new(),
+        legal: candidates
+            .into_iter()
+            .map(|binding| EffectTargetCandidate {
+                target: Target::Object(binding.object),
+                expected_object: Some(binding),
+            })
+            .collect(),
+        min_targets: 0,
+        max_targets,
+        ordered: false,
+        purpose: EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
+            player,
+            filter,
+            filter_fingerprint: library_filter_fingerprint(filter),
+            original_library,
+            max_targets,
+            destination,
             canonical_path,
         },
     });
@@ -11652,6 +11907,38 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 event::ProposedEvent::create_token(*token_def, controller),
             );
         }
+        EffectOp::CreateTokensDynamic {
+            token_def,
+            controller,
+            count,
+            tapped,
+        } => {
+            let token = crate::card_def::CARD_DEFS
+                .get(*token_def as usize)
+                .unwrap_or_else(|| {
+                    panic!("CreateTokensDynamic references unknown definition {token_def}")
+                });
+            assert!(
+                token.is_token && token.is_executable() && token.has_full_support(),
+                "CreateTokensDynamic requires a fully supported executable token definition, got {}",
+                token.name
+            );
+            let controller = ctx.resolve_player(*controller, state);
+            let count = crate::engine::evaluate_dynamic_value(state, *count, ctx.controller).max(0);
+            for _ in 0..count {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::create_token(*token_def, controller),
+                );
+                if *tapped {
+                    if let Some(crate::event::CommittedEvent::CreateToken { object, .. }) =
+                        state.engine.event_log.last().cloned()
+                    {
+                        state.objects.get_mut(object).tapped = true;
+                    }
+                }
+            }
+        }
         EffectOp::MayPayCostThen {
             discard,
             sacrifice_lands,
@@ -12664,6 +12951,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::Scry { .. }
         | EffectOp::SearchLibraryToHand { .. }
         | EffectOp::SearchLibraryToHandUpTo { .. }
+        | EffectOp::SearchLibraryCardsToDestination { .. }
         | EffectOp::UntapUpToLands { .. }
         | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. }
         | EffectOp::PutObjectInOwnersLibraryTopOrBottom { .. }
