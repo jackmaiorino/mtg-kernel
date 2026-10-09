@@ -50,7 +50,6 @@ mod search_state;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::Zone;
 pub(crate) use search_state::V4SearchSampleMode;
-#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub(crate) use search_state::V4SearchStateErrorV1;
 
 /// Local (V4-only) analog of `FlatResolvedActionObjectV2`. Two real defects
@@ -653,6 +652,30 @@ impl FastActorSessionV1 {
         let (observation, actions, _) =
             self.human_current_decision_input_v4(expected, expected.acting_player)?;
         Ok((observation, actions))
+    }
+
+    /// The acting player's V4 observation with the legal menu in the
+    /// scorer's frozen-source form (a pending trigger whose source is hidden
+    /// names the source's public incarnation, not the relabeled hidden card),
+    /// as the V4 search sampler's boundary uses it.
+    pub(crate) fn actor_visible_decision_v4(
+        &self,
+        expected: FastActorDecisionV1,
+    ) -> Result<
+        (
+            crate::policy_observation_v6::ObservationV6,
+            Vec<ActionSemanticV1>,
+        ),
+        FlatActionDecisionSliceErrorV1,
+    > {
+        let (observation, semantics) = self.diagnostic_current_decision_input_v4(expected)?;
+        Ok((
+            observation,
+            semantics
+                .into_iter()
+                .map(|x| frozen_pending_trigger_semantic_v4(&self.state, x))
+                .collect(),
+        ))
     }
 
     /// Fixed-seat live human input validated by the cache-free V4 encoder.

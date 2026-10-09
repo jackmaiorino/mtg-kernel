@@ -297,7 +297,6 @@ pub(crate) use flat_action_v3::{
 };
 pub use flat_action_v3::{FlatActionDecisionBindingV3, FlatActionDecisionSliceV3};
 pub(crate) use flat_action_v4::V4SearchSampleMode;
-#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub(crate) use flat_action_v4::V4SearchStateErrorV1;
 #[cfg(test)]
 pub(crate) use flat_action_v4::{
