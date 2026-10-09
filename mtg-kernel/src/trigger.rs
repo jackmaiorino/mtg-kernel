@@ -216,6 +216,9 @@ pub enum TriggerCondition {
     ControllerFirstLifeGain {
         own_turn_only: bool,
     },
+    /// One cast trigger for the controller's noncreature spell OR a spell
+    /// with the named subtype. A spell satisfying both still triggers once.
+    CastNoncreatureOrSubtype(Subtype),
 }
 
 pub struct TriggeredAbilityDef {
@@ -1857,6 +1860,24 @@ const KESSIG_FLAMEBREATHER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilit
     face_index: 0,
     effect: kessig_flamebreather_effect,
 }];
+
+fn balmor_cast_effect() -> EffectOp {
+    EffectOp::BoostControlledCreaturesUntilEndOfTurn {
+        power: 1,
+        toughness: 0,
+        keywords: Keywords::TRAMPLE,
+    }
+}
+
+const BALMOR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastInstantOrSorcery,
+    ..etb_trigger(balmor_cast_effect)
+}];
+
+const FIRESPITTER_WHELP_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastNoncreatureOrSubtype(Subtype::Dragon),
+    ..etb_trigger(kessig_flamebreather_effect)
+}];
 const GIXIAN_INFILTRATOR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::SacrificeAnotherPermanent,
     home_zone: Zone::Battlefield,
@@ -2848,6 +2869,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Blood Fountain" => &BLOOD_FOUNTAIN_TRIGGERS,
         "Sagu Wildling" => &SAGU_WILDLING_TRIGGERS,
         "Kessig Flamebreather" => &KESSIG_FLAMEBREATHER_TRIGGERS,
+        "Balmor, Battlemage Captain" => &BALMOR_TRIGGERS,
+        "Firespitter Whelp" => &FIRESPITTER_WHELP_TRIGGERS,
         "Gixian Infiltrator" => &GIXIAN_INFILTRATOR_TRIGGERS,
         "Webweaver Changeling" => &WEBWEAVER_CHANGELING_TRIGGERS,
         "Glint Hawk" => &GLINT_HAWK_TRIGGERS,
@@ -4247,6 +4270,22 @@ fn selected_spell_types(state: &GameState, spell: ObjectId) -> &'static [CardTyp
     }
 }
 
+fn selected_spell_has_subtype(state: &GameState, spell: ObjectId, subtype: Subtype) -> bool {
+    let object = state.objects.get(spell);
+    if object
+        .v4
+        .spell_cast_origin
+        .and_then(|origin| origin.finalized_method)
+        == Some(crate::state::CastMethodV4::Omen)
+    {
+        // Supported Adventure/Omen spell faces have no subtypes. Their
+        // printed creature face must not supply subtype authority.
+        false
+    } else {
+        subtype.is_in_subtype_ids(&crate::engine::effective_subtype_ids(state, spell))
+    }
+}
+
 /// For each event in `events` (already committed, in commit order), the
 /// value `draws_this_turn` genuinely held *at the moment that specific
 /// event was committed* -- not `state`'s current (post-batch) value.
@@ -4595,6 +4634,17 @@ fn trigger_matches(
             *caster == controller
                 && !selected_spell_types(state, *spell)
                     .contains(&crate::card_def::CardType::Creature)
+        }
+        (
+            TriggerCondition::CastNoncreatureOrSubtype(subtype),
+            CommittedEvent::SpellCast {
+                spell,
+                controller: caster,
+            },
+        ) => {
+            *caster == controller
+                && (!selected_spell_types(state, *spell).contains(&CardType::Creature)
+                    || selected_spell_has_subtype(state, *spell, subtype))
         }
         (
             TriggerCondition::CastSelf,

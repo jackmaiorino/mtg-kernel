@@ -3833,7 +3833,9 @@ fn keywords_for(card: &CardJson) -> String {
     }
     match card.name.as_str() {
         "Masked Meower" | "Clockwork Percussionist" => keywords.push("Keywords::HASTE"),
-        "Sneaky Snacker"
+        "Balmor, Battlemage Captain"
+        | "Firespitter Whelp"
+        | "Sneaky Snacker"
         | "Healer's Hawk"
         | "Spectral Sailor"
         | "Dazzling Angel"
@@ -5993,6 +5995,8 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Infestation Sage" => "dies:create_black_green_1_1_flying_insect_token:1",
         "Wary Thespian" => "etb_and_dies:surveil:1",
         "Firebrand Archer" => "cast_noncreature:damage_opponent:1",
+        "Balmor, Battlemage Captain" => "cast_instant_or_sorcery:boost_controlled_creatures:1:0:trample:end_of_turn",
+        "Firespitter Whelp" => "cast_noncreature_or_dragon:damage_opponent:1",
         "Spitfire Lagac" => "controlled_land_enters:damage_opponent:1",
         "Dragon Trainer" => "etb:create_red_4_4_flying_dragon:1",
         "Resolute Reinforcements" => "etb:create_white_1_1_soldier:1",
