@@ -1174,6 +1174,9 @@ mod tests {
         assert!(reverify_validated_collection(&collection, &[trajectory.clone()]).is_err());
         fs::write(&trajectory.path, b"{\"episode\":1}").unwrap();
         fs::write(&ledger.path, b"{\"entries\":[1]}").unwrap();
+        assert!(reverify_validated_collection(&collection, &[trajectory.clone()]).is_err());
+        fs::write(&ledger.path, b"{\"entries\":[]}").unwrap();
+        fs::write(&collection.path, b"{\"trajectories\":[]}").unwrap();
         assert!(reverify_validated_collection(&collection, &[trajectory]).is_err());
         fs::remove_dir_all(root).unwrap();
     }
