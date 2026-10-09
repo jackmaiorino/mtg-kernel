@@ -5,7 +5,8 @@ Usage: python stage4a_queue.py ROOT BINARY QUEUE.json
 
 QUEUE.json: [job or {"parallel": [job, ...]}], job = {"name", "mode": "s4a-corpus"|"s4a-run", "model": "r1"|"r2",
   "workers", "base_seed", and for corpus "first_game", "games"; for run
-  "roots" and optionally "limits" ("select_cap,eval_worlds,eval_cap", cost-only
+  "roots" and optionally "limits"; any job may set "max_wall_seconds" (its share of the
+  global worker-hour cap divided by its workers; the job is killed and recorded incomplete there), ("select_cap,eval_worlds,eval_cap", cost-only
   engineering checks)}]. Jobs run in order. Each process runs at BelowNormal
 priority with Windows power throttling (EcoQoS) switched off, so it uses the
 declared P-cores; priority is unchanged. An `s4a-run` job resumes: the binary
@@ -85,7 +86,14 @@ def run_job(item):
             p.kill()
             p.wait()
             log(f"{item['name']} killed: could not switch EcoQoS off")
-        code = p.wait()
+        try:
+            code = p.wait(timeout=item.get("max_wall_seconds"))
+        except subprocess.TimeoutExpired:
+            # Global worker-hour cap: workers x wall bounds the job's
+            # worker-seconds, so stopping here keeps the run inside the cap.
+            p.kill()
+            code = p.wait()
+            log(f"{item['name']} stopped at its worker-hour cap ({item['max_wall_seconds']} s wall); incomplete")
     kinds = Counter()
     if out.exists():
         for line in out.read_text(encoding="utf-8").splitlines():
