@@ -29,6 +29,15 @@ pub const KERNEL_NATIVE_SEARCH_AUTHORITY_SCHEMA_V1: &str =
 pub const KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1: &str = "kernel-native-search-opponent-v1";
 pub const KERNEL_NATIVE_SEARCH_ALGORITHM_V1: &str =
     "deterministic-per-simulation-redeterminized-is-mcts-integer-ucb/v1";
+/// The v1 search, except that each determinization keeps the identities of
+/// the hidden cards the root actor's own pending selection offers
+/// ([`pending_selection_hidden_objects_v1`]). v1 resamples those cards, so the
+/// engine rejects every cached candidate of a library-search root (#187).
+/// v1 stays registered unchanged so its seeded draws and past measurements
+/// still reproduce; an authority opts into v2 through its
+/// `algorithm_identity`, which also enters the simulation seeds.
+pub const KERNEL_NATIVE_SEARCH_ALGORITHM_V2: &str =
+    "deterministic-per-simulation-redeterminized-is-mcts-integer-ucb-pending-selection-pinned/v2";
 pub const KERNEL_NATIVE_SEARCH_NODE_KEY_V1: &str =
     "sha256-serde-json-observation-v5-actions-remaining-depth/v1";
 pub const KERNEL_NATIVE_SEARCH_SEED_DOMAIN_V1: &str =
@@ -125,10 +134,38 @@ impl KernelNativeSearchAuthorityV1 {
         action_seed: u64,
         private_diagnostic_identity: &str,
     ) -> Result<Self, KernelNativeSearchErrorV1> {
+        Self::current_with_algorithm_v1(
+            KERNEL_NATIVE_SEARCH_ALGORITHM_V1,
+            tier,
+            action_seed,
+            private_diagnostic_identity,
+        )
+    }
+
+    /// [`Self::current`] for the [`KERNEL_NATIVE_SEARCH_ALGORITHM_V2`] search.
+    pub fn current_v2(
+        tier: KernelNativeSearchTierV1,
+        action_seed: u64,
+        private_diagnostic_identity: &str,
+    ) -> Result<Self, KernelNativeSearchErrorV1> {
+        Self::current_with_algorithm_v1(
+            KERNEL_NATIVE_SEARCH_ALGORITHM_V2,
+            tier,
+            action_seed,
+            private_diagnostic_identity,
+        )
+    }
+
+    fn current_with_algorithm_v1(
+        algorithm_identity: &str,
+        tier: KernelNativeSearchTierV1,
+        action_seed: u64,
+        private_diagnostic_identity: &str,
+    ) -> Result<Self, KernelNativeSearchErrorV1> {
         let record = Self {
             schema: KERNEL_NATIVE_SEARCH_AUTHORITY_SCHEMA_V1.to_string(),
             authority_kind: KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1.to_string(),
-            algorithm_identity: KERNEL_NATIVE_SEARCH_ALGORITHM_V1.to_string(),
+            algorithm_identity: algorithm_identity.to_string(),
             node_key_identity: KERNEL_NATIVE_SEARCH_NODE_KEY_V1.to_string(),
             tier,
             transition_budget: tier.transition_budget(),
@@ -153,7 +190,8 @@ impl KernelNativeSearchAuthorityV1 {
                 == crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2;
         if self.schema != KERNEL_NATIVE_SEARCH_AUTHORITY_SCHEMA_V1
             || self.authority_kind != KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1
-            || self.algorithm_identity != KERNEL_NATIVE_SEARCH_ALGORITHM_V1
+            || !(self.algorithm_identity == KERNEL_NATIVE_SEARCH_ALGORITHM_V1
+                || self.algorithm_identity == KERNEL_NATIVE_SEARCH_ALGORITHM_V2)
             || self.node_key_identity != KERNEL_NATIVE_SEARCH_NODE_KEY_V1
             || self.transition_budget != self.tier.transition_budget()
             || self.policy_step_depth_cap != KERNEL_NATIVE_SEARCH_DEPTH_CAP_V1
@@ -173,6 +211,12 @@ impl KernelNativeSearchAuthorityV1 {
         Ok(())
     }
 
+    /// Whether determinizations keep the root actor's pending-selection
+    /// cards ([`KERNEL_NATIVE_SEARCH_ALGORITHM_V2`]).
+    pub fn pins_pending_selection_v2(&self) -> bool {
+        self.algorithm_identity == KERNEL_NATIVE_SEARCH_ALGORITHM_V2
+    }
+
     pub fn digest(&self) -> Result<[u8; 32], KernelNativeSearchErrorV1> {
         self.validate()?;
         let bytes =
@@ -181,9 +225,9 @@ impl KernelNativeSearchAuthorityV1 {
     }
 
     /// Independently reconstructs a fresh authority from just this record's
-    /// three minimal inputs (tier, action seed, private diagnostic
-    /// identity) via `Self::current`, then compares raw canonical-JSON
-    /// SHA-256 digests.
+    /// minimal inputs (tier, action seed, private diagnostic identity, and
+    /// the algorithm version) via `Self::current_with_algorithm_v1`, then
+    /// compares raw canonical-JSON SHA-256 digests.
     ///
     /// This is a genuinely distinct verification STRATEGY from `validate`,
     /// not a repeat of the same field checks under a different name:
@@ -204,7 +248,8 @@ impl KernelNativeSearchAuthorityV1 {
     /// accept can still be caught by this method on its own, because the
     /// comparison never asks `validate` for an opinion at all.
     pub(crate) fn matches_fresh_reconstruction_v1(&self) -> bool {
-        let Ok(reconstructed) = Self::current(
+        let Ok(reconstructed) = Self::current_with_algorithm_v1(
+            &self.algorithm_identity,
             self.tier,
             self.action_seed,
             &self.private_diagnostic_identity,
@@ -339,7 +384,11 @@ impl KernelNativeSearchOpponentV1 {
                 u64::from(simulations),
                 root_player,
             );
-            let mut sampled = session.kernel_search_redeterminized_clone_v1(simulation_seed)?;
+            let mut sampled = if self.authority.pins_pending_selection_v2() {
+                session.kernel_search_redeterminized_clone_pinned_v2(simulation_seed)?
+            } else {
+                session.kernel_search_redeterminized_clone_v1(simulation_seed)?
+            };
             if search_node_key_v1(&sampled, expected, depth_cap)? != root_key {
                 return Err(KernelNativeSearchErrorV1::HiddenStateContract);
             }
@@ -1297,6 +1346,67 @@ mod tests {
         assert_tamper_rejected!(algorithm_identity, "wrong-algorithm/v1".to_owned());
         assert_tamper_rejected!(seed_domain, "wrong-seed-domain/v1".to_owned());
         assert_tamper_rejected!(evaluator_sha256, "0".repeat(64));
+    }
+
+    #[test]
+    fn v2_authority_is_a_separate_registered_identity() {
+        let v1 = authority_v1(KernelNativeSearchTierV1::T512);
+        let v2 = KernelNativeSearchAuthorityV1::current_v2(
+            KernelNativeSearchTierV1::T512,
+            KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1[0],
+            crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
+        )
+        .unwrap();
+        assert_eq!(v1.algorithm_identity, KERNEL_NATIVE_SEARCH_ALGORITHM_V1);
+        assert_eq!(v2.algorithm_identity, KERNEL_NATIVE_SEARCH_ALGORITHM_V2);
+        assert!(!v1.pins_pending_selection_v2());
+        assert!(v2.pins_pending_selection_v2());
+        assert!(v2.validate().is_ok());
+        assert!(v2.matches_fresh_reconstruction_v1());
+        // The algorithm enters the digest, and so every simulation seed.
+        assert_ne!(v1.digest().unwrap(), v2.digest().unwrap());
+        let mut unknown = v2;
+        unknown.algorithm_identity = "wrong-algorithm/v2".to_owned();
+        assert_eq!(
+            unknown.validate(),
+            Err(KernelNativeSearchErrorV1::InvalidAuthority)
+        );
+        assert!(!unknown.matches_fresh_reconstruction_v1());
+    }
+
+    /// #187: at a library-search root, v1 fails because its determinizations
+    /// resample the cards the search offers. v2 searches the root
+    /// repeatably and leaves the episode untouched.
+    #[test]
+    fn v2_search_selects_at_a_library_search_root_where_v1_fails() {
+        let (session, _, _) = FastActorSessionV1::library_search_v2_fixture_for_test();
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("missing library-search decision");
+        };
+        let v1 = KernelNativeSearchOpponentV1::new(authority_v1(KernelNativeSearchTierV1::T512))
+            .unwrap();
+        assert!(matches!(
+            v1.select_action(&session, expected),
+            Err(KernelNativeSearchErrorV1::StaleOrTamperedBinding
+                | KernelNativeSearchErrorV1::HiddenStateContract)
+        ));
+
+        let v2 = KernelNativeSearchOpponentV1::new(
+            KernelNativeSearchAuthorityV1::current_v2(
+                KernelNativeSearchTierV1::T512,
+                KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1[0],
+                crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let hash_before = session.privileged_core_environment_hash();
+        let first = v2.select_action(&session, expected).unwrap();
+        let second = v2.select_action(&session, expected).unwrap();
+        assert_eq!(first, second);
+        assert!(first.selected_index < expected.legal_action_count);
+        assert_eq!(first.transitions_used, 512);
+        assert_eq!(session.privileged_core_environment_hash(), hash_before);
     }
 
     #[test]

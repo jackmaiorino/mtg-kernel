@@ -11,9 +11,10 @@ use crate::canonical_json_v1::{
 };
 use crate::kernel_native_search_opponent_v1::{
     KernelNativeSearchAuthorityV1, KernelNativeSearchTierV1, KERNEL_NATIVE_SEARCH_ALGORITHM_V1,
-    KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1, KERNEL_NATIVE_SEARCH_AUTHORITY_SCHEMA_V1,
-    KERNEL_NATIVE_SEARCH_DEPTH_CAP_V1, KERNEL_NATIVE_SEARCH_EVALUATOR_IDENTITY_V1,
-    KERNEL_NATIVE_SEARCH_NODE_KEY_V1, KERNEL_NATIVE_SEARCH_SEED_DOMAIN_V1,
+    KERNEL_NATIVE_SEARCH_ALGORITHM_V2, KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1,
+    KERNEL_NATIVE_SEARCH_AUTHORITY_SCHEMA_V1, KERNEL_NATIVE_SEARCH_DEPTH_CAP_V1,
+    KERNEL_NATIVE_SEARCH_EVALUATOR_IDENTITY_V1, KERNEL_NATIVE_SEARCH_NODE_KEY_V1,
+    KERNEL_NATIVE_SEARCH_SEED_DOMAIN_V1,
 };
 use crate::native_training_store_digest_v1::{lower_hex_raw32_v1, sha256_v1};
 use serde::{Deserialize, Serialize};
@@ -127,6 +128,12 @@ pub(crate) struct PopulationSearchAuthoritySlotV1 {
     engine_commit: String,
     card_db_hash: u64,
     runtime_deck_catalog_sha256: String,
+    // Present only for a `KERNEL_NATIVE_SEARCH_ALGORITHM_V2` occupant, so
+    // every v1 search slot re-encodes byte-for-byte as before this field
+    // existed. A v1 slot never spells its algorithm out: `to_authority_v1`
+    // maps any other present value to an authority `validate` rejects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    algorithm_identity: Option<String>,
 }
 
 impl PopulationSearchAuthoritySlotV1 {
@@ -148,6 +155,7 @@ impl PopulationSearchAuthoritySlotV1 {
             engine_commit: engine_commit.into(),
             card_db_hash,
             runtime_deck_catalog_sha256: runtime_deck_catalog_sha256.into(),
+            algorithm_identity: None,
         }
     }
 
@@ -174,6 +182,8 @@ impl PopulationSearchAuthoritySlotV1 {
             engine_commit: authority.engine_commit.clone(),
             card_db_hash: authority.card_db_hash,
             runtime_deck_catalog_sha256: authority.runtime_deck_catalog_sha256.clone(),
+            algorithm_identity: (authority.algorithm_identity != KERNEL_NATIVE_SEARCH_ALGORITHM_V1)
+                .then(|| authority.algorithm_identity.clone()),
         }
     }
 
@@ -186,7 +196,15 @@ impl PopulationSearchAuthoritySlotV1 {
         KernelNativeSearchAuthorityV1 {
             schema: KERNEL_NATIVE_SEARCH_AUTHORITY_SCHEMA_V1.to_owned(),
             authority_kind: KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1.to_owned(),
-            algorithm_identity: KERNEL_NATIVE_SEARCH_ALGORITHM_V1.to_owned(),
+            algorithm_identity: match self.algorithm_identity.as_deref() {
+                None => KERNEL_NATIVE_SEARCH_ALGORITHM_V1.to_owned(),
+                Some(KERNEL_NATIVE_SEARCH_ALGORITHM_V2) => {
+                    KERNEL_NATIVE_SEARCH_ALGORITHM_V2.to_owned()
+                }
+                // An explicit v1 (or unknown) value: a second spelling of a
+                // v1 slot would give one authority two manifest encodings.
+                Some(_) => String::new(),
+            },
             node_key_identity: KERNEL_NATIVE_SEARCH_NODE_KEY_V1.to_owned(),
             tier: self.tier,
             transition_budget: self.tier.transition_budget(),
@@ -1099,6 +1117,63 @@ mod tests {
         assert!(
             !String::from_utf8_lossy(ordinary.canonical_bytes_v1()).contains("search_authority")
         );
+    }
+
+    #[test]
+    fn v2_search_slot_declares_its_algorithm_and_v1_slots_never_do() {
+        let v1_manifest = manifest_with_search_slot_v1(
+            KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1[0],
+            KernelNativeSearchTierV1::T2048,
+            POPULATION_SEARCH_SLOT_T2048_WEIGHT_UNITS_V1,
+        );
+        assert!(!String::from_utf8_lossy(v1_manifest.canonical_bytes_v1())
+            .contains("algorithm_identity"));
+
+        let authority = KernelNativeSearchAuthorityV1::current_v2(
+            KernelNativeSearchTierV1::T2048,
+            KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1[0],
+            valid_diagnostic_identity_v1(),
+        )
+        .unwrap();
+        let mut slots = slots_with_search_at_6_v1(
+            KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1[0],
+            KernelNativeSearchTierV1::T2048,
+            POPULATION_SEARCH_SLOT_T2048_WEIGHT_UNITS_V1,
+        );
+        slots[6].search_authority = Some(PopulationSearchAuthoritySlotV1::from_authority_v1(
+            &authority,
+        ));
+        let manifest = build_population_refresh_manifest_v1(0, None, None, slots).unwrap();
+        let redecoded =
+            decode_population_refresh_manifest_v1(manifest.canonical_bytes_v1(), None).unwrap();
+        assert_eq!(
+            redecoded.canonical_bytes_v1(),
+            manifest.canonical_bytes_v1()
+        );
+        assert_ne!(
+            redecoded.manifest_sha256_v1(),
+            v1_manifest.manifest_sha256_v1()
+        );
+        let resolved = redecoded.slots_v1()[6]
+            .search_authority_v1()
+            .expect("search config must survive")
+            .to_authority_v1();
+        assert_eq!(resolved, authority);
+
+        // A v1 slot has exactly one encoding: spelling its algorithm out is
+        // rejected, as is an unknown algorithm.
+        for algorithm in [KERNEL_NATIVE_SEARCH_ALGORITHM_V1, "wrong-algorithm/v2"] {
+            assert_eq!(
+                mutate_v1(
+                    &v1_manifest,
+                    |value| value["slots"][6]["search_authority"]["algorithm_identity"] =
+                        json!(algorithm),
+                    None
+                ),
+                PopulationRefreshManifestErrorKindV1::InvalidSlots,
+                "algorithm {algorithm} must be rejected"
+            );
+        }
     }
 
     #[test]

@@ -6506,7 +6506,91 @@ impl FastActorSessionV1 {
         FastActorSessionV1,
         crate::kernel_native_search_opponent_v1::KernelNativeSearchErrorV1,
     > {
-        self.kernel_search_redeterminized_clone_core_v1(simulation_seed, |_state, _actor| {})
+        self.kernel_search_redeterminized_clone_core_v1(simulation_seed, false, |_state, _actor| {})
+    }
+
+    /// [`Self::kernel_search_redeterminized_clone_v1`] for the v2 search
+    /// algorithm: the hidden cards the actor's own pending selection offers
+    /// (every card a library search can find) keep their identities, as in
+    /// [`Self::census_redeterminized_clone_v1`]. The engine revalidates the
+    /// stored candidate set against those identities, so resampling them
+    /// rejects every determinization of a library-search root.
+    pub(crate) fn kernel_search_redeterminized_clone_pinned_v2(
+        &self,
+        simulation_seed: u64,
+    ) -> Result<
+        FastActorSessionV1,
+        crate::kernel_native_search_opponent_v1::KernelNativeSearchErrorV1,
+    > {
+        self.kernel_search_redeterminized_clone_core_v1(simulation_seed, true, |_state, _actor| {})
+    }
+
+    /// Test fixture: P0 has activated Generous Ent's forestcycling and is
+    /// choosing among the library cards it can find (one Forest, plus the
+    /// zero-card finish). Returns the state, the Forest, and P0's library.
+    #[cfg(test)]
+    pub(crate) fn library_search_root_state_for_test(
+    ) -> (crate::state::GameState, ObjectId, Vec<ObjectId>) {
+        use crate::engine::{Action, Decision};
+        use crate::policy_observation_v6::tests::{put, ready_state};
+
+        let actor = PlayerId::P0;
+        let mut state = ready_state();
+        let ent = put(&mut state, actor, "Generous Ent", Zone::Hand);
+        let mut library = Vec::new();
+        for name in [
+            "Lightning Bolt",
+            "Island",
+            "Forest",
+            "Counterspell",
+            "Swamp",
+            "Mountain",
+            "Island",
+            "Brainstorm",
+        ] {
+            library.push(put(&mut state, actor, name, Zone::Library));
+        }
+        let forest = library[2];
+        for name in ["Forest", "Island", "Lightning Bolt"] {
+            put(&mut state, actor.opponent(), name, Zone::Library);
+        }
+        state.players[actor.index()].mana_pool[crate::mana::ManaColor::G.pool_index()] = 1;
+        crate::engine::step(&mut state, Action::ActivateAbility(ent, 0)).unwrap();
+        loop {
+            match crate::engine::advance_until_decision(&mut state) {
+                Decision::CastSpellOrPass { .. } => {
+                    crate::engine::step(&mut state, Action::Pass).unwrap();
+                }
+                Decision::ChooseEffectTargets { .. } => break,
+                other => panic!("unexpected decision {other:?}"),
+            }
+        }
+        (state, forest, library)
+    }
+
+    /// Test fixture: [`Self::library_search_root_state_for_test`] as a
+    /// flat-action V2 session, the contract the kernel-native search uses.
+    #[cfg(test)]
+    pub(crate) fn library_search_v2_fixture_for_test() -> (Self, ObjectId, Vec<ObjectId>) {
+        let (state, forest, library) = Self::library_search_root_state_for_test();
+        let mut session = Self::reset_with_limits(23, 91, 10_000, 10_000);
+        session.state = state;
+        session.surface = PolicySurfaceV5::new_for_session();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.terminal = None;
+        session.flat_action_contract_mode = FlatActionContractModeV1::V2;
+        session.flat_action_cache_spare = None;
+        session.flat_action_cache_spare_v2 = None;
+        session.advance_to_decision_or_terminal();
+        (session, forest, library)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn card_def_for_test(&self, id: ObjectId) -> u16 {
+        self.state.objects.get(id).card_def
     }
 
     /// Test-only entry to the same boundary as
@@ -6526,12 +6610,14 @@ impl FastActorSessionV1 {
         FastActorSessionV1,
         crate::kernel_native_search_opponent_v1::KernelNativeSearchErrorV1,
     > {
-        self.kernel_search_redeterminized_clone_core_v1(simulation_seed, corruption)
+        self.kernel_search_redeterminized_clone_core_v1(simulation_seed, false, corruption)
     }
 
     /// Shared implementation behind
-    /// [`Self::kernel_search_redeterminized_clone_v1`] and its test-only
-    /// sibling above. `post_redetermination_hook` is called once, after
+    /// [`Self::kernel_search_redeterminized_clone_v1`], its pinned v2 sibling
+    /// and the test-only entry above. `pin_pending_selection` keeps the
+    /// actor's pending-selection cards out of the resampled pool (v2 only).
+    /// `post_redetermination_hook` is called once, after
     /// `redeterminize_hidden_zones_v1` and before the rebuild that produces
     /// `after_observation` / `after_semantics` / `after_binding`. The
     /// production wrapper always passes a no-op closure, so this is
@@ -6539,6 +6625,7 @@ impl FastActorSessionV1 {
     fn kernel_search_redeterminized_clone_core_v1(
         &self,
         simulation_seed: u64,
+        pin_pending_selection: bool,
         post_redetermination_hook: impl FnOnce(&mut crate::state::GameState, PlayerId),
     ) -> Result<
         FastActorSessionV1,
@@ -6563,11 +6650,20 @@ impl FastActorSessionV1 {
             .ok_or(KernelNativeSearchErrorV1::InvalidDecision)?;
         let before_binding = self.native_full_trajectory_current_binding_v2(expected)?;
 
+        let pinned = if pin_pending_selection {
+            crate::kernel_native_search_opponent_v1::pending_selection_hidden_objects_v1(
+                &self.state,
+                actor,
+            )
+        } else {
+            Vec::new()
+        };
         let mut sampled = self.clone();
-        crate::kernel_native_search_opponent_v1::redeterminize_hidden_zones_v1(
+        crate::kernel_native_search_opponent_v1::redeterminize_hidden_zones_pinned_v1(
             &mut sampled.state,
             actor,
             simulation_seed,
+            &pinned,
         )?;
         post_redetermination_hook(&mut sampled.state, actor);
 
@@ -16701,41 +16797,7 @@ mod tests {
     /// "prevalidated fast actor action failed internally".
     #[test]
     fn census_redeterminized_library_search_keeps_every_candidate_steppable() {
-        use crate::engine::{Action, Decision};
-        use crate::policy_observation_v6::tests::{put, ready_state};
-
-        let actor = PlayerId::P0;
-        let mut state = ready_state();
-        let ent = put(&mut state, actor, "Generous Ent", Zone::Hand);
-        let mut library = Vec::new();
-        for name in [
-            "Lightning Bolt",
-            "Island",
-            "Forest",
-            "Counterspell",
-            "Swamp",
-            "Mountain",
-            "Island",
-            "Brainstorm",
-        ] {
-            library.push(put(&mut state, actor, name, Zone::Library));
-        }
-        let forest = library[2];
-        for name in ["Forest", "Island", "Lightning Bolt"] {
-            put(&mut state, actor.opponent(), name, Zone::Library);
-        }
-        state.players[actor.index()].mana_pool[crate::mana::ManaColor::G.pool_index()] = 1;
-        // Forestcycling: search for a Forest card.
-        crate::engine::step(&mut state, Action::ActivateAbility(ent, 0)).unwrap();
-        loop {
-            match crate::engine::advance_until_decision(&mut state) {
-                Decision::CastSpellOrPass { .. } => {
-                    crate::engine::step(&mut state, Action::Pass).unwrap();
-                }
-                Decision::ChooseEffectTargets { .. } => break,
-                other => panic!("unexpected decision {other:?}"),
-            }
-        }
+        let (state, forest, library) = FastActorSessionV1::library_search_root_state_for_test();
         let session = FastActorSessionV1::from_v3_fixture_state(state);
         let FastActorResponseV1::Decision(d) = session.current_response() else {
             panic!("missing library-search decision");
@@ -16771,6 +16833,51 @@ mod tests {
                 .iter()
                 .any(|&id| card(&sampled, id) != card(&session, id));
         }
+        assert!(resampled, "the rest of the library is still resampled");
+    }
+
+    /// #187: the kernel-native search's v1 clone resamples the cards a
+    /// pending library search offers, so the admission check rejects most
+    /// determinizations of the root. The v2 clone keeps them, admits every
+    /// determinization, and every cached candidate stays steppable.
+    #[test]
+    fn kernel_search_pinned_clone_admits_every_library_search_determinization() {
+        use crate::kernel_native_search_opponent_v1::KernelNativeSearchErrorV1;
+
+        let (session, forest, library) = FastActorSessionV1::library_search_v2_fixture_for_test();
+        let FastActorResponseV1::Decision(d) = session.current_response() else {
+            panic!("missing library-search decision");
+        };
+        assert_eq!(d.legal_action_count, 2, "one findable Forest plus finish");
+
+        let mut v1_rejected = 0;
+        let mut resampled = false;
+        for det in 0..32u64 {
+            match session.kernel_search_redeterminized_clone_v1(det) {
+                Err(KernelNativeSearchErrorV1::StaleOrTamperedBinding)
+                | Err(KernelNativeSearchErrorV1::HiddenStateContract) => v1_rejected += 1,
+                Err(other) => panic!("det {det}: unexpected v1 error {other:?}"),
+                Ok(_) => {}
+            }
+            let sampled = session
+                .kernel_search_redeterminized_clone_pinned_v2(det)
+                .unwrap_or_else(|error| panic!("det {det}: {error:?}"));
+            assert_eq!(
+                sampled.card_def_for_test(forest),
+                session.card_def_for_test(forest)
+            );
+            for index in 0..d.legal_action_count {
+                let mut stepped = sampled.clone();
+                stepped
+                    .step(d.episode_id, d.step, index)
+                    .unwrap_or_else(|error| panic!("det {det} candidate {index}: {error:?}"));
+                assert!(stepped.state.engine.halted.is_none());
+            }
+            resampled |= library
+                .iter()
+                .any(|&id| sampled.card_def_for_test(id) != session.card_def_for_test(id));
+        }
+        assert!(v1_rejected > 0, "v1 must still reproduce the #187 failure");
         assert!(resampled, "the rest of the library is still resampled");
     }
 }
