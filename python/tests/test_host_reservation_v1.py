@@ -499,6 +499,14 @@ class HostReservationTests(unittest.TestCase):
         return row.session, row.pgrp
 
     @unittest.skipUnless(LINUX, "Linux backend")
+    def test_linux_descendant_override_cannot_bypass_session_containment(self):
+        r = hr.acquire("test", "no-override", "released by the test")
+        with self.assertRaises(hr.Refused):
+            hr.release(r["token"], "cancelled", ignore_descendants=[hr.self_identity()])
+        self.assertEqual(hr.status()["record"]["token"], r["token"])
+        hr.release(r["token"], "cancelled")
+
+    @unittest.skipUnless(LINUX, "Linux backend")
     def test_linux_second_acquire_fails_while_held_and_never_replaces_the_lock(self):
         first = hr.acquire("test", "first", "released by the test")
         before = hr.lock_path().read_bytes()
@@ -659,6 +667,13 @@ class WindowsProcessListTests(unittest.TestCase):
         pid, creation = hr.self_identity()
         self.assertEqual(hr.system_creation_times()[pid], creation)
 
+    def test_image_audit_uses_the_exact_current_process_identity(self):
+        pid, creation = hr.self_identity()
+        audited = hr._audit_descendant(pid, creation)
+        self.assertEqual((audited["pid"], audited["creation_time"]), (pid, creation))
+        self.assertTrue(audited["image"].lower().endswith("python.exe"))
+        self.assertIsNone(hr._audit_descendant(pid, creation + 1))
+
     def test_a_refused_pid_is_judged_by_the_system_process_list(self):
         pid, creation = hr.self_identity()
         with patch.object(hr, "_OpenProcess", return_value=None), \
@@ -670,6 +685,169 @@ class WindowsProcessListTests(unittest.TestCase):
                 self.assertEqual(hr.process_state(pid, creation), "absent", "pid not listed")
             with patch.object(hr, "system_creation_times", return_value=None):
                 self.assertEqual(hr.process_state(pid, creation), "unknown", "list unavailable")
+
+
+@unittest.skipUnless(os.name == "nt", "Windows descendant attribution")
+class WindowsDescendantTests(unittest.TestCase):
+    def walk(self, times, states=None, exits=None):
+        # The original root and its replacement have both exited. The live
+        # orphan of the replacement retains the original root's numeric pid.
+        rows = [(20, 10, "real-child.exe"), (30, 10, "WMI-helper.exe"),
+                (40, 30, "foreign-claim-worker.exe")]
+        with patch.object(hr, "process_table", return_value=rows), \
+                patch.object(hr, "creation_time", side_effect=lambda pid: times.get(pid)), \
+                patch.object(hr, "process_state", side_effect=lambda p, c: (states or {}).get((p, c), "absent")):
+            return hr.live_descendants([(10, 100)], exit_times=exits)
+
+    def test_chained_reuse_filters_later_orphans_and_their_tree(self):
+        found = self.walk({20: 150, 30: 300, 40: 400}, exits={(10, 100): 200})
+        self.assertEqual([d["pid"] for d in found], [20])
+
+    def test_no_exit_evidence_keeps_conservative_refusal(self):
+        found = self.walk({20: 150, 30: 300, 40: 400})
+        self.assertEqual([d["pid"] for d in found], [20, 30, 40])
+
+    def test_unknown_child_or_parent_remains_a_refusal(self):
+        self.assertIn(30, [d["pid"] for d in self.walk({20: 150}, exits={(10, 100): 200})])
+        self.assertIn(30, [d["pid"] for d in self.walk({30: 300},
+                      states={(10, 100): "unknown"}, exits={(10, 100): 200})])
+
+    def test_alive_root_ignores_exit_hint_and_live_reuse_has_existing_bound(self):
+        found = self.walk({10: 100, 30: 300}, states={(10, 100): "alive"}, exits={(10, 100): 200})
+        self.assertIn(30, [d["pid"] for d in found])
+        found = self.walk({10: 250, 20: 150, 30: 300, 40: 400})
+        self.assertEqual([d["pid"] for d in found], [20])
+
+    def test_children_at_exit_boundary_count_and_older_children_do_not(self):
+        found = self.walk({20: 99, 30: 200}, exits={(10, 100): 200})
+        self.assertEqual([d["pid"] for d in found], [30, 40])
+
+    def test_child_handle_reports_real_exit_after_wait(self):
+        # Only this test's short-lived child is queried. No reservation or
+        # foreign process is inspected or terminated.
+        with subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read()"],
+                              stdin=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW) as child:
+            creation = hr._child_creation(child)
+            self.assertIsNone(hr._child_exit(child))
+            child.stdin.close()
+            child.wait(timeout=20)
+            ended = hr._child_exit(child)
+            self.assertGreaterEqual(ended, creation)
+            self.assertLessEqual(ended, hr._exit_upper_bound())
+
+    def test_supervisor_records_exact_child_identity_and_exit(self):
+        from unittest.mock import Mock
+        child = Mock(pid=10)
+        child.wait.return_value = 0
+        with patch.object(hr, "contain_self", return_value="job"), patch.object(hr, "adopt"), \
+                patch.object(hr, "_spawn_contained", return_value=child), \
+                patch.object(hr, "_child_creation", return_value=100), \
+                patch.object(hr, "_child_exit", return_value=200), \
+                patch.object(hr, "record_descendant") as recorded, patch.object(hr, "_change") as changed, \
+                patch.object(hr, "job_members", return_value=[]), patch.object(hr, "release"):
+            self.assertEqual(hr.supervise("token", ["mock"]), 0)
+        recorded.assert_called_once_with("token", 10, 100)
+        changed.assert_called_once_with("token", "child-exited", pid=10, creation_time=100, exit_time=200)
+
+
+@unittest.skipUnless(os.name == "nt", "Windows descendant override")
+class DescendantOverrideTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="host-descendant-override-test-")
+        self.environment = patch.dict(os.environ, {hr.TEST_ROOT_ENV: self.temp.name})
+        self.environment.start()
+        self.token_env = patch.dict(os.environ)
+        self.token_env.start()
+        os.environ.pop(hr.TOKEN_ENV, None)
+        self.record = hr.acquire("test", "mocked-release", "scratch only")
+        self.token = self.record["token"]
+        self.events = [{"kind": "descendant", "pid": 10, "creation_time": 100}]
+        self.descendants = [{"pid": 20, "creation_time": 200, "image": "foreign-claim.exe"}]
+
+    def tearDown(self):
+        self.token_env.stop()
+        self.environment.stop()
+        self.temp.cleanup()
+
+    def release(self, ignored=((20, 200),), state=None, born=200, token=None):
+        with patch.object(hr, "read_events", return_value=(self.events, [])), \
+                patch.object(hr, "live_descendants", return_value=self.descendants), \
+                patch.object(hr, "process_state", side_effect=lambda p, c: (state or {}).get(p, "absent" if p == 10 else "alive")), \
+                patch.object(hr, "creation_time", return_value=born), \
+                patch.object(hr, "_audit_descendant", side_effect=lambda p, c: {"pid": p, "creation_time": c, "image": "foreign-claim.exe"}):
+            return hr.release(token or self.token, "cancelled", ignore_descendants=ignored)
+
+    def test_exact_override_audits_image_and_identity_without_touching_process(self):
+        self.release()
+        events, unreadable = hr.read_events(self.token)
+        self.assertFalse(unreadable)
+        self.assertEqual(events[-1]["ignored_descendants"], self.descendants)
+        self.assertEqual(hr.status()["state"], "free")
+
+    def test_unreadable_image_cannot_be_overridden(self):
+        with patch.object(hr, "read_events", return_value=(self.events, [])), \
+                patch.object(hr, "live_descendants", return_value=self.descendants), \
+                patch.object(hr, "process_state", side_effect=lambda p, c: "absent" if p == 10 else "alive"), \
+                patch.object(hr, "creation_time", return_value=200), \
+                patch.object(hr, "_audit_descendant", return_value=None), self.assertRaises(hr.Refused):
+            hr.release(self.token, "cancelled", ignore_descendants=[(20, 200)])
+
+    def test_wrong_token_is_refused(self):
+        with self.assertRaises(hr.Refused):
+            self.release(token=uuid.uuid4().hex)
+
+    def test_recorded_live_and_unknown_work_cannot_be_overridden(self):
+        for state in ("alive", "unknown"):
+            with self.subTest(state=state), self.assertRaises(hr.Refused):
+                self.release(ignored=((10, 100), (20, 200)), state={10: state})
+
+    def test_recorded_absent_identity_cannot_be_overridden(self):
+        with self.assertRaises(hr.Refused):
+            self.release(ignored=((10, 100),))
+
+    def test_unknown_stale_or_unlisted_identity_cannot_be_overridden(self):
+        for state, born, identity in (({20: "unknown"}, 200, (20, 200)),
+                                     ({20: "absent"}, 200, (20, 200)),
+                                     ({}, 201, (20, 200)), ({}, 200, (20, 201))):
+            with self.subTest(state=state, born=born, identity=identity), self.assertRaises(hr.Refused):
+                self.release(ignored=(identity,), state=state, born=born)
+
+    def test_ignoring_parent_does_not_ignore_its_subtree(self):
+        self.descendants.append({"pid": 30, "creation_time": 300, "image": "worker.exe"})
+        with self.assertRaises(hr.Refused):
+            self.release()
+
+    @unittest.skipUnless(os.name == "nt", "Windows job proof")
+    def test_caller_job_members_or_unreadable_job_cannot_be_overridden(self):
+        pid, creation = hr.self_identity()
+        self.events.append({"kind": "adopt", "pid": pid, "creation_time": creation, "contained": True})
+        with patch.object(hr, "job_members", return_value=[pid, 20]), self.assertRaises(hr.Refused):
+            self.release()
+        with patch.object(hr, "job_members", side_effect=OSError("unreadable")), self.assertRaises(hr.Refused):
+            self.release()
+
+    def test_exit_events_bound_exact_identity_and_old_nested_done_stays_unbounded(self):
+        events = [{"kind": "child-exited", "pid": 10, "creation_time": 100, "exit_time": 200},
+                  {"kind": "nested-done", "by_pid": 30, "by_process_creation_time": 300, "exit_upper_bound": 400},
+                  {"kind": "nested-done", "by_pid": 50, "by_process_creation_time": 500}]
+        self.assertEqual(hr._exit_times(events), {(10, 100): 200, (30, 300): 400})
+        with patch.object(hr, "_change") as changed, patch.object(hr, "_exit_upper_bound", return_value=400):
+            hr._finish(self.token, True, "success", "finished")
+        changed.assert_called_once_with(self.token, "nested-done", outcome="success", detail="finished", exit_upper_bound=400)
+
+    def test_malformed_exit_event_is_unknown(self):
+        hr._change(self.token, "child-exited", pid=10, creation_time=100, exit_time="200")
+        events, unreadable = hr.read_events(self.token)
+        self.assertFalse(events)
+        self.assertEqual(len(unreadable), 1)
+        self.assertEqual(hr.assess(self.record, events, unreadable)["state"], "unknown")
+
+    def test_cli_identity_parser_requires_exact_positive_fields(self):
+        import argparse
+        self.assertEqual(hr._descendant_identity("20:200"), (20, 200))
+        for value in ("20", "0:200", "20:0", "20:-1", "20:200:300", "20:unknown"):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                hr._descendant_identity(value)
 
 
 if __name__ == "__main__":

@@ -71,6 +71,7 @@ CLI (JSON on stdout; exit 0 ok, 3 held, 4 reclaimable, 5 unknown, 6 refused):
                                         supervisor's own act, after it contains itself)
   note --token T --kind KIND [--detail TEXT]
   release --token T --outcome success|failure|cancelled|spawn-failed [--detail TEXT]
+          [--ignore-descendant PID:CREATION]  (repeat for audited false positives)
   reclaim --lane L --work-id W --release-condition TEXT [--transport-record JSON] [--owner-pid PID]
   status [--token T] [--line]          exempt-pids --token T
   supervise --token T [--nested] [--cwd DIR] -- COMMAND...
@@ -241,6 +242,9 @@ if os.name == "nt":
     _TerminateProcess = _fn("TerminateProcess", wintypes.BOOL, HANDLE, wintypes.UINT)
     _CloseHandle = _fn("CloseHandle", wintypes.BOOL, HANDLE)
     _GetCurrentProcess = _fn("GetCurrentProcess", HANDLE)
+    _GetSystemTimePreciseAsFileTime = _fn("GetSystemTimePreciseAsFileTime", None, _FT)
+    _QueryFullProcessImageNameW = _fn("QueryFullProcessImageNameW", wintypes.BOOL, HANDLE,
+                                    wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD))
     _CreateToolhelp32Snapshot = _fn("CreateToolhelp32Snapshot", HANDLE, wintypes.DWORD, wintypes.DWORD)
     _Process32FirstW = _fn("Process32FirstW", wintypes.BOOL, HANDLE, ctypes.POINTER(PROCESSENTRY32W))
     _Process32NextW = _fn("Process32NextW", wintypes.BOOL, HANDLE, ctypes.POINTER(PROCESSENTRY32W))
@@ -371,6 +375,23 @@ if os.name == "nt":
             _CloseHandle(handle)
 
 
+    def _audit_descendant(pid: int, creation: int) -> dict | None:
+        """Read the image and identity through one handle, resisting snapshot/pid races."""
+        handle = _OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, False, pid)
+        if not handle:
+            return None
+        try:
+            if _creation_of(handle) != creation or _WaitForSingleObject(handle, 0) != WAIT_TIMEOUT:
+                return None
+            size = wintypes.DWORD(32768)
+            image = ctypes.create_unicode_buffer(size.value)
+            if not _QueryFullProcessImageNameW(handle, 0, image, ctypes.byref(size)):
+                return None
+            return {"pid": pid, "creation_time": creation, "image": image.value}
+        finally:
+            _CloseHandle(handle)
+
+
     def process_table() -> list[tuple[int, int, str]]:
         """(pid, parent pid, image name) of every process (Toolhelp snapshot)."""
         snap = _CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
@@ -389,12 +410,16 @@ if os.name == "nt":
             _CloseHandle(snap)
 
 
-    def live_descendants(roots, exclude=()) -> list[dict]:
+    def live_descendants(roots, exclude=(), exit_times=None) -> list[dict]:
         """Live processes descended from any (pid, creation) root, also through
         exited intermediates (an orphan keeps its dead parent's pid). A child
         counts only if it was created after its parent; if the root's pid now
         names a newer process, children created after that newer process are its
-        own. A child whose creation time cannot be read counts (unknown is live)."""
+        own. A dead root with a recorded exit bounds children by that exit,
+        including when both it and a later holder of its pid have exited.
+        A child whose creation time cannot be read counts (unknown is live).
+        This walk adds refusals; job containment supplies absence evidence."""
+        exit_times = exit_times or {}
         children: dict[int, list[tuple[int, str]]] = {}
         for pid, parent, image in process_table():
             if pid != parent:
@@ -405,11 +430,13 @@ if os.name == "nt":
             pid, creation = frontier.pop()
             holder = creation_time(pid)
             newer = holder if holder is not None and holder != creation else None
+            ended = exit_times.get((pid, creation)) if process_state(pid, creation) == "absent" else None
             for child, image in children.get(pid, []):
                 if child in seen:
                     continue
                 born = creation_time(child)
-                if born is not None and (born < creation or (newer is not None and born >= newer)):
+                if born is not None and (born < creation or (newer is not None and born >= newer)
+                                         or (ended is not None and born > ended)):
                     continue
                 seen.add(child)
                 found.append({"pid": child, "image": image, "creation_time": born})
@@ -528,6 +555,23 @@ if os.name == "nt":
         object, so it is readable even if the child has already exited."""
         return _creation_of(HANDLE(int(child._handle)))
 
+
+    def _child_exit(child) -> int | None:
+        """Actual exit FILETIME from the retained child handle, never a reused pid."""
+        c, e, k, u = (wintypes.FILETIME() for _ in range(4))
+        if not _GetProcessTimes(HANDLE(int(child._handle)), ctypes.byref(c), ctypes.byref(e),
+                                ctypes.byref(k), ctypes.byref(u)):
+            return None
+        return _filetime(e) or None
+
+
+    def _exit_upper_bound() -> int:
+        """Bound further child creation after nested-done; that path spawns nothing."""
+        now = wintypes.FILETIME()
+        _GetSystemTimePreciseAsFileTime(ctypes.byref(now))
+        return _filetime(now)
+
+
     def _spawn_contained(job, command, cwd, env):
         """Start the work; it is created in the supervisor's job."""
         return subprocess.Popen(command, cwd=cwd, env=env)
@@ -625,7 +669,7 @@ else:
             time.sleep(0.05)
         return True
 
-    def live_descendants(roots, exclude=()) -> list[dict]:
+    def live_descendants(roots, exclude=(), exit_times=None) -> list[dict]:
         """Live processes descended from any (pid, creation) root, and every live
         member of a session or process group such a process leads. Linux
         reparents an orphan, so after an intermediate exits only its session
@@ -755,6 +799,15 @@ else:
         """The work child's start time; an exited child stays readable until
         Popen reaps it."""
         return creation_time(child.pid)
+
+
+    def _child_exit(child) -> None:
+        return None  # Linux reparenting/session semantics use no FILETIME bounds.
+
+
+    def _exit_upper_bound() -> None:
+        return None
+
 
     def boot_id() -> str:
         """The kernel's boot id, a random UUID new at every boot."""
@@ -937,6 +990,12 @@ def read_events(token: str) -> tuple[list[dict], list[str]]:
             event = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(event, dict) or event.get("schema") != EVENT_SCHEMA or event.get("token") != token:
                 raise ValueError("not an event of this reservation")
+            if event.get("kind") == "child-exited":
+                identity = (event.get("pid"), event.get("creation_time"))
+                _validate_exit(identity, event.get("exit_time"))
+            elif event.get("kind") == "nested-done" and event.get("exit_upper_bound") is not None:
+                identity = (event.get("by_pid"), event.get("by_process_creation_time"))
+                _validate_exit(identity, event["exit_upper_bound"])
             events.append(event)
         except (OSError, ValueError, UnicodeDecodeError):
             unreadable.append(path.name)
@@ -974,6 +1033,29 @@ def _work_roots(events: list[dict]) -> list[tuple[int, int]]:
     return roots
 
 
+def _validate_exit(identity, ended) -> None:
+    pid, creation = identity
+    if any(not isinstance(v, int) or isinstance(v, bool) or v <= 0 for v in (pid, creation, ended)) \
+            or ended < creation:
+        raise ValueError("incomplete process exit identity or time")
+
+
+def _exit_times(events: list[dict]) -> dict[tuple[int, int], int]:
+    """Exact child exits and nested completion bounds, tied to process identity.
+    Old reservations lack these events and retain the conservative walk."""
+    bounds = {}
+    for e in events:
+        if e.get("kind") == "child-exited":
+            identity, ended = (e["pid"], e["creation_time"]), e["exit_time"]
+        elif e.get("kind") == "nested-done" and e.get("exit_upper_bound") is not None:
+            identity = (e["by_pid"], e["by_process_creation_time"])
+            ended = e["exit_upper_bound"]
+        else:
+            continue
+        bounds[identity] = max(bounds.get(identity, ended), ended)
+    return bounds
+
+
 def assess(record: dict | None, events: list[dict], unreadable: list[str], exclude_self: bool = False) -> dict:
     """Liveness of a reservation. dead=True only with positive evidence: every
     recorded process absent by pid and creation time. That covers the whole
@@ -999,7 +1081,7 @@ def assess(record: dict | None, events: list[dict], unreadable: list[str], exclu
             continue
         states[label] = {"pid": pid, "creation_time": creation, "state": process_state(pid, creation)}
     exclude = [me[0]] if me else []
-    descendants = live_descendants(work, exclude=exclude)
+    descendants = live_descendants(work, exclude=exclude, exit_times=_exit_times(events))
     alive = [k for k, v in states.items() if v["state"] == "alive"]
     unknown = [k for k, v in states.items() if v["state"] == "unknown"]
     out = {"processes": states, "live_descendants": descendants}
@@ -1135,16 +1217,19 @@ def record_descendant(token: str, pid: int, creation: int | None = None) -> dict
 
 
 def note(token: str, kind: str, detail: str = "") -> dict:
-    if kind in ("handoff", "handoff-unverified", "adopt", "descendant", "members", "nested-done", "release", "reclaim"):
+    if kind in ("handoff", "handoff-unverified", "adopt", "descendant", "child-exited", "members", "nested-done", "release", "reclaim"):
         raise ValueError(f"{kind} is not a note")
     return _change(token, kind, detail=detail)
 
 
-def release(token: str, outcome: str, detail: str = "") -> dict:
+def release(token: str, outcome: str, detail: str = "", ignore_descendants=()) -> dict:
     """Owner-only release: the token must hold the lock and no recorded work
-    other than the caller may be live (a surviving descendant keeps it held)."""
+    other than the caller may be live. An exact audited Windows descendant
+    override changes only the extra tree refusal, never the absence proof."""
     if outcome not in OUTCOMES:
         raise ValueError(f"outcome must be one of {OUTCOMES}")
+    if ignore_descendants and os.name != "nt":
+        raise Refused("descendant overrides require Windows job containment")
     try:
         handle, record = _transition(token)
     except FileNotFoundError:
@@ -1152,13 +1237,41 @@ def release(token: str, outcome: str, detail: str = "") -> dict:
     with handle:
         events, unreadable = read_events(token)
         me = self_identity()
-        work = [w for w in _work_roots(events) if w != me]
+        roots = _work_roots(events)
+        work = [w for w in roots if w != me]
         live = [w for w in work if process_state(*w) != "absent"]
-        descendants = live_descendants(work, exclude=[me[0]])
+        descendants = live_descendants(work, exclude=[me[0]], exit_times=_exit_times(events))
+        ignored = []
+        if ignore_descendants:
+            # The tree walk is only an extra refusal. Overrides never change
+            # the recorded identities used as job containment/absence proof.
+            if unreadable or live:
+                raise Refused("cannot ignore descendants while recorded work is live or unknown")
+            if any(e.get("kind") == "adopt" and e.get("contained")
+                   and (e.get("pid"), e.get("creation_time")) == me for e in events):
+                try:
+                    members = set(job_members(None)) - {me[0]}
+                except OSError as exc:
+                    raise Refused(f"cannot verify caller job membership: {exc}") from exc
+                if members:
+                    raise Refused(f"caller job still holds work: {sorted(members)}")
+            requested = set(ignore_descendants)
+            for identity in sorted(requested):
+                pid, creation = identity
+                if identity in roots or process_state(pid, creation) != "alive":
+                    raise Refused(f"ignored descendant identity is recorded, absent or unknown: {identity}")
+                match = next((d for d in descendants if (d["pid"], d["creation_time"]) == identity), None)
+                if match is None or not match.get("image") or creation_time(pid) != creation:
+                    raise Refused(f"ignored descendant identity changed or is not in the refusal walk: {identity}")
+                audit = _audit_descendant(pid, creation)
+                if audit is None:
+                    raise Refused(f"cannot audit ignored descendant image and exact identity: {identity}")
+                ignored.append(audit)
+            descendants = [d for d in descendants if (d["pid"], d["creation_time"]) not in requested]
         if unreadable or live or descendants:
             raise Refused(f"work still live or unknown: processes {live}, descendants "
                           f"{[d['pid'] for d in descendants]}, unreadable events {unreadable}")
-        _write_event(token, "release", outcome=outcome, detail=detail)
+        _write_event(token, "release", outcome=outcome, detail=detail, ignored_descendants=ignored)
         handle.rename(f"{HOST}.g{record['generation']:08d}.{token}.released.json")
     return {"token": token, "outcome": outcome, "generation": record["generation"]}
 
@@ -1222,7 +1335,7 @@ def exempt_pids(token: str) -> list[int]:
     events, _ = read_events(token)
     work = _work_roots(events)
     pids = [pid for pid, creation in work if process_state(pid, creation) == "alive"]
-    pids += [d["pid"] for d in live_descendants(work)]
+    pids += [d["pid"] for d in live_descendants(work, exit_times=_exit_times(events))]
     if os.environ.get(TOKEN_ENV) == token:
         try:
             pids += job_members(None)  # a nested caller's own supervisor job
@@ -1235,7 +1348,7 @@ def _finish(token: str, nested: bool, outcome: str, detail: str) -> None:
     """Outer supervisors release; nested ones only record that they are done."""
     try:
         if nested:
-            _change(token, "nested-done", outcome=outcome, detail=detail)
+            _change(token, "nested-done", outcome=outcome, detail=detail, exit_upper_bound=_exit_upper_bound())
         else:
             release(token, outcome, detail=detail)
     except Refused as exc:
@@ -1268,8 +1381,13 @@ def supervise(token: str, command: list[str], cwd: str | None = None, nested: bo
         _finish(token, nested, "spawn-failed", f"{type(exc).__name__}: {exc}")
         return 127
     # Read through the child's own handle, so an exited child is readable too.
-    record_descendant(token, child.pid, _child_creation(child))
+    child_creation = _child_creation(child)
+    record_descendant(token, child.pid, child_creation)
     code = child.wait()
+    child_exit = _child_exit(child)
+    if child_exit is not None:
+        _validate_exit((child.pid, child_creation), child_exit)
+        _change(token, "child-exited", pid=child.pid, creation_time=child_creation, exit_time=child_exit)
     outcome, detail = ("success" if code == 0 else "failure"), f"exit code {code}"
     me, listed = os.getpid(), False
     while True:
@@ -1429,6 +1547,12 @@ def _transport(value: str | None) -> dict:
     return parsed
 
 
+def _descendant_identity(value: str) -> tuple[int, int]:
+    if not re.fullmatch(r"[1-9][0-9]*:[1-9][0-9]*", value):
+        raise argparse.ArgumentTypeError("expected PID:CREATION with positive integer identity fields")
+    return tuple(int(part) for part in value.split(":"))
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     command = []
@@ -1456,6 +1580,8 @@ def main(argv: list[str] | None = None) -> int:
         if op == "release":
             p.add_argument("--outcome", required=True, choices=OUTCOMES)
             p.add_argument("--detail", default="")
+            p.add_argument("--ignore-descendant", action="append", type=_descendant_identity, default=[],
+                           help="audit and ignore this exact false positive in the descendant walk only")
         if op == "supervise":
             p.add_argument("--cwd")
             p.add_argument("--nested", action="store_true")
@@ -1475,7 +1601,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.op == "note":
             result = note(args.token, args.kind, args.detail)
         elif args.op == "release":
-            result = release(args.token, args.outcome, args.detail)
+            result = release(args.token, args.outcome, args.detail, args.ignore_descendant)
         elif args.op == "exempt-pids":
             print(" ".join(str(p) for p in exempt_pids(args.token)))
             return EXIT_OK
