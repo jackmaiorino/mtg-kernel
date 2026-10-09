@@ -4998,7 +4998,11 @@ mod tests {
                 let values = |len: usize, offset: usize| -> Vec<f32> {
                     (0..len)
                         .map(|i| {
-                            let sign = if (i + offset) % 3 == 0 { -1.0 } else { 1.0 };
+                            let sign = if (i + offset).is_multiple_of(3) {
+                                -1.0
+                            } else {
+                                1.0
+                            };
                             sign * (((i * 31 + offset * 13) % 127) as f32 - 63.0) / 37.0
                         })
                         .collect()

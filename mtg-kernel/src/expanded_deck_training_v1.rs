@@ -3515,7 +3515,6 @@ fn execute_update_v1(
     result["input_read_seconds"] = json!(input_read_seconds);
     result["behavior_replay_seconds"] = json!(behavior_replay_seconds);
     result["learner_update_seconds"] = json!(learner_update_seconds);
-    drop(gae_phase_recorder);
     if profile_gae && !gae_phase_profile.records_v1().is_empty() {
         result["gae_phase_profile"] = json!({
             "update_elapsed_ns": gae_phase_profile.update_elapsed_ns_v1(),

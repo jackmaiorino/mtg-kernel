@@ -1168,13 +1168,17 @@ mod tests {
             read_pin_bounded(&trajectory, ARTIFACT_CAP).unwrap(),
             json!({"episode":1})
         );
-        reverify_validated_collection(&collection, &[trajectory.clone()]).unwrap();
+        reverify_validated_collection(&collection, std::slice::from_ref(&trajectory)).unwrap();
         fs::write(&trajectory.path, b"{\"episode\":2}").unwrap();
         assert!(read_pin_bounded(&trajectory, ARTIFACT_CAP).is_err());
-        assert!(reverify_validated_collection(&collection, &[trajectory.clone()]).is_err());
+        assert!(
+            reverify_validated_collection(&collection, std::slice::from_ref(&trajectory)).is_err()
+        );
         fs::write(&trajectory.path, b"{\"episode\":1}").unwrap();
         fs::write(&ledger.path, b"{\"entries\":[1]}").unwrap();
-        assert!(reverify_validated_collection(&collection, &[trajectory.clone()]).is_err());
+        assert!(
+            reverify_validated_collection(&collection, std::slice::from_ref(&trajectory)).is_err()
+        );
         fs::write(&ledger.path, b"{\"entries\":[]}").unwrap();
         fs::write(&collection.path, b"{\"trajectories\":[]}").unwrap();
         assert!(reverify_validated_collection(&collection, &[trajectory]).is_err());
