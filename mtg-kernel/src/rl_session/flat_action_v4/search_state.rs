@@ -5,6 +5,7 @@ use crate::state::GameState;
 mod chance_tests;
 mod effect_refs;
 mod key_step;
+pub(crate) use key_step::V4SearchActionTokenV1;
 #[cfg(test)]
 pub(super) mod library_tests;
 mod sampler;
@@ -20,6 +21,7 @@ pub(crate) enum V4SearchStateErrorV1 {
     DecisionLocalLibrary,
     InvalidVisibleBinding,
     HiddenStateContract,
+    HiddenReferenceConflict,
     SampleCandidateRebuildFailed,
     SampleBoundaryEncodingFailed,
     SampleBoundaryChanged,
@@ -248,7 +250,12 @@ impl FastActorSessionV1 {
                     }
                 }
             }
-            return Err(error);
+            // Legacy error vocabulary stays unchanged. Only the fresh mode
+            // names the lawful reference rejection used by its fallback.
+            return Err(if mode == V4SearchSampleMode::FutureChanceV3
+                && error == Error::HiddenStateContract
+                && sampler::has_hidden_reference_conflict(&self.state, actor, plan.as_ref())
+            { Error::HiddenReferenceConflict } else { error });
         }
         if mode == V4SearchSampleMode::FutureChanceV3 {
             // `seed` already derives from visible root, experiment and

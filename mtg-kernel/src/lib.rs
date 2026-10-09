@@ -36,6 +36,8 @@ compile_error!(
 
 pub mod async_flat_scored_rollout_v1;
 pub mod async_flat_scored_rollout_v2;
+pub mod native_search_collection_v3;
+pub mod native_search_trajectory_v3;
 pub mod async_rollout;
 pub mod async_rollout_v2;
 pub mod bo3_match;

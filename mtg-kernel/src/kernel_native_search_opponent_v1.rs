@@ -277,6 +277,7 @@ pub enum KernelNativeSearchErrorV1 {
     UnsupportedFlatActionContract,
     BudgetSmallerThanRootActionCount { budget: u32, root_actions: u32 },
     HiddenStateContract,
+    DeterminizationReferenceConflict,
     StaleOrTamperedBinding,
     NonNaturalTerminal,
     CorruptTree,
@@ -308,6 +309,7 @@ impl From<crate::rl_session::V4SearchStateErrorV1> for KernelNativeSearchErrorV1
         match error {
             V4SearchStateErrorV1::UnsupportedActionContract => Self::UnsupportedFlatActionContract,
             V4SearchStateErrorV1::NoLiveDecision => Self::InvalidDecision,
+            V4SearchStateErrorV1::HiddenReferenceConflict => Self::DeterminizationReferenceConflict,
             _ => Self::HiddenStateContract,
         }
     }

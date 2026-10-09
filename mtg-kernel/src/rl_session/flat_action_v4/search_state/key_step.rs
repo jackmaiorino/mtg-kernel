@@ -5,6 +5,12 @@ use super::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct V4SearchActionTokenV1(FlatActionDecisionSliceV3);
 
+impl V4SearchActionTokenV1 {
+    pub(crate) fn commitment(self) -> [u8; 16] {
+        self.0.binding.0.candidate_order_commitment
+    }
+}
+
 fn hash_visible(
     mut observation: crate::policy_observation_v6::ObservationV6,
     semantics: Vec<ActionSemanticV1>,

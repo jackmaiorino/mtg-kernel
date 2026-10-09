@@ -117,6 +117,32 @@ fn draw(rng: &mut SplitMix64, bound: u64) -> usize {
     }
 }
 
+pub(super) fn has_hidden_reference_conflict(
+    state: &GameState, actor: PlayerId,
+    plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+) -> bool {
+    for owner in [PlayerId::P0, PlayerId::P1] {
+        let mut pool = Vec::new();
+        if owner != actor {
+            for &id in &state.players[owner.index()].hand {
+                let object = state.objects.get(id);
+                if !state.known_hand_cards(actor, owner).iter().any(|known| {
+                    known.object == id && known.zone_change_count == object.zone_change_count
+                }) { pool.push(id); }
+            }
+        }
+        for (position, &id) in state.players[owner.index()].library.iter().enumerate() {
+            let object = state.objects.get(id);
+            if !state.known_library_cards(actor, owner).iter().any(|known| {
+                known.position as usize == position && known.object == id
+                    && known.zone_change_count == object.zone_change_count
+            }) { pool.push(id); }
+        }
+        if conflicts(state, &pool, plan) { return true; }
+    }
+    false
+}
+
 /// Called only on a disposable cloned state. Failure never permits retrying a seed.
 #[cfg(test)]
 pub(super) fn redeterminize(
