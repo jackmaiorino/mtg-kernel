@@ -6,7 +6,7 @@ mod chance_tests;
 mod effect_refs;
 mod key_step;
 #[cfg(test)]
-mod library_tests;
+pub(super) mod library_tests;
 mod sampler;
 #[cfg(test)]
 mod sampler_tests;
