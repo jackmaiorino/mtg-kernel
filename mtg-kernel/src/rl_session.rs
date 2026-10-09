@@ -300,6 +300,7 @@ pub(crate) use flat_action_v3::{
 pub use flat_action_v3::{FlatActionDecisionBindingV3, FlatActionDecisionSliceV3};
 #[cfg(test)]
 pub(crate) use flat_action_v4::search_library_fixture_v3;
+pub(crate) use flat_action_v4::V4SearchActionTokenV1;
 pub(crate) use flat_action_v4::V4SearchSampleMode;
 pub(crate) use flat_action_v4::V4SearchStateErrorV1;
 #[cfg(test)]
@@ -6527,6 +6528,11 @@ impl FastActorSessionV1 {
         }
         let mut used = vec![false; original.len()];
         let mut indices = Vec::with_capacity(original.len());
+        // PolicyActionV5 contains the complete executable command, including
+        // physical object handles. FastActorCurrentCandidateProofV1 copies
+        // exactly this command into the mutation path. Equal commands therefore
+        // have equal engine behavior even if visible semantic normalization
+        // differs. The used-index mask keeps any equal commands bijective.
         for candidate in &current.candidates {
             let index = original
                 .iter()

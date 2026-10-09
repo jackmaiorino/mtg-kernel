@@ -97,6 +97,7 @@ pub(super) fn census_hidden_source_conflicts_v1(
 mod search_state;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::Zone;
+pub(crate) use search_state::V4SearchActionTokenV1;
 pub(crate) use search_state::V4SearchSampleMode;
 pub(crate) use search_state::V4SearchStateErrorV1;
 
