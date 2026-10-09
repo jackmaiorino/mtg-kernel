@@ -15,6 +15,16 @@ verification remain pending. See
 [the gameplay validation matrix](../reports/fdn_fixture_gameplay_v1_validation.md).
 Milestones 5 through 7 remain separate work.
 
+October 9 target decision: Jack selected the complete Foundations Play
+Booster pool, now frozen in `data/limited/fdn_v1/booster_pool_v1.json`.
+The product-derived 286 names equal the historical reference exactly,
+including all ten Special Guests. See `fdn_booster_target_v1.md`.
+The original fixture milestone's final main CI run 37440121764 has all eight
+jobs successful; final retained evidence integration in collaboration PR
+#92 is merged at `f5e220570aecd0dda7b66294e747347d698944b1`.
+This updates the older qualification status above
+without changing any frozen measurements.
+
 | Milestone | Concrete work | Acceptance |
 | --- | --- | --- |
 | 1. Inputs and coverage | Import `.dck` files; separate mainboard and sideboard; inspect capabilities; resolve fully supported mainboards; pin two DraftZero fixtures and its reference names. | Reject unknown/partial/no-effect cards and tokens; preserve row/copy order; accept 40+ cards and duplicate counts; deterministic output. Implemented in this PR. |

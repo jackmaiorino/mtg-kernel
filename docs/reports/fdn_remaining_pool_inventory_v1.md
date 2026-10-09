@@ -1,5 +1,15 @@
 # FDN remaining reference pool inventory v1
 
+On October 9 Jack selected the full Foundations Play Booster pool as issue
+#110's target. The frozen product manifest is
+`data/limited/fdn_v1/booster_pool_v1.json`; see
+`docs/design/fdn_booster_target_v1.md`. Its 276 main-set names and ten Special
+Guests match all 286 historical reference names exactly. The nine names
+outside XMage's main `Foundations.java` list are applicable Special Guests,
+not missing target decisions. Goblin Bushwhacker is the tenth Special Guest
+and was already supported. The older sizing snapshot below is preserved;
+its request to freeze the manifest is now satisfied.
+
 Snapshot of the 243 FDN reference names (242 missing plus the partial Ajani) that are not fully supported on `main` at `a4e1474b`, classified by the XMage implementation each card uses (`jackmaiorino/mage` master). The tier is a heuristic over the XMage ability/effect classes imported by each card file and whether the file defines its own effect classes; it estimates engineering size and is not a rules-parity verdict. Nine names (Akroma's Memorial, Bloom Tender, Condemn, Embercleave, Fiend Artisan, Grim Tutor, Paradise Druid, Sphinx's Tutelage, Temporal Manipulation) are absent from XMage's `Foundations.java` set list, so the observed 17lands pool includes cards printed outside the main set and a frozen target manifest is still required (milestone 5).
 
 | Tier | Meaning | Names | Common | Uncommon | Rare | Mythic | Outside set |
