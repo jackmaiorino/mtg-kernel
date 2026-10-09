@@ -556,6 +556,12 @@ pub enum CommittedEvent {
         object: ObjectId,
         zone_change_count: u32,
     },
+    /// Appended to preserve every historical event's Hash discriminant.
+    /// Non-trigger history anchor, only emitted by opted-in game states.
+    LifeGainTurnBeganV1 {
+        turn: u32,
+        active_player: PlayerId,
+    },
 }
 
 /// Remembers the counters of a departing permanent whose own leave ability
@@ -1202,6 +1208,7 @@ fn commit_with_ability_lki(
             );
         }
     }
+    crate::life_gain_turn_v1::capture_committed_gain(state);
     if let Some(object) = entry_counter_object {
         let live = state.objects.get(object);
         let count = live.counters.plus1_plus1;

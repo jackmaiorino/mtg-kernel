@@ -608,6 +608,8 @@ pub enum UnsupportedMechanic {
     /// interpreter's fail-closed structural contract. Supported card
     /// definitions must never reach this at runtime.
     InvalidEffectContinuation,
+    /// First-life-gain matching has missing or inconsistent turn history.
+    InvalidFirstLifeGainHistory,
 }
 
 /// Issues the next 613.7 timestamp for a newly-created
@@ -11379,6 +11381,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             state.players[1].draws_this_turn = 0;
             #[cfg(feature = "standard-magezero-fixtures")]
             crate::standard_keywords_v1::advance_day_night(state, p.opponent());
+            crate::life_gain_turn_v1::reset_at_untap(state);
             state.players[0].spells_cast_this_turn = 0;
             state.players[1].spells_cast_this_turn = 0;
             for (_, object) in state.objects.iter_mut() {
