@@ -1,0 +1,134 @@
+{
+  "schema": "training-throughput-audit-manifest/v1",
+  "audit_date": "2026-10-09",
+  "audited_source_commit": "e0ea59c01e861a6fc699fbfe9e51643c0650f797",
+  "measured_nine_deck_source_commit": "c69255d32e8cfa46974ff8c93cd9ce7b4f0a366d",
+  "measured_binary_sha256": "c1b4406c9d09f1c7c315ffc7cfa15ac847f11fba35f005ee0d0bba709ee9ebf2",
+  "gpu_ordinal": null,
+  "seed_scope": "Existing nine-deck-baseline-v1 schedule namespace; zero new draws or runs. All schedules and weights unchanged.",
+  "toolchain": {
+    "analysis_python": "3.14.3",
+    "rust_pin": "1.94.1",
+    "llvm": "21.1.8",
+    "linker": "No rebuild performed; historical linker not re-resolved. Runtime bound by binary SHA256."
+  },
+  "execution": {
+    "new_games": 0,
+    "new_updates": 0,
+    "builds": 0,
+    "paid_resources_created": 0,
+    "mode": "read-only retained timing reconstruction"
+  },
+  "storage": {
+    "kind": "committed small report and derived metadata; no bulk training artifacts",
+    "report_cap_bytes": 4194304,
+    "bytes": 1515564
+  },
+  "files": [
+    {
+      "path": ".gitattributes",
+      "bytes": 27,
+      "sha256": "c089985639038cc07dc37c07a8d0d543df7ddf9b1873a948000494a6e230530d"
+    },
+    {
+      "path": "aggregate_historical.py",
+      "bytes": 10298,
+      "sha256": "90b178d40648418a2dfc1ca77371a14be237e6ad0a2545d725cefcba591df4b3"
+    },
+    {
+      "path": "aggregate_local_r1.py",
+      "bytes": 6158,
+      "sha256": "ae3cc032cbcb1fde8383994617fd20bf4f459edc90779a694d6566c35132fd28"
+    },
+    {
+      "path": "aggregate_native_collection.py",
+      "bytes": 5703,
+      "sha256": "55a5900abc6ac2a34826b56881680817aedbb80c5c462d67ee23b93cb56b3aef"
+    },
+    {
+      "path": "capture_context.py",
+      "bytes": 6777,
+      "sha256": "b0a8eaef3448a6c8cd61de73e16e9bb6bf913622a7546b48e313ee813c772564"
+    },
+    {
+      "path": "context.json",
+      "bytes": 99347,
+      "sha256": "f229bab0ba91190c67e08fb5d9bcaf0d83db323f916c6d156befff248db542fa"
+    },
+    {
+      "path": "desktop-profile.json",
+      "bytes": 152263,
+      "sha256": "818498be407e6ab3ad9f911fdb0571895f1af8185bdbaecdc627974564fca2de"
+    },
+    {
+      "path": "haley-archive-timings.json",
+      "bytes": 53698,
+      "sha256": "de062cda29d4aedbbe336947421275467edafce3fa3f577a6390527d48816979"
+    },
+    {
+      "path": "haley-block-stage-summary.json",
+      "bytes": 155429,
+      "sha256": "6718df86c2f57ab311b9f6ca4e32d3fff13383a74f92e36f73337a7998076d3e"
+    },
+    {
+      "path": "haley-update-collection-breakdown.json",
+      "bytes": 87439,
+      "sha256": "c996cb45a997b5851e738f07a4dadcd90b564e7b1ab6a7fe6e7ac9e8b4c7c28e"
+    },
+    {
+      "path": "historical-metrics.json",
+      "bytes": 337485,
+      "sha256": "65d2457e0a20653c9c243261115eed8a6f887965c9e504fb8280f5c9cd0a271e"
+    },
+    {
+      "path": "local-r1-stages.json",
+      "bytes": 57900,
+      "sha256": "77208c2b94321db931030048e899c7863b4b3f2edb2e2677b42e3526c869bafd"
+    },
+    {
+      "path": "native-collection-metrics.json",
+      "bytes": 128344,
+      "sha256": "79242579c18f5240239557285ac200a32a627b8b81d4d036e5fa4e9b68a3a02b"
+    },
+    {
+      "path": "profile.py",
+      "bytes": 11910,
+      "sha256": "1b24cc7ac2a6cac0cc9648ea860970772496309018e365d03bbca1bb303001e7"
+    },
+    {
+      "path": "README.md",
+      "bytes": 23918,
+      "sha256": "5117ceb1ea9e3a73ca9aa833a6b43fec45624f42726efbe80edbc835447dcbfe"
+    },
+    {
+      "path": "remote_archive_timing.py",
+      "bytes": 2054,
+      "sha256": "2ec5fc75aef413102addb3c03515320eec824891231632e8dc851722c88b916c"
+    },
+    {
+      "path": "remote_breakdown.py",
+      "bytes": 4816,
+      "sha256": "d149f9875d0a467d5cfc89496c9accc5aae6dedd20dc1827477cbb1db51e985b"
+    },
+    {
+      "path": "remote_metadata.py",
+      "bytes": 2703,
+      "sha256": "0774f3cf9dd6bf245c9ac8330f1869510bd16d6786651b59a0cc13a2b66e5a90"
+    },
+    {
+      "path": "summarize.py",
+      "bytes": 8023,
+      "sha256": "467c0b156c7bb8e728b6d2951fb3ea8f12311fffeff67e693b737fef44af35e4"
+    },
+    {
+      "path": "summary.json",
+      "bytes": 137811,
+      "sha256": "94b12342d57905a6af9a95a87650516de22f4aa62c053548307c9ebf5b527629"
+    },
+    {
+      "path": "throughput-audit.png",
+      "bytes": 223461,
+      "sha256": "edc712c30aa6fd72b8b6d39f20bf999efc7be9e7b511b79b0c41344c2a6ddc64"
+    }
+  ]
+}
