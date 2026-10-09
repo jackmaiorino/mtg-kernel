@@ -3,7 +3,7 @@
 
 Usage: python stage4a_queue.py ROOT BINARY QUEUE.json
 
-QUEUE.json: [{"name", "mode": "s4a-corpus"|"s4a-run", "model": "r1"|"r2",
+QUEUE.json: [job or {"parallel": [job, ...]}], job = {"name", "mode": "s4a-corpus"|"s4a-run", "model": "r1"|"r2",
   "workers", "base_seed", and for corpus "first_game", "games"; for run
   "roots" and optionally "limits" ("select_cap,eval_worlds,eval_cap", cost-only
   engineering checks)}]. Jobs run in order. Each process runs at BelowNormal
@@ -101,11 +101,18 @@ def main():
     log(f"queue start: binary {BIN} sha {sha(BIN)}, {len(QUEUE)} jobs")
     results = []
     for item in QUEUE:
-        record = run_job(item)
-        results.append(record)
+        if "parallel" in item:
+            # A group of jobs started together (each its own process).
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(len(item["parallel"])) as pool:
+                records = list(pool.map(run_job, item["parallel"]))
+        else:
+            records = [run_job(item)]
+        results.extend(records)
         (OUT / "QUEUE-RESULTS.json").write_text(json.dumps(results, indent=1))
-        if record["exit"] != 0:
-            log(f"{item['name']} exited {record['exit']}; queue stopped")
+        failed = [r["job"] for r in records if r["exit"] != 0]
+        if failed:
+            log(f"{failed} exited non-zero; queue stopped")
             break
     log("queue done")
 
