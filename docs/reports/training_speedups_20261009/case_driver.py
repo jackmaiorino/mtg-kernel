@@ -112,6 +112,7 @@ def main():
     began = time.monotonic()
     receipt = {'schema': 'training-speedup-case/v1', 'action': args.action,
                'request': pin(args.request), 'launcher': pin(command[2]),
+               'controller_source': pin(__file__),
                'started_utc': datetime.now(timezone.utc).isoformat(),
                'logical_preflight': {'current_bytes': observed['logical_bytes'],
                                      'additional_bytes': logical_projection,
