@@ -98,4 +98,5 @@ the first refused receipt, stops on a failed case and has a two-hour waiting
 deadline. The waiter covers eight qualifications and allocation measurement;
 it cannot launch full comparison blocks. Its job and current-state receipts
 are under `C:/mtg-node/training-speedups-20261009/qualification-resume-*.json`.
+The launched waiter is recorded in merged collab PR128.
 No measured speedup is available while those qualifications are pending.

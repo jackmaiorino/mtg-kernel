@@ -3,13 +3,16 @@
 Manifest: {"sequential_nonoverlapping": true, "cases": [
  {"id":"A1", "variant":"baseline", "report": <file>, "execution": <file>,
   "archive": <file>, "inspect": <file>, "transport": <file>, "retain": <file>,
-  "scheduler_stdout": <optional JSONL>, "update_reports": [<optional 162 files>],
+  "scheduler_stdout": <optional JSONL pinned by this case's recovery copy>,
   "controller": <optional case_driver receipt>,
   "retained_root": <optional retained block root>, "retained_manifest": <required RETAINED.json when retained_root>}], "qualifications": [<optional cases>]}
 Each file is a path or {"path": ..., "sha256": ...}; local paths may be relative
  to --root. Explicit local files avoid remapping captured remote source paths.
-Case phases must be sequential, report-bound, and complete. Controller polling
-is displayed separately and never enters primary complete_case_seconds.
+Case phases must be sequential, report-bound, and complete. Exactly dispatch,
+inspection, actual transport and retention enter complete_case_seconds.
+Learner timings require retained_root plus this case's retained_manifest.
+Controller polling is displayed separately. Unsupported extra phases and
+explicit update_reports are rejected.
 """
 import argparse
 import hashlib
@@ -61,8 +64,9 @@ def stage_timers(document):
     return {key: seconds(value, key) for key, value in timers.items()}
 
 
-def scheduler(reader, ref, count):
-    payload, _ = reader.bytes(ref)
+def scheduler(reader, ref, count, source_pin):
+    payload, digest = reader.bytes(ref)
+    linked(source_pin, digest, "scheduler stdout source")
     records = [json.loads(line) for line in payload.decode("utf-8-sig").splitlines() if line.strip()]
     records = [entry for entry in records if "scheduler_timing" in entry]
     require(len(records) == count and [r["completed_iteration"] for r in records] == list(range(count)),
@@ -126,6 +130,12 @@ def retained_update_refs(reader, local_root, kept, manifest_pin, count):
 
 
 def read_case(reader, case, formal):
+    require("additional_sequential_phases" not in case,
+            "additional_sequential_phases unsupported; exactly four elapsed phases required")
+    require("update_reports" not in case,
+            "explicit update_reports unsupported; use case-bound retained_root and retained_manifest")
+    require("retained_manifest" not in case or "retained_root" in case,
+            "retained_manifest requires retained_root")
     report, report_sha = reader.json(case["report"])
     execution, execution_sha = reader.json(case["execution"])
     archive, archive_sha = reader.json(case["archive"])
@@ -172,22 +182,22 @@ def read_case(reader, case, formal):
         result["complete_case_seconds"] = dispatch_time + sum(phases.values())
         result["maintenance_stages"] = {"inspect": stage_timers(inspect), "retain": stage_timers(retain)}
         result["transport_stages"] = stage_timers(transport)
-        if "additional_sequential_phases" in case:
-            additional = []
-            for ref in case["additional_sequential_phases"]:
-                doc, _ = reader.json(ref)
-                require(doc["complete"] is True and doc.get("report", {}).get("sha256") == report_sha,
-                        "extra phase must bind this report")
-                additional.append({"schema": doc["schema"], "seconds": seconds(doc["seconds"], "extra phase", True),
-                                   "timing": stage_timers(doc)})
-            result["additional_sequential_phases"] = additional
-            result["complete_case_seconds"] += sum(r["seconds"] for r in additional)
     if "scheduler_stdout" in case:
-        result["scheduler"] = scheduler(reader, case["scheduler_stdout"], updates)
-    update_refs = case.get("update_reports")
+        require(formal, "scheduler stdout requires this formal case's recovery copy source pin")
+        # copy_recovery receipts preserve each verified original source pin.
+        # postprocess_case includes dispatch/stdout.jsonl in the report-bound
+        # recovery copy plan, whose hash is linked through inspect/transport.
+        dispatch_root = captured_path(report["execution"]["path"]).rsplit("/", 1)[0]
+        expected_path = dispatch_root + "/stdout.jsonl"
+        source_pins = [item["source"] for item in transport.get("files", [])
+                       if captured_path(item["source"]["path"]) == expected_path
+                       and item.get("verified") is True]
+        require(len(source_pins) == 1,
+                "scheduler stdout lacks a unique verified source pin for this case")
+        result["scheduler"] = scheduler(reader, case["scheduler_stdout"], updates, source_pins[0])
+    update_refs = None
     if "retained_root" in case:
         require(formal, "retained timing requires formal case retention")
-        require(update_refs is None, "choose retained_root or explicit update_reports")
         require("retained_manifest" in case, "case retained_manifest required with retained_root")
         kept, kept_sha = reader.json(case["retained_manifest"])
         linked(retain["retained_manifest"], kept_sha, "case retained manifest")
@@ -258,7 +268,7 @@ def main():
     result = {"schema": "training-speedups-matched-summary/v1", "complete": True,
               "full_fingerprint_parity": True, "dispatch_comparison": compare(cases, "dispatch_seconds"),
               "complete_case_comparison": compare(cases, "complete_case_seconds"),
-              "accounting": "complete_case = dispatch + inspect + actual transport + retain + explicitly supplied extra sequential phases. Archive/child/scheduler/learner timers are nested diagnostics and never added again. Controller polling envelope is separate.",
+              "accounting": "complete_case = dispatch + inspect + actual transport + retain. Archive/child/scheduler/learner timers are nested diagnostics and never added again. Controller polling envelope is separate.",
               "cases": cases, "qualifications": qualifications, "inputs": reader.inputs}
     print(json.dumps(result, indent=2, allow_nan=False))
     print("case | variant | workers/prep | dispatch s | inspect s | transfer s | retain s | complete s", file=sys.stderr)
