@@ -32,7 +32,7 @@ At 2026-10-09 21:58 UTC, Jack's PC held stage4a reservation generation412 and
 all configured shared build cores were claimed. Haley had no reservation or
 shared core claims, 16 logical CPUs, 22.35 GiB available memory and 69.68 GiB
 free on C:. Four-core BelowNormal release builds of both variants passed under
-Haley's canonical `host_slots_v1` wrapper. The candidate native tests are pending.
+Haley's canonical `host_slots_v1` wrapper. All 67 affected native tests passed.
 An initial build-helper attempt stopped at
 an interactive linker help command; that owned process tree was stopped and
 the helper repaired before compilation. No training measurement was started
@@ -48,8 +48,9 @@ will accompany measured results.
 
 Pinned Python 3.13.14 checks passed: 26 dispatcher tests, four archive tests,
 and three storage tests; four Linux-only dispatcher tests were skipped.
-Native parity tests, guarded qualification,
-complete matched blocks, current-diff review and integration remain pending.
+Native parity tests passed, including the pinned two-update GAE state and
+real serial/parallel games. Guarded qualification, complete matched blocks,
+current-head CI and integration remain pending.
 Review found and repaired two collector issues: a zero enclosing profiler
 duration and source-pin verification across cached collection invocations.
 
@@ -78,3 +79,12 @@ enforces current logical bytes plus the full logical projection against the
 192 GiB allowance. The 60 GiB physical reserve remains unchanged. First-block
 physical growth must be reconciled before continuing. A storage admission
 failure does not authorize lowering an unmeasured projection.
+
+At 22:44:48 UTC the first qualification was refused by the canonical host
+reservation guard before either native or cold output roots existed. The
+22:45:14 inventory confirmed Haley generation 156 belongs to
+`spellbench-xmage-native`, work `codex-learned-full-qualification-001`;
+Jack generation 413 belongs to `claude-stage4a-20261009`. The failed controller
+receipt is preserved. This preflight failure is not a timing sample. The next
+attempt requires an observed reservation release and the same guarded launch.
+Coordination and current state are recorded in collab PR127.
