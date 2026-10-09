@@ -563,6 +563,25 @@ fn sylvan_scavenging_effect() -> EffectOp {
     }
 }
 
+/// Trigger programs chosen when the event happens instead of being returned
+/// by `triggers_for` (Moon-Circuit Hacker skips its discard on the turn it
+/// entered). Variants replace the owning trigger's default inventory program.
+pub fn event_time_trigger_programs(card_def: u16, condition: TriggerCondition) -> Vec<EffectOp> {
+    let Some(card) = crate::card_def::CARD_DEFS.get(card_def as usize) else {
+        return Vec::new();
+    };
+    if card.name == "Moon-Circuit Hacker"
+        && matches!(condition, TriggerCondition::DealsCombatDamageToPlayer)
+    {
+        [false, true]
+            .into_iter()
+            .map(moon_circuit_hacker_combat_effect_for_entered_this_turn)
+            .collect()
+    } else {
+        Vec::new()
+    }
+}
+
 /// A definition-owned modal program waiting for its placement-time choice.
 /// The root is only a pending-trigger marker. It must never reach the stack
 /// or the resolution interpreter; selection replaces it with one branch.

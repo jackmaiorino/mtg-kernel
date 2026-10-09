@@ -2296,9 +2296,9 @@ impl GameState {
         copy
     }
 
-    /// D3 search only: install an independent future stream on an already
-    /// disposable clone. The sole production caller is the additive V3 search
-    /// sampler. Never derive `seed` from this state's real random stream.
+    /// Install an independent future stream on an already disposable analysis
+    /// clone: additive V3 search and opt-in census future V2. Never derive
+    /// `seed` from this state's real random stream.
     /// Preserve mode and past physical-owner shuffle counters.
     pub(crate) fn resample_future_randomness_for_search_v3(&mut self, seed: u64) {
         match &mut self.randomness {

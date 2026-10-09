@@ -12980,6 +12980,19 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             power,
             toughness,
         } => {
+            // A source ability continues to resolve after its source leaves,
+            // but its old incarnation cannot boost a returned permanent.
+            if *target == TargetRef::ThisSource {
+                let Some(source_contract) = ctx.ability_source_contract else {
+                    return;
+                };
+                if !state.objects.try_get(ctx.source).is_some_and(|source| {
+                    source.zone == Zone::Battlefield
+                        && source.zone_change_count == source_contract.zone_change_count
+                }) {
+                    return;
+                }
+            }
             let Target::Object(object) = ctx.resolve_target(*target) else {
                 panic!("dynamic target pump requires an object target");
             };

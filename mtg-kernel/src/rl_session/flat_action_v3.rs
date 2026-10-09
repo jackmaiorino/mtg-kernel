@@ -663,7 +663,7 @@ impl FastActorSessionV1 {
         session
     }
 
-    fn into_flat_action_v3(mut self) -> Self {
+    pub(crate) fn into_flat_action_v3(mut self) -> Self {
         self.flat_action_contract_mode = FlatActionContractModeV1::V3;
         self.flat_action_cache_spare = None;
         self.flat_action_cache_spare_v2 = None;

@@ -3036,6 +3036,11 @@ enum AbilityCostRecipe {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AbilityEffectRecipe {
     DrawCards(u8),
+    PumpSourceUntilEndOfTurn {
+        power: i32,
+        toughness: i32,
+    },
+    GrantTargetKeywordUntilEndOfTurn(&'static str),
     GainLife(u8),
     CreateToken(&'static str),
     DamageTarget(u8),
@@ -3805,7 +3810,8 @@ fn keywords_for(card: &CardJson) -> String {
         | "Balustrade Spy"
         | "Spellstutter Sprite"
         | "Glint Hawk"
-        | "Fang Dragon" => keywords.push("Keywords::FLYING"),
+        | "Fang Dragon"
+        | "Shivan Dragon" => keywords.push("Keywords::FLYING"),
         "Generous Ent"
         | "Writhing Chrysalis"
         | "Vitu-Ghazi Inspector"
@@ -4256,6 +4262,45 @@ fn escape_for(name: &str) -> String {
 /// then resolve the reusable typed library search.
 fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
+        "Shivan Dragon" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: Some("R"),
+                generic: 0,
+            }],
+            effect: AbilityEffectRecipe::PumpSourceUntilEndOfTurn {
+                power: 1,
+                toughness: 0,
+            },
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Axgard Cavalry" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Tap],
+            effect: AbilityEffectRecipe::GrantTargetKeywordUntilEndOfTurn("HASTE"),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "Creature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Rogue's Passage" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 4,
+                },
+                AbilityCostRecipe::Tap,
+            ],
+            effect: AbilityEffectRecipe::GrantTargetKeywordUntilEndOfTurn("CANT_BE_BLOCKED"),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "Creature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Cathar Commando" => &[ActivatedAbilityRecipe {
             cost: &[
                 AbilityCostRecipe::Mana {
@@ -5073,6 +5118,8 @@ fn permanent_filter_token(filter: PermanentFilterRecipe) -> &'static str {
 
 fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
     match effect {
+        AbilityEffectRecipe::PumpSourceUntilEndOfTurn { power, toughness } => format!("pump_source_until_end_of_turn:{power}:{toughness}:exact_incarnation"),
+        AbilityEffectRecipe::GrantTargetKeywordUntilEndOfTurn(keyword) => format!("grant_target_keyword_until_end_of_turn:{keyword}:exact_incarnation"),
         AbilityEffectRecipe::DrawCards(count) => format!("draw_cards:{count}"),
         AbilityEffectRecipe::Surveil(count) => format!("surveil:{count}"),
         AbilityEffectRecipe::GainLife(amount) => format!("gain_life:{amount}"),
@@ -5191,6 +5238,13 @@ fn library_search_filter_src(filter: LibrarySearchFilterRecipe) -> String {
 
 fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
     match effect {
+        AbilityEffectRecipe::PumpSourceUntilEndOfTurn { power, toughness } => {
+            format!("ability_effect_pump_source_{power}_{toughness}")
+        }
+        AbilityEffectRecipe::GrantTargetKeywordUntilEndOfTurn(keyword) => format!(
+            "ability_effect_grant_target_{}",
+            keyword.to_ascii_lowercase()
+        ),
         AbilityEffectRecipe::DrawCards(count) => format!("ability_effect_draw_{count}"),
         AbilityEffectRecipe::Surveil(count) => format!("ability_effect_surveil_{count}"),
         AbilityEffectRecipe::GainLife(amount) => format!("ability_effect_gain_life_{amount}"),
@@ -6224,6 +6278,12 @@ fn codegen(cards: &[CardJson]) -> String {
         let function_name = ability_effect_fn_name(effect);
         writeln!(out, "fn {function_name}() -> EffectOp {{").unwrap();
         match effect {
+            AbilityEffectRecipe::PumpSourceUntilEndOfTurn { power, toughness } => {
+                writeln!(out, "    EffectOp::PumpTargetUntilEndOfTurnDynamic {{ target: TargetRef::ThisSource, power: DynamicValueDef::Fixed({power}), toughness: DynamicValueDef::Fixed({toughness}) }}").unwrap();
+            }
+            AbilityEffectRecipe::GrantTargetKeywordUntilEndOfTurn(keyword) => {
+                writeln!(out, "    EffectOp::GrantKeywordTargetUntilEndOfTurn {{ object: ObjectRef::Target(0), keyword: Keywords::{keyword} }}").unwrap();
+            }
             AbilityEffectRecipe::DrawCards(count) => {
                 writeln!(
                     out,
@@ -8648,7 +8708,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v60\n"
+            "kernel_carddb/v61\n"
         } else {
             "kernel_carddb/v34\n"
         },
@@ -8974,6 +9034,8 @@ fn subtype_variant(t: &str) -> &'static str {
         "Cat" => "Subtype::Cat",
         "Detective" => "Subtype::Detective",
         "Dragon" => "Subtype::Dragon",
+        "Dwarf" => "Subtype::Dwarf",
+        "Berserker" => "Subtype::Berserker",
         "Drone" => "Subtype::Drone",
         "Druid" => "Subtype::Druid",
         "Eldrazi" => "Subtype::Eldrazi",

@@ -4010,6 +4010,100 @@
         "surveil"
       ],
       "java_file": "Mage.Sets/src/mage/cards/r/RuneSealedWall.java"
+    },
+    {
+      "name": "Shivan Dragon",
+      "engine_capability": "full",
+      "mana_cost": "{4}{R}{R}",
+      "mana_value": 6,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dragon"
+      ],
+      "supertypes": [],
+      "power": 5,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_activated_combat.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying",
+        "activated_pump"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/ShivanDragon.java",
+      "scryfall_id": "1fcff1e0-2745-448d-a27b-e31719e222e9",
+      "oracle_id": "711eea87-0fa3-46e0-a42b-fa5a86455f04"
+    },
+    {
+      "name": "Axgard Cavalry",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dwarf",
+        "Berserker"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_activated_combat.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "activated_haste"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AxgardCavalry.java",
+      "scryfall_id": "fe3cc41a-adae-4c9b-b4d3-03f3ca862fed",
+      "oracle_id": "6a92b011-fd01-4b6a-a17c-73ac1967ff98"
+    },
+    {
+      "name": "Rogue's Passage",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C"
+      ],
+      "decks": [
+        "FDN_reference_activated_combat.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "mana_ability",
+        "activated_unblockable"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RoguesPassage.java",
+      "scryfall_id": "a2a424ea-ef32-4ac5-8f8c-3ea1839f01d4",
+      "oracle_id": "f29dc596-2121-4421-8463-15f6c2e8b9b3"
     }
   ]
 }

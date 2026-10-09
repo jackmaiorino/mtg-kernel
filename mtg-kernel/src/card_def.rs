@@ -272,6 +272,9 @@ pub enum Subtype {
     Elk,
     /// Appended for Rune-Scarred Demon; existing ids remain fixed.
     Demon,
+    /// Appended for Axgard Cavalry; existing ids remain fixed.
+    Dwarf,
+    Berserker,
 }
 
 impl Subtype {
@@ -383,6 +386,10 @@ impl Subtype {
         Subtype::Elk,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Demon,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Dwarf,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Berserker,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -528,6 +535,8 @@ impl Subtype {
                 | Subtype::Shark
                 | Subtype::Elk
                 | Subtype::Demon
+                | Subtype::Dwarf
+                | Subtype::Berserker
         )
     }
 }
@@ -1906,11 +1915,11 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 326 (simple triggers and graveyard spells).
+        // batches append through id 329 (activated combat abilities).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                327
+                330
             } else {
                 192
             }
@@ -2010,8 +2019,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v60_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x63e4_c9bf_208f_49e0;
+    fn card_db_hash_v61_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x949b_eb8c_995c_006c;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

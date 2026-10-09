@@ -128,17 +128,40 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --release --locked --workspace --all-targets -- -D warnings
 
+      - name: Check joined serializer fixture and warmed encoder allocations
+        run: |
+          cargo test --release --locked -p mtg-kernel --lib joined_frame_
+          cargo test --release --locked -p mtg-kernel --test flat_policy_allocation
+
       - name: Run non-Windows native Store feature Clippy
         run: cargo clippy --release --locked -p mtg-kernel --all-targets --features native-training-store-v2-production -- -D warnings
 
       - name: Run Limited feature Clippy
         run: cargo clippy --release --locked -p mtg-kernel --all-targets --features limited-fdn-fixtures -- -D warnings
 
+      - name: Report generated catalog hashes
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          for path in sorted(Path('target/release/build').glob('mtg-kernel-*/out/card_defs.rs')):
+              source = path.read_text()
+              match = re.search(r'pub const KERNEL_CARDDB_HASH: u64 = (0x[0-9a-f]+)', source)
+              if match:
+                  print(path, match.group(1), flush=True)
+          PY
+
       # Hosted runners have no CUDA device, so behavioral CUDA gates run
       # under the local merge protocol; this step still fails closed on any
       # merged change that breaks the CUDA feature's compilation or lints.
       - name: Run CUDA backend feature Clippy (compile gate, no device)
         run: cargo clippy --release --locked -p mtg-kernel --all-targets --features experimental-burn-net8-packed-cuda-v1 -- -D warnings
+
+      - name: Check rules-vector trigger context and event classes
+        run: |
+          cargo test --release --locked -p mtg-kernel --lib rules_vector_v1::tests
+          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib rules_vector_v1::tests
 
   # Each group builds a different feature set, so they run as parallel
   # jobs; `rust-tests` below keeps the per-OS check names.
@@ -314,7 +337,7 @@ jobs:
       - name: Validate FDN Limited gameplay and catalog separation
         if: matrix.group == 'limited'
         run: |
-          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test fdn_fixture_batch_a_v1 --test fdn_fixture_batch_b_v1 --test limited_session_v1 --test limited_priority_v1 --test limited_combat_v1 --test fdn_combat_cards_v1 --test fdn_legend_rule_v1 --test fdn_targeted_spells_v1 --test fdn_counter_creatures_v1 --test fdn_lifegain_creatures_v1 --test fdn_draw_creatures_v1 --test fdn_homunculus_creature_v1 --test fdn_koma_creature_v1 --test fdn_kiora_creature_v1 --test fdn_prowler_creature_v1 --test fdn_luminous_rebuke_v1 --test fdn_uncharted_voyage_v1 --test fdn_sylvan_scavenging_v1 --test fdn_celestial_armor_v1 --test fdn_keyword_creatures_v1 --test fdn_gainlands_lifegain_v1 --test fdn_triggers_tricks_v1 --test fdn_equipment_search_v1 --test fdn_tokens_auras_v1 --test fdn_removal_tricks_v1 --test fdn_counters_threats_v1 --test fdn_library_search_v1 --test fdn_simple_triggers_v1
+          cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test fdn_fixture_batch_a_v1 --test fdn_fixture_batch_b_v1 --test limited_session_v1 --test limited_priority_v1 --test limited_combat_v1 --test fdn_combat_cards_v1 --test fdn_legend_rule_v1 --test fdn_targeted_spells_v1 --test fdn_counter_creatures_v1 --test fdn_lifegain_creatures_v1 --test fdn_draw_creatures_v1 --test fdn_homunculus_creature_v1 --test fdn_koma_creature_v1 --test fdn_kiora_creature_v1 --test fdn_prowler_creature_v1 --test fdn_luminous_rebuke_v1 --test fdn_uncharted_voyage_v1 --test fdn_sylvan_scavenging_v1 --test fdn_celestial_armor_v1 --test fdn_keyword_creatures_v1 --test fdn_gainlands_lifegain_v1 --test fdn_triggers_tricks_v1 --test fdn_equipment_search_v1 --test fdn_tokens_auras_v1 --test fdn_removal_tricks_v1 --test fdn_counters_threats_v1 --test fdn_library_search_v1 --test fdn_simple_triggers_v1 --test fdn_activated_combat_v1
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures limited_session_v1::tests rl_session::tests card_def:: koma_spell_protection threshold_counts_graveyard native_training_store_run_v2::
 
       - name: Validate FDN profiles under the native Store feature

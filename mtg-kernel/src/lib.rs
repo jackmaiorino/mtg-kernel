@@ -47,6 +47,8 @@ pub mod card_def;
 pub mod combat_damage_v1;
 pub(crate) mod continuous_characteristics_v1;
 pub mod legend_rule_v1;
+pub mod native_search_collection_v3;
+pub mod native_search_trajectory_v3;
 pub mod planeswalker_v1;
 // Fail-closed canonical JSON codec shared by the native training store's
 // records. Schema validation remains a separate layer.
@@ -463,6 +465,8 @@ pub const KERNEL_VERSION: &str = "0.0.4-spike";
 
 pub mod public_cost_features_v1;
 pub(crate) mod public_stack_features_v1;
+/// Engine-derived per-card rules features (no names or registry labels).
+pub mod rules_vector_v1;
 
 /// Runs the opt-in production-parameter Burn/CUDA diagnostic. This surface is
 /// intentionally hidden from normal documentation and absent from normal
