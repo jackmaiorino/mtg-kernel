@@ -279,8 +279,9 @@ jobs:
       - name: Saved input scalar diagnostic guards
         if: matrix.group == 'saved-input'
         run: |
-          cargo clippy --release --locked -p mtg-kernel --lib --bin saved_input_scalar_diagnostic --features saved-input-scalar-diagnostic -- -D warnings
-          cargo test --release --locked -p mtg-kernel --features saved-input-scalar-diagnostic --lib saved_input_scalar_diagnostic::tests
+          cargo clippy --release --locked -p mtg-kernel --lib --bin saved_input_scalar_diagnostic --bin gameplay_checkpoint_reconstruction_v1 --features saved-input-scalar-diagnostic,gameplay-checkpoint-reconstruction-v1 -- -D warnings
+          cargo test --release --locked -p mtg-kernel --features saved-input-scalar-diagnostic,gameplay-checkpoint-reconstruction-v1 --lib saved_input_scalar_diagnostic::
+          cargo test --release --locked -p mtg-kernel --features gameplay-checkpoint-reconstruction-v1 --lib gameplay_checkpoint_reconstruction_v1::tests
 
       - name: Validate native Store production feature boundary
         if: matrix.group == 'native-store'
