@@ -176,6 +176,77 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "non-natural"):
             dispatch.collection_fingerprint(collection, 1)
 
+    def test_profile_gae_is_boolean_and_training_only(self):
+        request = self.request(1)
+        self.assertFalse(dispatch.profile_gae_requested(request))
+        for value in (True, False):
+            request["profile_gae"] = value
+            self.assertEqual(dispatch.profile_gae_requested(request), value)
+        for value in (1, 0, "true", None, [], {}):
+            request["profile_gae"] = value
+            with self.assertRaisesRegex(ValueError, "profile_gae must be Boolean"):
+                # Validation rejects malformed requests before runtime admission.
+                dispatch.validate_request(request, True)
+        request["kind"] = "evaluation"
+        for value in (True, False):
+            request["profile_gae"] = value
+            with self.assertRaisesRegex(ValueError, "training requests only"):
+                dispatch.validate_request(request, True)
+        del request["profile_gae"]
+        self.assertFalse(dispatch.profile_gae_requested(request))
+
+    def test_native_child_environment_sets_or_clears_profile_flag(self):
+        request = self.request(1)
+        with patch.dict(os.environ, {"MTG_KERNEL_PROFILE_GAE_V1": "inherited", "PROFILE_TEST_KEEP": "yes"}):
+            environment = dispatch.native_child_environment(request)
+            self.assertNotIn("MTG_KERNEL_PROFILE_GAE_V1", environment)
+            self.assertEqual(environment["PROFILE_TEST_KEEP"], "yes")
+            request["profile_gae"] = True
+            self.assertEqual(dispatch.native_child_environment(request)["MTG_KERNEL_PROFILE_GAE_V1"], "1")
+            request["profile_gae"] = False
+            self.assertNotIn("MTG_KERNEL_PROFILE_GAE_V1", dispatch.native_child_environment(request))
+            self.assertEqual(os.environ["MTG_KERNEL_PROFILE_GAE_V1"], "inherited")
+        with patch.dict(os.environ, {}, clear=True):
+            request["profile_gae"] = True
+            self.assertEqual(dispatch.native_child_environment(request), {"MTG_KERNEL_PROFILE_GAE_V1": "1"})
+
+    def test_execute_passes_request_profile_flag_to_native_child(self):
+        for index, value in enumerate((None, False, True)):
+            request = self.request(1)
+            request["root"] += f"-profile-{index}"
+            request["cold_root"] += f"-profile-{index}"
+            if value is not None:
+                request["profile_gae"] = value
+            request_ref = self.save(request)
+            # Stop immediately after the mocked spawn. No native process or
+            # fingerprint/archive work is performed by this propagation check.
+            with patch.dict(os.environ, {"MTG_HOST_RESERVATION_TOKEN": "test-token",
+                                         "MTG_KERNEL_PROFILE_GAE_V1": "inherited"}), \
+                    patch.object(dispatch, "validate_request", return_value=(self.config, self.runtime)), \
+                    patch.object(dispatch, "set_affinity"), \
+                    patch("host_reservation_v1.status", return_value={"token_fate": "holds"}), \
+                    patch("host_reservation_v1.record_descendant", side_effect=RuntimeError("mocked spawn complete")), \
+                    patch.object(dispatch.subprocess, "Popen") as spawn:
+                with self.assertRaisesRegex(RuntimeError, "mocked spawn complete"):
+                    dispatch.execute(Path(request_ref["path"]), True)
+                environment = spawn.call_args.kwargs["env"]
+                if value:
+                    self.assertEqual(environment["MTG_KERNEL_PROFILE_GAE_V1"], "1")
+                else:
+                    self.assertNotIn("MTG_KERNEL_PROFILE_GAE_V1", environment)
+
+    def test_fastest_choice_rejects_profiled_qualification(self):
+        choice = self.choice()
+        request = self.request(2)
+        report = dispatch.read(choice["qualifications"][0]["path"])
+        original = dispatch.read(report["request"]["path"])
+        original["profile_gae"] = True
+        report["request"] = self.save(original)
+        choice["qualifications"][0] = self.save(report)
+        with patch.object(dispatch, "validate_request", return_value=(self.config, self.runtime)):
+            with self.assertRaisesRegex(ValueError, "profiled qualification"):
+                dispatch.require_choice(self.save(choice), request)
+
     def test_fastest_choice_requires_complete_serial_parallel_evidence(self):
         choice = self.choice()
         request = self.request(2)

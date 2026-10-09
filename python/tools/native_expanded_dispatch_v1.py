@@ -277,9 +277,29 @@ def require_host(request):
         require(WINDOWS and HOSTS[host] == platform.node().upper(), "wrong target host")
 
 
+def profile_gae_requested(request):
+    """Explicit request control survives environment-free WMI supervisors."""
+    require("profile_gae" not in request or request["kind"] == "training",
+            "GAE profiling applies to training requests only")
+    value = request.get("profile_gae", False)
+    require(type(value) is bool, "profile_gae must be Boolean")
+    return value
+
+
+def native_child_environment(request):
+    environment = os.environ.copy()
+    # A shell or supervisor's inherited diagnostic flag cannot silently profile
+    # an unprofiled request or contaminate its allocation timing receipt.
+    environment.pop("MTG_KERNEL_PROFILE_GAE_V1", None)
+    if profile_gae_requested(request):
+        environment["MTG_KERNEL_PROFILE_GAE_V1"] = "1"
+    return environment
+
+
 def validate_request(request, qualification):
     require(request["schema"] == SCHEMA, "unsupported request")
     require(request["kind"] in ("training", "evaluation"), "unsupported native workload")
+    profile_gae_requested(request)
     runtime = runtime_for(request)
     host_runtime(runtime)
     config = read(checked(request["config"]))
@@ -477,6 +497,8 @@ def require_choice(path, request, verify_outputs=False):
         require(report["schema"] == SCHEMA and report["qualification"] and report["complete"],
                 "not completed qualification")
         original = read(resolve(report["request"]))
+        require(not profile_gae_requested(original),
+                "profiled qualification cannot select production allocation")
         actual_config = read(resolve(report["executed_config"]))
         original_config = read(resolve(original["config"]))
         other_runtime = runtime_for(original, resolve)
@@ -647,7 +669,8 @@ def execute(request_path, qualification):
         options = ({"creationflags": subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW}
                    if WINDOWS else {"preexec_fn": lambda: os.nice(10)})
         child_started = time.monotonic()
-        child = subprocess.Popen(command, stdout=stdout, stderr=stderr, **options)
+        child = subprocess.Popen(command, stdout=stdout, stderr=stderr,
+                                 env=native_child_environment(request), **options)
         reservations.record_descendant(token, child.pid)
         write(root/"started.json", {"pid": child.pid, "started_unix": time.time(),
                                     "placement": request["placement"], "request": pin(request_path)})
