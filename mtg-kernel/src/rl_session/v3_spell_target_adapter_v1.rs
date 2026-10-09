@@ -54,7 +54,7 @@ pub(super) fn visible_spell_target(
 #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 impl FastActorSessionV1 {
     /// The original scorer remains the first path. Only a rejected action
-    /// reference can enter the explicitly identified adapter. The copy never
+    /// or unresolved public relation can enter the identified adapter. The copy never
     /// steps the game, consumes RNG, or exposes hidden state to the policy.
     pub(crate) fn encode_v3_spell_target_adapter_v1(
         &self,
@@ -70,12 +70,13 @@ impl FastActorSessionV1 {
             Ok(value) => return Ok((value, false)),
             Err(FlatDecisionErrorV2::Action(
                 FlatActionDecisionSliceErrorV1::InvalidActionReference,
-            )) => {}
+            ))
+            | Err(FlatDecisionErrorV2::InvalidReference) => {}
             Err(error) => return Err(error),
         }
         let view = self.v3_spell_target_adapter_view(expected)?;
         let value =
-            view.encode_current_flat_scoring_decision_owned_v3(expected, encoder, buffers)?;
+            view.encode_current_flat_scoring_v3_evaluation_adapter(expected, encoder, buffers)?;
         Ok((value, true))
     }
 
@@ -117,6 +118,49 @@ impl FastActorSessionV1 {
         view.current = Some(current);
         Ok(view)
     }
+}
+
+#[cfg(test)]
+pub(crate) fn linked_exile_target_fixture_v1() -> crate::state::GameState {
+    use crate::event::{self, ProposedEvent};
+    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::state::{AbilitySourceContractV4, LinkedExileRecordV4, ObjectLinkV4};
+
+    let mut state = ready_state();
+    // The departure trigger has finished; only the outstanding linked exile
+    // authenticates the source's old Battlefield incarnation.
+    let fiend = put(&mut state, PlayerId::P1, "Mesmeric Fiend", Zone::Graveyard);
+    state.objects.get_mut(fiend).zone_change_count = 1;
+    let exiled = put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(exiled, Zone::Exile));
+    let exiled_zone_change_count = state.objects.get(exiled).zone_change_count;
+    state.objects.get_mut(exiled).v4.exiled_by = Some(ObjectLinkV4 {
+        object: fiend,
+        zone_change_count: 0,
+    });
+    state.engine.linked_exile_records.push(LinkedExileRecordV4 {
+        source: AbilitySourceContractV4 {
+            source: fiend,
+            card_def: state.objects.get(fiend).card_def,
+            owner: PlayerId::P1,
+            controller: PlayerId::P1,
+            zone: Zone::Battlefield,
+            zone_change_count: 0,
+            attached_to: None,
+        },
+        exiled,
+        exiled_card_def: state.objects.get(exiled).card_def,
+        exiled_owner: PlayerId::P0,
+        exiled_zone_change_count,
+    });
+    // Keep a real priority choice, avoiding the old V4 fixture's auto-pass
+    // through empty libraries to terminal before its assertion.
+    put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
+    state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        put(&mut state, actor, "Island", Zone::Library);
+    }
+    state
 }
 
 #[cfg(test)]

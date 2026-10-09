@@ -4046,6 +4046,7 @@ impl FlatDecisionEncoderV2 {
         session: &FastActorSessionV1,
         expected: FastActorDecisionV1,
         buffers: &mut FlatScoringOwnedBuffersV2<'_>,
+        repair_public_relations: bool,
     ) -> Result<crate::flat_policy_v3::FlatDecisionV3, FlatDecisionErrorV2> {
         self.clear_typed_cache();
         self.v3_action_objects = Some(Vec::new());
@@ -4096,6 +4097,9 @@ impl FlatDecisionEncoderV2 {
             session.game_state(),
             observation.acting_player,
         )?;
+        if repair_public_relations {
+            self.register_exiled_by_sources_for_v3_evaluation(&observation, session.game_state())?;
+        }
         self.build_relations(&observation)?;
         self.validate_cached_tables()?;
         if self.scorer_actions.len() != self.actions.len()
@@ -4127,6 +4131,41 @@ impl FlatDecisionEncoderV2 {
         std::mem::swap(&mut self.scorer_actions, buffers.actions);
         std::mem::swap(&mut self.scorer_action_refs, buffers.action_refs);
         Ok(decision)
+    }
+
+    /// Evaluation adapter only. The V6 producer already authenticates each
+    /// public ExiledBy relation against its live source or linked-exile record.
+    /// Register only missing sources actually present in this actor projection,
+    /// so hidden records cannot introduce model rows or affect row ordinals.
+    fn register_exiled_by_sources_for_v3_evaluation(
+        &mut self,
+        observation: &ObservationV6,
+        state: &crate::state::GameState,
+    ) -> Result<(), FlatDecisionErrorV2> {
+        let actor = observation.acting_player;
+        let mut appended = 0_u32;
+        for relation in &observation.projection.surface.object_relations {
+            let ObjectRelationPublicV4::ExiledBy { exiled_by, .. } = relation else {
+                continue;
+            };
+            match self.resolve_reference(exiled_by, actor) {
+                Ok(_) => continue,
+                Err(FlatDecisionErrorV2::InvalidReference) => {}
+                Err(error) => return Err(error),
+            }
+            // After stack, pending-effect and hidden pending-trigger rows.
+            let ordinal = crate::trigger::historical_public_source_ordinal_ceiling_v1(state)
+                .and_then(|ceiling| {
+                    ceiling.checked_add(u32::try_from(FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1).ok()?)
+                })
+                .and_then(|base| base.checked_add(appended))
+                .ok_or(FlatDecisionErrorV2::CheckedIntegerRange)?;
+            self.add_validated_historical_source_v3(exiled_by, actor, ordinal)?;
+            appended = appended
+                .checked_add(1)
+                .ok_or(FlatDecisionErrorV2::CheckedIntegerRange)?;
+        }
+        Ok(())
     }
 
     fn build_cache(
