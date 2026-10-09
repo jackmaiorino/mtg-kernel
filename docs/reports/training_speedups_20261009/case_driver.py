@@ -37,12 +37,15 @@ def wait_for_release(reservations, dispatched, deadline):
     state = reservations.status(token)
     handle = None
     if os.name == 'nt' and state.get('token_fate') == 'holds':
-        record = state['record']
-        if record['owner_pid'] == dispatched['pid']:
+        # The immutable lock owner is the launcher. Handoff/adopt events,
+        # projected by status(), identify the actual supervisor instead.
+        creations = {row['creation_time'] for row in state.get('processes', {}).values()
+                     if row['pid'] == dispatched['pid'] and row['state'] == 'alive'}
+        if len(creations) == 1:
             handle = reservations._OpenProcess(
                 reservations.PROCESS_QUERY_LIMITED_INFORMATION | reservations.SYNCHRONIZE,
                 False, dispatched['pid'])
-            if handle and reservations._creation_of(handle) != record['owner_process_creation_time']:
+            if handle and reservations._creation_of(handle) != next(iter(creations)):
                 reservations._CloseHandle(handle)
                 handle = None
     checks = 0
