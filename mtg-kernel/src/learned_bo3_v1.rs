@@ -68,6 +68,11 @@ pub struct LearnedBo3RunConfigV1 {
     pub max_policy_steps: u64,
     #[serde(default, skip_serializing_if = "Bo3OpeningProtocolV1::is_legacy")]
     pub opening_protocol: Bo3OpeningProtocolV1,
+    /// Some fixes a game-level runtime rules profile for every physical game
+    /// of the match, applied when each game is built. None keeps every prior
+    /// serialized byte.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_rules: Option<crate::expanded_deck_training_v1::EpisodeRuntimeRulesV1>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -631,14 +636,18 @@ fn create_bo3_episode_v1(
             PlayerId::P0,
         )?;
         opening.keep()?;
-        return opening.into_session();
+        let mut session = opening.into_session()?;
+        if let Some(rules) = config.runtime_rules {
+            session.set_runtime_rules_v1(rules.rules())?;
+        }
+        return Ok(session);
     }
     let constructor = if uses_v3 {
         FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1
     } else {
         FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_starting_player_v1
     };
-    constructor(
+    let mut session = constructor(
         u64::from(game_index),
         environment_seed,
         config.max_physical_decisions,
@@ -647,7 +656,31 @@ fn create_bo3_episode_v1(
         mainboards,
         starting_player,
     )
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+    if let Some(rules) = config.runtime_rules {
+        session.set_runtime_rules_v1(rules.rules())?;
+    }
+    Ok(session)
+}
+
+/// Rebuilds one recorded physical game for passive replay (diagnostic
+/// labels): the same constructor, opening and runtime rules as play.
+pub(crate) fn replay_game_session_v1(
+    config: &LearnedBo3RunConfigV1,
+    uses_v3: bool,
+    game_index: u8,
+    environment_seed: u64,
+    mainboards: [Vec<u16>; 2],
+    starting_player: PlayerId,
+) -> Result<FastActorSessionV1, String> {
+    create_bo3_episode_v1(
+        config,
+        uses_v3,
+        game_index,
+        environment_seed,
+        mainboards,
+        starting_player,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1041,6 +1074,7 @@ mod tests {
                 max_physical_decisions: 4000,
                 max_policy_steps: 40000,
                 opening_protocol: Bo3OpeningProtocolV1::LegacyKeepSevenV1,
+                runtime_rules: None,
             },
             outcome: MatchOutcomeV1::Winner {
                 winner: PlayerId::P0,
@@ -1099,6 +1133,7 @@ mod tests {
                 max_physical_decisions: 4000,
                 max_policy_steps: 40000,
                 opening_protocol: Default::default(),
+                runtime_rules: None,
             },
             explicit_registrations: [registration.clone(), registration],
             play_models,

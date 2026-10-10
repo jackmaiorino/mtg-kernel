@@ -22,9 +22,11 @@
 //! checks (rows record the limits and whether they are formal).
 
 mod arms;
+mod bank;
 mod diag;
 mod labels;
 mod play;
+mod replay_labels;
 mod seeds;
 mod tree;
 mod world;
@@ -47,7 +49,15 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 pub(super) fn is_mode(mode: &str) -> bool {
-    matches!(mode, "s4a-corpus" | "s4a-run" | "s4a-diag")
+    matches!(
+        mode,
+        "s4a-corpus"
+            | "s4a-run"
+            | "s4a-diag"
+            | "s4a-bank"
+            | "s4a-bank-parity"
+            | "s4a-label-replay"
+    )
 }
 
 const SPY_DECK: &str = "Spy";
@@ -58,6 +68,16 @@ fn hex(bytes: &[u8]) -> String {
 
 fn sha(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
+}
+
+/// Replay key of a decision for callers outside Stage 4a (the reset
+/// collector verifies its cut with it): canonical actor-view observation and
+/// menu hashes.
+pub(crate) fn decision_replay_key(
+    s: &crate::rl_session::FastActorSessionV1,
+    d: crate::rl_session::FastActorDecisionV1,
+) -> Result<(String, String), String> {
+    replay_key(s, d)
 }
 
 /// Replay key of a focal decision: canonical observation and menu hashes.
@@ -163,7 +183,7 @@ fn parse_select_rule(
     };
     match value.as_str() {
         "" | "untried-first" => Ok(None),
-        "fpu-1.5" if mode == "s4a-diag" => Ok(Some(1.5)),
+        "fpu-1.5" if mode == "s4a-diag" || mode == "s4a-bank-parity" => Ok(Some(1.5)),
         other => Err(format!("unsupported S4A_SELECT {other} for {mode}")),
     }
 }
@@ -174,7 +194,7 @@ fn parse_runtime_rules(
 ) -> Result<Option<crate::engine::RuntimeRulesV1>, String> {
     match setting {
         None | Some("") | Some("historical") => Ok(None),
-        Some("resolution-boundary-v1") if mode == "s4a-diag" => {
+        Some("resolution-boundary-v1") if mode == "s4a-diag" || mode == "s4a-bank-parity" => {
             Ok(Some(crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1))
         }
         Some("resolution-boundary-v1") => {
@@ -724,7 +744,106 @@ fn fork_roles(policy: &FrozenPlayPolicyV1, shared: &Shared) -> Result<Roles, Str
     })
 }
 
+fn parse_limits() -> Result<Limits, String> {
+    match std::env::var("S4A_LIMITS") {
+        Ok(v) => {
+            let x: Vec<u64> = v
+                .split(',')
+                .map(|t| t.trim().parse().map_err(|_| format!("bad S4A_LIMITS {v}")))
+                .collect::<Result<_, _>>()?;
+            if x.len() != 3 {
+                return Err("S4A_LIMITS needs select_cap,eval_worlds,eval_cap".into());
+            }
+            Ok(Limits {
+                select_cap: x[0],
+                eval_worlds: x[1],
+                eval_cap: x[2],
+            })
+        }
+        Err(_) => Ok(Limits::FORMAL),
+    }
+}
+
+/// `s4a-bank`: guide banks for the reset curriculum pilot (`bank.rs`).
+fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(), String> {
+    let path = std::env::var("BANK_SPEC").map_err(|_| "BANK_SPEC is required")?;
+    let spec: bank::BankSpec = serde_json::from_slice(
+        &std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?,
+    )
+    .map_err(|e| format!("{path}: {e}"))?;
+    if cfg.decks != (0..RUNTIME_DECKS.len()).collect::<Vec<_>>() || spec.decks.len() != cfg.decks.len()
+    {
+        return Err("s4a-bank needs decks=all registered decks in runtime order".into());
+    }
+    let mut labels = Vec::new();
+    let mut opponents = Vec::new();
+    for entry in std::env::var("OPPONENTS")
+        .map_err(|_| "OPPONENTS is required")?
+        .split(',')
+        .filter(|x| !x.trim().is_empty())
+    {
+        let (l, p) = entry
+            .split_once('=')
+            .ok_or_else(|| format!("OPPONENTS entry {entry} needs label=path"))?;
+        opponents.push(load_policy_v1(p.trim())?);
+        labels.push(l.trim().to_owned());
+    }
+    let sh = bank::BankShared {
+        spec,
+        labels,
+        opponents,
+        prior: world::DeckPrior::new(&cfg.decks),
+        limits: parse_limits()?,
+    };
+    bank::run_bank(cfg, policy, sh)
+}
+
+/// `s4a-bank-parity`: the generic guide search context on frozen Stage 4a
+/// roots (`ROOTS`, `S4A_RUNTIME`, `S4A_SELECT=fpu-1.5`), selection only, to
+/// reproduce an archived search before the adapter meets new roots.
+fn run_bank_parity(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(), String> {
+    let shared = load_shared(cfg)?;
+    if shared.select_urgency != Some(bank::URGENCY) {
+        return Err("s4a-bank-parity needs S4A_SELECT=fpu-1.5".into());
+    }
+    let mut out = std::fs::File::create(&cfg.out).map_err(|e| e.to_string())?;
+    let mut roles = fork_roles(policy, &shared)?;
+    for root in &shared.roots {
+        let root_id = root["root_id"].as_str().ok_or("root has no root_id")?;
+        let (setup, mut session) = replay(cfg, &shared, &mut roles, root)?;
+        if let Some(r) = shared.runtime_rules {
+            session.set_runtime_rules_v1(r)?;
+        }
+        let seeds = RootSeeds {
+            model: shared.model.clone(),
+            root: root_id.to_owned(),
+        };
+        let ctx = bank::guide_ctx(
+            &session,
+            crate::ids::PlayerId(setup.focal as u8),
+            setup.model,
+            &seeds,
+            &shared.prior,
+            shared.limits,
+        )?;
+        let (sel, _) = roles.select_e(&ctx);
+        writeln!(
+            out,
+            "{}",
+            json!({"kind":"bank_parity","root_id":root_id,"selection":sel.json()})
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(), String> {
+    match cfg.mode.as_str() {
+        "s4a-bank" => return run_bank_mode(cfg, policy),
+        "s4a-bank-parity" => return run_bank_parity(cfg, policy),
+        "s4a-label-replay" => return replay_labels::run(cfg),
+        _ => {}
+    }
     let shared = load_shared(cfg)?;
     let row_kind = if cfg.mode == "s4a-diag" {
         "s4a_diag_root"

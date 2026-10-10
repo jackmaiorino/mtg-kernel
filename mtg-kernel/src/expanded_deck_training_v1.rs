@@ -747,9 +747,70 @@ pub struct ExpandedEpisodeV1 {
     pub postboard: bool,
     pub max_physical_decisions: u64,
     pub max_policy_steps: u64,
+    /// Some fixes a game-level runtime rules profile, applied when the game
+    /// is built and before any decision. None keeps every prior serialized
+    /// byte and the default rules.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_rules: Option<EpisodeRuntimeRulesV1>,
+    /// Some starts the episode from a fixed starting history instead of a
+    /// fresh game (spy-reset-pilot-v1). None keeps every prior serialized
+    /// byte.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset: Option<ExpandedResetStartV1>,
+}
+
+/// Named game-level runtime rules profiles an episode may select.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EpisodeRuntimeRulesV1 {
+    /// `engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1` (refused for a game
+    /// with a Delve card).
+    #[serde(rename = "resolution-boundary-v1")]
+    ResolutionBoundaryV1,
+}
+
+impl EpisodeRuntimeRulesV1 {
+    pub fn rules(self) -> crate::engine::RuntimeRulesV1 {
+        match self {
+            Self::ResolutionBoundaryV1 => crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1,
+        }
+    }
+}
+
+/// A reset episode's starting history. The game is built from `game_seed`
+/// (with the episode's decks, starting player and runtime rules) and the
+/// recorded `prefix` actions are applied for both seats, one per policy step
+/// from the opening, with no policy call, sampling draw or record. The cut
+/// is the next decision: it must be the learner's, at the first substep of
+/// physical decision `cut_physical_decision_id`, with the recorded actor-view
+/// observation and menu hashes and the recorded full-state diagnostic hash
+/// (private reconstruction check only: never a feature or search input).
+/// Collection then starts there with fresh
+/// policy streams from the episode's own `seed`; only suffix rows are
+/// recorded, so prefix actions never reach any loss, advantage or
+/// normalization term. The episode limits count suffix work from the cut.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExpandedResetStartV1 {
+    /// Provenance label of the guide and cut (metadata only).
+    pub guide: String,
+    pub game_seed: u64,
+    pub prefix: Vec<u32>,
+    pub cut_physical_decision_id: u64,
+    pub cut_observation_sha256: String,
+    pub cut_menu_sha256: String,
+    /// `FastActorSessionV1::diagnostic_state_hash` at the cut, 16 hex digits.
+    pub cut_state_hash: String,
 }
 
 impl ExpandedEpisodeV1 {
+    /// Policy steps and physical decisions the starting history already
+    /// holds (zero for an ordinary episode).
+    fn reset_offsets_v1(&self) -> (u64, u64) {
+        self.reset.as_ref().map_or((0, 0), |r| {
+            (r.prefix.len() as u64, r.cut_physical_decision_id)
+        })
+    }
+
     fn configurations(&self) -> Result<[DeckConfigurationV1; 2], String> {
         ensure(
             self.opponent_search.is_none(),
@@ -759,13 +820,26 @@ impl ExpandedEpisodeV1 {
             self.opponent_kind.is_none(),
             "opt-in opponent kinds are admitted only by the public-feature collector",
         )?;
-        self.configurations_for_public_collector_v1()
+        self.configurations_checked_v1()
     }
 
     /// Validation for the public-feature collector only, which admits the D3
     /// search pin and the opt-in opponent kinds. Conflicting opponent fields
-    /// fail closed before collection.
+    /// fail closed before collection. That collector builds its own games,
+    /// so it refuses runtime rules and reset starts.
+    #[cfg_attr(
+        not(any(test, feature = "experimental-burn-net8-packed-cuda-v1")),
+        allow(dead_code, reason = "used by the public-feature collector build")
+    )]
     fn configurations_for_public_collector_v1(&self) -> Result<[DeckConfigurationV1; 2], String> {
+        ensure(
+            self.runtime_rules.is_none() && self.reset.is_none(),
+            "runtime rules and reset starts are admitted only by the expanded collector",
+        )?;
+        self.configurations_checked_v1()
+    }
+
+    fn configurations_checked_v1(&self) -> Result<[DeckConfigurationV1; 2], String> {
         ensure(
             self.opponent_search.is_none() || self.opponent.is_some(),
             "search opponent requires an explicit opponent model",
@@ -1485,9 +1559,49 @@ fn episode_session_v1(
     episode: &ExpandedEpisodeV1,
     configs: &[DeckConfigurationV1; 2],
 ) -> Result<FastActorSessionV1, String> {
-    FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
-        1, episode.seed, episode.max_physical_decisions, episode.max_policy_steps,
-        episode.selected.each_ref().map(|d| d.label.clone()), configs.each_ref().map(|d| d.mainboard().to_vec()), PlayerId(episode.starting_player)).map_err(err)
+    let (steps, physical) = episode.reset_offsets_v1();
+    let game_seed = episode.reset.as_ref().map_or(episode.seed, |r| r.game_seed);
+    let mut session = FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
+        1, game_seed, physical + episode.max_physical_decisions, steps + episode.max_policy_steps,
+        episode.selected.each_ref().map(|d| d.label.clone()), configs.each_ref().map(|d| d.mainboard().to_vec()), PlayerId(episode.starting_player)).map_err(err)?;
+    if let Some(rules) = episode.runtime_rules {
+        session.set_runtime_rules_v1(rules.rules())?;
+    }
+    Ok(session)
+}
+
+/// Applies a reset episode's recorded starting history and verifies the cut
+/// (`ExpandedResetStartV1`). A no-op for an ordinary episode.
+pub(crate) fn restore_reset_cut_v1(
+    session: &mut FastActorSessionV1,
+    episode: &ExpandedEpisodeV1,
+) -> Result<(), String> {
+    let Some(reset) = &episode.reset else {
+        return Ok(());
+    };
+    for &action in &reset.prefix {
+        let FastActorResponseV1::Decision(d) = session.current_response() else {
+            return Err("reset prefix reaches a terminal before the cut".into());
+        };
+        session.step(d.episode_id, d.step, action).map_err(err)?;
+    }
+    let FastActorResponseV1::Decision(d) = session.current_response() else {
+        return Err("reset cut is a terminal state".into());
+    };
+    ensure(
+        d.step == reset.prefix.len() as u64
+            && d.physical_decision_id == reset.cut_physical_decision_id
+            && d.substep_index == 0
+            && seat(d.acting_player) == episode.learner_seat,
+        "reset cut is not the learner's recorded physical decision start",
+    )?;
+    let (observation, menu) = crate::regret_census_v1::decision_replay_key(session, d)?;
+    ensure(
+        observation == reset.cut_observation_sha256
+            && menu == reset.cut_menu_sha256
+            && format!("{:016x}", session.diagnostic_state_hash()) == reset.cut_state_hash,
+        "reset cut observation, menu or state differs from the recorded starting history",
+    )
 }
 
 fn collect_episode(
@@ -1523,6 +1637,7 @@ fn collect_episode(
     });
     let config_hashes = configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1()));
     let mut session = episode_session_v1(episode, &configs)?;
+    restore_reset_cut_v1(&mut session, episode)?;
     let seeds = paired_policy_seeds_v1(episode.seed);
     policy.reset_sampling_v1(seeds);
     if let Some(other) = opponent.as_mut() {
@@ -2096,8 +2211,12 @@ fn validate_episode_records_with_search_v1(
                     .map(|c| explicit_deck_hash_v1(c.mainboard())),
         "terminal deck binding differs",
     )?;
+    // A reset episode records only its suffix: steps and physical decisions
+    // continue from the starting history's counts.
+    let (step_offset, physical_offset) = episode.reset_offsets_v1();
     ensure(
-        terminal.policy_step_count == decisions.len() as u64 && !decisions.is_empty(),
+        terminal.policy_step_count == step_offset + decisions.len() as u64
+            && !decisions.is_empty(),
         "trajectory step count differs",
     )?;
     let expected_rewards = match terminal.winner {
@@ -2109,7 +2228,7 @@ fn validate_episode_records_with_search_v1(
         terminal.terminal_reward == expected_rewards,
         "terminal rewards contradict winner",
     )?;
-    let mut physical = 0u64;
+    let mut physical = physical_offset;
     let mut index = 0usize;
     let mut rng = paired_policy_seeds_v1(episode.seed).map(SplitMix64::seed);
     let mut sampler = WideCategoricalScratchV1::default();
@@ -2129,7 +2248,7 @@ fn validate_episode_records_with_search_v1(
         ensure(end <= decisions.len(), "truncated physical decision")?;
         for (substep, row) in decisions[index..end].iter().enumerate() {
             ensure(
-                row.step == (index + substep) as u64
+                row.step == step_offset + (index + substep) as u64
                     && row.physical_decision_id == physical
                     && row.substep_count == first.substep_count
                     && row.substep_index == substep as u32
@@ -4028,6 +4147,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100,
             max_policy_steps: 1000,
+            runtime_rules: None,
+            reset: None,
         }
     }
 
@@ -4546,6 +4667,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100,
             max_policy_steps: 1000,
+            runtime_rules: None,
+            reset: None,
         };
         assert!(e.configurations().is_ok());
         let selected = &mut e.selected[0];
@@ -4652,6 +4775,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            runtime_rules: None,
+            reset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
         assert_eq!(
@@ -4784,6 +4909,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            runtime_rules: None,
+            reset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -4919,6 +5046,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            runtime_rules: None,
+            reset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -5050,6 +5179,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            runtime_rules: None,
+            reset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -5164,6 +5295,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            runtime_rules: None,
+            reset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -5293,6 +5426,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            runtime_rules: None,
+            reset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -5432,6 +5567,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            runtime_rules: None,
+            reset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -5561,6 +5698,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            runtime_rules: None,
+            reset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -5707,6 +5846,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            runtime_rules: None,
+            reset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -5855,6 +5996,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            runtime_rules: None,
+            reset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -5893,6 +6036,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            runtime_rules: None,
+            reset: None,
         }
     }
 
@@ -6376,6 +6521,8 @@ pub(crate) mod tests {
                 postboard: false,
                 max_physical_decisions: 100_000,
                 max_policy_steps: 1_000_000,
+                runtime_rules: None,
+                reset: None,
             };
             if let Err(error) = collect_episode(&mut policy, &learner, None, &episode) {
                 failures.push(format!(
@@ -6432,6 +6579,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            runtime_rules: None,
+            reset: None,
         };
         collect_episode(&mut policy, &learner, None, &episode).unwrap();
     }
@@ -6471,6 +6620,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            runtime_rules: None,
+            reset: None,
         };
         collect_episode(&mut policy, &learner, None, &episode).unwrap();
     }
@@ -6591,6 +6742,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            runtime_rules: None,
+            reset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -6645,6 +6798,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            runtime_rules: None,
+            reset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -6685,6 +6840,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            runtime_rules: None,
+            reset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -6740,6 +6897,8 @@ pub(crate) mod tests {
                 postboard: false,
                 max_physical_decisions: 100_000,
                 max_policy_steps: 1_000_000,
+                runtime_rules: None,
+                reset: None,
             };
             let trajectory =
                 collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -6810,6 +6969,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            runtime_rules: None,
+            reset: None,
         };
         let trajectory =
             collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -6842,6 +7003,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            runtime_rules: None,
+            reset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode)
             .unwrap_or_else(|e| panic!("V3 self-play must never fail on this seed/decks: {e}"));
@@ -6892,6 +7055,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            runtime_rules: None,
+            reset: None,
         };
         let trajectory =
             collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -6925,6 +7090,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            runtime_rules: None,
+            reset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode)
             .unwrap_or_else(|e| panic!("V3 self-play must never fail on this seed/decks: {e}"));
@@ -7007,6 +7174,8 @@ pub(crate) mod tests {
                 postboard: false,
                 max_physical_decisions: 100_000,
                 max_policy_steps: 1_000_000,
+                runtime_rules: None,
+                reset: None,
             };
             let collect_result = execute_v1(ExpandedTrainingCommandV1::Collect {
                 source: source.clone(),
@@ -7520,6 +7689,8 @@ pub(crate) mod tests {
                     postboard: false,
                     max_physical_decisions: 100_000,
                     max_policy_steps: 1_000_000,
+                    runtime_rules: None,
+                    reset: None,
                 };
                 let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
                     source: source.clone(),
@@ -7660,6 +7831,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            runtime_rules: None,
+            reset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
 
@@ -7780,6 +7953,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            runtime_rules: None,
+            reset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
         assert_eq!(
@@ -8243,6 +8418,8 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            runtime_rules: None,
+            reset: None,
         };
         let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -8669,4 +8846,6 @@ pub(crate) mod tests {
         assert_eq!(encoding, FEATURE_ENCODING_DIGEST_V4);
         println!("{GAE_CUDA_SUBPROCESS_HASH_PREFIX_V1}{state}");
     }
+
+    mod reset_start_tests;
 }
