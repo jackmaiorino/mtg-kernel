@@ -37,3 +37,10 @@ actual registered card casting and restore/ability-removal games, metadata and
 live profile migration, CI and default integration. The card remains
 unregistered and adds no accepted coverage. Serial admission follows the
 prepared Sprite/Archmage batch after canonical PR213 integration.
+
+Native14 at2227766a compiled all four actual-card fixture groups successfully
+in2m15s. Supported guard59fea122e3a347d4b89716994dd3fa3e admitted cores12-13
+BelowNormal and ended0 after removal of only the verified idle owned VCTIP
+helper159308 from supervisor150192. The command, log and generated executable
+are retained. This is compilation, not actual Brine gameplay qualification;
+Brine remains unregistered and adds no accepted coverage.
