@@ -245,3 +245,12 @@ Accepted v66 was merged cleanly into this owned branch at3226e574. Candidate
 cases pass. Native20 uses two guarded cores, incremental disabled, and runs
 the seven actual games before extracting the generated v67 hash. Live profile
 migration and acceptance remain pending; candidate171 is not accepted coverage.
+
+Native20 at79995d87 passed all seven actual Sprite/Archmage gameplay and restore
+cases in0.06s after compilation. Supported guard7c67232742114eee9d790ff57719ee06
+ended0. Generated v67 identity1b1e46ebfc30edb7 and generated-file SHA256
+5e7cafc678cf8a955a6477885665e2aadb95233da9a59dd4d8002a54776baade are observed.
+The live profile migration uses that identity and preserves runtime SHA256
+68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851.
+Source review found no integration or profile findings. Profile/card-definition
+and cross-family checks remain pending; candidate171 is unaccepted.
