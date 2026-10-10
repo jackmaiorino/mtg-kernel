@@ -376,6 +376,7 @@ impl Node {
 
     /// Selection rule: the first untried action in the seeded order; once
     /// all are tried, maximum UCB, ties to the seeded order.
+    #[cfg(test)]
     pub(crate) fn select(&self) -> usize {
         self.select_with(None)
     }

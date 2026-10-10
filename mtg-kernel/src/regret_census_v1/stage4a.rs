@@ -94,11 +94,7 @@ fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
         Err(error) => return Err(format!("invalid S4A_RUNTIME: {error}")),
     };
     let runtime_rules = parse_runtime_rules(&cfg.mode, runtime_setting.as_deref())?;
-    let select_urgency = match std::env::var("S4A_SELECT").ok().as_deref() {
-        None | Some("") | Some("untried-first") => None,
-        Some("fpu-1.5") if cfg.mode == "s4a-diag" => Some(1.5),
-        Some(other) => return Err(format!("unsupported S4A_SELECT {other} for {}", cfg.mode)),
-    };
+    let select_urgency = parse_select_rule(&cfg.mode, std::env::var("S4A_SELECT"))?;
     let entries: Vec<(String, String)> = std::env::var("OPPONENTS")
         .map_err(|_| "OPPONENTS is required")?
         .split(',')
@@ -154,6 +150,22 @@ fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
         runtime_rules,
         select_urgency,
     })
+}
+
+fn parse_select_rule(
+    mode: &str,
+    setting: Result<String, std::env::VarError>,
+) -> Result<Option<f64>, String> {
+    let value = match setting {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => return Ok(None),
+        Err(error) => return Err(format!("invalid S4A_SELECT: {error}")),
+    };
+    match value.as_str() {
+        "" | "untried-first" => Ok(None),
+        "fpu-1.5" if mode == "s4a-diag" => Ok(Some(1.5)),
+        other => Err(format!("unsupported S4A_SELECT {other} for {mode}")),
+    }
 }
 
 fn parse_runtime_rules(
@@ -216,7 +228,12 @@ fn completed_identity_roots(
         if recorded != runtime_rules {
             return Err("resume refused: runtime rules identity differs; preserve output and use a fresh path".into());
         }
-        if row.get("select_rule").and_then(Value::as_str) != select_rule {
+        let recorded_select = match row.get("select_rule") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(value)) if value == "fpu-1.5" => Some("fpu-1.5"),
+            _ => return Err("invalid resumed selection rule identity".into()),
+        };
+        if recorded_select != select_rule {
             return Err(
                 "resume refused: selection rule differs; preserve output and use a fresh path"
                     .into(),
