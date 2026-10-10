@@ -65,3 +65,10 @@ block and the predecessor definition-count pin. The redundant identical
 block is removed; v65 repair21814662 supplies338 definitions. It also retains
 the latest pending-cast replay fixture and both failed native receipts.
 Native source qualification remains pending; this is not card gameplay support.
+
+All31 prospective metadata rows were checked against the pinned Mage primary
+constructors at a5c90fe180021e70e2a644ade00eeab07f857a40 and frozen printing
+IDs. Existing prepared registry rows agree on cost, mana value, colors, types,
+subtypes, supertypes and P/T. The prospective file and deferred admission
+script are retained outside the repository. The script refuses until PR212
+is merged and its actual merge is an ancestor of this branch. It has not run.
