@@ -16587,7 +16587,7 @@ mod tests {
             put_on_battlefield(&mut state, player, "Faerie Miscreant");
             let token = put_on_battlefield(&mut state, player, "Treasure Token");
             state.objects.get_mut(token).v4.is_token = true;
-            let borrowed = put_on_battlefield(&mut state, player.opponent(), "Mulldrifter");
+            let borrowed = put_on_battlefield(&mut state, player.opponent(), "Tolarian Terror");
             state.objects.get_mut(borrowed).controller = player;
             put_on_battlefield(&mut state, player.opponent(), "Troll of Khazad-dum");
             put_in_hand(&mut state, player, "Troll of Khazad-dum");

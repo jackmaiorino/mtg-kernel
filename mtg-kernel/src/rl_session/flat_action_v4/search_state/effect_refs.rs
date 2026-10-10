@@ -147,6 +147,7 @@ impl Scan<'_> {
             | ReturnAbilitySourceFromGraveyard { .. }
             | LoseOpponentsLifeXThenGainLifeLost
             | ReturnAttackingCreaturesToOwnersHands
+            | ReturnOwnGraveyardCreaturesManaValueAtMost { .. }
             | CounterTargetSpellThenCreateTokens { .. }
             | BoostPlayerCreaturesUntilEndOfTurn { .. }
             | ExileGraveyardTargetsDrainPerCreature { .. }

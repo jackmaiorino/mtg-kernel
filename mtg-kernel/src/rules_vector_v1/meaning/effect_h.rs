@@ -266,6 +266,24 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
             );
             out.created_tokens.push(*token_def);
         }
+        EffectOp::ReturnOwnGraveyardCreaturesManaValueAtMost { max_mana_value } => {
+            let creature = ObjF::Typed(CardTypeF::Creature);
+            out.read(
+                RelF::You,
+                Some(ZoneF::Graveyard),
+                Some(creature),
+                AggF::Characteristic,
+            );
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Graveyard), ZoneF::Battlefield)
+                    .player(RelF::You)
+                    .obj(creature)
+                    .amount(AmtF::All),
+            );
+            // The fixed vocabulary lacks the mana-value bound and card/token distinction.
+            let _ = max_mana_value;
+            out.atoms.push(Atom::Opaque);
+        }
         EffectOp::ReturnAttackingCreaturesToOwnersHands => {
             out.effect(
                 EffectAtom::moving(Some(ZoneF::Battlefield), ZoneF::Hand)

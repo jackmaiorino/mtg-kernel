@@ -26,3 +26,10 @@ restore. Unused fixture imports were removed in `5f8139c5`. Supported two-core
 native checks use that exact committed source on Haley's PC. The all-test-target
 Limited source check passed in 1m19s; primitive execution remains pending.
 This checkout also contains the fight fixture type repair `6876b395`.
+
+Subsequent catalog audit found that the borrowed Mulldrifter fixture was absent
+from both catalogs. The primitive and two card fixtures now use supported
+Tolarian Terror, whose mana value seven remains distinct from zero/one and the
+excluded Troll's six. Count assertions and resolution-time control changes are
+unchanged. This closes the missing-definition setup error before the queued
+primitive retry starts; it does not claim a native pass.

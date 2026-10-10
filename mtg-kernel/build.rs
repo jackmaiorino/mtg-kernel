@@ -3367,6 +3367,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         mode2: None,
     };
     Some(match name {
+        "Raise the Past" => program(
+            "None",
+            "ReturnOwnGraveyardCreaturesManaValueAtMost(2,currentGraveyard,cardsOnly,simultaneous)",
+            "EffectOp::ReturnOwnGraveyardCreaturesManaValueAtMost { max_mana_value: 2 }",
+        ),
         "Bushwhack" => Special::Program {
             target: "None",
             recipe: "SearchLibraryToHand(Controller,BasicLand,reveal,shuffle)",

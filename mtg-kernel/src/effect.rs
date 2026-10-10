@@ -1376,6 +1376,11 @@ pub enum EffectOp {
         second: ObjectRef,
         target_spec: crate::card_def::TargetSpec,
     },
+    /// Return all qualifying creature cards from the controller's current
+    /// graveyard in one simultaneous zone-change batch. Tokens are not cards.
+    ReturnOwnGraveyardCreaturesManaValueAtMost {
+        max_mana_value: u16,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -13565,6 +13570,25 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ));
             }
         }
+        EffectOp::ReturnOwnGraveyardCreaturesManaValueAtMost { max_mana_value } => {
+            let events = state.players[ctx.controller.index()]
+                .graveyard
+                .iter()
+                .filter_map(|&id| {
+                    let object = state.objects.get(id);
+                    let def = &crate::card_def::CARD_DEFS[object.card_def as usize];
+                    (object.zone == Zone::Graveyard
+                        && object.owner == ctx.controller
+                        && !def.is_token
+                        && !object.v4.is_token
+                        && object.spell_copy_origin.is_none()
+                        && def.mana_value <= *max_mana_value
+                        && crate::engine::object_has_type(state, id, CardType::Creature))
+                    .then(|| event::ProposedEvent::zone_change(id, Zone::Battlefield))
+                })
+                .collect();
+            event::propose_and_commit_batch(state, events);
+        }
         EffectOp::ReturnAttackingCreaturesToOwnersHands => {
             let events = state
                 .objects
@@ -15319,6 +15343,156 @@ mod tests {
     use super::*;
     use crate::event::CommittedEvent;
     use crate::ids::PlayerId;
+
+    #[test]
+    fn graveyard_mass_return_filters_cards_and_current_mana_values_for_both_seats() {
+        let faerie = crate::card_def::card_id_by_name("Faerie Miscreant").unwrap();
+        let emissary = crate::card_def::card_id_by_name("Burning-Tree Emissary").unwrap();
+        let large = crate::card_def::card_id_by_name("Tolarian Terror").unwrap();
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        let token = crate::card_def::card_id_by_name("Human Soldier Token").unwrap();
+        let library = [faerie, faerie, faerie, emissary, large, forest, token];
+        for controller in [PlayerId::P0, PlayerId::P1] {
+            let mut state =
+                GameState::new_from_libraries(&library, &library, |c| format!("card-{c}"), 800);
+            let mut retained_hand = None;
+            let mut returned = Vec::new();
+            let mut excluded = Vec::new();
+            for id in state.players[controller.index()].library.clone() {
+                let def = state.objects.get(id).card_def;
+                let zone = if def == faerie && retained_hand.is_none() {
+                    retained_hand = Some(id);
+                    Zone::Hand
+                } else {
+                    if def == faerie || def == emissary {
+                        returned.push(id);
+                    } else {
+                        excluded.push(id);
+                    }
+                    Zone::Graveyard
+                };
+                event::propose_and_commit(&mut state, event::ProposedEvent::zone_change(id, zone));
+            }
+            let opponent_card = state.players[controller.opponent().index()].library[0];
+            event::propose_and_commit(
+                &mut state,
+                event::ProposedEvent::zone_change(opponent_card, Zone::Graveyard),
+            );
+            // A former controller cannot determine whose graveyard is scanned.
+            let parent = retained_hand.unwrap();
+            let mut virtual_copy = state.objects.get(parent).clone();
+            virtual_copy.zone = Zone::Graveyard;
+            virtual_copy.spell_copy_origin = Some(crate::state::SpellCopyOriginV4 {
+                parent,
+                parent_card_def: faerie,
+                parent_owner: controller,
+                parent_controller: controller,
+                parent_stack_zone_change_count: 0,
+                parent_was_copy: false,
+            });
+            let virtual_copy = state.objects.push(virtual_copy);
+            state.players[controller.index()]
+                .graveyard
+                .push(virtual_copy);
+            excluded.push(virtual_copy);
+            let mut copied_token = state.objects.get(parent).clone();
+            copied_token.zone = Zone::Graveyard;
+            copied_token.v4.is_token = true;
+            let copied_token = state.objects.push(copied_token);
+            state.players[controller.index()]
+                .graveyard
+                .push(copied_token);
+            excluded.push(copied_token);
+            state.objects.get_mut(returned[0]).controller = controller.opponent();
+            state.objects.get_mut(returned[0]).counters.plus1_plus1 = 4;
+            state.objects.get_mut(returned[0]).tapped = true;
+            let ctx = ExecCtx::no_targets(retained_hand.unwrap(), controller);
+            let op = EffectOp::ReturnOwnGraveyardCreaturesManaValueAtMost { max_mana_value: 2 };
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                let start = branch.engine.event_history.len();
+                let generations: Vec<_> = returned
+                    .iter()
+                    .map(|&id| branch.objects.get(id).zone_change_count)
+                    .collect();
+                execute(&op, &ctx, branch);
+                for (&id, generation) in returned.iter().zip(generations) {
+                    let object = branch.objects.get(id);
+                    assert_eq!(object.zone, Zone::Battlefield);
+                    assert_eq!(object.controller, controller);
+                    assert_eq!(object.zone_change_count, generation + 1);
+                    assert!(!object.tapped);
+                    assert!(object.summoning_sick);
+                    assert_eq!(object.counters.plus1_plus1, 0);
+                    assert!(branch.players[controller.index()].battlefield.contains(&id));
+                }
+                assert_eq!(returned.len(), 3);
+                for &id in &excluded {
+                    assert_eq!(branch.objects.get(id).zone, Zone::Graveyard);
+                }
+                assert_eq!(branch.objects.get(opponent_card).zone, Zone::Graveyard);
+                assert_eq!(branch.objects.get(retained_hand.unwrap()).zone, Zone::Hand);
+                assert_eq!(
+                    branch.engine.event_history[start..]
+                        .iter()
+                        .filter(|event| matches!(
+                            event,
+                            CommittedEvent::ZoneChange {
+                                from: Zone::Graveyard,
+                                to: Zone::Battlefield,
+                                ..
+                            }
+                        ))
+                        .count(),
+                    3
+                );
+                let after = branch.engine.event_history.len();
+                execute(&op, &ctx, branch);
+                assert_eq!(branch.engine.event_history.len(), after);
+            }
+            assert_eq!(state.state_hash(), restored.state_hash());
+        }
+    }
+
+    #[test]
+    fn graveyard_mass_return_enters_together_before_etb_trigger_collection() {
+        let faerie = crate::card_def::card_id_by_name("Faerie Miscreant").unwrap();
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        for controller in [PlayerId::P0, PlayerId::P1] {
+            let mut library = vec![forest; 40];
+            library.extend([faerie, faerie]);
+            let mut state =
+                GameState::new_from_libraries(&library, &library, |c| format!("card-{c}"), 801);
+            let cards: Vec<_> = state.players[controller.index()]
+                .library
+                .iter()
+                .copied()
+                .filter(|&id| state.objects.get(id).card_def == faerie)
+                .collect();
+            for &id in &cards {
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(id, Zone::Graveyard),
+                );
+            }
+            state.engine.event_log.clear();
+            execute(
+                &EffectOp::ReturnOwnGraveyardCreaturesManaValueAtMost { max_mana_value: 2 },
+                &ExecCtx::no_targets(cards[0], controller),
+                &mut state,
+            );
+            let pending = crate::trigger::collect_and_process(&mut state);
+            assert_eq!(pending.len(), 2);
+            assert!(
+                pending
+                    .iter()
+                    .all(|trigger| trigger.controller == controller
+                        && cards.contains(&trigger.source))
+            );
+            assert!(state.engine.halted.is_none());
+        }
+    }
 
     fn two_card_libraries() -> GameState {
         GameState::new_from_libraries(&[1, 2], &[3, 4], |c| format!("card-{c}"), 1)

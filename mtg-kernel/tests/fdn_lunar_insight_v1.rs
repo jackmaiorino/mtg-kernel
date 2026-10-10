@@ -120,11 +120,11 @@ fn lunar_insight_samples_distinct_nonland_values_at_resolution_with_restore() {
         let borrowed = put(
             &mut state,
             player.opponent(),
-            "Mulldrifter",
+            "Tolarian Terror",
             Zone::Battlefield,
         );
         let source = cast(&mut state, player);
-        // Newly controlled mana value five participates only at resolution.
+        // Newly controlled mana value seven participates only at resolution.
         state.players[player.opponent().index()]
             .battlefield
             .retain(|&id| id != borrowed);
@@ -156,7 +156,7 @@ fn lunar_insight_with_only_lands_draws_nothing() {
         put(
             &mut state,
             player.opponent(),
-            "Mulldrifter",
+            "Tolarian Terror",
             Zone::Battlefield,
         );
         let source = cast(&mut state, player);
