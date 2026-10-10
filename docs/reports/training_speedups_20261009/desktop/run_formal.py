@@ -4,6 +4,7 @@ Stops permanently on failure; no retries, request edits, or reservation manipula
 import argparse
 from datetime import datetime, timezone
 import hashlib
+import importlib
 import importlib.util
 import json
 import os
@@ -52,6 +53,14 @@ def main():
     requests = []
     for variant in ('baseline','candidate'):
         sources += [pin(x) for x in (ROOT/variant/'python/tools').glob('*.py')]
+    # The exposure collector derives its registration/card-map repository from
+    # the decks path. Validate those real dependencies before any native block,
+    # then keep them in the same source stability checks as the decks themselves.
+    sys.path.insert(0, str(ROOT/'baseline/python/tools'))
+    deck_loader = importlib.import_module('nine_deck_baseline_v1')
+    deck_repo = args.decks.resolve().parents[1]
+    sources += [pin(deck_repo/deck_loader.REGISTRATIONS_PATH), pin(deck_repo/'data/cards_v1.json')]
+    deck_loader.load_decks(args.decks)
     for case in plan['commands']:
         request = checked(case['request']); config = checked(request['config'])
         require(Path(config['output_directory']) == COMMON, 'common native directory differs')

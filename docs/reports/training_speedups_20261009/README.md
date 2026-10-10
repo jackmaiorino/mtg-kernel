@@ -1,7 +1,8 @@
 # Training speedup implementation and comparison
 
 Status: implementation verified and 16 short qualifications complete on two PCs.
-The full ABBA comparison is running; total end-to-end speedup remains unmeasured.
+The first full comparison stopped during inspection; total end-to-end speedup
+remains unmeasured.
 
 This follows the completed [throughput audit](../training_throughput_20261009/README.md).
 Three GPT-6.1 Sol agents implemented learner arithmetic, collection/model reuse,
@@ -185,3 +186,19 @@ API; its CLI intentionally accepts only the one-update qualification sample.
 The raw API check completed across 1,050 files without errors. First-block
 reconciliation is separate audit overhead. Results will report phase totals
 and the actual coordinator wall envelope without adding nested timers twice.
+
+## October 10 delivery observation
+
+The authoritative coordinator stopped at 12:49:25 UTC with zero completed
+cases: `block-01-baseline/inspect` failed because the exposure collector could
+not find the registered nine 75s. Its loader derives the repository from the
+runtime decks path, so staging only the runtime file and Python tools omitted
+the required registration and card-map layout. The coordinator now validates
+those dependencies before dispatch and pins them in its stability checks.
+The failed attempt and its frozen source copies remain unchanged.
+
+The shared coordination log also reports two unpinned Cargo builds on the
+timed cores from 12:37:17 to approximately 12:38:40 UTC. The research owner must
+disposition that contamination and the missing-input failure before any
+separately authorized continuation. No complete ABBA comparison or final
+end-to-end speedup is available. Delivery review does not launch or restart it.
