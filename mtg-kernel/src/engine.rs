@@ -15480,6 +15480,7 @@ fn apply_declare_attackers(state: &mut GameState, attackers: Vec<ObjectId>) -> R
                     def.condition,
                     trigger::TriggerCondition::ControllerAttacks
                         | trigger::TriggerCondition::ControllerAttacksWithSubtype(_)
+                        | trigger::TriggerCondition::ControllerAttacksWithAtLeastCreatures(_)
                 )
             }) {
                 let event = CommittedEvent::ControllerAttacked {

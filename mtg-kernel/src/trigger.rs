@@ -219,6 +219,9 @@ pub enum TriggerCondition {
     /// One cast trigger for the controller's noncreature spell OR a spell
     /// with the named subtype. A spell satisfying both still triggers once.
     CastNoncreatureOrSubtype(Subtype),
+    /// One declaration by the controller containing at least this many
+    /// creatures. The observing source need not attack.
+    ControllerAttacksWithAtLeastCreatures(u8),
 }
 
 pub struct TriggeredAbilityDef {
@@ -491,6 +494,21 @@ fn mischievous_pup_effect() -> EffectOp {
 }
 
 const FELIDAR_SAVIOR_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(felidar_savior_effect)];
+
+const ARMASAUR_GUIDE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControllerAttacksWithAtLeastCreatures(3),
+    ..etb_trigger(armasaur_guide_effect)
+}];
+
+fn armasaur_guide_effect() -> EffectOp {
+    EffectOp::AddCountersToTarget {
+        target_index: 0,
+        optional: false,
+        plus1_plus1: 1,
+        lifelink: 0,
+        stun: 0,
+    }
+}
 
 fn felidar_savior_effect() -> EffectOp {
     EffectOp::Sequence(
@@ -3059,6 +3077,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Dreadwing Scavenger" => &DREADWING_SCAVENGER_TRIGGERS,
         "Mischievous Pup" => &MISCHIEVOUS_PUP_TRIGGERS,
         "Felidar Savior" => &FELIDAR_SAVIOR_TRIGGERS,
+        "Armasaur Guide" => &ARMASAUR_GUIDE_TRIGGERS,
         "Burglar Rat" => &BURGLAR_RAT_TRIGGERS,
         "Infestation Sage" => &INFESTATION_SAGE_TRIGGERS,
         "Wary Thespian" => &WARY_THESPIAN_TRIGGERS,
@@ -3235,6 +3254,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         "Elvish Regrower" => TargetSpec::PermanentCardInOwnGraveyard,
         "Mischievous Pup" => TargetSpec::UpToOneOtherControlledPermanent,
         "Felidar Savior" => TargetSpec::UpToTwoOtherControlledCreatures,
+        "Armasaur Guide" => TargetSpec::ControlledCreature,
         "Vampire Soulcaller" => TargetSpec::CreatureCardInOwnGraveyard,
         "Affectionate Indrik" => TargetSpec::OpponentControlledCreature,
         "Ambush Wolf" => TargetSpec::UpToOneCardInGraveyards,
@@ -4776,6 +4796,19 @@ fn trigger_matches(
                 && state.objects.get(source).zone_change_count == *source_zone_change_count
         }
         (
+            TriggerCondition::ControllerAttacksWithAtLeastCreatures(minimum),
+            CommittedEvent::ControllerAttacked {
+                source: event_source,
+                source_zone_change_count,
+                controller: event_controller,
+            },
+        ) => {
+            *event_source == source
+                && *event_controller == controller
+                && state.objects.get(source).zone_change_count == *source_zone_change_count
+                && state.engine.combat.attackers.len() >= usize::from(minimum)
+        }
+        (
             TriggerCondition::ControllerAttacksWithSubtype(subtype),
             CommittedEvent::ControllerAttacked {
                 source: event_source,
@@ -5301,6 +5334,63 @@ mod tests {
     use super::*;
     use crate::ids::PlayerId;
     use crate::state::GameState;
+
+    #[test]
+    fn attack_count_condition_uses_declaration_and_source_incarnation() {
+        let elf = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
+        for controller in [PlayerId::P0, PlayerId::P1] {
+            let mut state =
+                GameState::new_from_libraries(&[elf; 5], &[elf; 5], |_| "elf".into(), 1);
+            let objects = state.players[controller.index()].library.clone();
+            let source = objects[0];
+            state.objects.get_mut(source).zone_change_count = 7;
+            let marker = CommittedEvent::ControllerAttacked {
+                source,
+                source_zone_change_count: 7,
+                controller,
+            };
+            let condition = TriggerCondition::ControllerAttacksWithAtLeastCreatures(3);
+            // The source is deliberately absent from the declared set.
+            for count in 0..=4 {
+                state.engine.combat.attackers = objects[1..1 + count].to_vec();
+                assert_eq!(
+                    trigger_matches(condition, &marker, source, controller, &state, 0),
+                    count >= 3
+                );
+            }
+            assert!(!trigger_matches(
+                condition,
+                &marker,
+                source,
+                controller.opponent(),
+                &state,
+                0
+            ));
+            state.objects.get_mut(source).zone_change_count = 8;
+            assert!(!trigger_matches(
+                condition, &marker, source, controller, &state, 0
+            ));
+            state.objects.get_mut(source).zone_change_count = 7;
+            // Being put into combat alone supplies no declaration marker.
+            assert!(!trigger_matches(
+                condition,
+                &CommittedEvent::DeclaredAttacker {
+                    source,
+                    source_zone_change_count: 7,
+                    controller
+                },
+                source,
+                controller,
+                &state,
+                0
+            ));
+            let replay: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert!(trigger_matches(
+                condition, &marker, source, controller, &replay, 0
+            ));
+        }
+    }
 
     #[test]
     fn cast_union_is_one_predicate_and_selected_face_does_not_inherit_subtypes() {
