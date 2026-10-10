@@ -3,6 +3,7 @@
 use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardType, Keywords, Subtype, CARD_DEFS,
 };
+use mtg_kernel::effect::{EffectTargetSelectionPurpose, PendingEffectChoice};
 use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
@@ -80,6 +81,49 @@ fn settle(state: &mut GameState) -> Option<Decision> {
                 return None
             }
             Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+            Decision::ChooseEffectTargets {
+                player,
+                source,
+                selected_count: 0,
+                min_targets: 2,
+                max_targets: 2,
+                legal_targets,
+                can_finish: false,
+            } if state.objects.get(source).card_def == card_id_by_name("Mental Note").unwrap() => {
+                assert_eq!(player, PlayerId::P0);
+                assert_eq!(legal_targets.len(), 2);
+                let continuation = state.engine.pending_effect.as_ref().unwrap();
+                let Some(PendingEffectChoice::SelectTargets {
+                    player: chooser,
+                    selected,
+                    legal,
+                    ordered: true,
+                    purpose: EffectTargetSelectionPurpose::OrderMilledIntoGraveyard,
+                    ..
+                }) = &continuation.choice
+                else {
+                    panic!("unexpected Mental Note choice");
+                };
+                assert_eq!(*chooser, player);
+                assert!(selected.is_empty());
+                assert_eq!(legal.len(), 2);
+                for ((candidate, target), object) in legal
+                    .iter()
+                    .zip(&legal_targets)
+                    .zip(&state.players[player.index()].library[..2])
+                {
+                    assert_eq!(candidate.target, *target);
+                    assert_eq!(*target, Target::Object(*object));
+                    let binding = candidate.expected_object.unwrap();
+                    assert_eq!(binding.object, *object);
+                    assert_eq!(binding.expected_zone, Zone::Library);
+                    assert_eq!(
+                        binding.expected_zone_change_count,
+                        state.objects.get(*object).zone_change_count
+                    );
+                }
+                engine::step(state, Action::ChooseEffectTarget(legal_targets[0])).unwrap();
+            }
             other => return Some(other),
         }
     }

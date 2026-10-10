@@ -165,3 +165,21 @@ Mergeed165fe7219ff5780d114861e253e3cfdf6030b3 preserves its two equivalent
 collector lint rewrites and exhaustive walk_diff example match. Exact read-only
 review found no defects and judged the456 gameplay evidence applicable; CI must
 check the current combined head. The live remote checkout remains untouched.
+
+Native10 completed both feature compiles, the unchanged v66 generator identity,
+one Hacker case,48 card-definition cases,23 rules-vector cases (one existing
+ignore),149 native-store cases (three existing ignores) and65 production-profile
+cases. Its25 card targets completed with eight failures across three targets:
+five Mental Note fixtures omitted the existing private two-card mill ordering;
+one Dreadwing fixture expected a choice from a forced single-card discard;
+two fight fixtures incorrectly expected survival against deathtouch. The other
+22 targets passed, including all four repaired Arbiter cases. The command and
+guardf06a0cf7edf14a949c2ad8285e858ab2 ended101. Only proven owned idle
+VCTIP155140 was stopped after stable CPU and exact job membership checks.
+
+The next fixture repair authenticates only Mental Note's typed two-card library
+ordering, gives Dreadwing two real discard candidates, and uses non-deathtouch
+fight bodies with live counter changes. Cast-observer, damage, zone and restore
+assertions remain. Common step-entry validation97da6a02 additionally refuses
+forged Pass actions before mutation; the Native10 source predates that boundary.
+Current-head native qualification and CI remain required before acceptance169.

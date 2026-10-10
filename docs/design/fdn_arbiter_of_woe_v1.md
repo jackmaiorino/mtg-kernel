@@ -39,8 +39,11 @@ in both seats. Seven forged count/path/frame/hand/cross-slot/choice payloads
 must refuse both direct actions and advancement without mutation. Read-only
 review found and repaired a removed-discard bypass and a legacy Hacker
 compatibility issue; exact final review of456cbfe2 found no actionable findings.
-Native10 includes the Hacker regression and all25 new card targets; no repaired
-gameplay pass is claimed before that sequence completes.
+Native10 passed all four repaired Arbiter games and the Hacker regression at
+456cbfe2. Its command and guard ended101 because eight cases in three other
+fixture targets failed. These failed attempts remain retained. Source97da6a02
+adds common step-entry validation and forged Pass refusal to the existing
+seven tamper cases; this added boundary needs current-head qualification.
 
 Historical sourcea70d648f passed both feature test compilations and44 focused
 primitive/prior-game executions under guard5de40808e06145f2b53c4613c9d29167,
