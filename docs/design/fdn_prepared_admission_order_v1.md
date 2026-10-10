@@ -136,3 +136,32 @@ Historical v65 stores remain readable; new cases reject stale v65 resume and
 publication before mutation. Exact read-only migration review found no
 actionable defects. Native profile execution remains pending and must follow
 the retained card-game sequence without mutating its running checkout.
+
+Native8 at a0032541 passed both feature test compilations and all3 Aetherize
+games, then passed3 Arbiter games and failed its discard-ordering case. Life
+was22/18 while the opponent choice was pending, rather than20/20. No later
+card target ran. The command and guard4a0f751ea5ea4e6699633f479e6f1e7a ended101;
+only its proven owned idle VCTIP helper was stopped after stable CPU sampling.
+
+Repair456cbfe201b323fa0f67946d4a8566440faf95e8 adds an authenticated suspended
+discard boundary for a flat root Sequence and preserves terminal legacy paths.
+It rejects forged or removed cross-slot state before direct actions or engine
+advancement. Read-only review findings about removed/relabelled discard state
+and Moon-Circuit Hacker compatibility were repaired; exact final review found
+no actionable findings. Empty and forced one-card hand coverage is included.
+All36 affected Python cases and diff checks pass.
+
+After verifying terminal Native8 and the clean owned checkout, bundle
+SHA25670492dd0b7a0694dccee7d742484dab26dac1c7a04972c5983b7c77cacb7cb97
+fast-forwarded the owned Haley checkout to456cbfe2. Native10 supported guard
+f06a0cf7edf14a949c2ad8285e858ab2, supervisor157032, actually admitted cores12-13
+BelowNormal with pinned Rust1.94.1/MSVC19.50.35725. Observer46239 retains new
+output. The sequence regenerates the identity, checks both feature setups,
+runs the Hacker regression, card definitions, rules and native/production
+profile cases, then all25 new targets with no-fail-fast. Results remain pending.
+
+PR213 independently acquired commit0c0b0a96 while the repair was reviewed.
+Mergeed165fe7219ff5780d114861e253e3cfdf6030b3 preserves its two equivalent
+collector lint rewrites and exhaustive walk_diff example match. Exact read-only
+review found no defects and judged the456 gameplay evidence applicable; CI must
+check the current combined head. The live remote checkout remains untouched.
