@@ -132,7 +132,8 @@ measurement errors are reported before the empty-tree check. Mutation and
 reparse rejection remain enforced. The preserved attempt-2 measurements
 completed with zero errors: the full-block physical projection is
 15,669,643,620 bytes, exceeding Haley's 6,820,810,752 bytes above the 60 GiB
-reserve. Full blocks therefore need another placement.
+reserve at that observation. Haley's later free-space observation is recorded
+below; this exclusion is historical evidence, not its current eligibility.
 
 At 12:07 UTC both host reservations were free; Jack's D: had 322,815,766,528
 bytes free and RunPod still returned 403. Desktop qualification subsequently
@@ -163,21 +164,14 @@ physical projections are below 15.67 GB and logical projections below
 conservative 16 GiB physical and 32 GiB logical projections, a 160 GiB
 desktop allowance and 32 GiB reserved for existing Haley artifacts.
 
-The full comparison launched at 12:35:51 UTC on October 10, using balanced
-baseline, candidate, candidate, baseline order. The first native baseline
-process started at 12:35:57 UTC through the supported reserved launcher.
-Inspection, verified recovery on the separate physical E: disk, retention
-and late metadata copies are included. Local recovery is explicit; the
-original remote mode remains available. The frozen binaries and training
-inputs are unchanged by these storage and orchestration repairs.
-
-The bounded coordinator is PID 46196, identified by its start time and SHA
-in `desktop/formal-launch.json`. Its authoritative state is
-`D:/training-speedups-20261009/desktop/formal-v2/coordinator/state.json`.
-It stops on a failed phase or full fingerprint mismatch and preserves the
-attempt. Completion or an error is the next inspection condition; no new
-campaign or automatic retry is authorized. Short qualification extrapolation
-suggests roughly 1.5-2.5 hours including recovery, with substantial uncertainty.
+The preserved formal-v2 attempt began at 12:35:51 UTC on October 10.
+Its first native baseline completed all 162 updates and 1,620 games, with
+800.104 seconds of guarded dispatch. That timing is excluded from the clean
+comparison because two unpinned Cargo release builds overlapped its declared
+timed P cores from 12:37:17 to approximately 12:38:40 UTC. The original
+report, checkpoint fingerprint and recovery evidence remain preserved.
+`desktop/formal-launch.json` identifies this historical attempt; it is not
+the current clean launch receipt.
 
 All four public `check-choice` calls passed. Eight affected recovery tests
 passed on the desktop, including real local plan construction. Review also
@@ -197,8 +191,59 @@ the required registration and card-map layout. The coordinator now validates
 those dependencies before dispatch and pins them in its stability checks.
 The failed attempt and its frozen source copies remain unchanged.
 
-The shared coordination log also reports two unpinned Cargo builds on the
-timed cores from 12:37:17 to approximately 12:38:40 UTC. The research owner must
-disposition that contamination and the missing-input failure before any
-separately authorized continuation. No complete ABBA comparison or final
-end-to-end speedup is available. Delivery review does not launch or restart it.
+After the missing registration and card-map dependencies were staged, the
+existing baseline's inspection, independent E: recovery copy and retention
+completed. The continuation stopped on the next candidate's guarded dispatch
+refusal before native execution. The compact
+`desktop/contamination-disposition-20261010.json` records both attempts,
+the complete recovery receipt and the decision to preserve the numerical
+reference while excluding the contaminated timing from clean ABBA.
+
+At 13:12:49 UTC Haley had 86,399,787,008 bytes free, enough for the conservative
+16 GiB physical projection above the 60 GiB reserve. The new placement
+comparison therefore includes desktop and Haley; RunPod remains unavailable
+with HTTP403 and no paid authority. Existing eight-case qualifications per
+host are reused with their unchanged runtime, schedule and full fingerprint
+bindings. No rebenchmark is claimed.
+
+`desktop/haley-qualification-mirror-20261010.json` records local report refs
+and supported path mappings for all eight Haley cases. Requests, configs,
+runtime, execution and archive receipts retain their captured bytes; native
+payloads were recovered from the two pinned ZIP shards with exact member
+inventory and SHA verification. The original scientific input pins remain
+unchanged. This mirror supports full public output verification without
+rewriting remote paths in captured artifacts.
+
+The local desktop transport sample measured 27,226,168 bytes through D: SHA,
+E: copy/fsync and full E: SHA in 0.7205 seconds. The analogous Haley sample
+measured 27,225,149 bytes through actual SCP, D: SHA and independent E:
+copy/fsync/readback in 2.0152 seconds. Their conservative 32 GiB linear
+transport projections are 909.23 and 2,543.24 seconds respectively, with
+cache and scaling limitations recorded in the sample receipts. Haley's
+receipt is `desktop/haley-transport-sample-20261010.json`. These costs enter
+the supported allocation comparison; actual complete recovery times must
+still be measured for every formal case.
+
+The bounded clean formal-v3 queued launcher started at 13:22:50 UTC as PID
+12604, pinned in `desktop/clean-queued-job.json`. Its first observed state
+waits for desktop reservation generation 427, `codex-fdn-issue110`. It uses
+canonical directory events with a two-hour bound, then refreshes all three
+hosts, prepares fresh requests, performs four public output-verifying choice
+checks, seals and validates the plan, and starts the supported dispatcher.
+Any started phase failure preserves the attempt and stops the coordinator.
+
+Both variants reserve cores 0-15 through `host_slots_v1.py timed` while native
+execution retains its qualified binding to 0,2,4,6,8,10,12,14. This protects
+their physical-core siblings and leaves 16-23 for useful CI or build work.
+The v3 controller and adapter are separate files; historical helpers remain
+unchanged. Each case waits for canonical availability before its timer starts;
+queue time is recorded separately and remains inside the coordinator wall.
+The analysis also requires the terminal state's exact independent E: copy.
+
+The authoritative queued state is
+`D:/training-speedups-20261009/desktop/formal-v3-launcher/state.json`, followed
+by `desktop/formal-v3/coordinator/state.json` after execution begins. Jack's
+request to poll through completion is covered by the existing five-minute
+`finish-training-throughput-comparison` heartbeat, with backoff on unchanged
+state. Clean native execution, a complete ABBA result and final end-to-end
+speedup remain pending.
