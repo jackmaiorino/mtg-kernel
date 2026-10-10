@@ -1464,6 +1464,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::ControlledCreature
         | TargetSpec::EnchantmentPermanent
         | TargetSpec::CreatureCardInOwnGraveyard
+        | TargetSpec::PermanentCardInOwnGraveyard
         | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_)
         | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_)
         | TargetSpec::SpellYouDontControl
@@ -2967,7 +2968,10 @@ fn legal_targets_for_controller_from_source(
                 .filter(|id| !targets_chosen.contains(&Target::Object(*id)))
                 .filter(|&id| {
                     let object = state.objects.get(id);
-                    object.zone == Zone::Graveyard && !object.v4.is_token
+                    object.zone == Zone::Graveyard
+                        && !object.v4.is_token
+                        && (spec != TargetSpec::UpToOneCardInGraveyards
+                            || object.spell_copy_origin.is_none())
                 })
                 .map(Target::Object)
                 .collect()
@@ -3014,6 +3018,29 @@ fn legal_targets_for_controller_from_source(
         })
         .map(Target::Object)
         .collect(),
+        TargetSpec::PermanentCardInOwnGraveyard => state.players[controller.index()]
+            .graveyard
+            .iter()
+            .copied()
+            .filter(|&id| {
+                let object = state.objects.get(id);
+                let definition = &card_def::CARD_DEFS[object.card_def as usize];
+                object.owner == controller
+                    && object.zone == Zone::Graveyard
+                    && !object.v4.is_token
+                    && object.spell_copy_origin.is_none()
+                    && [
+                        CardType::Land,
+                        CardType::Creature,
+                        CardType::Artifact,
+                        CardType::Enchantment,
+                        CardType::Planeswalker,
+                    ]
+                    .into_iter()
+                    .any(|kind| definition.has_type(kind))
+            })
+            .map(Target::Object)
+            .collect(),
         TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(maximum) => state.players
             [controller.index()]
         .graveyard

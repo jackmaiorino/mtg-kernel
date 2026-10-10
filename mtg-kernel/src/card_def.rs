@@ -427,7 +427,10 @@ impl Subtype {
         Subtype::Mercenary,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Assassin,
-        #[cfg(feature = "standard-magezero-fixtures")]
+        #[cfg(any(
+            feature = "standard-magezero-fixtures",
+            feature = "limited-fdn-fixtures"
+        ))]
         Subtype::Wolf,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Kraken,
@@ -809,6 +812,8 @@ pub enum TargetSpec {
     /// named effective subtypes (Rockface Village's "target Lizard, Mouse,
     /// Otter, or Raccoon you control").
     ControlledPermanentWithAnySubtype([Subtype; 4]),
+    /// One permanent card from the controller's graveyard, including a land.
+    PermanentCardInOwnGraveyard,
 }
 
 impl TargetSpec {
@@ -874,6 +879,7 @@ impl TargetSpec {
             TargetSpec::UpToOneCardInGraveyards => 54,
             TargetSpec::AttackingCreatureWithSubtype(_) => 55,
             TargetSpec::ControlledPermanentWithAnySubtype(_) => 56,
+            TargetSpec::PermanentCardInOwnGraveyard => 57,
         }
     }
 }
@@ -2160,11 +2166,11 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 333 (first-life-gain creatures).
+        // batches append through id 335 (graveyard-trigger creatures).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                334
+                336
             } else {
                 192
             }
@@ -2241,6 +2247,20 @@ mod tests {
                 53,
             ),
             (TargetSpec::UpToOneCardInGraveyards, 54),
+            (
+                TargetSpec::AttackingCreatureWithSubtype(Subtype::AssemblyWorker),
+                55,
+            ),
+            (
+                TargetSpec::ControlledPermanentWithAnySubtype([
+                    Subtype::Lizard,
+                    Subtype::Mouse,
+                    Subtype::Otter,
+                    Subtype::Raccoon,
+                ]),
+                56,
+            ),
+            (TargetSpec::PermanentCardInOwnGraveyard, 57),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);
