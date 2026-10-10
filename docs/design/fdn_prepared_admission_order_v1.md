@@ -47,6 +47,6 @@ registry. All29 names are in the target and absent from this registry.
 Native source checks and reviews qualify only the observed primitive
 or compilation scope. They do not execute these unregistered card games.
 The proposed admission would reach167 full names only if all29 and both
-predecessor batches pass gameplay/profile checks and merge. The frozen296
+predecessor batches pass gameplay/profile checks and merge. The frozen286
 name target, remaining rules work, cross-color/reference comparisons and
 Limited search/DraftZero acceptance remain unchanged.
