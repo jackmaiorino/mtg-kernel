@@ -24,7 +24,20 @@ and checks nonchooser public and typed projections across hidden top-card
 changes. The failed output is retained alongside the corrected passing log
 `fdn110-v63-gameplay-checks-2.log` in the coordinator scratch directory.
 The corrected launcher exited zero after release of its verified owned
-idle VCTIP helper. Production-profile publication/resume checks remain pending.
+idle VCTIP helper. Current-head Windows production-profile CI then passed
+all three publication/resume/round-trip checks, with 59 passing cases across
+the three existing filters in
+[job 114249932766](https://github.com/jackmaiorino/mtg-kernel/actions/runs/38063880908/job/114249932766).
+It tested head `2511f978` merged into main `7723122b`; the CI helper builds
+with `--release --locked` and both Limited/production features. That evidence
+replaces the redundant suspended standalone production build.
+
+The same run's default-feature Linux workspace failed five ledger fixtures
+at their Plains lookup. Plains belongs to the optional catalog. The fixtures
+now use default-catalog Forest while preserving all five assertions and the
+hidden Swamp substitution. No ledger/runtime behavior or catalog identity
+changed. The failed job/log remain retained; corrected default-feature and
+Limited checks must pass before integration.
 
 | Card | Exact printed behavior | Existing effect |
 | --- | --- | --- |
@@ -90,7 +103,8 @@ gain and turn-history read, but the global event ordinal and own-turn gate
 are explicitly reported as opaque. This does not reduce gameplay support;
 it records the extractor's representational limit. Registry wiring, generated
 identity and the separate profile are committed. Production-profile checks
-and current-head CI remain admission prerequisites. The earlier malformed build
+passed on the preceding receipt head; corrected current-head CI remains an
+integration prerequisite. The earlier malformed build
 claim was reported to its owner through the shared mailbox and collaboration
 PR137 and has since been released. No reservation or other owner's process
 was changed.

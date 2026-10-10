@@ -353,9 +353,10 @@ mod tests {
     use crate::state::Step;
 
     fn legacy() -> GameState {
-        let plains = crate::card_def::card_id_by_name("Plains").unwrap();
+        // Exercise the ledger in the default catalog as well as the FDN catalog.
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
         let mut state =
-            GameState::new_from_libraries(&[plains; 40], &[plains; 40], |_| "Plains".into(), 630);
+            GameState::new_from_libraries(&[forest; 40], &[forest; 40], |_| "Forest".into(), 630);
         state.step = Step::Main1;
         state
     }
