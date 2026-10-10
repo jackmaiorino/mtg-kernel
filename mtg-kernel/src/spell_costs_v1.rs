@@ -1,8 +1,5 @@
-//! Selected spell mana costs before CR 601.2f adjustments.
-//!
-//! This collector does not pay nonmana components or validate targets/timing.
-//! The next casting-path increment uses the same collected total for offers,
-//! pending choices and payment, with nonmana costs committed afterward.
+//! Selected spell totals, pure cost quotes and synchronous prepared payment.
+//! Timing, targets and restored PendingCast authentication belong to the caller.
 
 use super::{
     card_def, mana, normal_cast_reduction_count, supported_adventure, supported_bestow,
@@ -476,6 +473,178 @@ pub(super) fn selected_spell_mana_costs_v1(
         selected.components(additional);
     }
     Some(selected)
+}
+
+/// Quote a selected total before all interactive cost objects are picked.
+/// Complete the current pipeline's single supported object family without
+/// changing state. Tap picks reserve mana sources; sacrifices may use their
+/// mana abilities first, and mandatory exile cannot also pay Delve.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn selected_spell_quote_v1(
+    definition: &card_def::CardDef,
+    source: ObjectId,
+    origin_zone: crate::state::Zone,
+    method: CastMethodV4,
+    kicked: bool,
+    mode: u8,
+    x: u8,
+    targets: &[Target],
+    chosen_prefix: &[ObjectId],
+    player: PlayerId,
+    state: &GameState,
+    reserved_graveyard: &[ObjectId],
+) -> Option<SpellManaPaymentV1> {
+    if method == CastMethodV4::Alternative
+        && !super::alt_cost_condition_met(
+            definition.alt_cost?.condition,
+            player,
+            origin_zone,
+            state,
+        )
+    {
+        return None;
+    }
+    let selected =
+        selected_spell_mana_costs_v1(definition, method, kicked, mode, targets, player, state)?;
+    let modifiers = super::spell_cost_generic_modifiers_v1(state, selected.types, player);
+    let mut family = None;
+    let mut discard_count = 0usize;
+    let mut needs_creature = false;
+    let mut reveals_hand = false;
+    for component in selected
+        .component_groups
+        .iter()
+        .flat_map(|group| group.iter())
+    {
+        let interactive = match component {
+            CostComponent::SacrificeLands(count) => Some((
+                usize::from(*count),
+                super::sacrificeable_lands(player, state, &[]),
+            )),
+            CostComponent::SacrificeControlled { count, filter } => Some((
+                usize::from(*count),
+                super::sacrificeable_controlled_permanents(player, *filter, state, &[]),
+            )),
+            CostComponent::SacrificeOtherControlledCreatures(count) => Some((
+                usize::from(*count),
+                super::sacrificeable_other_controlled_creatures(player, source, state, &[]),
+            )),
+            CostComponent::ExileOtherCardsFromOwnGraveyard(count) => Some((
+                usize::from(*count),
+                super::checked_graveyard_exile_candidates(player, source, state, &[])?,
+            )),
+            CostComponent::TapUntappedControlledPermanent(filter) => Some((
+                1,
+                super::tap_permanent_cost_candidates(player, state, *filter, &[]),
+            )),
+            CostComponent::DiscardCards(count) => {
+                discard_count += usize::from(*count);
+                None
+            }
+            CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {
+                needs_creature = true;
+                None
+            }
+            CostComponent::RevealHandIfNoCardsWithType(_) => {
+                reveals_hand = true;
+                None
+            }
+            _ => None,
+        };
+        if let Some(interactive) = interactive {
+            if family.replace(interactive).is_some() {
+                // PendingCast cannot stage two independent object families.
+                return None;
+            }
+        }
+    }
+    if discard_count != 0 || needs_creature || reveals_hand {
+        let mut hand = Vec::new();
+        for &object in &state.players[player.index()].hand {
+            let card = state.objects.try_get(object)?;
+            if card.owner != player
+                || card.zone != crate::state::Zone::Hand
+                || card_def::CARD_DEFS.get(card.card_def as usize).is_none()
+                || hand.contains(&object)
+            {
+                return None;
+            }
+            hand.push(object);
+        }
+        hand.retain(|object| *object != source);
+        if hand.len() < discard_count {
+            return None;
+        }
+        if needs_creature
+            && super::chosen_creature_cost_candidates(
+                player,
+                super::ChosenCreatureCostZoneV1::Battlefield,
+                state,
+            )
+            .is_empty()
+            && (hand.len() <= discard_count
+                || !hand.iter().any(|object| {
+                    card_def::CARD_DEFS[state.objects.get(*object).card_def as usize]
+                        .has_type(CardType::Creature)
+                }))
+        {
+            return None;
+        }
+    }
+    let quote = |chosen: &[ObjectId]| {
+        let choices = selected.component_choices_v1(definition, method, player, state, chosen)?;
+        let groups = choices
+            .chosen_by_group
+            .iter()
+            .map(Vec::as_slice)
+            .collect::<Vec<_>>();
+        selected.payment_plan_with_component_choices_v1(
+            x,
+            player,
+            source,
+            state,
+            modifiers,
+            &groups,
+            reserved_graveyard,
+        )
+    };
+    let Some((needed, candidates)) = family else {
+        return chosen_prefix.is_empty().then(|| quote(&[])).flatten();
+    };
+    if chosen_prefix.len() > needed
+        || chosen_prefix.iter().enumerate().any(|(index, object)| {
+            !candidates.contains(object) || chosen_prefix[..index].contains(object)
+        })
+    {
+        return None;
+    }
+    let candidates = candidates
+        .into_iter()
+        .filter(|object| !chosen_prefix.contains(object))
+        .collect::<Vec<_>>();
+    let mut chosen = chosen_prefix.to_vec();
+    fn complete(
+        candidates: &[ObjectId],
+        needed: usize,
+        chosen: &mut Vec<ObjectId>,
+        quote: &impl Fn(&[ObjectId]) -> Option<SpellManaPaymentV1>,
+    ) -> Option<SpellManaPaymentV1> {
+        if chosen.len() == needed {
+            return quote(chosen);
+        }
+        if candidates.len() < needed - chosen.len() {
+            return None;
+        }
+        for (index, object) in candidates.iter().enumerate() {
+            chosen.push(*object);
+            if let Some(payment) = complete(&candidates[index + 1..], needed, chosen, quote) {
+                return Some(payment);
+            }
+            chosen.pop();
+        }
+        None
+    }
+    complete(&candidates, needed, &mut chosen, &quote)
 }
 
 /// Complete ephemeral payment, prepared before any real discard or mana use.
@@ -1190,6 +1359,127 @@ mod tests {
         super::super::begin_cast(&mut state, PlayerId::P0, source);
         let pending = state.engine.pending_cast.as_ref().unwrap().clone();
         (state, pending)
+    }
+
+    fn quote_pending(
+        state: &GameState,
+        pending: &super::super::PendingCast,
+        method: CastMethodV4,
+        prefix: &[ObjectId],
+        reserved: &[ObjectId],
+    ) -> Option<SpellManaPaymentV1> {
+        let definition = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+        selected_spell_quote_v1(
+            definition,
+            pending.spell,
+            pending.origin_zone,
+            method,
+            false,
+            0,
+            0,
+            &[],
+            prefix,
+            pending.controller,
+            state,
+            reserved,
+        )
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn quote_requires_a_discard_other_than_the_casting_source() {
+        let (mut state, pending) =
+            staged_payment(&["Thrill of Possibility"], "Thrill of Possibility");
+        state.players[0].mana_pool = [0, 0, 0, 1, 0, 1];
+        let before = serde_json::to_value(&state).unwrap();
+        assert!(quote_pending(&state, &pending, CastMethodV4::Normal, &[], &[]).is_none());
+        assert_eq!(serde_json::to_value(&state).unwrap(), before);
+        let (mut state, pending) = staged_payment(
+            &["Thrill of Possibility", "Forest"],
+            "Thrill of Possibility",
+        );
+        state.players[0].mana_pool = [0, 0, 0, 1, 0, 1];
+        let before = serde_json::to_value(&state).unwrap();
+        assert!(quote_pending(&state, &pending, CastMethodV4::Normal, &[], &[]).is_some());
+        assert_eq!(serde_json::to_value(&state).unwrap(), before);
+    }
+
+    #[test]
+    fn quote_completes_sacrifice_prefix_without_reserving_land_mana() {
+        let (mut state, pending) = staged_payment(&["Raze", "Mountain"], "Raze");
+        let land = state.players[0].hand[0];
+        assert!(state.move_hand_to_battlefield(PlayerId::P0, land));
+        let before = serde_json::to_value(&state).unwrap();
+        for prefix in [&[][..], &[land][..]] {
+            assert!(quote_pending(&state, &pending, CastMethodV4::Normal, prefix, &[]).is_some());
+        }
+        assert!(
+            quote_pending(&state, &pending, CastMethodV4::Normal, &[land, land], &[]).is_none()
+        );
+        assert!(quote_pending(
+            &state,
+            &pending,
+            CastMethodV4::Normal,
+            &[pending.spell],
+            &[]
+        )
+        .is_none());
+        assert_eq!(serde_json::to_value(&state).unwrap(), before);
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn quote_escape_completion_excludes_source_and_separately_reserved_cards() {
+        let (mut state, pending) = staged_payment(
+            &["Sleep of the Dead", "Forest", "Forest", "Forest"],
+            "Sleep of the Dead",
+        );
+        let graveyard = state.players[0].hand.clone();
+        for &object in &graveyard {
+            super::super::event::propose_and_commit(
+                &mut state,
+                super::super::ProposedEvent::zone_change(object, crate::state::Zone::Graveyard),
+            );
+        }
+        state.players[0].mana_pool[1] = 1;
+        state.players[0].mana_pool[5] = 2;
+        let before = serde_json::to_value(&state).unwrap();
+        assert!(quote_pending(&state, &pending, CastMethodV4::Escape, &[], &[]).is_some());
+        assert!(
+            quote_pending(&state, &pending, CastMethodV4::Escape, &[graveyard[0]], &[]).is_some()
+        );
+        assert!(quote_pending(
+            &state,
+            &pending,
+            CastMethodV4::Escape,
+            &[pending.spell],
+            &[]
+        )
+        .is_none());
+        assert!(
+            quote_pending(&state, &pending, CastMethodV4::Escape, &[], &[graveyard[0]]).is_none()
+        );
+        assert_eq!(serde_json::to_value(&state).unwrap(), before);
+    }
+
+    #[test]
+    fn quote_reveal_only_cost_authenticates_hand_before_legacy_lookups() {
+        let (state, pending) = staged_payment(&["Land Grant", "Lightning Bolt"], "Land Grant");
+        let hand = state.players[0].hand[0];
+        assert!(quote_pending(&state, &pending, CastMethodV4::Alternative, &[], &[]).is_some());
+        for invalid in 0..3 {
+            let mut forged = state.clone();
+            match invalid {
+                0 => forged.objects.get_mut(hand).owner = PlayerId::P1,
+                1 => forged.players[0].hand.push(ObjectId(u32::MAX)),
+                _ => forged.objects.get_mut(hand).card_def = u16::MAX,
+            }
+            let before = serde_json::to_value(&forged).unwrap();
+            assert!(
+                quote_pending(&forged, &pending, CastMethodV4::Alternative, &[], &[]).is_none()
+            );
+            assert_eq!(serde_json::to_value(&forged).unwrap(), before);
+        }
     }
 
     #[test]

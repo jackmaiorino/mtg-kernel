@@ -3564,6 +3564,7 @@ fn viable_printed_spell_modes(
 ) -> Vec<u8> {
     let mut modes =
         Vec::with_capacity(1 + usize::from(def.mode2.is_some()) + usize::from(def.mode3.is_some()));
+    let spell = source;
     let source = targeting_source_for_object(state, source);
     if target_prefix_can_complete_for_controller_and_source(
         def.target_spec,
@@ -3598,11 +3599,26 @@ fn viable_printed_spell_modes(
     }
     #[cfg(feature = "standard-magezero-fixtures")]
     if crate::standard_keywords_v1::spree_extra_generic(def.name, 0).is_some() {
-        let base = effective_normal_cast_cost(def, controller, state);
         modes.retain(|&mode| {
-            mana::can_pay(&with_spree_surcharge(def, mode, base), 0, controller, state).is_some()
+            spell_costs_v1::selected_spell_quote_v1(
+                def,
+                spell,
+                state.objects.get(spell).zone,
+                CastMethodV4::Normal,
+                false,
+                mode,
+                0,
+                &[],
+                &[],
+                controller,
+                state,
+                &[],
+            )
+            .is_some()
         });
     }
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
+    let _ = spell;
     modes
 }
 
@@ -5797,8 +5813,21 @@ fn normal_cast_target_prefix_is_payable(
     state: &GameState,
 ) -> bool {
     if !normal_cast_cost_depends_on_targets(def) {
-        let cost = effective_normal_cast_cost(def, controller, state);
-        return normal_cost_is_payable(def, &cost, 0, controller, state);
+        return spell_costs_v1::selected_spell_quote_v1(
+            def,
+            spell,
+            state.objects.get(spell).zone,
+            CastMethodV4::Normal,
+            false,
+            0,
+            0,
+            targets,
+            &[],
+            controller,
+            state,
+            &[],
+        )
+        .is_some();
     }
     let source = targeting_source_for_object(state, spell);
     if !target_prefix_can_complete_for_controller_and_source(
@@ -5806,8 +5835,22 @@ fn normal_cast_target_prefix_is_payable(
     ) {
         return false;
     }
-    let cost = effective_normal_cast_cost_with_targets(def, controller, targets, state);
-    if normal_cost_is_payable(def, &cost, 0, controller, state) {
+    if spell_costs_v1::selected_spell_quote_v1(
+        def,
+        spell,
+        state.objects.get(spell).zone,
+        CastMethodV4::Normal,
+        false,
+        0,
+        0,
+        targets,
+        &[],
+        controller,
+        state,
+        &[],
+    )
+    .is_some()
+    {
         return true;
     }
     completable_next_targets_for_controller_and_source(spec, targets, controller, source, state)
@@ -5850,30 +5893,6 @@ fn completable_next_cast_targets(
             )
         })
         .collect()
-}
-
-/// Whether a spell's normal-mode total cost (`effective_normal_cast_cost`'s
-/// output: colored/hybrid/phyrexian pips plus generic, already net of any
-/// `generic_cost_reduction`) is currently payable, accounting for Delve
-/// (`CardDef::delve`) when present. Centralizes the "ordinary `mana::
-/// can_pay`, or `mana::delve_payment_plan` for a delve spell" branch so
-/// every payability check (`is_castable_now`'s offer,
-/// `remaining_cast_payment_is_payable`'s mid-cast re-check) agrees with
-/// `finalize_cast`'s actual payment about what "payable" means for a delve
-/// spell -- see `mana::delve_payment_plan`'s doc for the plan itself.
-fn normal_cost_is_payable(
-    def: &card_def::CardDef,
-    normal_cost: &Cost,
-    x_value: u8,
-    player: PlayerId,
-    state: &GameState,
-) -> bool {
-    let creature_spell = def.has_type(CardType::Creature);
-    if def.delve {
-        mana::delve_payment_plan(normal_cost, x_value, player, state, creature_spell).is_some()
-    } else {
-        mana::can_pay_spell(normal_cost, x_value, player, state, creature_spell).is_some()
-    }
 }
 
 /// Returns the supported Omen definition for the current cast pipeline.
@@ -6031,152 +6050,63 @@ fn viable_pending_spell_forms(
     pending: &PendingCast,
     state: &GameState,
 ) -> Vec<u8> {
-    if let Some(bestow) = supported_bestow(def) {
+    let alternative = if supported_bestow(def).is_some() {
+        Some((CastMethodV4::Bestow, &[CardType::Enchantment][..]))
+    } else if let Some(adventure) = supported_adventure(def) {
+        (pending.origin_zone == Zone::Hand).then_some((CastMethodV4::Omen, adventure.types))
+    } else {
+        supported_omen(def).map(|omen| (CastMethodV4::Omen, omen.types))
+    };
+    if supported_bestow(def).is_some()
+        || supported_adventure(def).is_some()
+        || supported_omen(def).is_some()
+    {
         let mut forms = Vec::with_capacity(2);
-        if target_prefix_can_complete_for_controller_and_source(
-            def.target_spec,
-            &pending.targets_chosen,
-            pending.controller,
-            targeting_source_for_object(state, pending.spell),
-            state,
-        ) && pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
-            && mana::can_pay_spell(
-                &def.cost,
-                0,
-                pending.controller,
-                state,
-                def.has_type(CardType::Creature),
-            )
-            .is_some()
+        let source = targeting_source_for_object(state, pending.spell);
+        for (form, method, types, keywords) in
+            std::iter::once((0, CastMethodV4::Normal, def.types, def.keywords))
+                .chain(alternative.map(|(method, types)| (1, method, types, Keywords::NONE)))
         {
-            forms.push(0);
-        }
-        if target_prefix_can_complete_for_controller_and_source(
-            bestow.target_spec,
-            &pending.targets_chosen,
-            pending.controller,
-            targeting_source_for_object(state, pending.spell),
-            state,
-        ) && pending_cast_form_timing_ok(
-            &[CardType::Enchantment],
-            Keywords::NONE,
-            pending,
-            state,
-        ) && mana::can_pay(
-            &static_adjusted_spell_cost(
-                bestow.cost,
-                &[CardType::Enchantment],
-                pending.controller,
-                state,
-            ),
-            0,
-            pending.controller,
-            state,
-        )
-        .is_some()
-        {
-            forms.push(1);
-        }
-        return forms;
-    }
-    if let Some(adventure) = supported_adventure(def) {
-        let mut forms = Vec::with_capacity(2);
-        let normal_cost = effective_normal_cast_cost(def, pending.controller, state);
-        if target_prefix_can_complete_for_controller_and_source(
-            def.target_spec,
-            &pending.targets_chosen,
-            pending.controller,
-            targeting_source_for_object(state, pending.spell),
-            state,
-        ) && pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
-            && mana::can_pay_spell(
-                &normal_cost,
-                0,
-                pending.controller,
-                state,
-                def.has_type(CardType::Creature),
-            )
-            .is_some()
-        {
-            forms.push(0);
-        }
-        // The Adventure side is only ever a Hand-zone cast: a card sitting
-        // in Exile can only be castable via `ObjectStateV4::on_adventure`
-        // (the creature face only), never modally re-offered as the
-        // Adventure again.
-        let cast_from_hand = state
-            .objects
-            .get(pending.spell)
-            .v4
-            .spell_cast_origin
-            .is_some_and(|origin| origin.origin_zone == Zone::Hand);
-        if cast_from_hand
-            && target_prefix_can_complete_for_controller_and_source(
-                adventure.target_spec,
+            let spec = spell_form_target_spec(def, form).expect("supported form owns target spec");
+            if target_prefix_can_complete_for_controller_and_source(
+                spec,
                 &pending.targets_chosen,
                 pending.controller,
-                targeting_source_for_object(state, pending.spell),
+                source,
                 state,
-            )
-            && pending_cast_form_timing_ok(adventure.types, Keywords::NONE, pending, state)
-            && mana::can_pay(
-                &static_adjusted_spell_cost(
-                    adventure.cost,
-                    adventure.types,
-                    pending.controller,
+            ) && pending_cast_form_timing_ok(types, keywords, pending, state)
+                && pending_cast_quote_v1(
+                    def,
+                    pending,
+                    method,
+                    pending.kicked == Some(true),
+                    0,
                     state,
-                ),
-                0,
-                pending.controller,
-                state,
-            )
-            .is_some()
-        {
-            forms.push(1);
+                )
+                .is_some()
+            {
+                forms.push(form);
+            }
         }
         return forms;
     }
-    let Some(omen) = supported_omen(def) else {
-        return viable_printed_spell_modes(def, pending.spell, pending.controller, state);
-    };
-    let mut forms = Vec::with_capacity(2);
-    let normal_cost = effective_normal_cast_cost(def, pending.controller, state);
-    if target_prefix_can_complete_for_controller_and_source(
-        def.target_spec,
-        &pending.targets_chosen,
-        pending.controller,
-        targeting_source_for_object(state, pending.spell),
-        state,
-    ) && pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
-        && mana::can_pay_spell(
-            &normal_cost,
-            0,
-            pending.controller,
-            state,
-            def.has_type(CardType::Creature),
-        )
-        .is_some()
-    {
-        forms.push(0);
+    let mut modes = viable_printed_spell_modes(def, pending.spell, pending.controller, state);
+    if def.mode2.is_some() || def.mode3.is_some() {
+        modes.retain(|&mode| {
+            let mut selected = pending.clone();
+            selected.mode_chosen = Some(mode);
+            pending_cast_quote_v1(
+                def,
+                &selected,
+                CastMethodV4::Normal,
+                pending.kicked == Some(true),
+                0,
+                state,
+            )
+            .is_some()
+        });
     }
-    if target_prefix_can_complete_for_controller_and_source(
-        omen.target_spec,
-        &pending.targets_chosen,
-        pending.controller,
-        targeting_source_for_object(state, pending.spell),
-        state,
-    ) && pending_cast_form_timing_ok(omen.types, Keywords::NONE, pending, state)
-        && mana::can_pay(
-            &static_adjusted_spell_cost(omen.cost, omen.types, pending.controller, state),
-            0,
-            pending.controller,
-            state,
-        )
-        .is_some()
-    {
-        forms.push(1);
-    }
-    forms
+    modes
 }
 
 fn payable_cast_modes(
@@ -6185,37 +6115,29 @@ fn payable_cast_modes(
     state: &GameState,
 ) -> Vec<CastMode> {
     let mut modes = Vec::new();
-    let normal = with_spree_surcharge(
-        def,
-        pending.mode_chosen.unwrap_or(0),
-        effective_normal_cast_cost_with_targets(
-            def,
-            pending.controller,
-            &pending.targets_chosen,
-            state,
-        ),
-    );
     if pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
-        && mana::can_pay_spell(
-            &normal,
+        && pending_cast_quote_v1(
+            def,
+            pending,
+            CastMethodV4::Normal,
+            pending.kicked == Some(true),
             0,
-            pending.controller,
             state,
-            def.has_type(CardType::Creature),
         )
         .is_some()
     {
         modes.push(CastMode::Normal);
     }
     if pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
-        && def.alt_cost.is_some_and(|alt| {
-            alt_cost_condition_met(
-                alt.condition,
-                pending.controller,
-                pending.origin_zone,
-                state,
-            ) && can_pay_components(alt.components, pending.controller, pending.spell, state)
-        })
+        && pending_cast_quote_v1(
+            def,
+            pending,
+            CastMethodV4::Alternative,
+            pending.kicked == Some(true),
+            0,
+            state,
+        )
+        .is_some()
     {
         modes.push(CastMode::Alternative);
     }
@@ -6249,10 +6171,53 @@ fn pending_cast_selected_mana_cost(
     }
 }
 
-fn maximum_payable_x(cost: &Cost, player: PlayerId, state: &GameState) -> Option<u8> {
-    (0..=u8::MAX)
-        .rev()
-        .find(|&x| mana::can_pay(cost, x, player, state).is_some())
+fn pending_cast_quote_v1(
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    method: CastMethodV4,
+    kicked: bool,
+    x: u8,
+    state: &GameState,
+) -> Option<spell_costs_v1::SpellManaPaymentV1> {
+    let reserved_graveyard = if pending.optional_additional_cost_paid == Some(true)
+        && matches!(
+            def.optional_additional_cost,
+            Some(OptionalAdditionalCostDef::CollectEvidence { .. })
+        ) {
+        pending
+            .optional_additional_cost_chosen
+            .iter()
+            .map(|binding| binding.object)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    spell_costs_v1::selected_spell_quote_v1(
+        def,
+        pending.spell,
+        pending.origin_zone,
+        method,
+        kicked,
+        pending.mode_chosen.unwrap_or(0),
+        x,
+        &pending.targets_chosen,
+        &pending.sacrifice_chosen,
+        pending.controller,
+        state,
+        &reserved_graveyard,
+    )
+}
+
+fn maximum_payable_x(
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    state: &GameState,
+) -> Option<u8> {
+    let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
+    (0..=u8::MAX).rev().find(|&x| {
+        pending_cast_quote_v1(def, pending, method, pending.kicked == Some(true), x, state)
+            .is_some()
+    })
 }
 
 /// Returns the one graveyard cast method this definition can expose through
@@ -6313,36 +6278,96 @@ fn is_castable_now(
     }
 
     match cast_method {
-        CastMethodV4::Flashback => def.flashback.as_ref().is_some_and(|flashback| {
-            can_pay_components(flashback.cost, player, id, state)
-                && def
-                    .additional_cost
-                    .is_none_or(|cost| can_pay_components(cost, player, id, state))
-        }),
-        CastMethodV4::Escape => def.escape.as_ref().is_some_and(|escape| {
+        CastMethodV4::Flashback => spell_costs_v1::selected_spell_quote_v1(
+            def,
+            id,
+            state.objects.get(id).zone,
+            cast_method,
+            false,
+            0,
+            0,
+            &[],
+            &[],
+            player,
+            state,
+            &[],
+        )
+        .is_some(),
+        CastMethodV4::Escape => def.escape.as_ref().is_some_and(|_escape| {
             def.additional_cost.is_none()
                 && def.kicker_cost.is_none()
                 && def.generic_cost_reduction.is_none()
-                && can_pay_components(escape.cost, player, id, state)
+                && spell_costs_v1::selected_spell_quote_v1(
+                    def,
+                    id,
+                    state.objects.get(id).zone,
+                    cast_method,
+                    false,
+                    0,
+                    0,
+                    &[],
+                    &[],
+                    player,
+                    state,
+                    &[],
+                )
+                .is_some()
         }),
         CastMethodV4::Normal => {
             // Every check below is a pure read of `state`, so they are
             // ordered cheapest-first and short-circuit: a spell outside its
             // timing window never pays for target or mana enumeration.
             let normal_ok = || {
-                normal_cast_target_prefix_is_payable(def, id, def.target_spec, player, &[], state)
+                if normal_cast_cost_depends_on_targets(def) {
+                    normal_cast_target_prefix_is_payable(
+                        def,
+                        id,
+                        def.target_spec,
+                        player,
+                        &[],
+                        state,
+                    )
+                } else {
+                    viable_printed_spell_modes(def, id, player, state)
+                        .into_iter()
+                        .any(|mode| {
+                            spell_costs_v1::selected_spell_quote_v1(
+                                def,
+                                id,
+                                state.objects.get(id).zone,
+                                CastMethodV4::Normal,
+                                false,
+                                mode,
+                                0,
+                                &[],
+                                &[],
+                                player,
+                                state,
+                                &[],
+                            )
+                            .is_some()
+                        })
+                }
             };
             let alt_ok = || {
-                def.alt_cost.is_some_and(|alt| {
-                    alt_cost_condition_met(alt.condition, player, state.objects.get(id).zone, state)
-                        && can_pay_components(alt.components, player, id, state)
-                })
+                spell_costs_v1::selected_spell_quote_v1(
+                    def,
+                    id,
+                    state.objects.get(id).zone,
+                    CastMethodV4::Alternative,
+                    false,
+                    0,
+                    0,
+                    &[],
+                    &[],
+                    player,
+                    state,
+                    &[],
+                )
+                .is_some()
             };
             let main_ok = main_timing_ok
                 && (normal_ok() || alt_ok())
-                && def
-                    .additional_cost
-                    .is_none_or(|add| can_pay_components(add, player, id, state))
                 && !viable_printed_spell_modes(def, id, player, state).is_empty();
             let omen_ok = || {
                 supported_omen(def).is_some_and(|omen| {
@@ -6355,11 +6380,19 @@ fn is_castable_now(
                             targeting_source_for_object(state, id),
                             state,
                         )
-                        && mana::can_pay(
-                            &static_adjusted_spell_cost(omen.cost, omen.types, player, state),
+                        && spell_costs_v1::selected_spell_quote_v1(
+                            def,
+                            id,
+                            state.objects.get(id).zone,
+                            CastMethodV4::Omen,
+                            false,
+                            1,
                             0,
+                            &[],
+                            &[],
                             player,
                             state,
+                            &[],
                         )
                         .is_some()
                 })
@@ -6380,16 +6413,19 @@ fn is_castable_now(
                             targeting_source_for_object(state, id),
                             state,
                         )
-                        && mana::can_pay(
-                            &static_adjusted_spell_cost(
-                                bestow.cost,
-                                &[CardType::Enchantment],
-                                player,
-                                state,
-                            ),
+                        && spell_costs_v1::selected_spell_quote_v1(
+                            def,
+                            id,
+                            state.objects.get(id).zone,
+                            CastMethodV4::Bestow,
+                            false,
+                            1,
                             0,
+                            &[],
+                            &[],
                             player,
                             state,
+                            &[],
                         )
                         .is_some()
                 })
@@ -6410,16 +6446,19 @@ fn is_castable_now(
                             targeting_source_for_object(state, id),
                             state,
                         )
-                        && mana::can_pay(
-                            &static_adjusted_spell_cost(
-                                adventure.cost,
-                                adventure.types,
-                                player,
-                                state,
-                            ),
+                        && spell_costs_v1::selected_spell_quote_v1(
+                            def,
+                            id,
+                            state.objects.get(id).zone,
+                            CastMethodV4::Omen,
+                            false,
+                            1,
                             0,
+                            &[],
+                            &[],
                             player,
                             state,
+                            &[],
                         )
                         .is_some()
                 })
@@ -6544,6 +6583,25 @@ fn is_plotted_castable_now(player: PlayerId, id: ObjectId, state: &GameState) ->
         && def.is_castable()
         && !viable_printed_spell_modes(def, id, player, state).is_empty()
         && sorcery_speed_timing_ok(player, state)
+        && viable_printed_spell_modes(def, id, player, state)
+            .into_iter()
+            .any(|mode| {
+                spell_costs_v1::selected_spell_quote_v1(
+                    def,
+                    id,
+                    Zone::Exile,
+                    CastMethodV4::Plotted,
+                    false,
+                    mode,
+                    0,
+                    &[],
+                    &[],
+                    player,
+                    state,
+                    &[],
+                )
+                .is_some()
+            })
 }
 
 /// Hand cards `player` can currently afford to Plot (`CardDef::plot_cost`).
@@ -8695,7 +8753,17 @@ pub(crate) fn validate_pending_cast(
         } else if cost.x_count != 1 {
             return Err("pending cast has an unsupported number of X symbols".to_string());
         } else if let Some(x_value) = pending.x_value {
-            if mana::can_pay(&cost, x_value, pending.controller, state).is_none() {
+            let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
+            if pending_cast_quote_v1(
+                def,
+                pending,
+                method,
+                pending.kicked == Some(true),
+                x_value,
+                state,
+            )
+            .is_none()
+            {
                 return Err("pending cast chose an unaffordable X value".to_string());
             }
             if active_spec.is_none_or(|spec| !pending_cast_targeting_is_complete(pending, spec))
@@ -9059,17 +9127,11 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     // card in this pool with `kicker_cost` has no `alt_cost`, so checking
     // against the effective normal cost (never `def.alt_cost`) is exhaustive
     // here.
-    if let Some(kicker_cost) = def.kicker_cost {
+    if def.kicker_cost.is_some() {
         if pending.kicked.is_none() {
-            let normal_cost = effective_normal_cast_cost(def, pending.controller, state);
-            let payable = mana::can_pay_combined_spell(
-                &[&normal_cost, &kicker_cost],
-                0,
-                pending.controller,
-                state,
-                def.has_type(CardType::Creature),
-            )
-            .is_some();
+            let payable =
+                pending_cast_quote_v1(def, &pending, CastMethodV4::Normal, true, 0, state)
+                    .is_some();
             if payable {
                 return Some(Decision::ChooseKicker {
                     player: pending.controller,
@@ -9540,14 +9602,14 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     }
 
     if pending.x_value.is_none() {
-        let Some(cost) = pending_cast_selected_mana_cost(def, &pending, state) else {
+        let Some(_) = pending_cast_selected_mana_cost(def, &pending, state) else {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 pending.spell,
             ));
             return None;
         };
-        let Some(maximum) = maximum_payable_x(&cost, pending.controller, state) else {
+        let Some(maximum) = maximum_payable_x(def, &pending, state) else {
             let cast_method = finalized_cast_method(&pending, staged_method, def);
             let pending = state.engine.pending_cast.take().unwrap();
             abort_cast(state, pending, cast_method);
@@ -13917,18 +13979,10 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
                 return Err("this cast's kicker has already been chosen".to_string());
             }
             let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-            let kicker = def
+            def
                 .kicker_cost
                 .ok_or("this spell has no kicker choice")?;
-            let normal = effective_normal_cast_cost(def, pending.controller, state);
-            if mana::can_pay_combined_spell(
-                &[&normal, &kicker],
-                0,
-                pending.controller,
-                state,
-                def.has_type(CardType::Creature),
-            )
-            .is_none()
+            if pending_cast_quote_v1(def, &pending, CastMethodV4::Normal, true, 0, state).is_none()
             {
                 return Err("the kicker choice is no longer payable".to_string());
             }
@@ -15856,9 +15910,9 @@ fn apply_pending_cast_effect_option(
             Ok(())
         }
         PendingCastActionStage::ChooseXValue => {
-            let cost = pending_cast_selected_mana_cost(def, &pending, state)
+            pending_cast_selected_mana_cost(def, &pending, state)
                 .ok_or("pending X choice lost its selected spell form")?;
-            let maximum = maximum_payable_x(&cost, pending.controller, state)
+            let maximum = maximum_payable_x(def, &pending, state)
                 .ok_or("pending X choice has no payable value")?;
             let x_value = u8::try_from(option_index)
                 .map_err(|_| "chosen X exceeds the supported u8 range".to_string())?;
