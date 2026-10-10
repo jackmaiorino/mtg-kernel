@@ -16,6 +16,13 @@ pub(super) struct SpellManaPaymentV1 {
     pub(super) convoke_tapped: Vec<ObjectId>,
 }
 
+/// Object choices retain the same base/additional ownership as the staged
+/// cast. This result is local preparation, never serialized payment evidence.
+pub(super) struct SpellComponentChoicesV1 {
+    pub(super) ordered_objects: Vec<ObjectId>,
+    pub(super) chosen_by_group: Vec<Vec<ObjectId>>,
+}
+
 pub(super) struct SelectedSpellManaCostsV1 {
     pub(super) costs: Vec<Cost>,
     pub(super) component_groups: Vec<&'static [CostComponent]>,
@@ -26,6 +33,75 @@ pub(super) struct SelectedSpellManaCostsV1 {
 }
 
 impl SelectedSpellManaCostsV1 {
+    /// Assign the pending cast's one interactive object family to the original
+    /// definition-owned group. Escape picks are ordered by the live graveyard,
+    /// matching the existing public-equivalence and paid-provenance contract.
+    pub(super) fn component_choices_v1(
+        &self,
+        definition: &card_def::CardDef,
+        method: CastMethodV4,
+        player: PlayerId,
+        state: &GameState,
+        chosen: &[ObjectId],
+    ) -> Option<SpellComponentChoicesV1> {
+        let base = match method {
+            CastMethodV4::Alternative => Some(definition.alt_cost?.components),
+            CastMethodV4::Flashback => Some(definition.flashback.as_ref()?.cost),
+            CastMethodV4::Escape => Some(definition.escape.as_ref()?.cost),
+            _ => None,
+        };
+        let original_groups = base
+            .into_iter()
+            .chain(definition.additional_cost)
+            .collect::<Vec<_>>();
+        if original_groups != self.component_groups {
+            return None;
+        }
+        let ordered_objects = if method == CastMethodV4::Escape {
+            let graveyard = &state.players[player.index()].graveyard;
+            let ordered = graveyard
+                .iter()
+                .copied()
+                .filter(|object| chosen.contains(object))
+                .collect::<Vec<_>>();
+            // Do not silently drop a stale or duplicate pick when preparing.
+            if ordered.len() != chosen.len()
+                || chosen
+                    .iter()
+                    .enumerate()
+                    .any(|(index, object)| chosen[..index].contains(object))
+            {
+                return None;
+            }
+            ordered
+        } else {
+            chosen.to_vec()
+        };
+        let additional_owns_objects = definition.additional_cost.is_some_and(|components| {
+            super::controlled_permanent_sacrifice_in(components).is_some()
+                || super::tap_permanent_filter_in(components).is_some()
+        });
+        let mut chosen_by_group = Vec::with_capacity(original_groups.len());
+        if base.is_some() {
+            chosen_by_group.push(if additional_owns_objects {
+                Vec::new()
+            } else {
+                ordered_objects.clone()
+            });
+        }
+        if definition.additional_cost.is_some() {
+            chosen_by_group.push(if additional_owns_objects {
+                ordered_objects.clone()
+            } else {
+                Vec::new()
+            });
+        }
+        Some(SpellComponentChoicesV1 {
+            ordered_objects,
+            chosen_by_group,
+        })
+    }
+
     /// Validate one chosen-object slice per collected component group before
     /// deriving the combined payment. The casting caller independently validates
     /// discard and chosen-creature bindings, and freezes generic modifiers before
@@ -723,5 +799,90 @@ mod tests {
             .unwrap();
         assert_eq!(plan.pool_used[3], 1);
         assert_eq!(plan.pool_used[5], 0);
+    }
+
+    #[test]
+    fn selected_object_choices_keep_base_and_additional_ownership() {
+        let forest = card_def::card_id_by_name("Forest").unwrap();
+        let mut state =
+            GameState::new_from_libraries(&[forest; 2], &[forest], |_| "card".into(), 948);
+        let objects = (0..2)
+            .map(|_| {
+                let object = state.draw_card(PlayerId::P0).unwrap();
+                assert!(state.move_hand_to_battlefield(PlayerId::P0, object));
+                object
+            })
+            .collect::<Vec<_>>();
+        for (name, method, picks) in [
+            ("Fireblast", CastMethodV4::Alternative, objects.as_slice()),
+            ("Raze", CastMethodV4::Normal, &objects[..1]),
+        ] {
+            let definition =
+                &card_def::CARD_DEFS[card_def::card_id_by_name(name).unwrap() as usize];
+            let selected = selected_spell_mana_costs_v1(
+                definition,
+                method,
+                false,
+                0,
+                &[],
+                PlayerId::P0,
+                &state,
+            )
+            .unwrap();
+            let choices = selected
+                .component_choices_v1(definition, method, PlayerId::P0, &state, picks)
+                .unwrap();
+            assert_eq!(choices.ordered_objects, picks, "{name}");
+            assert_eq!(choices.chosen_by_group, vec![picks.to_vec()], "{name}");
+            // A mismatch between collection and choice assignment fails closed.
+            let mut wrong = selected;
+            wrong.component_groups.clear();
+            assert!(wrong
+                .component_choices_v1(definition, method, PlayerId::P0, &state, picks)
+                .is_none());
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn selected_escape_choices_canonicalize_without_dropping_invalid_picks() {
+        let definition =
+            &card_def::CARD_DEFS[card_def::card_id_by_name("Sleep of the Dead").unwrap() as usize];
+        let selected = selected("Sleep of the Dead", CastMethodV4::Escape, false);
+        let forest = card_def::card_id_by_name("Forest").unwrap();
+        let mut state =
+            GameState::new_from_libraries(&[forest; 4], &[forest], |_| "card".into(), 949);
+        let mut objects = Vec::new();
+        for _ in 0..4 {
+            let object = state.draw_card(PlayerId::P0).unwrap();
+            state.players[0].hand.retain(|id| *id != object);
+            state.objects.get_mut(object).zone = crate::state::Zone::Graveyard;
+            state.players[0].graveyard.push(object);
+            objects.push(object);
+        }
+        let before = serde_json::to_value(&state).unwrap();
+        let choices = selected
+            .component_choices_v1(
+                definition,
+                CastMethodV4::Escape,
+                PlayerId::P0,
+                &state,
+                &[objects[2], objects[0], objects[1]],
+            )
+            .unwrap();
+        assert_eq!(choices.ordered_objects, objects[..3]);
+        assert_eq!(choices.chosen_by_group, vec![objects[..3].to_vec()]);
+        for invalid in [vec![objects[0], objects[0]], vec![ObjectId(u32::MAX)]] {
+            assert!(selected
+                .component_choices_v1(
+                    definition,
+                    CastMethodV4::Escape,
+                    PlayerId::P0,
+                    &state,
+                    &invalid
+                )
+                .is_none());
+        }
+        assert_eq!(serde_json::to_value(&state).unwrap(), before);
     }
 }
