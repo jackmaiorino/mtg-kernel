@@ -85,7 +85,10 @@ def measure(root, native_root, allocation, on_reparse):
         for entry in entries:
             path = Path(entry.path)
             try:
-                before = entry.stat(follow_symlinks=False)
+                # Windows DirEntry.stat may return cached enumeration data
+                # with st_ino/st_dev zero. Compare fresh non-following stats
+                # from the same API before and after the allocation read.
+                before = path.lstat()
                 if reparse(before) or stat.S_ISLNK(before.st_mode):
                     skipped.append(str(path))
                     continue
@@ -96,8 +99,9 @@ def measure(root, native_root, allocation, on_reparse):
                 physical = allocation(path)
                 after = path.lstat()
                 require(not reparse(after) and not stat.S_ISLNK(after.st_mode), "file became a reparse point")
-                require((before.st_size, before.st_mtime_ns, before.st_ino) ==
-                        (after.st_size, after.st_mtime_ns, after.st_ino), "file changed while measuring")
+                require(stat.S_ISREG(after.st_mode), "file became nonregular")
+                require((before.st_size, before.st_mtime_ns, before.st_dev, before.st_ino) ==
+                        (after.st_size, after.st_mtime_ns, after.st_dev, after.st_ino), "file changed while measuring")
                 category = classify(path, native_root)
                 compressed = bool(before.st_file_attributes & stat.FILE_ATTRIBUTE_COMPRESSED)
                 aggregate = classes[category]
@@ -154,6 +158,15 @@ def main():
             "this calibration expects one complete 10-game update and a 162-update block")
     require(args.reserve_bytes >= 60 * GIB, "reserve cannot be below 60 GiB")
     result = measure(root, native_root, file_api(), args.on_reparse)
+    # A failed walk may have zero accepted files even when the tree exists.
+    # Preserve the primary errors instead of misreporting that as an empty tree.
+    if result["errors"] or (result["skipped_reparse_points"] and args.on_reparse == "fail"):
+        result.update({"schema": "training-speedups-allocation-calibration/v1",
+                       "root": str(root), "native_root": str(native_root),
+                       "complete": False, "error": "allocation measurement rejected; no projection produced",
+                       "empirical_physical_headroom_admits_projection": False})
+        print(json.dumps(result, indent=2))
+        return 2
     raw = result["representative_native"]
     require(raw["files"] > 0, "representative native tree is empty")
     volume = shutil.disk_usage(root)

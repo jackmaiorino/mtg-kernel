@@ -1,6 +1,7 @@
 # Training speedup implementation and comparison
 
-Status: implementation and verification in progress. No achieved speedup yet.
+Status: implementation verified and eight short qualifications complete.
+Full-block end-to-end speedup remains unmeasured.
 
 This follows the completed [throughput audit](../training_throughput_20261009/README.md).
 Three GPT-6.1 Sol agents implemented learner arithmetic, collection/model reuse,
@@ -49,8 +50,8 @@ will accompany measured results.
 Pinned Python 3.13.14 checks passed: 26 dispatcher tests, four archive tests,
 and three storage tests; four Linux-only dispatcher tests were skipped.
 Native parity tests passed, including the pinned two-update GAE state and
-real serial/parallel games. Guarded qualification, complete matched blocks,
-current-head CI and integration remain pending.
+real serial/parallel games. Complete matched blocks, final current-head
+checks and integration remain pending; the short qualifications are below.
 Review found and repaired two collector issues: a zero enclosing profiler
 duration and source-pin verification across cached collection invocations.
 
@@ -99,4 +100,42 @@ deadline. The waiter covers eight qualifications and allocation measurement;
 it cannot launch full comparison blocks. Its job and current-state receipts
 are under `C:/mtg-node/training-speedups-20261009/qualification-resume-*.json`.
 The launched waiter is recorded in merged collab PR128.
-No measured speedup is available while those qualifications are pending.
+The qualifications were pending at that October 9 observation.
+
+## October 10 qualification result and placement
+
+All eight guarded qualifications finished before the waiter stopped in the
+allocation helper. Each completed one update and ten games. Every ordered
+trajectory, complete optimizer/checkpoint and ledger fingerprint matches
+across both variants and all worker counts. The canonical fingerprint digest
+is `bbefb6d1d8f790812d95bcd22df0bd7c0e996043167ee544292c23cae659c9a8`.
+The compact `qualification-analysis-20261010.json` contains the exact receipt
+pins and timing table.
+
+| Workers | Baseline dispatch seconds | Candidate dispatch seconds |
+| --- | ---: | ---: |
+| 1 | 18.945 | 14.291 |
+| 2 | 15.943 | 11.716 |
+| 4 | 15.385 | 12.276 |
+| 8 | 15.290 | 12.899 |
+
+The best short qualification is about 1.31x faster (baseline eight workers,
+candidate two). This includes guarded dispatch and archive but excludes the
+full-block maintenance and independent recovery transfer. It is not the
+requested total speedup and does not establish a full-run estimate.
+
+The allocation helper falsely rejected unchanged files because Windows
+`DirEntry.stat()` returned inode zero while a subsequent `Path.lstat()`
+returned the real file ID. Both observations now use fresh `lstat()`, and
+measurement errors are reported before the empty-tree check. Mutation and
+reparse rejection remain enforced. The preserved attempt-2 measurements
+completed with zero errors: the full-block physical projection is
+15,669,643,620 bytes, exceeding Haley's 6,820,810,752 bytes above the 60 GiB
+reserve. Full blocks therefore need another placement.
+
+At 12:07 UTC both host reservations were free; Jack's D: had 322,815,766,528
+bytes free and RunPod still returned 403. The next placement is desktop
+qualification using the same frozen binaries and unchanged input pins,
+with owned D: output roots bound in new requests. No full block has launched. All 23 CI
+checks passed at `c4e75006a1524d8bcfddd4509d83fee24be8fa09`, including the
+separate delivery review's repaired recovery/pruning checks.
