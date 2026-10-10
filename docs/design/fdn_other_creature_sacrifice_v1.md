@@ -24,5 +24,9 @@ catalog pin changes in this preparation.
 Three primitive tests cover exclusion, control, atomic mana failure, counts,
 duplicate rejection and candidate incarnation binding. Prepared integration
 tests cover metadata, full payment, token choice, pending restore, borrowing
-and old-source refusal. Actual results will be recorded after execution;
-these tests do not establish admitted card support or playing strength.
+and old-source refusal. The three primitive tests passed with pinned Rust
+1.94.1 on the default catalog at source `239db43b`, through the supported
+BelowNormal two-core launcher (cores 16-17). The initial fixture-card lookup
+failure is retained; the repaired fixture uses registered Faerie Miscreant.
+The prepared gameplay cases still require serial card admission. This result
+does not establish admitted card support or playing strength.
