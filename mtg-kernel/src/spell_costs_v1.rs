@@ -64,7 +64,11 @@ impl PreparedNonmanaActionV1 {
 
 impl PreparedSpellNonmanaV1 {
     pub(super) fn commit(self, state: &mut GameState, player: PlayerId, source: ObjectId) {
-        for action in self.actions {
+        self.apply(state, player, source);
+    }
+
+    fn apply(&self, state: &mut GameState, player: PlayerId, source: ObjectId) {
+        for action in &self.actions {
             action.commit(state, player, source);
         }
     }
@@ -472,6 +476,253 @@ pub(super) fn selected_spell_mana_costs_v1(
         selected.components(additional);
     }
     Some(selected)
+}
+
+/// Complete ephemeral payment, prepared before any real discard or mana use.
+/// The engine must consume it synchronously with the same player/source/state.
+pub(super) struct PreparedSpellPaymentV1 {
+    mana: SpellManaPaymentV1,
+    base: PreparedSpellNonmanaV1,
+    additional: PreparedSpellNonmanaV1,
+    chosen_reveal: Option<ObjectId>,
+    optional_kind: Option<super::OptionalAdditionalCostDef>,
+    optional_objects: Vec<ObjectId>,
+    pub(super) ordered_objects: Vec<ObjectId>,
+    pub(super) chosen_power_lki: Option<i32>,
+}
+
+impl SpellManaPaymentV1 {
+    fn commit(&self, state: &mut GameState, player: PlayerId, source: ObjectId) -> u16 {
+        for &object in &self.convoke_tapped {
+            super::event::propose_and_commit(state, super::ProposedEvent::tap(object));
+        }
+        if !self.convoke_tapped.is_empty() {
+            state.objects.get_mut(source).v4.convoked_creatures_v1 =
+                u8::try_from(self.convoke_tapped.len()).unwrap_or(u8::MAX);
+        }
+        let spent = super::pay_plan(state, player, &self.mana);
+        if !self.delve_exiled.is_empty() {
+            super::commit_graveyard_exile(state, &self.delve_exiled);
+        }
+        spent
+    }
+}
+
+impl PreparedSpellPaymentV1 {
+    fn commit_optional(&self, state: &mut GameState) {
+        match self.optional_kind {
+            Some(super::OptionalAdditionalCostDef::CollectEvidence { .. }) => {
+                super::commit_graveyard_exile(state, &self.optional_objects);
+            }
+            Some(
+                super::OptionalAdditionalCostDef::Bargain
+                | super::OptionalAdditionalCostDef::Casualty(_),
+            ) => super::commit_sacrifice(state, &self.optional_objects),
+            None => {}
+        }
+    }
+
+    /// Discards have already committed through the shared Madness-aware path.
+    pub(super) fn commit(self, state: &mut GameState, player: PlayerId, source: ObjectId) -> u16 {
+        let spent = self.mana.commit(state, player, source);
+        self.base.apply(state, player, source);
+        if let Some(object) = self.chosen_reveal {
+            PreparedNonmanaActionV1::RevealHand(vec![object]).commit(state, player, source);
+        }
+        self.additional.apply(state, player, source);
+        self.commit_optional(state);
+        spent
+    }
+}
+
+/// Targets, timing and PendingCast bindings are independently authenticated by
+/// the caller. Freeze modifiers before projecting discard, including Madness;
+/// prepare all subsequent resource actions before the caller changes real state.
+pub(super) fn prepare_final_spell_payment_v1(
+    state: &GameState,
+    pending: &super::PendingCast,
+    method: CastMethodV4,
+    discarded: &[ObjectId],
+) -> Option<PreparedSpellPaymentV1> {
+    let definition = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    let player = pending.controller;
+    let source = pending.spell;
+    let selected = selected_spell_mana_costs_v1(
+        definition,
+        method,
+        pending.kicked == Some(true),
+        pending.mode_chosen.unwrap_or(0),
+        &pending.targets_chosen,
+        player,
+        state,
+    )?;
+    let modifiers = super::spell_cost_generic_modifiers_v1(state, selected.types, player);
+    let choices = selected.component_choices_v1(
+        definition,
+        method,
+        player,
+        state,
+        &pending.sacrifice_chosen,
+    )?;
+    let discard_count = selected
+        .component_groups
+        .iter()
+        .flat_map(|group| group.iter())
+        .map(|component| match component {
+            CostComponent::DiscardCards(amount) => usize::from(*amount),
+            _ => 0,
+        })
+        .sum::<usize>();
+    if discarded.len() != discard_count
+        || discarded.iter().enumerate().any(|(index, object)| {
+            discarded[..index].contains(object)
+                || *object == source
+                || !state.players[player.index()].hand.contains(object)
+                || state.objects.try_get(*object).is_none_or(|card| {
+                    card.owner != player
+                        || card.zone != crate::state::Zone::Hand
+                        || card_def::CARD_DEFS.get(card.card_def as usize).is_none()
+                })
+        })
+    {
+        return None;
+    }
+    let optional_kind = if pending.optional_additional_cost_paid == Some(true) {
+        Some(definition.optional_additional_cost?)
+    } else {
+        None
+    };
+    let optional_objects = pending
+        .optional_additional_cost_chosen
+        .iter()
+        .map(|binding| binding.object)
+        .collect::<Vec<_>>();
+    let optional_graveyard = if matches!(
+        optional_kind,
+        Some(super::OptionalAdditionalCostDef::CollectEvidence { .. })
+    ) {
+        optional_objects.as_slice()
+    } else {
+        &[]
+    };
+    let group_choices = choices
+        .chosen_by_group
+        .iter()
+        .map(Vec::as_slice)
+        .collect::<Vec<_>>();
+    let resource_projection = if discarded.is_empty() {
+        None
+    } else {
+        let mut projected = state.clone();
+        projected.engine.pending_cast = None;
+        projected.engine.pending_discard = None;
+        for &object in discarded {
+            super::commit_discarded_card(&mut projected, object);
+        }
+        Some(projected)
+    };
+    let resources = resource_projection.as_ref().unwrap_or(state);
+    let mut prepared = PreparedSpellPaymentV1 {
+        mana: selected.payment_plan_with_component_choices_v1(
+            pending.x_value.unwrap_or(0),
+            player,
+            source,
+            resources,
+            modifiers,
+            &group_choices,
+            optional_graveyard,
+        )?,
+        base: PreparedSpellNonmanaV1 {
+            actions: Vec::new(),
+        },
+        additional: PreparedSpellNonmanaV1 {
+            actions: Vec::new(),
+        },
+        chosen_reveal: None,
+        optional_kind,
+        optional_objects,
+        ordered_objects: choices.ordered_objects,
+        chosen_power_lki: None,
+    };
+    // Ordinary mana-only spells require no whole-state projection.
+    if selected.component_groups.is_empty()
+        && discarded.is_empty()
+        && optional_kind.is_none()
+        && pending.chosen_creature_cost.is_none()
+        && !selected.delve
+        && !selected.convoke
+    {
+        return Some(prepared);
+    }
+    let mut projected = resource_projection.unwrap_or_else(|| state.clone());
+    projected.engine.pending_cast = None;
+    projected.engine.pending_discard = None;
+    // Delve may use an actual graveyard discard, but a Madness card enters exile.
+    // Its original frozen total is unchanged by either projection.
+    prepared.mana.commit(&mut projected, player, source);
+    let base_count = usize::from(matches!(
+        method,
+        CastMethodV4::Alternative | CastMethodV4::Flashback | CastMethodV4::Escape
+    ));
+    let groups = selected
+        .component_groups
+        .iter()
+        .zip(&group_choices)
+        .map(|(components, chosen)| (*components, *chosen))
+        .collect::<Vec<_>>();
+    prepared.base = prepare_spell_nonmana_v1(&projected, player, source, &groups[..base_count])?;
+    prepared.base.apply(&mut projected, player, source);
+    if let Some(binding) = pending.chosen_creature_cost {
+        let zone = pending.chosen_creature_cost_zone?;
+        if !super::chosen_creature_cost_candidates(player, zone, &projected).contains(&binding) {
+            return None;
+        }
+        if zone == super::ChosenCreatureCostZoneV1::Hand {
+            prepared.chosen_reveal = Some(binding.object);
+            PreparedNonmanaActionV1::RevealHand(vec![binding.object]).commit(
+                &mut projected,
+                player,
+                source,
+            );
+        }
+    }
+    prepared.additional =
+        prepare_spell_nonmana_v1(&projected, player, source, &groups[base_count..])?;
+    prepared.additional.apply(&mut projected, player, source);
+    if let Some(kind) = optional_kind {
+        if pending
+            .optional_additional_cost_chosen
+            .iter()
+            .any(|binding| !super::optional_cost_binding_is_live(&projected, *binding))
+        {
+            return None;
+        }
+        if !matches!(
+            kind,
+            super::OptionalAdditionalCostDef::CollectEvidence { .. }
+        ) {
+            let candidates = super::bargain_candidates(kind, player, &projected).ok()?;
+            if !super::selected_bindings_are_unique_subset(
+                &pending.optional_additional_cost_chosen,
+                &candidates,
+            ) {
+                return None;
+            }
+        }
+    }
+    prepared.commit_optional(&mut projected);
+    if let Some(binding) = pending.chosen_creature_cost {
+        prepared.chosen_power_lki = Some(match projected.objects.get(binding.object).zone {
+            crate::state::Zone::Battlefield => super::effective_power(&projected, binding.object),
+            crate::state::Zone::Hand => card_def::CARD_DEFS
+                [projected.objects.get(binding.object).card_def as usize]
+                .power
+                .map(i32::from)
+                .unwrap_or(0),
+            _ => return None,
+        });
+    }
+    Some(prepared)
 }
 
 #[cfg(all(test, not(feature = "standard-magezero-fixtures")))]
@@ -918,6 +1169,104 @@ mod tests {
             .unwrap();
         assert_eq!(plan.pool_used[3], 1);
         assert_eq!(plan.pool_used[5], 0);
+    }
+
+    fn staged_payment(names: &[&str], spell_name: &str) -> (GameState, super::super::PendingCast) {
+        let definitions = names
+            .iter()
+            .map(|name| card_def::card_id_by_name(name).unwrap())
+            .collect::<Vec<_>>();
+        let mut state =
+            GameState::new_from_libraries(&definitions, &definitions[..1], |_| "card".into(), 953);
+        for _ in names {
+            state.draw_card(PlayerId::P0).unwrap();
+        }
+        let spell_definition = card_def::card_id_by_name(spell_name).unwrap();
+        let source = *state.players[0]
+            .hand
+            .iter()
+            .find(|object| state.objects.get(**object).card_def == spell_definition)
+            .unwrap();
+        super::super::begin_cast(&mut state, PlayerId::P0, source);
+        let pending = state.engine.pending_cast.as_ref().unwrap().clone();
+        (state, pending)
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn prepared_full_payment_refuses_before_discard_and_projects_madness_exactly() {
+        for (discard_name, expected_zone) in [
+            ("Forest", crate::state::Zone::Graveyard),
+            ("Fiery Temper", crate::state::Zone::Exile),
+        ] {
+            let (mut state, pending) = staged_payment(
+                &["Thrill of Possibility", discard_name],
+                "Thrill of Possibility",
+            );
+            let discarded = state.players[0].hand[0];
+            state.players[0].mana_pool[3] = 1;
+            let before = serde_json::to_value(&state).unwrap();
+            assert!(prepare_final_spell_payment_v1(
+                &state,
+                &pending,
+                CastMethodV4::Normal,
+                &[discarded]
+            )
+            .is_none());
+            assert_eq!(serde_json::to_value(&state).unwrap(), before);
+            state.players[0].mana_pool[5] = 1;
+            let funded = serde_json::to_value(&state).unwrap();
+            let payment = prepare_final_spell_payment_v1(
+                &state,
+                &pending,
+                CastMethodV4::Normal,
+                &[discarded],
+            )
+            .unwrap();
+            assert_eq!(serde_json::to_value(&state).unwrap(), funded);
+            state.engine.pending_cast = None;
+            super::super::commit_discarded_card(&mut state, discarded);
+            let spent = payment.commit(&mut state, PlayerId::P0, pending.spell);
+            assert_eq!(spent, 2);
+            assert_eq!(state.players[0].mana_pool, [0; 6]);
+            assert_eq!(state.objects.get(discarded).zone, expected_zone);
+            assert_eq!(
+                state
+                    .engine
+                    .pending_triggers
+                    .iter()
+                    .filter(|trigger| trigger.is_madness_offer)
+                    .count(),
+                usize::from(discard_name == "Fiery Temper")
+            );
+        }
+    }
+
+    #[test]
+    fn prepared_full_payment_can_use_a_sacrificed_land_for_mana_first() {
+        let (mut state, mut pending) = staged_payment(&["Raze", "Mountain"], "Raze");
+        let land = state.players[0].hand[0];
+        assert!(state.move_hand_to_battlefield(PlayerId::P0, land));
+        pending.sacrifice_chosen = vec![land];
+        let before = serde_json::to_value(&state).unwrap();
+        let payment =
+            prepare_final_spell_payment_v1(&state, &pending, CastMethodV4::Normal, &[]).unwrap();
+        assert_eq!(payment.ordered_objects, vec![land]);
+        assert_eq!(serde_json::to_value(&state).unwrap(), before);
+        state.engine.pending_cast = None;
+        let spent = payment.commit(&mut state, PlayerId::P0, pending.spell);
+        assert_eq!(spent, 1);
+        assert_eq!(state.players[0].mana_pool, [0; 6]);
+        assert_eq!(state.objects.get(land).zone, crate::state::Zone::Graveyard);
+        assert!(!state.players[0].battlefield.contains(&land));
+        assert_eq!(
+            state.players[0]
+                .graveyard
+                .iter()
+                .filter(|object| **object == land)
+                .count(),
+            1
+        );
     }
 
     #[test]
