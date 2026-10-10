@@ -10,6 +10,9 @@
 //! - `s4a-run`: for each frozen root in `ROOTS`, selection by E, A and D
 //!   under the transition ceiling, then 16 paired evaluation worlds per arm.
 //!   One row per root; a root already present in `out` is skipped (resume).
+//! - `s4a-equiv`: the corpus games, recording for every decision with two
+//!   or more options how many of them lead to different situations for the
+//!   chooser (`equiv.rs`). One row per game.
 //!
 //! Settings: `S4A_MODEL` (seed namespace model label, e.g. r1), `ROOTS`,
 //! `OPPONENTS` (`label=source,...`, in game-setup order), and optionally
@@ -17,6 +20,7 @@
 //! checks (rows record the limits and whether they are formal).
 
 mod arms;
+mod equiv;
 mod labels;
 mod play;
 mod seeds;
@@ -41,7 +45,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 pub(super) fn is_mode(mode: &str) -> bool {
-    matches!(mode, "s4a-corpus" | "s4a-run")
+    matches!(mode, "s4a-corpus" | "s4a-run" | "s4a-equiv")
 }
 
 const SPY_DECK: &str = "Spy";
@@ -232,6 +236,32 @@ fn corpus_game(
         "opp_model_index":setup.model,"focal_seat":setup.focal,"starting_player":setup.starting,
         "decisions":decisions,"finished":finished,"spy_focal":spy,
         "cast_root":cast_root,"target_root":target_root});
+    write_line(sink, &row)
+}
+
+/// `s4a-equiv`: one corpus game with a census record per decision.
+fn equiv_game(
+    cfg: &CensusConfigV1,
+    shared: &Shared,
+    focal: &mut FrozenPlayPolicyV1,
+    opps: &mut [FrozenPlayPolicyV1],
+    game: u64,
+    sink: &Mutex<std::fs::File>,
+) -> Result<(), String> {
+    let setup = game_setup(cfg, shared.labels.len(), game);
+    let decks = [RUNTIME_DECKS[setup.decks[0]].id, RUNTIME_DECKS[setup.decks[1]].id];
+    let started = Instant::now();
+    let mut records = Vec::new();
+    let (_, finished) = drive(&setup, focal, &mut opps[setup.model], |s, d, _| {
+        if d.legal_action_count >= 2 {
+            let seat = acting(d).index();
+            records.push(equiv::record(s, d, decks[seat])?);
+        }
+        Ok(false)
+    })?;
+    let row = json!({"kind":"s4a_equiv_game","game":game,"seed":setup.seed,"decks":decks,
+        "focal_seat":setup.focal,"opp_model":shared.labels[setup.model],"finished":finished,
+        "settle_cap":equiv::SETTLE_CAP,"seconds":started.elapsed().as_secs_f64(),"decisions":records});
     write_line(sink, &row)
 }
 
@@ -525,6 +555,8 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
                     }
                     let result = if cfg.mode == "s4a-corpus" {
                         corpus_game(cfg, shared, &mut roles.focal, &mut roles.opps, item, sink)
+                    } else if cfg.mode == "s4a-equiv" {
+                        equiv_game(cfg, shared, &mut roles.focal, &mut roles.opps, item, sink)
                     } else {
                         let root = &shared.roots[item as usize];
                         let id = root["root_id"].as_str().unwrap_or("").to_owned();
