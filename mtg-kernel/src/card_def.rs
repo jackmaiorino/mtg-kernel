@@ -306,6 +306,8 @@ pub enum Subtype {
     Elephant,
     /// Appended for unregistered Scrawling Crawler, preserving accepted ids.
     Construct,
+    /// Appended for unregistered Mischievous Pup, preserving existing ids.
+    Dog,
 }
 
 impl Subtype {
@@ -427,6 +429,8 @@ impl Subtype {
         Subtype::Elephant,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Construct,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Dog,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Scout,
         #[cfg(feature = "standard-magezero-fixtures")]
@@ -597,6 +601,7 @@ impl Subtype {
                 | Subtype::Otter
                 | Subtype::Elephant
                 | Subtype::Construct
+                | Subtype::Dog
                 | Subtype::Hyena
                 | Subtype::Raccoon
                 | Subtype::Citizen
@@ -824,6 +829,9 @@ pub enum TargetSpec {
     ControlledPermanentWithAnySubtype([Subtype; 4]),
     /// One permanent card from the controller's graveyard, including a land.
     PermanentCardInOwnGraveyard,
+    /// Zero or one controlled battlefield permanent other than the exact
+    /// source incarnation captured by this ability.
+    UpToOneOtherControlledPermanent,
 }
 
 impl TargetSpec {
@@ -890,6 +898,7 @@ impl TargetSpec {
             TargetSpec::AttackingCreatureWithSubtype(_) => 55,
             TargetSpec::ControlledPermanentWithAnySubtype(_) => 56,
             TargetSpec::PermanentCardInOwnGraveyard => 57,
+            TargetSpec::UpToOneOtherControlledPermanent => 58,
         }
     }
 }
@@ -2285,6 +2294,7 @@ mod tests {
                 56,
             ),
             (TargetSpec::PermanentCardInOwnGraveyard, 57),
+            (TargetSpec::UpToOneOtherControlledPermanent, 58),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);

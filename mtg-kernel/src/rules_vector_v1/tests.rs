@@ -613,6 +613,7 @@ fn power_toughness_changes_keep_their_sign() {
 /// or `event_time_trigger_programs`; token names are reached through
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
+    "Mischievous Pup",
     "Dreadwing Scavenger",
     "Wardens of the Cycle",
     "Tragic Banshee",

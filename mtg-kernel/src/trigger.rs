@@ -481,6 +481,12 @@ const DREADWING_SCAVENGER_TRIGGERS: [TriggeredAbilityDef; 2] = [
         ..etb_trigger(icewind_elemental_effect)
     },
 ];
+
+const MISCHIEVOUS_PUP_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(mischievous_pup_effect)];
+
+fn mischievous_pup_effect() -> EffectOp {
+    EffectOp::MoveAllTargets { to: Zone::Hand }
+}
 const BURGLAR_RAT_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(burglar_rat_effect)];
 const INFESTATION_SAGE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::LeftBattlefieldToGraveyard,
@@ -3026,6 +3032,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Prideful Parent" => &PRIDEFUL_PARENT_TRIGGERS,
         "Icewind Elemental" => &ICEWIND_ELEMENTAL_TRIGGERS,
         "Dreadwing Scavenger" => &DREADWING_SCAVENGER_TRIGGERS,
+        "Mischievous Pup" => &MISCHIEVOUS_PUP_TRIGGERS,
         "Burglar Rat" => &BURGLAR_RAT_TRIGGERS,
         "Infestation Sage" => &INFESTATION_SAGE_TRIGGERS,
         "Wary Thespian" => &WARY_THESPIAN_TRIGGERS,
@@ -3200,6 +3207,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         "Celestial Armor" => TargetSpec::ControlledCreature,
         "Sun-Blessed Healer" => TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(2),
         "Elvish Regrower" => TargetSpec::PermanentCardInOwnGraveyard,
+        "Mischievous Pup" => TargetSpec::UpToOneOtherControlledPermanent,
         "Vampire Soulcaller" => TargetSpec::CreatureCardInOwnGraveyard,
         "Affectionate Indrik" => TargetSpec::OpponentControlledCreature,
         "Ambush Wolf" => TargetSpec::UpToOneCardInGraveyards,

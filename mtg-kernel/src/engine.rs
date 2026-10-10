@@ -1489,6 +1489,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::AnotherControlledCreature
         | TargetSpec::ControlledCreatureWithSubtype(_)
         | TargetSpec::UpToOneCardInGraveyards
+        | TargetSpec::UpToOneOtherControlledPermanent
         | TargetSpec::AttackingCreatureWithSubtype(_)
         | TargetSpec::ControlledPermanentWithAnySubtype(_) => 1,
         TargetSpec::PlayerThenTheirCreature
@@ -1509,6 +1510,7 @@ fn target_min_count(spec: TargetSpec) -> u8 {
         | TargetSpec::UpToTwoPlayers
         | TargetSpec::UpToTwoCardsInGraveyards
         | TargetSpec::UpToOneCardInGraveyards
+        | TargetSpec::UpToOneOtherControlledPermanent
         | TargetSpec::UpToOneTappedCreature => 0,
         _ => target_count(spec),
     }
@@ -2539,6 +2541,8 @@ pub fn legal_targets_for(
 struct TargetingSource {
     object: ObjectId,
     card_def: u16,
+    zone: Zone,
+    zone_change_count: u32,
     /// The creature "other than that creature" names, when a trigger's
     /// target must differ from an object other than its own source.
     other_than: Option<ObjectId>,
@@ -2548,6 +2552,8 @@ fn targeting_source_for_object(state: &GameState, object: ObjectId) -> Option<Ta
     state.objects.try_get(object).map(|live| TargetingSource {
         object,
         card_def: live.card_def,
+        zone: live.zone,
+        zone_change_count: live.zone_change_count,
         other_than: None,
     })
 }
@@ -2584,6 +2590,8 @@ fn triggered_ability_targeting_source(
     source_contract.map(|contract| TargetingSource {
         object: source,
         card_def: contract.card_def,
+        zone: contract.zone,
+        zone_change_count: contract.zone_change_count,
         other_than,
     })
 }
@@ -2606,6 +2614,27 @@ fn legal_targets_for_controller_from_source(
 ) -> Vec<Target> {
     let mut targets = match spec {
         TargetSpec::None => Vec::new(),
+        TargetSpec::UpToOneOtherControlledPermanent => battlefield_objects(state)
+            .filter(|&id| {
+                let object = state.objects.get(id);
+                source.is_some_and(|source| {
+                    !(source.object == id
+                        && source.zone == object.zone
+                        && source.zone_change_count == object.zone_change_count)
+                }) && object.controller == controller
+                    && !targets_chosen.contains(&Target::Object(id))
+                    && [
+                        CardType::Land,
+                        CardType::Creature,
+                        CardType::Artifact,
+                        CardType::Enchantment,
+                        CardType::Planeswalker,
+                    ]
+                    .into_iter()
+                    .any(|kind| object_has_type(state, id, kind))
+            })
+            .map(Target::Object)
+            .collect(),
         TargetSpec::AnyPlayer => {
             vec![Target::Player(PlayerId::P0), Target::Player(PlayerId::P1)]
         }
@@ -3280,6 +3309,8 @@ fn activation_legal_targets_with_source_lki(
         Some(TargetingSource {
             object: source,
             card_def: state.objects.get(source).card_def,
+            zone: state.objects.get(source).zone,
+            zone_change_count: state.objects.get(source).zone_change_count,
             other_than: None,
         }),
         state,
@@ -10091,9 +10122,18 @@ fn validate_pending_trigger(state: &GameState, pending: &PendingTrigger) -> Resu
     }
     let mut prefix = Vec::new();
     for &target in &pending.targets {
-        if !completable_next_targets_for_controller(expected, &prefix, pending.controller, state)
-            .contains(&target)
-        {
+        let legal = if expected == TargetSpec::UpToOneOtherControlledPermanent {
+            completable_next_targets_for_controller_and_source(
+                expected,
+                &prefix,
+                pending.controller,
+                pending_trigger_targeting_source(pending),
+                state,
+            )
+        } else {
+            completable_next_targets_for_controller(expected, &prefix, pending.controller, state)
+        };
+        if !legal.contains(&target) {
             return Err("pending trigger carries an illegal target prefix".to_string());
         }
         prefix.push(target);
@@ -10972,6 +11012,8 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
                     StackItemKind::Spell => Some(TargetingSource {
                         object: item.source,
                         card_def: state.objects.get(item.source).card_def,
+                        zone: state.objects.get(item.source).zone,
+                        zone_change_count: state.objects.get(item.source).zone_change_count,
                         other_than: None,
                     }),
                     StackItemKind::TriggeredAbility => {
@@ -16776,6 +16818,78 @@ mod tests {
 
     fn empty_game() -> GameState {
         GameState::new_from_libraries(&[], &[], |c| format!("card-{c}"), 1)
+    }
+
+    #[test]
+    fn other_controlled_permanent_targets_use_captured_source_incarnation() {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = empty_game();
+            let source = put_on_battlefield(&mut state, player, "Voldaren Epicure");
+            let land = put_on_battlefield(&mut state, player, "Forest");
+            let token = put_on_battlefield(&mut state, player, "Forest");
+            state.objects.get_mut(token).v4.is_token = true;
+            let borrowed = put_on_battlefield(&mut state, player.opponent(), "Great Furnace");
+            state.objects.get_mut(borrowed).controller = player;
+            let theirs = put_on_battlefield(&mut state, player.opponent(), "Forest");
+            let protected = put_on_battlefield(&mut state, player, "Guardian of the Guildpact");
+            let hand = put_in_hand(&mut state, player, "Forest");
+            let grave = put_in_graveyard(&mut state, player, "Forest");
+            let contract = AbilitySourceContractV4::capture(&state, source);
+            let captured = triggered_ability_targeting_source(
+                source,
+                Some(contract),
+                &EffectOp::MoveAllTargets { to: Zone::Hand },
+            );
+            let spec = TargetSpec::UpToOneOtherControlledPermanent;
+            let legal =
+                legal_targets_for_controller_from_source(spec, &[], player, captured, &state);
+            for wanted in [land, token, borrowed] {
+                assert!(legal.contains(&Target::Object(wanted)));
+            }
+            for excluded in [source, theirs, protected, hand, grave] {
+                assert!(!legal.contains(&Target::Object(excluded)));
+            }
+            assert!(
+                legal_targets_for_controller_from_source(spec, &[], player, None, &state)
+                    .is_empty()
+            );
+            assert!(!legal_targets_for_controller_from_source(
+                spec,
+                &[Target::Object(land)],
+                player,
+                captured,
+                &state,
+            )
+            .contains(&Target::Object(land)));
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Exile));
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            assert!(
+                legal_targets_for_controller_from_source(spec, &[], player, captured, &state)
+                    .contains(&Target::Object(source))
+            );
+            assert!(!legal_targets_for_controller_from_source(
+                spec,
+                &[],
+                player,
+                targeting_source_for_object(&state, source),
+                &state,
+            )
+            .contains(&Target::Object(source)));
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(
+                legal_targets_for_controller_from_source(spec, &[], player, captured, &state),
+                legal_targets_for_controller_from_source(spec, &[], player, captured, &restored),
+            );
+            state.objects.get_mut(borrowed).controller = player.opponent();
+            assert!(
+                !legal_targets_for_controller_from_source(spec, &[], player, captured, &state)
+                    .contains(&Target::Object(borrowed))
+            );
+        }
     }
 
     #[test]

@@ -68,9 +68,9 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
         | TargetSpec::NonOutlawCreature
         | TargetSpec::CreatureToughnessAtLeastFour
         | TargetSpec::CreatureEnchantmentOrPlaneswalker => (BATTLEFIELD, None),
-        TargetSpec::ControlledCreature | TargetSpec::AnotherControlledCreature => {
-            (BATTLEFIELD, Some(RelF::You))
-        }
+        TargetSpec::ControlledCreature
+        | TargetSpec::AnotherControlledCreature
+        | TargetSpec::UpToOneOtherControlledPermanent => (BATTLEFIELD, Some(RelF::You)),
         TargetSpec::ControlledCreatureWithSubtype(subtype) => {
             // The subtype is a target legality fact (targets table).
             let _ = subtype;
