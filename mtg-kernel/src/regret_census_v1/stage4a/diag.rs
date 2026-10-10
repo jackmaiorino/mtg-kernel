@@ -107,6 +107,20 @@ struct NodeMeta {
     edges: Vec<String>,
 }
 
+/// Opt-in capture of full canonical views at the first step of a
+/// choose-all selection (every remaining option must be taken) and at the
+/// chooser's first decision after it, for a few sibling simulations
+/// (`S4A_MILLOBS=<n>`). Operator diagnostics only.
+#[derive(Default)]
+pub(crate) struct MillObs {
+    pub(crate) want: usize,
+    captured: usize,
+    /// (parent node id, edge index) of the first captured selection node.
+    parent: Option<(u64, u64)>,
+    /// Source card of the selection awaiting its post-selection capture.
+    awaiting: Option<u16>,
+}
+
 /// One root's trace; `lines` become the JSONL sidecar.
 #[derive(Default)]
 pub(crate) struct Trace {
@@ -114,6 +128,38 @@ pub(crate) struct Trace {
     ids: HashMap<Key, u32>,
     meta: HashMap<Key, NodeMeta>,
     cur: Map<String, Value>,
+    pub(crate) millobs: Option<MillObs>,
+}
+
+/// Source card of a first choose-all selection step: every option selects
+/// one object for the same effect, none selected yet, and the effect must
+/// take all of them.
+fn choose_all_start(sem: &[ActionSemanticV1]) -> Option<u16> {
+    let mut src = None;
+    for x in sem {
+        let ActionSemanticV1::ChooseEffectTarget { source, selected_count, min_targets, max_targets, .. } = x else {
+            return None;
+        };
+        if *selected_count != 0 || min_targets != max_targets || usize::from(*min_targets) != sem.len() {
+            return None;
+        }
+        if src.is_some_and(|s| s != source.card_db_id) {
+            return None;
+        }
+        src = Some(source.card_db_id);
+    }
+    src.filter(|_| sem.len() >= 2)
+}
+
+fn full_view(s: &FastActorSessionV1, d: &FastActorDecisionV1) -> Value {
+    let canon = super::tree::canon(s, *d).ok();
+    let raw = s.actor_visible_decision_v4(*d).ok();
+    json!({
+        "canon_obs": canon.as_ref().and_then(|c| serde_json::from_slice::<Value>(&c.obs).ok()),
+        "canon_menu": canon.as_ref().map(|c| c.menu.iter().map(|m| String::from_utf8_lossy(m).into_owned()).collect::<Vec<_>>()),
+        "raw_obs": raw.as_ref().and_then(|(o, _)| serde_json::to_value(o).ok()),
+        "raw_menu": raw.as_ref().and_then(|(_, m)| serde_json::to_value(m).ok()),
+    })
 }
 
 fn menu_bits(s: &FastActorSessionV1, focal: PlayerId, defs: &SpyDefs) -> Vec<u8> {
@@ -144,6 +190,9 @@ impl Trace {
     }
 
     pub(crate) fn sim_begin(&mut self, index: u64, t0: u64) {
+        if let Some(m) = self.millobs.as_mut() {
+            m.awaiting = None;
+        }
         self.cur = json!({"r":"sel","i":index,"t0":t0,"path":[],"dec":[],"ev":[],"tail":null})
             .as_object()
             .cloned()
@@ -223,6 +272,7 @@ impl Trace {
                 path.push(json!([id, e, t, pd, ss]));
             }
         }
+        self.mill_capture(s, d, &p, t, depth);
         if matches!(src, SelSrc::TailAfterExpand | SelSrc::TailDepth)
             && self.cur.get("tail").is_some_and(Value::is_null)
         {
@@ -237,6 +287,43 @@ impl Trace {
                     "menu":menu}),
             );
         }
+    }
+
+    fn mill_capture(&mut self, s: &FastActorSessionV1, d: &FastActorDecisionV1, p: &Value, t: u64, depth: u32) {
+        let Some(m) = self.millobs.as_mut() else {
+            return;
+        };
+        let sem = s.diagnostic_current_action_semantics().unwrap_or_default();
+        let start = choose_all_start(&sem);
+        let i = self.cur.get("i").cloned().unwrap_or(Value::Null);
+        if let Some(src) = m.awaiting {
+            let same = sem.iter().all(|x| matches!(x, ActionSemanticV1::ChooseEffectTarget { source, .. } if source.card_db_id == src));
+            if !same {
+                m.awaiting = None;
+                let view = full_view(s, d);
+                self.lines.push(json!({"r":"millobs","phase":"after_selection","i":i,"t":t,"dep":depth,"view":view}).to_string());
+            }
+            return;
+        }
+        let (Some(src), Some(pi)) = (start, p.as_u64()) else {
+            return;
+        };
+        if m.captured >= m.want || pi == 0 {
+            return;
+        }
+        let parent = self.cur.get("path").and_then(|x| x.get(pi as usize - 1)).map(|e| (e[0].as_u64().unwrap_or(0), e[1].as_u64().unwrap_or(0)));
+        let Some(parent) = parent else {
+            return;
+        };
+        if m.parent.is_some_and(|x| x != parent) {
+            return;
+        }
+        m.parent = Some(parent);
+        m.captured += 1;
+        m.awaiting = Some(src);
+        let view = full_view(s, d);
+        self.lines.push(json!({"r":"millobs","phase":"selection_start","i":i,"t":t,"dep":depth,"source":src,
+            "parent":[parent.0, parent.1],"view":view}).to_string());
     }
 
     /// Existing resolution events of the transition that ended at `t`.

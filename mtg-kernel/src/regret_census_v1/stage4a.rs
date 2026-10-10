@@ -468,7 +468,17 @@ fn run_root_diag(
         .as_str()
         .ok_or("root has no root_id")?
         .to_owned();
-    let (setup, session) = replay(cfg, shared, roles, root)?;
+    let (setup, mut session) = replay(cfg, shared, roles, root)?;
+    // `S4A_RUNTIME=resolution-boundary-v1`: continue from the replayed root
+    // under the opt-in rules profile (a new runtime identity).
+    let runtime = match std::env::var("S4A_RUNTIME").ok().as_deref() {
+        None | Some("") | Some("historical") => None,
+        Some("resolution-boundary-v1") => Some(crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1),
+        Some(other) => return Err(format!("unknown S4A_RUNTIME {other}")),
+    };
+    if let Some(r) = runtime {
+        session.set_runtime_rules_v1(r);
+    }
     let replay_secs = started.elapsed().as_secs_f64();
     let d = decision(&session).ok_or("root is terminal")?;
     let seeds = RootSeeds {
@@ -495,6 +505,12 @@ fn run_root_diag(
     };
     let trace_dir = std::env::var("S4A_TRACE").ok();
     let mut trace = trace_dir.as_ref().map(|_| diag::Trace::default());
+    if let (Some(t), Ok(n)) = (trace.as_mut(), std::env::var("S4A_MILLOBS")) {
+        t.millobs = Some(diag::MillObs {
+            want: n.parse().map_err(|_| format!("bad S4A_MILLOBS {n}"))?,
+            ..Default::default()
+        });
+    }
     if let Some(t) = trace.as_mut() {
         t.meta_line(json!({"r":"meta","schema":"s4a-diag-trace/v1","root_id":root_id,
             "model":shared.model,"stratum":root["stratum"],"cast_root":cast_root,"focal_seat":setup.focal,
@@ -566,7 +582,7 @@ fn run_root_diag(
         "config":{"limits":shared.limits.json(),"sampler":world::SAMPLER_VERSION,
             "prior_decks":shared.prior.ids(),"opponents":shared.labels,"seed_namespace":seeds::NAMESPACE},
         "arms":arms_json,"eval_worlds":worlds,"rejected_eval_worlds":rejected_worlds,
-        "eval_sampler":eval_sampler.json(),"invalid":invalid,
+        "eval_sampler":eval_sampler.json(),"invalid":invalid,"runtime_rules":runtime.map(|_| "resolution-boundary-v1"),
         "cost":{"selection_transitions":e_sel.transitions,"selection_inference_calls":e_sel.inference,
             "eval_transitions":summary.4},
         "timing":{"replay":replay_secs,"selection_wall":{"E":e_sel.wall},

@@ -6462,6 +6462,14 @@ impl FastActorSessionV1 {
         .expect("fast actor core environment serializes")
     }
 
+    /// Opt into a runtime rules profile from this point of the game on (see
+    /// `engine::RuntimeRulesV1`). It changes which choices later effects
+    /// expose, never the current decision, so a caller can replay a
+    /// historical game to a root and continue under the new profile.
+    pub fn set_runtime_rules_v1(&mut self, rules: crate::engine::RuntimeRulesV1) {
+        self.state.engine.runtime_rules = rules;
+    }
+
     /// Audit-only copy of the current canonical semantic action order.
     ///
     /// The fast actor deliberately omits semantic records from its hot

@@ -7328,7 +7328,14 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     order_resolved,
                     path,
                 } => {
-                    if to_zone == Zone::Graveyard && objects.len() >= 2 && !order_resolved {
+                    if to_zone == Zone::Graveyard
+                        && objects.len() >= 2
+                        && !order_resolved
+                        && crate::engine::graveyard_order_choice_exposed(
+                            state,
+                            state.objects.get(objects[0].object).owner,
+                        )
+                    {
                         for binding in &objects {
                             validate_effect_object_binding(state, *binding)?;
                         }
@@ -7359,7 +7366,13 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     path,
                 } => {
                     validate_bound_library_prefix(state, &objects)?;
-                    if objects.len() >= 2 && !order_resolved {
+                    if objects.len() >= 2
+                        && !order_resolved
+                        && crate::engine::graveyard_order_choice_exposed(
+                            state,
+                            state.objects.get(objects[0].object).owner,
+                        )
+                    {
                         let player = state.objects.get(objects[0].object).owner;
                         // A mill instruction does not publicly reveal its
                         // library snapshot before the move. The owner must
@@ -7391,7 +7404,10 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         &objects,
                         "revealed-library graveyard order",
                     )?;
-                    if objects.len() >= 2 && !order_resolved {
+                    if objects.len() >= 2
+                        && !order_resolved
+                        && crate::engine::graveyard_order_choice_exposed(state, player)
+                    {
                         stage_graveyard_order_choice(
                             &mut continuation,
                             player,

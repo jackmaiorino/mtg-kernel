@@ -718,3 +718,225 @@ fn diagnostic_trace_is_passive_and_reconstructs_backups() {
         assert_eq!(decs[0]["root"], true);
     }
 }
+
+/// Resolution-boundary profile (engine::RuntimeRulesV1): plays a scripted
+/// cast of `spell` by P0 (self-targeting, choosing the first option at every
+/// other P0 decision, passing for P1) until the stack is empty again, and
+/// returns every P0 multi-option decision's semantics plus the final state.
+fn scripted_cast(
+    rules: crate::engine::RuntimeRulesV1,
+    spell: &str,
+    library: &[&str],
+) -> (
+    Vec<Vec<crate::rl::ActionSemanticV1>>,
+    crate::state::GameState,
+) {
+    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::rl::{ActionSemanticV1, PlayerSeatV1, TargetRefV1};
+    use crate::state::Zone;
+    let mut st = ready_state();
+    let me = PlayerId::P0;
+    put(&mut st, me, spell, Zone::Hand);
+    for c in [crate::mana::ManaColor::B, crate::mana::ManaColor::U] {
+        st.players[0].mana_pool[c.pool_index()] = 4;
+    }
+    for name in library {
+        put(&mut st, me, name, Zone::Library);
+    }
+    for _ in 0..10 {
+        put(&mut st, me.opponent(), "Swamp", Zone::Library);
+    }
+    let mut s = crate::rl_session::FastActorSessionV1::from_v3_fixture_state(st);
+    s.set_runtime_rules_v1(rules);
+    let spell_id = crate::card_def::card_id_by_name(spell).unwrap();
+    let mut menus = Vec::new();
+    let mut cast = false;
+    for _ in 0..400 {
+        let Some(d) = play::decision(&s) else { break };
+        let g = s.game_state();
+        if cast && g.stack.is_empty() && g.engine.pending_effect.is_none() {
+            break;
+        }
+        let sem = s.diagnostic_current_action_semantics().unwrap();
+        let a = if play::acting(&d) == me {
+            if d.legal_action_count >= 2 {
+                menus.push(sem.clone());
+            }
+            let pos = |f: &dyn Fn(&ActionSemanticV1) -> bool| sem.iter().position(f);
+            pos(&|x| {
+                !cast
+                    && matches!(x, ActionSemanticV1::CastSpell { source, .. } if source.card_db_id == spell_id)
+            })
+            .or_else(|| {
+                pos(&|x| {
+                    matches!(x, ActionSemanticV1::ChooseTarget { target: TargetRefV1::Player { player }, .. } if *player == PlayerSeatV1::P0)
+                })
+            })
+            .or_else(|| {
+                pos(&|x| {
+                    cast && !matches!(
+                        x,
+                        ActionSemanticV1::Pass { .. }
+                            | ActionSemanticV1::CastSpell { .. }
+                            | ActionSemanticV1::ActivateAbility { .. }
+                            | ActionSemanticV1::PlayLand { .. }
+                    )
+                })
+            })
+            .or_else(|| pos(&|x| matches!(x, ActionSemanticV1::Pass { .. })))
+            .unwrap_or(0)
+        } else {
+            sem.iter()
+                .position(|x| matches!(x, ActionSemanticV1::Pass { .. }))
+                .unwrap_or(0)
+        };
+        if matches!(&sem[a], ActionSemanticV1::CastSpell { source, .. } if source.card_db_id == spell_id) {
+            cast = true;
+        }
+        s.step(d.episode_id, d.step, a as u32).unwrap();
+    }
+    assert!(cast, "{spell} was never cast");
+    (menus, s.game_state().clone())
+}
+
+fn order_menus(menus: &[Vec<crate::rl::ActionSemanticV1>]) -> usize {
+    menus
+        .iter()
+        .filter(|m| {
+            m.iter()
+                .all(|x| matches!(x, crate::rl::ActionSemanticV1::ChooseEffectTarget { .. }))
+        })
+        .count()
+}
+
+fn zone_names(
+    st: &crate::state::GameState,
+    ids: &[crate::ids::ObjectId],
+    sorted: bool,
+) -> Vec<String> {
+    let mut v: Vec<String> = ids
+        .iter()
+        .map(|&i| st.objects.get(i).name.to_string())
+        .collect();
+    if sorted {
+        v.sort();
+    }
+    v
+}
+
+#[test]
+fn resolution_boundary_mills_a_landless_library_without_ordering_choices() {
+    use crate::engine::RuntimeRulesV1;
+    let lib = ["Dread Return", "Lotleth Giant", "Balustrade Spy", "Dread Return"];
+    let (old_menus, old) = scripted_cast(RuntimeRulesV1::default(), "Balustrade Spy", &lib);
+    let (new_menus, new) = scripted_cast(
+        RuntimeRulesV1::RESOLUTION_BOUNDARY_V1,
+        "Balustrade Spy",
+        &lib,
+    );
+    // The historical engine asks the owner to order the milled cards.
+    assert!(order_menus(&old_menus) >= 3, "{old_menus:?}");
+    assert_eq!(order_menus(&new_menus), 0, "{new_menus:?}");
+    // Exactly-one-of-many targeting stays a real choice.
+    let targets = |m: &[Vec<crate::rl::ActionSemanticV1>]| {
+        m.iter().any(|x| {
+            x.len() >= 2
+                && x.iter()
+                    .all(|y| matches!(y, crate::rl::ActionSemanticV1::ChooseTarget { .. }))
+        })
+    };
+    assert!(targets(&old_menus) && targets(&new_menus));
+    // Same legal outcome: the whole library is in the graveyard either way;
+    // the profile keeps the bound (library) order.
+    for st in [&old, &new] {
+        assert!(st.players[0].library.is_empty());
+    }
+    assert_eq!(
+        zone_names(&old, &old.players[0].graveyard, true),
+        zone_names(&new, &new.players[0].graveyard, true)
+    );
+    assert_eq!(old.players[1].graveyard, new.players[1].graveyard);
+}
+
+#[test]
+fn resolution_boundary_stops_at_the_first_land_like_the_historical_engine() {
+    use crate::engine::RuntimeRulesV1;
+    let lib = ["Lotleth Giant", "Swamp", "Dread Return", "Balustrade Spy", "Dread Return"];
+    let (_, old) = scripted_cast(RuntimeRulesV1::default(), "Balustrade Spy", &lib);
+    let (new_menus, new) = scripted_cast(
+        RuntimeRulesV1::RESOLUTION_BOUNDARY_V1,
+        "Balustrade Spy",
+        &lib,
+    );
+    assert_eq!(order_menus(&new_menus), 0, "{new_menus:?}");
+    assert!(!new.players[0].library.is_empty(), "the land stops the reveal");
+    assert_eq!(
+        zone_names(&old, &old.players[0].library, false),
+        zone_names(&new, &new.players[0].library, false)
+    );
+    assert_eq!(
+        zone_names(&old, &old.players[0].graveyard, true),
+        zone_names(&new, &new.players[0].graveyard, true)
+    );
+    // The reveal stays public under the profile.
+    assert_eq!(old.library_knowledge, new.library_knowledge);
+}
+
+#[test]
+fn resolution_boundary_keeps_the_order_choice_when_delve_can_read_it() {
+    use crate::engine::RuntimeRulesV1;
+    let lib = ["Dread Return", "Lotleth Giant", "Gurmag Angler", "Dread Return"];
+    let (menus, _) = scripted_cast(
+        RuntimeRulesV1::RESOLUTION_BOUNDARY_V1,
+        "Balustrade Spy",
+        &lib,
+    );
+    assert!(order_menus(&menus) >= 3, "{menus:?}");
+}
+
+#[test]
+fn resolution_boundary_keeps_ordered_library_placement() {
+    use crate::engine::RuntimeRulesV1;
+    let lib = ["Island", "Swamp", "Lotleth Giant", "Dread Return"];
+    let (menus, _) = scripted_cast(RuntimeRulesV1::RESOLUTION_BOUNDARY_V1, "Ponder", &lib);
+    assert!(
+        order_menus(&menus) >= 1,
+        "Ponder's top-of-library order must stay a choice: {menus:?}"
+    );
+}
+
+#[test]
+fn resolution_boundary_profile_survives_world_sampling_and_is_hash_neutral() {
+    use crate::engine::RuntimeRulesV1;
+    let cfg = test_cfg();
+    let spy = spy_index();
+    let setup = game_setup(&cfg, 1, spy as u64 + 9 * 3);
+    let focal_id = PlayerId(setup.focal as u8);
+    let (mut a, mut b) = (fixture(), fixture());
+    let mut root = None;
+    drive(&setup, &mut a, &mut b, |s, d, _| {
+        if play::acting(d) == focal_id && d.legal_action_count >= 3 && s.game_state().turn >= 3 {
+            root = Some(s.clone());
+            return Ok(true);
+        }
+        Ok(false)
+    })
+    .unwrap();
+    let mut s = root.unwrap();
+    let h = |st: &crate::state::GameState| (st.state_hash(), st.diagnostic_state_hash());
+    let json = |st: &crate::state::GameState| serde_json::to_string(st).unwrap();
+    let before = (h(s.game_state()), json(s.game_state()));
+    s.set_runtime_rules_v1(RuntimeRulesV1::default());
+    assert_eq!(before, (h(s.game_state()), json(s.game_state())));
+    s.set_runtime_rules_v1(RuntimeRulesV1::RESOLUTION_BOUNDARY_V1);
+    // Hash-neutral for the runtime state hash; the audit hash and snapshot
+    // record the profile once it is on.
+    assert_eq!(before.0 .0, h(s.game_state()).0);
+    assert_ne!(before.1, json(s.game_state()));
+    let prior = world::DeckPrior::new(&cfg.decks);
+    let w = world::sample(&s, 7, &prior).unwrap();
+    assert_eq!(
+        w.world.game_state().engine.runtime_rules,
+        RuntimeRulesV1::RESOLUTION_BOUNDARY_V1
+    );
+}
