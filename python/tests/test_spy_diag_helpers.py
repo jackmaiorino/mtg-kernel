@@ -1,5 +1,7 @@
 """Correctness fixtures only; no search, scoring, native child or experiment."""
 import importlib
+import contextlib
+import io
 import json
 from pathlib import Path
 import sys
@@ -16,6 +18,32 @@ queue = importlib.import_module('diag_queue')
 
 
 class PanelTests(unittest.TestCase):
+    def test_analyzer_accepts_complete_panel_and_refuses_missing_or_duplicate_inputs(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            panel = root/'panel.json'
+            panel.write_text(json.dumps({'roots': [{'root_id': rid, 'role': 'fixture'}
+                                                  for rid in ('a', 'b')]}))
+            traces = []
+            for rid in ('a', 'b'):
+                trace = root/(rid + '.jsonl')
+                trace.write_text(json.dumps({'r': 'meta', 'root_id': rid, 'cast_root': True,
+                                             'stratum': 'fixture', 'opp_model': 'fixture'}) + '\n')
+                traces.append(str(trace))
+            for label, inputs, valid in [('complete', traces, True), ('missing', traces[:1], False),
+                                          ('duplicate', traces + traces[:1], False)]:
+                output = root/label
+                args = ['analyze.py', '--panel', str(panel), '--out', str(output)] + inputs
+                with self.subTest(case=label), patch.object(sys, 'argv', args), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    if valid:
+                        analysis.main()
+                        self.assertEqual(set(json.loads((output/'analysis.json').read_text())), {'a', 'b'})
+                    else:
+                        with self.assertRaises(ValueError):
+                            analysis.main()
+                        self.assertFalse(output.exists())
+
     def test_missing_duplicate_and_extra_roots_refuse(self):
         expected = coverage.expected_roots({'roots': [{'root_id': 'a'}, {'root_id': 'b'}]})
         for observed in (['a'], ['a', 'a'], ['a', 'b', 'b'], ['a', 'b', 'c']):
