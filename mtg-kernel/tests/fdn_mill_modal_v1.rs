@@ -38,7 +38,7 @@ fn put(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -> Objec
         Zone::Battlefield => state.players[player.index()].battlefield.push(id),
         Zone::Graveyard => state.players[player.index()].graveyard.push(id),
         Zone::Library => state.players[player.index()].library.push(id),
-        Zone::Exile => state.players[player.index()].exile.push(id),
+        Zone::Exile => state.exile.push(id),
         _ => panic!("helper zone"),
     }
     id
