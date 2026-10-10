@@ -21,8 +21,16 @@ No new public observation field, effect opcode or subtype is required.
 
 Two primitive regressions cover both seats, spell types, turn/caster matrices,
 serialized-state equivalence, changed control and stale source incarnations.
-These tests and the source have not yet been compiled or executed. Formatting
-and diff checks pass. Required remaining checks are native primitive execution,
+Native13 at b42370ef passed both primitive tests in the Limited configuration.
+The combined configuration is still running under supported guard
+0fd098388a7449f597dbf38080d96709 on Haley cores12-13 BelowNormal with pinned
+Rust1.94.1/MSVC19.50.35725. No combined or terminal result is claimed yet.
+Four additional card fixture groups cover metadata and colored Flash payment,
+the two-seat caster/turn/spell-type matrix, departure and return, and ability
+removal before trigger resolution. Each restores and compares serialized states.
+They remain unexecuted because the card is unregistered. Read-only review found
+no actionable findings; formatting and diff checks pass.
+Required remaining checks are native primitive execution,
 actual registered card casting and restore/ability-removal games, metadata and
 live profile migration, CI and default integration. The card remains
 unregistered and adds no accepted coverage. Serial admission follows the
