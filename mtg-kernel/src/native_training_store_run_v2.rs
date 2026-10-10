@@ -380,6 +380,11 @@ const FROZEN_CARD_DB_HASH_U64_HEX_FDN_STATIC_TEAM_BOOSTS_V1: &str = "42bf6f9ca62
 const FROZEN_RUNTIME_CATALOG_SHA256_FDN_STATIC_TEAM_BOOSTS_V1: &str =
     "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
+// v66 admits the prepared mechanic families.
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_PREPARED_FAMILIES_V1: &str = "e8e2bba9d9071e80";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_PREPARED_FAMILIES_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
 const FROZEN_PROTOCOL_V2: &str = "kernel_rl_jsonl";
 const FROZEN_PROTOCOL_VERSION_V2: u32 = 5;
 const FROZEN_SCHEMA_VERSION_V2: u32 = 5;
@@ -2100,6 +2105,7 @@ pub(crate) enum NativeRunCatalogProfileV1 {
     FdnFirstLifeGain,
     FdnGraveyardTriggers,
     FdnStaticTeamBoosts,
+    FdnPreparedFamilies,
 }
 
 impl ValidatedTrainRunV2 {
@@ -2744,6 +2750,11 @@ fn classify_catalog_profile_from_identity_v1(
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_STATIC_TEAM_BOOSTS_V1,
             FROZEN_RUNTIME_CATALOG_SHA256_FDN_STATIC_TEAM_BOOSTS_V1,
             NativeRunCatalogProfileV1::FdnStaticTeamBoosts,
+        ),
+        (
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_PREPARED_FAMILIES_V1,
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_PREPARED_FAMILIES_V1,
+            NativeRunCatalogProfileV1::FdnPreparedFamilies,
         ),
         (
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_CELESTIAL_ARMOR_V1,
@@ -5560,6 +5571,11 @@ pub(crate) fn test_fixture_bytes_fdn_first_lifegain_v1() -> Vec<u8> {
 pub(crate) fn test_fixture_bytes_fdn_graveyard_triggers_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_graveyard_triggers()
 }
+#[cfg(all(test, feature = "limited-fdn-fixtures"))]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn test_fixture_bytes_fdn_static_team_boosts_v1() -> Vec<u8> {
+    tests::fixture_bytes_fdn_static_team_boosts()
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6340,6 +6356,32 @@ mod tests {
         assert_eq!(
             validated.catalog_profile_v1(),
             NativeRunCatalogProfileV1::FdnGraveyardTriggers
+        );
+        assert_eq!(validated.canonical_bytes(), bytes);
+        assert!(!current_profile_matches_live_build_identity_v1(
+            validated.record().environment()
+        ));
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(super) fn fixture_bytes_fdn_static_team_boosts() -> Vec<u8> {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_STATIC_TEAM_BOOSTS_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_STATIC_TEAM_BOOSTS_V1.to_owned();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn fdn_static_team_boosts_profile_remains_readable_but_is_not_live() {
+        let bytes = fixture_bytes_fdn_static_team_boosts();
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnStaticTeamBoosts
         );
         assert_eq!(validated.canonical_bytes(), bytes);
         assert!(!current_profile_matches_live_build_identity_v1(
@@ -7696,20 +7738,20 @@ mod tests {
     /// the frozen literals were typed wrong when this successor landed.
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn fdn_static_team_boosts_frozen_literal_matches_the_live_build_constant() {
+    fn fdn_prepared_families_frozen_literal_matches_the_live_build_constant() {
         use crate::card_def::KERNEL_CARDDB_HASH;
         use crate::runtime_decks::RUNTIME_DECK_CATALOG_FILE_SHA256;
         assert_eq!(
             format!("{KERNEL_CARDDB_HASH:016x}"),
             if cfg!(feature = "limited-fdn-fixtures") {
-                FROZEN_CARD_DB_HASH_U64_HEX_FDN_STATIC_TEAM_BOOSTS_V1
+                FROZEN_CARD_DB_HASH_U64_HEX_FDN_PREPARED_FAMILIES_V1
             } else {
                 FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1
             }
         );
         assert_eq!(
             RUNTIME_DECK_CATALOG_FILE_SHA256,
-            FROZEN_RUNTIME_CATALOG_SHA256_FDN_STATIC_TEAM_BOOSTS_V1
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_PREPARED_FAMILIES_V1
         );
     }
 
@@ -8040,22 +8082,22 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn fdn_static_team_boosts_fixture_decodes_with_its_own_profile_and_live_identity() {
+    fn fdn_prepared_families_fixture_decodes_with_its_own_profile_and_live_identity() {
         let validated = decode_train_run_v2(&fixture_bytes()).unwrap();
         assert_eq!(
             validated.catalog_profile_v1(),
-            NativeRunCatalogProfileV1::FdnStaticTeamBoosts
+            NativeRunCatalogProfileV1::FdnPreparedFamilies
         );
         assert!(current_profile_matches_live_build_identity_v1(
             validated.record().environment()
         ));
         assert_ne!(
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_STATIC_TEAM_BOOSTS_V1,
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_PREPARED_FAMILIES_V1,
             FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
         );
         assert_eq!(
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_STATIC_TEAM_BOOSTS_V1,
-            "42bf6f9ca62d6615"
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_PREPARED_FAMILIES_V1,
+            "e8e2bba9d9071e80"
         );
     }
 
@@ -8365,7 +8407,7 @@ mod tests {
         assert_eq!(
             validated.catalog_profile_v1(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnStaticTeamBoosts
+                NativeRunCatalogProfileV1::FdnPreparedFamilies
             } else {
                 NativeRunCatalogProfileV1::PauperMetaW1
             }
