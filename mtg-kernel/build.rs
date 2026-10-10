@@ -3887,7 +3887,9 @@ fn keywords_for(card: &CardJson) -> String {
         "Brazen Scourge" | "Fanatical Firebrand" => keywords.push("Keywords::HASTE"),
         "Samurai Token" => keywords.push("Keywords::VIGILANCE"),
         "Dragon Token" | "Dragon 5/5 Token" => keywords.push("Keywords::FLYING"),
-        "Resolute Reinforcements" | "Twinblade Blessing" => keywords.push("Keywords::FLASH"),
+        "Resolute Reinforcements" | "Twinblade Blessing" | "Ambush Wolf" => {
+            keywords.push("Keywords::FLASH")
+        }
         "Elfsworn Giant" => keywords.push("Keywords::REACH"),
         "Eager Trufflesnout" => keywords.push("Keywords::TRAMPLE"),
         _ => {}
@@ -6025,6 +6027,8 @@ fn delve_for(name: &str) -> bool {
 /// event, target, and effect part of the generated card database identity.
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Elvish Regrower" => "etb:return_target_own_graveyard_permanent_card_to_hand",
+        "Ambush Wolf" => "etb:exile_up_to_one_target_graveyard_card",
         "Celestial Armor" => "etb:target_controlled_creature:attach_exact_source:then_grant_hexproof_indestructible_until_end_of_turn",
         "Mossborn Hydra" => "controlled_land_enters:double_plus_one_counters_on_bound_source",
         "Exemplar of Light" => "controller_gains_positive_life:counter_on_bound_source:1;controller_places_plus_one_counters_on_source:draw:1:limit_per_turn:1",
@@ -9232,7 +9236,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v63\n"
+            "kernel_carddb/v64\n"
         } else {
             "kernel_carddb/v34\n"
         },
