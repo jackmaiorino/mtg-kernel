@@ -9,11 +9,10 @@ its entry trigger exiles zero or one target card from either graveyard.
 Primary references are XMage `Mage.Sets/src/mage/cards/e/ElvishRegrower.java`
 and `Mage.Sets/src/mage/cards/a/AmbushWolf.java`, checked against the retained
 Scryfall FDN oracle pages. The batch reserves card ids 334-335 and Limited
-catalog v64 after the v61-v63 prerequisites. Wolf appends after Otter once
-those prerequisites integrate. Catalog hash qualification remains pending.
+catalog v64 after the v61-v63 prerequisites. Wolf reuses the already appended Standard subtype discriminant. Catalog hash qualification remains pending.
 
-Append two stable target filters, `PermanentCardInOwnGraveyard` (47) and
-`UpToOneCardInGraveyards` (48), and reuse the existing incarnation-bound
+Append `PermanentCardInOwnGraveyard` (55) and reuse the already integrated
+`UpToOneCardInGraveyards` (54), and reuse the existing incarnation-bound
 `MoveAllTargets` hand/exile effects. Optional trigger completion uses the
 existing target bounds and an explicit pending-trigger finish marker. False
 is omitted from serialized state, preserving earlier required-target bytes.
@@ -29,3 +28,11 @@ leave-and-return target incarnation fizzle, and public returned-card knowledge
 without revealing another card in the opponent's hand. A 40-card reference
 deck exercises deck import. Existing catalog profiles and measurements keep
 their prior identities; this batch introduces no training or formal run.
+
+October 10 source integration preserves Standard target IDs and subtype
+support. The new finish marker has a manual Hash implementation: false
+contributes no bytes to historical pending-trigger hashes; true adds a tagged
+extension. Registration/Python admission are retained on the original batch
+branch and will be copied after v63 admission so reserved card IDs 334-335
+remain correct. This staging branch adds source and fixture tests only;
+metadata admission and native qualification remain pending.

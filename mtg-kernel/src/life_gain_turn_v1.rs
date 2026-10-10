@@ -132,6 +132,7 @@ fn capture_pending(
         targets: Vec::new(),
         target_contracts: Vec::new(),
         placement_ordered: false,
+        target_selection_finished: false,
         source_contract: Some(contract),
         granted_by: None,
         optional_additional_cost_paid: None,

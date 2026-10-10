@@ -420,7 +420,10 @@ impl Subtype {
         Subtype::Mercenary,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Assassin,
-        #[cfg(any(feature = "standard-magezero-fixtures", feature = "limited-fdn-fixtures"))]
+        #[cfg(any(
+            feature = "standard-magezero-fixtures",
+            feature = "limited-fdn-fixtures"
+        ))]
         Subtype::Wolf,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Kraken,

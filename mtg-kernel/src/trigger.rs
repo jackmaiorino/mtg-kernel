@@ -3271,7 +3271,7 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
     )
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingTrigger {
     pub controller: PlayerId,
     pub source: ObjectId,
@@ -3329,6 +3329,30 @@ pub struct PendingTrigger {
     /// spell's stack incarnation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paid_cost_refs: Vec<PaidCostRefV4>,
+}
+
+// Preserve the preexisting derived field sequence when the finish marker
+// is false. The new true state has its own tagged extension.
+impl std::hash::Hash for PendingTrigger {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(&self.controller, state);
+        std::hash::Hash::hash(&self.source, state);
+        std::hash::Hash::hash(&self.effect, state);
+        std::hash::Hash::hash(&self.is_madness_offer, state);
+        std::hash::Hash::hash(&self.kicked, state);
+        std::hash::Hash::hash(&self.target_spec, state);
+        std::hash::Hash::hash(&self.targets, state);
+        std::hash::Hash::hash(&self.target_contracts, state);
+        std::hash::Hash::hash(&self.placement_ordered, state);
+        std::hash::Hash::hash(&self.source_contract, state);
+        std::hash::Hash::hash(&self.granted_by, state);
+        std::hash::Hash::hash(&self.optional_additional_cost_paid, state);
+        std::hash::Hash::hash(&self.paid_cost_refs, state);
+        if self.target_selection_finished {
+            std::hash::Hash::hash("trigger-target-selection-finished-v1", state);
+            std::hash::Hash::hash(&true, state);
+        }
+    }
 }
 
 fn target_selection_is_open(finished: &bool) -> bool {
@@ -4071,6 +4095,7 @@ fn triggers_from_events(
                 targets: Vec::new(),
                 target_contracts: Vec::new(),
                 placement_ordered: false,
+                target_selection_finished: false,
                 source_contract: Some(AbilitySourceContractV4::capture(state, *target)),
                 optional_additional_cost_paid: None,
                 paid_cost_refs: Vec::new(),
@@ -4992,6 +5017,79 @@ mod tests {
     use super::*;
     use crate::ids::PlayerId;
     use crate::state::GameState;
+
+    #[test]
+    fn unfinished_trigger_preserves_legacy_hash_and_serialization() {
+        use std::hash::{Hash, Hasher};
+
+        // This field order is the PendingTrigger layout before optional finish.
+        #[derive(Hash)]
+        struct LegacyTrigger<'a> {
+            controller: PlayerId,
+            source: ObjectId,
+            effect: &'a EffectOp,
+            is_madness_offer: bool,
+            kicked: bool,
+            target_spec: TargetSpec,
+            targets: &'a Vec<Target>,
+            target_contracts: &'a Vec<StackTargetContractV4>,
+            placement_ordered: bool,
+            source_contract: &'a Option<AbilitySourceContractV4>,
+            granted_by: &'a Option<AbilitySourceContractV4>,
+            optional_additional_cost_paid: &'a Option<OptionalAdditionalCostDef>,
+            paid_cost_refs: &'a Vec<PaidCostRefV4>,
+        }
+        let state = GameState::new_from_libraries(&[1], &[2], |c| format!("card-{c}"), 1);
+        let source = state.players[0].library[0];
+        let mut pending = PendingTrigger {
+            controller: PlayerId::P0,
+            source,
+            effect: EffectOp::Sequence(vec![]),
+            is_madness_offer: false,
+            kicked: false,
+            target_spec: TargetSpec::Creature,
+            targets: vec![Target::Object(source)],
+            target_contracts: vec![],
+            placement_ordered: true,
+            target_selection_finished: false,
+            source_contract: None,
+            granted_by: None,
+            optional_additional_cost_paid: None,
+            paid_cost_refs: vec![],
+        };
+        let legacy = LegacyTrigger {
+            controller: pending.controller,
+            source: pending.source,
+            effect: &pending.effect,
+            is_madness_offer: pending.is_madness_offer,
+            kicked: pending.kicked,
+            target_spec: pending.target_spec,
+            targets: &pending.targets,
+            target_contracts: &pending.target_contracts,
+            placement_ordered: pending.placement_ordered,
+            source_contract: &pending.source_contract,
+            granted_by: &pending.granted_by,
+            optional_additional_cost_paid: &pending.optional_additional_cost_paid,
+            paid_cost_refs: &pending.paid_cost_refs,
+        };
+        let hash = |value: &dyn Fn(&mut std::collections::hash_map::DefaultHasher)| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            value(&mut hasher);
+            hasher.finish()
+        };
+        let legacy_hash = hash(&|h| legacy.hash(h));
+        assert_eq!(hash(&|h| pending.hash(h)), legacy_hash);
+        let encoded = serde_json::to_value(&pending).unwrap();
+        assert!(encoded.get("target_selection_finished").is_none());
+        let decoded: PendingTrigger = serde_json::from_value(encoded).unwrap();
+        assert_eq!(decoded, pending);
+        pending.target_selection_finished = true;
+        assert_ne!(hash(&|h| pending.hash(h)), legacy_hash);
+        assert_eq!(
+            serde_json::to_value(&pending).unwrap()["target_selection_finished"],
+            true
+        );
+    }
 
     // Lethal-damage creature death is exercised end-to-end in
     // `engine::tests::lethal_damage_kills_creature_via_sba`, using a real

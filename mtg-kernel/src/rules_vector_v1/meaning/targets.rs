@@ -227,6 +227,9 @@ pub(crate) fn target_spec(spec: TargetSpec, out: &mut Collector) {
         // A nontoken, nonland permanent card (creature, artifact,
         // enchantment or planeswalker) the targeting player owns, in that
         // player's graveyard, with printed mana value at most `maximum`.
+        TargetSpec::PermanentCardInOwnGraveyard => {
+            object(out, ObjF::Permanent, Some(RelF::You), ZoneF::Graveyard);
+        }
         TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(maximum) => {
             out.target(TargetAtom::Object {
                 obj: ObjF::NonlandPermanent,
@@ -396,6 +399,10 @@ pub(crate) fn target_slot_obj(spec: TargetSpec, slot: u8) -> ObjF {
         TargetSpec::NonlandPermanent | TargetSpec::OpponentNonlandPermanent => {
             let _ = slot; // One target slot.
             ObjF::NonlandPermanent
+        }
+        TargetSpec::PermanentCardInOwnGraveyard => {
+            let _ = slot;
+            ObjF::Permanent
         }
         TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(maximum) => {
             // The bound restricts which cards qualify, not their class.

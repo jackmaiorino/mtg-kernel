@@ -1465,7 +1465,6 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::EnchantmentPermanent
         | TargetSpec::CreatureCardInOwnGraveyard
         | TargetSpec::PermanentCardInOwnGraveyard
-        | TargetSpec::UpToOneCardInGraveyards
         | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_)
         | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_)
         | TargetSpec::SpellYouDontControl
@@ -1509,7 +1508,6 @@ fn target_min_count(spec: TargetSpec) -> u8 {
         | TargetSpec::UpToTwoCardsInGraveyards
         | TargetSpec::UpToOneCardInGraveyards
         | TargetSpec::UpToOneTappedCreature => 0,
-        TargetSpec::UpToOneCardInGraveyards => 0,
         _ => target_count(spec),
     }
 }
