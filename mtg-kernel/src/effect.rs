@@ -5974,10 +5974,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::engine::validated_stack_item_target_spec(&pending.resolving_item, state)
         .map_err(|error| format!("effect continuation has invalid stack provenance: {error}"))?;
     validate_answered_choice_guard(state, pending)?;
-    if pending.choice.is_none()
-        && pending.answered_choice_guard.is_none()
-        && definition_has_nonterminal_discard(state, pending)
-    {
+    if definition_has_nonterminal_discard(state, pending) {
         let discard = state
             .engine
             .pending_discard

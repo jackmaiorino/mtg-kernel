@@ -7644,6 +7644,14 @@ pub(crate) fn validate_pending_discard_binding(
     state: &GameState,
     pending_discard: &PendingDiscard,
 ) -> Result<(), (ObjectId, String)> {
+    // A resumable discard cannot be relabelled as a legacy standalone stage.
+    // The common validator derives that boundary from the owning definition.
+    effect::validate_pending_effect_choice(state).map_err(|message| {
+        (
+            state.stack.last().map_or(ObjectId(0), |item| item.source),
+            message,
+        )
+    })?;
     match &pending_discard.resume {
         DiscardResume::FinishEffectContinuation { .. } => {
             effect::validate_resumable_discard(state, pending_discard).map_err(|message| {

@@ -219,7 +219,7 @@ fn opponent_discards_exactly_one_then_life_draw_gain_continue_after_source_leave
         );
         assert_eq!(state.players[player.index()].library.len(), 40);
         assert!(state.engine.pending_effect.is_some());
-        for kind in 0..6 {
+        for kind in 0..7 {
             let mut forged = restored(&state);
             match kind {
                 0 => forged.engine.pending_discard.as_mut().unwrap().count = 2,
@@ -254,9 +254,22 @@ fn opponent_discards_exactly_one_then_life_draw_gain_continue_after_source_leave
                     forged.engine.pending_discard.as_mut().unwrap().resume =
                         mtg_kernel::engine::DiscardResume::None
                 }
+                6 => {
+                    forged.engine.pending_effect.as_mut().unwrap().choice =
+                        Some(mtg_kernel::effect::PendingEffectChoice::ChooseOption {
+                            player,
+                            path: vec![0],
+                            options: vec![],
+                            purpose: mtg_kernel::effect::EffectOptionChoicePurpose::Generic,
+                        })
+                }
                 _ => unreachable!(),
             }
             refuse(&mut forged, Action::Discard(vec![chosen]));
+            assert!(matches!(
+                engine::advance_until_decision(&mut forged),
+                Decision::Halted { .. }
+            ));
         }
         refuse(&mut state, Action::Discard(vec![]));
         refuse(&mut state, Action::Discard(vec![chosen, retained]));
