@@ -54,3 +54,12 @@ The retained6d6a7782 preparation is now ported onto v64 candidate8603ef7f.
 Both P/T insertion conflicts were resolved by keeping the accepted Standard
 forest/counter bonuses alongside the new Limited team bonus. Registration
 and profile changes wait for PR210 to merge; no accepted coverage changes.
+
+Read-only port review found that the old preparation omitted rules-vector
+extraction and the keyed-name inventory. The shared runtime team table is
+now exposed internally to the extractor, which records its keyword filter,
+source exclusion and P/T delta. Static meaning records controlled creatures
+and +1/+1 while the source is on the battlefield. Eagle's effective Flying
+predicate/source exclusion are explicitly Opaque where the facet vocabulary
+cannot express them. The default non-Limited getter returns no team rule.
+Both keyed names are inventoried. This repair awaits native qualification.
