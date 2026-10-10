@@ -116,6 +116,7 @@ fn printed_metadata_and_real_cast_payment_replay_for_both_seats() {
     assert_eq!(trigger::triggers_for(id).len(), 2);
     for player in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(player);
+        let kept = put(&mut state, player, "Lightning Bolt", Zone::Hand);
         let source = put(&mut state, player, "Dreadwing Scavenger", Zone::Hand);
         state.players[player.index()].mana_pool[5] = 3;
         next(&mut state);
@@ -140,12 +141,14 @@ fn printed_metadata_and_real_cast_payment_replay_for_both_seats() {
             else {
                 panic!("ETB loot absent");
             };
-            assert_eq!((chooser, count, choices.len()), (player, 1, 1));
+            assert_eq!((chooser, count, choices.len()), (player, 1, 2));
+            assert!(choices.contains(&kept));
+            let drawn = *choices.iter().find(|&&object| object != kept).unwrap();
             assert_eq!(current.objects.get(source).zone, Zone::Battlefield);
             assert_eq!(current.players[player.index()].library.len(), 39);
-            engine::step(current, Action::Discard(choices)).unwrap();
+            engine::step(current, Action::Discard(vec![drawn])).unwrap();
             assert!(settle(current).is_none());
-            assert!(current.players[player.index()].hand.is_empty());
+            assert_eq!(current.players[player.index()].hand, vec![kept]);
             assert_eq!(current.players[player.index()].graveyard.len(), 1);
         }
         assert_eq!(

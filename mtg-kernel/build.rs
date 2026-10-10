@@ -3648,6 +3648,7 @@ fn program_target_spec_src(target: &str) -> &'static str {
     match target {
         "None" => "TargetSpec::None",
         "AnyPlayer" => "TargetSpec::AnyPlayer",
+        "TargetOpponent" => "TargetSpec::TargetOpponent",
         "Creature" => "TargetSpec::Creature",
         "ControlledCreature" => "TargetSpec::ControlledCreature",
         "ArtifactPermanent" => "TargetSpec::ArtifactPermanent",
@@ -3657,9 +3658,13 @@ fn program_target_spec_src(target: &str) -> &'static str {
             "TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour"
         }
         "AnySpellOnStack" => "TargetSpec::AnySpellOnStack",
+        "NoncreatureSpellOnStack" => "TargetSpec::NoncreatureSpellOnStack",
         "EnchantmentPermanent" => "TargetSpec::EnchantmentPermanent",
         "ControlledCreatureThenOpponentCreatureOrPlaneswalker" => {
             "TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker"
+        }
+        "ControlledCreatureThenOpponentCreature" => {
+            "TargetSpec::ControlledCreatureThenOpponentCreature"
         }
         "NonOutlawCreature" => "TargetSpec::NonOutlawCreature",
         "CreatureToughnessAtLeastFour" => "TargetSpec::CreatureToughnessAtLeastFour",
@@ -9398,7 +9403,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // tags) remain intentionally outside the contract.
     let mut canon = String::from(
         if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
-            "kernel_carddb/v65\n"
+            "kernel_carddb/v66\n"
         } else {
             "kernel_carddb/v34\n"
         },

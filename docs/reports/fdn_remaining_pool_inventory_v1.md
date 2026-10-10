@@ -38,9 +38,11 @@ V64 Elvish Regrower/Ambush Wolf, IDs334-335, is now accepted in
 [PR #210](https://github.com/jackmaiorino/mtg-kernel/pull/210) at53fab604.
 All23 reviewed-head checks passed, its actual merge tree matches the reviewed
 composition, and34 affected Python cases pass on that default commit.
-Accepted coverage is136 full, one partial and149 missing names of286.
-The current v65 Anthem/Eagle candidate has138 full names and requires native
-gameplay, observed generated identity, live-profile checks and integration.
+V65 Anthem/Eagle, IDs336-337, is accepted in
+[PR #212](https://github.com/jackmaiorino/mtg-kernel/pull/212) at32080f84878da6224ab5a04522a3086a5963a115.
+All23 final reviewed-head checks and35 affected Python cases on the actual
+default merge pass. Accepted coverage is138 full, one partial and147 missing
+names of286; live v65 identity is42bf6f9ca62d6615.
 
 Later prepared families remain retained in their original worktrees: v65
 Anthem of Champions/Empyrean Eagle (336-337), then one coherent admission
@@ -59,9 +61,14 @@ The31 prepared names share one later catalog admission after v65 integrates.
 Their original tentative version labels describe preparation order, not frozen
 catalog identities. Every card still needs focused gameplay/restore execution,
 with one generated catalog/profile publication for the coherent batch.
-The source port now incorporates the v65 candidate's static-team extraction,
-live profile and repaired fixtures. It registers none of the31 new names and
-still requires source compilation/review before later admission.
+The source port incorporates accepted v65 static-team extraction, live profile
+and repaired fixtures. Candidate662b8343 registers all31 new names and passes36
+affected Python cases. Its first generator build failed and is retained;
+reviewed repaira0032541 generates observed v66 identitye8e2bba9d9071e80.
+Reviewed migration97bed882 binds that identity and preserves historical v65
+readability and stale-write refusals. Card games, live profile execution, CI
+and actual default integration remain pending. Candidate169 is not accepted
+coverage. See `docs/design/fdn_prepared_admission_order_v1.md`.
 
 Leyline Axe (game-start leyline step) and Electroduplicate (token copies)
 remain unclaimed engine work. Full coverage, fair Limited search and DraftZero

@@ -24,7 +24,7 @@ class SupportBindings(unittest.TestCase):
             {"r": "meta", "schema": "s4a-diag-trace/v1", "root_id": "fixture"},
             {"r": "node", "id": 1, "key": "a" * 64, "parent": None, "dep": 0,
              "n": [1], "w": [1], "visits": 1, "lab": [4], "perm": [0], "edges": ["action"]},
-            {"r": "sel", "i": 1, "end": "win", "path": [[1, 0]], "new": 1},
+            {"r": "sel", "i": 1, "end": "win", "path": [[1, 0, 23, 0, 0]], "new": 1},
             {"r": "eval", "world": 0, "dec": [
                 {"dep": 0, "node": 1, "edge": 0, "src": "tree", "off": 1, "ch": 4}]},
         ]
@@ -54,6 +54,9 @@ class SupportBindings(unittest.TestCase):
                     {**self.row, "diag": {"trace": {"sha256": "0" * 64}}}):
             with self.assertRaises(ValueError):
                 support.load(self.path, "fixture", self.pin, row, 1)
+        for selection in ("fpu-1.5", True, "unknown"):
+            with self.assertRaises(ValueError):
+                self.load(row={**self.row, "select_rule": selection})
 
     def test_changed_bytes_key_parent_and_meta_are_refused(self):
         for pin in (("0" * 64, self.pin[1], None),
@@ -105,6 +108,18 @@ class SupportBindings(unittest.TestCase):
             changed[1][field] = wrong
             with self.assertRaises(ValueError):
                 support.chronology(changed, sims, 1)
+
+    def test_all_node_reconciliation_refuses_bad_unselected_nodes_and_paths(self):
+        nodes, sims, _ = self.load()
+        self.assertTrue(support.reconcile_all(nodes, sims))
+        nodes[2] = {**nodes[1], "id": 2, "n": [0], "w": [0], "visits": 0}
+        self.assertTrue(support.reconcile_all(nodes, sims))
+        for field, bad in (("n", [1]), ("w", [1]), ("visits", 1)):
+            changed = copy.deepcopy(nodes)
+            changed[2][field] = bad
+            self.assertFalse(support.reconcile_all(changed, sims))
+        for path in ([[3, 0]], [[1, -1]], [[1, 1]], [[1]], [None], [[1, "0"]]):
+            self.assertFalse(support.reconcile_all(nodes, [{**sims[0], "path": path}]))
 
     def test_count_mismatch_refuses_before_output_and_preserves_existing_output(self):
         rows_dir = self.root / "rows"

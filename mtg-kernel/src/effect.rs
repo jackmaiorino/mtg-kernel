@@ -379,12 +379,10 @@ pub enum EffectOp {
     /// Unlike every other leaf, this one doesn't necessarily mutate state
     /// synchronously: `execute` stages `EngineState::pending_discard` and
     /// returns, and `engine::advance_until_decision` asks
-    /// `Decision::Discard`. Because of that, **this must be the last leaf
-    /// in any `Sequence` it appears in** (see `engine.rs`'s
-    /// `pending_discard` doc for why: nothing after it in the same
-    /// resolution would run before the decision is answered). The only
-    /// user this increment, Faithless Looting ("draw two, then discard
-    /// two"), satisfies this by construction.
+    /// `Decision::Discard`. Legacy synchronous programs require this to be
+    /// their last leaf. A root sequence with later instructions enters the
+    /// resumable interpreter and preserves those instructions until the exact
+    /// hand answer is authenticated and committed.
     DiscardCards {
         player: PlayerRef,
         count: u32,
@@ -2436,7 +2434,10 @@ impl std::hash::Hash for ExecCtx {
 /// interpreter.
 pub fn contains_player_choice(op: &EffectOp) -> bool {
     match op {
-        EffectOp::Sequence(ops) => ops.iter().any(contains_player_choice),
+        EffectOp::Sequence(ops) => ops.iter().enumerate().any(|(index, op)| {
+            contains_player_choice(op)
+                || (index + 1 < ops.len() && matches!(op, EffectOp::DiscardCards { .. }))
+        }),
         EffectOp::Conditional { then, else_, .. } => {
             contains_player_choice(then) || contains_player_choice(else_)
         }
@@ -5914,6 +5915,35 @@ fn validate_answered_choice_guard(
     Ok(())
 }
 
+fn definition_has_nonterminal_discard(state: &GameState, pending: &EffectContinuation) -> bool {
+    let nonterminal = |op: &EffectOp| matches!(op, EffectOp::Sequence(ops) if ops.iter().take(ops.len().saturating_sub(1)).any(|op| matches!(op, EffectOp::DiscardCards { .. })));
+    let Some(source) = state.objects.try_get(pending.resolving_item.source) else {
+        return false;
+    };
+    if pending.resolving_item.kind == crate::state::StackItemKind::TriggeredAbility {
+        // Classify from declared recipes, without imposing stricter root
+        // reconstruction on old event-time Generic choices.
+        return crate::trigger::triggers_for(source.card_def)
+            .iter()
+            .any(|trigger| nonterminal(&(trigger.effect)()));
+    }
+    if pending.resolving_item.kind == crate::state::StackItemKind::Spell {
+        let definition = &crate::card_def::CARD_DEFS[source.card_def as usize];
+        return (definition.spell_effect)()
+            .as_ref()
+            .is_some_and(nonterminal)
+            || definition
+                .mode2
+                .as_ref()
+                .is_some_and(|mode| nonterminal(&(mode.effect)()))
+            || definition
+                .mode3
+                .as_ref()
+                .is_some_and(|mode| nonterminal(&(mode.effect)()));
+    }
+    false
+}
+
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(());
@@ -5944,6 +5974,14 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::engine::validated_stack_item_target_spec(&pending.resolving_item, state)
         .map_err(|error| format!("effect continuation has invalid stack provenance: {error}"))?;
     validate_answered_choice_guard(state, pending)?;
+    if definition_has_nonterminal_discard(state, pending) {
+        let discard = state
+            .engine
+            .pending_discard
+            .as_ref()
+            .ok_or("nonterminal discard continuation lost its pending hand answer")?;
+        validate_resumable_discard_details(state, pending, discard)?;
+    }
     let Some(choice) = pending.choice.as_ref() else {
         return Ok(());
     };
@@ -10089,9 +10127,30 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 return Ok(ResumableProgress::Suspended);
             }
             leaf => {
-                if matches!(leaf, EffectOp::DiscardCards { .. }) && !continuation.frames.is_empty()
-                {
-                    return Err("a resumable discard must be the terminal effect leaf".to_string());
+                if let EffectOp::DiscardCards { player, count } = &leaf {
+                    if !continuation.frames.is_empty() {
+                        let player = continuation.ctx.resolve_player(*player, state);
+                        let original_hand = bind_hand(state, player);
+                        validate_bound_hand_exact(state, player, &original_hand)?;
+                        if original_hand.is_empty() || *count == 0 {
+                            continue;
+                        }
+                        continuation.frames.push(EffectFrame::Program {
+                            op: leaf.clone(),
+                            path: path.clone(),
+                        });
+                        state.engine.pending_discard = Some(crate::engine::PendingDiscard {
+                            player,
+                            count: *count,
+                            resume: crate::engine::DiscardResume::FinishEffectContinuation {
+                                stack_item_id: continuation.resolving_item.v4.stack_item_id,
+                                path,
+                                original_hand,
+                            },
+                        });
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
                 }
                 execute(&leaf, &continuation.ctx, state)
             }
@@ -10104,6 +10163,79 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
     Ok(ResumableProgress::Complete(Box::new(
         continuation.resolving_item,
     )))
+}
+
+/// Authenticate the first supported nonterminal discard shape against its
+/// definition-owned root sequence. Every deferred instruction, the original
+/// hand incarnations and the resolving stack item must still agree.
+pub(crate) fn validate_resumable_discard(
+    state: &GameState,
+    discard: &crate::engine::PendingDiscard,
+) -> Result<(), String> {
+    validate_pending_effect_choice(state)?;
+    let pending = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .ok_or("resumable discard lost its continuation")?;
+    validate_resumable_discard_details(state, pending, discard)
+}
+
+fn validate_resumable_discard_details(
+    state: &GameState,
+    pending: &EffectContinuation,
+    discard: &crate::engine::PendingDiscard,
+) -> Result<(), String> {
+    let crate::engine::DiscardResume::FinishEffectContinuation {
+        stack_item_id,
+        path,
+        original_hand,
+    } = &discard.resume
+    else {
+        return Err("discard is not bound to a resumable effect".to_string());
+    };
+    if pending.resolving_item.v4.stack_item_id != *stack_item_id
+        || pending.choice.is_some()
+        || pending.answered_choice_guard.is_some()
+        || state.engine.pending_cast.is_some()
+        || state.engine.pending_activation.is_some()
+    {
+        return Err("resumable discard continuation stage changed".to_string());
+    }
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    let (EffectOp::Sequence(ops), [index]) = (root.as_ref(), path.as_slice()) else {
+        return Err("nonterminal discard requires a root sequence leaf".to_string());
+    };
+    let index = usize::from(*index);
+    let Some(leaf @ EffectOp::DiscardCards { player, count }) = ops.get(index) else {
+        return Err("resumable discard lost its definition-owned leaf".to_string());
+    };
+    if index + 1 >= ops.len()
+        || pending.ctx.resolve_player(*player, state) != discard.player
+        || *count != discard.count
+        || original_hand.is_empty()
+    {
+        return Err("resumable discard player, count or stage changed".to_string());
+    }
+    validate_bound_hand_exact(state, discard.player, original_hand)?;
+    let mut expected = ops
+        .iter()
+        .enumerate()
+        .skip(index + 1)
+        .rev()
+        .map(|(index, op)| EffectFrame::Program {
+            op: op.clone(),
+            path: vec![index as u16],
+        })
+        .collect::<Vec<_>>();
+    expected.push(EffectFrame::Program {
+        op: leaf.clone(),
+        path: path.clone(),
+    });
+    if pending.frames != expected {
+        return Err("resumable discard remaining instructions changed".to_string());
+    }
+    Ok(())
 }
 
 impl ExecCtx {
@@ -13627,18 +13759,18 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             let events = state.players[ctx.controller.index()]
                 .graveyard
                 .iter()
-                .filter_map(|&id| {
+                .filter(|&&id| {
                     let object = state.objects.get(id);
                     let def = &crate::card_def::CARD_DEFS[object.card_def as usize];
-                    (object.zone == Zone::Graveyard
+                    object.zone == Zone::Graveyard
                         && object.owner == ctx.controller
                         && !def.is_token
                         && !object.v4.is_token
                         && object.spell_copy_origin.is_none()
                         && def.mana_value <= *max_mana_value
-                        && crate::engine::object_has_type(state, id, CardType::Creature))
-                    .then(|| event::ProposedEvent::zone_change(id, Zone::Battlefield))
+                        && crate::engine::object_has_type(state, id, CardType::Creature)
                 })
+                .map(|&id| event::ProposedEvent::zone_change(id, Zone::Battlefield))
                 .collect();
             event::propose_and_commit_batch(state, events);
         }

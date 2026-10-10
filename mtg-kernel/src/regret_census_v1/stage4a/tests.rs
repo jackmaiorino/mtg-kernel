@@ -1,6 +1,81 @@
 use super::arms::{Limits, Roles, RootCtx};
 use super::play::{Meter, PlayErr};
 use super::*;
+
+#[test]
+fn selection_setting_refuses_invalid_encoding_unknown_rule_and_formal_modes() {
+    use std::env::VarError;
+    assert_eq!(
+        parse_select_rule("s4a-diag", Err(VarError::NotPresent)).unwrap(),
+        None
+    );
+    for alias in ["", "untried-first"] {
+        assert_eq!(parse_select_rule("s4a", Ok(alias.into())).unwrap(), None);
+    }
+    assert_eq!(
+        parse_select_rule("s4a-diag", Ok("fpu-1.5".into())).unwrap(),
+        Some(1.5)
+    );
+    for mode in ["s4a", "corpus", "s4a-duel"] {
+        assert!(parse_select_rule(mode, Ok("fpu-1.5".into())).is_err());
+    }
+    assert!(parse_select_rule("s4a-diag", Ok("unknown".into())).is_err());
+    assert!(parse_select_rule("s4a-diag", Err(VarError::NotUnicode("opaque".into()))).is_err());
+}
+
+#[test]
+fn selection_resume_requires_typed_identity_for_both_runtime_profiles() {
+    let boundary = Some(crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1);
+    for runtime in [None, boundary] {
+        for selection in [None, Some("fpu-1.5")] {
+            let row = json!({"kind":"s4a_diag_root","root_id":"fixture",
+                "runtime_rules":runtime.map(|_| "resolution-boundary-v1"),
+                "select_rule":selection});
+            let bytes = format!("{row}\n");
+            let done =
+                completed_identity_roots(bytes.as_bytes(), "s4a_diag_root", runtime, selection)
+                    .unwrap();
+            assert!(done.contains("fixture"));
+            let other = if selection.is_none() {
+                Some("fpu-1.5")
+            } else {
+                None
+            };
+            assert!(
+                completed_identity_roots(bytes.as_bytes(), "s4a_diag_root", runtime, other)
+                    .is_err()
+            );
+            for bad in [
+                json!(false),
+                json!(17),
+                json!({}),
+                json!([]),
+                json!("unknown"),
+            ] {
+                let mut invalid = row.clone();
+                invalid["select_rule"] = bad;
+                let bad_bytes = format!("{invalid}\n");
+                assert!(completed_identity_roots(
+                    bad_bytes.as_bytes(),
+                    "s4a_diag_root",
+                    runtime,
+                    selection
+                )
+                .is_err());
+            }
+        }
+    }
+}
+
+#[test]
+fn selection_resume_preserves_legacy_rows_and_ignores_only_incomplete_tail() {
+    let bytes = b"{\"kind\":\"s4a_diag_root\",\"root_id\":\"old\"}\n{\"kind\":\"error\",\"select_rule\":true}\n\xff";
+    let done = completed_identity_roots(bytes, "s4a_diag_root", None, None).unwrap();
+    assert!(done.contains("old"));
+    assert!(completed_identity_roots(bytes, "s4a_diag_root", None, Some("fpu-1.5")).is_err());
+    let malformed = b"{\"kind\":\"s4a_diag_root\",\"root_id\":\"old\",\"select_rule\":true}\n\xff";
+    assert!(completed_identity_roots(malformed, "s4a_diag_root", None, None).is_err());
+}
 use crate::ids::PlayerId;
 use std::collections::BTreeMap;
 
@@ -319,6 +394,7 @@ fn small_root_package_is_deterministic_and_within_ceilings() {
                 eval_worlds: 2,
                 eval_cap: 4_000,
             },
+            urgency: None,
         };
         let (e, tree) = roles.select_e(&ctx);
         assert!(e.transitions <= 6_000);
@@ -667,6 +743,7 @@ fn diagnostic_trace_is_passive_and_reconstructs_backups() {
                 eval_worlds: 3,
                 eval_cap: 4_000,
             },
+            urgency: None,
         };
         let mut trace = traced.then(diag::Trace::default);
         let (e, tree) = roles.select_e_traced(&ctx, trace.as_mut());

@@ -218,6 +218,60 @@ fn opponent_discards_exactly_one_then_life_draw_gain_continue_after_source_leave
             (20, 20)
         );
         assert_eq!(state.players[player.index()].library.len(), 40);
+        assert!(state.engine.pending_effect.is_some());
+        for kind in 0..7 {
+            let mut forged = restored(&state);
+            match kind {
+                0 => forged.engine.pending_discard.as_mut().unwrap().count = 2,
+                1 => forged
+                    .engine
+                    .pending_effect
+                    .as_mut()
+                    .unwrap()
+                    .frames
+                    .clear(),
+                2 => {
+                    let mtg_kernel::engine::DiscardResume::FinishEffectContinuation {
+                        path, ..
+                    } = &mut forged.engine.pending_discard.as_mut().unwrap().resume
+                    else {
+                        panic!("resumable discard absent")
+                    };
+                    *path = vec![1];
+                }
+                3 => {
+                    let mtg_kernel::engine::DiscardResume::FinishEffectContinuation {
+                        original_hand,
+                        ..
+                    } = &mut forged.engine.pending_discard.as_mut().unwrap().resume
+                    else {
+                        panic!("resumable discard absent")
+                    };
+                    original_hand[0].expected_zone_change_count += 1;
+                }
+                4 => forged.engine.pending_discard = None,
+                5 => {
+                    forged.engine.pending_discard.as_mut().unwrap().resume =
+                        mtg_kernel::engine::DiscardResume::None
+                }
+                6 => {
+                    forged.engine.pending_effect.as_mut().unwrap().choice =
+                        Some(mtg_kernel::effect::PendingEffectChoice::ChooseOption {
+                            player,
+                            path: vec![0],
+                            options: vec![],
+                            purpose: mtg_kernel::effect::EffectOptionChoicePurpose::Generic,
+                        })
+                }
+                _ => unreachable!(),
+            }
+            refuse(&mut forged, Action::Discard(vec![chosen]));
+            refuse(&mut forged, Action::Pass);
+            assert!(matches!(
+                engine::advance_until_decision(&mut forged),
+                Decision::Halted { .. }
+            ));
+        }
         refuse(&mut state, Action::Discard(vec![]));
         refuse(&mut state, Action::Discard(vec![chosen, retained]));
         event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Exile));
@@ -249,21 +303,28 @@ fn opponent_discards_exactly_one_then_life_draw_gain_continue_after_source_leave
 }
 
 #[test]
-fn empty_opponent_hand_does_not_skip_remaining_etb_operations() {
+fn empty_and_forced_single_card_hands_do_not_skip_remaining_etb_operations() {
     for player in [PlayerId::P0, PlayerId::P1] {
-        let mut state = ready(player);
-        enter(&mut state, player);
-        assert!(settle(&mut state).is_none());
-        assert!(state.players[player.opponent().index()].hand.is_empty());
-        assert_eq!(
-            (
-                state.players[player.index()].life,
-                state.players[player.opponent().index()].life
-            ),
-            (22, 18)
-        );
-        assert_eq!(state.players[player.index()].library.len(), 39);
-        assert_eq!(state.players[player.index()].hand.len(), 1);
+        for hand_count in 0..=1 {
+            let mut state = ready(player);
+            let discarded =
+                (hand_count == 1).then(|| put(&mut state, player.opponent(), "Forest", Zone::Hand));
+            enter(&mut state, player);
+            assert!(settle(&mut state).is_none());
+            assert!(state.players[player.opponent().index()].hand.is_empty());
+            assert_eq!(
+                (
+                    state.players[player.index()].life,
+                    state.players[player.opponent().index()].life
+                ),
+                (22, 18)
+            );
+            assert_eq!(state.players[player.index()].library.len(), 39);
+            assert_eq!(state.players[player.index()].hand.len(), 1);
+            if let Some(discarded) = discarded {
+                assert_eq!(state.objects.get(discarded).zone, Zone::Graveyard);
+            }
+        }
     }
 }
 

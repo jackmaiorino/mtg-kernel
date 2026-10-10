@@ -925,6 +925,13 @@ pub enum DiscardResume {
     /// discard is chosen; `apply_discard` then removes this exact stack
     /// item. Appended after every earlier variant.
     FinishAbilityResolution { stack_item_id: StackItemId },
+    /// A discard inside a resumable sequence. Its remaining instructions
+    /// wait on the exact hand answer while the resolving item stays public.
+    FinishEffectContinuation {
+        stack_item_id: StackItemId,
+        path: Vec<u16>,
+        original_hand: Vec<effect::EffectObjectBinding>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -7751,7 +7758,23 @@ pub(crate) fn validate_pending_discard_binding(
     state: &GameState,
     pending_discard: &PendingDiscard,
 ) -> Result<(), (ObjectId, String)> {
+    // A resumable discard cannot be relabelled as a legacy standalone stage.
+    // The common validator derives that boundary from the owning definition.
+    effect::validate_pending_effect_choice(state).map_err(|message| {
+        (
+            state.stack.last().map_or(ObjectId(0), |item| item.source),
+            message,
+        )
+    })?;
     match &pending_discard.resume {
+        DiscardResume::FinishEffectContinuation { .. } => {
+            effect::validate_resumable_discard(state, pending_discard).map_err(|message| {
+                (
+                    state.stack.last().map_or(ObjectId(0), |item| item.source),
+                    message,
+                )
+            })
+        }
         DiscardResume::FinishCast {
             source_contract,
             controller,
@@ -8001,6 +8024,20 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
         commit_discarded_card(state, id);
     }
     match pending_discard.resume {
+        DiscardResume::FinishEffectContinuation { .. } => {
+            // Validation before any card moved authenticated the saved discard
+            // leaf and every remaining frame. Remove only that paid leaf and
+            // resume inside the same uninterrupted resolution. No answered
+            // payment attestation is exposed in a later snapshot.
+            state
+                .engine
+                .pending_effect
+                .as_mut()
+                .expect("validated resumable discard retains its continuation")
+                .frames
+                .pop();
+            let _ = resume_owned_pending_effect(state);
+        }
         DiscardResume::None => collect_and_queue_triggers(state),
         DiscardResume::FinishAbilityResolution { stack_item_id } => {
             // The ability's resolution is over only now (608.2).
@@ -8214,6 +8251,19 @@ pub(crate) fn pending_effect_targets_decision_v2(
 /// resolution path's pop-before-effects invariant.
 fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
     state.engine.pending_effect.as_ref()?;
+    if state
+        .engine
+        .pending_discard
+        .as_ref()
+        .is_some_and(|discard| {
+            matches!(
+                discard.resume,
+                DiscardResume::FinishEffectContinuation { .. }
+            )
+        })
+    {
+        return drain_pending_discard_or_decide(state);
+    }
     if effect::validate_pending_effect_choice(state).is_err() {
         let source = state
             .engine
@@ -8261,6 +8311,12 @@ fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
         });
     }
 
+    resume_owned_pending_effect(state)
+}
+
+/// Execute a locally owned remainder after common-boundary validation or an
+/// authenticated discard, before another snapshot or action can intervene.
+fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
     let pending = state.engine.pending_effect.as_ref().unwrap();
     let item = pending.resolving_item.clone();
     match state.stack.pop() {
@@ -13748,6 +13804,9 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    // A restored continuation must be valid before any action can mutate
+    // state, including when its separately saved discard slot was removed.
+    effect::validate_pending_effect_choice(state)?;
     if crate::london_mulligan_v1::has_pending(state) {
         return crate::london_mulligan_v1::answer(state, action);
     }

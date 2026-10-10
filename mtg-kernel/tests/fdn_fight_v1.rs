@@ -194,7 +194,7 @@ fn indrik_targets_opposing_creature_then_optionally_fights_with_restored_choice(
             let target = put(
                 &mut state,
                 player.opponent(),
-                "Treetop Snarespinner",
+                "Faerie Miscreant",
                 Zone::Battlefield,
             );
             let own = put(&mut state, player, "Faerie Miscreant", Zone::Battlefield);
@@ -343,22 +343,19 @@ fn bushwhack_search_can_fail_or_reveal_a_basic_land_with_pending_restore() {
 fn bushwhack_fight_samples_current_powers_and_deals_reciprocal_damage() {
     for player in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(player);
-        let first = put(
-            &mut state,
-            player,
-            "Treetop Snarespinner",
-            Zone::Battlefield,
-        );
+        let first = put(&mut state, player, "Rune-Sealed Wall", Zone::Battlefield);
         let second = put(
             &mut state,
             player.opponent(),
-            "Treetop Snarespinner",
+            "Rune-Sealed Wall",
             Zone::Battlefield,
         );
+        state.objects.get_mut(first).counters.plus1_plus1 = 1;
+        state.objects.get_mut(second).counters.plus1_plus1 = 1;
         let source = cast_bushwhack(&mut state, player, 1);
         choose_pair(&mut state, first, second);
         // Power changes after casting and before resolution are sampled now.
-        state.objects.get_mut(first).counters.plus1_plus1 = 1;
+        state.objects.get_mut(first).counters.plus1_plus1 = 2;
         let mut replay = restored(&state);
         settle(&mut state);
         settle(&mut replay);
