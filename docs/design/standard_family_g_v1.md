@@ -11,7 +11,7 @@ Every definition appends to `data/standard/magezero_v1/cards_v1.json`. The
 behavior tables in `build.rs` (keywords, `trigger_recipe_for`,
 `standard_static_recipe_for`, activated recipes) name each card, so the Standard
 catalog identity covers them. The batch moves the Standard catalog to
-`kernel_carddb_standard/v3` (golden hash awaits hosted requalification after the capability and power corrections); Assassin and Mercenary join
+`kernel_carddb_standard/v3` (`0xc6139dbdd2f0db62`); Assassin and Mercenary join
 `Subtype::OUTLAW_TYPES` for Shoot the Sheriff. Pauper and FDN canon never include the Standard
 static field. New engine state and rules are cfg-gated to
 `standard-magezero-fixtures` wherever a default build would otherwise change. The
@@ -119,5 +119,5 @@ Rules sources: [Comprehensive Rules](https://media.wizards.com/2026/downloads/Ma
 definition's characteristics and trigger count. Behavior tests and life-payment
 regressions cover stale sources, declined choices, empty candidate sets, counters
 and LKI, uncounterable spells, priority-window casting with flash, and printed
-affordability when Bloodletter modifies a Phyrexian payment. Native qualification
-of the repaired catalog is pending hosted CI.
+affordability when Bloodletter modifies a Phyrexian payment. CI runs this suite
+and the catalog suite, including the fixed identity and Partial admission checks.
