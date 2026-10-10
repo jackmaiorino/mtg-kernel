@@ -20375,7 +20375,10 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "limited-fdn-fixtures")]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn koma_spell_protection_preserves_copies_but_not_abilities_or_ordinary_departure() {
         let mut state = empty_game();
         let physical = put_on_stack(&mut state, PlayerId::P0, "Koma, World-Eater");
