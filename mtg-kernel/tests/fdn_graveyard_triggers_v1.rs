@@ -307,7 +307,7 @@ fn pending_optional_choice_and_finished_prefix_restore_without_changing_legacy_b
 }
 
 #[test]
-fn trigger_finish_cannot_answer_another_pending_effect_selection() {
+fn finish_answers_active_effect_without_consuming_a_queued_trigger() {
     let mut state = ready();
     let lembas = put(&mut state, PlayerId::P0, "Lembas", Zone::Hand);
     state.players[0].mana_pool[5] = 2;
@@ -322,10 +322,19 @@ fn trigger_finish_cannot_answer_another_pending_effect_selection() {
         pass(&mut state, d);
     }
     assert!(saw_effect && state.engine.pending_effect.is_some());
-    // Fault injection: two otherwise real producers cannot share a finish answer.
+    // The active interpreter retains its finish answer while a trigger waits.
     enter(&mut state, "Ambush Wolf");
     state.engine.pending_triggers[0].placement_ordered = true;
-    refuse_unchanged(&mut state, Action::FinishEffectSelection);
+    let queued = state.engine.pending_triggers.clone();
+    engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+    assert_eq!(state.engine.pending_triggers, queued);
+    assert!(state
+        .engine
+        .pending_effect
+        .as_ref()
+        .unwrap()
+        .choice
+        .is_none());
 }
 
 #[test]

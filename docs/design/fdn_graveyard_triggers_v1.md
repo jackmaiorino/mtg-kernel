@@ -16,8 +16,9 @@ Append `PermanentCardInOwnGraveyard` (55) and reuse the already integrated
 `MoveAllTargets` hand/exile effects. Optional trigger completion uses the
 existing Standard optional-target placement and immediate stack admission.
 No pending-trigger field, hash change or serialization extension is needed.
-Finishing is permitted only for the exact ordered trigger's legal optional
-prefix with no competing choice producer. Required targeting, a second
+Trigger finishing uses the exact ordered trigger's legal optional prefix.
+An active interpreter's finish answer retains precedence over a waiting trigger.
+Required targeting, a second
 target after the maximum and repeated completion refuse before mutation.
 
 Gameplay regressions cover exact characteristics and mana payment, flash
@@ -36,3 +37,8 @@ Registration/Python admission are retained on the original batch
 branch and will be copied after v63 admission so reserved card IDs 334-335
 remain correct. This staging branch adds source and fixture tests only;
 metadata admission and native qualification remain pending.
+
+The staged source and integration tests compile under Rust 1.94.1 with the
+Limited feature at `275709b4`; this is a type check, not gameplay qualification.
+The active-effect precedence fixture was then aligned with the reused Standard
+behavior. Gameplay execution still awaits registration.
