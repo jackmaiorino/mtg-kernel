@@ -1,16 +1,26 @@
 # Prepared admission order after v64 and v65
 
-The retained source families below share one later catalog admission after
-v64 IDs334-335 and v65 IDs336-337 merge. These names are not registered in
-this source-preparation branch and do not increase accepted coverage.
+The retained source families below share one catalog admission after accepted
+v64 IDs334-335 and v65 IDs336-337. PR212 merged at
+32080f84878da6224ab5a04522a3086a5963a115, with the reviewed composition tree
+178cb6c3679909db6fc617b5c69a5550cd865728. All23 reviewed-head CI checks and
+all35 affected Python tests on that actual default commit pass. Accepted
+coverage is138 full, one partial and147 missing names.
+
+The31 names are now registered only in this development candidate, IDs338-368,
+after the deferred admission script verified PR212's merge and ancestry.
+All36 affected Python tests pass, including the new40-card reference fixture.
+Native card gameplay, generated v66 identity/profile migration, CI and actual
+default integration remain required; candidate169 does not increase accepted
+coverage. The separate future cost-framework branch is not part of this batch.
 Historical tentative v66-v81 labels in the individual design notes describe
 their original staging order, not separate live catalog profiles. Assign one
 successor identity from generated output at admission, qualify each fixture
 family, preserve all prior readable profiles and reject stale store writes.
 
 The exact printing and Oracle identifiers remain in the frozen booster
-manifest. The table below was checked against that manifest and the current
-registry. All31 names are in the target and absent from this registry.
+manifest. The table below was checked against that manifest and the predecessor
+registry. All31 names are in the target and absent from that predecessor.
 
 | Reserved ID | Name | Frozen printing |
 | --- | --- | --- |
