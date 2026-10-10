@@ -258,3 +258,22 @@ waiter handles reservation release, and the existing
 `finish-training-throughput-comparison` heartbeat checks completion every
 15 minutes. Queue time is separate from case timing and remains in the
 coordinator wall. No complete ABBA result or final speedup is claimed yet.
+
+At 14:26 UTC, a read-only diagnostic found a substantial late-copy cost in
+the first v4 baseline. Dispatch completed in 833.11 seconds; the subsequent
+late copy was still progressing more than 15 minutes after retention ended.
+Only 318 destination files (26.4 MB) were present from a maintenance tree
+containing 1,187 files (151.1 MB), plus the controller receipt. Two disk-wide
+samples measured E: average write latency of 196 and 256 ms. These are partial
+observations, preserved in `desktop/formal-v4-late-copy-observation.json`,
+not final case timings or process-specific I/O attribution.
+
+The coordinator copies the full retained tree, creating, flushing, syncing
+and verifying each file separately. Per-file storage latency is a likely
+contributor. A future optimization could package the identical late inventory
+in one uncompressed ZIP, sync it, then verify every destination member hash
+and the exact inventory. This would preserve the recovery contents while
+reducing individual sync operations; its speedup remains unmeasured. The
+current frozen run remains unchanged, and all its actual late-copy time will
+be included in the complete-case comparison alongside separate dispatch and
+maintenance timings.
