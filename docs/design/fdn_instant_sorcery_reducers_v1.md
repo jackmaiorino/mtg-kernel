@@ -233,9 +233,15 @@ compatible. Combined all-target lint on this repair is still pending.
 Remaining work: finish native qualification of runtime integration and quotes;
 actual Sprite/Archmage gameplay and restore tests; metadata/catalog admission;
 live profile qualification; CI and default-branch acceptance. Accepted booster
-coverage remains138. No new card gameplay or experimental result is claimed.
+coverage is169 after accepted PR213. No new card gameplay or experimental result is claimed.
 
 Native19 at2bf6a03e passed strict all-target combined-catalog lint in1m18s.
 Supported guardeaa94dbba304467eb8366c9621b4b9d5 ended0. The compatible
 Limited lint and340 runtime receipts above complete framework qualification;
 seven Sprite/Archmage games still require registration and execution.
+
+Accepted v66 was merged cleanly into this owned branch at3226e574. Candidate
+79995d87 admits Sprite369/Archmage370 and371 definitions; all37 affected Python
+cases pass. Native20 uses two guarded cores, incremental disabled, and runs
+the seven actual games before extracting the generated v67 hash. Live profile
+migration and acceptance remain pending; candidate171 is not accepted coverage.

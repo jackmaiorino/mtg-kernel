@@ -44,6 +44,23 @@ All23 final reviewed-head checks and35 affected Python cases on the actual
 default merge pass. Accepted coverage is138 full, one partial and147 missing
 names of286; live v65 identity is42bf6f9ca62d6615.
 
+Current accepted v66 integration: PR213 merged atb3bd1c1c0d7b5b6766359a3901549de768bcc175.
+All23 final CI checks passed; the actual default tree matches the reviewed
+composition and all36 affected Python cases pass there. The31-card batch has
+113 passing focused native games across25 targets. Accepted coverage is169
+full, one partial and116 missing of286 names; live identitye8e2bba9d9071e80.
+See PR213 default receipt6103422141. Issue110 remains open for full pool,
+reference comparisons and broader fair Limited/DraftZero requirements.
+
+The next candidate admits Mocking Sprite369/Archmage of Runes370 into371
+card definitions after accepted v66. All37 affected Python cases pass.
+Native20 runs seven actual games and extracts the observed v67 identity;
+profile qualification, review, CI and default acceptance remain required.
+Brine's four fixture groups compiled but are unexecuted and unregistered.
+Ferocious source for Ruby/Courageous has six unregistered gameplay groups,
+with Native15 primitive/registered regressions and fixture compilation pending.
+The following preparation order and receipts are retained history.
+
 Later prepared families remain retained in their original worktrees: v65
 Anthem of Champions/Empyrean Eagle (336-337), then one coherent admission
 for prepared IDs338-368, beginning with Balmor/Firespitter Whelp. The later
