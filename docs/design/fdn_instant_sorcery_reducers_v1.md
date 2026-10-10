@@ -64,6 +64,27 @@ Two focused regressions cover invalid sacrifice choices and tap/mana source
 sharing. Exact read-only review found no defects. Native execution is pending;
 this is not yet complete nonmana preflight or casting-route integration.
 
+Repair 892e828f preserves the explicit Alternative-cast requirement that at
+least one creature convokes. Colored payment backtracks when floating mana
+would leave no convoker; generic payment tries each available convoker on
+isolated state, preserving another creature's multi-yield mana when needed.
+Two new regressions cover these cases. Exact read-only review found the named
+defect resolved. The future shared planner may change the legacy helper's
+deterministic maximum-creature tap selection; integration must account for it.
+
+At 20:39 UTC Haley's core-slot and whole-host status both showed free. Source
+892e828fc8e438c0298a8f1e8eca6c3ae3590e53 was transferred in a SHA256-checked
+bundle (6cc834a30225f2bfbdb3681da14cb4cf7fa6ca4e4a1a7c817e1565c3bd9d5341)
+to a new owned checkout, C:/mtg-node/codex-fdn-spell-costs-20261010.
+Supported guard cb559b02c0d440fa9c4393847d110c82, supervisor156816,
+admitted cores14-15 at BelowNormal priority. The actual command log confirms
+Rust1.94.1/MSVC19.50.35725 and compilation started. This small correctness
+sequence checks both feature configurations, mana/collector tests, rules
+vectors, frozen v65 and the prior graveyard/static-team games. It is pending;
+no newer source tests or card games are claimed as passed. Jack's older
+Native27 queue and observer remain intact. The later local Native28 command
+has not been submitted.
+
 Remaining work: offer/pending/X/final-payment integration;
 atomic nonmana payment; actual card gameplay and restore tests; metadata and
 catalog admission; live profile qualification; CI and default-branch acceptance.
