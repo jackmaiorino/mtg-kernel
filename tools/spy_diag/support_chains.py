@@ -153,12 +153,31 @@ def eval_prefix(worlds, nid=None):
     return out
 
 
+def reconcile_all(nodes, sims):
+    """Per-edge natural returns rebuilt from ordered simulation paths equal
+    the saved n and w at every node, and visits equal the sum of n."""
+    n = defaultdict(lambda: Counter())
+    w = defaultdict(lambda: Counter())
+    for s in sims:
+        if s.get("end") not in ("win", "loss"):
+            continue
+        for p in s.get("path", []):
+            n[p[0]][p[1]] += 1
+            w[p[0]][p[1]] += s["end"] == "win"
+    for nid, node in nodes.items():
+        if [n[nid][e] for e in range(len(node["n"]))] != node["n"]:
+            return False
+        if [w[nid][e] for e in range(len(node["w"]))] != node["w"] or sum(node["n"]) != node["visits"]:
+            return False
+    return True
+
+
 def main():
     tdir, outp = Path(sys.argv[1]), sys.argv[2]
     result = {}
     for rid, nid, role in CASES:
         nodes, sims, worlds = load(tdir / f"{rid}.trace.jsonl")
-        r = {"role": role}
+        r = {"role": role, "all_nodes_reconciled": reconcile_all(nodes, sims)}
         if nid is None:
             r["eval_prefix"] = eval_prefix(worlds)
             miss = Counter()
