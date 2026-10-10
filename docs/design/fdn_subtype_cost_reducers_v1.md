@@ -37,3 +37,12 @@ registry when both flags are enabled. Their guards now follow that actual
 catalog precedence; Limited-only retains both cases. The failed local-9 log
 is preserved. Both rules-vector configurations and remaining type checks are
 retried; full native and unregistered card qualification remain pending.
+
+Native preparation2e4ac80c completed under supported two-core guard
+ a50938b39b9d4833b3512a5cda70cfa0 with exit zero. Limited-only rules-vector
+checks passed23 with one existing ignore; combined Standard/Limited passed21
+with one existing ignore. Test compilation passed in both configurations.
+The earlier local-9 failure is retained. Together with its two subtype-cost
+and four Affinity passes, this qualifies the prepared runtime primitives and
+fixture compilation. The four unregistered card cases await later admission.
+The subsequent a180798c change removes only an unused fixture import.
