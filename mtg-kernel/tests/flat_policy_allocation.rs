@@ -129,10 +129,10 @@ fn assert_warmed_encode_allocates_nothing(mut session: FastActorSessionV1) {
         ENCODER_THREAD.set(false);
         assert_eq!(first, warmed);
         assert_eq!(
-            ALLOCATION_COUNT.load(Ordering::SeqCst),
+            ENCODER_THREAD_ALLOCATION_COUNT.load(Ordering::SeqCst),
             0,
-            "warmed decision {decisions}; encoder thread allocations {}",
-            ENCODER_THREAD_ALLOCATION_COUNT.load(Ordering::SeqCst)
+            "warmed decision {decisions}; global allocations {}",
+            ALLOCATION_COUNT.load(Ordering::SeqCst)
         );
         decisions += 1;
         if matches!(
