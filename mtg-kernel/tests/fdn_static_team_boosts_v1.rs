@@ -402,6 +402,7 @@ fn static_team_real_costs_and_pending_cast_restore_match() {
             if castable_spells.contains(&spell))
         );
         engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
         assert_eq!(state.players[0].mana_pool, [0; 6]);
         assert_eq!(stats(&state, hawk), (1, 1));
         let saved = state.snapshot();

@@ -90,3 +90,11 @@ both names were checked. FdnStaticTeamBoosts uses this observed live identity,
 retains v64 readability and adds rejection before stale resume/publication
 mutations. Metadata/deck and planned profile migration review found no
 actionable defects. Focused native gameplay and hosted qualification are next.
+
+The first focused run at50581f12 passed all22 predecessor gameplay cases
+and eight of nine static-team cases. The payment/restore fixture asserted
+mana consumption immediately after beginning a cast, before advancing its
+pending casting continuation. It now advances to priority before checking
+payment and taking both snapshots. No engine/catalog/profile identity changes.
+Failed local-22, guardb563c1890d8a4791858ff6f0b176fed7 and exit101 remain
+retained. Qualification is retried on the corrected fixture head.
