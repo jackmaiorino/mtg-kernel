@@ -457,6 +457,9 @@ pub(super) fn label(
                         // any color"); `extra_cost` below supplies the "pay"
                         // phrase, so this base clause stays empty.
                         ManaAbilityCostDef::None => String::new(),
+                        ManaAbilityCostDef::TapSelfPayLife(life) => {
+                            format!("Tap {source_name} and pay {life} life")
+                        }
                     };
                     if !matches!(
                         ability.cost,

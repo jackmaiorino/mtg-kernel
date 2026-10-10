@@ -311,7 +311,7 @@ jobs:
         if: matrix.group == 'limited'
         run: |
           python python/tools/run_rust_lib_filters.py --features standard-magezero-fixtures card_def:: event::tests::heartfire_death_respects_the_pre_zone_change_ability_snapshot
-          cargo test --release --locked --no-fail-fast -p mtg-kernel --features standard-magezero-fixtures --test standard_magezero_catalog_v1 --test standard_family_g_v1 --test standard_family_d_v1
+          cargo test --release --locked --no-fail-fast -p mtg-kernel --features standard-magezero-fixtures --test standard_magezero_catalog_v1 --test standard_family_g_v1 --test standard_family_d_v1 --test standard_lands_v1
 
       - name: Run Rust release tests
         if: matrix.group == 'workspace'
