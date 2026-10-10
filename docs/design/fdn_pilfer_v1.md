@@ -30,3 +30,8 @@ the existing engine discard commit, preserving ordinary Madness trigger
 placement and the old continuation wire. The repaired reveal case compares
 exact hand rows, including identities/incarnations, in the caster's opponent
 knowledge and the opponent's own hand. Native execution remains pending.
+
+Repair review of `355256638c0f529aaa94e95a872249416a7282db` confirmed both
+findings resolved, existing discard order and delayed Madness trigger
+placement preserved, and no remaining actionable findings. Diff check
+passed; the reviewer did not execute tests.
