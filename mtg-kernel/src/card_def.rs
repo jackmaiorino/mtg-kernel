@@ -2040,11 +2040,11 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 329 (activated combat abilities).
+        // batches append through id 331 (surveil creatures).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                330
+                332
             } else {
                 192
             }
@@ -2150,8 +2150,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v61_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x949b_eb8c_995c_006c;
+    fn card_db_hash_v62_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x1742_7afa_c1e9_5f8e;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

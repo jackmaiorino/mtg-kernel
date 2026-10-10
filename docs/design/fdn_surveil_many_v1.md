@@ -9,8 +9,9 @@ removal suppresses its printed static ability and Duo's printed triggers.
 
 Primary reference: pinned XMage card sources `LightshellDuo.java` and
 `CephalidInkmage.java`, plus `SurveilEffect.java`. This batch reserves IDs
-330-331 after the v61 mana/combat batch. Its catalog identity is pending
-the preceding batch's integration and generated v62 hash.
+330-331 after the v61 mana/combat batch. Catalog v62 has generated hash `17427afac1e95f8e`. Its independent
+`FdnSurveil` store profile keeps the earlier v61 identity readable while
+publication and resume require the current live catalog.
 
 The new continuation binds the complete library and definition-owned
 standalone Surveil root. It privately looks at the top N cards once,
@@ -34,5 +35,7 @@ order, surveil two, empty/short libraries, private projection invariance,
 restore at both pending and answered boundaries, source/count/program and
 library tampering, unlooked-card rejection, departed source resolution,
 threshold changes and ability removal, actual prowess, and count-one
-compatibility. Source formatting and diff checks pass. Native and hosted
-execution remain pending; no gameplay acceptance or hash is claimed yet.
+compatibility. Registration adds an attributed synthetic 40-card fixture and
+Python deck admission. Native correctness verification and complete hosted
+qualification are tracked in PR delivery; prepared tests alone are not
+accepted gameplay evidence.

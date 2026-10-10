@@ -360,6 +360,11 @@ const FROZEN_CARD_DB_HASH_U64_HEX_FDN_ACTIVATED_COMBAT_V1: &str = "949beb8c995c0
 const FROZEN_RUNTIME_CATALOG_SHA256_FDN_ACTIVATED_COMBAT_V1: &str =
     "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
+// v62 adds the complete private surveil creatures.
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_SURVEIL_V1: &str = "17427afac1e95f8e";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_SURVEIL_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
 const FROZEN_PROTOCOL_V2: &str = "kernel_rl_jsonl";
 const FROZEN_PROTOCOL_VERSION_V2: u32 = 5;
 const FROZEN_SCHEMA_VERSION_V2: u32 = 5;
@@ -2076,6 +2081,7 @@ pub(crate) enum NativeRunCatalogProfileV1 {
     FdnLibrarySearch,
     FdnSimpleTriggers,
     FdnActivatedCombat,
+    FdnSurveil,
 }
 
 impl ValidatedTrainRunV2 {
@@ -2700,6 +2706,11 @@ fn classify_catalog_profile_from_identity_v1(
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_ACTIVATED_COMBAT_V1,
             FROZEN_RUNTIME_CATALOG_SHA256_FDN_ACTIVATED_COMBAT_V1,
             NativeRunCatalogProfileV1::FdnActivatedCombat,
+        ),
+        (
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_SURVEIL_V1,
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_SURVEIL_V1,
+            NativeRunCatalogProfileV1::FdnSurveil,
         ),
         (
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_CELESTIAL_ARMOR_V1,
@@ -5494,6 +5505,12 @@ pub(crate) fn test_fixture_bytes_fdn_library_search_v1() -> Vec<u8> {
 pub(crate) fn test_fixture_bytes_fdn_simple_triggers_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_simple_triggers()
 }
+
+#[cfg(all(test, feature = "limited-fdn-fixtures"))]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn test_fixture_bytes_fdn_activated_combat_v1() -> Vec<u8> {
+    tests::fixture_bytes_fdn_activated_combat()
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5592,12 +5609,12 @@ mod tests {
                 cross_language_golden_stream_sha256: ZERO_SHA256.to_owned(),
             },
             environment: TrainRunEnvironmentV2 {
-                card_db_hash_u64_hex: "0000000000000000".to_owned(),
+                card_db_hash_u64_hex: "17427afac1e95f8e".to_owned(),
                 runtime_catalog_schema: String::new(),
                 runtime_catalog_protocol: String::new(),
                 runtime_catalog_sha256: ZERO_SHA256.to_owned(),
                 deck_ids: [String::new(), String::new()],
-                deck_hashes_u64_hex: ["0000000000000000".to_owned(), "0000000000000000".to_owned()],
+                deck_hashes_u64_hex: ["17427afac1e95f8e".to_owned(), "17427afac1e95f8e".to_owned()],
                 protocol: String::new(),
                 protocol_version: 0,
                 schema_version: 0,
@@ -6203,6 +6220,17 @@ mod tests {
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_SIMPLE_TRIGGERS_V1.to_owned();
         record.environment.runtime_catalog_sha256 =
             FROZEN_RUNTIME_CATALOG_SHA256_FDN_SIMPLE_TRIGGERS_V1.to_owned();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(super) fn fixture_bytes_fdn_activated_combat() -> Vec<u8> {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_ACTIVATED_COMBAT_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_ACTIVATED_COMBAT_V1.to_owned();
         refresh_derived(&mut record);
         to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
     }
@@ -7562,14 +7590,14 @@ mod tests {
         assert_eq!(
             format!("{KERNEL_CARDDB_HASH:016x}"),
             if cfg!(feature = "limited-fdn-fixtures") {
-                FROZEN_CARD_DB_HASH_U64_HEX_FDN_ACTIVATED_COMBAT_V1
+                FROZEN_CARD_DB_HASH_U64_HEX_FDN_SURVEIL_V1
             } else {
                 FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1
             }
         );
         assert_eq!(
             RUNTIME_DECK_CATALOG_FILE_SHA256,
-            FROZEN_RUNTIME_CATALOG_SHA256_FDN_ACTIVATED_COMBAT_V1
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_SURVEIL_V1
         );
     }
 
@@ -7872,6 +7900,11 @@ mod tests {
                 FROZEN_RUNTIME_CATALOG_SHA256_FDN_SIMPLE_TRIGGERS_V1,
                 NativeRunCatalogProfileV1::FdnSimpleTriggers,
             ),
+            (
+                FROZEN_CARD_DB_HASH_U64_HEX_FDN_ACTIVATED_COMBAT_V1,
+                FROZEN_RUNTIME_CATALOG_SHA256_FDN_ACTIVATED_COMBAT_V1,
+                NativeRunCatalogProfileV1::FdnActivatedCombat,
+            ),
         ] {
             let mut record = fixture_record();
             record.environment.card_db_hash_u64_hex = card_db.to_owned();
@@ -7890,22 +7923,22 @@ mod tests {
 
     #[test]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn fdn_activated_combat_fixture_decodes_with_its_own_profile_and_live_identity() {
+    fn fdn_surveil_fixture_decodes_with_its_own_profile_and_live_identity() {
         let validated = decode_train_run_v2(&fixture_bytes()).unwrap();
         assert_eq!(
             validated.catalog_profile_v1(),
-            NativeRunCatalogProfileV1::FdnActivatedCombat
+            NativeRunCatalogProfileV1::FdnSurveil
         );
         assert!(current_profile_matches_live_build_identity_v1(
             validated.record().environment()
         ));
         assert_ne!(
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_ACTIVATED_COMBAT_V1,
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_SURVEIL_V1,
             FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
         );
         assert_eq!(
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_ACTIVATED_COMBAT_V1,
-            "949beb8c995c006c"
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_SURVEIL_V1,
+            "17427afac1e95f8e"
         );
     }
 
@@ -8215,7 +8248,7 @@ mod tests {
         assert_eq!(
             validated.catalog_profile_v1(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnActivatedCombat
+                NativeRunCatalogProfileV1::FdnSurveil
             } else {
                 NativeRunCatalogProfileV1::PauperMetaW1
             }
