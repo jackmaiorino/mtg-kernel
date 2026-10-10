@@ -66,9 +66,8 @@ Limited search/DraftZero acceptance remain unchanged.
 The source port incorporates v65 candidatef2cf66f1 from draft PR212,
 preserving its accepted v64 predecessor, live v65 profile, feature-off static
 getter, rules-vector extraction and repaired gameplay fixtures. This brings
-only the two already admitted candidate names into this source branch;
-all31 names in the table remain absent. Source qualification is next and
-their metadata admission still waits for v65 acceptance.
+only the two then-admitted candidate names into the source-preparation branch;
+all31 names in the table remained absent until candidate662b8343 above.
 
 Read-only port review found a duplicate imported Regrower/Wolf definition
 block and the predecessor definition-count pin. The redundant identical
@@ -86,11 +85,24 @@ All31 prospective metadata rows were checked against the pinned Mage primary
 constructors at a5c90fe180021e70e2a644ade00eeab07f857a40 and frozen printing
 IDs. Existing prepared registry rows agree on cost, mana value, colors, types,
 subtypes, supertypes and P/T. The prospective file and deferred admission
-script are retained outside the repository. The script refuses until PR212
-is merged and its actual merge is an ancestor of this branch. It has not run.
+script are retained outside the repository. The script refused until PR212
+merged and its actual merge was an ancestor of this branch. It ran once for
+candidate662b8343 after that gate cleared; all36 affected Python cases pass.
 
 Read-only review of both deferred admission/profile scripts at sourcea70d648f
 found no actionable defects. They preserve historical v65 readability and add
 stale v65 resume/publication refusals. Profile invocation requires the observed
-generated v66 identity; the31-name metadata admission remains gated on PR212
-acceptance.
+generated v66 identity. The31-name metadata admission's PR212 gate is now
+satisfied; native card and profile qualification remain pending.
+
+Candidate662b834325df7004c77fcd3e03c7503d2ac28fc1 was transferred in a
+SHA256-verified bundle5473cb58dd41224e9e861d2f2d30ac148ccb5f31dec52e8eb2a0dd386319af0c
+to the new owned Haley checkout C:/mtg-node/codex-fdn-prepared-admit-v66-20261010.
+Supported guard743bf99568f246e3b0a1da3057103dcb, supervisor150568, admitted
+cores12-13 at BelowNormal and compilation actually started at approximately
+20:49 UTC. Rust1.94.1/MSVC19.50.35725 match the pinned tools. It uses a separate
+retained target from the future-cost check running on cores14-15. This small
+correctness sequence generates the candidate identity, checks both feature
+configurations, then executes all25 new card-fixture targets. Observer20100
+is retained. No new card result, live v66 profile or increased accepted
+coverage is claimed while it runs.
