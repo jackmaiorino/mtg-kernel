@@ -12,9 +12,9 @@ pool, 52 nonbasic cards are Full, 19 are Partial and 154 are missing. No
 complete MageZero deck resolves yet. Partial cards are refused by full-deck
 admission; their current behavior remains available for development.
 
-The fixed v4 identity assertion awaits the value observed in hosted native
-CI after these capability corrections. The original head's
-`0x58c7c4e68b6ef277` identifies the original definitions, not this repair.
+The fixed v4 identity is `0xd62111f185e47a13`, after these capability
+corrections. The original head's `0x58c7c4e68b6ef277` identified the
+definitions before them.
 
 ## Cards
 

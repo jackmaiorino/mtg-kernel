@@ -236,7 +236,7 @@ fn standard_registry_appends_to_the_pauper_prefix_without_fdn() {
 
 #[test]
 fn standard_catalog_identity_is_frozen() {
-    const EXPECTED_STANDARD_V4: u64 = 0x58c7_c4e6_8b6e_f277;
+    const EXPECTED_STANDARD_V4: u64 = 0xd621_11f1_85e4_7a13;
     assert_eq!(
         KERNEL_CARDDB_HASH, EXPECTED_STANDARD_V4,
         "Standard catalog hash {KERNEL_CARDDB_HASH:#018x}"
