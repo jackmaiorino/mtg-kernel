@@ -443,12 +443,12 @@ mod tests {
         let source = state.draw_card(PlayerId::P0).unwrap();
         assert!(state.move_hand_to_battlefield(PlayerId::P0, source));
         let components = [
-            CostComponent::Tap,
             CostComponent::Mana(Cost {
                 pips: &[mana::Pip::Colored(mana::ManaColor::G)],
                 generic: 0,
                 x_count: 0,
             }),
+            CostComponent::Tap,
         ];
         let reserved = super::super::validate_cost_component_choices_v1(
             &state,
