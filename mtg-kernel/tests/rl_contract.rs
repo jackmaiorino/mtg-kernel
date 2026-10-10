@@ -1040,6 +1040,7 @@ fn rl_contract_registry_metadata_is_materialized_in_public_v4_objects() {
         minus0_minus1: 1,
         stun: 4,
         lore: 5,
+        ..Default::default()
     };
 
     let def = &CARD_DEFS[state.objects.get(emissary).card_def as usize];

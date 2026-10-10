@@ -15,6 +15,10 @@ fn i16_is_zero(value: &i16) -> bool {
     *value == 0
 }
 
+fn u8_is_zero(value: &u8) -> bool {
+    *value == 0
+}
+
 fn bool_is_false(value: &bool) -> bool {
     !*value
 }
@@ -54,6 +58,26 @@ pub struct Counters {
     pub minus0_minus1: i16,
     pub stun: i16,
     pub lore: i16,
+    /// Oil counters (Evolving Adaptive). Omitted from serialization and the
+    /// state hash while zero, so every earlier snapshot and hash is unchanged.
+    #[serde(default, skip_serializing_if = "is_zero_i16")]
+    pub oil: i16,
+}
+
+fn is_zero_i16(value: &i16) -> bool {
+    *value == 0
+}
+
+impl Counters {
+    /// Whether any counter of any kind is present.
+    pub fn any(&self) -> bool {
+        self.plus1_plus1 != 0
+            || self.minus1_minus1 != 0
+            || self.minus0_minus1 != 0
+            || self.stun != 0
+            || self.lore != 0
+            || self.oil != 0
+    }
 }
 
 pub(crate) fn hash_plus_one_counters<H: std::hash::Hasher>(count: i32, state: &mut H) {
@@ -73,6 +97,10 @@ impl std::hash::Hash for Counters {
         self.minus0_minus1.hash(state);
         self.stun.hash(state);
         self.lore.hash(state);
+        if self.oil != 0 {
+            b"oil_counters_v1".hash(state);
+            self.oil.hash(state);
+        }
     }
 }
 
@@ -186,6 +214,32 @@ pub struct ObjectStateV4 {
     /// this set.
     #[serde(default, skip_serializing_if = "bool_is_false")]
     pub on_adventure: bool,
+    /// True iff this battlefield incarnation resolved from a spell cast for
+    /// its warp cost (`card_def::AltCostCondition::WarpFromHand`). Read by
+    /// its own end-step exile trigger and by "if that creature was cast for
+    /// its warp cost" (Full Bore). Every zone change clears it.
+    #[serde(default, skip_serializing_if = "bool_is_false")]
+    pub warped_v1: bool,
+    /// How many creatures convoked this spell (on the stack) or the spell
+    /// this permanent resolved from (on the battlefield). Every zone change
+    /// clears it; resolution carries it onto the permanent.
+    #[serde(default, skip_serializing_if = "u8_is_zero")]
+    pub convoked_creatures_v1: u8,
+    /// True iff this battlefield incarnation was returned by unearth. It is
+    /// exiled at the beginning of the next end step, and exiled instead if
+    /// it would leave the battlefield any other way. Every zone change
+    /// clears it.
+    #[serde(default, skip_serializing_if = "bool_is_false")]
+    pub unearthed_v1: bool,
+    /// Impending's time counters. While any remain the permanent isn't a
+    /// creature; its controller removes one at the beginning of each of
+    /// their end steps. Every zone change clears them.
+    #[serde(default, skip_serializing_if = "u8_is_zero")]
+    pub time_counters_v1: u8,
+    /// An Enduring card returned by its own dies trigger: "It's an
+    /// enchantment" (not a creature). Every zone change clears it.
+    #[serde(default, skip_serializing_if = "bool_is_false")]
+    pub enduring_enchantment_v1: bool,
 }
 
 impl Hash for ObjectStateV4 {
@@ -216,6 +270,23 @@ impl Hash for ObjectStateV4 {
         if let Some(timestamp) = self.lifelink_counter_timestamp {
             "lifelink_counter_timestamp/v1".hash(state);
             timestamp.hash(state);
+        }
+        if self.warped_v1 {
+            "warped/v1".hash(state);
+        }
+        if self.convoked_creatures_v1 != 0 {
+            "convoked-creatures/v1".hash(state);
+            self.convoked_creatures_v1.hash(state);
+        }
+        if self.unearthed_v1 {
+            "unearthed/v1".hash(state);
+        }
+        if self.time_counters_v1 != 0 {
+            "time-counters/v1".hash(state);
+            self.time_counters_v1.hash(state);
+        }
+        if self.enduring_enchantment_v1 {
+            "enduring-enchantment/v1".hash(state);
         }
     }
 }
@@ -253,7 +324,13 @@ impl ObjectStateV4 {
             exiled_by: None,
             ward_generic: match def.ward_cost {
                 Some(crate::card_def::WardCostDef::Generic(amount)) => u16::from(amount),
-                None => 0,
+                // Observations carry only generic Ward amounts.
+                Some(
+                    crate::card_def::WardCostDef::CollectEvidence(_)
+                    | crate::card_def::WardCostDef::BackFacePayLife(_)
+                    | crate::card_def::WardCostDef::DiscardCard,
+                )
+                | None => 0,
             },
             minimum_blockers_override: None,
             landwalk_mask: 0,
@@ -262,6 +339,11 @@ impl ObjectStateV4 {
             layer_timestamp: None,
             lifelink_counter_timestamp: None,
             on_adventure: false,
+            warped_v1: false,
+            convoked_creatures_v1: 0,
+            unearthed_v1: false,
+            time_counters_v1: 0,
+            enduring_enchantment_v1: false,
         }
     }
 
@@ -908,7 +990,12 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::CreatureOrPlaneswalker
                 | TargetSpec::ArtifactEnchantmentOrFlyingCreature
                 | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour
-                | TargetSpec::OpponentNonlandPermanent,
+                | TargetSpec::OpponentNonlandPermanent
+                | TargetSpec::NonOutlawCreature
+                | TargetSpec::CreatureToughnessAtLeastFour
+                | TargetSpec::CreatureEnchantmentOrPlaneswalker
+                | TargetSpec::AnotherControlledCreature
+                | TargetSpec::ControlledCreatureWithSubtype(_),
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Battlefield,
@@ -927,7 +1014,8 @@ pub fn stack_target_contract_is_structurally_valid(
         ) | (
             TargetSpec::CreatureOrLandCardInGraveyard
                 | TargetSpec::CreatureCardInOwnGraveyard
-                | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_),
+                | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_)
+                | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_),
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Graveyard,
@@ -948,6 +1036,13 @@ pub fn stack_target_contract_is_structurally_valid(
                 ..
             },
         ) | (
+            TargetSpec::UpToOneCardInGraveyards,
+            0,
+            StackTargetContractV4::Object {
+                zone: Zone::Graveyard,
+                ..
+            },
+        ) | (
             TargetSpec::AnySpellOnStack
                 | TargetSpec::InstantSpellOnStack
                 | TargetSpec::BlueSpellOnStack
@@ -957,7 +1052,8 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::NoncreatureSpellOnStack
                 | TargetSpec::CreatureSpellOnStack
                 | TargetSpec::ArtifactSpellOnStack
-                | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. },
+                | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. }
+                | TargetSpec::SpellYouDontControl,
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Stack,
@@ -1057,6 +1153,33 @@ pub struct StackStateV4 {
     /// physical payments through `paid_cost_refs`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub optional_additional_cost_paid: Option<crate::card_def::OptionalAdditionalCostDef>,
+    /// Mana spent to cast this spell (CR 601.2h), recorded only for a
+    /// definition with `CardDef::records_mana_spent` (Memory Deluge's "X is
+    /// the amount of mana spent to cast this spell"). Zero, and absent from
+    /// serialized state, for every other stack item.
+    #[serde(default, skip_serializing_if = "ManaSpentV1::is_zero")]
+    pub mana_spent: ManaSpentV1,
+}
+
+/// Mana spent to cast a spell. Zero contributes nothing to the in-process
+/// `Hash`, so stack items that never record it keep their prior
+/// `GameState::state_hash`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ManaSpentV1(pub u16);
+
+impl ManaSpentV1 {
+    pub fn is_zero(&self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl Hash for ManaSpentV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if self.0 != 0 {
+            self.0.hash(state);
+        }
+    }
 }
 
 impl StackStateV4 {
@@ -1311,6 +1434,38 @@ pub struct CreatureDeathTurnV1 {
     pub active_player: PlayerId,
 }
 
+/// Each player's speed (Aetherdrift's Start your engines!), indexed by seat.
+/// Zero means the player has no speed. `last_increase` stamps the turn in
+/// which the active player's once-per-turn speed increase last happened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpeedV1 {
+    pub speeds: [u8; 2],
+    pub last_increase: Option<CreatureDeathTurnV1>,
+}
+
+impl SpeedV1 {
+    /// 702.179 (Max speed): a player's speed can't exceed four.
+    pub const MAX: u8 = 4;
+}
+
+/// 700.14: which players descended (had a permanent card put into their
+/// graveyard from anywhere) during `turn`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DescendedTurnV1 {
+    pub turn: CreatureDeathTurnV1,
+    pub players: [bool; 2],
+}
+
+/// 726: the game's day/night designation once a daybound or nightbound
+/// permanent has appeared (absent before then).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DayNightV1 {
+    Day,
+    Night,
+}
+
 /// `Hash` is manual (see the `impl Hash for GameState` block below this
 /// struct): it must reproduce the exact pre-existing field-hash sequence for
 /// a legacy P0-first state, the same discipline `starting_player`'s serde
@@ -1386,6 +1541,69 @@ pub struct GameState {
     /// Opt-in pregame state. Absent in every historical reset mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub london_mulligans_v1: Option<crate::london_mulligan_v1::LondonMulligansV1>,
+    /// Last-known counters of permanents whose leave-the-battlefield
+    /// abilities read them (Quirion Beastcaller, Unstoppable Slasher). Only
+    /// `standard-magezero-fixtures` builds record entries, so it stays absent
+    /// everywhere else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counter_lki_v1: Option<Vec<CounterLkiV1>>,
+    /// Players who lost life this turn. Only `standard-magezero-fixtures`
+    /// builds record it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub life_loss_turn_v1: Option<LifeLossTurnV1>,
+    /// Creatures that can't attack or block while a source stays under
+    /// someone's control. Only `standard-magezero-fixtures` builds record it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attack_block_restrictions_v1: Option<Vec<AttackBlockRestrictionV1>>,
+    /// Absent until some player first gets speed, so every earlier state
+    /// keeps its bytes and hashes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed_v1: Option<SpeedV1>,
+    /// Absent until a daybound permanent first appears.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub day_night_v1: Option<DayNightV1>,
+    /// Absent until some player first descends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub descended_v1: Option<DescendedTurnV1>,
+}
+
+/// Which players lost life during one turn (Hired Claw: "only if an
+/// opponent has lost life this turn"). Stale once the turn moves on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LifeLossTurnV1 {
+    pub turn: u32,
+    pub active_player: PlayerId,
+    pub players: [bool; 2],
+}
+
+/// "That creature can't attack or block for as long as you control
+/// [source]" (Extraction Specialist). Active while both exact incarnations
+/// are on the battlefield and `controller` still controls the source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttackBlockRestrictionV1 {
+    pub creature: ObjectLinkV4,
+    pub source: ObjectLinkV4,
+    pub controller: PlayerId,
+}
+
+/// The counters one exact battlefield incarnation had as it left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CounterLkiV1 {
+    pub source: ObjectLinkV4,
+    pub counters: Counters,
+}
+
+impl GameState {
+    /// Counters `object`'s battlefield incarnation `zone_change_count` had
+    /// when it left, or `None` if it had none (or was never recorded).
+    pub fn counter_lki_for(&self, object: ObjectId, zone_change_count: u32) -> Option<Counters> {
+        self.counter_lki_v1.as_ref()?.iter().find_map(|entry| {
+            (entry.source.object == object && entry.source.zone_change_count == zone_change_count)
+                .then_some(entry.counters)
+        })
+    }
 }
 
 /// Reproduces exactly the field-hash sequence `#[derive(Hash)]` produced
@@ -1437,6 +1655,30 @@ impl Hash for GameState {
         if let Some(pregame) = &self.london_mulligans_v1 {
             "london-mulligans-v1".hash(state);
             pregame.hash(state);
+        }
+        if let Some(lki) = &self.counter_lki_v1 {
+            "counter-lki-v1".hash(state);
+            lki.hash(state);
+        }
+        if let Some(loss) = &self.life_loss_turn_v1 {
+            "life-loss-turn-v1".hash(state);
+            loss.hash(state);
+        }
+        if let Some(restrictions) = &self.attack_block_restrictions_v1 {
+            "attack-block-restrictions-v1".hash(state);
+            restrictions.hash(state);
+        }
+        if let Some(speed) = &self.speed_v1 {
+            "speed-v1".hash(state);
+            speed.hash(state);
+        }
+        if let Some(day_night) = &self.day_night_v1 {
+            "day-night-v1".hash(state);
+            day_night.hash(state);
+        }
+        if let Some(descended) = &self.descended_v1 {
+            "descended-v1".hash(state);
+            descended.hash(state);
         }
     }
 }
@@ -1490,6 +1732,32 @@ impl PaidCostRefV4 {
 }
 
 impl GameState {
+    pub fn player_lost_life_this_turn_v1(&self, player: PlayerId) -> bool {
+        self.life_loss_turn_v1.is_some_and(|loss| {
+            loss.turn == self.turn
+                && loss.active_player == self.active_player
+                && loss.players[player.index()]
+        })
+    }
+
+    /// Records that `player` lost life now.
+    #[cfg(feature = "standard-magezero-fixtures")]
+    pub(crate) fn record_life_loss_v1(&mut self, player: PlayerId) {
+        let mut players = if self.player_lost_life_this_turn_v1(player.opponent()) {
+            let mut players = [false; 2];
+            players[player.opponent().index()] = true;
+            players
+        } else {
+            [false; 2]
+        };
+        players[player.index()] = true;
+        self.life_loss_turn_v1 = Some(LifeLossTurnV1 {
+            turn: self.turn,
+            active_player: self.active_player,
+            players,
+        });
+    }
+
     pub fn creature_died_this_turn_v1(&self) -> bool {
         self.creature_death_turn_v1.is_some_and(|death| {
             death.turn == self.turn && death.active_player == self.active_player
@@ -1582,6 +1850,12 @@ impl GameState {
             trigger_uses_v1: None,
             creature_death_turn_v1: None,
             london_mulligans_v1: None,
+            counter_lki_v1: None,
+            life_loss_turn_v1: None,
+            attack_block_restrictions_v1: None,
+            speed_v1: None,
+            day_night_v1: None,
+            descended_v1: None,
         }
     }
 
