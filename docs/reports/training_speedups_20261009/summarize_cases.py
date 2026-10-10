@@ -300,7 +300,7 @@ def main():
               "accounting": "complete_case = dispatch + inspect + actual transport + retain + optional pinned late copy. One-time allocation reconciliation and metadata receipt self-copy overhead are separate. Archive/child/scheduler/learner timers are nested diagnostics and never added again. Controller polling envelope is separate.",
               "cases": cases, "qualifications": qualifications, "inputs": reader.inputs}
     print(json.dumps(result, indent=2, allow_nan=False))
-    print("case | variant | workers/prep | dispatch s | inspect s | transfer s | retain s | complete s", file=sys.stderr)
+    print("case | variant | workers/prep | dispatch s | inspect s | transfer s | retain s | late copy s | complete s", file=sys.stderr)
     for c in cases:
         print(f"{c['id']} | {c['variant']} | {c['workers']}/{c['preparation_workers']} | {c['dispatch_seconds']:.3f} | {c['inspect_seconds']:.3f} | {c['transport_seconds']:.3f} | {c['retain_seconds']:.3f} | {c.get('late_copy_seconds',0):.3f} | {c['complete_case_seconds']:.3f}", file=sys.stderr)
     for label in ("dispatch_comparison", "complete_case_comparison"):
