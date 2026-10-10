@@ -243,7 +243,9 @@ The analysis also requires the terminal state's exact independent E: copy.
 The authoritative queued state is
 `D:/training-speedups-20261009/desktop/formal-v3-launcher/state.json`, followed
 by `desktop/formal-v3/coordinator/state.json` after execution begins. Jack's
-request to poll through completion is covered by the existing five-minute
-`finish-training-throughput-comparison` heartbeat, with backoff on unchanged
-state. Clean native execution, a complete ABBA result and final end-to-end
+request to poll through completion is covered by the existing
+`finish-training-throughput-comparison` heartbeat. It began at five-minute
+intervals and backed off to 15 minutes after two unchanged observations;
+the local event waiter reacts immediately to reservation release.
+Clean native execution, a complete ABBA result and final end-to-end
 speedup remain pending.
