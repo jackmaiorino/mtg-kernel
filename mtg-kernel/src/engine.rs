@@ -16838,7 +16838,9 @@ mod tests {
             let captured = triggered_ability_targeting_source(
                 source,
                 Some(contract),
-                &EffectOp::MoveAllTargets { to: Zone::Hand },
+                &EffectOp::MoveAllTargets {
+                    to_zone: Zone::Hand,
+                },
             );
             let spec = TargetSpec::UpToOneOtherControlledPermanent;
             let legal =

@@ -485,7 +485,9 @@ const DREADWING_SCAVENGER_TRIGGERS: [TriggeredAbilityDef; 2] = [
 const MISCHIEVOUS_PUP_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(mischievous_pup_effect)];
 
 fn mischievous_pup_effect() -> EffectOp {
-    EffectOp::MoveAllTargets { to: Zone::Hand }
+    EffectOp::MoveAllTargets {
+        to_zone: Zone::Hand,
+    }
 }
 const BURGLAR_RAT_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(burglar_rat_effect)];
 const INFESTATION_SAGE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
