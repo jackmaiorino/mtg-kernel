@@ -62,3 +62,12 @@ the new ledger anchor. Hosted tests will supply actual results after the prior v
 integrate. Pinned rustfmt and diff checks are the only local Rust checks;
 Stage4a's desktop reservation, paid-run authority and frozen evidence remain
 untouched.
+
+October 10 integration preparation preserves the recent Standard event/state
+fields, appends the new trigger/halt variants after the existing variants,
+and maps Vanguard Seraph's flying keyword. The rules-vector record retains
+the exact first-gain condition. Its existing vocabulary represents the life
+gain and turn-history read, but the global event ordinal and own-turn gate
+are explicitly reported as opaque. This does not reduce gameplay support;
+it records the extractor's representational limit. Registration, catalog
+admission and gameplay qualification still await v62 integration.

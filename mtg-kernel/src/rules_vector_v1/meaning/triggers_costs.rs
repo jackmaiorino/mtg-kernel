@@ -189,6 +189,15 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
             // A positive life gain event for the controller.
             out.trigger(TrigF::LifeGained { by: RelF::You });
         }
+        TriggerCondition::ControllerFirstLifeGain { own_turn_only } => {
+            // The record retains the global first-event ordinal and own-turn
+            // restriction. The feature vocabulary cannot express either.
+            let _ = own_turn_only;
+            out.trigger(TrigF::LifeGained { by: RelF::You });
+            out.control(ControlF::Conditional);
+            out.read(RelF::You, None, None, AggF::EventThisTurn);
+            out.atoms.push(Atom::Opaque);
+        }
         TriggerCondition::ControllerAddedPlusOneCountersToSelf { max_per_turn } => {
             // The controller put one or more +1/+1 counters on the source's
             // current incarnation. `max_per_turn` caps how many times the
