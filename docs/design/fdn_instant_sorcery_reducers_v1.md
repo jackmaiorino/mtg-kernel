@@ -45,10 +45,20 @@ backtracking and adds the exact Aquifer/Swamp regression. Review then found
 generic payment outside the pip search could miss a legal Phyrexian payment. Repair 5c761ec8 includes generic payment at the search's
 terminal condition with isolated failed-branch state and a taxed-spell
 regression. Exact read-only review of 5c761ec8 found both findings resolved
-and no further actionable defects. Native execution is pending. Convoke still
-explicitly refuses this planner until its complete adapter is implemented.
+and no further actionable defects. Native execution is pending.
 
-Remaining work: Convoke adapter; offer/pending/X/final-payment integration;
+Convoke source 4bb578e0 solves ordinary mana and creature taps together against
+the already adjusted total. Physical source aliases prevent double payment;
+partial colored/Hybrid/Phyrexian coverage and colorless generic payment retain
+pip requirements. Multi-yield mana dominates an aliased one-unit Convoke option
+for generic payment. Planner indices are remapped before returning tap lists.
+Primary ConvokeAbility.java was read at the pinned Mage commit above. Review
+caught cached creature colors bypassing Aura overrides. Repair a6f96cc3 uses
+object_color_mask and tests Witness Protection with a stale-incarnation check.
+Exact repair review found no further defects. Six new Convoke regressions and
+all newer payment changes remain unexecuted.
+
+Remaining work: offer/pending/X/final-payment integration;
 atomic nonmana payment; actual card gameplay and restore tests; metadata and
 catalog admission; live profile qualification; CI and default-branch acceptance.
 No new card gameplay, increased coverage or experimental result is claimed.
