@@ -7455,6 +7455,50 @@ fn drain_pending_discard_or_decide(state: &mut GameState) -> Option<Decision> {
     })
 }
 
+/// Commit one already-validated hand discard through the shared Madness
+/// replacement and ordinary owner-controlled trigger queue. Choice-bearing
+/// discard callers retain their own authentication and completion stages.
+pub(crate) fn commit_discarded_card(state: &mut GameState, id: ObjectId) {
+    let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
+    if def.is_castable() && def.madness_cost.is_some() {
+        // 702.83b: a discarded Madness card is exiled instead of
+        // graveyarded, and "as that card is exiled this way" a real
+        // triggered ability fires offering its owner the chance to
+        // cast it for its madness cost -- queued into
+        // `pending_triggers` exactly like any other triggered ability
+        // (`trigger::collect_and_process`'s Guttersnipe/Voldaren
+        // Epicure triggers), not a special-cased side channel: it
+        // goes through the same APNAP grouping/`Decision::
+        // OrderTriggers` machinery if it happens to coincide with
+        // another simultaneous trigger, and (`push_trigger_onto_stack`)
+        // becomes a real `StackItem` that sits through normal priority
+        // like anything else on the stack -- see that function's
+        // `is_madness_offer` doc, and `advance_until_decision`'s
+        // `top.madness_offer` check for where the actual `Decision::
+        // ChooseMadnessCast` gets asked (at *resolution* time, not
+        // discard time).
+        event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Exile));
+        let owner = state.objects.get(id).owner;
+        state.engine.pending_triggers.push(PendingTrigger {
+            controller: owner,
+            source: id,
+            source_contract: Some(AbilitySourceContractV4::capture(state, id)),
+            granted_by: None,
+            effect: EffectOp::Sequence(vec![]),
+            is_madness_offer: true,
+            kicked: false,
+            target_spec: TargetSpec::None,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
+        });
+    } else {
+        event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
+    }
+}
+
 fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: PendingDiscard) {
     if let Err((source, _message)) = validate_pending_discard_binding(state, &pending_discard) {
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
@@ -7506,44 +7550,7 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
     };
     state.engine.pending_discard = None;
     for &id in &chosen {
-        let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
-        if def.is_castable() && def.madness_cost.is_some() {
-            // 702.83b: a discarded Madness card is exiled instead of
-            // graveyarded, and "as that card is exiled this way" a real
-            // triggered ability fires offering its owner the chance to
-            // cast it for its madness cost -- queued into
-            // `pending_triggers` exactly like any other triggered ability
-            // (`trigger::collect_and_process`'s Guttersnipe/Voldaren
-            // Epicure triggers), not a special-cased side channel: it
-            // goes through the same APNAP grouping/`Decision::
-            // OrderTriggers` machinery if it happens to coincide with
-            // another simultaneous trigger, and (`push_trigger_onto_stack`)
-            // becomes a real `StackItem` that sits through normal priority
-            // like anything else on the stack -- see that function's
-            // `is_madness_offer` doc, and `advance_until_decision`'s
-            // `top.madness_offer` check for where the actual `Decision::
-            // ChooseMadnessCast` gets asked (at *resolution* time, not
-            // discard time).
-            event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Exile));
-            let owner = state.objects.get(id).owner;
-            state.engine.pending_triggers.push(PendingTrigger {
-                controller: owner,
-                source: id,
-                source_contract: Some(AbilitySourceContractV4::capture(state, id)),
-                granted_by: None,
-                effect: EffectOp::Sequence(vec![]),
-                is_madness_offer: true,
-                kicked: false,
-                target_spec: TargetSpec::None,
-                targets: Vec::new(),
-                target_contracts: Vec::new(),
-                placement_ordered: false,
-                optional_additional_cost_paid: None,
-                paid_cost_refs: Vec::new(),
-            });
-        } else {
-            event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
-        }
+        commit_discarded_card(state, id);
     }
     match pending_discard.resume {
         DiscardResume::None => collect_and_queue_triggers(state),

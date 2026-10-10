@@ -7,9 +7,9 @@ use mtg_kernel::engine::{self, Action, Decision, UnsupportedMechanic};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::{ManaColor, Pip};
-use mtg_kernel::rl::HarnessSurfaceV2;
-use mtg_kernel::rl_session::observe_v2;
+use mtg_kernel::rl::observe_v2;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
+use mtg_kernel::surface_v2::HarnessSurfaceV2;
 
 fn ready(player: PlayerId) -> GameState {
     let forest = card_id_by_name("Forest").unwrap();
@@ -59,7 +59,11 @@ fn refuse(state: &mut GameState, action: Action) {
 }
 
 fn begin(state: &mut GameState, caster: PlayerId) -> ObjectId {
-    let source = put(state, caster, "Pilfer");
+    begin_named(state, caster, "Pilfer")
+}
+
+fn begin_named(state: &mut GameState, caster: PlayerId, name: &str) -> ObjectId {
+    let source = put(state, caster, name);
     state.players[caster.index()].mana_pool[ManaColor::B.pool_index()] = 1;
     state.players[caster.index()].mana_pool[5] = 1;
     next(state);
@@ -144,11 +148,33 @@ fn pilfer_reveals_both_seats_full_hand_and_caster_chooses_nonland_after_restore(
             refuse(&mut state, Action::ChooseEffectTarget(Target::Object(land)));
             for observer in [PlayerId::P0, PlayerId::P1] {
                 let observed = observe_v2(&state, &HarnessSurfaceV2::new(), observer, 0).unwrap();
-                let encoded = serde_json::to_string(&observed).unwrap();
-                for name in ["Faerie Miscreant", "Giant Growth", "Forest"] {
-                    let id = card_id_by_name(name).unwrap();
-                    assert!(encoded.contains(&format!("\"card_db_id\":{id}")));
-                }
+                let rows = if observer == caster {
+                    &observed.known_hand_cards[opponent.index()]
+                } else {
+                    &observed.own_hand
+                };
+                let mut actual = rows
+                    .iter()
+                    .map(|row| {
+                        (
+                            row.stable.arena_id,
+                            row.stable.card_db_id,
+                            row.stable.zone,
+                            row.stable.zone_change_count,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let mut expected = state.players[opponent.index()]
+                    .hand
+                    .iter()
+                    .map(|id| {
+                        let card = state.objects.get(*id);
+                        (id.0, card.card_def, Zone::Hand, card.zone_change_count)
+                    })
+                    .collect::<Vec<_>>();
+                actual.sort_unstable_by_key(|entry| entry.0);
+                expected.sort_unstable_by_key(|entry| entry.0);
+                assert_eq!(actual, expected);
             }
             let mut replay: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
@@ -217,5 +243,45 @@ fn pilfer_rejects_changed_revealed_hand_and_changed_target_incarnation() {
                 ..
             }
         ));
+    }
+}
+
+#[test]
+fn pilfer_and_duress_discard_madness_cards_through_the_owner_offer() {
+    for caster in [PlayerId::P0, PlayerId::P1] {
+        for name in ["Pilfer", "Duress"] {
+            let mut state = ready(caster);
+            let owner = caster.opponent();
+            let temper = put(&mut state, owner, "Fiery Temper");
+            let source = begin_named(&mut state, caster, name);
+            discard_choice(&mut state);
+            engine::step(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(temper)),
+            )
+            .unwrap();
+            let mut replay: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut replay] {
+                let mut offered = false;
+                for _ in 0..32 {
+                    let d = next(branch);
+                    if let Decision::ChooseMadnessCast { player, card } = d {
+                        assert_eq!((player, card), (owner, temper));
+                        assert_eq!(branch.objects.get(temper).zone, Zone::Exile);
+                        engine::step(branch, Action::ChooseMadnessCast(false)).unwrap();
+                        offered = true;
+                        break;
+                    }
+                    assert!(matches!(d, Decision::CastSpellOrPass { .. }));
+                    engine::step(branch, Action::Pass).unwrap();
+                }
+                assert!(offered);
+                settle(branch);
+                assert_eq!(branch.objects.get(temper).zone, Zone::Graveyard);
+                assert_eq!(branch.objects.get(source).zone, Zone::Graveyard);
+            }
+            assert_eq!(state.state_hash(), replay.state_hash());
+        }
     }
 }

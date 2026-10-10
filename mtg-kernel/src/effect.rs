@@ -8158,10 +8158,7 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     {
                         return Err("Duress discard binding changed".to_string());
                     }
-                    event::propose_and_commit(
-                        state,
-                        event::ProposedEvent::zone_change(selected.object, Zone::Graveyard),
-                    );
+                    crate::engine::commit_discarded_card(state, selected.object);
                 }
                 EffectFrame::BeginSearchLibraryToBattlefieldTapped {
                     player,
