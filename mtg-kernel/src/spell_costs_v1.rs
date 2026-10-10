@@ -126,7 +126,7 @@ pub(super) fn selected_spell_mana_costs_v1(
     Some(selected)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "standard-magezero-fixtures")))]
 mod tests {
     use super::*;
 
