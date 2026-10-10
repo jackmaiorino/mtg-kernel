@@ -1938,6 +1938,13 @@ fn enduring_curiosity_draws_for_each_creature_connecting() {
 /// paying casualty when `casualty` is set.
 fn make_disappear_a_burn(state: &mut GameState, casualty: bool) -> (ObjectId, ObjectId) {
     let fodder = put(state, PlayerId::P0, "Yotian Frontliner", Zone::Battlefield);
+    let burst = make_disappear_a_burn_with(state, casualty);
+    (fodder, burst)
+}
+
+/// P1 casts Burst Lightning at P0; P0 responds with Make Disappear,
+/// choosing casualty or not. Returns the Burst Lightning.
+fn make_disappear_a_burn_with(state: &mut GameState, casualty: bool) -> ObjectId {
     let counter = put(state, PlayerId::P0, "Make Disappear", Zone::Hand);
     state.priority_player = PlayerId::P1;
     let burst = put(state, PlayerId::P1, "Burst Lightning", Zone::Hand);
@@ -1966,7 +1973,34 @@ fn make_disappear_a_burn(state: &mut GameState, casualty: bool) -> (ObjectId, Ob
             other => panic!("unexpected decision: {other:?}"),
         }
     }
-    (fodder, burst)
+    burst
+}
+
+#[test]
+fn make_disappear_casualty_can_sacrifice_a_transformed_incubator() {
+    let mut state = ready();
+    let incubator = put(
+        &mut state,
+        PlayerId::P0,
+        "Incubator Token",
+        Zone::Battlefield,
+    );
+    state.objects.get_mut(incubator).counters.plus1_plus1 = 1;
+    add_mana(&mut state, PlayerId::P0, &[], 2);
+    assert!(
+        matches!(next(&mut state), Decision::CastSpellOrPass { activatable_abilities, .. } if activatable_abilities.contains(&(incubator, 0)))
+    );
+    engine::step(&mut state, Action::ActivateAbility(incubator, 0)).unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(incubator).v4.face_index, 1);
+    assert_eq!(power_toughness(&state, incubator), (1, 1));
+
+    let burst = make_disappear_a_burn_with(&mut state, true);
+    assert!(state.engine.halted.is_none());
+    assert_ne!(state.objects.get(incubator).zone, Zone::Battlefield);
+    assert_eq!(state.stack.len(), 3);
+    assert!(state.stack[2].is_copy);
+    assert_eq!(state.stack[2].targets, vec![Target::Object(burst)]);
 }
 
 #[test]

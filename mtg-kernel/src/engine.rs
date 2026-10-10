@@ -4655,7 +4655,9 @@ fn bargain_candidates(
         if object.zone != Zone::Battlefield || object.controller != player {
             return Err("Bargain permanent binding changed controller or zone".to_string());
         }
-        if object.v4.face_index != 0 {
+        // Casualty reads effective types and power, which cover a
+        // transformed face; Bargain's printed-type rule does not.
+        if object.v4.face_index != 0 && !matches!(kind, OptionalAdditionalCostDef::Casualty(_)) {
             return Err(
                 "Bargain effective card types are unavailable for a non-front face".to_string(),
             );
@@ -4839,7 +4841,11 @@ fn validate_optional_additional_paid_refs(
             if paid.controller != controller
                 || paid.zone != Zone::Graveyard
                 || paid.visible_to_mask != 0b11
-                || !def.has_type(CardType::Creature)
+                || !(def.has_type(CardType::Creature)
+                    || def
+                        .transform_face
+                        .as_ref()
+                        .is_some_and(|face| face.types.contains(&CardType::Creature)))
             {
                 return Err("Casualty paid provenance is not one eligible sacrifice".to_string());
             }
@@ -13467,8 +13473,17 @@ fn finish_optional_trigger_targets(state: &mut GameState) -> Result<(), String> 
     if pending.targets.len() < usize::from(target_min_count(pending.target_spec)) {
         return Err("the triggered ability has not chosen its minimum targets".to_string());
     }
+    // As when a trigger's targets complete in `drain_pending_triggers_or_decide`: a
+    // trigger that cannot go on the stack halts rather than leaving `step`
+    // to fail after the pending trigger was removed.
     let pending = state.engine.pending_triggers.remove(0);
-    push_trigger_onto_stack(state, pending)
+    if push_trigger_onto_stack(state, pending.clone()).is_err() {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            pending.source,
+        ));
+    }
+    Ok(())
 }
 
 fn apply_choose_optional_additional_cost(

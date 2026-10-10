@@ -50,6 +50,7 @@ impl Scan<'_> {
             | PutPlusOnePlusOneCounterOnTriggerEventObject { object }
             | BoostBoundObjectUntilEndOfTurn { object, .. }
             | WarpExileBoundObject { object } => self.b(object),
+            PutPlusOnePlusOneCounterOnTargetOtherThan { other_than } => self.raw(*other_than),
             PutBoundAuraOntoBattlefieldAttached { aura, host } => self.b(aura) || self.b(host),
             ResolveInitiativeTrigger { binding }
             | EnterUndercityRoom { binding, .. }
@@ -142,7 +143,6 @@ impl Scan<'_> {
             | LookTopTakeCreaturesManaValueAtMostThenShuffle { .. }
             | Incubate { .. }
             | BindPlusOneCounterOnAnotherTargetToTriggerTarget
-            | PutPlusOnePlusOneCounterOnTargetOtherThan { .. }
             | ReturnSourceFromGraveyardUnearthed
             | ExileGraveyardTargetsDrainPerCreature { .. }
             | RemoveTimeCounterFromSource
@@ -658,7 +658,9 @@ pub(super) fn conflicts(
             | Sacrificed { object, .. }
             | Transformed { object, .. } => s.raw(*object),
             PlusOneCountersAdded { object, .. }
-            | PrintedAbilitiesRemovedBeforeZoneChange { object, .. } => s.raw(*object),
+            | PrintedAbilitiesRemovedBeforeZoneChange { object, .. }
+            | WasCreatureBeforeLeavingBattlefield { object, .. }
+            | PowerBeforeLeavingBattlefield { object, .. } => s.raw(*object),
             Draw { object, .. } => object.is_some_and(|id| s.raw(id)),
             SpellCast { spell, .. } => s.raw(*spell),
             Targeted { target, .. } => s.raw(*target),
@@ -679,8 +681,6 @@ pub(super) fn conflicts(
             | UpkeepBegan { .. }
             | CrimeCommitted { .. }
             | BeginningOfCombat { .. }
-            | WasCreatureBeforeLeavingBattlefield { .. }
-            | PowerBeforeLeavingBattlefield { .. }
             | BeginningEndStep { .. } => false,
         }
     })

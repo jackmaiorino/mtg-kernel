@@ -644,27 +644,6 @@ pub enum EffectOp {
         targeting_stack_item: StackItemId,
         generic: u8,
     },
-    /// Ward—Collect evidence N: counters the exact stack incarnation that
-    /// targeted the bound Ward permanent unless that item's controller
-    /// exiles cards with total mana value N or more from their graveyard.
-    /// The payer always pays when able, exiling the deterministic
-    /// `standard_keywords_v1::evidence_plan` selection; it never asks, so
-    /// no decision or observation shape changes.
-    CounterUnlessCollectsEvidence {
-        ward_target: StackTargetContractV4,
-        targeting_stack_item: StackItemId,
-        minimum_mana_value: u16,
-    },
-    /// Ward—Pay N life: counters the exact stack incarnation that targeted
-    /// the bound Ward permanent unless its controller pays `life`. Like
-    /// `CounterUnlessCollectsEvidence` it never asks: the payer pays
-    /// whenever they have more life than the cost, so paying never ends
-    /// the game.
-    CounterUnlessPaysLife {
-        ward_target: StackTargetContractV4,
-        targeting_stack_item: StackItemId,
-        life: u8,
-    },
     /// Deals one simultaneous damage batch to every creature without the
     /// excluded subtype. Breath Weapon is the first consumer.
     DamageEachCreatureWithoutSubtype {
@@ -1258,6 +1237,27 @@ pub enum EffectOp {
         player: PlayerRef,
         count: u8,
         max_mana_value: u16,
+    },
+    /// Ward—Collect evidence N: counters the exact stack incarnation that
+    /// targeted the bound Ward permanent unless that item's controller
+    /// exiles cards with total mana value N or more from their graveyard.
+    /// The payer always pays when able, exiling the deterministic
+    /// `standard_keywords_v1::evidence_plan` selection; it never asks, so
+    /// no decision or observation shape changes.
+    CounterUnlessCollectsEvidence {
+        ward_target: StackTargetContractV4,
+        targeting_stack_item: StackItemId,
+        minimum_mana_value: u16,
+    },
+    /// Ward—Pay N life: counters the exact stack incarnation that targeted
+    /// the bound Ward permanent unless its controller pays `life`. Like
+    /// `CounterUnlessCollectsEvidence` it never asks: the payer pays
+    /// whenever they have more life than the cost, so paying never ends
+    /// the game.
+    CounterUnlessPaysLife {
+        ward_target: StackTargetContractV4,
+        targeting_stack_item: StackItemId,
+        life: u8,
     },
     /// Trigger collection binds this template to the number of creatures
     /// that convoked the trigger source

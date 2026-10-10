@@ -507,6 +507,24 @@ pub enum CommittedEvent {
         player: PlayerId,
         count: i32,
     },
+    /// Morbid is captured when this step begins, before any later death.
+    BeginningEndStep {
+        active_player: PlayerId,
+        creature_died_this_turn: bool,
+    },
+    /// Immediately precedes a departure whose printed abilities were absent.
+    PrintedAbilitiesRemovedBeforeZoneChange {
+        object: ObjectId,
+        zone_change_count: u32,
+    },
+    /// Exact declaration-time source for a "whenever you attack" trigger:
+    /// `controller` declared one or more attackers while `source` was on the
+    /// battlefield. Emitted only for permanents with such a trigger.
+    ControllerAttacked {
+        source: ObjectId,
+        source_zone_change_count: u32,
+        controller: PlayerId,
+    },
     /// 700.13: `player` committed a crime by casting a spell, activating an
     /// ability or putting a triggered ability on the stack that targets an
     /// opponent, anything an opponent controls, or a card in an opponent's
@@ -536,24 +554,6 @@ pub enum CommittedEvent {
     WasCreatureBeforeLeavingBattlefield {
         object: ObjectId,
         zone_change_count: u32,
-    },
-    /// Morbid is captured when this step begins, before any later death.
-    BeginningEndStep {
-        active_player: PlayerId,
-        creature_died_this_turn: bool,
-    },
-    /// Immediately precedes a departure whose printed abilities were absent.
-    PrintedAbilitiesRemovedBeforeZoneChange {
-        object: ObjectId,
-        zone_change_count: u32,
-    },
-    /// Exact declaration-time source for a "whenever you attack" trigger:
-    /// `controller` declared one or more attackers while `source` was on the
-    /// battlefield. Emitted only for permanents with such a trigger.
-    ControllerAttacked {
-        source: ObjectId,
-        source_zone_change_count: u32,
-        controller: PlayerId,
     },
 }
 
@@ -962,6 +962,10 @@ fn commit_with_ability_lki(
             if from == Zone::Battlefield {
                 record_counter_lki(state, z.object);
             }
+            // Before the abilities-removed marker, which must immediately
+            // precede the departure for leave triggers to see it.
+            #[cfg(feature = "standard-magezero-fixtures")]
+            crate::standard_keywords_v1::before_zone_change(state, z.object, z.to_zone);
             if from == Zone::Battlefield
                 && abilities_removed_before.unwrap_or_else(|| {
                     !crate::continuous_characteristics_v1::printed_abilities_active(state, z.object)
@@ -974,8 +978,6 @@ fn commit_with_ability_lki(
                 state.engine.event_log.push(marker.clone());
                 state.engine.event_history.push(marker);
             }
-            #[cfg(feature = "standard-magezero-fixtures")]
-            crate::standard_keywords_v1::before_zone_change(state, z.object, z.to_zone);
             #[cfg(feature = "limited-fdn-fixtures")]
             let creature_died = from == Zone::Battlefield
                 && z.to_zone == Zone::Graveyard
