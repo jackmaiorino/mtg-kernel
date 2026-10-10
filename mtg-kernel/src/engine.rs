@@ -7471,7 +7471,6 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
                 targets: Vec::new(),
                 target_contracts: Vec::new(),
                 placement_ordered: false,
-                target_selection_finished: false,
                 optional_additional_cost_paid: None,
                 paid_cost_refs: Vec::new(),
             });
@@ -9695,7 +9694,7 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
             continue;
         }
         let need = target_count(pending.target_spec);
-        if !pending.target_selection_finished && pending.targets.len() < usize::from(need) {
+        if pending.targets.len() < usize::from(need) {
             let trigger_source = pending_trigger_targeting_source(&pending);
             if !target_prefix_can_complete_for_controller_and_source(
                 pending.target_spec,
@@ -9777,13 +9776,6 @@ fn validate_pending_trigger(state: &GameState, pending: &PendingTrigger) -> Resu
         return Err("pending trigger has not completed placement ordering".to_string());
     }
     validate_pending_trigger_identity(state, pending)?;
-    if pending.target_selection_finished
-        && (target_min_count(pending.target_spec) >= target_count(pending.target_spec)
-            || !target_cardinality_is_complete(pending.target_spec, pending.targets.len())
-            || pending_trigger_modes(state, pending).is_some())
-    {
-        return Err("pending trigger finished an invalid optional target prefix".into());
-    }
     if pending.is_madness_offer {
         if pending.target_spec != TargetSpec::None
             || !pending.targets.is_empty()
@@ -9932,11 +9924,6 @@ fn validate_pending_trigger_for_stack(
     }
     if !target_cardinality_is_complete(pending.target_spec, pending.targets.len()) {
         return Err("pending trigger target metadata is incomplete".to_string());
-    }
-    if pending.targets.len() < usize::from(target_count(pending.target_spec))
-        && !pending.target_selection_finished
-    {
-        return Err("pending trigger has not finished its optional target prefix".into());
     }
     if pending.is_madness_offer {
         return Ok(());
@@ -11645,6 +11632,7 @@ pub struct StaticSelfBoostDef {
     pub power: i32,
     pub toughness: i32,
     pub grant_haste: bool,
+    pub battlefield_only: bool,
 }
 
 /// A continuously recomputed bonus from a controlled subtype lord.
@@ -11801,19 +11789,21 @@ pub(crate) fn static_self_boost_for(name: &str) -> Option<StaticSelfBoostDef> {
             power: 1,
             toughness: 0,
             grant_haste: true,
+            battlefield_only: false,
         }),
         "Billowing Shriekmass" => Some(StaticSelfBoostDef {
             condition: controller_has_threshold_v1,
             power: 2,
             toughness: 1,
             grant_haste: false,
+            battlefield_only: true,
         }),
         _ => None,
     }
 }
 
 fn controller_has_threshold_v1(controller: PlayerId, state: &GameState) -> bool {
-    state.players[controller.index()].graveyard.len() >= 7
+    crate::effect::controller_graveyard_card_count(state, controller) >= 7
 }
 
 fn valid_bestow_attachment_host(state: &GameState, aura: ObjectId) -> Option<ObjectId> {
@@ -11966,7 +11956,9 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {
         if let Some(boost) = static_self_boost_for(def.name) {
-            if (boost.condition)(obj.controller, state) {
+            if (!boost.battlefield_only || obj.zone == Zone::Battlefield)
+                && (boost.condition)(obj.controller, state)
+            {
                 power += boost.power;
             }
         }
@@ -12026,7 +12018,9 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {
         if let Some(boost) = static_self_boost_for(def.name) {
-            if (boost.condition)(obj.controller, state) {
+            if (!boost.battlefield_only || obj.zone == Zone::Battlefield)
+                && (boost.condition)(obj.controller, state)
+            {
                 toughness += boost.toughness;
             }
         }
@@ -12218,7 +12212,11 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     }
     if kw.has(Keywords::HASTE) {
         if let Some(boost) = static_self_boost_for(def.name) {
-            if printed_active && boost.grant_haste && (boost.condition)(obj.controller, state) {
+            if printed_active
+                && boost.grant_haste
+                && (!boost.battlefield_only || obj.zone == Zone::Battlefield)
+                && (boost.condition)(obj.controller, state)
+            {
                 return true;
             }
         }
@@ -13209,7 +13207,6 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
             }
         }
         if pending_trigger.placement_ordered
-            && !pending_trigger.target_selection_finished
             && pending_trigger.targets.len()
                 < usize::from(target_count(pending_trigger.target_spec))
         {
@@ -13421,14 +13418,7 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
             }
         }
         Action::FinishEffectSelection => {
-            if state.engine.pending_triggers.first().is_some_and(|pending|
-                pending.placement_ordered && !pending.target_selection_finished
-                    && pending.targets.len() < usize::from(target_count(pending.target_spec)))
-            {
-                // This answer belongs to the ordered trigger. Reject
-                // competing producers before any mutation.
-                finish_optional_trigger_targets(state)
-            } else if state.engine.pending_cast.is_some() {
+            if state.engine.pending_cast.is_some() {
                 finish_optional_cast_or_collect_evidence(state)
             } else if state.engine.pending_activation.is_some() {
                 finish_optional_activation_targets(state)
@@ -13509,7 +13499,6 @@ fn exact_targeting_producer(state: &GameState) -> Result<TargetingProducer, Stri
     }
     if let Some(pending) = state.engine.pending_triggers.first() {
         if pending.placement_ordered
-            && !pending.target_selection_finished
             && pending.targets.len() < usize::from(target_count(pending.target_spec))
         {
             validate_pending_trigger(state, pending)?;
@@ -13748,38 +13737,6 @@ fn finish_optional_cast_or_collect_evidence(state: &mut GameState) -> Result<(),
         return Ok(());
     }
     finish_optional_cast_targets(state)
-}
-
-fn finish_optional_trigger_targets(state: &mut GameState) -> Result<(), String> {
-    if state.engine.pending_effect.is_some()
-        || state.engine.pending_cast.is_some()
-        || state.engine.pending_activation.is_some()
-        || state.engine.pending_spell_copy.is_some()
-    {
-        return Err("optional trigger finish conflicts with another choice producer".into());
-    }
-    let pending = state
-        .engine
-        .pending_triggers
-        .first()
-        .ok_or("no triggered ability is selecting optional targets")?;
-    validate_pending_trigger(state, pending)?;
-    if pending.target_selection_finished
-        || target_min_count(pending.target_spec) >= target_count(pending.target_spec)
-        || pending.targets.len() >= usize::from(target_count(pending.target_spec))
-        || !target_cardinality_is_complete(pending.target_spec, pending.targets.len())
-        || pending_trigger_modes(state, pending).is_some()
-        || !pending_trigger_targets_can_complete(pending, state)
-    {
-        return Err("trigger cannot finish this target prefix".into());
-    }
-    state
-        .engine
-        .pending_triggers
-        .first_mut()
-        .expect("validated pending trigger remains bound")
-        .target_selection_finished = true;
-    Ok(())
 }
 
 fn finish_optional_cast_targets(state: &mut GameState) -> Result<(), String> {
@@ -17479,7 +17436,6 @@ mod tests {
             targets: Vec::new(),
             target_contracts: Vec::new(),
             placement_ordered: false,
-            target_selection_finished: false,
             source_contract: None,
             optional_additional_cost_paid: None,
             paid_cost_refs: Vec::new(),
@@ -17495,7 +17451,6 @@ mod tests {
             targets: Vec::new(),
             target_contracts: Vec::new(),
             placement_ordered: false,
-            target_selection_finished: false,
             source_contract: None,
             optional_additional_cost_paid: None,
             paid_cost_refs: Vec::new(),

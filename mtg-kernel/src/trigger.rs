@@ -3220,6 +3220,13 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     let Some(card) = crate::card_def::CARD_DEFS.get(card_def as usize) else {
         return false;
     };
+    if card.name == "Apothecary Stomper"
+        && apothecary_stomper_modes()
+            .iter()
+            .any(|(_, branch)| branch == effect)
+    {
+        return true;
+    }
     if card.name == "Sylvan Scavenging"
         && sylvan_scavenging_modes()
             .iter()
@@ -3295,6 +3302,14 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
         return Some(TargetSpec::None);
     }
     let card = crate::card_def::CARD_DEFS.get(card_def as usize)?;
+    if card.name == "Apothecary Stomper" {
+        return Some(
+            apothecary_stomper_modes()
+                .iter()
+                .find(|(_, branch)| branch == effect)
+                .map_or(TargetSpec::None, |(spec, _)| *spec),
+        );
+    }
     #[cfg(feature = "standard-magezero-fixtures")]
     if card.name == "Hullbreaker Horror" {
         return Some(
@@ -3339,7 +3354,7 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
     )
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PendingTrigger {
     pub controller: PlayerId,
     pub source: ObjectId,
@@ -3377,10 +3392,6 @@ pub struct PendingTrigger {
     /// been ordered by its controller or proven singleton.
     #[serde(default)]
     pub placement_ordered: bool,
-    /// Explicit finish of a target prefix below an optional target maximum.
-    /// Omission keeps every preexisting required-target serialization unchanged.
-    #[serde(default, skip_serializing_if = "target_selection_is_open")]
-    pub target_selection_finished: bool,
     /// Exact historical source incarnation captured when the trigger was
     /// created. This lets independent and linked abilities remain valid
     /// across later zone changes of the same physical card.
@@ -3397,34 +3408,6 @@ pub struct PendingTrigger {
     /// spell's stack incarnation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paid_cost_refs: Vec<PaidCostRefV4>,
-}
-
-// Preserve the preexisting derived field sequence when the finish marker
-// is false. The new true state has its own tagged extension.
-impl std::hash::Hash for PendingTrigger {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        std::hash::Hash::hash(&self.controller, state);
-        std::hash::Hash::hash(&self.source, state);
-        std::hash::Hash::hash(&self.effect, state);
-        std::hash::Hash::hash(&self.is_madness_offer, state);
-        std::hash::Hash::hash(&self.kicked, state);
-        std::hash::Hash::hash(&self.target_spec, state);
-        std::hash::Hash::hash(&self.targets, state);
-        std::hash::Hash::hash(&self.target_contracts, state);
-        std::hash::Hash::hash(&self.placement_ordered, state);
-        std::hash::Hash::hash(&self.source_contract, state);
-        std::hash::Hash::hash(&self.granted_by, state);
-        std::hash::Hash::hash(&self.optional_additional_cost_paid, state);
-        std::hash::Hash::hash(&self.paid_cost_refs, state);
-        if self.target_selection_finished {
-            std::hash::Hash::hash("trigger-target-selection-finished-v1", state);
-            std::hash::Hash::hash(&true, state);
-        }
-    }
-}
-
-fn target_selection_is_open(finished: &bool) -> bool {
-    !finished
 }
 
 pub(crate) fn creature_dies_to_state_based_actions(
@@ -3827,7 +3810,6 @@ fn triggers_from_events(
                     targets: Vec::new(),
                     target_contracts: Vec::new(),
                     placement_ordered: false,
-                    target_selection_finished: false,
                     source_contract: Some(AbilitySourceContractV4 {
                         source: id,
                         card_def: obj.card_def,
@@ -4034,7 +4016,6 @@ fn triggers_from_events(
                         targets: Vec::new(),
                         target_contracts: Vec::new(),
                         placement_ordered: false,
-                        target_selection_finished: false,
                         source_contract,
                         optional_additional_cost_paid: paid_optional_cost,
                         paid_cost_refs,
@@ -4110,7 +4091,6 @@ fn triggers_from_events(
                         targets: Vec::new(),
                         target_contracts: Vec::new(),
                         placement_ordered: false,
-                        target_selection_finished: false,
                         source_contract: Some(AbilitySourceContractV4::capture(state, id)),
                         optional_additional_cost_paid: None,
                         paid_cost_refs: Vec::new(),
@@ -4163,7 +4143,6 @@ fn triggers_from_events(
                 targets: Vec::new(),
                 target_contracts: Vec::new(),
                 placement_ordered: false,
-                target_selection_finished: false,
                 source_contract: Some(AbilitySourceContractV4::capture(state, *target)),
                 optional_additional_cost_paid: None,
                 paid_cost_refs: Vec::new(),
@@ -4230,7 +4209,6 @@ fn triggers_from_events(
                     targets: Vec::new(),
                     target_contracts: Vec::new(),
                     placement_ordered: false,
-                    target_selection_finished: false,
                     optional_additional_cost_paid: None,
                     paid_cost_refs: Vec::new(),
                 });
@@ -4256,7 +4234,6 @@ fn triggers_from_events(
             targets: Vec::new(),
             target_contracts: Vec::new(),
             placement_ordered: false,
-            target_selection_finished: false,
             source_contract: Some(binding.source),
             granted_by: None,
             optional_additional_cost_paid: None,
@@ -4279,7 +4256,6 @@ fn triggers_from_events(
             targets: Vec::new(),
             target_contracts: Vec::new(),
             placement_ordered: false,
-            target_selection_finished: false,
             source_contract: Some(binding.source),
             granted_by: None,
             optional_additional_cost_paid: None,
@@ -5114,79 +5090,6 @@ mod tests {
     use crate::state::GameState;
 
     #[test]
-    fn unfinished_trigger_preserves_legacy_hash_and_serialization() {
-        use std::hash::{Hash, Hasher};
-
-        // This field order is the PendingTrigger layout before optional finish.
-        #[derive(Hash)]
-        struct LegacyTrigger<'a> {
-            controller: PlayerId,
-            source: ObjectId,
-            effect: &'a EffectOp,
-            is_madness_offer: bool,
-            kicked: bool,
-            target_spec: TargetSpec,
-            targets: &'a Vec<Target>,
-            target_contracts: &'a Vec<StackTargetContractV4>,
-            placement_ordered: bool,
-            source_contract: &'a Option<AbilitySourceContractV4>,
-            granted_by: &'a Option<AbilitySourceContractV4>,
-            optional_additional_cost_paid: &'a Option<OptionalAdditionalCostDef>,
-            paid_cost_refs: &'a Vec<PaidCostRefV4>,
-        }
-        let state = GameState::new_from_libraries(&[1], &[2], |c| format!("card-{c}"), 1);
-        let source = state.players[0].library[0];
-        let mut pending = PendingTrigger {
-            controller: PlayerId::P0,
-            source,
-            effect: EffectOp::Sequence(vec![]),
-            is_madness_offer: false,
-            kicked: false,
-            target_spec: TargetSpec::Creature,
-            targets: vec![Target::Object(source)],
-            target_contracts: vec![],
-            placement_ordered: true,
-            target_selection_finished: false,
-            source_contract: None,
-            granted_by: None,
-            optional_additional_cost_paid: None,
-            paid_cost_refs: vec![],
-        };
-        let legacy = LegacyTrigger {
-            controller: pending.controller,
-            source: pending.source,
-            effect: &pending.effect,
-            is_madness_offer: pending.is_madness_offer,
-            kicked: pending.kicked,
-            target_spec: pending.target_spec,
-            targets: &pending.targets,
-            target_contracts: &pending.target_contracts,
-            placement_ordered: pending.placement_ordered,
-            source_contract: &pending.source_contract,
-            granted_by: &pending.granted_by,
-            optional_additional_cost_paid: &pending.optional_additional_cost_paid,
-            paid_cost_refs: &pending.paid_cost_refs,
-        };
-        let hash = |value: &dyn Fn(&mut std::collections::hash_map::DefaultHasher)| {
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            value(&mut hasher);
-            hasher.finish()
-        };
-        let legacy_hash = hash(&|h| legacy.hash(h));
-        assert_eq!(hash(&|h| pending.hash(h)), legacy_hash);
-        let encoded = serde_json::to_value(&pending).unwrap();
-        assert!(encoded.get("target_selection_finished").is_none());
-        let decoded: PendingTrigger = serde_json::from_value(encoded).unwrap();
-        assert_eq!(decoded, pending);
-        pending.target_selection_finished = true;
-        assert_ne!(hash(&|h| pending.hash(h)), legacy_hash);
-        assert_eq!(
-            serde_json::to_value(&pending).unwrap()["target_selection_finished"],
-            true
-        );
-    }
-
-    #[test]
     fn cast_union_is_one_predicate_and_selected_face_does_not_inherit_subtypes() {
         let note = crate::card_def::card_id_by_name("Mental Note").unwrap();
         let fang = crate::card_def::card_id_by_name("Fang Dragon").unwrap();
@@ -5289,7 +5192,6 @@ mod tests {
             targets: Vec::new(),
             target_contracts: Vec::new(),
             placement_ordered: false,
-            target_selection_finished: false,
             source_contract: Some(contract),
             optional_additional_cost_paid: None,
             paid_cost_refs: Vec::new(),
@@ -5341,7 +5243,6 @@ mod tests {
             targets: Vec::new(),
             target_contracts: Vec::new(),
             placement_ordered: false,
-            target_selection_finished: false,
             source_contract: None,
             optional_additional_cost_paid: None,
             paid_cost_refs: Vec::new(),
@@ -5357,7 +5258,6 @@ mod tests {
             targets: Vec::new(),
             target_contracts: Vec::new(),
             placement_ordered: false,
-            target_selection_finished: false,
             source_contract: None,
             optional_additional_cost_paid: None,
             paid_cost_refs: Vec::new(),

@@ -844,7 +844,11 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
             power,
             toughness,
             grant_haste,
+            battlefield_only,
         } = boost;
+        if battlefield_only {
+            walk.rec("static_self_boost_home_zone", json!(Zone::Battlefield));
+        }
         walk.opaque
             .push("static self boost gated on an engine predicate");
         walk.rec(

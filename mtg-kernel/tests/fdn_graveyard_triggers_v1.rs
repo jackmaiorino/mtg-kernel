@@ -326,7 +326,6 @@ fn trigger_finish_cannot_answer_another_pending_effect_selection() {
     enter(&mut state, "Ambush Wolf");
     state.engine.pending_triggers[0].placement_ordered = true;
     refuse_unchanged(&mut state, Action::FinishEffectSelection);
-    assert!(!state.engine.pending_triggers[0].target_selection_finished);
 }
 
 #[test]

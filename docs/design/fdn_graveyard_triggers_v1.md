@@ -14,8 +14,8 @@ catalog v64 after the v61-v63 prerequisites. Wolf reuses the already appended St
 Append `PermanentCardInOwnGraveyard` (55) and reuse the already integrated
 `UpToOneCardInGraveyards` (54), and reuse the existing incarnation-bound
 `MoveAllTargets` hand/exile effects. Optional trigger completion uses the
-existing target bounds and an explicit pending-trigger finish marker. False
-is omitted from serialized state, preserving earlier required-target bytes.
+existing Standard optional-target placement and immediate stack admission.
+No pending-trigger field, hash change or serialization extension is needed.
 Finishing is permitted only for the exact ordered trigger's legal optional
 prefix with no competing choice producer. Required targeting, a second
 target after the maximum and repeated completion refuse before mutation.
@@ -30,9 +30,9 @@ deck exercises deck import. Existing catalog profiles and measurements keep
 their prior identities; this batch introduces no training or formal run.
 
 October 10 source integration preserves Standard target IDs and subtype
-support. The new finish marker has a manual Hash implementation: false
-contributes no bytes to historical pending-trigger hashes; true adds a tagged
-extension. Registration/Python admission are retained on the original batch
+support. Current main already has the generic optional-trigger finish primitive;
+integration reuses it and retains the original derived PendingTrigger hash.
+Registration/Python admission are retained on the original batch
 branch and will be copied after v63 admission so reserved card IDs 334-335
 remain correct. This staging branch adds source and fixture tests only;
 metadata admission and native qualification remain pending.

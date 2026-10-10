@@ -24,9 +24,12 @@ incarnation contract. Both modes use existing effects. Elephant appends to
 the subtype enum; its changeling expansion is enabled only in the FDN build.
 Generated semantic recipes describe only these future names.
 
-Seven unexecuted gameplay tests cover metadata, threshold transitions in both
+Eight unexecuted gameplay tests cover metadata, threshold transitions in both
 seats, controller changes, ability suppression, private mill continuation
 restore, short and empty libraries, both modal branches, pending mode restore,
 opponent target rejection and a blinked target. Registration, checksum,
+Noncards in the graveyard do not satisfy threshold, and the static boost
+operates only on the battlefield. Selected modal branches have explicit
+definition-owned provenance and target-spec admission.
 store-profile admission and native gameplay qualification remain pending
 the serial predecessors. Formatting and diff checks are source checks only.

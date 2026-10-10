@@ -37,6 +37,8 @@ fn put(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -> Objec
         Zone::Hand => state.players[player.index()].hand.push(id),
         Zone::Battlefield => state.players[player.index()].battlefield.push(id),
         Zone::Graveyard => state.players[player.index()].graveyard.push(id),
+        Zone::Library => state.players[player.index()].library.push(id),
+        Zone::Exile => state.players[player.index()].exile.push(id),
         _ => panic!("helper zone"),
     }
     id
@@ -141,6 +143,28 @@ fn threshold_recomputes_for_controller_and_zone_changes() {
         state.players[other.index()].battlefield.push(source);
         state.objects.get_mut(source).controller = other;
         assert_eq!(stats(&state, source), (4, 4));
+    }
+}
+
+#[test]
+fn threshold_ignores_transient_tokens_and_only_operates_on_battlefield() {
+    let mut state = ready();
+    let source = put(
+        &mut state,
+        PlayerId::P0,
+        "Billowing Shriekmass",
+        Zone::Battlefield,
+    );
+    for _ in 0..6 {
+        put(&mut state, PlayerId::P0, "Plains", Zone::Graveyard);
+    }
+    put(&mut state, PlayerId::P0, "Food Token", Zone::Graveyard);
+    assert_eq!(stats(&state, source), (2, 3));
+    put(&mut state, PlayerId::P0, "Plains", Zone::Graveyard);
+    assert_eq!(stats(&state, source), (4, 4));
+    for zone in [Zone::Hand, Zone::Library, Zone::Graveyard, Zone::Exile] {
+        let outside = put(&mut state, PlayerId::P0, "Billowing Shriekmass", zone);
+        assert_eq!(stats(&state, outside), (2, 3), "{zone:?}");
     }
 }
 
