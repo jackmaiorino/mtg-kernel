@@ -121,6 +121,15 @@ pub(crate) struct MillObs {
     awaiting: Option<u16>,
 }
 
+impl MillObs {
+    pub(crate) fn new(want: usize) -> Self {
+        Self {
+            want,
+            ..Self::default()
+        }
+    }
+}
+
 /// One root's trace; `lines` become the JSONL sidecar.
 #[derive(Default)]
 pub(crate) struct Trace {
@@ -137,10 +146,20 @@ pub(crate) struct Trace {
 fn choose_all_start(sem: &[ActionSemanticV1]) -> Option<u16> {
     let mut src = None;
     for x in sem {
-        let ActionSemanticV1::ChooseEffectTarget { source, selected_count, min_targets, max_targets, .. } = x else {
+        let ActionSemanticV1::ChooseEffectTarget {
+            source,
+            selected_count,
+            min_targets,
+            max_targets,
+            ..
+        } = x
+        else {
             return None;
         };
-        if *selected_count != 0 || min_targets != max_targets || usize::from(*min_targets) != sem.len() {
+        if *selected_count != 0
+            || min_targets != max_targets
+            || usize::from(*min_targets) != sem.len()
+        {
             return None;
         }
         if src.is_some_and(|s| s != source.card_db_id) {
@@ -289,7 +308,14 @@ impl Trace {
         }
     }
 
-    fn mill_capture(&mut self, s: &FastActorSessionV1, d: &FastActorDecisionV1, p: &Value, t: u64, depth: u32) {
+    fn mill_capture(
+        &mut self,
+        s: &FastActorSessionV1,
+        d: &FastActorDecisionV1,
+        p: &Value,
+        t: u64,
+        depth: u32,
+    ) {
         let Some(m) = self.millobs.as_mut() else {
             return;
         };
@@ -311,7 +337,11 @@ impl Trace {
         if m.captured >= m.want || pi == 0 {
             return;
         }
-        let parent = self.cur.get("path").and_then(|x| x.get(pi as usize - 1)).map(|e| (e[0].as_u64().unwrap_or(0), e[1].as_u64().unwrap_or(0)));
+        let parent = self
+            .cur
+            .get("path")
+            .and_then(|x| x.get(pi as usize - 1))
+            .map(|e| (e[0].as_u64().unwrap_or(0), e[1].as_u64().unwrap_or(0)));
         let Some(parent) = parent else {
             return;
         };
@@ -322,8 +352,11 @@ impl Trace {
         m.captured += 1;
         m.awaiting = Some(src);
         let view = full_view(s, d);
-        self.lines.push(json!({"r":"millobs","phase":"selection_start","i":i,"t":t,"dep":depth,"source":src,
-            "parent":[parent.0, parent.1],"view":view}).to_string());
+        self.lines.push(
+            json!({"r":"millobs","phase":"selection_start","i":i,"t":t,"dep":depth,"source":src,
+            "parent":[parent.0, parent.1],"view":view})
+            .to_string(),
+        );
     }
 
     /// Existing resolution events of the transition that ended at `t`.

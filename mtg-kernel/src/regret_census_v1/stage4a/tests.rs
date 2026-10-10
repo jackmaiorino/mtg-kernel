@@ -790,7 +790,8 @@ fn scripted_cast(
                 .position(|x| matches!(x, ActionSemanticV1::Pass { .. }))
                 .unwrap_or(0)
         };
-        if matches!(&sem[a], ActionSemanticV1::CastSpell { source, .. } if source.card_db_id == spell_id) {
+        if matches!(&sem[a], ActionSemanticV1::CastSpell { source, .. } if source.card_db_id == spell_id)
+        {
             cast = true;
         }
         s.step(d.episode_id, d.step, a as u32).unwrap();
@@ -827,7 +828,12 @@ fn zone_names(
 #[test]
 fn resolution_boundary_mills_a_landless_library_without_ordering_choices() {
     use crate::engine::RuntimeRulesV1;
-    let lib = ["Dread Return", "Lotleth Giant", "Balustrade Spy", "Dread Return"];
+    let lib = [
+        "Dread Return",
+        "Lotleth Giant",
+        "Balustrade Spy",
+        "Dread Return",
+    ];
     let (old_menus, old) = scripted_cast(RuntimeRulesV1::default(), "Balustrade Spy", &lib);
     let (new_menus, new) = scripted_cast(
         RuntimeRulesV1::RESOLUTION_BOUNDARY_V1,
@@ -861,7 +867,13 @@ fn resolution_boundary_mills_a_landless_library_without_ordering_choices() {
 #[test]
 fn resolution_boundary_stops_at_the_first_land_like_the_historical_engine() {
     use crate::engine::RuntimeRulesV1;
-    let lib = ["Lotleth Giant", "Swamp", "Dread Return", "Balustrade Spy", "Dread Return"];
+    let lib = [
+        "Lotleth Giant",
+        "Swamp",
+        "Dread Return",
+        "Balustrade Spy",
+        "Dread Return",
+    ];
     let (_, old) = scripted_cast(RuntimeRulesV1::default(), "Balustrade Spy", &lib);
     let (new_menus, new) = scripted_cast(
         RuntimeRulesV1::RESOLUTION_BOUNDARY_V1,
@@ -869,7 +881,10 @@ fn resolution_boundary_stops_at_the_first_land_like_the_historical_engine() {
         &lib,
     );
     assert_eq!(order_menus(&new_menus), 0, "{new_menus:?}");
-    assert!(!new.players[0].library.is_empty(), "the land stops the reveal");
+    assert!(
+        !new.players[0].library.is_empty(),
+        "the land stops the reveal"
+    );
     assert_eq!(
         zone_names(&old, &old.players[0].library, false),
         zone_names(&new, &new.players[0].library, false)
@@ -885,7 +900,12 @@ fn resolution_boundary_stops_at_the_first_land_like_the_historical_engine() {
 #[test]
 fn resolution_boundary_keeps_the_order_choice_when_delve_can_read_it() {
     use crate::engine::RuntimeRulesV1;
-    let lib = ["Dread Return", "Lotleth Giant", "Gurmag Angler", "Dread Return"];
+    let lib = [
+        "Dread Return",
+        "Lotleth Giant",
+        "Gurmag Angler",
+        "Dread Return",
+    ];
     let (menus, _) = scripted_cast(
         RuntimeRulesV1::RESOLUTION_BOUNDARY_V1,
         "Balustrade Spy",

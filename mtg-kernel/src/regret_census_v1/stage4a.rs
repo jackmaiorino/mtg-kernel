@@ -473,7 +473,9 @@ fn run_root_diag(
     // under the opt-in rules profile (a new runtime identity).
     let runtime = match std::env::var("S4A_RUNTIME").ok().as_deref() {
         None | Some("") | Some("historical") => None,
-        Some("resolution-boundary-v1") => Some(crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1),
+        Some("resolution-boundary-v1") => {
+            Some(crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1)
+        }
         Some(other) => return Err(format!("unknown S4A_RUNTIME {other}")),
     };
     if let Some(r) = runtime {
@@ -506,10 +508,9 @@ fn run_root_diag(
     let trace_dir = std::env::var("S4A_TRACE").ok();
     let mut trace = trace_dir.as_ref().map(|_| diag::Trace::default());
     if let (Some(t), Ok(n)) = (trace.as_mut(), std::env::var("S4A_MILLOBS")) {
-        t.millobs = Some(diag::MillObs {
-            want: n.parse().map_err(|_| format!("bad S4A_MILLOBS {n}"))?,
-            ..Default::default()
-        });
+        t.millobs = Some(diag::MillObs::new(
+            n.parse().map_err(|_| format!("bad S4A_MILLOBS {n}"))?,
+        ));
     }
     if let Some(t) = trace.as_mut() {
         t.meta_line(json!({"r":"meta","schema":"s4a-diag-trace/v1","root_id":root_id,
