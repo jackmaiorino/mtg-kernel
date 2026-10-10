@@ -842,6 +842,51 @@ const CACKLING_PROWLER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef
     condition: TriggerCondition::BeginningControllerEndStepIfCreatureDied,
     ..etb_trigger(prowler_morbid_effect)
 }];
+const WARDENS_OF_THE_CYCLE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningControllerEndStepIfCreatureDied,
+    ..etb_trigger(wardens_of_the_cycle_effect)
+}];
+
+fn wardens_of_the_cycle_modes() -> Vec<(TargetSpec, EffectOp)> {
+    [
+        EffectOp::GainLife {
+            player: PlayerRef::Controller,
+            amount: 2,
+        },
+        EffectOp::Sequence(vec![
+            EffectOp::DrawCards {
+                player: PlayerRef::Controller,
+                count: 1,
+            },
+            EffectOp::LoseLife {
+                player: PlayerRef::Controller,
+                amount: 1,
+            },
+        ]),
+    ]
+    .into_iter()
+    .map(|branch| {
+        (
+            TargetSpec::None,
+            EffectOp::Conditional {
+                cond: EffectCond::CreatureDiedThisTurn,
+                then: Box::new(branch),
+                else_: Box::new(EffectOp::Sequence(vec![])),
+            },
+        )
+    })
+    .collect()
+}
+
+fn wardens_of_the_cycle_effect() -> EffectOp {
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: wardens_of_the_cycle_modes()
+            .into_iter()
+            .map(|(_, effect)| effect)
+            .collect(),
+    }
+}
 
 const SYLVAN_SCAVENGING_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::BeginningControllerEndStep,
@@ -954,6 +999,9 @@ pub fn unselected_trigger_modes(
     let card = crate::card_def::CARD_DEFS.get(card_def as usize)?;
     if card.name == "Apothecary Stomper" && *effect == apothecary_stomper_effect() {
         return Some(apothecary_stomper_modes());
+    }
+    if card.name == "Wardens of the Cycle" && *effect == wardens_of_the_cycle_effect() {
+        return Some(wardens_of_the_cycle_modes());
     }
     #[cfg(feature = "standard-magezero-fixtures")]
     if card.name == "Hullbreaker Horror"
@@ -2984,6 +3032,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Cephalid Inkmage" => &CEPHALID_INKMAGE_TRIGGERS,
         "Billowing Shriekmass" => &BILLOWING_SHRIEKMASS_TRIGGERS,
         "Apothecary Stomper" => &APOTHECARY_STOMPER_TRIGGERS,
+        "Wardens of the Cycle" => &WARDENS_OF_THE_CYCLE_TRIGGERS,
         "Crypt Feaster" => &CRYPT_FEASTER_TRIGGERS,
         "Erudite Wizard" => &ERUDITE_WIZARD_TRIGGERS,
         "Phyrexian Arena" => &PHYREXIAN_ARENA_TRIGGERS,
@@ -3333,6 +3382,13 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     let Some(card) = crate::card_def::CARD_DEFS.get(card_def as usize) else {
         return false;
     };
+    if card.name == "Wardens of the Cycle"
+        && wardens_of_the_cycle_modes()
+            .iter()
+            .any(|(_, branch)| branch == effect)
+    {
+        return true;
+    }
     if card.name == "Apothecary Stomper"
         && apothecary_stomper_modes()
             .iter()
