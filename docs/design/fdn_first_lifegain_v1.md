@@ -13,6 +13,14 @@ catalog SHA-256 `68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b85
 Historical v62 `FdnSurveil` stores remain readable; publication and resume
 require the current catalog. Native gameplay qualification remains queued.
 
+The first guarded gameplay attempt at `bc3c349e` completed with 11 passing
+cases and three fixture failures: the settle helper and private-surveil case
+expected a target prompt for count one, whose preserved protocol is the
+two-option keep/graveyard prompt. Commit `527c565a` uses that actual prompt
+and checks nonchooser public and typed projections across hidden top-card
+changes. The failed output is retained; the corrected attempt is queued and
+is not yet reported passing.
+
 | Card | Exact printed behavior | Existing effect |
 | --- | --- | --- |
 | Vanguard Seraph, {3}{W}, Angel Warrior, 3/3 flying | First life gain each turn: surveil 1 | Controller surveil, count 1 |
