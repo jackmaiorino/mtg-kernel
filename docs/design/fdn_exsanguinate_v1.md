@@ -20,3 +20,6 @@ replacement, required colored mana, pending X and final-stack restore,
 illegal X rejection and terminal resolution. They have not executed.
 Registry, fixture, generated catalog/profile and gameplay qualification
 await serial admission. Earlier effect discriminants and profiles persist.
+Read-only source review at `58c07ab9` found no actionable correctness
+defects. Its terminal-coverage note is addressed at `d32c59d1` with an
+explicit lethal winner assertion. Native execution remains pending.

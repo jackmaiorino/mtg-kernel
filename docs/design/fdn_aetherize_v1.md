@@ -20,3 +20,7 @@ real attacker declaration and defending-player priority, pending-stack
 restore, departed objects, changed creature types and late attackers.
 They have not executed. Registry, fixture, generated catalog/profile and
 gameplay qualification await serial admission.
+Read-only review found the borrowed-creature fixture retained the old
+battlefield bucket after changing controller, so real attacker declaration
+would reject it. The fixture now moves it to the active controller
+battlefield list while preserving ownership. Native checks remain pending.

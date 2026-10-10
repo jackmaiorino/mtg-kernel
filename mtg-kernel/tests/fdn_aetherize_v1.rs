@@ -104,6 +104,12 @@ fn aetherize_returns_real_attackers_to_owners_with_pending_stack_restore() {
         );
         let borrowed = put(&mut state, caster, "Faerie Miscreant", Zone::Battlefield);
         state.objects.get_mut(borrowed).controller = attacker_seat;
+        state.players[caster.index()]
+            .battlefield
+            .retain(|&id| id != borrowed);
+        state.players[attacker_seat.index()]
+            .battlefield
+            .push(borrowed);
         let idle = put(
             &mut state,
             attacker_seat,
