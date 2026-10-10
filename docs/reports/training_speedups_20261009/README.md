@@ -6,7 +6,8 @@ improved **2.48x** (34.91 to 14.10 minutes per block); the declared sum of
 completed phases improved **2.49x** (34.79 to 13.99 minutes). The first
 baseline's unusually slow recovery copying strongly inflates this contrast.
 It is not a stable production speedup estimate. Guarded dispatch improved
-**1.35x**, with adjacent pair ratios of 1.39x and 1.31x. Integration is pending.
+**1.35x**, with adjacent pair ratios of 1.39x and 1.31x. Delivery is tracked in
+[PR200](https://github.com/jackmaiorino/mtg-kernel/pull/200).
 
 The [full result and bottleneck ranking](RESULTS.md) include all four cases,
 timing boundaries, storage variability, numerical parity and next priorities.
@@ -60,7 +61,7 @@ Pinned Python 3.13.14 checks passed: 26 dispatcher tests, four archive tests,
 and three storage tests; four Linux-only dispatcher tests were skipped.
 Native parity tests passed, including the pinned two-update GAE state and
 real serial/parallel games. The complete matched blocks and result review
-passed; final current-head CI and integration remain pending. The short
+passed; current-head CI and integration are tracked in PR200. The short
 qualifications and historical progress records are below.
 Review found and repaired two collector issues: a zero enclosing profiler
 duration and source-pin verification across cached collection invocations.
