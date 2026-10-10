@@ -104,6 +104,14 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
                 obj: ObjF::Spell,
             });
         }
+        TriggerCondition::CastNoncreatureOrSubtype(_) => {
+            out.trigger(TrigF::SpellCast {
+                by: RelF::You,
+                obj: ObjF::Spell,
+            });
+            // The v1 object facets cannot express this union predicate.
+            out.atoms.push(Atom::Opaque);
+        }
         TriggerCondition::CastSelf => {
             // The cast event's spell is the source itself, cast by its
             // controller. The stack home zone is emitted by the caller.

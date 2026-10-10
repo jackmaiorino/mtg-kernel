@@ -25,8 +25,8 @@ instant/sorcery triggers, noncreature triggers, damage and boost effects keep
 their meanings. No new effect, state, subtype or receipt enum is added.
 
 This is source preparation for issue110, reserving catalog v66 / IDs338-339
-following the serial v61-v65 batches. The current branch appends registry
-records to its v60 base temporarily; its native ID assertions deliberately
+following the serial v61-v65 batches. The owned staging branch keeps registry
+admission deferred; its native ID assertions deliberately
 require the eventual serial IDs. Catalog version/hash, prior store-profile
 readability, CI admission and native qualification await those dependencies.
 No generated catalog hash or native test pass is claimed.
@@ -40,3 +40,8 @@ predicate when both terms are true and excludes printed Dragon subtype from
 an Adventure face. The synthetic forty-card reference deck has four copies
 each of Balmor, Whelp, Firebrand Archer, Think Twice and Lembas plus ten each
 Island and Mountain. Python deck checks are source admission evidence only.
+
+Source changes are staged on `codex/fdn-next-families` with all current
+Standard trigger enum discriminants preserved. The rules vector records the
+combined cast predicate exactly and marks its union filter opaque in v1 facets.
+No registration or native qualification is claimed.

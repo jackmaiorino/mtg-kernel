@@ -752,6 +752,13 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                     .push("global first life gain ordinal and optional own-turn gate");
             }
             let env = Env { target_spec: spec };
+            if matches!(
+                condition,
+                crate::trigger::TriggerCondition::CastNoncreatureOrSubtype(_)
+            ) {
+                walk.opaque
+                    .push("noncreature spell or selected subtype cast union predicate");
+            }
             walk.ability(CtxF::Trigger, |out| {
                 triggers_costs::trigger_condition(condition, out);
                 if home_zone != Zone::Battlefield {
