@@ -4364,6 +4364,891 @@
       "java_file": "Mage.Sets/src/mage/cards/e/EmpyreanEagle.java",
       "scryfall_id": "577e99a7-4a55-4314-8f08-2ae0c33b85c7",
       "oracle_id": "270d14b2-07bc-46bc-918f-658102265ccf"
+    },
+    {
+      "mana_cost": "{U}{R}",
+      "mana_value": 2,
+      "colors": [
+        "U",
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bird",
+        "Wizard"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 1,
+      "toughness": 3,
+      "name": "Balmor, Battlemage Captain",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/b/BalmorBattlemageCaptain.java",
+      "scryfall_id": "0b45ab13-9bb6-48af-8b37-d97b25801ac8",
+      "oracle_id": "7da19fc5-cb85-4ec7-beea-95210378bbfe",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{2}{R}",
+      "mana_value": 3,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dragon"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "name": "Firespitter Whelp",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/f/FirespitterWhelp.java",
+      "scryfall_id": "4b3a4c7d-3126-4bde-9dca-cb6a1e2f37c9",
+      "oracle_id": "1cad92ce-55c8-4b78-8d8c-56645ef8e6ee",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{3}{B}",
+      "mana_value": 4,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Spirit"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 3,
+      "name": "Billowing Shriekmass",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/b/BillowingShriekmass.java",
+      "scryfall_id": "7b3587a9-0667-4d53-807b-c437bcb1d7b3",
+      "oracle_id": "ce45d6bd-74e3-401b-983d-028d3fb942da",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{4}{G}{G}",
+      "mana_value": 6,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elephant"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 4,
+      "name": "Apothecary Stomper",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/a/ApothecaryStomper.java",
+      "scryfall_id": "680b7b0c-0e1b-46ce-9917-9fc6e05aa148",
+      "oracle_id": "6a381121-9134-489c-8c7e-44be1936b0e2",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Zombie"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "name": "Hungry Ghoul",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/h/HungryGhoul.java",
+      "scryfall_id": "790f9433-7565-4f7f-88e8-8af762ea0296",
+      "oracle_id": "4a7a55a3-568c-4c31-9460-5b94dc0121d8",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{4}{B}",
+      "mana_value": 5,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Vampire",
+        "Warlock"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 2,
+      "name": "Vampire Soulcaller",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/v/VampireSoulcaller.java",
+      "scryfall_id": "2d076293-3b45-4878-8f67-978927cc1f68",
+      "oracle_id": "bbea8ade-a641-4132-b306-f39fe2f14311",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{6}{R}",
+      "mana_value": 7,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "name": "Brass's Bounty",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/b/BrasssBounty.java",
+      "scryfall_id": "65fe7127-b0ec-400f-97f1-6e17ab8e319d",
+      "oracle_id": "63b0538e-aa94-4e23-adf1-704cbf5bc3e5",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Skeleton",
+        "Warrior"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "name": "Reassembling Skeleton",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/r/ReassemblingSkeleton.java",
+      "scryfall_id": "28e84b1b-1c05-4e1b-93b8-9cc2ca73509d",
+      "oracle_id": "9dbc3530-b278-4c8d-b2cc-a09dfac9d5e5",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{X}{B}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "name": "Exsanguinate",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/e/Exsanguinate.java",
+      "scryfall_id": "f11d7311-4066-4a5d-ba28-9857fa707a0b",
+      "oracle_id": "8164b1e8-3350-465e-8a17-75f57d326344",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{3}{U}",
+      "mana_value": 4,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "name": "Aetherize",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/a/Aetherize.java",
+      "scryfall_id": "1e5530fc-0291-4a17-b048-c5d24e6f51d8",
+      "oracle_id": "7c779721-cd1b-4696-9ae9-68ccc284ed2a",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{U}",
+      "mana_value": 1,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "name": "An Offer You Can't Refuse",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/a/AnOfferYouCantRefuse.java",
+      "scryfall_id": "a829747f-cf9b-4d81-ba66-9f0630ed4565",
+      "oracle_id": "234a734b-ba28-4f1b-9d01-3c3e7d516590",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{2}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "name": "Seeker's Folly",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/s/SeekersFolly.java",
+      "scryfall_id": "bc359da6-8b7f-45ec-b530-ce159fc35953",
+      "oracle_id": "223794f2-67a3-4ab5-81c5-046c63307c6c",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "name": "Pilfer",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/p/Pilfer.java",
+      "scryfall_id": "8c7c88b5-6d09-453b-b9c1-7dcbba8f1080",
+      "oracle_id": "d13f0907-de39-4a90-940a-831740d7aa9b",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{5}{G}",
+      "mana_value": 6,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Beast"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 4,
+      "name": "Affectionate Indrik",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/a/AffectionateIndrik.java",
+      "scryfall_id": "2da8347d-06a4-46e0-a55e-cc2da4660263",
+      "oracle_id": "88aa032d-dc11-4cae-81f3-ce66353963e0",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "name": "Bushwhack",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/b/Bushwhack.java",
+      "scryfall_id": "03ebdb36-55e0-49dd-a514-785fbeb4ae19",
+      "oracle_id": "c61374e5-a7f6-455e-a40b-a481751b536b",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "name": "Lunar Insight",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/l/LunarInsight.java",
+      "scryfall_id": "a9a159f6-fecf-4bdd-b2f8-a9665a5cc32d",
+      "oracle_id": "56b4a2f7-2d35-4d05-8d26-4f9f16c5f9f5",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{3}{R}",
+      "mana_value": 4,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "name": "Hidetsugu's Second Rite",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/h/HidetsugusSecondRite.java",
+      "scryfall_id": "609421da-8d89-4365-b18b-778832d91482",
+      "oracle_id": "749683c9-8cc0-4e8e-8d90-adda5e5f4e93",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{2}{W}{W}",
+      "mana_value": 4,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "name": "Raise the Past",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/r/RaiseThePast.java",
+      "scryfall_id": "6c6be129-56da-4fe7-a6bd-6a1d402c09e1",
+      "oracle_id": "a69a24d0-ca58-4a44-8af1-a3bd1608d2f9",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{7}{B}{B}",
+      "mana_value": 9,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "name": "Rise of the Dark Realms",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/r/RiseOfTheDarkRealms.java",
+      "scryfall_id": "8645bf0c-631f-4003-bd24-3e069ae23513",
+      "oracle_id": "e5223a09-f732-4747-8914-e6546ab0ef4c",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{4}{B}",
+      "mana_value": 5,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Spirit"
+      ],
+      "supertypes": [],
+      "power": 5,
+      "toughness": 3,
+      "name": "Tragic Banshee",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/t/TragicBanshee.java",
+      "scryfall_id": "30df3e33-2f17-4067-99f1-5db6b0f41fd4",
+      "oracle_id": "888f58c0-1860-4df4-ad75-53e634150680",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{4}{U}{U}",
+      "mana_value": 6,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Kraken"
+      ],
+      "supertypes": [],
+      "power": 5,
+      "toughness": 6,
+      "name": "Grappling Kraken",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/g/GrapplingKraken.java",
+      "scryfall_id": "d1f5cab3-3fc0-448d-8252-cd55abf5b596",
+      "oracle_id": "1ba99ade-df8d-4654-882a-a5f4256ada3d",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{3}{R}",
+      "mana_value": 4,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Berserker"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 4,
+      "name": "Battlesong Berserker",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/b/BattlesongBerserker.java",
+      "scryfall_id": "a1f8b199-5d62-485f-b1c3-b30aa550595b",
+      "oracle_id": "396cc8ce-9efa-4fc7-90a6-b439b2b021db",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{3}",
+      "mana_value": 3,
+      "colors": [],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Phyrexian",
+        "Construct"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 2,
+      "name": "Scrawling Crawler",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/s/ScrawlingCrawler.java",
+      "scryfall_id": "a1176dcf-40ee-4342-aa74-791b8352e99a",
+      "oracle_id": "1d60c80d-9a95-4051-bbf7-02ca51ee1be2",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{1}{B}{G}{G}",
+      "mana_value": 4,
+      "colors": [
+        "B",
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elf",
+        "Warlock"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 4,
+      "name": "Wardens of the Cycle",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/w/WardensOfTheCycle.java",
+      "scryfall_id": "83ea9b2c-5723-4eff-88ac-6669975939e3",
+      "oracle_id": "fa7d09aa-2ebc-4571-81da-836cd80cf554",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{3}{U}{U}",
+      "mana_value": 5,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "name": "Arcane Epiphany",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/a/ArcaneEpiphany.java",
+      "scryfall_id": "06431793-5dfe-4cbf-990b-4bcc960d1f31",
+      "oracle_id": "fe1556cc-32d0-4e51-bb15-f3fce669a5e1",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{3}{W}{W}",
+      "mana_value": 5,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "name": "Claws Out",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/c/ClawsOut.java",
+      "scryfall_id": "4396049c-b976-4b7f-8ecd-564e24ebd631",
+      "oracle_id": "499d76c1-97ff-4006-922c-be1684a7754c",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{1}{U}{B}",
+      "mana_value": 3,
+      "colors": [
+        "U",
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Nightmare",
+        "Bird"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "name": "Dreadwing Scavenger",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/d/DreadwingScavenger.java",
+      "scryfall_id": "e24d838b-ab48-410a-9a50-dbfea5da089b",
+      "oracle_id": "bbfd0de0-3558-4833-bae4-8efae44b7fff",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{2}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dog"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 1,
+      "name": "Mischievous Pup",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/m/MischievousPup.java",
+      "scryfall_id": "7214d984-6400-44d7-bde6-57d96b606e78",
+      "oracle_id": "e75b187d-0e3b-4d94-a940-8b7e4e7ed1ca",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{3}{W}",
+      "mana_value": 4,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Cat",
+        "Beast"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 3,
+      "name": "Felidar Savior",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/f/FelidarSavior.java",
+      "scryfall_id": "cd092b14-d72f-4de0-8f19-1338661b9e3b",
+      "oracle_id": "2bee2508-cd5d-4c62-a205-12d8bbb3143d",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{4}{W}",
+      "mana_value": 5,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dinosaur"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 4,
+      "name": "Armasaur Guide",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/a/ArmasaurGuide.java",
+      "scryfall_id": "c80fc380-0499-4499-8a60-c43844c02c9b",
+      "oracle_id": "1d4e7422-2e26-49ce-beef-08f61583089a",
+      "complexity": "moderate",
+      "mechanics": []
+    },
+    {
+      "mana_cost": "{4}{B}{B}",
+      "mana_value": 6,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Demon"
+      ],
+      "supertypes": [],
+      "power": 5,
+      "toughness": 4,
+      "name": "Arbiter of Woe",
+      "engine_capability": "full",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_prepared_families.dck"
+      ],
+      "sideboard_only": false,
+      "java_file": "Mage.Sets/src/mage/cards/a/ArbiterOfWoe.java",
+      "scryfall_id": "b2496c4a-df03-4583-bd76-f98ed5cb61ee",
+      "oracle_id": "540693f3-985c-4a4a-945c-c957c5aad395",
+      "complexity": "moderate",
+      "mechanics": []
     }
   ]
 }

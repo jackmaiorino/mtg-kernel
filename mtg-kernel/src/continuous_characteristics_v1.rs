@@ -50,6 +50,20 @@ pub(crate) fn printed_abilities_active(state: &GameState, source: ObjectId) -> b
     removal_timestamp(state, source).is_none()
 }
 
+pub(crate) fn has_printed_cant_block(name: &str) -> bool {
+    cfg!(feature = "limited-fdn-fixtures") && name == "Vampire Soulcaller"
+}
+
+pub(crate) fn printed_cant_block(state: &GameState, source: ObjectId) -> bool {
+    state.objects.try_get(source).is_some_and(|object| {
+        object.zone == Zone::Battlefield
+            && CARD_DEFS
+                .get(usize::from(object.card_def))
+                .is_some_and(|def| has_printed_cant_block(def.name))
+            && printed_abilities_active(state, source)
+    })
+}
+
 pub(crate) fn grant_survives(state: &GameState, host: ObjectId, timestamp: u64) -> bool {
     removal_timestamp(state, host).is_none_or(|removed_at| timestamp > removed_at)
 }

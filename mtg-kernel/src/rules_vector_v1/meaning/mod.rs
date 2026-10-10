@@ -159,6 +159,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::DestroyTargetLandThenMaySearchBasicTapped { .. }
         | EffectOp::SearchLibraryToBattlefieldTapped { .. }
         | EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard { .. }
+        | EffectOp::RevealTargetHandChooseNonlandDiscard { .. }
         | EffectOp::ShuffleTriggerSourceIntoOwnersLibrary
         | EffectOp::MaterializeStormCopies
         | EffectOp::CreateStormCopies { .. }
@@ -193,8 +194,10 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::BindTemporaryBoostToTriggerSource { .. }
         | EffectOp::BoostBoundObjectUntilEndOfTurn { .. }
         | EffectOp::BoostControlledCreaturesUntilEndOfTurn { .. }
+        | EffectOp::BoostPlayerCreaturesUntilEndOfTurn { .. }
         | EffectOp::GainLifeByAttackingSubtypeCount { .. }
         | EffectOp::CreatureTargetPowerDamage { .. }
+        | EffectOp::FightObjects { .. }
         | EffectOp::PreventCombatDamageToTargetThisTurn { .. }
         | EffectOp::BindDoublePlusOneCountersToTriggerSource
         | EffectOp::DoublePlusOneCountersOnBoundObject { .. }
@@ -233,6 +236,12 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::BindPlusOneCounterOnAnotherTargetToTriggerTarget
         | EffectOp::PutPlusOnePlusOneCounterOnTargetOtherThan { .. }
         | EffectOp::ReturnSourceFromGraveyardUnearthed
+        | EffectOp::ReturnAbilitySourceFromGraveyard { .. }
+        | EffectOp::LoseOpponentsLifeXThenGainLifeLost
+        | EffectOp::ReturnAttackingCreaturesToOwnersHands
+        | EffectOp::ReturnOwnGraveyardCreaturesManaValueAtMost { .. }
+        | EffectOp::ReturnAllGraveyardCreaturesUnderController
+        | EffectOp::CounterTargetSpellThenCreateTokens { .. }
         | EffectOp::ExileGraveyardTargetsDrainPerCreature { .. }
         | EffectOp::RemoveTimeCounterFromSource
         | EffectOp::ReturnSourceAsEnduringEnchantment => effect_h::effect_op(op, env, out),

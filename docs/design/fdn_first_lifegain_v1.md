@@ -108,3 +108,11 @@ integration prerequisite. The earlier malformed build
 claim was reported to its owner through the shared mailbox and collaboration
 PR137 and has since been released. No reservation or other owner's process
 was changed.
+
+Default-branch acceptance, October10: PR208 merged reviewed headffb6676e at
+bc23a8da89d6b57d5c8ca0afd480a9ae50c4e292. All23 head checks passed. The actual
+merge treeffee360661264d8ba5829625be8db69bb82ee45c equals the independently
+reviewed composition against main30d00b0b. All33 affected Python cases pass on
+that default commit with Python3.13.14, and frozen286-name inventory is134
+full, one partial and151 missing. This supersedes the earlier pending status;
+the full-pool umbrella remains open. No playing-strength result is claimed.

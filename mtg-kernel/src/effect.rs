@@ -315,6 +315,17 @@ pub enum EffectCond {
     /// The resolving triggered ability's source is still the incarnation
     /// that triggered, in the zone it triggered from.
     SourceStillInTriggerZone,
+    /// Current life total of a player target, sampled when the effect resolves.
+    TargetPlayerLifeTotalEquals {
+        index: u8,
+        life: i32,
+    },
+    /// Full current legality of an incarnation-bound target, using the
+    /// captured ability source rather than the source's current incarnation.
+    TargetIsLegalForAbility {
+        index: u8,
+        spec: crate::card_def::TargetSpec,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -368,12 +379,10 @@ pub enum EffectOp {
     /// Unlike every other leaf, this one doesn't necessarily mutate state
     /// synchronously: `execute` stages `EngineState::pending_discard` and
     /// returns, and `engine::advance_until_decision` asks
-    /// `Decision::Discard`. Because of that, **this must be the last leaf
-    /// in any `Sequence` it appears in** (see `engine.rs`'s
-    /// `pending_discard` doc for why: nothing after it in the same
-    /// resolution would run before the decision is answered). The only
-    /// user this increment, Faithless Looting ("draw two, then discard
-    /// two"), satisfies this by construction.
+    /// `Decision::Discard`. Legacy synchronous programs require this to be
+    /// their last leaf. A root sequence with later instructions enters the
+    /// resumable interpreter and preserves those instructions until the exact
+    /// hand answer is authenticated and committed.
     DiscardCards {
         player: PlayerRef,
         count: u32,
@@ -1334,6 +1343,54 @@ pub enum EffectOp {
     /// The resolving ability's source becomes its `CardDef::animation`
     /// creature, if it is still the activating battlefield incarnation.
     AnimateSource,
+    /// Return the exact graveyard incarnation that activated this ability
+    /// under its owner's control. Unlike Unearth, this adds no exile rule.
+    ReturnAbilitySourceFromGraveyard {
+        tapped: bool,
+    },
+    /// Each opponent loses the spell's announced X; gain exactly the life
+    /// lost by those proposals after replacement. The game has two seats.
+    LoseOpponentsLifeXThenGainLifeLost,
+    /// Sample current attacking creatures at resolution and move them
+    /// simultaneously to their owners' hands, preserving their public identity.
+    ReturnAttackingCreaturesToOwnersHands,
+    /// Counter this exact targeted spell if allowed, then let its controller
+    /// at resolution create tokens whether or not the counter succeeded.
+    CounterTargetSpellThenCreateTokens {
+        target_index: u8,
+        token_def: u16,
+        count: u8,
+    },
+    /// Snapshot current creatures controlled by the resolved player and
+    /// install per-incarnation boosts and keywords until this turn's cleanup.
+    BoostPlayerCreaturesUntilEndOfTurn {
+        player: PlayerRef,
+        power: i32,
+        toughness: i32,
+        keywords: Keywords,
+    },
+    /// Publicly reveal the opponent's hand, then choose one nonland card
+    /// for that player to discard. The definition owns the eligibility
+    /// filter; existing revealed-hand continuations retain their wire shape.
+    RevealTargetHandChooseNonlandDiscard {
+        player: PlayerRef,
+    },
+    /// Two currently legal battlefield creature incarnations deal damage
+    /// equal to their sampled powers to one another simultaneously. A
+    /// source operand uses its captured ability incarnation, never LKI.
+    FightObjects {
+        first: ObjectRef,
+        second: ObjectRef,
+        target_spec: crate::card_def::TargetSpec,
+    },
+    /// Return all qualifying creature cards from the controller's current
+    /// graveyard in one simultaneous zone-change batch. Tokens are not cards.
+    ReturnOwnGraveyardCreaturesManaValueAtMost {
+        max_mana_value: u16,
+    },
+    /// Move all creature cards from both graveyards into one battlefield
+    /// entry batch under the effect controller; physical owners are unchanged.
+    ReturnAllGraveyardCreaturesUnderController,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -2377,7 +2434,10 @@ impl std::hash::Hash for ExecCtx {
 /// interpreter.
 pub fn contains_player_choice(op: &EffectOp) -> bool {
     match op {
-        EffectOp::Sequence(ops) => ops.iter().any(contains_player_choice),
+        EffectOp::Sequence(ops) => ops.iter().enumerate().any(|(index, op)| {
+            contains_player_choice(op)
+                || (index + 1 < ops.len() && matches!(op, EffectOp::DiscardCards { .. }))
+        }),
         EffectOp::Conditional { then, else_, .. } => {
             contains_player_choice(then) || contains_player_choice(else_)
         }
@@ -2415,6 +2475,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::DestroyTargetLandThenMaySearchBasicTapped { .. }
         | EffectOp::SearchLibraryToBattlefieldTapped { .. }
         | EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard { .. }
+        | EffectOp::RevealTargetHandChooseNonlandDiscard { .. }
         | EffectOp::RevealHandChooseNonlandToLinkedExile { .. }
         | EffectOp::ReturnLinkedExiledCardToOwnersHand
         | EffectOp::PreventDamageFromChosenColorUntilEndOfTurn { .. }
@@ -4951,18 +5012,21 @@ fn validate_search_library_to_battlefield_origin(
     }
 }
 
-fn validate_duress_origin(
+fn revealed_discard_excludes_creatures(
     state: &GameState,
     pending: &EffectContinuation,
     player: PlayerId,
     canonical_path: &[u16],
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let root = validated_definition_owned_root_effect(state, pending)?;
     match effect_op_at_path(root.as_ref(), canonical_path) {
         Some(EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard {
             player: original_player,
-        }) if pending.ctx.resolve_player(*original_player, state) == player => Ok(()),
-        _ => Err("Duress continuation lost its definition-owned origin".to_string()),
+        }) if pending.ctx.resolve_player(*original_player, state) == player => Ok(true),
+        Some(EffectOp::RevealTargetHandChooseNonlandDiscard {
+            player: original_player,
+        }) if pending.ctx.resolve_player(*original_player, state) == player => Ok(false),
+        _ => Err("revealed discard continuation lost its definition-owned origin".to_string()),
     }
 }
 
@@ -5851,6 +5915,35 @@ fn validate_answered_choice_guard(
     Ok(())
 }
 
+fn definition_has_nonterminal_discard(state: &GameState, pending: &EffectContinuation) -> bool {
+    let nonterminal = |op: &EffectOp| matches!(op, EffectOp::Sequence(ops) if ops.iter().take(ops.len().saturating_sub(1)).any(|op| matches!(op, EffectOp::DiscardCards { .. })));
+    let Some(source) = state.objects.try_get(pending.resolving_item.source) else {
+        return false;
+    };
+    if pending.resolving_item.kind == crate::state::StackItemKind::TriggeredAbility {
+        // Classify from declared recipes, without imposing stricter root
+        // reconstruction on old event-time Generic choices.
+        return crate::trigger::triggers_for(source.card_def)
+            .iter()
+            .any(|trigger| nonterminal(&(trigger.effect)()));
+    }
+    if pending.resolving_item.kind == crate::state::StackItemKind::Spell {
+        let definition = &crate::card_def::CARD_DEFS[source.card_def as usize];
+        return (definition.spell_effect)()
+            .as_ref()
+            .is_some_and(nonterminal)
+            || definition
+                .mode2
+                .as_ref()
+                .is_some_and(|mode| nonterminal(&(mode.effect)()))
+            || definition
+                .mode3
+                .as_ref()
+                .is_some_and(|mode| nonterminal(&(mode.effect)()));
+    }
+    false
+}
+
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(());
@@ -5881,6 +5974,14 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::engine::validated_stack_item_target_spec(&pending.resolving_item, state)
         .map_err(|error| format!("effect continuation has invalid stack provenance: {error}"))?;
     validate_answered_choice_guard(state, pending)?;
+    if definition_has_nonterminal_discard(state, pending) {
+        let discard = state
+            .engine
+            .pending_discard
+            .as_ref()
+            .ok_or("nonterminal discard continuation lost its pending hand answer")?;
+        validate_resumable_discard_details(state, pending, discard)?;
+    }
     let Some(choice) = pending.choice.as_ref() else {
         return Ok(());
     };
@@ -6308,9 +6409,15 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     {
                         return Err("Duress discard prompt has a noncanonical shape".to_string());
                     }
-                    validate_duress_origin(state, pending, *hand_player, canonical_path)?;
+                    let exclude_creatures = revealed_discard_excludes_creatures(
+                        state,
+                        pending,
+                        *hand_player,
+                        canonical_path,
+                    )?;
                     validate_bound_hand_exact(state, *hand_player, original_hand)?;
-                    let recomputed = duress_eligible_hand(state, original_hand)?;
+                    let recomputed =
+                        revealed_discard_eligible_hand(state, original_hand, exclude_creatures)?;
                     if eligible != &recomputed || eligible.is_empty() {
                         return Err("Duress eligible hand partition changed".to_string());
                     }
@@ -8121,9 +8228,15 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     if path != canonical_path {
                         return Err("Duress discard frame path changed".to_string());
                     }
-                    validate_duress_origin(state, &continuation, player, &canonical_path)?;
+                    let exclude_creatures = revealed_discard_excludes_creatures(
+                        state,
+                        &continuation,
+                        player,
+                        &canonical_path,
+                    )?;
                     validate_bound_hand_exact(state, player, &original_hand)?;
-                    let recomputed = duress_eligible_hand(state, &original_hand)?;
+                    let recomputed =
+                        revealed_discard_eligible_hand(state, &original_hand, exclude_creatures)?;
                     if eligible != recomputed
                         || eligible
                             .iter()
@@ -8133,10 +8246,7 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     {
                         return Err("Duress discard binding changed".to_string());
                     }
-                    event::propose_and_commit(
-                        state,
-                        event::ProposedEvent::zone_change(selected.object, Zone::Graveyard),
-                    );
+                    crate::engine::commit_discarded_card(state, selected.object);
                 }
                 EffectFrame::BeginSearchLibraryToBattlefieldTapped {
                     player,
@@ -9745,7 +9855,12 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
             }
-            EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard { player } => {
+            discard_op @ (EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard { player }
+            | EffectOp::RevealTargetHandChooseNonlandDiscard { player }) => {
+                let exclude_creatures = matches!(
+                    discard_op,
+                    EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard { .. }
+                );
                 let player = continuation.ctx.resolve_player(player, state);
                 if player == continuation.ctx.controller {
                     return Err("Duress must target an opponent".to_string());
@@ -9757,7 +9872,8 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         state.reveal_hand_card(observer, player, binding.object)?;
                     }
                 }
-                let eligible = duress_eligible_hand(state, &original_hand)?;
+                let eligible =
+                    revealed_discard_eligible_hand(state, &original_hand, exclude_creatures)?;
                 if !eligible.is_empty() {
                     stage_duress_discard_choice(
                         &mut continuation,
@@ -10011,9 +10127,30 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 return Ok(ResumableProgress::Suspended);
             }
             leaf => {
-                if matches!(leaf, EffectOp::DiscardCards { .. }) && !continuation.frames.is_empty()
-                {
-                    return Err("a resumable discard must be the terminal effect leaf".to_string());
+                if let EffectOp::DiscardCards { player, count } = &leaf {
+                    if !continuation.frames.is_empty() {
+                        let player = continuation.ctx.resolve_player(*player, state);
+                        let original_hand = bind_hand(state, player);
+                        validate_bound_hand_exact(state, player, &original_hand)?;
+                        if original_hand.is_empty() || *count == 0 {
+                            continue;
+                        }
+                        continuation.frames.push(EffectFrame::Program {
+                            op: leaf.clone(),
+                            path: path.clone(),
+                        });
+                        state.engine.pending_discard = Some(crate::engine::PendingDiscard {
+                            player,
+                            count: *count,
+                            resume: crate::engine::DiscardResume::FinishEffectContinuation {
+                                stack_item_id: continuation.resolving_item.v4.stack_item_id,
+                                path,
+                                original_hand,
+                            },
+                        });
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
                 }
                 execute(&leaf, &continuation.ctx, state)
             }
@@ -10026,6 +10163,79 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
     Ok(ResumableProgress::Complete(Box::new(
         continuation.resolving_item,
     )))
+}
+
+/// Authenticate the first supported nonterminal discard shape against its
+/// definition-owned root sequence. Every deferred instruction, the original
+/// hand incarnations and the resolving stack item must still agree.
+pub(crate) fn validate_resumable_discard(
+    state: &GameState,
+    discard: &crate::engine::PendingDiscard,
+) -> Result<(), String> {
+    validate_pending_effect_choice(state)?;
+    let pending = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .ok_or("resumable discard lost its continuation")?;
+    validate_resumable_discard_details(state, pending, discard)
+}
+
+fn validate_resumable_discard_details(
+    state: &GameState,
+    pending: &EffectContinuation,
+    discard: &crate::engine::PendingDiscard,
+) -> Result<(), String> {
+    let crate::engine::DiscardResume::FinishEffectContinuation {
+        stack_item_id,
+        path,
+        original_hand,
+    } = &discard.resume
+    else {
+        return Err("discard is not bound to a resumable effect".to_string());
+    };
+    if pending.resolving_item.v4.stack_item_id != *stack_item_id
+        || pending.choice.is_some()
+        || pending.answered_choice_guard.is_some()
+        || state.engine.pending_cast.is_some()
+        || state.engine.pending_activation.is_some()
+    {
+        return Err("resumable discard continuation stage changed".to_string());
+    }
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    let (EffectOp::Sequence(ops), [index]) = (root.as_ref(), path.as_slice()) else {
+        return Err("nonterminal discard requires a root sequence leaf".to_string());
+    };
+    let index = usize::from(*index);
+    let Some(leaf @ EffectOp::DiscardCards { player, count }) = ops.get(index) else {
+        return Err("resumable discard lost its definition-owned leaf".to_string());
+    };
+    if index + 1 >= ops.len()
+        || pending.ctx.resolve_player(*player, state) != discard.player
+        || *count != discard.count
+        || original_hand.is_empty()
+    {
+        return Err("resumable discard player, count or stage changed".to_string());
+    }
+    validate_bound_hand_exact(state, discard.player, original_hand)?;
+    let mut expected = ops
+        .iter()
+        .enumerate()
+        .skip(index + 1)
+        .rev()
+        .map(|(index, op)| EffectFrame::Program {
+            op: op.clone(),
+            path: vec![index as u16],
+        })
+        .collect::<Vec<_>>();
+    expected.push(EffectFrame::Program {
+        op: leaf.clone(),
+        path: path.clone(),
+    });
+    if pending.frames != expected {
+        return Err("resumable discard remaining instructions changed".to_string());
+    }
+    Ok(())
 }
 
 impl ExecCtx {
@@ -12085,9 +12295,10 @@ fn validate_bound_hand_exact(
     Ok(())
 }
 
-fn duress_eligible_hand(
+fn revealed_discard_eligible_hand(
     state: &GameState,
     original_hand: &[EffectObjectBinding],
+    exclude_creatures: bool,
 ) -> Result<Vec<EffectObjectBinding>, String> {
     let mut eligible = Vec::new();
     for &binding in original_hand {
@@ -12099,7 +12310,9 @@ fn duress_eligible_hand(
         let definition = crate::card_def::CARD_DEFS
             .get(object.card_def as usize)
             .ok_or("Duress hand card definition is missing")?;
-        if !definition.has_type(CardType::Creature) && !definition.has_type(CardType::Land) {
+        if !definition.has_type(CardType::Land)
+            && (!exclude_creatures || !definition.has_type(CardType::Creature))
+        {
             eligible.push(binding);
         }
     }
@@ -12445,6 +12658,74 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 }
             }
         }
+        EffectOp::FightObjects {
+            first,
+            second,
+            target_spec,
+        } => {
+            let resolve_creature = |reference| {
+                let object = match reference {
+                    ObjectRef::ThisSource => {
+                        let contract = ctx.ability_source_contract?;
+                        if contract.source != ctx.source || contract.zone != Zone::Battlefield {
+                            return None;
+                        }
+                        let live = state.objects.try_get(contract.source)?;
+                        if live.zone_change_count != contract.zone_change_count {
+                            return None;
+                        }
+                        contract.source
+                    }
+                    ObjectRef::Target(slot) => {
+                        let index = usize::from(slot);
+                        if !ctx.target_incarnation_matches(index, state)
+                            || !crate::engine::effect_target_is_legal(
+                                state,
+                                ctx.source,
+                                ctx.controller,
+                                *target_spec,
+                                &ctx.targets,
+                                index,
+                            )
+                        {
+                            return None;
+                        }
+                        let Target::Object(object) = *ctx.targets.get(index)? else {
+                            return None;
+                        };
+                        object
+                    }
+                };
+                let live = state.objects.try_get(object)?;
+                (live.zone == Zone::Battlefield
+                    && crate::engine::object_has_type(state, object, CardType::Creature))
+                .then_some(object)
+            };
+            let (Some(first), Some(second)) = (resolve_creature(*first), resolve_creature(*second))
+            else {
+                return;
+            };
+            let powers = [
+                crate::engine::effective_power(state, first).max(0),
+                crate::engine::effective_power(state, second).max(0),
+            ];
+            let mut packets = Vec::with_capacity(2);
+            if powers[0] > 0 {
+                packets.push(event::ProposedEvent::damage(
+                    first,
+                    Target::Object(second),
+                    powers[0],
+                ));
+            }
+            if powers[1] > 0 {
+                packets.push(event::ProposedEvent::damage(
+                    second,
+                    Target::Object(first),
+                    powers[1],
+                ));
+            }
+            event::propose_and_commit_batch(state, packets);
+        }
         EffectOp::PreventCombatDamageToTargetThisTurn { target_index } => {
             let index = usize::from(*target_index);
             if ctx.target_incarnation_matches(index, state) {
@@ -12595,6 +12876,27 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             };
             event::propose_and_commit(state, event::ProposedEvent::life_gain(player, amount));
+        }
+        EffectOp::LoseOpponentsLifeXThenGainLifeLost => {
+            if ctx.x_value == 0 {
+                return;
+            }
+            let opponent = ctx.controller.opponent();
+            let start = state.engine.event_history.len();
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::life_loss(opponent, i32::from(ctx.x_value)),
+            );
+            let lost = state.engine.event_history[start..]
+                .iter()
+                .filter_map(|event| match event {
+                    event::CommittedEvent::LifeLoss { player, amount } if *player == opponent => {
+                        Some((*amount).max(0))
+                    }
+                    _ => None,
+                })
+                .sum();
+            event::propose_and_commit(state, event::ProposedEvent::life_gain(ctx.controller, lost));
         }
         EffectOp::LoseLife { player, amount } => {
             let player = ctx.resolve_player(*player, state);
@@ -12882,6 +13184,29 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 let counters = &mut state.objects.get_mut(ctx.source).v4.time_counters_v1;
                 *counters = counters.saturating_sub(1);
             }
+        }
+        EffectOp::ReturnAbilitySourceFromGraveyard { tapped } => {
+            let Some(contract) = ctx.ability_source_contract else {
+                return;
+            };
+            if contract.source != ctx.source
+                || contract.zone != Zone::Graveyard
+                || !state
+                    .objects
+                    .try_get(contract.source)
+                    .is_some_and(|object| {
+                        object.zone == Zone::Graveyard
+                            && object.zone_change_count == contract.zone_change_count
+                    })
+            {
+                return;
+            }
+            let proposed = if *tapped {
+                event::ProposedEvent::zone_change_to_battlefield_tapped(contract.source)
+            } else {
+                event::ProposedEvent::zone_change(contract.source, Zone::Battlefield)
+            };
+            event::propose_and_commit(state, proposed);
         }
         EffectOp::ReturnSourceFromGraveyardUnearthed => {
             let still_there = ctx.ability_source_contract.is_some_and(|contract| {
@@ -13404,6 +13729,129 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
                 ));
+            }
+        }
+        EffectOp::ReturnAllGraveyardCreaturesUnderController => {
+            let mut events = Vec::new();
+            for owner in [PlayerId::P0, PlayerId::P1] {
+                for &id in &state.players[owner.index()].graveyard {
+                    let object = state.objects.get(id);
+                    let def = &crate::card_def::CARD_DEFS[object.card_def as usize];
+                    if object.zone == Zone::Graveyard
+                        && object.owner == owner
+                        && !def.is_token
+                        && !object.v4.is_token
+                        && object.spell_copy_origin.is_none()
+                        && crate::engine::object_has_type(state, id, CardType::Creature)
+                    {
+                        events.push(
+                            event::ProposedEvent::zone_change_to_battlefield_under_controller(
+                                id,
+                                ctx.controller,
+                            ),
+                        );
+                    }
+                }
+            }
+            event::propose_and_commit_batch(state, events);
+        }
+        EffectOp::ReturnOwnGraveyardCreaturesManaValueAtMost { max_mana_value } => {
+            let events = state.players[ctx.controller.index()]
+                .graveyard
+                .iter()
+                .filter(|&&id| {
+                    let object = state.objects.get(id);
+                    let def = &crate::card_def::CARD_DEFS[object.card_def as usize];
+                    object.zone == Zone::Graveyard
+                        && object.owner == ctx.controller
+                        && !def.is_token
+                        && !object.v4.is_token
+                        && object.spell_copy_origin.is_none()
+                        && def.mana_value <= *max_mana_value
+                        && crate::engine::object_has_type(state, id, CardType::Creature)
+                })
+                .map(|&id| event::ProposedEvent::zone_change(id, Zone::Battlefield))
+                .collect();
+            event::propose_and_commit_batch(state, events);
+        }
+        EffectOp::ReturnAttackingCreaturesToOwnersHands => {
+            let events = state
+                .objects
+                .iter()
+                .filter(|(id, object)| {
+                    object.zone == Zone::Battlefield
+                        && state.engine.combat.attackers.contains(id)
+                        && crate::engine::object_has_type(state, *id, CardType::Creature)
+                })
+                .map(|(id, _)| {
+                    event::ProposedEvent::zone_change_preserving_known_identity(id, Zone::Hand)
+                })
+                .collect();
+            event::propose_and_commit_batch(state, events);
+        }
+        EffectOp::CounterTargetSpellThenCreateTokens {
+            target_index,
+            token_def,
+            count,
+        } => {
+            let index = usize::from(*target_index);
+            let Some(Target::Object(target)) = ctx.targets.get(index).copied() else {
+                return;
+            };
+            if !ctx.target_incarnation_matches(index, state) {
+                return;
+            }
+            let live = state.objects.get(target);
+            if live.zone != Zone::Stack {
+                return;
+            }
+            let Some(controller) = state.stack.iter().find_map(|item| {
+                (item.kind == crate::state::StackItemKind::Spell
+                    && item.source == target
+                    && item.v4.source_contract.is_some_and(|contract| {
+                        contract.source == target
+                            && contract.zone == Zone::Stack
+                            && contract.zone_change_count == live.zone_change_count
+                    }))
+                .then_some(item.controller)
+            }) else {
+                return;
+            };
+            let token = crate::card_def::CARD_DEFS
+                .get(usize::from(*token_def))
+                .expect("counter reward references a token definition");
+            assert!(
+                token.is_token && token.is_executable() && token.has_full_support(),
+                "counter reward requires a fully supported executable token definition"
+            );
+            if eval_cond(
+                &EffectCond::TargetSpellCanBeCountered(*target_index),
+                ctx,
+                state,
+            ) {
+                execute(
+                    &EffectOp::MoveObject {
+                        object: ObjectRef::Target(*target_index),
+                        to_zone: Zone::Graveyard,
+                    },
+                    ctx,
+                    state,
+                );
+            }
+            if state.engine.halted.is_some() {
+                return;
+            }
+            let mut reward_ctx = ctx.clone();
+            reward_ctx.controller = controller;
+            for _ in 0..*count {
+                execute(
+                    &EffectOp::CreateToken {
+                        token_def: *token_def,
+                        controller: PlayerRef::Controller,
+                    },
+                    &reward_ctx,
+                    state,
+                );
             }
         }
         EffectOp::MoveAllTargets { to_zone } => {
@@ -13997,6 +14445,31 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             toughness,
         } => {
             install_temporary_boost(state, *object, *power, *toughness, Keywords::NONE);
+        }
+        EffectOp::BoostPlayerCreaturesUntilEndOfTurn {
+            player,
+            power,
+            toughness,
+            keywords,
+        } => {
+            let player = ctx.resolve_player(*player, state);
+            let objects: Vec<_> = state
+                .objects
+                .iter()
+                .filter_map(|(object, live)| {
+                    (live.zone == Zone::Battlefield
+                        && live.controller == player
+                        && crate::engine::object_has_type(state, object, CardType::Creature))
+                    .then_some(EffectObjectBinding {
+                        object,
+                        expected_zone: Zone::Battlefield,
+                        expected_zone_change_count: live.zone_change_count,
+                    })
+                })
+                .collect();
+            for object in objects {
+                install_temporary_boost(state, object, *power, *toughness, *keywords);
+            }
         }
         EffectOp::BoostControlledCreaturesUntilEndOfTurn {
             power,
@@ -14836,6 +15309,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::DestroyTargetLandThenMaySearchBasicTapped { .. }
         | EffectOp::SearchLibraryToBattlefieldTapped { .. }
         | EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard { .. }
+        | EffectOp::RevealTargetHandChooseNonlandDiscard { .. }
         | EffectOp::RevealHandChooseNonlandToLinkedExile { .. }
         | EffectOp::ReturnLinkedExiledCardToOwnersHand
         | EffectOp::ResolveInitiativeTrigger { .. }
@@ -14862,6 +15336,7 @@ pub(crate) fn controller_graveyard_card_count(state: &GameState, controller: Pla
             object.zone == Zone::Graveyard
                 && object.owner == controller
                 && !crate::card_def::CARD_DEFS[object.card_def as usize].is_token
+                && !object.v4.is_token
                 && object.spell_copy_origin.is_none()
         })
         .count()
@@ -14870,6 +15345,21 @@ pub(crate) fn controller_graveyard_card_count(state: &GameState, controller: Pla
 fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
     match cond {
         EffectCond::Always => true,
+        EffectCond::TargetIsLegalForAbility { index, spec } => {
+            ctx.target_incarnation_matches(usize::from(*index), state)
+                && ctx.ability_source_contract.is_some_and(|source| {
+                    source.source == ctx.source
+                        && source.controller == ctx.controller
+                        && crate::engine::effect_target_is_legal_from_ability_source(
+                            state,
+                            source,
+                            ctx.controller,
+                            *spec,
+                            &ctx.targets,
+                            usize::from(*index),
+                        )
+                })
+        }
         EffectCond::Never => false,
         EffectCond::DiscardedNonLandForCost => ctx.discarded.iter().any(|&id| {
             let def_idx = state.objects.get(id).card_def;
@@ -15032,6 +15522,10 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
         EffectCond::ControllerGraveyardCardCountAtLeast(minimum) => {
             controller_graveyard_card_count(state, ctx.controller) >= usize::from(*minimum)
         }
+        EffectCond::TargetPlayerLifeTotalEquals { index, life } => {
+            matches!(ctx.targets.get(usize::from(*index)),
+                Some(Target::Player(player)) if state.players[player.index()].life == *life)
+        }
         EffectCond::TargetManaValueAtMost(index, maximum) => {
             ctx.target_incarnation_matches(usize::from(*index), state)
                 && match ctx.targets.get(usize::from(*index)) {
@@ -15052,8 +15546,1025 @@ mod tests {
     use crate::event::CommittedEvent;
     use crate::ids::PlayerId;
 
+    #[test]
+    fn individual_ability_target_guards_skip_illegal_targets_and_keep_captured_source() {
+        use crate::card_def::{card_id_by_name, TargetSpec};
+        for player in [PlayerId::P0, PlayerId::P1] {
+            for change in 0..5 {
+                let source_def = card_id_by_name("Voldaren Epicure").unwrap();
+                let creature = card_id_by_name("Faerie Miscreant").unwrap();
+                let mut state = GameState::new_from_libraries(
+                    &[source_def, creature, creature],
+                    &[source_def, creature, creature],
+                    |c| format!("card-{c}"),
+                    839,
+                );
+                let ids = state.players[player.index()].library.clone();
+                let (source, first, second) = (ids[0], ids[1], ids[2]);
+                for &id in &ids {
+                    event::propose_and_commit(
+                        &mut state,
+                        event::ProposedEvent::zone_change(id, Zone::Battlefield),
+                    );
+                }
+                let mut ctx = ExecCtx::no_targets(source, player);
+                ctx.ability_source_contract =
+                    Some(AbilitySourceContractV4::capture(&state, source));
+                ctx.targets = vec![Target::Object(first), Target::Object(second)];
+                ctx.target_contracts = ctx
+                    .targets
+                    .iter()
+                    .map(|&target| StackTargetContractV4::capture(&state, target))
+                    .collect();
+                let op = EffectOp::Sequence(
+                    (0..2)
+                        .map(|index| EffectOp::Conditional {
+                            cond: EffectCond::TargetIsLegalForAbility {
+                                index,
+                                spec: TargetSpec::UpToTwoOtherControlledCreatures,
+                            },
+                            then: Box::new(EffectOp::AddCountersToTarget {
+                                target_index: index,
+                                optional: true,
+                                plus1_plus1: 1,
+                                lifelink: 0,
+                                stun: 0,
+                            }),
+                            else_: Box::new(EffectOp::Sequence(vec![])),
+                        })
+                        .collect(),
+                );
+                match change {
+                    0 => {}
+                    1 => {
+                        state.players[player.index()]
+                            .battlefield
+                            .retain(|&id| id != second);
+                        state.players[player.opponent().index()]
+                            .battlefield
+                            .push(second);
+                        state.objects.get_mut(second).controller = player.opponent();
+                    }
+                    2 => {
+                        event::propose_and_commit(
+                            &mut state,
+                            event::ProposedEvent::zone_change(second, Zone::Exile),
+                        );
+                    }
+                    3 => {
+                        event::propose_and_commit(
+                            &mut state,
+                            event::ProposedEvent::zone_change(second, Zone::Exile),
+                        );
+                        event::propose_and_commit(
+                            &mut state,
+                            event::ProposedEvent::zone_change(second, Zone::Battlefield),
+                        );
+                    }
+                    4 => execute(
+                        &EffectOp::GrantKeywordTargetUntilEndOfTurn {
+                            object: ObjectRef::Target(1),
+                            keyword: Keywords::PROTECTION_FROM_MONOCOLORED,
+                        },
+                        &ctx,
+                        &mut state,
+                    ),
+                    _ => unreachable!(),
+                }
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(source, Zone::Exile),
+                );
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(source, Zone::Battlefield),
+                );
+                let mut replay: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                for current in [&mut state, &mut replay] {
+                    execute(&op, &ctx, current);
+                    assert_eq!(current.objects.get(first).counters.plus1_plus1, 1);
+                    assert_eq!(
+                        current.objects.get(second).counters.plus1_plus1,
+                        if change == 0 { 1 } else { 0 }
+                    );
+                    assert!(current.engine.halted.is_none());
+                }
+                assert_eq!(
+                    state.diagnostic_state_hash(),
+                    replay.diagnostic_state_hash()
+                );
+                // The original incarnation is excluded; its returned card is eligible.
+                let cond = EffectCond::TargetIsLegalForAbility {
+                    index: 0,
+                    spec: TargetSpec::UpToTwoOtherControlledCreatures,
+                };
+                ctx.targets = vec![Target::Object(source)];
+                ctx.target_contracts = vec![StackTargetContractV4::capture(&state, ctx.targets[0])];
+                assert!(eval_cond(&cond, &ctx, &state));
+                ctx.ability_source_contract =
+                    Some(AbilitySourceContractV4::capture(&state, source));
+                assert!(!eval_cond(&cond, &ctx, &state));
+                ctx.ability_source_contract = None;
+                assert!(!eval_cond(&cond, &ctx, &state));
+                ctx.targets.clear();
+                ctx.target_contracts.clear();
+                assert!(!eval_cond(&cond, &ctx, &state));
+            }
+        }
+    }
+
+    #[test]
+    fn graveyard_mass_return_filters_cards_and_current_mana_values_for_both_seats() {
+        let faerie = crate::card_def::card_id_by_name("Faerie Miscreant").unwrap();
+        let emissary = crate::card_def::card_id_by_name("Burning-Tree Emissary").unwrap();
+        let large = crate::card_def::card_id_by_name("Tolarian Terror").unwrap();
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        let token = crate::card_def::card_id_by_name("Human Soldier Token").unwrap();
+        let library = [faerie, faerie, faerie, emissary, large, forest, token];
+        for controller in [PlayerId::P0, PlayerId::P1] {
+            let mut state =
+                GameState::new_from_libraries(&library, &library, |c| format!("card-{c}"), 800);
+            let mut retained_hand = None;
+            let mut returned = Vec::new();
+            let mut excluded = Vec::new();
+            for id in state.players[controller.index()].library.clone() {
+                let def = state.objects.get(id).card_def;
+                let zone = if def == faerie && retained_hand.is_none() {
+                    retained_hand = Some(id);
+                    Zone::Hand
+                } else {
+                    if def == faerie || def == emissary {
+                        returned.push(id);
+                    } else {
+                        excluded.push(id);
+                    }
+                    Zone::Graveyard
+                };
+                event::propose_and_commit(&mut state, event::ProposedEvent::zone_change(id, zone));
+            }
+            let opponent_card = state.players[controller.opponent().index()].library[0];
+            event::propose_and_commit(
+                &mut state,
+                event::ProposedEvent::zone_change(opponent_card, Zone::Graveyard),
+            );
+            // A former controller cannot determine whose graveyard is scanned.
+            let parent = retained_hand.unwrap();
+            let mut virtual_copy = state.objects.get(parent).clone();
+            virtual_copy.zone = Zone::Graveyard;
+            virtual_copy.spell_copy_origin = Some(crate::state::SpellCopyOriginV4 {
+                parent,
+                parent_card_def: faerie,
+                parent_owner: controller,
+                parent_controller: controller,
+                parent_stack_zone_change_count: 0,
+                parent_was_copy: false,
+            });
+            let virtual_copy = state.objects.push(virtual_copy);
+            state.players[controller.index()]
+                .graveyard
+                .push(virtual_copy);
+            excluded.push(virtual_copy);
+            let mut copied_token = state.objects.get(parent).clone();
+            copied_token.zone = Zone::Graveyard;
+            copied_token.v4.is_token = true;
+            let copied_token = state.objects.push(copied_token);
+            state.players[controller.index()]
+                .graveyard
+                .push(copied_token);
+            excluded.push(copied_token);
+            state.objects.get_mut(returned[0]).controller = controller.opponent();
+            state.objects.get_mut(returned[0]).counters.plus1_plus1 = 4;
+            state.objects.get_mut(returned[0]).tapped = true;
+            let ctx = ExecCtx::no_targets(retained_hand.unwrap(), controller);
+            let op = EffectOp::ReturnOwnGraveyardCreaturesManaValueAtMost { max_mana_value: 2 };
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                let start = branch.engine.event_history.len();
+                let generations: Vec<_> = returned
+                    .iter()
+                    .map(|&id| branch.objects.get(id).zone_change_count)
+                    .collect();
+                execute(&op, &ctx, branch);
+                for (&id, generation) in returned.iter().zip(generations) {
+                    let object = branch.objects.get(id);
+                    assert_eq!(object.zone, Zone::Battlefield);
+                    assert_eq!(object.controller, controller);
+                    assert_eq!(object.zone_change_count, generation + 1);
+                    assert!(!object.tapped);
+                    assert!(object.summoning_sick);
+                    assert_eq!(object.counters.plus1_plus1, 0);
+                    assert!(branch.players[controller.index()].battlefield.contains(&id));
+                }
+                assert_eq!(returned.len(), 3);
+                for &id in &excluded {
+                    assert_eq!(branch.objects.get(id).zone, Zone::Graveyard);
+                }
+                assert_eq!(branch.objects.get(opponent_card).zone, Zone::Graveyard);
+                assert_eq!(branch.objects.get(retained_hand.unwrap()).zone, Zone::Hand);
+                assert_eq!(
+                    branch.engine.event_history[start..]
+                        .iter()
+                        .filter(|event| matches!(
+                            event,
+                            CommittedEvent::ZoneChange {
+                                from: Zone::Graveyard,
+                                to: Zone::Battlefield,
+                                ..
+                            }
+                        ))
+                        .count(),
+                    3
+                );
+                let after = branch.engine.event_history.len();
+                execute(&op, &ctx, branch);
+                assert_eq!(branch.engine.event_history.len(), after);
+            }
+            assert_eq!(state.state_hash(), restored.state_hash());
+        }
+    }
+
+    #[test]
+    fn graveyard_mass_return_enters_together_before_etb_trigger_collection() {
+        let faerie = crate::card_def::card_id_by_name("Faerie Miscreant").unwrap();
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        for controller in [PlayerId::P0, PlayerId::P1] {
+            let mut library = vec![forest; 40];
+            library.extend([faerie, faerie]);
+            let mut state =
+                GameState::new_from_libraries(&library, &library, |c| format!("card-{c}"), 801);
+            let cards: Vec<_> = state.players[controller.index()]
+                .library
+                .iter()
+                .copied()
+                .filter(|&id| state.objects.get(id).card_def == faerie)
+                .collect();
+            for &id in &cards {
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(id, Zone::Graveyard),
+                );
+            }
+            state.engine.event_log.clear();
+            execute(
+                &EffectOp::ReturnOwnGraveyardCreaturesManaValueAtMost { max_mana_value: 2 },
+                &ExecCtx::no_targets(cards[0], controller),
+                &mut state,
+            );
+            let pending = crate::trigger::collect_and_process(&mut state);
+            assert_eq!(pending.len(), 2);
+            assert!(
+                pending
+                    .iter()
+                    .all(|trigger| trigger.controller == controller
+                        && cards.contains(&trigger.source))
+            );
+            assert!(state.engine.halted.is_none());
+        }
+    }
+
+    #[test]
+    fn all_graveyard_return_preserves_owners_and_enters_under_controller_simultaneously() {
+        let faerie = crate::card_def::card_id_by_name("Faerie Miscreant").unwrap();
+        let large = crate::card_def::card_id_by_name("Tolarian Terror").unwrap();
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        let token = crate::card_def::card_id_by_name("Human Soldier Token").unwrap();
+        let library = [faerie, large, forest, token];
+        for controller in [PlayerId::P0, PlayerId::P1] {
+            let mut state =
+                GameState::new_from_libraries(&library, &library, |c| format!("card-{c}"), 810);
+            let mut returned = Vec::new();
+            let mut excluded = Vec::new();
+            for owner in [PlayerId::P0, PlayerId::P1] {
+                let mut parent = None;
+                for id in state.players[owner.index()].library.clone() {
+                    let def = state.objects.get(id).card_def;
+                    event::propose_and_commit(
+                        &mut state,
+                        event::ProposedEvent::zone_change(id, Zone::Graveyard),
+                    );
+                    if def == faerie || def == large {
+                        returned.push((id, owner));
+                        if def == faerie {
+                            parent = Some(id);
+                        }
+                    } else {
+                        excluded.push(id);
+                    }
+                }
+                let parent = parent.unwrap();
+                let mut copy = state.objects.get(parent).clone();
+                copy.spell_copy_origin = Some(crate::state::SpellCopyOriginV4 {
+                    parent,
+                    parent_card_def: faerie,
+                    parent_owner: owner,
+                    parent_controller: owner,
+                    parent_stack_zone_change_count: 0,
+                    parent_was_copy: false,
+                });
+                let copy = state.objects.push(copy);
+                state.players[owner.index()].graveyard.push(copy);
+                excluded.push(copy);
+                let mut token_copy = state.objects.get(parent).clone();
+                token_copy.v4.is_token = true;
+                let token_copy = state.objects.push(token_copy);
+                state.players[owner.index()].graveyard.push(token_copy);
+                excluded.push(token_copy);
+            }
+            state.engine.event_log.clear();
+            let ctx = ExecCtx::no_targets(returned[0].0, controller);
+            let op = EffectOp::ReturnAllGraveyardCreaturesUnderController;
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                let start = branch.engine.event_history.len();
+                execute(&op, &ctx, branch);
+                assert_eq!(returned.len(), 4);
+                for &(id, owner) in &returned {
+                    let object = branch.objects.get(id);
+                    assert_eq!(object.zone, Zone::Battlefield);
+                    assert_eq!(object.owner, owner);
+                    assert_eq!(object.controller, controller);
+                    assert_eq!(object.zone_change_count, 2);
+                    assert!(!object.tapped);
+                    assert!(object.summoning_sick);
+                    assert!(branch.players[controller.index()].battlefield.contains(&id));
+                    assert!(!branch.players[controller.opponent().index()]
+                        .battlefield
+                        .contains(&id));
+                }
+                for &id in &excluded {
+                    assert_eq!(branch.objects.get(id).zone, Zone::Graveyard);
+                }
+                assert_eq!(
+                    branch.engine.event_history[start..]
+                        .iter()
+                        .filter(|event| matches!(
+                            event,
+                            CommittedEvent::ZoneChange {
+                                from: Zone::Graveyard,
+                                to: Zone::Battlefield,
+                                ..
+                            }
+                        ))
+                        .count(),
+                    4
+                );
+                let after = branch.engine.event_history.len();
+                execute(&op, &ctx, branch);
+                assert_eq!(branch.engine.event_history.len(), after);
+                let pending = crate::trigger::collect_and_process(branch);
+                assert_eq!(pending.len(), 2);
+                assert!(pending
+                    .iter()
+                    .all(|trigger| trigger.controller == controller));
+                assert!(branch.engine.halted.is_none());
+                let stolen = returned
+                    .iter()
+                    .find(|(_, owner)| *owner != controller)
+                    .unwrap()
+                    .0;
+                event::propose_and_commit(
+                    branch,
+                    event::ProposedEvent::zone_change(stolen, Zone::Hand),
+                );
+                assert!(branch.players[controller.opponent().index()]
+                    .hand
+                    .contains(&stolen));
+                assert!(!branch.players[controller.index()].hand.contains(&stolen));
+            }
+            assert_eq!(state.state_hash(), restored.state_hash());
+        }
+    }
+
     fn two_card_libraries() -> GameState {
         GameState::new_from_libraries(&[1, 2], &[3, 4], |c| format!("card-{c}"), 1)
+    }
+
+    #[test]
+    fn target_player_life_equality_uses_current_total_and_actual_damage() {
+        let op = EffectOp::Conditional {
+            cond: EffectCond::TargetPlayerLifeTotalEquals { index: 0, life: 10 },
+            then: Box::new(EffectOp::DealDamage {
+                target: TargetRef::Target(0),
+                amount: 10,
+            }),
+            else_: Box::new(EffectOp::Sequence(vec![])),
+        };
+        for controller in [PlayerId::P0, PlayerId::P1] {
+            for target in [controller, controller.opponent()] {
+                for life in [9, 10, 11] {
+                    let mut state = two_card_libraries();
+                    let source = state.draw_card(controller).unwrap();
+                    state.players[target.index()].life = life;
+                    let mut ctx = ExecCtx::no_targets(source, controller);
+                    ctx.targets.push(Target::Player(target));
+                    let mut restored: GameState =
+                        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                    execute(&op, &ctx, &mut state);
+                    execute(&op, &ctx, &mut restored);
+                    assert_eq!(
+                        state.players[target.index()].life,
+                        if life == 10 { 0 } else { life }
+                    );
+                    assert_eq!(state.state_hash(), restored.state_hash());
+                    let damage_count = state
+                        .engine
+                        .event_history
+                        .iter()
+                        .filter(|event| matches!(event, CommittedEvent::Damage { .. }))
+                        .count();
+                    assert_eq!(damage_count, usize::from(life == 10));
+                }
+            }
+        }
+        let mut state = two_card_libraries();
+        let source = state.draw_card(PlayerId::P0).unwrap();
+        let before = state.clone();
+        execute(&op, &ExecCtx::no_targets(source, PlayerId::P0), &mut state);
+        assert_eq!(state, before, "an absent player target fails the condition");
+    }
+
+    fn fight_fixture(player: PlayerId) -> (GameState, ObjectId, ObjectId, ExecCtx) {
+        let card = crate::card_def::card_id_by_name("Faerie Miscreant").unwrap();
+        let mut state = GameState::new_from_libraries(
+            &[card; 7],
+            &[card; 7],
+            |_| "Faerie Miscreant".into(),
+            770,
+        );
+        let first = state.draw_card(player).unwrap();
+        let second = state.draw_card(player.opponent()).unwrap();
+        for object in [first, second] {
+            event::propose_and_commit(
+                &mut state,
+                event::ProposedEvent::zone_change(object, Zone::Battlefield),
+            );
+        }
+        let mut ctx = ExecCtx::no_targets(first, player);
+        ctx.ability_source_contract = Some(AbilitySourceContractV4::capture(&state, first));
+        ctx.targets.push(Target::Object(second));
+        ctx.target_contracts.push(StackTargetContractV4::capture(
+            &state,
+            Target::Object(second),
+        ));
+        (state, first, second, ctx)
+    }
+
+    #[test]
+    fn fight_samples_both_powers_and_uses_noncombat_damage_keywords() {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, first, second, ctx) = fight_fixture(player);
+            state.objects.get_mut(first).counters.plus1_plus1 = 3;
+            state.objects.get_mut(second).counters.plus1_plus1 = 1;
+            for (object, keywords) in [(first, Keywords::LIFELINK), (second, Keywords::DEATHTOUCH)]
+            {
+                let binding = EffectObjectBinding {
+                    object,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: state.objects.get(object).zone_change_count,
+                };
+                install_temporary_boost(&mut state, binding, 0, 0, keywords);
+            }
+            // Combat-only prevention cannot prevent fight damage.
+            execute(
+                &EffectOp::PreventCombatDamageToTargetThisTurn { target_index: 0 },
+                &ctx,
+                &mut state,
+            );
+            let op = EffectOp::FightObjects {
+                first: ObjectRef::ThisSource,
+                second: ObjectRef::Target(0),
+                target_spec: crate::card_def::TargetSpec::OpponentControlledCreature,
+            };
+            let mut replay: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut replay] {
+                let start = branch.engine.event_history.len();
+                execute(&op, &ctx, branch);
+                assert_eq!(branch.objects.get(first).damage, 2);
+                assert_eq!(branch.objects.get(second).damage, 4);
+                assert!(branch.objects.get(first).v4.deathtouch_damage);
+                assert_eq!(branch.players[player.index()].life, 24);
+                let damage = branch.engine.event_history[start..]
+                    .iter()
+                    .filter_map(|event| match event {
+                        CommittedEvent::Damage {
+                            source,
+                            target,
+                            amount,
+                        } => Some((*source, *target, *amount)),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    damage,
+                    vec![
+                        (first, Target::Object(second), 4),
+                        (second, Target::Object(first), 2)
+                    ]
+                );
+                crate::trigger::collect_and_process(branch);
+                assert_eq!(branch.objects.get(first).zone, Zone::Graveyard);
+                assert_eq!(branch.objects.get(second).zone, Zone::Graveyard);
+            }
+            assert_eq!(state.state_hash(), replay.state_hash());
+        }
+    }
+
+    #[test]
+    fn fight_requires_live_creatures_exact_incarnations_and_legal_control() {
+        let op = EffectOp::FightObjects {
+            first: ObjectRef::ThisSource,
+            second: ObjectRef::Target(0),
+            target_spec: crate::card_def::TargetSpec::OpponentControlledCreature,
+        };
+        let land = crate::card_def::card_id_by_name("Mountain").unwrap();
+        for player in [PlayerId::P0, PlayerId::P1] {
+            for case in 0..6 {
+                let (mut state, first, second, ctx) = fight_fixture(player);
+                match case {
+                    0 => {
+                        state.objects.get_mut(first).zone_change_count += 1;
+                    }
+                    1 => {
+                        state.objects.get_mut(second).zone_change_count += 1;
+                    }
+                    2 => {
+                        event::propose_and_commit(
+                            &mut state,
+                            event::ProposedEvent::zone_change(first, Zone::Hand),
+                        );
+                    }
+                    3 => {
+                        state.objects.get_mut(second).controller = player;
+                        state.players[player.opponent().index()]
+                            .battlefield
+                            .retain(|id| *id != second);
+                        state.players[player.index()].battlefield.push(second);
+                    }
+                    4 | 5 => {
+                        let object = if case == 4 { first } else { second };
+                        state.objects.get_mut(object).card_def = land;
+                        state.objects.get_mut(object).v4 =
+                            crate::state::ObjectStateV4::from_card_def(land);
+                    }
+                    _ => unreachable!(),
+                }
+                let before = state.state_hash();
+                execute(&op, &ctx, &mut state);
+                assert_eq!(state.state_hash(), before);
+            }
+        }
+    }
+
+    #[test]
+    fn fight_handles_self_fight_and_nonpositive_power() {
+        for power in [-1, 0, 1] {
+            let (mut state, first, second, ctx) = fight_fixture(PlayerId::P0);
+            let binding = EffectObjectBinding {
+                object: first,
+                expected_zone: Zone::Battlefield,
+                expected_zone_change_count: state.objects.get(first).zone_change_count,
+            };
+            install_temporary_boost(&mut state, binding, power - 1, 3, Keywords::NONE);
+            execute(
+                &EffectOp::FightObjects {
+                    first: ObjectRef::ThisSource,
+                    second: ObjectRef::Target(0),
+                    target_spec: crate::card_def::TargetSpec::OpponentControlledCreature,
+                },
+                &ctx,
+                &mut state,
+            );
+            assert_eq!(state.objects.get(first).damage, 1);
+            assert_eq!(
+                state.objects.get(second).damage,
+                u32::try_from(power.max(0)).unwrap()
+            );
+        }
+        let (mut state, first, _, mut ctx) = fight_fixture(PlayerId::P0);
+        ctx.targets = vec![Target::Object(first)];
+        ctx.target_contracts = vec![StackTargetContractV4::capture(
+            &state,
+            Target::Object(first),
+        )];
+        execute(
+            &EffectOp::FightObjects {
+                first: ObjectRef::ThisSource,
+                second: ObjectRef::Target(0),
+                target_spec: crate::card_def::TargetSpec::Creature,
+            },
+            &ctx,
+            &mut state,
+        );
+        assert_eq!(state.objects.get(first).damage, 2);
+    }
+
+    #[test]
+    fn revealed_discard_filter_preserves_duress_and_allows_pilfer_creatures() {
+        let creature = crate::card_def::card_id_by_name("Faerie Miscreant").unwrap();
+        let spell = crate::card_def::card_id_by_name("Counterspell").unwrap();
+        let land = crate::card_def::card_id_by_name("Mountain").unwrap();
+        let cards = [creature, spell, land, land, land, land, land];
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = GameState::new_from_libraries(&cards, &cards, |_| "card".into(), 760);
+            for _ in 0..cards.len() {
+                state.draw_card(player).unwrap();
+            }
+            let original_hand = bind_hand(&state, player);
+            let replay: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&state, &replay] {
+                let old = revealed_discard_eligible_hand(branch, &original_hand, true).unwrap();
+                assert_eq!(old.len(), 1);
+                assert_eq!(branch.objects.get(old[0].object).card_def, spell);
+                let new = revealed_discard_eligible_hand(branch, &original_hand, false).unwrap();
+                assert_eq!(new.len(), 2);
+                assert!(new
+                    .iter()
+                    .any(|binding| branch.objects.get(binding.object).card_def == creature));
+                assert!(new
+                    .iter()
+                    .any(|binding| branch.objects.get(binding.object).card_def == spell));
+                assert!(new
+                    .iter()
+                    .all(|binding| branch.objects.get(binding.object).card_def != land));
+            }
+            let mut stale = state;
+            stale
+                .objects
+                .get_mut(original_hand[0].object)
+                .zone_change_count += 1;
+            assert!(revealed_discard_eligible_hand(&stale, &original_hand, false).is_err());
+        }
+    }
+
+    #[test]
+    fn return_ability_source_from_graveyard_uses_exact_activation_incarnation() {
+        let card = crate::card_def::card_id_by_name("Faerie Miscreant").unwrap();
+        for player in [PlayerId::P0, PlayerId::P1] {
+            for tapped in [false, true] {
+                let mut state = GameState::new_from_libraries(
+                    &[card; 7],
+                    &[card; 7],
+                    |_| "Faerie Miscreant".into(),
+                    710,
+                );
+                let source = state.draw_card(player).unwrap();
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(source, Zone::Graveyard),
+                );
+                let mut ctx = ExecCtx::no_targets(source, player);
+                ctx.ability_source_contract =
+                    Some(AbilitySourceContractV4::capture(&state, source));
+                let saved = serde_json::to_vec(&state).unwrap();
+                let mut restored: GameState = serde_json::from_slice(&saved).unwrap();
+                for branch in [&mut state, &mut restored] {
+                    execute(
+                        &EffectOp::ReturnAbilitySourceFromGraveyard { tapped },
+                        &ctx,
+                        branch,
+                    );
+                    let live = branch.objects.get(source);
+                    assert_eq!(live.zone, Zone::Battlefield);
+                    assert_eq!(live.controller, player);
+                    assert_eq!(live.tapped, tapped);
+                    assert!(live.summoning_sick);
+                    assert!(!live.v4.unearthed_v1);
+                }
+                assert_eq!(state.state_hash(), restored.state_hash());
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(source, Zone::Graveyard),
+                );
+                let before = state.state_hash();
+                execute(
+                    &EffectOp::ReturnAbilitySourceFromGraveyard { tapped },
+                    &ctx,
+                    &mut state,
+                );
+                assert_eq!(
+                    state.state_hash(),
+                    before,
+                    "old activation cannot return a later graveyard incarnation"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn exsanguinate_primitive_uses_announced_x_and_does_not_cap_loss_at_remaining_life() {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            for x in [0, 5, u16::MAX] {
+                let mut state = two_card_libraries();
+                state.players[player.opponent().index()].life = 2;
+                let mut ctx = ExecCtx::no_targets(ObjectId(0), player);
+                ctx.x_value = x;
+                let mut restored: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                let before = state.state_hash();
+                for branch in [&mut state, &mut restored] {
+                    execute(&EffectOp::LoseOpponentsLifeXThenGainLifeLost, &ctx, branch);
+                    assert_eq!(branch.players[player.index()].life, 20 + i32::from(x));
+                    assert_eq!(
+                        branch.players[player.opponent().index()].life,
+                        2 - i32::from(x)
+                    );
+                    assert!(!branch
+                        .engine
+                        .event_history
+                        .iter()
+                        .any(|event| matches!(event, CommittedEvent::Damage { .. })));
+                }
+                assert_eq!(state.state_hash(), restored.state_hash());
+                if x == 0 {
+                    assert_eq!(state.state_hash(), before, "zero X commits no life events");
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "standard-magezero-fixtures")]
+    fn exsanguinate_primitive_gains_the_replaced_life_loss() {
+        let card = crate::card_def::card_id_by_name("Bloodletter of Aclazotz").unwrap();
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &[card; 7],
+                &[card; 7],
+                |_| "Bloodletter of Aclazotz".into(),
+                720,
+                player,
+            );
+            let source = state.draw_card(player).unwrap();
+            event::propose_and_commit(
+                &mut state,
+                event::ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            let mut ctx = ExecCtx::no_targets(source, player);
+            ctx.x_value = 3;
+            execute(
+                &EffectOp::LoseOpponentsLifeXThenGainLifeLost,
+                &ctx,
+                &mut state,
+            );
+            assert_eq!(state.players[player.opponent().index()].life, 14);
+            assert_eq!(state.players[player.index()].life, 26);
+        }
+    }
+
+    #[test]
+    fn return_attacking_creatures_samples_live_combat_and_returns_to_owner() {
+        let creature = crate::card_def::card_id_by_name("Faerie Miscreant").unwrap();
+        let land = crate::card_def::card_id_by_name("Forest").unwrap();
+        for caster in [PlayerId::P0, PlayerId::P1] {
+            let mut state = GameState::new_from_libraries(
+                &[creature; 7],
+                &[creature; 7],
+                |_| "Faerie Miscreant".into(),
+                730,
+            );
+            let attacker = state.draw_card(caster.opponent()).unwrap();
+            let idle = state.draw_card(caster).unwrap();
+            let noncreature = state.draw_card(caster).unwrap();
+            for id in [attacker, idle, noncreature] {
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(id, Zone::Battlefield),
+                );
+            }
+            state.objects.get_mut(attacker).controller = caster;
+            state.players[caster.opponent().index()]
+                .battlefield
+                .retain(|&id| id != attacker);
+            state.players[caster.index()].battlefield.push(attacker);
+            state.objects.get_mut(idle).tapped = true;
+            state.objects.get_mut(noncreature).card_def = land;
+            state.objects.get_mut(noncreature).v4 =
+                crate::state::ObjectStateV4::from_card_def(land);
+            state.engine.combat.attackers = vec![attacker, noncreature];
+            let ctx = ExecCtx::no_targets(idle, caster);
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                execute(
+                    &EffectOp::ReturnAttackingCreaturesToOwnersHands,
+                    &ctx,
+                    branch,
+                );
+                assert_eq!(branch.objects.get(attacker).zone, Zone::Hand);
+                assert!(branch.players[caster.opponent().index()]
+                    .hand
+                    .contains(&attacker));
+                assert!(!branch.players[caster.index()].hand.contains(&attacker));
+                for seat in [PlayerId::P0, PlayerId::P1] {
+                    assert!(!branch.players[seat.index()].battlefield.contains(&attacker));
+                }
+                assert_eq!(branch.objects.get(idle).zone, Zone::Battlefield);
+                assert_eq!(branch.objects.get(noncreature).zone, Zone::Battlefield);
+                assert!(!branch.engine.combat.attackers.contains(&attacker));
+            }
+            assert_eq!(state.state_hash(), restored.state_hash());
+        }
+    }
+
+    #[test]
+    fn counter_reward_uses_current_spell_controller_then_preserves_stale_noop() {
+        let card = crate::card_def::card_id_by_name("Faerie Miscreant").unwrap();
+        let token = crate::card_def::card_id_by_name("Treasure Token").unwrap();
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &[card; 7],
+                &[card; 7],
+                |_| "Faerie Miscreant".into(),
+                740,
+                player,
+            );
+            state.step = crate::state::Step::Main1;
+            let target = state.draw_card(player).unwrap();
+            state.players[player.index()].mana_pool[crate::mana::ManaColor::U.pool_index()] = 1;
+            crate::engine::advance_until_decision(&mut state);
+            crate::engine::step(&mut state, crate::engine::Action::CastSpell(target)).unwrap();
+            assert!(matches!(
+                crate::engine::advance_until_decision(&mut state),
+                crate::engine::Decision::CastSpellOrPass { .. }
+            ));
+            let mut ctx = ExecCtx::no_targets(
+                state.draw_card(player.opponent()).unwrap(),
+                player.opponent(),
+            );
+            ctx.targets.push(Target::Object(target));
+            let mut historical = StackTargetContractV4::capture(&state, Target::Object(target));
+            if let StackTargetContractV4::Object { controller, .. } = &mut historical {
+                *controller = player.opponent();
+            }
+            ctx.target_contracts.push(historical);
+            let op = EffectOp::CounterTargetSpellThenCreateTokens {
+                target_index: 0,
+                token_def: token,
+                count: 2,
+            };
+            let mut replay: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut replay] {
+                execute(&op, &ctx, branch);
+                assert!(branch.engine.halted.is_none());
+                assert_eq!(branch.objects.get(target).zone, Zone::Graveyard);
+                assert!(branch.players[player.index()].graveyard.contains(&target));
+                assert_eq!(branch.players[player.index()].battlefield.len(), 2);
+                assert!(branch.players[player.opponent().index()]
+                    .battlefield
+                    .is_empty());
+                for &created in &branch.players[player.index()].battlefield {
+                    assert_eq!(branch.objects.get(created).card_def, token);
+                    assert_eq!(branch.objects.get(created).controller, player);
+                }
+                let before = branch.state_hash();
+                execute(&op, &ctx, branch);
+                assert_eq!(
+                    branch.state_hash(),
+                    before,
+                    "stale target cannot produce another reward"
+                );
+            }
+            assert_eq!(state.state_hash(), replay.state_hash());
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn counter_reward_creates_tokens_even_if_target_cannot_be_countered() {
+        let card = crate::card_def::card_id_by_name("Koma, World-Eater").unwrap();
+        let token = crate::card_def::card_id_by_name("Treasure Token").unwrap();
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &[card; 7],
+                &[card; 7],
+                |_| "Koma, World-Eater".into(),
+                741,
+                player,
+            );
+            state.step = crate::state::Step::Main1;
+            let target = state.draw_card(player).unwrap();
+            state.players[player.index()].mana_pool[5] = 3;
+            state.players[player.index()].mana_pool[crate::mana::ManaColor::U.pool_index()] = 2;
+            state.players[player.index()].mana_pool[crate::mana::ManaColor::G.pool_index()] = 2;
+            crate::engine::advance_until_decision(&mut state);
+            crate::engine::step(&mut state, crate::engine::Action::CastSpell(target)).unwrap();
+            assert!(matches!(
+                crate::engine::advance_until_decision(&mut state),
+                crate::engine::Decision::CastSpellOrPass { .. }
+            ));
+            let mut ctx = ExecCtx::no_targets(target, player.opponent());
+            ctx.targets.push(Target::Object(target));
+            ctx.target_contracts.push(StackTargetContractV4::capture(
+                &state,
+                Target::Object(target),
+            ));
+            execute(
+                &EffectOp::CounterTargetSpellThenCreateTokens {
+                    target_index: 0,
+                    token_def: token,
+                    count: 2,
+                },
+                &ctx,
+                &mut state,
+            );
+            assert!(state.engine.halted.is_none());
+            assert_eq!(state.objects.get(target).zone, Zone::Stack);
+            assert_eq!(state.stack.len(), 1);
+            assert_eq!(state.players[player.index()].battlefield.len(), 2);
+            assert!(state.players[player.opponent().index()]
+                .battlefield
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn player_creature_boost_snapshots_current_control_and_exact_incarnations() {
+        let card = crate::card_def::card_id_by_name("Faerie Miscreant").unwrap();
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        for caster in [PlayerId::P0, PlayerId::P1] {
+            let mut state = GameState::new_from_libraries(
+                &[card; 7],
+                &[card; 7],
+                |_| "Faerie Miscreant".into(),
+                750,
+            );
+            let affected = state.draw_card(caster.opponent()).unwrap();
+            let excluded = state.draw_card(caster.opponent()).unwrap();
+            let late = state.draw_card(caster.opponent()).unwrap();
+            let borrowed = state.draw_card(caster).unwrap();
+            let own = state.draw_card(caster).unwrap();
+            for object in [affected, excluded, borrowed, own] {
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(object, Zone::Battlefield),
+                );
+            }
+            state.objects.get_mut(excluded).card_def = forest;
+            state.objects.get_mut(excluded).v4 = crate::state::ObjectStateV4::from_card_def(forest);
+            state.objects.get_mut(borrowed).controller = caster.opponent();
+            state.players[caster.index()]
+                .battlefield
+                .retain(|&id| id != borrowed);
+            state.players[caster.opponent().index()]
+                .battlefield
+                .push(borrowed);
+            let ctx = ExecCtx::no_targets(own, caster);
+            let mut replay: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut replay] {
+                execute(
+                    &EffectOp::BoostPlayerCreaturesUntilEndOfTurn {
+                        player: PlayerRef::Opponent,
+                        power: 2,
+                        toughness: 3,
+                        keywords: Keywords::HEXPROOF,
+                    },
+                    &ctx,
+                    branch,
+                );
+                for object in [affected, borrowed] {
+                    assert_eq!(crate::engine::effective_power(branch, object), 3);
+                    assert_eq!(crate::engine::effective_toughness(branch, object), 4);
+                    assert!(crate::engine::has_effective_keyword(
+                        branch,
+                        object,
+                        Keywords::HEXPROOF
+                    ));
+                }
+                assert_eq!(crate::engine::effective_power(branch, own), 1);
+                assert!(!crate::engine::has_effective_keyword(
+                    branch,
+                    own,
+                    Keywords::HEXPROOF
+                ));
+                event::propose_and_commit(
+                    branch,
+                    event::ProposedEvent::zone_change(late, Zone::Battlefield),
+                );
+                assert_eq!(crate::engine::effective_power(branch, late), 1);
+                event::propose_and_commit(
+                    branch,
+                    event::ProposedEvent::zone_change(affected, Zone::Hand),
+                );
+                event::propose_and_commit(
+                    branch,
+                    event::ProposedEvent::zone_change(affected, Zone::Battlefield),
+                );
+                assert_eq!(crate::engine::effective_power(branch, affected), 1);
+                assert!(!crate::engine::has_effective_keyword(
+                    branch,
+                    affected,
+                    Keywords::HEXPROOF
+                ));
+            }
+            assert_eq!(state.state_hash(), replay.state_hash());
+        }
     }
 
     #[test]
@@ -15231,6 +16742,14 @@ mod tests {
         });
         let copy = state.objects.push(copy);
         state.players[0].graveyard.push(copy);
+        assert_eq!(controller_graveyard_card_count(&state, PlayerId::P0), 7);
+        // Runtime token copies keep a nontoken definition. They are still
+        // not cards while temporarily in the graveyard before the next SBA.
+        let mut token_copy = state.objects.get(parent).clone();
+        token_copy.v4.is_token = true;
+        assert!(!crate::card_def::CARD_DEFS[token_copy.card_def as usize].is_token);
+        let token_copy = state.objects.push(token_copy);
+        state.players[0].graveyard.push(token_copy);
         assert_eq!(controller_graveyard_card_count(&state, PlayerId::P0), 7);
     }
 

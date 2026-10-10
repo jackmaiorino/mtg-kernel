@@ -6882,7 +6882,9 @@ fn pending_discard_semantic_v2(
         .map_err(|(_, error)| RlContractError(format!("invalid pending discard: {error}")))?;
     let (resume_stage, resume_source) = match &p.resume {
         // The resolving ability itself stays on the public stack.
-        engine::DiscardResume::None | engine::DiscardResume::FinishAbilityResolution { .. } => {
+        engine::DiscardResume::None
+        | engine::DiscardResume::FinishAbilityResolution { .. }
+        | engine::DiscardResume::FinishEffectContinuation { .. } => {
             (DiscardResumeSemanticV2::None, None)
         }
         engine::DiscardResume::FinishCast { .. } => (DiscardResumeSemanticV2::FinishCast, None),

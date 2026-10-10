@@ -302,6 +302,12 @@ pub enum Subtype {
     Sphere,
     /// Starting Town's land subtype. Not a creature type.
     Town,
+    /// Appended for unregistered Apothecary Stomper after accepted Standard ids.
+    Elephant,
+    /// Appended for unregistered Scrawling Crawler, preserving accepted ids.
+    Construct,
+    /// Appended for unregistered Mischievous Pup, preserving existing ids.
+    Dog,
 }
 
 impl Subtype {
@@ -419,6 +425,12 @@ impl Subtype {
         Subtype::Berserker,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Otter,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Elephant,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Construct,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Dog,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Scout,
         #[cfg(feature = "standard-magezero-fixtures")]
@@ -587,6 +599,9 @@ impl Subtype {
                 | Subtype::Merfolk
                 | Subtype::Octopus
                 | Subtype::Otter
+                | Subtype::Elephant
+                | Subtype::Construct
+                | Subtype::Dog
                 | Subtype::Hyena
                 | Subtype::Raccoon
                 | Subtype::Citizen
@@ -814,6 +829,11 @@ pub enum TargetSpec {
     ControlledPermanentWithAnySubtype([Subtype; 4]),
     /// One permanent card from the controller's graveyard, including a land.
     PermanentCardInOwnGraveyard,
+    /// Zero or one controlled battlefield permanent other than the exact
+    /// source incarnation captured by this ability.
+    UpToOneOtherControlledPermanent,
+    /// Zero to two controlled creatures other than the captured source incarnation.
+    UpToTwoOtherControlledCreatures,
 }
 
 impl TargetSpec {
@@ -880,6 +900,8 @@ impl TargetSpec {
             TargetSpec::AttackingCreatureWithSubtype(_) => 55,
             TargetSpec::ControlledPermanentWithAnySubtype(_) => 56,
             TargetSpec::PermanentCardInOwnGraveyard => 57,
+            TargetSpec::UpToOneOtherControlledPermanent => 58,
+            TargetSpec::UpToTwoOtherControlledCreatures => 59,
         }
     }
 }
@@ -1079,6 +1101,10 @@ pub enum CostComponent {
     /// deterministically; whether to convoke at all is the ordinary cast
     /// mode choice.
     ConvokeMana(crate::mana::Cost),
+    /// Sacrifice `count` other creatures the payer currently controls.
+    /// The source is excluded from both selection and atomic payment.
+    /// Appended for Hungry Ghoul, preserving all older cost variants.
+    SacrificeOtherControlledCreatures(u8),
 }
 
 /// Optional additional costs chosen while announcing a spell. The selected
@@ -1308,6 +1334,12 @@ pub enum DynamicValueDef {
     /// effective subtypes include the named subtype (Flow of Knowledge's
     /// "each Island you control").
     ControlledPermanentsWithSubtype(Subtype),
+    /// Count battlefield permanents currently controlled by the evaluating
+    /// player with this effective card type, including tokens and copies.
+    ControlledPermanentsWithType(CardType),
+    /// Count distinct mana values among currently controlled nonland
+    /// battlefield permanents. Tokens participate, and X is zero off-stack.
+    DistinctManaValuesAmongControlledNonlandPermanents,
 }
 
 /// Two subtypes a *single* permanent must carry at once, e.g. the Urza's
@@ -1488,6 +1520,10 @@ pub enum DynamicCountDef {
     ControllerHasCreatureWithAndWithoutSubtype(Subtype),
     /// One iff a chosen spell target is a tapped battlefield creature.
     SpellTargetsTappedCreature,
+    /// Count currently controlled permanents with the effective named subtype.
+    ControllerBattlefieldSubtype(Subtype),
+    /// One iff a currently controlled permanent has the effective named subtype.
+    ControllerHasPermanentSubtype(Subtype),
 }
 
 /// Reduces only the generic portion of a spell's mana cost, flooring at
@@ -2166,11 +2202,11 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 337 (static team bonuses).
+        // batches append through id 368 (prepared mechanic families).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                338
+                369
             } else {
                 192
             }
@@ -2261,6 +2297,8 @@ mod tests {
                 56,
             ),
             (TargetSpec::PermanentCardInOwnGraveyard, 57),
+            (TargetSpec::UpToOneOtherControlledPermanent, 58),
+            (TargetSpec::UpToTwoOtherControlledCreatures, 59),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);
@@ -2290,8 +2328,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v65_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x42bf_6f9c_a62d_6615;
+    fn card_db_hash_v66_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0xe8e2_bba9_d907_1e80;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

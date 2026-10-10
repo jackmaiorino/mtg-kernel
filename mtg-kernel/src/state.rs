@@ -1027,6 +1027,7 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::ArtifactPermanent
                 | TargetSpec::EnchantmentPermanent
                 | TargetSpec::ControlledCreature
+                | TargetSpec::UpToOneOtherControlledPermanent
                 | TargetSpec::OpponentControlledCreature
                 | TargetSpec::UpToOneTappedCreature
                 | TargetSpec::NoncreatureArtifactPermanent
@@ -1052,6 +1053,7 @@ pub fn stack_target_contract_is_structurally_valid(
             },
         ) | (
             TargetSpec::UpToTwoCreatures
+                | TargetSpec::UpToTwoOtherControlledCreatures
                 | TargetSpec::ExactlyTwoArtifactPermanents
                 | TargetSpec::ControlledCreatureThenOpponentCreature
                 | TargetSpec::ControlledCreatureThenOpponentCreatureOrPlaneswalker,

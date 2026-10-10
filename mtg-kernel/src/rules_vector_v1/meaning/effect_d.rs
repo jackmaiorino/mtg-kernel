@@ -249,6 +249,20 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                     .amount(AmtF::fixed(1)),
             );
         }
+        EffectOp::RevealTargetHandChooseNonlandDiscard { player } => {
+            let player = player_ref(*player);
+            reveal_hand(player, out);
+            out.control(ControlF::ChooseObjects);
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Hand), ZoneF::Graveyard)
+                    .player(player)
+                    .obj(ObjF::AnyCard)
+                    .amount(AmtF::fixed(1)),
+            );
+            // The exact program retains Nonland; the fixed vocabulary
+            // has no nonland-card class (NonlandPermanent is distinct).
+            out.atoms.push(Atom::Opaque);
+        }
         EffectOp::ShuffleTriggerSourceIntoOwnersLibrary => {
             // The leave-trigger source, if it is the exact card now in its
             // owner's graveyard, moves into that library, which is shuffled.

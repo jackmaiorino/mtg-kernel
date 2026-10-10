@@ -363,6 +363,14 @@ fn activated(walk: &mut Walk, ctx: CtxF, key: &str, ability: &ActivatedAbilityDe
             "max_per_turn": max_activations_per_turn,
         }),
     );
+    if cost.iter().any(|component| {
+        matches!(
+            component,
+            CostComponent::SacrificeOtherControlledCreatures(_)
+        )
+    }) {
+        walk.opaque.push("sacrifice cost excludes its source");
+    }
     let env = Env { target_spec };
     walk.ability(ctx, |out| {
         for &component in cost {
@@ -891,6 +899,13 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                     .push("global first life gain ordinal and optional own-turn gate");
             }
             let env = Env { target_spec: spec };
+            if matches!(
+                condition,
+                crate::trigger::TriggerCondition::CastNoncreatureOrSubtype(_)
+            ) {
+                walk.opaque
+                    .push("noncreature spell or selected subtype cast union predicate");
+            }
             walk.ability(CtxF::Trigger, |out| {
                 triggers_costs::trigger_condition(condition, out);
                 if home_zone != Zone::Battlefield {
@@ -976,7 +991,11 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
             power,
             toughness,
             grant_haste,
+            battlefield_only,
         } = boost;
+        if battlefield_only {
+            walk.rec("static_self_boost_home_zone", json!(Zone::Battlefield));
+        }
         walk.opaque
             .push("static self boost gated on an engine predicate");
         walk.rec(
@@ -1091,6 +1110,23 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 );
             }
         });
+    }
+
+    if crate::continuous_characteristics_v1::has_printed_cant_block(name) {
+        walk.rec(
+            "static_cant_block",
+            json!({"printed_source_abilities": true}),
+        );
+        walk.ability(CtxF::Static, |out| {
+            out.effect(
+                EffectAtom::new(EvF::Restrict)
+                    .obj(ObjF::ThisObject)
+                    .duration(DurF::WhileOnBattlefield),
+            );
+            // Restrict has no predicate distinguishing blocking from other actions.
+            out.atoms.push(Atom::Opaque);
+        });
+        walk.opaque.push("printed source cannot block");
     }
 
     #[cfg(feature = "standard-magezero-fixtures")]
