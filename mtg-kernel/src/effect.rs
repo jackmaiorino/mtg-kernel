@@ -1238,27 +1238,6 @@ pub enum EffectOp {
         count: u8,
         max_mana_value: u16,
     },
-    /// Ward—Collect evidence N: counters the exact stack incarnation that
-    /// targeted the bound Ward permanent unless that item's controller
-    /// exiles cards with total mana value N or more from their graveyard.
-    /// The payer always pays when able, exiling the deterministic
-    /// `standard_keywords_v1::evidence_plan` selection; it never asks, so
-    /// no decision or observation shape changes.
-    CounterUnlessCollectsEvidence {
-        ward_target: StackTargetContractV4,
-        targeting_stack_item: StackItemId,
-        minimum_mana_value: u16,
-    },
-    /// Ward—Pay N life: counters the exact stack incarnation that targeted
-    /// the bound Ward permanent unless its controller pays `life`. Like
-    /// `CounterUnlessCollectsEvidence` it never asks: the payer pays
-    /// whenever they have more life than the cost, so paying never ends
-    /// the game.
-    CounterUnlessPaysLife {
-        ward_target: StackTargetContractV4,
-        targeting_stack_item: StackItemId,
-        life: u8,
-    },
     /// Trigger collection binds this template to the number of creatures
     /// that convoked the trigger source
     /// (`LookTopTakeCreaturesManaValueAtMostThenShuffle`).
@@ -1342,6 +1321,21 @@ pub enum EffectOp {
     /// under its owner's control; it's an enchantment, not a creature
     /// (`ObjectStateV4::enduring_enchantment_v1`).
     ReturnSourceAsEnduringEnchantment,
+    // Append new variants to preserve existing derived Hash discriminants.
+    /// Development-only Ward payment approximation. Axebane Ferox is
+    /// Partial until declining and choosing the evidence subset are supported.
+    CounterUnlessCollectsEvidence {
+        ward_target: StackTargetContractV4,
+        targeting_stack_item: StackItemId,
+        minimum_mana_value: u16,
+    },
+    /// Development-only automatic life payment. Brutal Cathar is Partial
+    /// until the controller can decline or choose a legal payment.
+    CounterUnlessPaysLife {
+        ward_target: StackTargetContractV4,
+        targeting_stack_item: StackItemId,
+        life: u8,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -12827,17 +12821,21 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 .collect();
             if !object_ids.is_empty() {
                 let timestamp = crate::engine::next_timestamp(state);
-                state.engine.until_end_of_turn.push(
-                    crate::engine::UntilEndOfTurnEffect::ResolvedSetEffect {
-                        object_ids,
-                        layer: crate::engine::Layers::POWER_TOUGHNESS,
-                        timestamp,
-                        duration: crate::engine::EffectDuration::EndOfTurn,
-                        power: *power,
-                        toughness: *toughness,
-                        grant_haste: false,
-                    },
-                );
+                for object_id in object_ids {
+                    let object_zone_change_count = state.objects.get(object_id).zone_change_count;
+                    state.engine.until_end_of_turn.push(
+                        crate::engine::UntilEndOfTurnEffect::ResolvedObjectEffect {
+                            object_id,
+                            object_zone_change_count,
+                            layer: crate::engine::Layers::POWER_TOUGHNESS,
+                            timestamp,
+                            duration: crate::engine::EffectDuration::EndOfTurn,
+                            power: *power,
+                            toughness: *toughness,
+                            grant_haste: false,
+                        },
+                    );
+                }
             }
         }
         EffectOp::RevealTopCardToHandLoseLifeEqualToManaValue => {
@@ -14454,6 +14452,12 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             }
             let def = &crate::card_def::CARD_DEFS[source.card_def as usize];
+            // CR 701.27f: an earlier activation may already have transformed
+            // this Incubator since the current activation entered the stack.
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if def.name == "Incubator Token" && source.v4.face_index == 1 {
+                return;
+            }
             if source.v4.face_index != 0 || def.transform_face.is_none() {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,

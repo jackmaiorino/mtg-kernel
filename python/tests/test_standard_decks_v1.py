@@ -13,17 +13,17 @@ import limited_decks_v1 as limited
 STANDARD = REPO_ROOT / "data/standard/magezero_v1"
 # Each Standard card batch extends this list with the deck cards it supports.
 SUPPORTED_NONBASIC = {
-    "Adeline, Resplendent Cathar", "Aloe Alchemist", "Ascendant Packleader", "Axebane Ferox",
-    "Bloodletter of Aclazotz", "Brutal Cathar", "Burnout Bashtronaut", "Burst Lightning",
+    "Adeline, Resplendent Cathar", "Aloe Alchemist", "Ascendant Packleader",
+    "Bloodletter of Aclazotz", "Burst Lightning",
     "Cenote Scout", "Chrome Host Seedshark", "Consider", "Coppercoat Vanguard",
     "Cori-Steel Cutter", "Darkstar Augur", "Deep-Cavern Bat", "Destroy Evil", "Dissipate",
-    "Duress", "Emberheart Challenger", "Enduring Curiosity", "Enduring Innocence", "Fading Hope",
+    "Duress", "Emberheart Challenger", "Fading Hope",
     "Flow of Knowledge", "Forsaken Miner", "Full Bore", "Gatekeeper of Malakir", "Get Lost",
-    "Graveyard Trespasser", "Hard-Hitting Question", "Heartfire Hero", "Hired Claw",
-    "Hopeful Initiate", "Hullbreaker Horror", "Impulse", "Iridescent Vinelasher",
-    "Knight-Errant of Eos", "Lightning Strike", "Llanowar Elves", "Make Disappear",
+    "Hard-Hitting Question", "Heartfire Hero", "Hired Claw",
+    "Hullbreaker Horror", "Impulse", "Iridescent Vinelasher",
+    "Lightning Strike", "Llanowar Elves",
     "Manifold Mouse", "Monastery Swiftspear", "Negate", "Nova Hellkite", "Novice Inspector", "Opt",
-    "Overlord of the Mistmoors", "Pawpatch Recruit", "Phantom Interference", "Razorkin Needlehead",
+    "Pawpatch Recruit", "Phantom Interference", "Razorkin Needlehead",
     "Ruin-Lurker Bat", "Sanguine Evangelist", "Sentinel of the Nameless City", "Shock",
     "Shoot the Sheriff", "Slickshot Show-Off", "Spell Pierce", "Thirst for Discovery",
     "Tolarian Terror", "Unstoppable Slasher", "Voldaren Epicure", "Warden of the Inner Sky",
@@ -92,6 +92,24 @@ class StandardDeckTest(unittest.TestCase):
             "Quirion Beastcaller",
             "Sharp-Eyed Rookie",
             "Thalia, Guardian of Thraben",
+        ):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "unsupported mainboard"):
+                limited.resolve_mainboard(limited.parse_dck(f"39 Plains\n1 {name}"), self.registry)
+
+
+    def test_incomplete_family_d_cards_are_refused(self) -> None:
+        for name in (
+            "Enduring Curiosity",
+            "Enduring Innocence",
+            "Overlord of the Mistmoors",
+            "Axebane Ferox",
+            "Brutal Cathar",
+            "Burnout Bashtronaut",
+            "Graveyard Trespasser",
+            "Hopeful Initiate",
+            "Knight-Errant of Eos",
+            "Make Disappear",
+            "Flourishing Bloom-Kin",
         ):
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, "unsupported mainboard"):
                 limited.resolve_mainboard(limited.parse_dck(f"39 Plains\n1 {name}"), self.registry)

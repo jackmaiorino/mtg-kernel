@@ -8,9 +8,9 @@
 //! during your turn, if your speed is less than 4, increase your speed by 1.
 //! This ability triggers only once each turn." This kernel applies that
 //! increase directly when the life-loss event batch is processed instead of
-//! putting the inherent trigger on the stack: nothing in the pool can respond
-//! to it or observe the difference, and it keeps speed free of a source
-//! object. "Max speed" abilities read `speed == 4`.
+//! putting the inherent trigger on the stack. This omits its response and
+//! ordering window, so Burnout Bashtronaut remains Partial. "Max speed"
+//! abilities read `speed == 4`.
 //!
 //! Day and night (726): the designation starts when a daybound permanent
 //! appears and changes as each turn begins. Daybound/nightbound permanents

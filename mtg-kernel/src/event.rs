@@ -525,6 +525,7 @@ pub enum CommittedEvent {
         source_zone_change_count: u32,
         controller: PlayerId,
     },
+    // Append new variants to preserve existing derived Hash discriminants.
     /// 700.13: `player` committed a crime by casting a spell, activating an
     /// ability or putting a triggered ability on the stack that targets an
     /// opponent, anything an opponent controls, or a card in an opponent's
@@ -962,8 +963,6 @@ fn commit_with_ability_lki(
             if from == Zone::Battlefield {
                 record_counter_lki(state, z.object);
             }
-            // Before the abilities-removed marker, which must immediately
-            // precede the departure for leave triggers to see it.
             #[cfg(feature = "standard-magezero-fixtures")]
             crate::standard_keywords_v1::before_zone_change(state, z.object, z.to_zone);
             if from == Zone::Battlefield
@@ -1859,6 +1858,40 @@ mod tests {
 
     fn fresh_state() -> GameState {
         GameState::new_from_libraries(&[1, 2, 3], &[4, 5, 6], |c| format!("card-{c}"), 1)
+    }
+
+    #[cfg(feature = "standard-magezero-fixtures")]
+    #[test]
+    fn heartfire_death_respects_the_pre_zone_change_ability_snapshot() {
+        for abilities_removed in [false, true] {
+            let mut state = fresh_state();
+            let hero = push_object_into(&mut state, PlayerId::P0, Zone::Battlefield);
+            let definition = crate::card_def::card_id_by_name("Heartfire Hero").unwrap();
+            let object = state.objects.get_mut(hero);
+            object.card_def = definition;
+            object.name = "Heartfire Hero".into();
+            object.v4 = crate::state::ObjectStateV4::from_card_def(definition);
+            state.players[0].battlefield.push(hero);
+
+            // A simultaneous zone-change batch freezes whether an Aura had
+            // removed the printed ability before either permanent leaves.
+            commit_with_ability_lki(
+                &mut state,
+                ProposedEvent::zone_change(hero, Zone::Graveyard),
+                Some(abilities_removed),
+            );
+            let triggers = crate::trigger::collect_and_process(&mut state);
+            assert_eq!(triggers.len(), usize::from(!abilities_removed));
+            if let Some(trigger) = triggers.first() {
+                assert_eq!(
+                    trigger.effect,
+                    crate::effect::EffectOp::DealDamage {
+                        target: crate::effect::TargetRef::Opponent,
+                        amount: 1,
+                    }
+                );
+            }
+        }
     }
 
     fn lifelink_source(state: &mut GameState) -> ObjectId {
