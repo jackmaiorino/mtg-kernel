@@ -6513,11 +6513,15 @@ fn rich_mana_ability_is_payable(
     match rich.cost {
         ManaAbilityCostDef::TapSelf | ManaAbilityCostDef::TapAndSacrificeSelf => {
             !(object.tapped
-                || object_has_type(state, source, CardType::Creature) && object.summoning_sick)
+                || (object_has_type(state, source, CardType::Creature)
+                    && object.summoning_sick
+                    && !has_effective_keyword(state, source, Keywords::HASTE)))
         }
         ManaAbilityCostDef::TapSelfPayLife(life) => {
             !(object.tapped
-                || object_has_type(state, source, CardType::Creature) && object.summoning_sick)
+                || (object_has_type(state, source, CardType::Creature)
+                    && object.summoning_sick
+                    && !has_effective_keyword(state, source, Keywords::HASTE)))
                 && mana::life_payment_affordable(
                     i32::from(life),
                     state.players[player.index()].life,
@@ -6531,7 +6535,9 @@ fn rich_mana_ability_is_payable(
             // cheap checks: the flat-encode zero-allocation contract counts
             // on the short-circuit (tests/flat_action_allocation.rs).
             !(object.tapped
-                || object_has_type(state, source, CardType::Creature) && object.summoning_sick
+                || (object_has_type(state, source, CardType::Creature)
+                    && object.summoning_sick
+                    && !has_effective_keyword(state, source, Keywords::HASTE))
                 || mana_ability_cost_targets(player, source, state).is_empty())
         }
     }
@@ -6595,7 +6601,9 @@ pub(crate) fn available_mana_ability_choices_into(
         rich_mana_ability_is_payable(player, source, 0, rich, None, state)
     } else {
         !(object.tapped
-            || object_has_type(state, source, CardType::Creature) && object.summoning_sick)
+            || (object_has_type(state, source, CardType::Creature)
+                && object.summoning_sick
+                && !has_effective_keyword(state, source, Keywords::HASTE)))
     };
     if primary_payable {
         for &color in primary.as_slice() {
