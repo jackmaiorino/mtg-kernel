@@ -315,6 +315,11 @@ pub enum EffectCond {
     /// The resolving triggered ability's source is still the incarnation
     /// that triggered, in the zone it triggered from.
     SourceStillInTriggerZone,
+    /// Current life total of a player target, sampled when the effect resolves.
+    TargetPlayerLifeTotalEquals {
+        index: u8,
+        life: i32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -15291,6 +15296,10 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
         EffectCond::ControllerGraveyardCardCountAtLeast(minimum) => {
             controller_graveyard_card_count(state, ctx.controller) >= usize::from(*minimum)
         }
+        EffectCond::TargetPlayerLifeTotalEquals { index, life } => {
+            matches!(ctx.targets.get(usize::from(*index)),
+                Some(Target::Player(player)) if state.players[player.index()].life == *life)
+        }
         EffectCond::TargetManaValueAtMost(index, maximum) => {
             ctx.target_incarnation_matches(usize::from(*index), state)
                 && match ctx.targets.get(usize::from(*index)) {
@@ -15313,6 +15322,50 @@ mod tests {
 
     fn two_card_libraries() -> GameState {
         GameState::new_from_libraries(&[1, 2], &[3, 4], |c| format!("card-{c}"), 1)
+    }
+
+    #[test]
+    fn target_player_life_equality_uses_current_total_and_actual_damage() {
+        let op = EffectOp::Conditional {
+            cond: EffectCond::TargetPlayerLifeTotalEquals { index: 0, life: 10 },
+            then: Box::new(EffectOp::DealDamage {
+                target: TargetRef::Target(0),
+                amount: 10,
+            }),
+            else_: Box::new(EffectOp::NoOp),
+        };
+        for controller in [PlayerId::P0, PlayerId::P1] {
+            for target in [controller, controller.opponent()] {
+                for life in [9, 10, 11] {
+                    let mut state = two_card_libraries();
+                    let source = state.players[controller.index()].hand[0];
+                    state.players[target.index()].life = life;
+                    let mut ctx = ExecCtx::no_targets(source, controller);
+                    ctx.targets.push(Target::Player(target));
+                    let mut restored: GameState =
+                        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                    execute(&op, &ctx, &mut state);
+                    execute(&op, &ctx, &mut restored);
+                    assert_eq!(
+                        state.players[target.index()].life,
+                        if life == 10 { 0 } else { life }
+                    );
+                    assert_eq!(state.state_hash(), restored.state_hash());
+                    let damage_count = state
+                        .engine
+                        .event_history
+                        .iter()
+                        .filter(|event| matches!(event, CommittedEvent::Damage { .. }))
+                        .count();
+                    assert_eq!(damage_count, usize::from(life == 10));
+                }
+            }
+        }
+        let mut state = two_card_libraries();
+        let source = state.players[0].hand[0];
+        let before = state.clone();
+        execute(&op, &ExecCtx::no_targets(source, PlayerId::P0), &mut state);
+        assert_eq!(state, before, "an absent player target fails the condition");
     }
 
     fn fight_fixture(player: PlayerId) -> (GameState, ObjectId, ObjectId, ExecCtx) {

@@ -37,6 +37,17 @@ pub(crate) fn effect_cond(cond: &EffectCond, env: &Env, out: &mut Collector) {
     match cond {
         // Constant conditions read nothing.
         EffectCond::Always => {}
+        EffectCond::TargetPlayerLifeTotalEquals { index, life } => {
+            out.read(
+                player_ref(PlayerRef::Target(*index)),
+                None,
+                Some(ObjF::Player),
+                AggF::Characteristic,
+            );
+            // Exact life-total equality has no predicate facet in v1.
+            let _ = life;
+            out.atoms.push(Atom::Opaque);
+        }
         EffectCond::Never => {}
         EffectCond::DiscardedNonLandForCost => {
             // Reads the cards this cast's additional cost discarded

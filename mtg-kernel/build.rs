@@ -3407,6 +3407,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
             "LoseOpponentsLifeXThenGainLifeLost(announcedX,actualCommittedLoss)",
             "EffectOp::LoseOpponentsLifeXThenGainLifeLost",
         ),
+        "Hidetsugu's Second Rite" => program(
+            "AnyPlayer",
+            "Conditional(TargetPlayerLifeTotalEquals(Target0,10),DealDamage(Target0,10),NoOp)",
+            "EffectOp::Conditional { cond: EffectCond::TargetPlayerLifeTotalEquals { index: 0, life: 10 }, then: Box::new(EffectOp::DealDamage { target: TargetRef::Target(0), amount: 10 }), else_: Box::new(EffectOp::NoOp) }",
+        ),
         "Lunar Insight" => program(
             "None",
             "DrawCardsDynamic(Controller,DistinctManaValuesAmongControlledNonlandPermanents,resolutionSample)",
@@ -3610,6 +3615,7 @@ fn standard_program_for(name: &str) -> Option<Special> {
 fn program_target_spec_src(target: &str) -> &'static str {
     match target {
         "None" => "TargetSpec::None",
+        "AnyPlayer" => "TargetSpec::AnyPlayer",
         "Creature" => "TargetSpec::Creature",
         "ControlledCreature" => "TargetSpec::ControlledCreature",
         "ArtifactPermanent" => "TargetSpec::ArtifactPermanent",
