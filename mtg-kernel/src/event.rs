@@ -260,6 +260,18 @@ impl ProposedEvent {
             touched_by: Vec::new(),
         })
     }
+    pub fn zone_change_to_battlefield_under_controller(
+        object: ObjectId,
+        controller: PlayerId,
+    ) -> ProposedEvent {
+        let ProposedEvent::ZoneChange(mut change) = Self::zone_change(object, Zone::Battlefield)
+        else {
+            unreachable!("zone-change constructor");
+        };
+        change.battlefield_controller = Some(controller);
+        ProposedEvent::ZoneChange(change)
+    }
+
     pub fn transformed_battlefield_return(
         object: ObjectId,
         face_index: u8,

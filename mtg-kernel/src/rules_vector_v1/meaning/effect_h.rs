@@ -266,6 +266,29 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
             );
             out.created_tokens.push(*token_def);
         }
+        EffectOp::ReturnAllGraveyardCreaturesUnderController => {
+            let creature = ObjF::Typed(CardTypeF::Creature);
+            out.read(
+                RelF::EachPlayer,
+                Some(ZoneF::Graveyard),
+                Some(creature),
+                AggF::Characteristic,
+            );
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Graveyard), ZoneF::Battlefield)
+                    .player(RelF::EachPlayer)
+                    .obj(creature)
+                    .amount(AmtF::All),
+            );
+            out.effect(
+                EffectAtom::new(EvF::GainControl)
+                    .player(RelF::You)
+                    .obj(creature)
+                    .amount(AmtF::All),
+            );
+            // Card/token filtering and simultaneous entry have no fixed predicate facets.
+            out.atoms.push(Atom::Opaque);
+        }
         EffectOp::ReturnOwnGraveyardCreaturesManaValueAtMost { max_mana_value } => {
             let creature = ObjF::Typed(CardTypeF::Creature);
             out.read(

@@ -239,6 +239,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::LoseOpponentsLifeXThenGainLifeLost
         | EffectOp::ReturnAttackingCreaturesToOwnersHands
         | EffectOp::ReturnOwnGraveyardCreaturesManaValueAtMost { .. }
+        | EffectOp::ReturnAllGraveyardCreaturesUnderController
         | EffectOp::CounterTargetSpellThenCreateTokens { .. }
         | EffectOp::ExileGraveyardTargetsDrainPerCreature { .. }
         | EffectOp::RemoveTimeCounterFromSource
