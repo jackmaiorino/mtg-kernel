@@ -30,18 +30,21 @@ Merged batches take one catalog version each: keyword creatures and gainlands (n
 The v61 activated-combat batch merged in [PR #195](https://github.com/jackmaiorino/mtg-kernel/pull/195).
 Its default-branch inventory is 130 full, one partial and 155 missing names.
 
-Current integration owner: Codex issue #110 goal, branch `codex/fdn-issue110`.
-The next catalog is v62, Lightshell Duo and Cephalid Inkmage, IDs 330-331,
-with private multi-card surveil and threshold. Its source registry resolves
-132 names, but those two additions remain pending gameplay and hosted
-qualification before that number counts as accepted default-branch coverage.
-The preparation commits on `codex/limited-surveil-batch-20261009` are retained
-and integrated into the owner's branch.
+Current integration owner: Codex issue #110 goal. The v62 surveil batch
+merged in [PR #204](https://github.com/jackmaiorino/mtg-kernel/pull/204), and
+v63 Vanguard Seraph/Cat Collector merged in
+[PR #208](https://github.com/jackmaiorino/mtg-kernel/pull/208) at `bc23a8da`.
+That accepted default composition covers 134 full, one partial and 151
+missing names, with 33 affected Python cases passing on the actual merge.
+The next catalog is v64, Elvish Regrower/Ambush Wolf, IDs 334-335, on
+`codex/fdn-graveyard-admission-v64`. Its 136-name candidate still requires
+native gameplay, generated identity, live-profile checks and integration.
 
-Later prepared families remain retained in their original worktrees: v63
-Vanguard Seraph/Cat Collector (IDs 332-333), v64 Elvish Regrower/Ambush Wolf
-(334-335), v65 Anthem of Champions/Empyrean Eagle (336-337), and v66
-Balmor/Firespitter Whelp (338-339). They require serial registration, generated
+Later prepared families remain retained in their original worktrees: v65
+Anthem of Champions/Empyrean Eagle (336-337), then one coherent admission
+for prepared IDs 338-363, beginning with Balmor/Firespitter Whelp. The later
+preparations include Wardens of the Cycle, Arcane Epiphany and Claws Out.
+They require serial registration, generated
 catalog identities, gameplay verification and integration. Source review
 identified Vanguard Seraph's missing flying mapping and the graveyard batch's
 pending-trigger hash compatibility requirement; these must be repaired at

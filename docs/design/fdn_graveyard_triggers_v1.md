@@ -52,3 +52,14 @@ adding a PendingTrigger field. Candidate coverage is136 full, one partial and
 149 missing; accepted coverage remains134 until gameplay and profile checks
 pass and this batch merges. Native catalog generation supplies the new hash
 before any live-profile pin is finalized. No paid/formal run is started.
+
+The v64 candidate at150aee3099d95829eaa45a284ac8a56845214ea7 generated
+catalog identityf2a1adba0b3c68c4 under supported guard
+06e7fb0bbf5d4838a689c48714155423, exit zero, in46.97 seconds.
+Rust1.94.1/MSVC19.50.35725 and the source SHA are logged. The generated
+catalog binds both trigger recipes, Wolf's Flash and IDs334-335. The successor
+FdnGraveyardTriggers live profile uses that observed identity, preserves the
+frozen v63 identity and adds historical readability plus rejection before
+resume/publication mutations. Separate source review of150aee30 found no
+findings. All34 affected Python cases, formatting and diff checks pass.
+Native gameplay and current-head hosted qualification remain pending.
