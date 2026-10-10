@@ -379,10 +379,8 @@ pub(crate) fn plan_spell_mana_total_v1(
         &mut pool_remaining,
         &mut plan,
         mana_life_budget,
+        Some(generic),
     ) {
-        return None;
-    }
-    if !pay_generic(generic, &sources, &mut used, &mut pool_remaining, &mut plan) {
         return None;
     }
     let total_life = i64::from(plan.life_paid) + i64::from(additional_life);
@@ -609,11 +607,21 @@ fn solve_pips(
     pool_remaining: &mut [u8; 6],
     plan: &mut PaymentPlan,
 ) -> bool {
-    solve_pips_with_life_budget_v1(pips, idx, sources, used, pool_remaining, plan, i64::MAX)
+    solve_pips_with_life_budget_v1(
+        pips,
+        idx,
+        sources,
+        used,
+        pool_remaining,
+        plan,
+        i64::MAX,
+        None,
+    )
 }
 
 /// A selected spell's remaining life budget participates in pip backtracking,
 /// so rejecting a Phyrexian life branch can still find a legal mana allocation.
+#[allow(clippy::too_many_arguments)]
 fn solve_pips_with_life_budget_v1(
     pips: &[Pip],
     idx: usize,
@@ -622,8 +630,28 @@ fn solve_pips_with_life_budget_v1(
     pool_remaining: &mut [u8; 6],
     plan: &mut PaymentPlan,
     max_life_payment: i64,
+    generic_needed: Option<u32>,
 ) -> bool {
     let Some(pip) = pips.get(idx) else {
+        let Some(generic) = generic_needed else {
+            return true;
+        };
+        // A failed generic branch must not alter the pip search's state.
+        let mut generic_plan = plan.clone();
+        let mut generic_pool = *pool_remaining;
+        let mut generic_used = used.to_vec();
+        if !pay_generic(
+            generic,
+            sources,
+            &mut generic_used,
+            &mut generic_pool,
+            &mut generic_plan,
+        ) {
+            return false;
+        }
+        *plan = generic_plan;
+        *pool_remaining = generic_pool;
+        used.copy_from_slice(&generic_used);
         return true;
     };
 
@@ -633,8 +661,8 @@ fn solve_pips_with_life_budget_v1(
         Pip::Phyrexian(c) => vec![c],
     };
 
-    // Prefer paying from the floating pool: it never needs backtracking,
-    // since spending it doesn't remove a source with other uses.
+    // Prefer floating mana, but backtrack if Phyrexian life payment must
+    // preserve that mana for the spell's generic requirement.
     for &c in &candidate_colors {
         let pi = c.pool_index();
         if pool_remaining[pi] > 0 {
@@ -648,6 +676,7 @@ fn solve_pips_with_life_budget_v1(
                 pool_remaining,
                 plan,
                 max_life_payment,
+                generic_needed,
             ) {
                 return true;
             }
@@ -688,6 +717,7 @@ fn solve_pips_with_life_budget_v1(
                 pool_remaining,
                 plan,
                 max_life_payment,
+                generic_needed,
             ) {
                 return true;
             }
@@ -709,6 +739,7 @@ fn solve_pips_with_life_budget_v1(
             pool_remaining,
             plan,
             max_life_payment,
+            generic_needed,
         ) {
             return true;
         }
@@ -1038,6 +1069,24 @@ mod tests {
             255,
         )
         .is_none());
+    }
+
+    #[test]
+    fn spell_total_backtracks_to_life_when_floating_red_must_pay_generic() {
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        let mut state = GameState::new_from_libraries(&[forest], &[forest], |_| "Forest".into(), 5);
+        state.players[0].life = 2;
+        state.players[0].mana_pool[3] = 1;
+        let pips = [Pip::Phyrexian(ManaColor::R)];
+        let plan = plan_spell_mana_total_v1(&pips, 1, PlayerId::P0, &state, false, &[], 0)
+            .expect("Two life pays the pip and floating R pays the generic tax");
+        assert_eq!(plan.life_paid, 2);
+        assert_eq!(plan.pool_used[3], 1);
+        assert!(plan_spell_mana_total_v1(&pips, 1, PlayerId::P0, &state, false, &[], 1).is_none());
+        state.players[0].life = 3;
+        assert!(plan_spell_mana_total_v1(&pips, 1, PlayerId::P0, &state, false, &[], 1).is_some());
+        assert_eq!(state.players[0].mana_pool[3], 1, "planning never pays mana");
+        assert_eq!(state.players[0].life, 3, "planning never pays life");
     }
 
     #[test]
