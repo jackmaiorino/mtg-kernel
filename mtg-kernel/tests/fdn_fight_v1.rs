@@ -280,6 +280,14 @@ fn bushwhack_search_can_fail_or_reveal_a_basic_land_with_pending_restore() {
     for player in [PlayerId::P0, PlayerId::P1] {
         for accept in [false, true] {
             let mut state = ready(player);
+            // Keep both modes viable so this case exercises the explicit choice.
+            put(&mut state, player, "Faerie Miscreant", Zone::Battlefield);
+            put(
+                &mut state,
+                player.opponent(),
+                "Faerie Miscreant",
+                Zone::Battlefield,
+            );
             let before = state.players[player.index()].library.len();
             let source = cast_bushwhack(&mut state, player, 0);
             let d = until(&mut state, |d| {
