@@ -744,6 +744,13 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 // A transform back face's own trigger.
                 walk.rec("trigger_face_index", json!(face_index));
             }
+            if matches!(
+                condition,
+                crate::trigger::TriggerCondition::ControllerFirstLifeGain { .. }
+            ) {
+                walk.opaque
+                    .push("global first life gain ordinal and optional own-turn gate");
+            }
             let env = Env { target_spec: spec };
             walk.ability(CtxF::Trigger, |out| {
                 triggers_costs::trigger_condition(condition, out);
