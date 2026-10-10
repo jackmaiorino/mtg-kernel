@@ -1267,17 +1267,16 @@ fn phyrexian_payments_use_printed_affordability_and_modified_life_loss() {
         );
         let elf = put(
             &mut state,
-            PlayerId::P1,
+            PlayerId::P0,
             "Llanowar Elves",
             Zone::Battlefield,
         );
-        let growth = put(&mut state, PlayerId::P1, "Mutagenic Growth", Zone::Hand);
+        let gut_shot = put(&mut state, PlayerId::P1, "Gut Shot", Zone::Hand);
         state.players[1].life = starting_life;
         state.priority_player = PlayerId::P1;
-        // The creature has no mana available. Paying printed {G/P} costs two
+        // The caster has no mana available. Paying printed {R/P} costs two
         // life even when Bloodletter makes the actual life loss four.
-        state.objects.get_mut(elf).tapped = true;
-        cast(&mut state, growth, &[Target::Object(elf)]);
+        cast(&mut state, gut_shot, &[Target::Object(elf)]);
         let decision = next(&mut state); // Finalize casting and pay the cost.
         assert_eq!(state.players[1].life, starting_life - 4);
         assert!(state.player_lost_life_this_turn_v1(PlayerId::P1));
