@@ -172,15 +172,13 @@ fn fight_cards_have_exact_printed_metadata_modes_and_costs() {
     assert_eq!(spell.cost.generic, 0);
     assert_eq!(spell.cost.pips, &[Pip::Colored(ManaColor::G)]);
     assert_eq!(spell.target_spec, TargetSpec::None);
-    assert_eq!(spell.modes.len(), 1);
+    assert!(spell.mode3.is_none());
+    let second = spell.mode2.as_ref().expect("Bushwhack's fight mode");
     assert_eq!(
-        spell.modes[0].target_spec,
+        second.target_spec,
         TargetSpec::ControlledCreatureThenOpponentCreature
     );
-    assert!(matches!(
-        (spell.modes[0].effect)(),
-        EffectOp::FightObjects { .. }
-    ));
+    assert!(matches!((second.effect)(), EffectOp::FightObjects { .. }));
     let mut state = ready(PlayerId::P0);
     let source = put(&mut state, PlayerId::P0, "Affectionate Indrik", Zone::Hand);
     state.players[0].mana_pool[5] = 6;
