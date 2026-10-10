@@ -209,6 +209,14 @@ behavior. The next exact-source lint and regression qualification remains
 pending. The seven new card fixtures are executable source but were only type
 checked, because Sprite/Archmage remain unregistered. No card coverage is added.
 
+Native16 at3dc199a5 again passed both feature test compilations and340 actual
+regressions, then all-target lint reached an example with a non-exhaustive cost
+match. Guard438d81ed53604e289ab5410a7e4b43b0 ended101. The exact existing
+delivery repair0c0b0a96 is ported to walk_diff: the new sacrifice variant joins
+its unsupported-cost fallback without inventing rendering semantics. The
+library/runtime receipts remain compatible; both all-target feature lint
+checks still require execution on the repaired source.
+
 Remaining work: finish native qualification of runtime integration and quotes;
 actual Sprite/Archmage gameplay and restore tests; metadata/catalog admission;
 live profile qualification; CI and default-branch acceptance. Accepted booster
