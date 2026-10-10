@@ -3409,8 +3409,8 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         ),
         "Hidetsugu's Second Rite" => program(
             "AnyPlayer",
-            "Conditional(TargetPlayerLifeTotalEquals(Target0,10),DealDamage(Target0,10),NoOp)",
-            "EffectOp::Conditional { cond: EffectCond::TargetPlayerLifeTotalEquals { index: 0, life: 10 }, then: Box::new(EffectOp::DealDamage { target: TargetRef::Target(0), amount: 10 }), else_: Box::new(EffectOp::NoOp) }",
+            "Conditional(TargetPlayerLifeTotalEquals(Target0,10),DealDamage(Target0,10),Sequence())",
+            "EffectOp::Conditional { cond: EffectCond::TargetPlayerLifeTotalEquals { index: 0, life: 10 }, then: Box::new(EffectOp::DealDamage { target: TargetRef::Target(0), amount: 10 }), else_: Box::new(EffectOp::Sequence(vec![])) }",
         ),
         "Lunar Insight" => program(
             "None",

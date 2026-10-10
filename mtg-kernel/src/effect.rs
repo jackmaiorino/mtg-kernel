@@ -15332,7 +15332,7 @@ mod tests {
                 target: TargetRef::Target(0),
                 amount: 10,
             }),
-            else_: Box::new(EffectOp::NoOp),
+            else_: Box::new(EffectOp::Sequence(vec![])),
         };
         for controller in [PlayerId::P0, PlayerId::P1] {
             for target in [controller, controller.opponent()] {
