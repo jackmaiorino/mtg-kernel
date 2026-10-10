@@ -3367,6 +3367,16 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         mode2: None,
     };
     Some(match name {
+        "Bushwhack" => Special::Program {
+            target: "None",
+            recipe: "SearchLibraryToHand(Controller,BasicLand,reveal,shuffle)",
+            effect: "EffectOp::SearchLibraryToHand { player: PlayerRef::Controller, filter: LibraryCardFilter::BasicLand }",
+            mode2: Some(ProgramMode {
+                target: "ControlledCreatureThenOpponentCreature",
+                recipe: "FightObjects(Target0,Target1,currentPowers,simultaneousNoncombatDamage,exactIncarnations)",
+                effect: "EffectOp::FightObjects { first: ObjectRef::Target(0), second: ObjectRef::Target(1), target_spec: TargetSpec::ControlledCreatureThenOpponentCreature }",
+            }),
+        },
         "Pilfer" => program(
             "TargetOpponent",
             "RevealTargetHandChooseNonlandDiscard(Target0,publicHand,exactIncarnations)",
@@ -6098,6 +6108,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Elvish Regrower" => "etb:return_target_own_graveyard_permanent_card_to_hand",
         "Vampire Soulcaller" => "etb:return_target_own_graveyard_creature_card_to_hand;static:cant_block:printed_source_abilities",
         "Ambush Wolf" => "etb:exile_up_to_one_target_graveyard_card",
+        "Affectionate Indrik" => "etb:target_opponent_creature:may_fight_bound_source:current_powers:simultaneous_noncombat_damage",
         "Tatyova, Benthic Druid" => "controlled_land_enters:gain_life:1:then_draw:1",
         "Dazzling Angel" => "other_controlled_creature_enters:gain_life:1",
         "Beast-Kin Ranger" => "other_controlled_creature_enters:pump_bound_source:1:0:end_of_turn",

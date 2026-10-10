@@ -1363,6 +1363,14 @@ pub enum EffectOp {
     RevealTargetHandChooseNonlandDiscard {
         player: PlayerRef,
     },
+    /// Two currently legal battlefield creature incarnations deal damage
+    /// equal to their sampled powers to one another simultaneously. A
+    /// source operand uses its captured ability incarnation, never LKI.
+    FightObjects {
+        first: ObjectRef,
+        second: ObjectRef,
+        target_spec: crate::card_def::TargetSpec,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -12475,6 +12483,74 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 }
             }
         }
+        EffectOp::FightObjects {
+            first,
+            second,
+            target_spec,
+        } => {
+            let resolve_creature = |reference| {
+                let object = match reference {
+                    ObjectRef::ThisSource => {
+                        let contract = ctx.ability_source_contract?;
+                        if contract.source != ctx.source || contract.zone != Zone::Battlefield {
+                            return None;
+                        }
+                        let live = state.objects.try_get(contract.source)?;
+                        if live.zone_change_count != contract.zone_change_count {
+                            return None;
+                        }
+                        contract.source
+                    }
+                    ObjectRef::Target(slot) => {
+                        let index = usize::from(slot);
+                        if !ctx.target_incarnation_matches(index, state)
+                            || !crate::engine::effect_target_is_legal(
+                                state,
+                                ctx.source,
+                                ctx.controller,
+                                *target_spec,
+                                &ctx.targets,
+                                index,
+                            )
+                        {
+                            return None;
+                        }
+                        let Target::Object(object) = *ctx.targets.get(index)? else {
+                            return None;
+                        };
+                        object
+                    }
+                };
+                let live = state.objects.try_get(object)?;
+                (live.zone == Zone::Battlefield
+                    && crate::engine::object_has_type(state, object, CardType::Creature))
+                .then_some(object)
+            };
+            let (Some(first), Some(second)) = (resolve_creature(*first), resolve_creature(*second))
+            else {
+                return;
+            };
+            let powers = [
+                crate::engine::effective_power(state, first).max(0),
+                crate::engine::effective_power(state, second).max(0),
+            ];
+            let mut packets = Vec::with_capacity(2);
+            if powers[0] > 0 {
+                packets.push(event::ProposedEvent::damage(
+                    first,
+                    Target::Object(second),
+                    powers[0],
+                ));
+            }
+            if powers[1] > 0 {
+                packets.push(event::ProposedEvent::damage(
+                    second,
+                    Target::Object(first),
+                    powers[1],
+                ));
+            }
+            event::propose_and_commit_batch(state, packets);
+        }
         EffectOp::PreventCombatDamageToTargetThisTurn { target_index } => {
             let index = usize::from(*target_index);
             if ctx.target_incarnation_matches(index, state) {
@@ -15237,6 +15313,179 @@ mod tests {
 
     fn two_card_libraries() -> GameState {
         GameState::new_from_libraries(&[1, 2], &[3, 4], |c| format!("card-{c}"), 1)
+    }
+
+    fn fight_fixture(player: PlayerId) -> (GameState, ObjectId, ObjectId, ExecCtx) {
+        let card = crate::card_def::card_id_by_name("Faerie Miscreant").unwrap();
+        let mut state = GameState::new_from_libraries(
+            &[card; 7],
+            &[card; 7],
+            |_| "Faerie Miscreant".into(),
+            770,
+        );
+        let first = state.players[player.index()].hand[0];
+        let second = state.players[player.opponent().index()].hand[0];
+        for object in [first, second] {
+            event::propose_and_commit(
+                &mut state,
+                event::ProposedEvent::zone_change(object, Zone::Battlefield),
+            );
+        }
+        let mut ctx = ExecCtx::no_targets(first, player);
+        ctx.ability_source_contract = Some(AbilitySourceContractV4::capture(&state, first));
+        ctx.targets.push(Target::Object(second));
+        ctx.target_contracts.push(StackTargetContractV4::capture(
+            &state,
+            Target::Object(second),
+        ));
+        (state, first, second, ctx)
+    }
+
+    #[test]
+    fn fight_samples_both_powers_and_uses_noncombat_damage_keywords() {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, first, second, ctx) = fight_fixture(player);
+            state.objects.get_mut(first).counters.plus1_plus1 = 3;
+            state.objects.get_mut(second).counters.plus1_plus1 = 1;
+            for (object, keywords) in [(first, Keywords::LIFELINK), (second, Keywords::DEATHTOUCH)]
+            {
+                let binding = EffectObjectBinding {
+                    object,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: state.objects.get(object).zone_change_count,
+                };
+                install_temporary_boost(&mut state, binding, 0, 0, keywords);
+            }
+            // Combat-only prevention cannot prevent fight damage.
+            execute(
+                &EffectOp::PreventCombatDamageToTargetThisTurn { target_index: 0 },
+                &ctx,
+                &mut state,
+            );
+            let op = EffectOp::FightObjects {
+                first: ObjectRef::ThisSource,
+                second: ObjectRef::Target(0),
+                target_spec: crate::card_def::TargetSpec::OpponentControlledCreature,
+            };
+            let mut replay: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut replay] {
+                let start = branch.engine.event_history.len();
+                execute(&op, &ctx, branch);
+                assert_eq!(branch.objects.get(first).damage, 2);
+                assert_eq!(branch.objects.get(second).damage, 4);
+                assert!(branch.objects.get(first).v4.deathtouch_damage);
+                assert_eq!(branch.players[player.index()].life, 24);
+                let damage = branch.engine.event_history[start..]
+                    .iter()
+                    .filter_map(|event| match event {
+                        CommittedEvent::Damage {
+                            source,
+                            target,
+                            amount,
+                        } => Some((*source, *target, *amount)),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    damage,
+                    vec![
+                        (first, Target::Object(second), 4),
+                        (second, Target::Object(first), 2)
+                    ]
+                );
+                crate::trigger::collect_and_process(branch);
+                assert_eq!(branch.objects.get(first).zone, Zone::Graveyard);
+                assert_eq!(branch.objects.get(second).zone, Zone::Graveyard);
+            }
+            assert_eq!(state.state_hash(), replay.state_hash());
+        }
+    }
+
+    #[test]
+    fn fight_requires_live_creatures_exact_incarnations_and_legal_control() {
+        let op = EffectOp::FightObjects {
+            first: ObjectRef::ThisSource,
+            second: ObjectRef::Target(0),
+            target_spec: crate::card_def::TargetSpec::OpponentControlledCreature,
+        };
+        let land = crate::card_def::card_id_by_name("Mountain").unwrap();
+        for player in [PlayerId::P0, PlayerId::P1] {
+            for case in 0..6 {
+                let (mut state, first, second, ctx) = fight_fixture(player);
+                match case {
+                    0 => {
+                        state.objects.get_mut(first).zone_change_count += 1;
+                    }
+                    1 => {
+                        state.objects.get_mut(second).zone_change_count += 1;
+                    }
+                    2 => {
+                        event::propose_and_commit(
+                            &mut state,
+                            event::ProposedEvent::zone_change(first, Zone::Hand),
+                        );
+                    }
+                    3 => {
+                        state.objects.get_mut(second).controller = player;
+                        state.players[player.opponent().index()]
+                            .battlefield
+                            .retain(|id| *id != second);
+                        state.players[player.index()].battlefield.push(second);
+                    }
+                    4 | 5 => {
+                        let object = if case == 4 { first } else { second };
+                        state.objects.get_mut(object).card_def = land;
+                        state.objects.get_mut(object).v4 =
+                            crate::state::ObjectStateV4::from_card_def(land);
+                    }
+                    _ => unreachable!(),
+                }
+                let before = state.state_hash();
+                execute(&op, &ctx, &mut state);
+                assert_eq!(state.state_hash(), before);
+            }
+        }
+    }
+
+    #[test]
+    fn fight_handles_self_fight_and_nonpositive_power() {
+        for power in [-1, 0, 1] {
+            let (mut state, first, second, ctx) = fight_fixture(PlayerId::P0);
+            let binding = EffectObjectBinding {
+                object: first,
+                expected_zone: Zone::Battlefield,
+                expected_zone_change_count: state.objects.get(first).zone_change_count,
+            };
+            install_temporary_boost(&mut state, binding, power - 1, 3, Keywords::NONE);
+            execute(
+                &EffectOp::FightObjects {
+                    first: ObjectRef::ThisSource,
+                    second: ObjectRef::Target(0),
+                    target_spec: crate::card_def::TargetSpec::OpponentControlledCreature,
+                },
+                &ctx,
+                &mut state,
+            );
+            assert_eq!(state.objects.get(first).damage, 1);
+            assert_eq!(state.objects.get(second).damage, power.max(0));
+        }
+        let (mut state, first, _, mut ctx) = fight_fixture(PlayerId::P0);
+        ctx.targets = vec![Target::Object(first)];
+        ctx.target_contracts = vec![StackTargetContractV4::capture(
+            &state,
+            Target::Object(first),
+        )];
+        execute(
+            &EffectOp::FightObjects {
+                first: ObjectRef::ThisSource,
+                second: ObjectRef::Target(0),
+                target_spec: crate::card_def::TargetSpec::Creature,
+            },
+            &ctx,
+            &mut state,
+        );
+        assert_eq!(state.objects.get(first).damage, 2);
     }
 
     #[test]

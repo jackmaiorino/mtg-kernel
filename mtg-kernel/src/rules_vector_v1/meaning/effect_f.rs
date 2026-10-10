@@ -222,6 +222,32 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                     .duration(DurF::EndOfTurn),
             );
         }
+        EffectOp::FightObjects {
+            first,
+            second,
+            target_spec,
+        } => {
+            let spec_env = Env {
+                target_spec: *target_spec,
+            };
+            out.control(ControlF::Conditional);
+            for (source, recipient) in [(*first, *second), (*second, *first)] {
+                out.read(
+                    RelF::ObjectController,
+                    Some(ZoneF::Battlefield),
+                    Some(object_ref(source, &spec_env)),
+                    AggF::Characteristic,
+                );
+                out.effect(
+                    EffectAtom::new(EvF::Damage)
+                        .obj(object_ref(recipient, &spec_env))
+                        .amount(AmtF::Dynamic),
+                );
+            }
+            // Reciprocal source-to-recipient power bindings and simultaneous
+            // noncombat timing have no facets in the fixed vocabulary.
+            out.atoms.push(Atom::Opaque);
+        }
         EffectOp::BindDoublePlusOneCountersToTriggerSource => {
             // Authored trigger marker. Collection binds it to the source's
             // exact incarnation; at resolution, if that incarnation is on the

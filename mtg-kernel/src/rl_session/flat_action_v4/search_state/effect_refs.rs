@@ -161,6 +161,7 @@ impl Scan<'_> {
             | SearchLibraryToBattlefieldTapped { .. }
             | RevealTargetHandChooseNoncreatureNonlandDiscard { .. }
             | RevealTargetHandChooseNonlandDiscard { .. }
+            | FightObjects { .. }
             | ShuffleTriggerSourceIntoOwnersLibrary
             | LoseHalfLifeRoundedUp { .. }
             | CreateTokenTappedAndAttacking { .. }

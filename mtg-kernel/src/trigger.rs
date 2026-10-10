@@ -1029,6 +1029,21 @@ fn sun_blessed_healer_effect() -> EffectOp {
 
 const ELVISH_REGROWER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(elvish_regrower_effect)];
 const VAMPIRE_SOULCALLER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(elvish_regrower_effect)];
+const AFFECTIONATE_INDRIK_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(affectionate_indrik_effect)];
+fn affectionate_indrik_effect() -> EffectOp {
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: vec![
+            EffectOp::Sequence(vec![]),
+            EffectOp::FightObjects {
+                first: ObjectRef::ThisSource,
+                second: ObjectRef::Target(0),
+                target_spec: TargetSpec::OpponentControlledCreature,
+            },
+        ],
+    }
+}
 fn elvish_regrower_effect() -> EffectOp {
     EffectOp::MoveAllTargets {
         to_zone: Zone::Hand,
@@ -2893,6 +2908,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Rune-Scarred Demon" => &RUNE_SCARRED_DEMON_TRIGGERS,
         "Elvish Regrower" => &ELVISH_REGROWER_TRIGGERS,
         "Vampire Soulcaller" => &VAMPIRE_SOULCALLER_TRIGGERS,
+        "Affectionate Indrik" => &AFFECTIONATE_INDRIK_TRIGGERS,
         "Ambush Wolf" => &AMBUSH_WOLF_TRIGGERS,
         "Tatyova, Benthic Druid" => &TATYOVA_BENTHIC_DRUID_TRIGGERS,
         "Dazzling Angel" => &DAZZLING_ANGEL_TRIGGERS,
@@ -3037,6 +3053,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         "Sun-Blessed Healer" => TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(2),
         "Elvish Regrower" => TargetSpec::PermanentCardInOwnGraveyard,
         "Vampire Soulcaller" => TargetSpec::CreatureCardInOwnGraveyard,
+        "Affectionate Indrik" => TargetSpec::OpponentControlledCreature,
         "Ambush Wolf" => TargetSpec::UpToOneCardInGraveyards,
         "Balustrade Spy" => TargetSpec::AnyPlayer,
         "Lotleth Giant" => TargetSpec::TargetOpponent,

@@ -196,6 +196,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::BoostPlayerCreaturesUntilEndOfTurn { .. }
         | EffectOp::GainLifeByAttackingSubtypeCount { .. }
         | EffectOp::CreatureTargetPowerDamage { .. }
+        | EffectOp::FightObjects { .. }
         | EffectOp::PreventCombatDamageToTargetThisTurn { .. }
         | EffectOp::BindDoublePlusOneCountersToTriggerSource
         | EffectOp::DoublePlusOneCountersOnBoundObject { .. }
