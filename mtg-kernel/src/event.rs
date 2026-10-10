@@ -107,9 +107,6 @@ pub struct ZoneChangeProposed {
 pub struct LifeLossProposed {
     pub player: PlayerId,
     pub amount: i32,
-    /// Paying life as a cost. Effects that modify life loss leave a payment
-    /// unchanged (Bloodletter of Aclazotz).
-    pub payment: bool,
     pub touched_by: Vec<ReplacementId>,
 }
 
@@ -284,17 +281,13 @@ impl ProposedEvent {
         ProposedEvent::LifeLoss(LifeLossProposed {
             player,
             amount,
-            payment: false,
             touched_by: Vec::new(),
         })
     }
+    /// Paying life loses life (CR 119.4). Modifiers change the loss, not the
+    /// printed amount checked for affordability (CR 118.11).
     pub fn life_payment(player: PlayerId, amount: i32) -> ProposedEvent {
-        ProposedEvent::LifeLoss(LifeLossProposed {
-            player,
-            amount,
-            payment: true,
-            touched_by: Vec::new(),
-        })
+        Self::life_loss(player, amount)
     }
     pub fn life_gain(player: PlayerId, amount: i32) -> ProposedEvent {
         ProposedEvent::LifeGain(LifeGainProposed {
@@ -983,11 +976,7 @@ fn commit_with_ability_lki(
         ProposedEvent::LifeLoss(l) => {
             let amount = l.amount;
             #[cfg(feature = "standard-magezero-fixtures")]
-            let amount = if l.payment {
-                amount
-            } else {
-                crate::standard_statics_v1::modified_life_loss(state, l.player, amount)
-            };
+            let amount = crate::standard_statics_v1::modified_life_loss(state, l.player, amount);
             #[cfg(feature = "standard-magezero-fixtures")]
             if amount > 0 {
                 state.record_life_loss_v1(l.player);

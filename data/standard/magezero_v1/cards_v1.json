@@ -713,7 +713,7 @@
     },
     {
       "name": "Sharp-Eyed Rookie",
-      "engine_capability": "full",
+      "engine_capability": "partial",
       "mana_cost": "{1}{G}",
       "mana_value": 2,
       "colors": [
@@ -745,7 +745,7 @@
     },
     {
       "name": "Evolving Adaptive",
-      "engine_capability": "full",
+      "engine_capability": "partial",
       "mana_cost": "{G}",
       "mana_value": 1,
       "colors": [
@@ -776,7 +776,7 @@
     },
     {
       "name": "Quirion Beastcaller",
-      "engine_capability": "full",
+      "engine_capability": "partial",
       "mana_cost": "{1}{G}",
       "mana_value": 2,
       "colors": [
@@ -970,7 +970,7 @@
     },
     {
       "name": "Thalia, Guardian of Thraben",
-      "engine_capability": "full",
+      "engine_capability": "partial",
       "mana_cost": "{1}{W}",
       "mana_value": 2,
       "colors": [
@@ -1004,7 +1004,7 @@
     },
     {
       "name": "Haughty Djinn",
-      "engine_capability": "full",
+      "engine_capability": "partial",
       "mana_cost": "{1}{U}{U}",
       "mana_value": 3,
       "colors": [
@@ -1102,7 +1102,7 @@
     },
     {
       "name": "Extraction Specialist",
-      "engine_capability": "full",
+      "engine_capability": "partial",
       "mana_cost": "{2}{W}",
       "mana_value": 3,
       "colors": [
@@ -1183,7 +1183,7 @@
         "Soldier"
       ],
       "supertypes": [],
-      "power": 3,
+      "power": 2,
       "toughness": 1,
       "is_land": false,
       "produces_mana": [],

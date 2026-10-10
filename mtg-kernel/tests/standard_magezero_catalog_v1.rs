@@ -58,7 +58,7 @@ const STANDARD_APPENDED: [&str; 39] = [
 
 /// Every distinct nonbasic card in the 16 decks that this build fully
 /// supports. Each Standard card batch extends this list.
-const SUPPORTED_NONBASIC: [&str; 40] = [
+const SUPPORTED_NONBASIC: [&str; 34] = [
     "Adeline, Resplendent Cathar",
     "Ascendant Packleader",
     "Bloodletter of Aclazotz",
@@ -70,14 +70,11 @@ const SUPPORTED_NONBASIC: [&str; 40] = [
     "Destroy Evil",
     "Dissipate",
     "Duress",
-    "Evolving Adaptive",
-    "Extraction Specialist",
     "Fading Hope",
     "Flow of Knowledge",
     "Gatekeeper of Malakir",
     "Get Lost",
     "Hard-Hitting Question",
-    "Haughty Djinn",
     "Hired Claw",
     "Hullbreaker Horror",
     "Impulse",
@@ -86,14 +83,11 @@ const SUPPORTED_NONBASIC: [&str; 40] = [
     "Negate",
     "Novice Inspector",
     "Opt",
-    "Quirion Beastcaller",
     "Razorkin Needlehead",
     "Sentinel of the Nameless City",
-    "Sharp-Eyed Rookie",
     "Shock",
     "Shoot the Sheriff",
     "Spell Pierce",
-    "Thalia, Guardian of Thraben",
     "Thirst for Discovery",
     "Tolarian Terror",
     "Unstoppable Slasher",
@@ -101,10 +95,18 @@ const SUPPORTED_NONBASIC: [&str; 40] = [
     "Warden of the Inner Sky",
 ];
 
-/// Cards that keep their bottomed cards in looked-at order where the printed
-/// card says "in a random order", so full deck admission refuses them until
-/// subset randomization exists.
-const PARTIAL: [&str; 2] = ["Memory Deluge", "Recruitment Officer"];
+/// Definitions retained for development with incomplete printed behavior.
+/// Full deck admission must refuse every one.
+const PARTIAL: [&str; 8] = [
+    "Memory Deluge",
+    "Recruitment Officer",
+    "Evolving Adaptive",
+    "Extraction Specialist",
+    "Haughty Djinn",
+    "Quirion Beastcaller",
+    "Sharp-Eyed Rookie",
+    "Thalia, Guardian of Thraben",
+];
 
 const BASICS: [&str; 5] = ["Plains", "Island", "Swamp", "Mountain", "Forest"];
 
@@ -832,7 +834,7 @@ fn get_lost_uses_the_live_controller_even_when_destruction_is_prevented() {
 }
 
 #[test]
-fn random_bottom_order_cards_are_partial_and_refused_by_full_deck_admission() {
+fn incomplete_cards_are_partial_and_refused_by_full_deck_admission() {
     for name in PARTIAL {
         let id = card_id_by_name(name).unwrap();
         assert_eq!(

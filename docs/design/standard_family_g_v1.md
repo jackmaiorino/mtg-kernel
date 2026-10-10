@@ -11,7 +11,7 @@ Every definition appends to `data/standard/magezero_v1/cards_v1.json`. The
 behavior tables in `build.rs` (keywords, `trigger_recipe_for`,
 `standard_static_recipe_for`, activated recipes) name each card, so the Standard
 catalog identity covers them. The batch moves the Standard catalog to
-`kernel_carddb_standard/v3` (`0x34c514a6e676a7c9`); Assassin and Mercenary join
+`kernel_carddb_standard/v3` (golden hash awaits hosted requalification after the capability and power corrections); Assassin and Mercenary join
 `Subtype::OUTLAW_TYPES` for Shoot the Sheriff. Pauper and FDN canon never include the Standard
 static field. New engine state and rules are cfg-gated to
 `standard-magezero-fixtures` wherever a default build would otherwise change. The
@@ -67,42 +67,57 @@ Human Token (1/1 white Human) is appended for Adeline.
   sacrifice-cost staging one pick at a time.
 - New target specs `CreatureCardInOwnGraveyardManaValueAtMost` (stable id 50)
   and `SpellYouDontControl` (51).
-- Paying life is now a distinct life-loss proposal, so life-loss modifiers leave
-  payments alone.
-- Normal casts (including kicker and delve) and the Adventure, Omen and Bestow
-  forms pass their cost through one static adjustment. Increases apply first,
-  and a reduction only reduces generic mana.
+- Life payments, including Phyrexian mana payments, use the life-loss commit
+  path in Standard. Bloodletter modifies the life lost, while affordability
+  uses the printed payment amount (CR 119.4 and 118.11). Other catalogs retain
+  their existing Phyrexian payment event history.
+- Normal, Adventure, Omen and Bestow casts have a static cost adjustment.
+  Complete total-cost ordering and alternative-cost coverage remain unfinished;
+  Thalia and Haughty Djinn are therefore Partial.
 
 - The rules-vector extractor maps the new effect ops in a new slice,
   `rules_vector_v1/meaning/effect_g.rs`, and the new trigger conditions, cost
   component and target specs in the existing tables.
 
-## Deviations from the printed cards
+## Remaining limitations and admission
 
-- Quirion Beastcaller does not target. When its dies trigger is created, it
-  fixes the creatures its controller controls then; at resolution the
-  controller places the counters one at a time among them, and a creature that
-  has left by then receives nothing.
+This batch adds 14 Full and seven Partial deck-card definitions, plus Human
+Token. The tracked catalog has 34 Full nonbasic cards and eight Partial cards
+(including the earlier Memory Deluge). Both Rust and Python full-deck admission
+refuse every Partial card. Existing behavior tests exercise development support;
+they do not certify these incomplete definitions as Full.
+
+- Quirion Beastcaller is Partial. Its dies trigger uses untargeted per-counter
+  choices at resolution. Printed targets and allocation must be announced when
+  the trigger enters the stack, with target legality enforced at resolution.
+- Extraction Specialist is Partial. Its restriction currently resumes if its
+  controller loses and regains the same Specialist. The printed duration ends
+  permanently when that player first stops controlling it (CR 611.2b).
+- Sharp-Eyed Rookie and Evolving Adaptive are Partial. Resolution currently
+  requires the entrant still to be on the battlefield; a departed entrant needs
+  last-known power and toughness for the intervening-if check.
+- Thalia and Haughty Djinn are Partial. Alternative, flashback, escape, madness
+  and plotted costs lack the adjustment. Intrinsic reductions are applied before
+  the tax, and kicker is added after the reduction. The shared Pauper prefix
+  makes these omissions reachable even without changing the Standard decks.
+- Recruitment Officer and Memory Deluge are Partial because bottomed cards keep
+  looked-at order instead of the printed random order. Recruitment Officer's
+  printed power/toughness is 2/1.
 - Ward granted by Coppercoat Vanguard is not shown in observation features.
   Stack validation accepts a ward {1} trigger from any Human creature
   definition, because the grant may have ended by the time the trigger is
   checked.
-- Thalia and Haughty Djinn do not adjust flashback, escape, madness or other
-  alternative costs. None of those appear in the Standard pool's mono decks.
-- Extraction Specialist's restriction is keyed to the exact Specialist
-  incarnation and its controller at resolution. If that player loses and then
-  regains control of the same Specialist, the restriction applies again.
-- Recruitment Officer puts the rest on the bottom in the order they were looked
-  at, not a random order, because the kernel only advances randomness through
-  library shuffles. Like Memory Deluge, it is therefore `Partial`, and full
-  deck admission refuses it until subset randomization exists.
 - Target spec stable ids 50 and 51 follow FDN (42 to 46) and Standard family C
   (47 to 49).
+
+Rules sources: [Comprehensive Rules](https://media.wizards.com/2026/downloads/MagicCompRules%2020260925.txt),
+[Dominaria United release notes](https://magic.wizards.com/en/news/feature/dominaria-united-release-notes-2022-08-26).
 
 ## Tests
 
 `mtg-kernel/tests/standard_family_g_v1.rs` (Standard feature) checks every
-definition's characteristics and trigger count, and covers each card's behavior
-with 49 tests, including the edge cases above (stale sources, declined choices,
-empty candidate sets, counters and LKI, uncounterable spells, priority-window
-casting with flash).
+definition's characteristics and trigger count. Behavior tests and life-payment
+regressions cover stale sources, declined choices, empty candidate sets, counters
+and LKI, uncounterable spells, priority-window casting with flash, and printed
+affordability when Bloodletter modifies a Phyrexian payment. Native qualification
+of the repaired catalog is pending hosted CI.

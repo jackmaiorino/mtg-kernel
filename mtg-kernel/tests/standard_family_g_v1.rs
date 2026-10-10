@@ -142,7 +142,7 @@ const CARDS: &[(&str, &[Subtype], (i16, i16), Keywords, usize)] = &[
     (
         "Recruitment Officer",
         &[Subtype::Human, Subtype::Soldier],
-        (3, 1),
+        (2, 1),
         Keywords::NONE,
         0,
     ),
@@ -307,9 +307,18 @@ fn appended_definitions_match_their_printed_characteristics() {
     for &(name, subtypes, (power, toughness), keywords, triggers) in CARDS {
         let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} missing"));
         let def = &CARD_DEFS[id as usize];
-        // Recruitment Officer keeps the bottomed cards in looked-at order
-        // instead of a random one, so it is Partial like Memory Deluge.
-        let expected = if name == "Recruitment Officer" {
+        // Incomplete printed behavior stays available only for development.
+        let expected = if [
+            "Recruitment Officer",
+            "Evolving Adaptive",
+            "Extraction Specialist",
+            "Haughty Djinn",
+            "Quirion Beastcaller",
+            "Sharp-Eyed Rookie",
+            "Thalia, Guardian of Thraben",
+        ]
+        .contains(&name)
+        {
             CardCapability::Partial
         } else {
             CardCapability::Full
@@ -1228,6 +1237,61 @@ fn bloodletter_doubles_opponent_life_loss_during_your_turn() {
             winner: Some(PlayerId::P0)
         }
     ));
+}
+
+#[test]
+fn bloodletter_modifies_life_payments_and_records_the_actual_loss() {
+    let mut state = ready(Step::Main1);
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Bloodletter of Aclazotz",
+        Zone::Battlefield,
+    );
+    event::propose_and_commit(&mut state, ProposedEvent::life_payment(PlayerId::P1, 3));
+    assert_eq!(state.players[1].life, 14);
+    assert!(state.player_lost_life_this_turn_v1(PlayerId::P1));
+    event::propose_and_commit(&mut state, ProposedEvent::life_payment(PlayerId::P0, 3));
+    assert_eq!(state.players[0].life, 17);
+}
+
+#[test]
+fn phyrexian_payments_use_printed_affordability_and_modified_life_loss() {
+    for starting_life in [20, 2] {
+        let mut state = ready(Step::Main1);
+        put(
+            &mut state,
+            PlayerId::P0,
+            "Bloodletter of Aclazotz",
+            Zone::Battlefield,
+        );
+        let elf = put(
+            &mut state,
+            PlayerId::P1,
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let growth = put(&mut state, PlayerId::P1, "Mutagenic Growth", Zone::Hand);
+        state.players[1].life = starting_life;
+        state.priority_player = PlayerId::P1;
+        // The creature has no mana available. Paying printed {G/P} costs two
+        // life even when Bloodletter makes the actual life loss four.
+        state.objects.get_mut(elf).tapped = true;
+        cast(&mut state, growth, &[Target::Object(elf)]);
+        let decision = next(&mut state); // Finalize casting and pay the cost.
+        assert_eq!(state.players[1].life, starting_life - 4);
+        assert!(state.player_lost_life_this_turn_v1(PlayerId::P1));
+        if starting_life == 2 {
+            assert!(matches!(
+                decision,
+                Decision::GameOver {
+                    winner: Some(PlayerId::P0)
+                }
+            ));
+        } else {
+            assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+        }
+    }
 }
 
 #[test]

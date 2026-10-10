@@ -173,8 +173,8 @@ pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> 
     Some(i32::try_from(count).unwrap_or(i32::MAX))
 }
 
-/// Life `player` actually loses when they would lose `amount` (from damage
-/// or an effect, never a payment): "If an opponent would lose life during
+/// Life `player` actually loses when they would lose `amount` (from damage,
+/// an effect, or a life payment): "If an opponent would lose life during
 /// your turn, they lose twice that much life instead" (Bloodletter of
 /// Aclazotz), once per Bloodletter the active player controls.
 pub(crate) fn modified_life_loss(

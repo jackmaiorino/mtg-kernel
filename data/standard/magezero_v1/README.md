@@ -46,4 +46,4 @@ python python/tools/limited_decks_v1.py inventory --registry-extension data/stan
 `docs/reports/standard_magezero_inventory_v1.md` lists the missing cards by mechanic family and which
 thread owns each family.
 
-Memory Deluge and Recruitment Officer are Partial: their current implementations keep the bottomed cards in looked-at order, so full deck admission refuses them until subset randomization is implemented. The registry retains their definitions and behavior for development.
+The tracked pool has 34 fully supported nonbasic cards and eight Partial cards. Full deck admission refuses Memory Deluge and Recruitment Officer (random bottom ordering), Quirion Beastcaller (targeting and allocation timing), Extraction Specialist (restriction duration), Sharp-Eyed Rookie and Evolving Adaptive (departed entrant power/toughness), and Thalia and Haughty Djinn (complete spell-cost adjustment). Their definitions and current behavior remain available for development. See `docs/design/standard_family_g_v1.md` for the remaining work.

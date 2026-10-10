@@ -15767,7 +15767,15 @@ pub(crate) fn pay_plan(state: &mut GameState, player: PlayerId, plan: &mana::Pay
     for (i, &amt) in plan.pool_used.iter().enumerate() {
         state.players[player.index()].mana_pool[i] -= amt;
     }
-    state.players[player.index()].life -= plan.life_paid;
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if plan.life_paid > 0 {
+        event::propose_and_commit(state, ProposedEvent::life_payment(player, plan.life_paid));
+    }
+    // Preserve the existing event history in catalogs without Standard statics.
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
+    {
+        state.players[player.index()].life -= plan.life_paid;
+    }
     let pool_spent: u16 = plan.pool_used.iter().map(|&amount| u16::from(amount)).sum();
     u16::try_from(plan.taps.len())
         .unwrap_or(u16::MAX)

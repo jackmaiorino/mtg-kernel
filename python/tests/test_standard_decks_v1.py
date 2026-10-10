@@ -15,13 +15,13 @@ STANDARD = REPO_ROOT / "data/standard/magezero_v1"
 SUPPORTED_NONBASIC = {
     "Adeline, Resplendent Cathar", "Ascendant Packleader", "Bloodletter of Aclazotz",
     "Burst Lightning", "Cenote Scout", "Consider", "Coppercoat Vanguard", "Deep-Cavern Bat",
-    "Destroy Evil", "Dissipate", "Duress", "Evolving Adaptive", "Extraction Specialist",
+    "Destroy Evil", "Dissipate", "Duress",
     "Fading Hope", "Flow of Knowledge", "Gatekeeper of Malakir", "Get Lost",
-    "Hard-Hitting Question", "Haughty Djinn", "Hired Claw", "Hullbreaker Horror", "Impulse",
+    "Hard-Hitting Question", "Hired Claw", "Hullbreaker Horror", "Impulse",
     "Lightning Strike", "Llanowar Elves", "Negate", "Novice Inspector", "Opt",
-    "Quirion Beastcaller", "Razorkin Needlehead", "Sentinel of the Nameless City",
-    "Sharp-Eyed Rookie", "Shock", "Shoot the Sheriff", "Spell Pierce",
-    "Thalia, Guardian of Thraben", "Thirst for Discovery", "Tolarian Terror",
+    "Razorkin Needlehead", "Sentinel of the Nameless City",
+    "Shock", "Shoot the Sheriff", "Spell Pierce",
+    "Thirst for Discovery", "Tolarian Terror",
     "Unstoppable Slasher", "Voldaren Epicure", "Warden of the Inner Sky",
 }
 
@@ -78,6 +78,18 @@ class StandardDeckTest(unittest.TestCase):
             limited.resolve_mainboard(
                 limited.parse_dck("39 Plains\n1 Recruitment Officer"), self.registry
             )
+
+    def test_incomplete_family_g_cards_are_refused(self) -> None:
+        for name in (
+            "Evolving Adaptive",
+            "Extraction Specialist",
+            "Haughty Djinn",
+            "Quirion Beastcaller",
+            "Sharp-Eyed Rookie",
+            "Thalia, Guardian of Thraben",
+        ):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "unsupported mainboard"):
+                limited.resolve_mainboard(limited.parse_dck(f"39 Plains\n1 {name}"), self.registry)
 
 
 if __name__ == "__main__":
