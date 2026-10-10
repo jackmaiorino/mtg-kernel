@@ -126,19 +126,14 @@ fn power_toughness(state: &GameState, id: ObjectId) -> (i32, i32) {
 fn family_d_cards_are_fully_supported() {
     for name in [
         "Emberheart Challenger",
-        "Burnout Bashtronaut",
         "Nova Hellkite",
         "Full Bore",
         "Iridescent Vinelasher",
         "Iridescent Vinelasher Offspring Token",
         "Aloe Alchemist",
         "Forsaken Miner",
-        "Axebane Ferox",
-        "Hopeful Initiate",
         "Chrome Host Seedshark",
         "Incubator Token",
-        "Brutal Cathar",
-        "Knight-Errant of Eos",
         "Monastery Swiftspear",
         "Heartfire Hero",
         "Slickshot Show-Off",
@@ -154,12 +149,7 @@ fn family_d_cards_are_fully_supported() {
         "Yotian Frontliner",
         "Cori-Steel Cutter",
         "Monk Token",
-        "Graveyard Trespasser",
-        "Overlord of the Mistmoors",
         "White Insect Token",
-        "Enduring Curiosity",
-        "Enduring Innocence",
-        "Make Disappear",
         "Phantom Interference",
         "Spirit Token",
     ] {
@@ -167,6 +157,29 @@ fn family_d_cards_are_fully_supported() {
         assert_eq!(
             CARD_DEFS[id as usize].capability,
             CardCapability::Full,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn incomplete_keyword_cards_remain_partial() {
+    for name in [
+        "Enduring Curiosity",
+        "Enduring Innocence",
+        "Overlord of the Mistmoors",
+        "Axebane Ferox",
+        "Brutal Cathar",
+        "Burnout Bashtronaut",
+        "Graveyard Trespasser",
+        "Hopeful Initiate",
+        "Knight-Errant of Eos",
+        "Make Disappear",
+    ] {
+        let id = card_id_by_name(name).expect(name);
+        assert_eq!(
+            CARD_DEFS[id as usize].capability,
+            CardCapability::Partial,
             "{name}"
         );
     }
@@ -2063,6 +2076,7 @@ fn phantom_interference_spree_offers_every_affordable_mode_set() {
     engine::step(&mut state, Action::ChooseTarget(Target::Object(burst))).unwrap();
     resolve_stack_declining_payments(&mut state);
     assert_eq!(state.objects.get(burst).zone, Zone::Graveyard);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
     assert_eq!(state.players[0].life, 20);
     assert_eq!(tokens_named(&state, PlayerId::P0, "Spirit Token"), 1);
 }
@@ -2076,6 +2090,7 @@ fn phantom_interference_counter_mode_costs_one_more() {
     assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
     engine::step(&mut state, Action::ChooseTarget(Target::Object(burst))).unwrap();
     resolve_stack_declining_payments(&mut state);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
     assert_eq!(state.players[0].life, 20);
     assert_eq!(tokens_named(&state, PlayerId::P0, "Spirit Token"), 0);
 }
@@ -2093,6 +2108,7 @@ fn phantom_interference_spirit_mode_needs_no_spell_to_target() {
     assert!(castable(&mut state, spree));
     engine::step(&mut state, Action::CastSpell(spree)).unwrap();
     resolve_stack_declining_payments(&mut state);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
     let spirit = state.players[0]
         .battlefield
         .iter()
@@ -2132,4 +2148,153 @@ fn flourishing_bloom_kin_dies_without_forests() {
     cast(&mut state, bloom, &[]);
     settled(&mut state);
     assert_eq!(state.objects.get(bloom).zone, Zone::Graveyard);
+}
+
+#[test]
+fn incubator_two_pending_activations_transform_once_without_halting() {
+    let mut state = ready();
+    let incubator = put(
+        &mut state,
+        PlayerId::P0,
+        "Incubator Token",
+        Zone::Battlefield,
+    );
+    state.objects.get_mut(incubator).counters.plus1_plus1 = 2;
+    add_mana(&mut state, PlayerId::P0, &[], 4);
+
+    for _ in 0..2 {
+        assert!(
+            matches!(next(&mut state), Decision::CastSpellOrPass { activatable_abilities, .. } if activatable_abilities.contains(&(incubator, 0)))
+        );
+        engine::step(&mut state, Action::ActivateAbility(incubator, 0)).unwrap();
+    }
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(state.stack.len(), 2, "both activations are still pending");
+    assert_eq!(state.players[0].mana_pool[5], 0);
+    settled(&mut state);
+
+    assert!(state.engine.halted.is_none());
+    assert_eq!(state.objects.get(incubator).v4.face_index, 1);
+    assert_eq!(state.objects.get(incubator).name, "Phyrexian Token");
+    assert_eq!(power_toughness(&state, incubator), (2, 2));
+    assert!(
+        matches!(next(&mut state), Decision::CastSpellOrPass { activatable_abilities, .. } if !activatable_abilities.contains(&(incubator, 0)))
+    );
+}
+
+#[test]
+fn battle_cry_bonus_does_not_follow_a_returned_object() {
+    let mut state = ready();
+    let evangelist = put(
+        &mut state,
+        PlayerId::P0,
+        "Sanguine Evangelist",
+        Zone::Battlefield,
+    );
+    let returned = put(
+        &mut state,
+        PlayerId::P0,
+        "Monastery Swiftspear",
+        Zone::Battlefield,
+    );
+    let unchanged = put(
+        &mut state,
+        PlayerId::P0,
+        "Monastery Swiftspear",
+        Zone::Battlefield,
+    );
+    attack_with(&mut state, vec![evangelist, returned, unchanged]);
+    settled(&mut state);
+    assert_eq!(power_toughness(&state, returned), (2, 2));
+    assert_eq!(power_toughness(&state, unchanged), (2, 2));
+    assert_eq!(power_toughness(&state, evangelist), (2, 1));
+
+    let previous_generation = state.objects.get(returned).zone_change_count;
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::zone_change(returned, Zone::Hand),
+    );
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::zone_change(returned, Zone::Battlefield),
+    );
+    assert_eq!(
+        state.objects.get(returned).zone_change_count,
+        previous_generation + 2
+    );
+    assert_eq!(power_toughness(&state, returned), (1, 2));
+    assert_eq!(power_toughness(&state, unchanged), (2, 2));
+}
+
+#[test]
+fn chrome_host_seedshark_incubates_the_announced_omen_mana_value() {
+    let mut state = ready_with("Forest");
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Chrome Host Seedshark",
+        Zone::Battlefield,
+    );
+    let sagu = put(&mut state, PlayerId::P0, "Sagu Wildling", Zone::Hand);
+    add_mana(&mut state, PlayerId::P0, &[ManaColor::G], 0);
+    // Only Roost Seek ({G}) is affordable, rather than the MV5 creature.
+    cast(&mut state, sagu, &[]);
+    let search = settle(&mut state).expect("Roost Seek's basic-land search");
+    assert!(matches!(search, Decision::ChooseEffectTargets { .. }));
+    let [incubator] = incubators(&state, PlayerId::P0)[..] else {
+        panic!("expected one Incubator from Roost Seek");
+    };
+    assert_eq!(state.objects.get(incubator).counters.plus1_plus1, 1);
+    engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+    settled(&mut state);
+    assert_eq!(state.objects.get(sagu).zone, Zone::Library);
+    assert_eq!(state.objects.get(incubator).counters.plus1_plus1, 1);
+}
+
+#[test]
+fn stolen_enduring_death_triggers_for_its_controller_and_returns_to_its_owner() {
+    for name in ["Enduring Curiosity", "Enduring Innocence"] {
+        let mut state = ready();
+        let enduring = put(&mut state, PlayerId::P0, name, Zone::Battlefield);
+        state.players[0].battlefield.retain(|&id| id != enduring);
+        state.players[1].battlefield.push(enduring);
+        state.objects.get_mut(enduring).controller = PlayerId::P1;
+
+        mtg_kernel::event::propose_and_commit(
+            &mut state,
+            mtg_kernel::event::ProposedEvent::zone_change(enduring, Zone::Graveyard),
+        );
+        let graveyard_generation = state.objects.get(enduring).zone_change_count;
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        let trigger = state
+            .stack
+            .iter()
+            .find(|item| {
+                item.source == enduring
+                    && item.kind == mtg_kernel::state::StackItemKind::TriggeredAbility
+            })
+            .expect("Enduring's death trigger is on the stack");
+        assert_eq!(trigger.controller, PlayerId::P1);
+        let contract = trigger
+            .v4
+            .source_contract
+            .expect("graveyard return binding");
+        assert_eq!(contract.controller, PlayerId::P1);
+        assert_eq!(contract.zone, Zone::Graveyard);
+        assert_eq!(contract.zone_change_count, graveyard_generation);
+
+        settled(&mut state);
+        let returned = state.objects.get(enduring);
+        assert_eq!(returned.zone, Zone::Battlefield);
+        assert_eq!(returned.controller, PlayerId::P0);
+        assert_eq!(returned.zone_change_count, graveyard_generation + 1);
+        assert!(returned.v4.enduring_enchantment_v1);
+        assert!(state.players[0].battlefield.contains(&enduring));
+        assert!(!state.players[1].battlefield.contains(&enduring));
+        assert!(!engine::object_has_type(
+            &state,
+            enduring,
+            mtg_kernel::card_def::CardType::Creature,
+        ));
+    }
 }

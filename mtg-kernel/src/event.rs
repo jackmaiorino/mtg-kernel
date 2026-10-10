@@ -507,6 +507,25 @@ pub enum CommittedEvent {
         player: PlayerId,
         count: i32,
     },
+    /// Morbid is captured when this step begins, before any later death.
+    BeginningEndStep {
+        active_player: PlayerId,
+        creature_died_this_turn: bool,
+    },
+    /// Immediately precedes a departure whose printed abilities were absent.
+    PrintedAbilitiesRemovedBeforeZoneChange {
+        object: ObjectId,
+        zone_change_count: u32,
+    },
+    /// Exact declaration-time source for a "whenever you attack" trigger:
+    /// `controller` declared one or more attackers while `source` was on the
+    /// battlefield. Emitted only for permanents with such a trigger.
+    ControllerAttacked {
+        source: ObjectId,
+        source_zone_change_count: u32,
+        controller: PlayerId,
+    },
+    // Append new variants to preserve existing derived Hash discriminants.
     /// 700.13: `player` committed a crime by casting a spell, activating an
     /// ability or putting a triggered ability on the stack that targets an
     /// opponent, anything an opponent controls, or a card in an opponent's
@@ -536,24 +555,6 @@ pub enum CommittedEvent {
     WasCreatureBeforeLeavingBattlefield {
         object: ObjectId,
         zone_change_count: u32,
-    },
-    /// Morbid is captured when this step begins, before any later death.
-    BeginningEndStep {
-        active_player: PlayerId,
-        creature_died_this_turn: bool,
-    },
-    /// Immediately precedes a departure whose printed abilities were absent.
-    PrintedAbilitiesRemovedBeforeZoneChange {
-        object: ObjectId,
-        zone_change_count: u32,
-    },
-    /// Exact declaration-time source for a "whenever you attack" trigger:
-    /// `controller` declared one or more attackers while `source` was on the
-    /// battlefield. Emitted only for permanents with such a trigger.
-    ControllerAttacked {
-        source: ObjectId,
-        source_zone_change_count: u32,
-        controller: PlayerId,
     },
 }
 
@@ -962,6 +963,8 @@ fn commit_with_ability_lki(
             if from == Zone::Battlefield {
                 record_counter_lki(state, z.object);
             }
+            #[cfg(feature = "standard-magezero-fixtures")]
+            crate::standard_keywords_v1::before_zone_change(state, z.object, z.to_zone);
             if from == Zone::Battlefield
                 && abilities_removed_before.unwrap_or_else(|| {
                     !crate::continuous_characteristics_v1::printed_abilities_active(state, z.object)
@@ -974,8 +977,6 @@ fn commit_with_ability_lki(
                 state.engine.event_log.push(marker.clone());
                 state.engine.event_history.push(marker);
             }
-            #[cfg(feature = "standard-magezero-fixtures")]
-            crate::standard_keywords_v1::before_zone_change(state, z.object, z.to_zone);
             #[cfg(feature = "limited-fdn-fixtures")]
             let creature_died = from == Zone::Battlefield
                 && z.to_zone == Zone::Graveyard
@@ -1857,6 +1858,40 @@ mod tests {
 
     fn fresh_state() -> GameState {
         GameState::new_from_libraries(&[1, 2, 3], &[4, 5, 6], |c| format!("card-{c}"), 1)
+    }
+
+    #[cfg(feature = "standard-magezero-fixtures")]
+    #[test]
+    fn heartfire_death_respects_the_pre_zone_change_ability_snapshot() {
+        for abilities_removed in [false, true] {
+            let mut state = fresh_state();
+            let hero = push_object_into(&mut state, PlayerId::P0, Zone::Battlefield);
+            let definition = crate::card_def::card_id_by_name("Heartfire Hero").unwrap();
+            let object = state.objects.get_mut(hero);
+            object.card_def = definition;
+            object.name = "Heartfire Hero".into();
+            object.v4 = crate::state::ObjectStateV4::from_card_def(definition);
+            state.players[0].battlefield.push(hero);
+
+            // A simultaneous zone-change batch freezes whether an Aura had
+            // removed the printed ability before either permanent leaves.
+            commit_with_ability_lki(
+                &mut state,
+                ProposedEvent::zone_change(hero, Zone::Graveyard),
+                Some(abilities_removed),
+            );
+            let triggers = crate::trigger::collect_and_process(&mut state);
+            assert_eq!(triggers.len(), usize::from(!abilities_removed));
+            if let Some(trigger) = triggers.first() {
+                assert_eq!(
+                    trigger.effect,
+                    crate::effect::EffectOp::DealDamage {
+                        target: crate::effect::TargetRef::Opponent,
+                        amount: 1,
+                    }
+                );
+            }
+        }
     }
 
     fn lifelink_source(state: &mut GameState) -> ObjectId {

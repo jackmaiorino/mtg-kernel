@@ -429,14 +429,11 @@ fn materialize_trigger_event_effect(
 
 /// A spell's mana value on the stack, including its announced X.
 fn spell_mana_value_on_stack(state: &GameState, spell: ObjectId) -> u16 {
-    let def = &crate::card_def::CARD_DEFS[state.objects.get(spell).card_def as usize];
-    let x_value = state
+    state
         .stack
         .iter()
         .find(|item| item.source == spell)
-        .map_or(0, |item| item.v4.x_value);
-    def.mana_value
-        .saturating_add(u16::from(def.cost.x_count).saturating_mul(x_value))
+        .map_or(0, |item| crate::engine::stack_spell_mana_value(state, item))
 }
 
 const fn etb_trigger(effect: fn() -> EffectOp) -> TriggeredAbilityDef {
@@ -3670,6 +3667,10 @@ fn triggers_from_events(
                     | TriggerCondition::LeftBattlefield
                     | TriggerCondition::DiesWithoutCounters
             );
+            // Enduring keeps a graveyard-incarnation binding for its return,
+            // but its death ability and controller come from the battlefield.
+            let uses_death_lki =
+                uses_leave_lki || def.condition == TriggerCondition::DiesIfWasCreature;
             if !uses_leave_lki
                 && (obj.zone != def.home_zone
                     || !crate::continuous_characteristics_v1::printed_abilities_active(state, id))
@@ -3690,7 +3691,7 @@ fn triggers_from_events(
                 continue;
             }
             for (i, ev) in events.iter().enumerate() {
-                if uses_leave_lki && i.checked_sub(1).and_then(|index| events.get(index)).is_some_and(|event| matches!(event, CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange { object, .. } if *object == id)) {
+                if uses_death_lki && i.checked_sub(1).and_then(|index| events.get(index)).is_some_and(|event| matches!(event, CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange { object, .. } if *object == id)) {
                     continue;
                 }
                 let event_controller = match ev {
@@ -3699,7 +3700,7 @@ fn triggers_from_events(
                         from: Zone::Battlefield,
                         controller_before,
                         ..
-                    } if *object == id && uses_leave_lki => *controller_before,
+                    } if *object == id && uses_death_lki => *controller_before,
                     _ => obj.controller,
                 };
                 if trigger_matches(

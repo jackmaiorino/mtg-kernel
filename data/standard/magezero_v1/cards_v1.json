@@ -1235,7 +1235,7 @@
     },
     {
       "name": "Burnout Bashtronaut",
-      "engine_capability": "full",
+      "engine_capability": "partial",
       "mana_cost": "{R}",
       "mana_value": 1,
       "colors": [
@@ -1457,7 +1457,7 @@
     },
     {
       "name": "Axebane Ferox",
-      "engine_capability": "full",
+      "engine_capability": "partial",
       "mana_cost": "{2}{G}{G}",
       "mana_value": 4,
       "colors": [
@@ -1488,7 +1488,7 @@
     },
     {
       "name": "Hopeful Initiate",
-      "engine_capability": "full",
+      "engine_capability": "partial",
       "mana_cost": "{W}",
       "mana_value": 1,
       "colors": [
@@ -1580,7 +1580,7 @@
     },
     {
       "name": "Brutal Cathar",
-      "engine_capability": "full",
+      "engine_capability": "partial",
       "mana_cost": "{2}{W}",
       "mana_value": 3,
       "colors": [
@@ -1616,7 +1616,7 @@
     },
     {
       "name": "Knight-Errant of Eos",
-      "engine_capability": "full",
+      "engine_capability": "partial",
       "mana_cost": "{4}{W}",
       "mana_value": 5,
       "colors": [
@@ -2124,7 +2124,7 @@
     },
     {
       "name": "Graveyard Trespasser",
-      "engine_capability": "full",
+      "engine_capability": "partial",
       "mana_cost": "{2}{B}",
       "mana_value": 3,
       "colors": [
@@ -2159,7 +2159,7 @@
     },
     {
       "name": "Overlord of the Mistmoors",
-      "engine_capability": "full",
+      "engine_capability": "partial",
       "mana_cost": "{5}{W}{W}",
       "mana_value": 7,
       "colors": [
@@ -2221,7 +2221,7 @@
     },
     {
       "name": "Enduring Curiosity",
-      "engine_capability": "full",
+      "engine_capability": "partial",
       "mana_cost": "{2}{U}{U}",
       "mana_value": 4,
       "colors": [
@@ -2254,7 +2254,7 @@
     },
     {
       "name": "Enduring Innocence",
-      "engine_capability": "full",
+      "engine_capability": "partial",
       "mana_cost": "{1}{W}{W}",
       "mana_value": 3,
       "colors": [
@@ -2288,7 +2288,7 @@
     },
     {
       "name": "Make Disappear",
-      "engine_capability": "full",
+      "engine_capability": "partial",
       "mana_cost": "{1}{U}",
       "mana_value": 2,
       "colors": [

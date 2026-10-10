@@ -1,11 +1,20 @@
 # MageZero Standard family D: new set keywords v1
 
-Third batch of the MageZero Standard catalog (`kernel_carddb_standard/v4`,
-`0x58c7c4e68b6ef277`), covering mechanic family D of
+Third batch of the MageZero Standard catalog (`kernel_carddb_standard/v4`),
+covering mechanic family D of
 `docs/reports/standard_magezero_inventory_v1.md`.
 Every card's printed behavior was read from its XMage card file (path in the
 registry entry). All new behavior is gated on the `standard-magezero-fixtures`
 feature, so the Pauper and FDN Limited identities are unchanged.
+
+The batch adds 18 Full cards and 11 Partial definitions. Across the tracked
+pool, 52 nonbasic cards are Full, 19 are Partial and 154 are missing. No
+complete MageZero deck resolves yet. Partial cards are refused by full-deck
+admission; their current behavior remains available for development.
+
+The fixed v4 identity assertion awaits the value observed in hosted native
+CI after these capability corrections. The original head's
+`0x58c7c4e68b6ef277` identifies the original definitions, not this repair.
 
 ## Cards
 
@@ -70,7 +79,8 @@ Mouse offspring tokens, Incubator, Bat, Monk, White Insect and Spirit.
 - **Impending** is an alternative cost from hand. The permanent enters with
   time counters, is not a creature while it has any, and loses one at each of
   its controller's end steps.
-- **Enduring** creatures that die return at once as noncreature enchantments.
+- **Enduring** creatures have a death trigger that returns their exact
+  graveyard incarnation as a noncreature enchantment under its owner's control.
 - **Casualty** shares Bargain's sacrifice-one optional cost path. A casualty
   cast puts a copy with the same targets on the stack.
 - **Spree** is modeled as one printed mode per mode set (Phantom Interference:
@@ -86,8 +96,21 @@ Mouse offspring tokens, Incubator, Bat, Monk, White Insect and Spirit.
 
 ## Simplifications
 
-These keep the decision surface unchanged. Each is a deliberate departure
-from the printed rules.
+Incomplete printed behavior stays Partial. Full deck admission refuses:
+
+| Card | Remaining work |
+| --- | --- |
+| Axebane Ferox | Decline ward or select an evidence subset |
+| Brutal Cathar | Choose ward life payment, allow legal lethal payment; correct until-leaves exile and multiple linked exiles |
+| Graveyard Trespasser | Decline ward or select the discarded card |
+| Hopeful Initiate | Choose the creatures and counters used to pay its activation |
+| Knight-Errant of Eos | Choose convoke creatures and mana; choose zero through two eligible revealed creatures |
+| Make Disappear | Put the casualty trigger on the stack and offer new copy targets |
+| Burnout Bashtronaut | Put the inherent speed trigger on the stack with its response and ordering window |
+| Enduring Curiosity, Enduring Innocence, Overlord of the Mistmoors | Use effective noncreature types throughout costs and effects; Gatekeeper's edict and Dread Return's sacrifice cost still read printed Creature |
+| Flourishing Bloom-Kin | Face-down disguise and its turned-face-up trigger |
+
+These development approximations remain in the recipes:
 
 - **Ward payments are automatic.** The targeting player always pays a ward
   cost they can pay: collect evidence exiles the smallest-total qualifying
@@ -98,6 +121,8 @@ from the printed rules.
   from the creature with the most +1/+1 counters.
 - **Casualty's copy keeps the original's targets** and is created immediately
   as part of casting, not by a separate trigger. No new targets are offered.
+- **Speed increases immediately**, omitting the inherent trigger's response
+  window. A player can otherwise respond before speed 4 grants double strike.
 - **Cori-Steel Cutter's attach choice** is made when the trigger resolves,
   before the Monk token exists.
 - **Overlord of the Mistmoors' end-step trigger** is only collected while it
@@ -128,5 +153,10 @@ from the printed rules.
 
 ## Tests
 
-`mtg-kernel/tests/standard_family_d_v1.rs` covers each card's printed
-behavior, the keyword interactions above and every simplification.
+`mtg-kernel/tests/standard_family_d_v1.rs` covers implemented behavior,
+capability refusals, all three Spree mode payments, two pending Incubator
+activations, battle cry across zone changes, Seedshark with an Omen spell,
+and a stolen Enduring creature's death trigger and owner return. The targeted
+Standard event library test checks suppression of Heartfire's death ability
+from the pre-departure ability snapshot. Native results remain pending at
+the repaired head; original-head CI is not repair qualification.

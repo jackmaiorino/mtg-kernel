@@ -7094,11 +7094,15 @@ fn remaining_cast_payment_is_payable(
     let x_value = pending.x_value.unwrap_or(0);
     let base_payable = match cast_method {
         CastMethodV4::Normal => {
-            let normal = effective_normal_cast_cost_with_targets(
+            let normal = with_spree_surcharge(
                 def,
-                pending.controller,
-                &pending.targets_chosen,
-                state,
+                pending.mode_chosen.unwrap_or(0),
+                effective_normal_cast_cost_with_targets(
+                    def,
+                    pending.controller,
+                    &pending.targets_chosen,
+                    state,
+                ),
             );
             if pending.kicked == Some(true) {
                 def.kicker_cost.is_some_and(|kicker| {
@@ -15543,11 +15547,15 @@ fn finalize_owned_cast(
         }
         CastMethodV4::Normal => {
             let kicked = pending.kicked == Some(true);
-            let normal_cost = effective_normal_cast_cost_with_targets(
+            let normal_cost = with_spree_surcharge(
                 def,
-                pending.controller,
-                &pending.targets_chosen,
-                state,
+                pending.mode_chosen.unwrap_or(0),
+                effective_normal_cast_cost_with_targets(
+                    def,
+                    pending.controller,
+                    &pending.targets_chosen,
+                    state,
+                ),
             );
             if def.delve {
                 // Delve is never combined with Kicker in this pool (Gurmag

@@ -96,14 +96,11 @@ const STANDARD_APPENDED: [&str; 77] = [
 
 /// Every distinct nonbasic card in the 16 decks that this build fully
 /// supports. Each Standard card batch extends this list.
-const SUPPORTED_NONBASIC: [&str; 62] = [
+const SUPPORTED_NONBASIC: [&str; 52] = [
     "Adeline, Resplendent Cathar",
     "Aloe Alchemist",
     "Ascendant Packleader",
-    "Axebane Ferox",
     "Bloodletter of Aclazotz",
-    "Brutal Cathar",
-    "Burnout Bashtronaut",
     "Burst Lightning",
     "Cenote Scout",
     "Chrome Host Seedshark",
@@ -116,33 +113,26 @@ const SUPPORTED_NONBASIC: [&str; 62] = [
     "Dissipate",
     "Duress",
     "Emberheart Challenger",
-    "Enduring Curiosity",
-    "Enduring Innocence",
     "Fading Hope",
     "Flow of Knowledge",
     "Forsaken Miner",
     "Full Bore",
     "Gatekeeper of Malakir",
     "Get Lost",
-    "Graveyard Trespasser",
     "Hard-Hitting Question",
     "Heartfire Hero",
     "Hired Claw",
-    "Hopeful Initiate",
     "Hullbreaker Horror",
     "Impulse",
     "Iridescent Vinelasher",
-    "Knight-Errant of Eos",
     "Lightning Strike",
     "Llanowar Elves",
-    "Make Disappear",
     "Manifold Mouse",
     "Monastery Swiftspear",
     "Negate",
     "Nova Hellkite",
     "Novice Inspector",
     "Opt",
-    "Overlord of the Mistmoors",
     "Pawpatch Recruit",
     "Phantom Interference",
     "Razorkin Needlehead",
@@ -163,7 +153,7 @@ const SUPPORTED_NONBASIC: [&str; 62] = [
 
 /// Definitions retained for development with incomplete printed behavior.
 /// Full deck admission must refuse every one.
-const PARTIAL: [&str; 9] = [
+const PARTIAL: [&str; 19] = [
     "Memory Deluge",
     "Recruitment Officer",
     "Evolving Adaptive",
@@ -173,6 +163,16 @@ const PARTIAL: [&str; 9] = [
     "Sharp-Eyed Rookie",
     "Thalia, Guardian of Thraben",
     "Flourishing Bloom-Kin",
+    "Enduring Curiosity",
+    "Enduring Innocence",
+    "Overlord of the Mistmoors",
+    "Axebane Ferox",
+    "Brutal Cathar",
+    "Burnout Bashtronaut",
+    "Graveyard Trespasser",
+    "Hopeful Initiate",
+    "Knight-Errant of Eos",
+    "Make Disappear",
 ];
 
 const BASICS: [&str; 5] = ["Plains", "Island", "Swamp", "Mountain", "Forest"];
