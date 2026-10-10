@@ -33,8 +33,8 @@ order. FDN definitions are not included, so FDN batches never move Standard card
 Build with `cargo build --locked -p mtg-kernel --features standard-magezero-fixtures`. The feature
 also enables `limited-fdn-fixtures` for its rules behavior, but `build.rs` appends this file
 instead of the FDN one and uses the separate `kernel_carddb_standard/vN` identity. Only
-`standard_magezero_catalog_v1` and the `card_def::` library tests are expected to pass in this
-build; the other Limited tests are tied to FDN cards and identity.
+`standard_magezero_catalog_v1`, the Standard card tests (`standard_lands_v1`) and the
+`card_def::` library tests are expected to pass in this build; the other Limited tests are tied to FDN cards and identity.
 
 Inspect coverage without a build:
 
@@ -46,4 +46,6 @@ python python/tools/limited_decks_v1.py inventory --registry-extension data/stan
 `docs/reports/standard_magezero_inventory_v1.md` lists the missing cards by mechanic family and which
 thread owns each family.
 
-The tracked pool has 52 Full nonbasic cards, 19 Partial cards and 154 missing cards. No complete MageZero deck resolves yet. Full deck admission refuses every Partial definition. Their current behavior remains available for development; see `docs/design/standard_family_g_v1.md` and `docs/design/standard_family_d_keywords_v1.md` for the missing mechanics.
+The tracked pool has 91 Full nonbasic cards, 21 Partial cards and 113 missing cards. No complete MageZero deck resolves yet. Full deck admission refuses every Partial definition. Their current behavior remains available for development; see `docs/design/standard_family_g_v1.md` and `docs/design/standard_family_d_keywords_v1.md` for the missing mechanics.
+
+The first lands batch adds 39 Full lands. Mirrex remains Partial because poison counters are absent from policy observations; Rockface Village remains Partial because restricted red mana cannot be floated. Their engine primitives are retained for development. See `docs/design/standard_lands_v1.md`.

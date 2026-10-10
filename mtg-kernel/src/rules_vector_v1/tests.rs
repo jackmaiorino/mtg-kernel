@@ -668,6 +668,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Dwynen, Gilt-Leaf Daen",
     "Eager Trufflesnout",
     "Eldrazi Spawn Token",
+    "Elegant Parlor",
     "Elementalist Adept",
     "Elf Warrior Token",
     "Elfsworn Giant",
@@ -726,6 +727,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Koma, World-Eater",
     "Lembas",
     "Lotleth Giant",
+    "Lush Portico",
     "Manifold Mouse",
     "Manifold Mouse Offspring Token",
     "Map Token",
@@ -783,6 +785,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Tranquil Cove",
     "Treasure Token",
     "Troublemaker Ouphe",
+    "Underground Mortuary",
     "Unstoppable Slasher",
     "Vitu-Ghazi Inspector",
     "Voldaren Epicure",
@@ -941,6 +944,11 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
     (
         "standard_keywords_v1.rs",
         "Forsaken Miner",
+        "read via standard_keywords_v1::rules_vector_statics",
+    ),
+    (
+        "standard_keywords_v1.rs",
+        "Phyrexian Mite Token",
         "read via standard_keywords_v1::rules_vector_statics",
     ),
     (

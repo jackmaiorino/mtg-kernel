@@ -274,6 +274,10 @@ fn mana_ability_facts(def: &ManaAbilityDef, out: &mut Collector) {
                 amount: AmtF::Unit,
             });
         }
+        ManaAbilityCostDef::TapSelfPayLife(life) => {
+            out.cost(CostAtom::Tap);
+            out.cost(CostAtom::PayLife(life));
+        }
         ManaAbilityCostDef::None => {}
     }
     let amount = match amount {
@@ -304,6 +308,35 @@ fn mana_ability_facts(def: &ManaAbilityDef, out: &mut Collector) {
     }
     if max_activations_per_turn.is_some() {
         out.control(ControlF::Repeat);
+    }
+}
+
+/// The condition gating one additional mana ability.
+fn mana_ability_condition_facts(
+    condition: crate::card_def::ManaAbilityConditionDef,
+    out: &mut Collector,
+) {
+    out.control(ControlF::Conditional);
+    match condition {
+        crate::card_def::ManaAbilityConditionDef::ControllerControlsPermanentWithEitherSubtype {
+            first,
+            second,
+        } => {
+            // Vocabulary gap: ObjF has no subtype class.
+            let _ = (first, second);
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Permanent),
+                AggF::Any,
+            );
+        }
+        crate::card_def::ManaAbilityConditionDef::SourceEnteredThisTurn => out.read(
+            RelF::You,
+            Some(ZoneF::Battlefield),
+            Some(ObjF::ThisObject),
+            AggF::EventThisTurn,
+        ),
     }
 }
 
@@ -429,6 +462,11 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         adventure,
         cant_be_blocked_by_monarchs_creatures,
         conditional_tap_yield,
+        enters_tapped_unless_controller,
+        additional_mana_ability_conditions,
+        restricted_mana_abilities,
+        animation,
+        activated_ability_generic_reductions,
         // Cast bookkeeping for a program's `ManaSpentToCast` count, which
         // the program's own facets already carry.
         records_mana_spent: _,
@@ -701,17 +739,118 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         walk.rec("mana_ability_def", Value::String(format!("{rich:?}")));
         walk.ability(CtxF::Mana, |out| mana_ability_facts(rich, out));
     }
-    for additional in additional_mana_abilities.iter() {
+    for (index, additional) in additional_mana_abilities.iter().enumerate() {
         walk.rec("additional_mana", Value::String(format!("{additional:?}")));
+        let condition = additional_mana_ability_conditions
+            .get(index)
+            .copied()
+            .flatten();
+        if let Some(condition) = condition {
+            walk.rec(
+                "additional_mana_condition",
+                Value::String(format!("{condition:?}")),
+            );
+        }
         walk.ability(CtxF::Mana, |out| {
             out.cost(CostAtom::Mana);
             mana_ability_facts(&additional.ability, out);
+            if let Some(condition) = condition {
+                mana_ability_condition_facts(condition, out);
+            }
+        });
+    }
+    for restricted in restricted_mana_abilities.iter() {
+        walk.rec("restricted_mana", Value::String(format!("{restricted:?}")));
+        walk.ability(CtxF::Mana, |out| {
+            // `{T}: Add one of these colors`, spendable only while paying a
+            // creature spell's total cost. Vocabulary gap: no spending
+            // restriction; it is marked conditional.
+            out.cost(CostAtom::Tap);
+            for &color in restricted.colors {
+                out.effect(
+                    EffectAtom::new(EvF::AddMana)
+                        .player(RelF::You)
+                        .amount(AmtF::fixed(1))
+                        .color(color.into()),
+                );
+            }
+            match restricted.restriction {
+                crate::card_def::ManaSpendRestrictionDef::CreatureSpell => {
+                    out.control(ControlF::Conditional)
+                }
+            }
         });
     }
     if let Some(amount) = conditional_tap_yield {
         walk.rec(
             "conditional_tap_yield",
             Value::String(format!("{amount:?}")),
+        );
+    }
+    for reduction in activated_ability_generic_reductions.iter() {
+        walk.rec(
+            "activated_ability_generic_reduction",
+            Value::String(format!("{reduction:?}")),
+        );
+        walk.ability(CtxF::Static, |out| {
+            out.cost(CostAtom::Reduced);
+            match reduction.per {
+                crate::card_def::ActivatedAbilityReductionCountDef::ControlledLegendaryCreatures => {
+                    // Vocabulary gap: no legendary filter.
+                    out.read(
+                        RelF::You,
+                        Some(ZoneF::Battlefield),
+                        Some(ObjF::Typed(CardTypeF::Creature)),
+                        AggF::Count,
+                    )
+                }
+            }
+        });
+    }
+    if let Some(rule) = enters_tapped_unless_controller {
+        walk.rec(
+            "enters_tapped_unless_controller",
+            Value::String(format!("{rule:?}")),
+        );
+        walk.ability(CtxF::Static, |out| {
+            out.control(ControlF::Conditional);
+            match *rule {
+                crate::card_def::EntersTappedUnlessControllerDef::ControlsAtMostOtherLands(n)
+                | crate::card_def::EntersTappedUnlessControllerDef::ControlsAtLeastOtherLands(n) => {
+                    out.read(
+                        RelF::You,
+                        Some(ZoneF::Battlefield),
+                        Some(ObjF::Typed(CardTypeF::Land)),
+                        AggF::AtLeast(bucket(i64::from(n))),
+                    )
+                }
+                crate::card_def::EntersTappedUnlessControllerDef::WithinOwnFirstTurns(_) => {
+                    // Vocabulary gap: no turn-number read.
+                    out.atoms.push(Atom::Opaque)
+                }
+            }
+            out.effect(EffectAtom::new(EvF::Tap).obj(ObjF::ThisObject));
+        });
+    }
+    if let Some(animation) = animation {
+        let crate::card_def::AnimationDef {
+            power,
+            toughness,
+            artifact,
+            colors,
+            subtypes,
+            keywords,
+        } = *animation;
+        walk.rec(
+            "animation",
+            json!({
+                "power": power,
+                "toughness": toughness,
+                "artifact": artifact,
+                "colors": colors.iter().map(|c| format!("{c:?}")).collect::<Vec<_>>(),
+                "subtypes": subtypes.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>(),
+                "keywords": keywords.0,
+            }),
         );
     }
 

@@ -402,6 +402,6 @@ fn target_and_returned_card_stay_public_without_exposing_other_hand_cards() {
         trigger::trigger_target_spec(card_id_by_name("Elvish Regrower").unwrap()),
         TargetSpec::PermanentCardInOwnGraveyard
     );
-    assert_eq!(TargetSpec::PermanentCardInOwnGraveyard.stable_id(), 55);
+    assert_eq!(TargetSpec::PermanentCardInOwnGraveyard.stable_id(), 57);
     assert_eq!(TargetSpec::UpToOneCardInGraveyards.stable_id(), 54);
 }

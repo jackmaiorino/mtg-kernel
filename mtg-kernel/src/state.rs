@@ -240,6 +240,17 @@ pub struct ObjectStateV4 {
     /// enchantment" (not a creature). Every zone change clears it.
     #[serde(default, skip_serializing_if = "bool_is_false")]
     pub enduring_enchantment_v1: bool,
+    /// Timestamp of the ability that made this incarnation its
+    /// `CardDef::animation` creature (Mishra's Foundry). Cleared at cleanup
+    /// (every animation lasts until end of turn) and by every zone change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub animation_timestamp: Option<u64>,
+    /// True from this incarnation's battlefield entry until the next untap
+    /// step. `entered_battlefield_turn` is a round number shared by both
+    /// players' turns, so it cannot answer "entered this turn" (Mirrex).
+    /// Only Standard builds set it, so other catalogs keep their bytes.
+    #[serde(default, skip_serializing_if = "bool_is_false")]
+    pub entered_battlefield_this_turn: bool,
 }
 
 impl Hash for ObjectStateV4 {
@@ -287,6 +298,13 @@ impl Hash for ObjectStateV4 {
         }
         if self.enduring_enchantment_v1 {
             "enduring-enchantment/v1".hash(state);
+        }
+        if let Some(timestamp) = self.animation_timestamp {
+            "animation_timestamp/v1".hash(state);
+            timestamp.hash(state);
+        }
+        if self.entered_battlefield_this_turn {
+            "entered_battlefield_this_turn/v1".hash(state);
         }
     }
 }
@@ -344,6 +362,8 @@ impl ObjectStateV4 {
             unearthed_v1: false,
             time_counters_v1: 0,
             enduring_enchantment_v1: false,
+            animation_timestamp: None,
+            entered_battlefield_this_turn: false,
         }
     }
 
@@ -352,6 +372,7 @@ impl ObjectStateV4 {
         *self = base;
         if to_zone == Zone::Battlefield {
             self.entered_battlefield_turn = Some(turn);
+            self.entered_battlefield_this_turn = cfg!(feature = "standard-magezero-fixtures");
         }
     }
 
@@ -590,6 +611,31 @@ pub struct PlayerState {
     pub draws_this_turn: u32,
     pub spells_cast_this_turn: u16,
     pub dungeon: DungeonStateV4,
+    /// Poison counters (122.1f), given by toxic combat damage. Absent on the
+    /// wire and in hashes while zero, so states without poison keep their
+    /// bytes.
+    #[serde(default, skip_serializing_if = "PoisonCountersV1::is_zero")]
+    pub poison_counters: PoisonCountersV1,
+}
+
+/// A player's poison counter count. Hashes nothing while zero.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PoisonCountersV1(pub u16);
+
+impl PoisonCountersV1 {
+    pub fn is_zero(&self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl Hash for PoisonCountersV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if self.0 != 0 {
+            "poison_counters/v1".hash(state);
+            self.0.hash(state);
+        }
+    }
 }
 
 impl PlayerState {
@@ -607,6 +653,7 @@ impl PlayerState {
             draws_this_turn: 0,
             spells_cast_this_turn: 0,
             dungeon: DungeonStateV4::default(),
+            poison_counters: PoisonCountersV1::default(),
         }
     }
 }
@@ -995,7 +1042,9 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::CreatureToughnessAtLeastFour
                 | TargetSpec::CreatureEnchantmentOrPlaneswalker
                 | TargetSpec::AnotherControlledCreature
-                | TargetSpec::ControlledCreatureWithSubtype(_),
+                | TargetSpec::ControlledCreatureWithSubtype(_)
+                | TargetSpec::AttackingCreatureWithSubtype(_)
+                | TargetSpec::ControlledPermanentWithAnySubtype(_),
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Battlefield,

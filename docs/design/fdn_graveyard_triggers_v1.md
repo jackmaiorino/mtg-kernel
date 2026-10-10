@@ -11,7 +11,8 @@ and `Mage.Sets/src/mage/cards/a/AmbushWolf.java`, checked against the retained
 Scryfall FDN oracle pages. The batch reserves card ids 334-335 and Limited
 catalog v64 after the v61-v63 prerequisites. Wolf reuses the already appended Standard subtype discriminant. Catalog hash qualification remains pending.
 
-Append `PermanentCardInOwnGraveyard` (55) and reuse the already integrated
+Append `PermanentCardInOwnGraveyard` (57), preserving accepted Standard
+land target IDs55-56, and reuse the already integrated
 `UpToOneCardInGraveyards` (54), and reuse the existing incarnation-bound
 `MoveAllTargets` hand/exile effects. Optional trigger completion uses the
 existing Standard optional-target placement and immediate stack admission.

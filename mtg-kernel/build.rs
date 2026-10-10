@@ -24,6 +24,8 @@
 #[allow(dead_code)]
 #[path = "../build_support/native_store_build_capture_v1.rs"]
 mod native_store_build_capture_v1;
+#[path = "../build_support/standard_lands_v1.rs"]
+mod standard_lands;
 #[allow(dead_code)]
 #[path = "src/strict_source_tree_attestation_v1.rs"]
 mod strict_source_tree_attestation_v1;
@@ -3135,6 +3137,21 @@ enum AbilityEffectRecipe {
         count: u8,
         max_mana_value: u16,
     },
+    /// The source becomes its `CardDef::animation` creature (Mishra's
+    /// Foundry and the Restless lands).
+    AnimateSource,
+    /// Target(0) gets a fixed +power/+toughness until end of turn.
+    PumpTargetUntilEndOfTurn {
+        power: i8,
+        toughness: i8,
+    },
+    /// Target(0) gets a fixed +power/+toughness and gains a keyword until
+    /// end of turn (Rockface Village).
+    PumpTargetAndGrantKeyword {
+        power: i8,
+        toughness: i8,
+        keyword: &'static str,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4030,6 +4047,9 @@ fn keywords_for(card: &CardJson) -> String {
         keywords.push("Keywords::DEATHTOUCH");
     }
     keywords.extend_from_slice(standard_keywords_for(&card.name));
+    if card.name == "Phyrexian Mite Token" {
+        keywords.push("Keywords::TOXIC_1");
+    }
     if keywords.is_empty() {
         "Keywords::NONE".to_string()
     } else if keywords.len() == 1 {
@@ -4104,6 +4124,9 @@ fn primary_mana_ability_colors(card: &CardJson) -> Vec<&str> {
         // mana ability the automatic payment planner must never assume is
         // always available.
         "Barrels of Blasting Jelly" => vec![],
+        _ if standard_lands::overrides_primary_mana(&card.name) => {
+            standard_lands::primary_mana_ability_colors(&card.name)
+        }
         _ => card.produces_mana.iter().map(String::as_str).collect(),
     }
 }
@@ -4120,7 +4143,10 @@ fn as_enters_choose_color_other_than(name: &str) -> &'static str {
     }
 }
 
-fn additional_mana_abilities_for(name: &str) -> &'static str {
+fn additional_mana_abilities_for(name: &str) -> String {
+    if let Some(src) = standard_lands::additional_mana_abilities(name) {
+        return src;
+    }
     match name {
         "Heap Gate" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], mana_cost: Cost { pips: &[], generic: 1, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None } }]",
         // Conduit Pylons' "{1}, {T}: Add one mana of any color" is Heap
@@ -4133,6 +4159,7 @@ fn additional_mana_abilities_for(name: &str) -> &'static str {
         "Barrels of Blasting Jelly" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], mana_cost: Cost { pips: &[], generic: 1, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::None, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: Some(1) } }]",
         _ => "&[]",
     }
+    .to_string()
 }
 
 fn object_name_for(name: &str) -> &str {
@@ -4444,6 +4471,9 @@ fn escape_for(name: &str) -> String {
 /// hand-zone Islandcycling `{1}` shape: pay mana, discard the exact source,
 /// then resolve the reusable typed library search.
 fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
+    if let Some(recipes) = standard_lands::activated_ability_recipes(name) {
+        return recipes;
+    }
     match name {
         "Reassembling Skeleton" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Mana {
@@ -5538,6 +5568,18 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::EachPlayerControllingNamedPermanentDrawsCard(name) => {
             format!("each_player_controlling_named_permanent_draws_card:{name}")
         }
+        AbilityEffectRecipe::AnimateSource => "animate_source".to_string(),
+        AbilityEffectRecipe::PumpTargetUntilEndOfTurn { power, toughness } => {
+            format!("pump_target_until_end_of_turn:{power}:{toughness}")
+        }
+        AbilityEffectRecipe::PumpTargetAndGrantKeyword {
+            power,
+            toughness,
+            keyword,
+        } => format!(
+            "pump_target_and_grant_keyword_until_end_of_turn:{power}:{toughness}:{}",
+            keyword.to_ascii_lowercase()
+        ),
     }
 }
 
@@ -5601,6 +5643,9 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
         }
         AbilityEffectRecipe::CreateToken("Sacred Cat Embalmed Token") => {
             "ability_effect_create_sacred_cat_embalmed_token".to_string()
+        }
+        AbilityEffectRecipe::CreateToken("Phyrexian Mite Token") => {
+            "ability_effect_create_phyrexian_mite_token".to_string()
         }
         AbilityEffectRecipe::CreateToken(name) => {
             panic!("no generated activated-ability token function for {name:?}")
@@ -5739,6 +5784,31 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
                     .collect::<String>()
             )
         }
+        AbilityEffectRecipe::AnimateSource => "ability_effect_animate_source".to_string(),
+        AbilityEffectRecipe::PumpTargetUntilEndOfTurn { power, toughness } => format!(
+            "ability_effect_pump_target_{}_{}",
+            signed_fn_token(power),
+            signed_fn_token(toughness)
+        ),
+        AbilityEffectRecipe::PumpTargetAndGrantKeyword {
+            power,
+            toughness,
+            keyword,
+        } => format!(
+            "ability_effect_pump_target_{}_{}_grant_{}",
+            signed_fn_token(power),
+            signed_fn_token(toughness),
+            keyword.to_ascii_lowercase()
+        ),
+    }
+}
+
+/// Function-name-safe spelling of a signed pump amount (`2`, `m1`).
+fn signed_fn_token(value: i8) -> String {
+    if value < 0 {
+        format!("m{}", value.unsigned_abs())
+    } else {
+        value.to_string()
     }
 }
 
@@ -6169,6 +6239,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Harrier Strix" => "etb:target_any_permanent:tap",
         "Bojuka Bog" => "etb:target_player:exile_graveyard",
         "Conduit Pylons" => "etb:surveil:1",
+        "Elegant Parlor" | "Lush Portico" | "Underground Mortuary" => "etb:surveil:1",
         "Humbling Elder" => "etb:target_opponent_creature:pump:-2:0:eot",
         "Meteor Golem" => "etb:target_opponent_nonland_permanent:destroy",
         "Dauntless Veteran" => "source_declared_attacker:boost_controlled_creatures:1:1:none:end_of_turn",
@@ -6981,6 +7052,22 @@ fn codegen(cards: &[CardJson]) -> String {
                     "    EffectOp::EachPlayerControllingDefinitionDrawsCard {{ card_def: named }}"
                 )
                 .unwrap();
+            }
+            AbilityEffectRecipe::AnimateSource => {
+                writeln!(out, "    EffectOp::AnimateSource").unwrap();
+            }
+            AbilityEffectRecipe::PumpTargetUntilEndOfTurn { power, toughness } => {
+                writeln!(out, "    EffectOp::PumpTargetUntilEndOfTurnDynamic {{ target: TargetRef::Target(0), power: DynamicValueDef::Fixed({power}), toughness: DynamicValueDef::Fixed({toughness}) }}").unwrap();
+            }
+            AbilityEffectRecipe::PumpTargetAndGrantKeyword {
+                power,
+                toughness,
+                keyword,
+            } => {
+                writeln!(out, "    EffectOp::Sequence(vec![").unwrap();
+                writeln!(out, "        EffectOp::PumpTargetUntilEndOfTurnDynamic {{ target: TargetRef::Target(0), power: DynamicValueDef::Fixed({power}), toughness: DynamicValueDef::Fixed({toughness}) }},").unwrap();
+                writeln!(out, "        EffectOp::GrantKeywordTargetUntilEndOfTurn {{ object: ObjectRef::Target(0), keyword: Keywords::{keyword} }},").unwrap();
+                writeln!(out, "    ])").unwrap();
             }
         }
         writeln!(out, "}}").unwrap();
@@ -9091,7 +9178,7 @@ fn codegen(cards: &[CardJson]) -> String {
             if executable {
                 additional_mana_abilities_for(&c.name)
             } else {
-                "&[]"
+                "&[]".to_string()
             }
         )
         .unwrap();
@@ -9180,6 +9267,32 @@ fn codegen(cards: &[CardJson]) -> String {
             }
         )
         .unwrap();
+        let standard = standard_lands::fields(&c.name, executable);
+        writeln!(
+            out,
+            "        enters_tapped_unless_controller: {},",
+            standard.enters_tapped_unless_controller
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        additional_mana_ability_conditions: {},",
+            standard.additional_mana_ability_conditions
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        restricted_mana_abilities: {},",
+            standard.restricted_mana_abilities
+        )
+        .unwrap();
+        writeln!(out, "        animation: {},", standard.animation).unwrap();
+        writeln!(
+            out,
+            "        activated_ability_generic_reductions: {},",
+            standard.activated_ability_generic_reductions
+        )
+        .unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -9262,7 +9375,7 @@ fn codegen(cards: &[CardJson]) -> String {
         // `standard-magezero-fixtures` builds: the Pauper prefix plus
         // `data/standard/magezero_v1/cards_v1.json`, versioned separately
         // from the FDN Limited catalog.
-        canon = String::from("kernel_carddb_standard/v4\n");
+        canon = String::from("kernel_carddb_standard/v5\n");
     }
     if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some() {
         canon.push_str("counter_target_spell_guard=bound_stack_spell_can_be_countered\n");
@@ -9377,10 +9490,10 @@ fn codegen(cards: &[CardJson]) -> String {
         });
         canon.push('|');
         canon.push_str("additional_mana_abilities=");
-        canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
+        canon.push_str(&if c.engine_capability != EngineCapabilityJson::NoEffect {
             additional_mana_abilities_for(&c.name)
         } else {
-            "&[]"
+            "&[]".to_string()
         });
         canon.push('|');
         canon.push_str("object_name=");
@@ -9516,6 +9629,15 @@ fn codegen(cards: &[CardJson]) -> String {
         } else {
             "None"
         });
+        // Fields appended for the Standard lands enter the contract only for
+        // a card that sets one, so every earlier catalog line is unchanged.
+        let standard = standard_lands::fields(
+            &c.name,
+            c.engine_capability != EngineCapabilityJson::NoEffect,
+        );
+        if !standard.is_empty() {
+            canon.push_str(&format!("|standard_lands={}", standard.canonical_token()));
+        }
         canon.push('\n');
     }
     let hash = fnv1a64(canon.as_bytes());
@@ -9629,6 +9751,10 @@ fn subtype_variant(t: &str) -> &'static str {
         "Insect" => "Subtype::Insect",
         "Archer" => "Subtype::Archer",
         "Lizard" => "Subtype::Lizard",
+        "Assembly-Worker" => "Subtype::AssemblyWorker",
+        "Mite" => "Subtype::Mite",
+        "Sphere" => "Subtype::Sphere",
+        "Town" => "Subtype::Town",
         "Golem" => "Subtype::Golem",
         "Boar" => "Subtype::Boar",
         "Cyclops" => "Subtype::Cyclops",

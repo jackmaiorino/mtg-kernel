@@ -76,6 +76,16 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
             let _ = subtype;
             (BATTLEFIELD, Some(RelF::You))
         }
+        TargetSpec::AttackingCreatureWithSubtype(subtype) => {
+            // The subtype is a target legality fact (targets table).
+            let _ = subtype;
+            (BATTLEFIELD, None)
+        }
+        TargetSpec::ControlledPermanentWithAnySubtype(subtypes) => {
+            // The subtypes are a target legality fact (targets table).
+            let _ = subtypes;
+            (BATTLEFIELD, Some(RelF::You))
+        }
         TargetSpec::OpponentControlledCreature
         | TargetSpec::OpponentArtifactOrEnchantmentPermanent
         | TargetSpec::OpponentNonlandPermanent => (BATTLEFIELD, Some(RelF::Opponent)),

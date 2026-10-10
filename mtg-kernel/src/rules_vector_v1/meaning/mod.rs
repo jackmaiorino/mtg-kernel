@@ -17,6 +17,7 @@ mod effect_e;
 mod effect_f;
 mod effect_g;
 mod effect_h;
+mod effect_i;
 pub(crate) mod reads;
 pub(crate) mod targets;
 pub(crate) mod triggers_costs;
@@ -244,5 +245,6 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::ExileGraveyardTargetsDrainPerCreature { .. }
         | EffectOp::RemoveTimeCounterFromSource
         | EffectOp::ReturnSourceAsEnduringEnchantment => effect_h::effect_op(op, env, out),
+        EffectOp::AnimateSource => effect_i::effect_op(op, env, out),
     }
 }
