@@ -2,7 +2,8 @@
 
 No remote execution, automatic recovery copying, retries, or training. Run the
 same file for both variants. Inspection never prunes. Retention requires a
-separately supplied SHA-pinned desktop E: copy verification receipt.
+separately supplied SHA-pinned desktop E: copy verification receipt. Desktop-local
+mode verifies independent physical D: and E: devices and current E: bytes.
 """
 from __future__ import annotations
 
@@ -142,7 +143,7 @@ def inputs(args):
 
 def inspect(args):
     began = time.monotonic()
-    _, request_pin, request, dispatch_root, cold, native, report_pin, report, out = inputs(args)
+    comparison, request_pin, request, dispatch_root, cold, native, report_pin, report, out = inputs(args)
     verify_native_recovery(native, read_pinned(report['archive']))
     require(not out.exists(), 'preserve existing inspection; choose a new output root')
     out.mkdir(parents=True)
@@ -196,6 +197,15 @@ def inspect(args):
             'destination_host': 'DESKTOP-DJ1C40R', 'destination_drive': 'E:', 'request': request_pin,
             'report': report_pin, 'native_root': str(native), 'files': entries,
             'requires_full_destination_sha256_verification': True}
+    if args.recovery_mode == 'desktop-local':
+        import desktop_devices
+        require(comparison.drive.upper() == 'D:', 'desktop comparison root must be on D:')
+        source_device = desktop_devices.device(comparison)
+        destination_device = desktop_devices.device(Path('E:/training-speedups-20261009'))
+        desktop_devices.independent(source_device, destination_device)
+        plan.update(schema='training-speedup-independent-cold-copy-plan/v2',
+                    mode='desktop-local', source_device=source_device,
+                    destination_device=destination_device, source_root=str(comparison / 'measure'))
     plan_pin = save(out / 'recovery-copy-plan.json', plan)
     timers['recovery_copy_plan_hash_seconds'] = time.monotonic() - phase
     result = {'schema': 'training-speedup-maintenance-inspect/v1', 'complete': True,
@@ -225,10 +235,29 @@ def retain(args):
     plan = read_pinned(plan_pin)
     receipt_pin = {'path': str(checked_path(args.cold_copy_receipt)), 'sha256': args.cold_copy_sha256}
     receipt = read_pinned(receipt_pin)
-    require(receipt['schema'] == 'training-speedup-independent-cold-copy/v1' and receipt['complete'] is True
-            and receipt['plan'] == plan_pin and receipt['source_host'] == plan['source_host'] == platform.node()
-            and receipt['destination_host'].upper() == plan['destination_host']
-            and receipt['destination_host'].upper() != platform.node().upper(), 'independent cold copy identity differs')
+    local = plan.get('mode') == 'desktop-local'
+    require(local == (args.recovery_mode == 'desktop-local'), 'explicit recovery mode differs from plan')
+    require(receipt['complete'] is True and receipt['plan'] == plan_pin
+            and receipt['source_host'] == plan['source_host'] == platform.node()
+            and receipt['destination_host'].upper() == plan['destination_host'],
+            'independent cold copy identity differs')
+    if local:
+        import desktop_devices
+        require(plan['schema'] == 'training-speedup-independent-cold-copy-plan/v2'
+                and receipt['schema'] == 'training-speedup-independent-cold-copy/v2'
+                and receipt.get('mode') == 'desktop-local'
+                and receipt['source_device'] == plan['source_device']
+                and receipt['destination_device'] == plan['destination_device']
+                and checked_path(plan['source_root']) == native.parent.parent
+                and checked_path(receipt['destination_root']) == Path('E:/training-speedups-20261009') / out.name,
+                'desktop recovery identity differs')
+        desktop_devices.verify(plan['source_root'], receipt['destination_root'],
+                               plan['source_device'], plan['destination_device'])
+    else:
+        require(plan['schema'] == 'training-speedup-independent-cold-copy-plan/v1'
+                and receipt['schema'] == 'training-speedup-independent-cold-copy/v1'
+                and receipt['destination_host'].upper() != platform.node().upper(),
+                'independent remote cold copy identity differs')
     require(len(receipt['files']) == len(plan['files']), 'independent recovery coverage differs')
     destinations = set()
     for planned, copied in zip(plan['files'], receipt['files']):
@@ -240,7 +269,14 @@ def retain(args):
                 'independent recovery must be on desktop E:')
         require(str(destination).casefold() not in destinations, 'duplicate recovery destination')
         destinations.add(str(destination).casefold())
-        require(pin(planned['source']['path']) == planned['source'], 'remote recovery source changed')
+        if local:
+            expected_destination = checked_path(Path(receipt['destination_root']) / planned['relative_destination'])
+            require(checked_path(copied['destination']['path']) == expected_destination
+                    and expected_destination.is_relative_to(checked_path(receipt['destination_root']))
+                    and pin(expected_destination) == copied['destination']
+                    and expected_destination.stat().st_size == planned['bytes'],
+                    'desktop E: recovery destination changed')
+        require(pin(planned['source']['path']) == planned['source'], 'recovery source changed')
     verification_seconds = time.monotonic() - began
     files_in_tree(native)  # Refuse every nested reparse/link before recursive pruning.
     tools = checked_path(args.launcher_root) / 'python' / 'tools'
@@ -272,6 +308,7 @@ def retain(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('stage', choices=('inspect', 'retain'))
+    parser.add_argument('--recovery-mode', choices=('remote', 'desktop-local'), default='remote')
     parser.add_argument('--launcher-root', type=Path, required=True)
     parser.add_argument('--comparison-root', type=Path, default=Path('C:/mtg-node/training-speedups-20261009'))
     parser.add_argument('--request', type=Path, required=True)

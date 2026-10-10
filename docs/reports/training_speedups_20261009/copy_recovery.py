@@ -1,4 +1,4 @@
-"""Copy one pinned recovery plan to D: and independently verified desktop E:.
+"""Copy pinned recovery remotely via D:, or directly from desktop D: to E:.
 
 Never retries, overwrites, prunes, or executes remotely. Preserve partial copies
 and a failure receipt; choose a new case label only after investigating failure.
@@ -100,16 +100,104 @@ def cold_copy(source, destination):
         os.fsync(copied.fileno())
 
 
+
+def desktop_local(args):
+    """Copy existing D: archive/receipts directly to independent E: storage."""
+    import desktop_devices
+    began = time.monotonic()
+    require(args.local_plan and not args.remote_plan, 'desktop-local requires only --local-plan')
+    source_plan = safe_local(args.local_plan)
+    require(source_plan.drive.upper() == 'D:' and source_plan.is_file(), 'local plan must exist on D:')
+    require(pin(source_plan)['sha256'] == args.plan_sha256, 'local plan differs from explicit pin')
+    plan = json.loads(source_plan.read_bytes())
+    source_root = safe_local(plan['source_root'])
+    require(source_root.drive.upper() == 'D:' and source_root.name == 'measure'
+            and source_plan == source_root / 'maintenance' / args.case_label / 'recovery-copy-plan.json',
+            'local plan must belong to exact case maintenance root')
+    require(plan['schema'] == 'training-speedup-independent-cold-copy-plan/v2'
+            and plan.get('mode') == 'desktop-local'
+            and plan['source_host'].upper() == platform.node().upper()
+            and plan['destination_host'].upper() == platform.node().upper()
+            and plan['destination_drive'] == 'E:'
+            and plan['requires_full_destination_sha256_verification'] is True,
+            'desktop-local plan identity differs')
+    cold = safe_local(LOCAL_COLD / args.case_label)
+    desktop_devices.verify(source_root, cold, plan['source_device'], plan['destination_device'])
+    # Fully validate paths, duplicates and pins before creating a copy root.
+    jobs, sources, destinations = [], set(), set()
+    require(plan['files'], 'empty recovery plan')
+    for item in plan['files']:
+        source = safe_local(item['source']['path'])
+        relative = relative_path(item['relative_destination'])
+        require(source.is_relative_to(source_root)
+                and source.parts[len(source_root.parts)] in ('cold', 'hot', 'maintenance')
+                and source.is_file(), 'local recovery source outside case measure root')
+        require(re.fullmatch(r'[a-f0-9]{64}', item['source']['sha256'])
+                and type(item['bytes']) is int and item['bytes'] >= 0, 'invalid source pin/size')
+        require(str(source).casefold() not in sources and str(relative).casefold() not in destinations,
+                'duplicate recovery source or destination')
+        sources.add(str(source).casefold()); destinations.add(str(relative).casefold())
+        jobs.append((item, source, relative))
+    require(not cold.exists(), 'fresh E: case root required; no overwrite/retry')
+    projected = sum(item['bytes'] for item, _, _ in jobs)
+    require(shutil.disk_usage(cold.anchor).free >= 60 * 1024**3 + projected,
+            'independent copy would violate 60 GiB E: reserve')
+    receipt_path = safe_local(source_plan.parent / 'cold-copy-receipt.json')
+    failure_path = safe_local(source_plan.parent / 'cold-copy-failure.json')
+    require(not receipt_path.exists() and not failure_path.exists(), 'preserve prior copy attempt')
+    timers = dict(scp_seconds=0.0, d_verify_seconds=0.0, e_copy_fsync_seconds=0.0, e_verify_seconds=0.0)
+    receipt = {'schema': 'training-speedup-independent-cold-copy/v2', 'mode': 'desktop-local',
+               'complete': False, 'plan': {'path': str(source_plan), 'sha256': args.plan_sha256},
+               'source_host': platform.node(), 'destination_host': platform.node(),
+               'source_device': plan['source_device'], 'destination_device': plan['destination_device'],
+               'destination_root': str(cold), 'files': [], 'timing': timers,
+               'started_utc': datetime.now(timezone.utc).isoformat()}
+    try:
+        cold.mkdir(parents=True)
+        for item, source, relative in jobs:
+            phase = time.monotonic()
+            require(pin(source) == item['source'] and source.stat().st_size == item['bytes'],
+                    'D: recovery source checksum/size differs')
+            timers['d_verify_seconds'] += time.monotonic() - phase
+            destination = safe_local(cold / relative)
+            phase = time.monotonic()
+            cold_copy(source, destination)
+            timers['e_copy_fsync_seconds'] += time.monotonic() - phase
+            phase = time.monotonic()
+            destination_pin = pin(destination)
+            require(destination_pin['sha256'] == item['source']['sha256']
+                    and destination.stat().st_size == item['bytes'], 'E: recovery checksum/size differs')
+            timers['e_verify_seconds'] += time.monotonic() - phase
+            receipt['files'].append({'source': item['source'], 'bytes': item['bytes'],
+                                     'verified': True, 'destination': destination_pin})
+        desktop_devices.verify(source_root, cold, plan['source_device'], plan['destination_device'])
+        receipt['complete'] = True
+    except Exception as error:
+        receipt['error'] = f'{type(error).__name__}: {error}'
+        raise
+    finally:
+        receipt['seconds'] = time.monotonic() - began
+        receipt['finished_utc'] = datetime.now(timezone.utc).isoformat()
+        path = receipt_path if receipt['complete'] else failure_path
+        save(path, receipt)
+        print(json.dumps({'complete': receipt['complete'], 'receipt': pin(path)}))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--case-label', required=True)
-    parser.add_argument('--remote-plan', required=True)
+    parser.add_argument('--mode', choices=('remote', 'desktop-local'), default='remote')
+    parser.add_argument('--remote-plan')
+    parser.add_argument('--local-plan', type=Path)
     parser.add_argument('--plan-sha256', required=True)
     parser.add_argument('--ssh-target', default='haley@100.71.75.65')
     args = parser.parse_args()
     require(os.name == 'nt' and platform.node().upper() == 'DESKTOP-DJ1C40R', 'run only on Jack desktop Windows')
     require(re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_-]{0,80}', args.case_label), 'invalid case label')
     require(re.fullmatch(r'[a-f0-9]{64}', args.plan_sha256), 'explicit SHA256 plan pin required')
+    if args.mode == 'desktop-local':
+        return desktop_local(args)
+    require(args.remote_plan and not args.local_plan, 'remote mode requires only --remote-plan')
     require(re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.@:-]*', args.ssh_target), 'invalid SSH target')
     remote_plan = remote_path(args.remote_plan)
     require(remote_plan == REMOTE_MEASURE / 'maintenance' / args.case_label / 'recovery-copy-plan.json',

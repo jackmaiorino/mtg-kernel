@@ -2,6 +2,8 @@ import ctypes
 import importlib.util
 import json
 import os
+import platform
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
@@ -107,7 +109,7 @@ class RecoveryBindingTests(unittest.TestCase):
         retainer = tools / 'nine_deck_campaign_v1.py'
         retainer.write_text('# mocked retainer; never invoked', encoding='utf-8')
         request_pin, report_pin = self.input_tuple(out)[1], self.input_tuple(out)[6]
-        plan_pin = self.save('plan.json', {'source_host': 'HALEYSPC', 'destination_host': 'DESKTOP-DJ1C40R', 'files': []})
+        plan_pin = self.save('plan.json', {'schema': 'training-speedup-independent-cold-copy-plan/v1', 'source_host': 'HALEYSPC', 'destination_host': 'DESKTOP-DJ1C40R', 'files': []})
         receipt_pin = self.save('copy.json', {'schema': 'training-speedup-independent-cold-copy/v1',
             'complete': True, 'plan': plan_pin, 'source_host': 'HALEYSPC',
             'destination_host': 'DESKTOP-DJ1C40R', 'files': []})
@@ -118,7 +120,7 @@ class RecoveryBindingTests(unittest.TestCase):
             inspection[key] = self.save(key + '.json', {})
         self.save('inspection/inspect.json', inspection)
         args = SimpleNamespace(cold_copy_receipt=receipt_pin['path'], cold_copy_sha256=receipt_pin['sha256'],
-                               launcher_root=self.root / 'launcher')
+                               launcher_root=self.root / 'launcher', recovery_mode='remote')
         campaign = SimpleNamespace(retain_block=Mock())
         original_pin = POST.pin
         def replace_raw_after_receipt_checks(path):
@@ -136,6 +138,75 @@ class RecoveryBindingTests(unittest.TestCase):
         self.assertTrue(self.native.exists())
         self.assertFalse((out / 'retained').exists())
         self.assertFalse((out / 'retain.json').exists())
+
+
+class DesktopInspectionTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'nt' and platform.node().upper() == 'DESKTOP-DJ1C40R'
+                         and Path('D:/').is_dir() and Path('E:/').is_dir(),
+                         'desktop D:/E: physical-device integration')
+    def test_local_inspect_constructs_pinned_device_plan(self):
+        # Exercise real inspect orchestration and plan construction. Workload
+        # collection, embedding calculations and allocation accounting are mocked.
+        fixture_root = Path('D:/training-speedups-20261009/helper-checks')
+        fixture_root.mkdir(parents=True, exist_ok=True)
+        device_spec = importlib.util.spec_from_file_location('desktop_devices', SOURCE.with_name('desktop_devices.py'))
+        devices = importlib.util.module_from_spec(device_spec)
+        device_spec.loader.exec_module(devices)
+        with tempfile.TemporaryDirectory(dir=fixture_root) as folder:
+            comparison = Path(folder).resolve()
+            native = comparison / 'measure/hot/matched-native'
+            cold = comparison / 'measure/cold/case'
+            dispatch = comparison / 'measure/hot/case'
+            out = comparison / 'measure/maintenance/case'
+            for directory in (native, cold, dispatch):
+                directory.mkdir(parents=True)
+            checkpoint = native / 'checkpoint.json'
+            checkpoint.write_text('{}', encoding='utf-8')
+            t1 = comparison / 't1.json'
+            t1.write_text('{}', encoding='utf-8')
+            def saved(path, data):
+                path.write_text(json.dumps(data), encoding='utf-8')
+                return POST.pin(path)
+            update_pin = saved(native / 'update.json', {'checkpoint': POST.pin(checkpoint)})
+            last_pin = saved(native / 'last.json', {'update': update_pin})
+            saved(native / 'completion.json', {'complete': True, 'completed_iterations': 162,
+                                               'iterations': [last_pin]})
+            inventory = {path.name: POST.pin(path)['sha256'] for path in native.iterdir()}
+            archive_pin = saved(comparison / 'archive.json', {'shards': [{'files': inventory}]})
+            config_pin = saved(comparison / 'config.json', {'initial_source': {'checkpoint': POST.pin(t1)}})
+            request = {'config': config_pin}
+            report = {'archive': archive_pin}
+            tools = comparison / 'launcher/python/tools'
+            tools.mkdir(parents=True)
+            for name in ('nine_deck_exposure_collector_v1.py', 'nine_deck_campaign_v1.py'):
+                (tools / name).write_text('# test fixture', encoding='utf-8')
+            summary = {'verdict': 'pass', 'checks': {'fixture': {'pass': True}},
+                       'final_checkpoint_sha256': POST.pin(checkpoint)['sha256'], 'retained_updates': [0]}
+            def collect(_campaign, _block, _native, _decks, exposure):
+                saved(exposure / 'r5-b01-exposure.json', summary)
+                return summary
+            collector = SimpleNamespace(collect=collect, embedding_gate=lambda *_: {'pass': True},
+                                        ndb=SimpleNamespace(load_decks=lambda *_: []))
+            modules = {'nine_deck_exposure_collector_v1': collector,
+                       'nine_deck_campaign_v1': SimpleNamespace()}
+            input_tuple = (comparison, {'path': 'request', 'sha256': 'request-sha'}, request,
+                           dispatch, cold, native, {'path': 'report', 'sha256': 'report-sha'}, report, out)
+            args = SimpleNamespace(recovery_mode='desktop-local', decks=t1, t1=t1,
+                                   launcher_root=comparison / 'launcher')
+            with patch.dict(sys.modules, {'desktop_devices': devices}), \
+                    patch.object(POST, 'inputs', return_value=input_tuple), \
+                    patch.object(POST.importlib, 'import_module', side_effect=modules.__getitem__), \
+                    patch.object(POST, 'physical_stats', return_value={'files': 1}):
+                POST.inspect(args)
+            inspection = json.loads((out / 'inspect.json').read_bytes())
+            plan = POST.read_pinned(inspection['recovery_copy_plan'])
+            self.assertTrue(inspection['complete'])
+            self.assertEqual(plan['schema'], 'training-speedup-independent-cold-copy-plan/v2')
+            self.assertEqual(plan['mode'], 'desktop-local')
+            self.assertEqual(plan['source_root'], str(comparison / 'measure'))
+            self.assertEqual(plan['source_device']['drive'], 'D:')
+            self.assertEqual(plan['destination_device']['drive'], 'E:')
+            self.assertNotEqual(plan['source_device']['disk_unique_id'], plan['destination_device']['disk_unique_id'])
 
 
 if __name__ == '__main__':

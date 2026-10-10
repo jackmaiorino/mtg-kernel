@@ -9,7 +9,7 @@ Manifest: {"sequential_nonoverlapping": true, "cases": [
 Each file is a path or {"path": ..., "sha256": ...}; local paths may be relative
  to --root. Explicit local files avoid remapping captured remote source paths.
 Case phases must be sequential, report-bound, and complete. Exactly dispatch,
-inspection, actual transport and retention enter complete_case_seconds.
+inspection, actual transport, retention and optional pinned late copy enter complete_case_seconds.
 Learner timings require retained_root plus this case's retained_manifest.
 Controller polling is displayed separately. Unsupported extra phases and
 explicit update_reports are rejected.
@@ -166,11 +166,11 @@ def read_case(reader, case, formal):
         require(result["child_seconds"] <= execution_time + .001, "child exceeds execution")
     if formal:
         inspect, inspect_sha = reader.json(case["inspect"])
-        retain, _ = reader.json(case["retain"])
+        retain, retain_sha = reader.json(case["retain"])
         transport, transport_sha = reader.json(case["transport"])
         require(inspect["schema"] == "training-speedup-maintenance-inspect/v1" and inspect["complete"] is True, "incomplete maintenance inspection")
         require(retain["schema"] == "training-speedup-maintenance-retain/v1" and retain["complete"] is True, "incomplete retention")
-        require(transport["schema"] == "training-speedup-independent-cold-copy/v1" and transport["complete"] is True, "incomplete actual cold-copy transport")
+        require(transport["schema"] in ("training-speedup-independent-cold-copy/v1", "training-speedup-independent-cold-copy/v2") and transport["complete"] is True, "incomplete actual cold-copy transport")
         linked(inspect["report"], report_sha, "inspection report")
         linked(retain["inspection"], inspect_sha, "retention inspection")
         linked(retain["independent_cold_copy"], transport_sha, "retention cold-copy receipt")
@@ -178,6 +178,35 @@ def read_case(reader, case, formal):
         phases = {"inspect_seconds": seconds(inspect["seconds"], "inspect", True),
                   "transport_seconds": seconds(transport["seconds"], "transport", True),
                   "retain_seconds": seconds(retain["seconds"], "retain", True)}
+        if "late_copy" in case:
+            require(isinstance(case["late_copy"], dict) and "sha256" in case["late_copy"], "explicit pinned late_copy required")
+            late, _ = reader.json(case["late_copy"])
+            require(late.get("schema") == "training-speedup-late-copy/v1" and late.get("complete") is True, "incomplete late recovery")
+            linked(late["report"], report_sha, "late recovery report")
+            linked(late["retain"], retain_sha, "late recovery retention")
+            require(late["request"] == inspect["request"], "late recovery request differs")
+            require(late["files"], "empty late recovery")
+            sources, destinations = set(), set()
+            retention_seen = False
+            for item in late["files"]:
+                source, destination = item["source"], item["destination"]
+                require(type(item["bytes"]) is int and item["bytes"] >= 0, "invalid late copied byte count")
+                require(source["sha256"] == destination["sha256"], "late destination digest differs")
+                sp, dp = captured_path(source["path"]), captured_path(destination["path"])
+                require(sp not in sources and dp not in destinations, "duplicate late recovery entry")
+                sources.add(sp); destinations.add(dp)
+                require(dp.lower().startswith("e:/training-speedups-20261009/" + late["case"].lower() + "/late/") and "/../" not in dp, "late destination outside exact case E recovery")
+                maintenance_root = captured_path(late["retain"]["path"]).rsplit("/", 1)[0]
+                desktop_root = maintenance_root.split("/measure/maintenance/")[0]
+                require(sp.startswith(maintenance_root + "/") or sp == desktop_root + "/controllers/" + late["case"] + ".json", "late source outside current case")
+                require(dp.endswith(sp[len(desktop_root):]), "late source/destination relative mapping differs")
+                source_payload, source_sha = reader.bytes(source)
+                destination_payload, destination_sha = reader.bytes(destination)
+                require(len(source_payload) == len(destination_payload) == item["bytes"] and source_sha == destination_sha, "late recovery readback differs")
+                if source == late["retain"]: retention_seen = True
+            require(retention_seen, "late copy lacks this retention receipt")
+            phases["late_copy_seconds"] = seconds(late["seconds"], "late copy", True)
+            result["late_copy_accounting"] = late.get("accounting", "Payload copy/readback; receipt self-copy excluded")
         result.update(phases)
         result["complete_case_seconds"] = dispatch_time + sum(phases.values())
         result["maintenance_stages"] = {"inspect": stage_timers(inspect), "retain": stage_timers(retain)}
@@ -268,12 +297,12 @@ def main():
     result = {"schema": "training-speedups-matched-summary/v1", "complete": True,
               "full_fingerprint_parity": True, "dispatch_comparison": compare(cases, "dispatch_seconds"),
               "complete_case_comparison": compare(cases, "complete_case_seconds"),
-              "accounting": "complete_case = dispatch + inspect + actual transport + retain. Archive/child/scheduler/learner timers are nested diagnostics and never added again. Controller polling envelope is separate.",
+              "accounting": "complete_case = dispatch + inspect + actual transport + retain + optional pinned late copy. One-time allocation reconciliation and metadata receipt self-copy overhead are separate. Archive/child/scheduler/learner timers are nested diagnostics and never added again. Controller polling envelope is separate.",
               "cases": cases, "qualifications": qualifications, "inputs": reader.inputs}
     print(json.dumps(result, indent=2, allow_nan=False))
     print("case | variant | workers/prep | dispatch s | inspect s | transfer s | retain s | complete s", file=sys.stderr)
     for c in cases:
-        print(f"{c['id']} | {c['variant']} | {c['workers']}/{c['preparation_workers']} | {c['dispatch_seconds']:.3f} | {c['inspect_seconds']:.3f} | {c['transport_seconds']:.3f} | {c['retain_seconds']:.3f} | {c['complete_case_seconds']:.3f}", file=sys.stderr)
+        print(f"{c['id']} | {c['variant']} | {c['workers']}/{c['preparation_workers']} | {c['dispatch_seconds']:.3f} | {c['inspect_seconds']:.3f} | {c['transport_seconds']:.3f} | {c['retain_seconds']:.3f} | {c.get('late_copy_seconds',0):.3f} | {c['complete_case_seconds']:.3f}", file=sys.stderr)
     for label in ("dispatch_comparison", "complete_case_comparison"):
         value = result[label]
         print(f"{label}: {value['speedup']:.4f}x, {value['percent_time_reduction']:.2f}% less time", file=sys.stderr)

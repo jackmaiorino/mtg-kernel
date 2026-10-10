@@ -1,6 +1,6 @@
 # Training speedup implementation and comparison
 
-Status: implementation verified and eight short qualifications complete.
+Status: implementation verified and 16 short qualifications complete on two PCs.
 Full-block end-to-end speedup remains unmeasured.
 
 This follows the completed [throughput audit](../training_throughput_20261009/README.md).
@@ -134,8 +134,36 @@ completed with zero errors: the full-block physical projection is
 reserve. Full blocks therefore need another placement.
 
 At 12:07 UTC both host reservations were free; Jack's D: had 322,815,766,528
-bytes free and RunPod still returned 403. The next placement is desktop
-qualification using the same frozen binaries and unchanged input pins,
-with owned D: output roots bound in new requests. No full block has launched. All 23 CI
+bytes free and RunPod still returned 403. Desktop qualification subsequently
+completed using the same frozen binaries and unchanged input pins,
+with owned D: output roots bound in new requests. All 23 CI
 checks passed at `c4e75006a1524d8bcfddd4509d83fee24be8fa09`, including the
 separate delivery review's repaired recovery/pruning checks.
+
+All eight desktop cases completed at 12:22:06 UTC. Receipt chains, all 160
+native inventory file hashes and complete training fingerprints verified;
+the fingerprint digest is identical to Haley's. The compact
+`desktop-qualification-analysis.json` records the source pins.
+
+| Workers | Baseline dispatch seconds | Candidate dispatch seconds |
+| --- | ---: | ---: |
+| 1 | 12.053 | 15.896 |
+| 2 | 10.114 | 7.654 |
+| 4 | 9.533 | 7.181 |
+| 8 | 9.312 | 7.265 |
+
+The best desktop short qualification is 1.297x faster, using eight baseline
+workers and four candidate workers on the same eight physical P cores
+(logical CPUs 0,2,4,6,8,10,12,14). This remains preliminary dispatch timing,
+not the full end-to-end speedup. The candidate's slow one-worker sample is
+preserved without a causal explanation. Both variants' measured full-block
+physical projections are below 15.67 GB and logical projections below
+29.71 GB. D: has 256.26 GB above the 60 GiB reserve. Formal requests use
+conservative 16 GiB physical and 32 GiB logical projections, a 160 GiB
+desktop allowance and 32 GiB reserved for existing Haley artifacts.
+
+No full block has launched. The remaining comparison uses balanced baseline,
+candidate, candidate, baseline order, including inspection, verified recovery
+on the separate physical E: disk and retention. Local recovery is explicit;
+the original remote mode remains available. The frozen binaries and training
+inputs are unchanged by these storage and orchestration repairs.
