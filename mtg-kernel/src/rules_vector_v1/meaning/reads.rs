@@ -215,6 +215,17 @@ pub(crate) fn effect_cond(cond: &EffectCond, env: &Env, out: &mut Collector) {
                 AggF::Characteristic,
             );
         }
+        EffectCond::TargetManaValueAtMost(slot, maximum) => {
+            // Reads the targeted object's printed mana value before it moves.
+            // Vocabulary gap: `Characteristic` carries no threshold.
+            let _ = maximum;
+            out.read(
+                RelF::ObjectController,
+                None,
+                Some(env.target_obj(*slot)),
+                AggF::Characteristic,
+            );
+        }
     }
 }
 
@@ -272,6 +283,18 @@ pub(crate) fn dynamic_value(value: DynamicValueDef, out: &mut Collector) -> AmtF
             // as an amount it is state-dependent (`Dynamic`). Vocabulary
             // gap: AmtF cannot carry the two candidate magnitudes.
             let _ = (amount_when_met, amount_otherwise);
+            AmtF::Dynamic
+        }
+        DynamicValueDef::ControlledPermanentsWithSubtype(subtype) => {
+            // Permanents the controller controls with the subtype.
+            // Vocabulary gap: ObjF has no subtype class.
+            let _ = subtype;
+            out.read(
+                RelF::You,
+                Some(ZoneF::Battlefield),
+                Some(ObjF::Permanent),
+                AggF::Count,
+            );
             AmtF::Dynamic
         }
     }

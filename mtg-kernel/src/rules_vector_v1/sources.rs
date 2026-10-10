@@ -415,6 +415,9 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         adventure,
         cant_be_blocked_by_monarchs_creatures,
         conditional_tap_yield,
+        // Cast bookkeeping for a program's `ManaSpentToCast` count, which
+        // the program's own facets already carry.
+        records_mana_spent: _,
     } = def;
 
     let mut printed = Vec::new();

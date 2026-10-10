@@ -399,6 +399,45 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
             reorder.from = Some(ZoneF::Library);
             out.effect(reorder);
         }
+        EffectOp::LookTopPickToHandBottomRest {
+            player,
+            count,
+            pick,
+            choose_rest_order,
+        } => {
+            // Private look at the top `count`; exactly `pick` of them go to
+            // hand unrevealed and the rest to the bottom, in the player's
+            // chosen order when `choose_rest_order`, else in looked-at order.
+            let player = player_ref(*player);
+            let looked = match count {
+                crate::effect::LibraryLookCount::Fixed(n) => AmtF::fixed(i64::from(*n)),
+                // The resolving spell's mana spent, frozen at cast time.
+                // Vocabulary gap: no cast-payment read; the amount is
+                // state-dependent.
+                crate::effect::LibraryLookCount::ManaSpentToCast => AmtF::Dynamic,
+            };
+            let mut look = EffectAtom::new(EvF::Look)
+                .player(player)
+                .obj(ObjF::AnyCard)
+                .amount(looked);
+            look.from = Some(ZoneF::Library);
+            out.effect(look);
+            out.control(ControlF::ChooseObjects);
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Library), ZoneF::Hand)
+                    .player(player)
+                    .obj(ObjF::AnyCard)
+                    .amount(AmtF::fixed(i64::from(*pick))),
+            );
+            if *choose_rest_order {
+                let mut reorder = EffectAtom::new(EvF::Reorder)
+                    .player(player)
+                    .obj(ObjF::AnyCard)
+                    .amount(looked);
+                reorder.from = Some(ZoneF::Library);
+                out.effect(reorder);
+            }
+        }
         _ => unreachable!("dispatched to the wrong slice"),
     }
 }
