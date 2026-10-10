@@ -701,6 +701,7 @@ pub(super) fn conflicts(
             MonarchTrigger { binding } => s.raw(binding.source.source),
             LifeLoss { .. }
             | LifeGain { .. }
+            | LifeGainTurnBeganV1 { .. }
             | ManaAdded { .. }
             | UpkeepBegan { .. }
             | CrimeCommitted { .. }
