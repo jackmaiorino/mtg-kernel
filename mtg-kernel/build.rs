@@ -9615,7 +9615,6 @@ fn subtype_variant(t: &str) -> &'static str {
         "Lizard" => "Subtype::Lizard",
         "Assembly-Worker" => "Subtype::AssemblyWorker",
         "Mite" => "Subtype::Mite",
-        "Otter" => "Subtype::Otter",
         "Sphere" => "Subtype::Sphere",
         "Town" => "Subtype::Town",
         "Golem" => "Subtype::Golem",
