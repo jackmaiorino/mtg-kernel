@@ -125,3 +125,8 @@ coverage counts.
 Vanguard Seraph, Cat Collector and 38 Plains. It resolves the candidate v63
 registry; gameplay and store-profile qualification remain required. See
 `docs/design/fdn_first_lifegain_v1.md`.
+
+`FDN_reference_graveyard_triggers.dck` is a synthetic 40-card candidate v64
+fixture for Elvish Regrower/Ambush Wolf. Serial admission follows accepted
+v63. Gameplay and generated identity/store-profile qualification are pending;
+see `docs/design/fdn_graveyard_triggers_v1.md`.

@@ -984,6 +984,19 @@ fn sun_blessed_healer_effect() -> EffectOp {
 fn double_counter_marker_effect() -> EffectOp {
     EffectOp::BindDoublePlusOneCountersToTriggerSource
 }
+
+const ELVISH_REGROWER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(elvish_regrower_effect)];
+fn elvish_regrower_effect() -> EffectOp {
+    EffectOp::MoveAllTargets {
+        to_zone: Zone::Hand,
+    }
+}
+const AMBUSH_WOLF_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(ambush_wolf_effect)];
+fn ambush_wolf_effect() -> EffectOp {
+    EffectOp::MoveAllTargets {
+        to_zone: Zone::Exile,
+    }
+}
 const DWYNEN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Attacks,
     ..etb_trigger(dwynen_attack_effect)
@@ -2811,6 +2824,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Angel of Finality" => &BOJUKA_BOG_TRIGGERS,
         "Bigfin Bouncer" => &BIGFIN_BOUNCER_TRIGGERS,
         "Rune-Scarred Demon" => &RUNE_SCARRED_DEMON_TRIGGERS,
+        "Elvish Regrower" => &ELVISH_REGROWER_TRIGGERS,
+        "Ambush Wolf" => &AMBUSH_WOLF_TRIGGERS,
         "Tatyova, Benthic Druid" => &TATYOVA_BENTHIC_DRUID_TRIGGERS,
         "Dazzling Angel" => &DAZZLING_ANGEL_TRIGGERS,
         "Clinquant Skymage" => &CLINQUANT_SKYMAGE_TRIGGERS,
@@ -2951,6 +2966,8 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
     match card.name {
         "Celestial Armor" => TargetSpec::ControlledCreature,
         "Sun-Blessed Healer" => TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(2),
+        "Elvish Regrower" => TargetSpec::PermanentCardInOwnGraveyard,
+        "Ambush Wolf" => TargetSpec::UpToOneCardInGraveyards,
         "Balustrade Spy" => TargetSpec::AnyPlayer,
         "Lotleth Giant" => TargetSpec::TargetOpponent,
         "Harrier Strix" => TargetSpec::AnyPermanent,

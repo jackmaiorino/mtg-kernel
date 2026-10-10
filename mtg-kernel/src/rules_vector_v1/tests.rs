@@ -105,7 +105,10 @@ fn event_time_programs_keep_their_owning_trigger_without_duplicate_inventory() {
 }
 
 #[test]
-#[cfg(feature = "limited-fdn-fixtures")]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn equipment_noncreature_spell_trigger_matches_the_ordinary_trigger_class() {
     let rod = atoms(&rules("Black Mage's Rod"));
     let archer = atoms(&rules("Firebrand Archer"));
@@ -231,7 +234,10 @@ fn multi_card_surveil_includes_library_reordering() {
 }
 
 #[test]
-#[cfg(feature = "limited-fdn-fixtures")]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn inkmage_threshold_static_is_extracted_from_engine_data() {
     let facts = rules("Cephalid Inkmage");
     assert!(facts.opaque_rules.is_empty());
@@ -607,6 +613,8 @@ fn power_toughness_changes_keep_their_sign() {
 /// or `event_time_trigger_programs`; token names are reached through
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
+    "Elvish Regrower",
+    "Ambush Wolf",
     "Vanguard Seraph",
     "Cat Collector",
     "Cephalid Inkmage",
