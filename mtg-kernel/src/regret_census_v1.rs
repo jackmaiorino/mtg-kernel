@@ -22,6 +22,7 @@ use std::sync::Mutex;
 
 mod duel;
 mod search;
+mod stage4a;
 mod validity;
 
 const MAX_PHYSICAL: u64 = 4096;
@@ -1045,6 +1046,9 @@ fn load_policy_v1(path: &str) -> Result<FrozenPlayPolicyV1, String> {
 
 pub fn run_v1(cfg: CensusConfigV1) -> Result<(), String> {
     let policy = load_policy_v1(&cfg.source)?;
+    if stage4a::is_mode(&cfg.mode) {
+        return stage4a::run(&cfg, &policy);
+    }
     let reference = match std::env::var("REF_SOURCE") {
         Ok(path) => load_policy_v1(&path)?,
         Err(_) => policy.fork_for_collection_v3()?,

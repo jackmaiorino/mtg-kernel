@@ -47,9 +47,13 @@ pub mod card_def;
 pub mod combat_damage_v1;
 pub(crate) mod continuous_characteristics_v1;
 pub mod legend_rule_v1;
+pub mod native_search_collection_v3;
+pub mod native_search_trajectory_v3;
 pub mod planeswalker_v1;
 #[cfg(feature = "standard-magezero-fixtures")]
 pub mod standard_keywords_v1;
+#[cfg(feature = "standard-magezero-fixtures")]
+pub(crate) mod standard_statics_v1;
 // Fail-closed canonical JSON codec shared by the native training store's
 // records. Schema validation remains a separate layer.
 pub mod canonical_json_v1;
@@ -154,6 +158,8 @@ pub(crate) mod native_flat_cpu_reference_v1;
 pub(crate) mod deterministic_math_v1;
 // Auditable CPU inference reference for Python kernel-policy-value-net-8;
 // deliberately not a production or performance backend.
+#[cfg(feature = "gameplay-checkpoint-reconstruction-v1")]
+pub mod gameplay_checkpoint_reconstruction_v1;
 #[allow(dead_code)]
 pub(crate) mod native_policy_value_net_v1;
 #[cfg(feature = "saved-input-scalar-diagnostic")]
@@ -465,6 +471,8 @@ pub const KERNEL_VERSION: &str = "0.0.4-spike";
 
 pub mod public_cost_features_v1;
 pub(crate) mod public_stack_features_v1;
+/// Engine-derived per-card rules features (no names or registry labels).
+pub mod rules_vector_v1;
 
 /// Runs the opt-in production-parameter Burn/CUDA diagnostic. This surface is
 /// intentionally hidden from normal documentation and absent from normal

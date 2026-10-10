@@ -2,12 +2,37 @@
 import copy
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
+import re
+import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
 import native_expanded_dispatch_v1 as dispatch
+
+LINUX = sys.platform.startswith("linux")
+
+
+def lease_guard_files(folder, pod="testpod", now=None, **guard):
+    """A valid lease (lease_guard.validate) and a fresh unlatched guard.json for it."""
+    now = time.time() if now is None else now
+    lease = {"schema": "phase1-cloud-lease/v1", "name": "nine-deck-test", "network_volume_id": "volume",
+             "created_epoch": now - 600, "deadline_epoch": now - 600 + 4 * 3600, "increment_cap_usd": 10,
+             "total_cap_usd": 100, "prior_conservative_usd": 0, "rate_ceiling_usd_hour": 1.0,
+             "storage_usd_hour": 0.1, "postrun_storage_reserve_usd": 0.5, "recovery_reserve_usd": 0.5,
+             "funded_balance_usd": 50, "safety_multiplier": 1.25, "startup_idle_seconds": 900,
+             "work_idle_seconds": 300, "recovery_seconds": 600, "poll_seconds": 30}
+    status = {"reason": None, "funds_verified": True, "allow_new_dispatch": True, "funding_alert": None,
+              "pod_id": pod, "name": lease["name"], "epoch": now, "pid": os.getpid(), "provider_verified": True,
+              "provider_ok": True, "highest_rate_usd_hour": 1.0, "latched": None, "release_epoch": None} | guard
+    Path(folder).mkdir(parents=True, exist_ok=True)
+    (Path(folder) / "lease.json").write_text(json.dumps(lease), encoding="utf-8")
+    (Path(folder) / "guard.json").write_text(json.dumps(status), encoding="utf-8")
+    return lease
 
 
 class NativeExpandedAdmissionTests(unittest.TestCase):
@@ -167,6 +192,26 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "192 GiB"):
                 dispatch.validate_storage(storage)
 
+    def test_storage_walk_counts_a_file_deleted_mid_walk_as_freed(self):
+        # Another job sharing the accounting root removes its outputs between is_file and stat.
+        storage = self.request(2)["storage"]
+        doomed = self.root/"sibling/native/raced-episode.json"
+        doomed.parent.mkdir(parents=True)
+        doomed.write_bytes(b"x" * 4096)
+        is_file = Path.is_file
+
+        def racing_is_file(path, *args, **kwargs):
+            answer = is_file(path, *args, **kwargs)
+            if path.name == doomed.name and answer:  # the walk sees resolved paths
+                path.unlink()
+            return answer
+
+        with patch.object(dispatch.shutil, "disk_usage", return_value=type("Disk", (), {"free": 100*1024**3})()):
+            with patch.object(Path, "is_file", racing_is_file):
+                raced = dispatch.validate_storage(storage, 0)["logical_bytes"]
+            self.assertFalse(doomed.exists())
+            self.assertEqual(raced, dispatch.validate_storage(storage, 0)["logical_bytes"])
+
     def test_evaluation_serial_payload_has_no_parallel_field(self):
         config = {"mode": "collect_parallel", "workers": 4, "source": {},
                   "output_directory": str(self.root/"evaluation"),
@@ -210,6 +255,77 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "changed pinned"):
             resolver(captured)
 
+    def checkpoint_source(self, values):
+        return {"play_import": "fixed", "checkpoint": self.save({
+            "schema": "checkpoint/v1", "source_import": "fixed-import", "feature_contract_digest": "a",
+            "feature_encoding_digest": "b", "card_db_hash": "c",
+            "parameters": [{"name": "weight", "shape": [2], "values": values}]})}
+
+    def test_permuted_units_family_binds_episode_multiset_and_layout(self):
+        block = copy.deepcopy(self.config)
+        block["initial_source"] = self.checkpoint_source([1, 2])
+        for index, update in enumerate(block["iterations"]):
+            update["episodes"].append({"episode": {"id": f"second-{index}", "seed": 5000 + index, "learner_seat": 1,
+                                       "registered": ["deck-b", f"deck-{index % 3}"]}, "opponent": "initial"})
+        later = copy.deepcopy(block)
+        later["initial_source"] = self.checkpoint_source([7, 9])
+        later["iterations"].reverse()
+        for update in later["iterations"]:
+            update["episodes"].reverse()
+        family = "permuted-units-v1"
+        self.assertEqual(dispatch.workload(block, "training", family=family),
+                         dispatch.workload(later, "training", family=family))
+        self.assertNotEqual(dispatch.workload(block, "training"), dispatch.workload(later, "training"))
+        moved = copy.deepcopy(block)
+        moved["iterations"][0]["episodes"].append(moved["iterations"][1]["episodes"].pop())
+        self.assertNotEqual(dispatch.workload(block, "training", family=family),
+                            dispatch.workload(moved, "training", family=family))
+        changed = copy.deepcopy(block)
+        changed["iterations"][3]["episodes"][1]["opponent"] = "current"
+        self.assertNotEqual(dispatch.workload(block, "training", family=family),
+                            dispatch.workload(changed, "training", family=family))
+        for key, value in (("learning_rate", .001), ("max_non_natural_episode_fraction", .1)):
+            changed = copy.deepcopy(block); changed[key] = value
+            self.assertNotEqual(dispatch.workload(block, "training", family=family),
+                                dispatch.workload(changed, "training", family=family))
+        with self.assertRaisesRegex(ValueError, "training only"):
+            dispatch.workload({"mode": "collect", "source": {}, "episodes": [], "output_directory": "x"},
+                              "evaluation", family=family)
+        with self.assertRaisesRegex(ValueError, "unknown schedule family"):
+            dispatch.workload(block, "training", family="other")
+
+    def test_non_natural_tolerance_must_be_declared(self):
+        self.config["max_non_natural_episode_fraction"] = 0.2
+        request = self.request(1)
+        # The request names the desktop: run its host checks on any test host.
+        with patch.object(dispatch, "validate_storage"), patch.object(dispatch, "WINDOWS", True), \
+                patch.object(dispatch.platform, "node", return_value=dispatch.HOSTS["desktop"]):
+            with self.assertRaisesRegex(ValueError, "declared"):
+                dispatch.validate_request(request, True)
+            request["non_natural_tolerance"] = 0.1
+            with self.assertRaisesRegex(ValueError, "declared"):
+                dispatch.validate_request(request, True)
+            request["non_natural_tolerance"] = 0.2
+            dispatch.validate_request(request, True)
+            request["schedule_family"] = "unknown"
+            with self.assertRaisesRegex(ValueError, "schedule family"):
+                dispatch.validate_request(request, True)
+
+    def test_tolerant_ledger_enters_fingerprint_and_is_refused_otherwise(self):
+        trajectory = self.save({"terminal": {"terminal_classification": "natural"}})
+        ledger = self.save({"schema": "mtg-kernel-non-natural-collection-ledger/v1",
+                            "entries": [{"slot": 0, "attempt": 1}]})
+        collection = self.save({"complete": True, "trajectories": [trajectory], "non_natural_ledger": ledger})
+        with self.assertRaisesRegex(ValueError, "non-natural collection attempt"):
+            dispatch.collection_fingerprint(collection, 1)
+        ledgers = []
+        self.assertEqual(dispatch.collection_fingerprint(collection, 1, ledgers=ledgers), [trajectory["sha256"]])
+        self.assertEqual(ledgers, [ledger["sha256"]])
+        bad = self.save({"complete": True, "trajectories": [trajectory], "non_natural_ledger": self.save(
+            {"schema": "mtg-kernel-non-natural-collection-ledger/v1", "entries": [{"slot": 3, "attempt": 1}]})})
+        with self.assertRaisesRegex(ValueError, "invalid non-natural ledger"):
+            dispatch.collection_fingerprint(bad, 1, ledgers=[])
+
     def test_storage_projection_preserves_future_volume_reserve(self):
         storage = self.request(2)["storage"]
         free = dispatch.DISK_RESERVE_BYTES + 999
@@ -218,6 +334,208 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
                 dispatch.validate_storage(storage)
             # Periodic actual-use checks do not charge the original projection twice.
             dispatch.validate_storage(storage, extra=0)
+
+    # ---------------------------------------------------------------- Linux and runpod
+
+    def linux_runtime(self, libraries=None):
+        libraries = libraries or {name: {"path": "/usr/lib/x86_64-linux-gnu/" + name, "sha256": str(i) * 64}
+                                  for i, name in enumerate(dispatch.LIBRARIES)}
+        return {**copy.deepcopy(self.runtime), "platform": dispatch.PLATFORM, "libraries": libraries}
+
+    def test_libraries_are_the_runtime_observation_set(self):
+        dispatch.lease_guard()  # puts phase1_cloud on the import path
+        import runtime_observation
+        self.assertEqual(dispatch.LIBRARIES, runtime_observation.LIBRARIES)
+
+    def test_linux_runtime_identity_pins_libraries_and_never_matches_windows(self):
+        windows, linux = self.runtime, self.linux_runtime()
+        self.assertEqual(dispatch.runtime_identity(windows), {"engine_commit": "a" * 40,
+                         "tracked_tree_sha256": "b" * 64, "binary_sha256": windows["binary"]["sha256"]})
+        identity = dispatch.runtime_identity(linux)
+        self.assertEqual(identity["platform"], "linux-x86_64")
+        self.assertEqual(identity["library_sha256"]["libm.so.6"], "2" * 64)
+        self.assertNotEqual(identity, dispatch.runtime_identity(windows))
+        moved = copy.deepcopy(linux); moved["libraries"]["libm.so.6"]["path"] = "/lib64/libm.so.6"
+        self.assertEqual(dispatch.runtime_identity(moved), identity)
+        changed = copy.deepcopy(linux); changed["libraries"]["libm.so.6"]["sha256"] = "f" * 64
+        self.assertNotEqual(dispatch.runtime_identity(changed), identity)
+        partial = copy.deepcopy(linux); del partial["libraries"]["libgcc_s.so.1"]
+        with self.assertRaisesRegex(ValueError, "libgcc_s pins"):
+            dispatch.runtime_for({"runtime": self.save(partial)})
+
+    def test_linux_and_windows_qualifications_are_never_compatible(self):
+        windows = self.runtime
+        for trials, launch in ((self.linux_runtime(), windows), (windows, self.linux_runtime())):
+            self.runtime = trials
+            choice, request = self.choice(), self.request(2)
+            with patch.object(dispatch, "validate_request", return_value=(self.config, launch)), \
+                    self.assertRaisesRegex(ValueError, "qualification runtime differs"):
+                dispatch.require_choice(self.save(choice), request, verify_outputs=True)
+            with patch.object(dispatch, "validate_request", return_value=(self.config, trials)):
+                dispatch.require_choice(self.save(choice), request, verify_outputs=True)
+
+    def test_runpod_is_an_admissible_inventory_placement(self):
+        choice = self.choice()
+        for host in ("desktop", "runpod"):
+            choice["inventory"][host]["eligible"] = host == "runpod"
+        for entry in choice["qualifications"]:
+            report = dispatch.read(entry["path"]); original = dispatch.read(report["request"]["path"])
+            original["placement"]["host"] = report["placement"]["host"] = "runpod"
+            report["request"] = self.save(original); entry.update(self.save(report))
+        choice["selected"][dispatch.workload(self.config, "training")] = choice["qualifications"][1]
+        request = self.request(2); request["placement"]["host"] = "runpod"
+        with patch.object(dispatch, "validate_request", return_value=(self.config, self.runtime)):
+            self.assertEqual(dispatch.require_choice(self.save(choice), request, verify_outputs=True)["qualification"],
+                             choice["qualifications"][1])
+
+    @unittest.skipUnless(LINUX, "Linux runtime checks")
+    def test_linux_runtime_runs_only_on_linux_with_verified_pins_and_clean_loader(self):
+        files = {name: self.save({"library": name}, self.root / "lib" / name) for name in dispatch.LIBRARIES}
+        linux = self.linux_runtime(files)
+        with patch.dict(os.environ, {}, clear=False):
+            for name in [n for n in os.environ if n.startswith("LD_") or n == "GLIBC_TUNABLES"]:
+                os.environ.pop(name)
+            dispatch.host_runtime(linux)
+            with self.assertRaisesRegex(ValueError, "platform differs"):
+                dispatch.host_runtime(self.runtime)
+            with patch.object(dispatch, "WINDOWS", True), self.assertRaisesRegex(ValueError, "platform differs"):
+                dispatch.host_runtime(linux)
+            with patch.object(dispatch.platform, "machine", return_value="aarch64"), \
+                    self.assertRaisesRegex(ValueError, "platform differs"):
+                dispatch.host_runtime(linux)
+            with patch.dict(os.environ, {"LD_PRELOAD": "/tmp/interposer.so"}), \
+                    self.assertRaisesRegex(ValueError, "loader environment"):
+                dispatch.host_runtime(linux)
+            (self.root / "lib" / "libm.so.6").write_text("other libm")
+            with self.assertRaisesRegex(ValueError, "changed pinned input"):
+                dispatch.host_runtime(linux)
+
+    @unittest.skipUnless(LINUX, "symlinked library layout and /proc maps")
+    def test_mapped_libraries_must_resolve_to_their_pins(self):
+        real, link = self.root / "usr" / "lib", self.root / "lib"
+        real.mkdir(parents=True); link.mkdir()
+        libraries = {}
+        for name in dispatch.LIBRARIES:
+            target = real / ("libm-2.31.so" if name == "libm.so.6" else name)  # also an older soname layout
+            target.write_text(name)
+            (link / name).symlink_to(target)
+            libraries[name] = {"path": str(link / name), "sha256": "0" * 64}
+        runtime = self.linux_runtime(libraries)
+        maps = self.root / "proc" / "4242" / "maps"; maps.parent.mkdir(parents=True)
+        child = type("Child", (), {"pid": 4242, "poll": lambda self: None})()
+        def mapping(paths):
+            maps.write_text("".join(f"7f0000{i:04x}000-7f0000{i:04x}fff r-xp 00000000 08:01 {i} {path}\n"
+                                    for i, path in enumerate(paths)) + "7ffd0000-7ffd1000 r-xp 0 0 0 [vdso]\n")
+        resolved = [str(real / ("libm-2.31.so" if n == "libm.so.6" else n)) for n in dispatch.LIBRARIES]
+        with patch.object(dispatch, "PROC", self.root / "proc"):
+            mapping(resolved + [str(self.root / "binary")])
+            self.assertEqual(set(dispatch.require_mapped_libraries(child, runtime)), set(dispatch.LIBRARIES))
+            (self.root / "elsewhere").mkdir(); (self.root / "elsewhere" / "libm.so.6").write_text("other")
+            mapping(resolved + [str(self.root / "elsewhere" / "libm.so.6")])
+            with self.assertRaisesRegex(ValueError, "differs from its pin"):
+                dispatch.require_mapped_libraries(child, runtime)
+            mapping([path + " (deleted)" if path.endswith("libc.so.6") else path for path in resolved])
+            with self.assertRaisesRegex(ValueError, "differs from its pin"):
+                dispatch.require_mapped_libraries(child, runtime)
+            mapping([path for path in resolved if not path.endswith("libgcc_s.so.1")])
+            with self.assertRaisesRegex(ValueError, "not mapped"):
+                dispatch.require_mapped_libraries(child, runtime, timeout=0.05)
+            exited = type("Child", (), {"pid": 4242, "poll": lambda self: 0})()
+            with self.assertRaisesRegex(ValueError, "not mapped"):
+                dispatch.require_mapped_libraries(exited, runtime)
+
+    @unittest.skipUnless(LINUX, "Linux process telemetry and affinity")
+    def test_linux_telemetry_keeps_windows_fields_and_affinity_binds(self):
+        child = subprocess.Popen([sys.executable, "-c", "import time; x = bytearray(1 << 24); time.sleep(30)"])
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        time.sleep(0.3)
+        sample = dispatch.process_sample(child)
+        self.assertEqual(set(sample), {"at_unix", "pid", "rss_bytes", "cpu_seconds"})
+        self.assertEqual(sample["pid"], child.pid)
+        self.assertGreater(sample["rss_bytes"], 1 << 24)
+        self.assertGreaterEqual(sample["cpu_seconds"], 0)
+        with patch.object(dispatch.os, "sched_setaffinity") as bind, \
+                patch.object(dispatch.os, "sched_getaffinity", return_value={0, 1}):
+            dispatch.set_affinity([0, 1])
+            bind.assert_called_once_with(0, [0, 1])
+            with self.assertRaisesRegex(ValueError, "cannot bind"):
+                dispatch.set_affinity([0, 1, 2])
+
+    def test_placement_host_rules(self):
+        request = self.request(1)
+        request["placement"]["host"] = "aws"
+        with self.assertRaisesRegex(ValueError, "no paid or unknown placement"):
+            dispatch.require_host(request)
+        for host in ("desktop", "computehost"):
+            request["placement"]["host"] = host
+            with patch.object(dispatch, "WINDOWS", False), patch.dict(os.environ, {"RUNPOD_POD_ID": "testpod"}), \
+                    patch.object(dispatch.platform, "node", return_value=dispatch.HOSTS[host]), \
+                    self.assertRaisesRegex(ValueError, "wrong target host"):
+                dispatch.require_host(request)
+        request["placement"]["host"] = "desktop"
+        with patch.object(dispatch, "WINDOWS", True), \
+                patch.object(dispatch.platform, "node", return_value=dispatch.HOSTS["desktop"]):
+            dispatch.require_host(request)
+            request["placement"]["host"] = "computehost"
+            with self.assertRaisesRegex(ValueError, "wrong target host"):
+                dispatch.require_host(request)
+        request["placement"]["host"] = "runpod"
+        with patch.object(dispatch, "WINDOWS", True), self.assertRaisesRegex(ValueError, "lease guard"):
+            dispatch.require_host(request)
+        with patch.object(dispatch, "runpod_lease") as lease:
+            for extra, expected in (({}, 1000), ({"lease_work_seconds": 300}, 300),
+                                    ({"lease_work_seconds": 5000}, 1000)):
+                dispatch.require_host({**request, **extra})
+                lease.assert_called_with(expected)
+
+    @unittest.skipUnless(LINUX, "runpod placements exist only on Linux")
+    def test_runpod_needs_this_pods_fresh_unlatched_guard_and_lease_time(self):
+        folder, now = self.root / "guard", time.time()
+        lease = lease_guard_files(folder, now=now)
+        available = lease["deadline_epoch"] - lease["recovery_seconds"] - now
+        env = {"RUNPOD_POD_ID": "testpod", dispatch.LEASE_GUARD_ENV: str(folder)}
+        with patch.dict(os.environ, env):
+            result = dispatch.runpod_lease(3600, now=now)
+            self.assertEqual((result["pod_id"], result["available_seconds"]), ("testpod", available))
+            with self.assertRaisesRegex(ValueError, "lease time exhausted"):
+                dispatch.runpod_lease(available + 1, now=now)
+            with self.assertRaisesRegex(ValueError, "lease guard is stale"):
+                dispatch.runpod_lease(60, now=now + 3 * lease["poll_seconds"] + 31)
+            with patch.object(dispatch, "WINDOWS", True), self.assertRaisesRegex(ValueError, "lease guard"):
+                dispatch.runpod_lease(60, now=now)
+            (folder / "stop-request.json").write_text("{}")
+            with self.assertRaisesRegex(ValueError, "stopped new work"):
+                dispatch.runpod_lease(60, now=now)
+            (folder / "stop-request.json").unlink()
+            for guard in ({"latched": "native_work_stalled_or_idle"}, {"release_epoch": now + 600},
+                          {"provider_ok": False}, {"allow_new_dispatch": False}):
+                lease_guard_files(folder, now=now, **guard)
+                with self.assertRaisesRegex(ValueError, "stopped new work"):
+                    dispatch.runpod_lease(60, now=now)
+            lease_guard_files(folder, pod="otherpod", now=now)
+            with self.assertRaisesRegex(ValueError, "another pod"):
+                dispatch.runpod_lease(60, now=now)
+            lease_guard_files(folder, now=now)
+            lease["deadline_epoch"] = lease["created_epoch"] + 9 * 3600
+            (folder / "lease.json").write_text(json.dumps(lease))
+            with self.assertRaisesRegex(ValueError, "eight hours"):
+                dispatch.runpod_lease(60, now=now)
+        with patch.dict(os.environ, {dispatch.LEASE_GUARD_ENV: str(folder)}):
+            os.environ.pop("RUNPOD_POD_ID", None)
+            with self.assertRaisesRegex(ValueError, "lease guard"):
+                dispatch.runpod_lease(60, now=now)
+
+    def test_busy_pattern_is_unchanged_on_windows_and_names_the_linux_binary(self):
+        with patch.object(dispatch, "WINDOWS", True):
+            self.assertEqual(dispatch.busy_pattern("C:/bin/trainer.exe"),
+                             r"native_expanded_training|expanded_deck_training|cargo|rustc|trainer\.exe")
+        with patch.object(dispatch, "WINDOWS", False):
+            pattern = re.compile(dispatch.busy_pattern("/opt/bin/nine.deck-trainer"), re.IGNORECASE)
+        for name in ("nine.deck-trainer", "trainer", "trainer.exe", "native_expanded_training_run_v1", "cargo"):
+            self.assertTrue(pattern.search(name), name)
+        for name in ("python3.13", "trainer2", "nineXdeck-trainer"):
+            self.assertFalse(pattern.search(name), name)
 
 
 if __name__ == "__main__":

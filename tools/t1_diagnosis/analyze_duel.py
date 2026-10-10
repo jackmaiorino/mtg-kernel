@@ -3,6 +3,16 @@ fixed reference policy on game-index-paired seeds. Reports win rate per
 candidate and opponent deck, paired differences against a baseline run with a
 game-level bootstrap, and how the pilot used tracked cards.
 
+Spy combo (pilot deck Spy), per game, from the `combo|...` target keys, which
+count forced targets too:
+- dread_return_reach: the pilot chose a Dread Return target (cast it) at least
+  once;
+- combo_joint: in the same game the pilot aimed Balustrade Spy at itself and
+  chose Lotleth Giant as a Dread Return target;
+- spy_self_share: self targets over all of the pilot's Balustrade Spy targets.
+These are unconditional rates over all games, not rates given that a decision
+was reached.
+
 Usage: python analyze_duel.py BASELINE.jsonl CANDIDATE.jsonl [...]
 """
 from __future__ import annotations
@@ -40,8 +50,16 @@ def behaviour(rows):
     c = collections.Counter()
     for r in rows.values():
         k = r["counts"]
+        combo = [key.split("|")[1:3] for key in k if key.startswith("combo|")]
+        dread_targets = {t for kind, t in combo if kind == "dread_return_target"}
+        spy_self = ["spy_target", "self"] in combo
+        c["dread_return_reach"] += bool(dread_targets)
+        c["combo_joint"] += spy_self and "Lotleth Giant" in dread_targets
         for key, v in k.items():
             parts = key.split("|")
+            if parts[0] == "combo" and parts[1] == "spy_target":
+                c["spy_targets"] += v
+                c["spy_self_targets"] += v if parts[2] == "self" else 0
             if parts[0] == "Prismatic Strands" and parts[1] == "cast_spell":
                 c["strands_cast"] += v
                 if parts[3] == "opp" and parts[2] in COMBAT:
@@ -73,6 +91,8 @@ def behaviour(rows):
     out = {k: v / n for k, v in sorted(c.items())}
     if c["gate_colour_choices"]:
         out["gate_colour_useful_share"] = c["gate_colour_useful"] / c["gate_colour_choices"]
+    if c["spy_targets"]:
+        out["spy_self_share"] = c["spy_self_targets"] / c["spy_targets"]
     if c["strands_colour_choices"]:
         out["strands_colour_match_share"] = (
             c["strands_colour_matches_opponent"] / c["strands_colour_choices"]

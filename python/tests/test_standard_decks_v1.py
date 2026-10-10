@@ -13,8 +13,16 @@ import limited_decks_v1 as limited
 STANDARD = REPO_ROOT / "data/standard/magezero_v1"
 # Each Standard card batch extends this list with the deck cards it supports.
 SUPPORTED_NONBASIC = {
-    "Burst Lightning", "Duress", "Llanowar Elves", "Spell Pierce", "Tolarian Terror",
-    "Voldaren Epicure",
+    "Adeline, Resplendent Cathar", "Ascendant Packleader", "Bloodletter of Aclazotz",
+    "Burst Lightning", "Cenote Scout", "Consider", "Coppercoat Vanguard", "Deep-Cavern Bat",
+    "Destroy Evil", "Dissipate", "Duress",
+    "Fading Hope", "Flow of Knowledge", "Gatekeeper of Malakir", "Get Lost",
+    "Hard-Hitting Question", "Hired Claw", "Hullbreaker Horror", "Impulse",
+    "Lightning Strike", "Llanowar Elves", "Negate", "Novice Inspector", "Opt",
+    "Razorkin Needlehead", "Sentinel of the Nameless City",
+    "Shock", "Shoot the Sheriff", "Spell Pierce",
+    "Thirst for Discovery", "Tolarian Terror",
+    "Unstoppable Slasher", "Voldaren Epicure", "Warden of the Inner Sky",
 }
 
 
@@ -35,6 +43,7 @@ class StandardDeckTest(unittest.TestCase):
     def test_extension_follows_the_pauper_prefix_without_fdn(self) -> None:
         self.assertEqual(self.registry["Plains"].card_id, 192)
         self.assertEqual(self.registry["Burst Lightning"].card_id, 193)
+        self.assertEqual(self.registry["Get Lost"].card_id, 208)
         self.assertNotIn("Dwynen, Gilt-Leaf Daen", self.registry)
 
     def test_pool_is_sixteen_unsideboarded_decks(self) -> None:
@@ -59,6 +68,28 @@ class StandardDeckTest(unittest.TestCase):
     def test_unsupported_deck_is_refused(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported mainboard"):
             limited.resolve_mainboard(self.decks["Standard-MonoR"], self.registry)
+
+    def test_memory_deluge_partial_card_is_refused(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported mainboard"):
+            limited.resolve_mainboard(limited.parse_dck("39 Island\n1 Memory Deluge"), self.registry)
+
+    def test_recruitment_officer_partial_card_is_refused(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported mainboard"):
+            limited.resolve_mainboard(
+                limited.parse_dck("39 Plains\n1 Recruitment Officer"), self.registry
+            )
+
+    def test_incomplete_family_g_cards_are_refused(self) -> None:
+        for name in (
+            "Evolving Adaptive",
+            "Extraction Specialist",
+            "Haughty Djinn",
+            "Quirion Beastcaller",
+            "Sharp-Eyed Rookie",
+            "Thalia, Guardian of Thraben",
+        ):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "unsupported mainboard"):
+                limited.resolve_mainboard(limited.parse_dck(f"39 Plains\n1 {name}"), self.registry)
 
 
 if __name__ == "__main__":
