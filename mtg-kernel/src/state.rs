@@ -1515,6 +1515,25 @@ pub enum DayNightV1 {
     Night,
 }
 
+/// Exact history anchor for the opt-in first-life-gain trigger family.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LifeGainTurnV1 {
+    pub turn: u32,
+    pub active_player: PlayerId,
+    pub history_index: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub captures: Vec<FirstLifeGainCaptureV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FirstLifeGainCaptureV1 {
+    pub gain_history_index: usize,
+    pub ability_index: u16,
+    pub pending: crate::trigger::PendingTrigger,
+}
+
 /// `Hash` is manual (see the `impl Hash for GameState` block below this
 /// struct): it must reproduce the exact pre-existing field-hash sequence for
 /// a legacy P0-first state, the same discipline `starting_player`'s serde
@@ -1614,6 +1633,9 @@ pub struct GameState {
     /// Absent until some player first descends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub descended_v1: Option<DescendedTurnV1>,
+    /// Engine-only history. Absence preserves historical bytes and hashes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub life_gain_turn_v1: Option<LifeGainTurnV1>,
 }
 
 /// Which players lost life during one turn (Hired Claw: "only if an
@@ -1728,6 +1750,10 @@ impl Hash for GameState {
         if let Some(descended) = &self.descended_v1 {
             "descended-v1".hash(state);
             descended.hash(state);
+        }
+        if let Some(history) = &self.life_gain_turn_v1 {
+            "life-gain-turn-v1".hash(state);
+            history.hash(state);
         }
     }
 }
@@ -1873,7 +1899,7 @@ impl GameState {
         let mut player1 = PlayerState::new(STARTING_LIFE);
         player1.library = library1;
 
-        GameState {
+        let mut state = GameState {
             objects,
             players: [player0, player1],
             turn: 1,
@@ -1905,7 +1931,10 @@ impl GameState {
             speed_v1: None,
             day_night_v1: None,
             descended_v1: None,
-        }
+            life_gain_turn_v1: None,
+        };
+        crate::life_gain_turn_v1::initialize_for_pool(&mut state);
+        state
     }
 
     /// Removes the top card of `player`'s library and puts it in hand.

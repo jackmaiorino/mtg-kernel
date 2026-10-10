@@ -1,0 +1,596 @@
+//! Source preparation for the serial v63 first-life-gain card batch.
+#![cfg(feature = "limited-fdn-fixtures")]
+
+use mtg_kernel::card_def::{card_id_by_name, CardCapability, Keywords, Subtype, CARD_DEFS};
+use mtg_kernel::engine::{self, Action, Decision, UnsupportedMechanic};
+use mtg_kernel::event::{self, ProposedEvent};
+use mtg_kernel::ids::{ObjectId, PlayerId};
+use mtg_kernel::mana::ManaColor;
+use mtg_kernel::policy_surface_v5::PolicySurfaceV5;
+use mtg_kernel::rl::{observe_policy_v6, observe_v2};
+use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
+use mtg_kernel::surface_v2::HarnessSurfaceV2;
+use mtg_kernel::trigger::{self, PendingTrigger};
+
+fn ready(active: PlayerId) -> GameState {
+    let plains = card_id_by_name("Plains").unwrap();
+    let mut library = vec![plains; 38];
+    library.extend([
+        card_id_by_name("Vanguard Seraph").unwrap(),
+        card_id_by_name("Cat Collector").unwrap(),
+    ]);
+    let mut state = GameState::new_from_libraries_with_starting_player_v1(
+        &library,
+        &library,
+        |id| CARD_DEFS[id as usize].name.into(),
+        630,
+        active,
+    );
+    state.step = Step::Main1;
+    assert!(state.life_gain_turn_v1.is_some());
+    state
+}
+
+fn put(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -> ObjectId {
+    let card_def = card_id_by_name(name).unwrap();
+    let id = state.objects.push(GameObject {
+        card_def,
+        name: name.into(),
+        owner: player,
+        controller: player,
+        zone,
+        tapped: false,
+        summoning_sick: false,
+        damage: 0,
+        counters: Default::default(),
+        attachments: Vec::new(),
+        v4: ObjectStateV4::from_card_def(card_def),
+        spell_copy_origin: None,
+        plotted_turn: None,
+        zone_change_count: 0,
+    });
+    match zone {
+        Zone::Battlefield => state.players[player.index()].battlefield.push(id),
+        Zone::Hand => state.players[player.index()].hand.push(id),
+        _ => panic!("helper zone"),
+    }
+    id
+}
+
+fn gain(state: &mut GameState, player: PlayerId, amount: i32) {
+    event::propose_and_commit(state, ProposedEvent::life_gain(player, amount));
+}
+
+fn move_to(state: &mut GameState, source: ObjectId, zone: Zone) {
+    event::propose_and_commit(state, ProposedEvent::zone_change(source, zone));
+}
+
+fn collected(state: &mut GameState) -> Vec<PendingTrigger> {
+    let pending = trigger::collect_and_process(state);
+    assert!(state.engine.halted.is_none());
+    pending
+}
+
+fn queue(state: &mut GameState) {
+    let pending = collected(state);
+    state.engine.pending_triggers.extend(pending);
+}
+
+fn next(state: &mut GameState) -> Decision {
+    let decision = engine::advance_until_decision(state);
+    assert!(!matches!(decision, Decision::Halted { .. }), "{decision:?}");
+    decision
+}
+
+fn settle(state: &mut GameState) {
+    for _ in 0..100 {
+        let action = match next(state) {
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => return,
+            Decision::CastSpellOrPass { .. } => Action::Pass,
+            Decision::OrderTriggers { pending, .. } => {
+                Action::OrderTriggers((0..pending.len()).collect())
+            }
+            Decision::ChooseEffectTargets {
+                can_finish: true, ..
+            } => Action::FinishEffectSelection,
+            Decision::ChooseEffectOption {
+                option_count: 2, ..
+            } => Action::ChooseEffectOption(0),
+            other => panic!("unexpected decision {other:?}"),
+        };
+        engine::step(state, action).unwrap();
+    }
+    panic!("trigger resolution did not settle");
+}
+
+#[test]
+fn first_lifegain_definitions_append_and_preserve_printed_characteristics() {
+    let seraph_id = card_id_by_name("Vanguard Seraph").unwrap();
+    let collector_id = card_id_by_name("Cat Collector").unwrap();
+    assert_eq!(seraph_id, 332);
+    assert_eq!(collector_id, 333);
+    let seraph = &CARD_DEFS[seraph_id as usize];
+    let collector = &CARD_DEFS[collector_id as usize];
+    for definition in [seraph, collector] {
+        assert_eq!(definition.capability, CardCapability::Full);
+    }
+    assert_eq!(
+        (seraph.mana_value, seraph.power, seraph.toughness),
+        (4, Some(3), Some(3))
+    );
+    assert_eq!(seraph.subtypes, &[Subtype::Angel, Subtype::Warrior]);
+    assert!(seraph.keywords.has(Keywords::FLYING));
+    assert_eq!(
+        (collector.mana_value, collector.power, collector.toughness),
+        (3, Some(3), Some(2))
+    );
+    assert_eq!(collector.subtypes, &[Subtype::Human, Subtype::Citizen]);
+    let cat = &CARD_DEFS[card_id_by_name("Cat Token").unwrap() as usize];
+    assert_eq!((cat.power, cat.toughness), (Some(1), Some(1)));
+    assert_eq!(cat.subtypes, &[Subtype::Cat]);
+    assert_eq!(cat.colors, &[ManaColor::W]);
+    assert!(cat.is_token);
+}
+
+#[test]
+fn first_lifegain_each_seat_and_own_turn_restriction_are_independent() {
+    for active in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(active);
+        let mut expected = Vec::new();
+        for player in [PlayerId::P0, PlayerId::P1] {
+            expected.push(put(
+                &mut state,
+                player,
+                "Vanguard Seraph",
+                Zone::Battlefield,
+            ));
+            let collector = put(&mut state, player, "Cat Collector", Zone::Battlefield);
+            if player == active {
+                expected.push(collector);
+            }
+        }
+        gain(&mut state, PlayerId::P0, 9);
+        gain(&mut state, PlayerId::P1, 1);
+        gain(&mut state, PlayerId::P0, 1);
+        gain(&mut state, PlayerId::P1, 9);
+        let pending = collected(&mut state);
+        let mut actual: Vec<_> = pending.iter().map(|trigger| trigger.source).collect();
+        actual.sort();
+        expected.sort();
+        assert_eq!(actual, expected);
+        assert_eq!(pending.first().unwrap().controller, active);
+        assert!(collected(&mut state).is_empty(), "captures drain once");
+    }
+}
+
+#[test]
+fn first_lifegain_before_etb_is_consumed_even_without_live_sources() {
+    for name in ["Vanguard Seraph", "Cat Collector"] {
+        let mut state = ready(PlayerId::P0);
+        gain(&mut state, PlayerId::P0, 1);
+        assert!(collected(&mut state).is_empty());
+        put(&mut state, PlayerId::P0, name, Zone::Battlefield);
+        gain(&mut state, PlayerId::P0, 3);
+        assert!(collected(&mut state).is_empty());
+    }
+}
+
+#[test]
+fn first_lifegain_atomic_gain_then_etb_is_not_retroactive() {
+    for name in ["Vanguard Seraph", "Cat Collector"] {
+        let mut state = ready(PlayerId::P0);
+        let source = put(&mut state, PlayerId::P0, name, Zone::Hand);
+        gain(&mut state, PlayerId::P0, 1);
+        move_to(&mut state, source, Zone::Battlefield);
+        gain(&mut state, PlayerId::P0, 1);
+        let pending = collected(&mut state);
+        if name == "Cat Collector" {
+            assert_eq!(pending.len(), 1);
+            assert_eq!(
+                pending[0].effect,
+                mtg_kernel::effect::EffectOp::CreateToken {
+                    token_def: card_id_by_name("Food Token").unwrap(),
+                    controller: mtg_kernel::effect::PlayerRef::Controller,
+                }
+            );
+        } else {
+            assert!(pending.is_empty());
+        }
+    }
+}
+
+#[test]
+fn first_lifegain_atomic_etb_then_gain_captures_the_live_incarnation() {
+    for (name, count) in [("Vanguard Seraph", 1), ("Cat Collector", 2)] {
+        let mut state = ready(PlayerId::P0);
+        let source = put(&mut state, PlayerId::P0, name, Zone::Hand);
+        move_to(&mut state, source, Zone::Battlefield);
+        gain(&mut state, PlayerId::P0, 1);
+        let pending = collected(&mut state);
+        assert_eq!(pending.len(), count);
+        assert!(pending.iter().all(|ability| ability.source == source
+            && ability.source_contract.unwrap().zone_change_count == 1));
+    }
+}
+
+#[test]
+fn first_lifegain_capture_survives_atomic_departure_blink_and_control_change() {
+    for destination in [Zone::Hand, Zone::Battlefield] {
+        let mut state = ready(PlayerId::P0);
+        let seraph = put(
+            &mut state,
+            PlayerId::P0,
+            "Vanguard Seraph",
+            Zone::Battlefield,
+        );
+        gain(&mut state, PlayerId::P0, 1);
+        move_to(&mut state, seraph, Zone::Hand);
+        if destination == Zone::Battlefield {
+            move_to(&mut state, seraph, Zone::Battlefield);
+        }
+        let saved = state.snapshot();
+        let mut restored = ready(PlayerId::P0);
+        restored.restore(&saved);
+        let pending = collected(&mut state);
+        assert_eq!(pending, collected(&mut restored));
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].source_contract.unwrap().zone_change_count, 0);
+        state.engine.pending_triggers.extend(pending);
+        settle(&mut state);
+        assert!(state.engine.halted.is_none());
+    }
+    let mut state = ready(PlayerId::P0);
+    let seraph = put(
+        &mut state,
+        PlayerId::P0,
+        "Vanguard Seraph",
+        Zone::Battlefield,
+    );
+    gain(&mut state, PlayerId::P0, 1);
+    state.objects.get_mut(seraph).controller = PlayerId::P1;
+    let pending = collected(&mut state);
+    assert_eq!(pending[0].controller, PlayerId::P0);
+    assert_eq!(pending[0].source_contract.unwrap().controller, PlayerId::P0);
+}
+
+#[test]
+fn first_lifegain_food_costs_create_one_white_cat_and_later_gains_do_not_repeat() {
+    let mut state = ready(PlayerId::P0);
+    let collector = put(&mut state, PlayerId::P0, "Cat Collector", Zone::Hand);
+    move_to(&mut state, collector, Zone::Battlefield);
+    queue(&mut state);
+    settle(&mut state);
+    let food = state.players[0]
+        .battlefield
+        .iter()
+        .copied()
+        .find(|&id| state.objects.get(id).card_def == card_id_by_name("Food Token").unwrap())
+        .unwrap();
+    assert!(
+        matches!(next(&mut state), Decision::CastSpellOrPass { activatable_abilities, .. } if !activatable_abilities.contains(&(food, 0)))
+    );
+    state.players[0].mana_pool[5] = 2;
+    assert!(
+        matches!(next(&mut state), Decision::CastSpellOrPass { activatable_abilities, .. } if activatable_abilities.contains(&(food, 0)))
+    );
+    engine::step(&mut state, Action::ActivateAbility(food, 0)).unwrap();
+    settle(&mut state);
+    assert_ne!(state.objects.get(food).zone, Zone::Battlefield);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
+    assert_eq!(state.players[0].life, 23);
+    let cats = |state: &GameState| {
+        state.players[0]
+            .battlefield
+            .iter()
+            .filter(|&&id| state.objects.get(id).card_def == card_id_by_name("Cat Token").unwrap())
+            .count()
+    };
+    assert_eq!(cats(&state), 1);
+    gain(&mut state, PlayerId::P0, 8);
+    queue(&mut state);
+    settle(&mut state);
+    assert_eq!(cats(&state), 1);
+}
+
+#[test]
+fn first_lifegain_surveil_choice_is_private_and_restores_exactly() {
+    let mut state = ready(PlayerId::P0);
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Vanguard Seraph",
+        Zone::Battlefield,
+    );
+    gain(&mut state, PlayerId::P0, 1);
+    queue(&mut state);
+    let top = state.players[0].library[0];
+    for _ in 0..30 {
+        match next(&mut state) {
+            Decision::ChooseEffectOption {
+                player,
+                option_count,
+                ..
+            } => {
+                assert_eq!(player, PlayerId::P0);
+                assert_eq!(option_count, 2);
+                break;
+            }
+            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+            other => panic!("unexpected decision {other:?}"),
+        }
+    }
+    assert!(state.engine.pending_effect.is_some());
+    let snapshot = state.snapshot();
+    let mut restored = ready(PlayerId::P0);
+    restored.restore(&snapshot);
+    assert_eq!(next(&mut state), next(&mut restored));
+    let public = observe_v2(&state, &HarnessSurfaceV2::new(), PlayerId::P1, 0).unwrap();
+    let typed =
+        observe_policy_v6(&state, &PolicySurfaceV5::new(), PlayerId::P1, 0, 0, 0, 1).unwrap();
+    let mut hidden_changed = ready(PlayerId::P0);
+    hidden_changed.restore(&snapshot);
+    let replacement = card_id_by_name("Island").unwrap();
+    let hidden = hidden_changed.objects.get_mut(top);
+    hidden.card_def = replacement;
+    hidden.name = "Island".into();
+    hidden.v4 = ObjectStateV4::from_card_def(replacement);
+    assert_eq!(
+        public.visible_projection_hash,
+        observe_v2(&hidden_changed, &HarnessSurfaceV2::new(), PlayerId::P1, 0)
+            .unwrap()
+            .visible_projection_hash
+    );
+    let other = observe_policy_v6(
+        &hidden_changed,
+        &PolicySurfaceV5::new(),
+        PlayerId::P1,
+        0,
+        0,
+        0,
+        1,
+    )
+    .unwrap();
+    assert_eq!(typed.projection, other.projection);
+    assert_eq!(typed.extensions, other.extensions);
+    assert_eq!(typed.visible_projection_hash, other.visible_projection_hash);
+    for current in [&mut state, &mut restored] {
+        engine::step(current, Action::ChooseEffectOption(1)).unwrap();
+        settle(current);
+        assert!(current.players[0].graveyard.contains(&top));
+    }
+    assert_eq!(state.state_hash(), restored.state_hash());
+}
+
+#[test]
+fn first_lifegain_malformed_ledger_and_restored_capture_fail_explicitly() {
+    let mut state = ready(PlayerId::P0);
+    let seraph = put(
+        &mut state,
+        PlayerId::P0,
+        "Vanguard Seraph",
+        Zone::Battlefield,
+    );
+    state.life_gain_turn_v1 = None;
+    gain(&mut state, PlayerId::P0, 1);
+    assert_eq!(
+        state.engine.halted,
+        Some((UnsupportedMechanic::InvalidFirstLifeGainHistory, seraph))
+    );
+    let mut state = ready(PlayerId::P0);
+    let seraph = put(
+        &mut state,
+        PlayerId::P0,
+        "Vanguard Seraph",
+        Zone::Battlefield,
+    );
+    gain(&mut state, PlayerId::P0, 1);
+    state.life_gain_turn_v1.as_mut().unwrap().captures[0].ability_index = u16::MAX;
+    let mut state: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    assert!(trigger::collect_and_process(&mut state).is_empty());
+    assert_eq!(
+        state.engine.halted,
+        Some((UnsupportedMechanic::InvalidFirstLifeGainHistory, seraph))
+    );
+}
+
+#[test]
+fn first_lifegain_processed_capture_cannot_replay_in_a_later_batch() {
+    for later_event in 0..3 {
+        let mut state = ready(PlayerId::P0);
+        let seraph = put(
+            &mut state,
+            PlayerId::P0,
+            "Vanguard Seraph",
+            Zone::Battlefield,
+        );
+        gain(&mut state, PlayerId::P0, 1);
+        let old_capture = state.life_gain_turn_v1.as_ref().unwrap().captures[0].clone();
+        assert_eq!(collected(&mut state).len(), 1);
+        assert!(state.engine.event_log.is_empty());
+        assert!(state
+            .life_gain_turn_v1
+            .as_ref()
+            .unwrap()
+            .captures
+            .is_empty());
+        match later_event {
+            0 => {} // Even an empty continuation cannot redeliver the old gain.
+            1 => move_to(&mut state, seraph, Zone::Hand),
+            // Matching player/amount cannot substitute a different event index.
+            _ => gain(&mut state, PlayerId::P0, 1),
+        }
+        state
+            .life_gain_turn_v1
+            .as_mut()
+            .unwrap()
+            .captures
+            .push(old_capture);
+        let bytes = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
+        assert!(trigger::collect_and_process(&mut restored).is_empty());
+        assert_eq!(
+            restored.engine.halted,
+            Some((UnsupportedMechanic::InvalidFirstLifeGainHistory, seraph))
+        );
+        assert_eq!(
+            restored.life_gain_turn_v1.as_ref().unwrap().captures.len(),
+            1
+        );
+    }
+}
+
+#[test]
+fn first_lifegain_pending_capture_restores_with_later_atomic_events() {
+    let mut state = ready(PlayerId::P0);
+    let seraph = put(
+        &mut state,
+        PlayerId::P0,
+        "Vanguard Seraph",
+        Zone::Battlefield,
+    );
+    gain(&mut state, PlayerId::P0, 1);
+    move_to(&mut state, seraph, Zone::Hand);
+    gain(&mut state, PlayerId::P1, 2);
+    gain(&mut state, PlayerId::P0, 1);
+    let capture_index = state.life_gain_turn_v1.as_ref().unwrap().captures[0].gain_history_index;
+    assert!(capture_index < state.engine.event_history.len() - 1);
+    let snapshot = state.snapshot();
+    let bytes = serde_json::to_vec(&state).unwrap();
+    let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
+    let expected = collected(&mut state);
+    assert_eq!(expected.len(), 1);
+    assert_eq!(expected[0].source, seraph);
+    assert_eq!(expected, collected(&mut restored));
+    assert!(collected(&mut restored).is_empty());
+    state.restore(&snapshot);
+    assert_eq!(expected, collected(&mut state));
+    assert!(collected(&mut state).is_empty());
+}
+
+#[test]
+fn first_lifegain_distinct_lifelink_sources_share_only_one_first_trigger() {
+    let mut state = ready(PlayerId::P0);
+    let seraph = put(
+        &mut state,
+        PlayerId::P0,
+        "Vanguard Seraph",
+        Zone::Battlefield,
+    );
+    let a = put(
+        &mut state,
+        PlayerId::P0,
+        "Vampire Nighthawk",
+        Zone::Battlefield,
+    );
+    let b = put(
+        &mut state,
+        PlayerId::P0,
+        "Vampire Nighthawk",
+        Zone::Battlefield,
+    );
+    event::propose_and_commit_batch(
+        &mut state,
+        vec![
+            ProposedEvent::damage(a, Target::Player(PlayerId::P1), 2),
+            ProposedEvent::damage(b, Target::Player(PlayerId::P1), 2),
+        ],
+    );
+    let pending = collected(&mut state);
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].source, seraph);
+    assert_eq!(state.players[0].life, 24);
+}
+
+#[test]
+fn first_lifegain_prevented_lifelink_damage_does_not_consume_first_gain() {
+    let mut state = ready(PlayerId::P0);
+    let seraph = put(
+        &mut state,
+        PlayerId::P0,
+        "Vanguard Seraph",
+        Zone::Battlefield,
+    );
+    let vampire = put(
+        &mut state,
+        PlayerId::P0,
+        "Vampire Nighthawk",
+        Zone::Battlefield,
+    );
+    state
+        .engine
+        .active_replacements
+        .push(event::ActiveReplacement {
+            id: 1,
+            source: seraph,
+            kind: event::ReplacementEffectKind::PreventNextDamage {
+                target: Target::Player(PlayerId::P1),
+                remaining: 2,
+            },
+        });
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::damage(vampire, Target::Player(PlayerId::P1), 2),
+    );
+    assert_eq!(state.players[0].life, 20);
+    assert!(collected(&mut state).is_empty());
+    gain(&mut state, PlayerId::P0, 1);
+    let pending = collected(&mut state);
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].source, seraph);
+}
+
+#[test]
+fn first_lifegain_real_next_turn_resets_both_seats_and_own_turn_gate() {
+    let mut state = ready(PlayerId::P0);
+    let p0_seraph = put(
+        &mut state,
+        PlayerId::P0,
+        "Vanguard Seraph",
+        Zone::Battlefield,
+    );
+    let p1_seraph = put(
+        &mut state,
+        PlayerId::P1,
+        "Vanguard Seraph",
+        Zone::Battlefield,
+    );
+    put(&mut state, PlayerId::P0, "Cat Collector", Zone::Battlefield);
+    let p1_collector = put(&mut state, PlayerId::P1, "Cat Collector", Zone::Battlefield);
+    gain(&mut state, PlayerId::P0, 1);
+    gain(&mut state, PlayerId::P1, 1);
+    queue(&mut state);
+    settle(&mut state);
+    let old_anchor = state.life_gain_turn_v1.as_ref().unwrap().history_index;
+    assert!(state.stack.is_empty());
+    assert!(state.engine.pending_triggers.is_empty());
+    state.objects.get_mut(p0_seraph).damage = 1;
+    state.step = Step::End;
+    state.priority_player = PlayerId::P0;
+    state.engine.priority_passes = [false, false];
+    for _ in 0..8 {
+        let action = match next(&mut state) {
+            Decision::CastSpellOrPass { .. } if state.active_player == PlayerId::P1 => break,
+            Decision::CastSpellOrPass { .. } => Action::Pass,
+            Decision::OrderTriggers { pending, .. } => {
+                Action::OrderTriggers((0..pending.len()).collect())
+            }
+            other => panic!("unexpected End/Cleanup decision {other:?}"),
+        };
+        engine::step(&mut state, action).unwrap();
+    }
+    assert_eq!(state.active_player, PlayerId::P1);
+    assert_eq!(state.objects.get(p0_seraph).damage, 0, "Cleanup entry ran");
+    let ledger = state.life_gain_turn_v1.as_ref().unwrap();
+    assert_eq!(ledger.active_player, PlayerId::P1);
+    assert!(ledger.history_index > old_anchor);
+    gain(&mut state, PlayerId::P0, 1);
+    gain(&mut state, PlayerId::P1, 1);
+    let pending = collected(&mut state);
+    let mut actual: Vec<_> = pending.iter().map(|ability| ability.source).collect();
+    let mut expected = vec![p0_seraph, p1_seraph, p1_collector];
+    actual.sort();
+    expected.sort();
+    assert_eq!(actual, expected);
+    assert_eq!(pending.first().unwrap().controller, PlayerId::P1);
+}

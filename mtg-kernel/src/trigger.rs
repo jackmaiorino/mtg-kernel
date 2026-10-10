@@ -212,6 +212,10 @@ pub enum TriggerCondition {
     /// "Whenever one or more other creatures you control with power N or
     /// less enter ... This ability triggers only once each turn."
     OtherControlledCreatureWithPowerAtMostEntersOncePerTurn(i32),
+    /// Global first actual gain, independent of this permanent's entry time.
+    ControllerFirstLifeGain {
+        own_turn_only: bool,
+    },
 }
 
 pub struct TriggeredAbilityDef {
@@ -944,6 +948,30 @@ const SUN_BLESSED_HEALER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityD
     intervening_if_kicked: true,
     ..etb_trigger(sun_blessed_healer_effect)
 }];
+
+const VANGUARD_SERAPH_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControllerFirstLifeGain {
+        own_turn_only: false,
+    },
+    ..etb_trigger(vanguard_seraph_effect)
+}];
+
+const CAT_COLLECTOR_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    etb_trigger(generous_ent_effect),
+    TriggeredAbilityDef {
+        condition: TriggerCondition::ControllerFirstLifeGain {
+            own_turn_only: true,
+        },
+        ..etb_trigger(prideful_parent_effect)
+    },
+];
+
+fn vanguard_seraph_effect() -> EffectOp {
+    EffectOp::Surveil {
+        player: PlayerRef::Controller,
+        count: 1,
+    }
+}
 
 fn sun_blessed_healer_effect() -> EffectOp {
     EffectOp::Conditional {
@@ -2748,6 +2776,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
     match card.name {
         "Celestial Armor" => &CELESTIAL_ARMOR_TRIGGERS,
         "Exemplar of Light" => &EXEMPLAR_OF_LIGHT_TRIGGERS,
+        "Vanguard Seraph" => &VANGUARD_SERAPH_TRIGGERS,
+        "Cat Collector" => &CAT_COLLECTOR_TRIGGERS,
         "Sun-Blessed Healer" => &SUN_BLESSED_HEALER_TRIGGERS,
         "Mossborn Hydra" => &MOSSBORN_HYDRA_TRIGGERS,
         "Beast-Kin Ranger" => &BEAST_KIN_RANGER_TRIGGERS,
@@ -3538,6 +3568,16 @@ pub(crate) fn collect_and_process_with_waiting(
     if state.pending_legend_rule_v1.is_some() {
         return Vec::new();
     }
+    match crate::life_gain_turn_v1::take_captures(state) {
+        Ok(captures) => waiting.extend(captures),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidFirstLifeGainHistory,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
     let events: Vec<CommittedEvent> = state.engine.event_log.drain(..).collect();
     // Single-shot: `engine::resolve_top_of_stack` set this immediately
     // before the resolution whose events we're about to match, explicitly
@@ -3688,6 +3728,14 @@ fn triggers_from_events(
             }
         }
         for (ability_index, def) in triggers_for(obj.card_def).iter().enumerate() {
+            // These abilities were captured at the actual life-gain commit,
+            // before later operations can change battlefield membership.
+            if matches!(
+                def.condition,
+                TriggerCondition::ControllerFirstLifeGain { .. }
+            ) {
+                continue;
+            }
             let uses_leave_lki = matches!(
                 def.condition,
                 TriggerCondition::LeftBattlefieldToGraveyard
