@@ -1127,6 +1127,12 @@ impl FrozenPlayPolicyV1 {
 
     /// Crate-only warm-start bridge. The caller owns the successor checkpoint
     /// identity; the original import receipt continues to describe the source.
+    /// Independent train model with already validated parameters and derived
+    /// inference weights. Avoid a snapshot conversion and second installation.
+    pub(crate) fn training_model_v3(&self) -> NativePolicyValueNetV1 {
+        self.model.clone()
+    }
+
     pub(crate) fn training_parameters_v3(&self) -> Vec<NativeNamedParameterV1> {
         self.model.parameter_snapshot_v1()
     }

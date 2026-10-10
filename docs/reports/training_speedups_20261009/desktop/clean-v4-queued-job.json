@@ -1,0 +1,12 @@
+{
+  "schema": "training-speedups-queued-job/v1",
+  "state": "D:/training-speedups-20261009/desktop/formal-v4-launcher/state.json",
+  "script": {
+    "path": "D:/training-speedups-20261009/desktop/launch_clean_v4_when_free.py",
+    "sha256": "16b3baae6dbd5ac405b6ae55a05cdf0d78a6cc90614267ae8b0ce8f4455f0580"
+  },
+  "pid": 47152,
+  "started_utc": "2026-10-10T13:47:06.5310710Z",
+  "heartbeat": "finish-training-throughput-comparison",
+  "coordinator_state": "D:/training-speedups-20261009/desktop/formal-v4/coordinator/state.json"
+}

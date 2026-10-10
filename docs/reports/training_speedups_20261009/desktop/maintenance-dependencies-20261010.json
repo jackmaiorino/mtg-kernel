@@ -1,0 +1,16 @@
+[
+  {
+    "path": "D:\\training-speedups-20261009\\docs\\research\\sideboard_plan_inputs_2026-09\\registered_nine_75s.json",
+    "sha256": "095d66eef513caec81585d554cbd49304d1f5b1daf2e7ea969c5b5c982933104",
+    "bytes": 49624,
+    "source_git": "5242a984c2bd8d878c9a5fbc4b3cacab9798d08b",
+    "source_path": "docs/research/sideboard_plan_inputs_2026-09/registered_nine_75s.json"
+  },
+  {
+    "path": "D:\\training-speedups-20261009\\data\\cards_v1.json",
+    "sha256": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
+    "bytes": 138186,
+    "source_git": "5242a984c2bd8d878c9a5fbc4b3cacab9798d08b",
+    "source_path": "data/cards_v1.json"
+  }
+]
