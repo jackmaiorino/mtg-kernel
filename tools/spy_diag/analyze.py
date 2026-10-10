@@ -2,21 +2,23 @@
 
 Usage: python analyze.py --panel PANEL.json --out DIR TRACE.jsonl [...]
 Reads only passive trace sidecars written by `s4a-diag` with S4A_TRACE.
-Writes DIR/analysis.json (per root, per world, aggregates) and prints a
-short text summary. Labels are descriptive only.
+Writes DIR/analysis.json (per root, per world, aggregates by panel stratum).
+Labels are descriptive only.
 
 Action bits: 1 cast Spy, 2 Spy targets focal (self-target), 4 Dread Return
 targets Lotleth Giant, 8 Spy targets another, 16 DR targets something else.
 Event bits: 1 Spy resolved, 2 self-target resolved, 4 DR->Giant resolved,
-8 DR->Giant on the stack.
+8 DR->Giant on the stack. Depth = focal non-forced physical decisions from
+the root (the tree's depth unit; MAX_DEPTH 32).
 """
 import argparse
 import json
 from collections import Counter, defaultdict
 from pathlib import Path
 
-SELF, GIANT = 2, 4
+CAST, SELF, GIANT = 1, 2, 4
 MIN = 8
+STEPS = ((CAST, "cast", 1), (SELF, "self_target", 2), (GIANT, "dr_giant", 4))
 
 
 def load(path):
@@ -36,6 +38,19 @@ def load(path):
     return meta, sims, nodes, worlds
 
 
+def ordered_stage(evs, cast):
+    """Suffix stage reached, as labels.rs advances it (one step per transition)."""
+    stage = 0 if cast else 1
+    for _, _, b in evs:
+        if stage == 0 and b & 1:
+            stage = 1
+        elif stage == 1 and b & 2:
+            stage = 2
+        elif stage == 2 and b & 4:
+            stage = 3
+    return stage
+
+
 def edge_returns(sims):
     """Ordered natural terminal returns per (node id, edge index)."""
     hist = defaultdict(list)
@@ -44,146 +59,205 @@ def edge_returns(sims):
             continue
         w = 1 if s["end"] == "win" else 0
         for p in s["path"]:
-            hist[(p[0], p[1])].append((s["i"], w))
+            hist[(p[0], p[1])].append(w)
     return hist
 
 
 def history_summary(h):
     n = len(h)
-    wins = sum(w for _, w in h)
-    out = {"n": n, "wins": wins, "mean": wins / n if n else None}
+    out = {"n": n, "wins": sum(h), "mean": round(sum(h) / n, 4) if n else None}
     half = n // 2
     if half >= MIN:
-        a, b = h[:half], h[half:]
-        out["early_mean"] = sum(w for _, w in a) / len(a)
-        out["late_mean"] = sum(w for _, w in b) / len(b)
-        out["halves_n"] = [len(a), len(b)]
+        out["early_mean"] = round(sum(h[:half]) / half, 4)
+        out["late_mean"] = round(sum(h[half:]) / (n - half), 4)
     else:
         out["halves"] = "fewer than 8 returns per half"
-    # Cumulative mean at each tenth of the history.
     if n:
-        cum, marks = 0, []
-        for i, (_, w) in enumerate(h, 1):
+        marks, cum = [], 0
+        points = {max(1, round(n * q / 10)) for q in range(1, 11)}
+        for i, w in enumerate(h, 1):
             cum += w
-            if i in {max(1, round(n * q / 10)) for q in range(1, 11)}:
+            if i in points:
                 marks.append([i, round(cum / i, 4)])
         out["cumulative"] = marks
     return out
 
 
-def node_edge_table(node, hist, frozen_choice, chosen_edge):
-    """Every edge at a matched node: counts, mean, qualification, seeded rank."""
+def compat_verdict(node, bit, fc, hist, nid):
+    """Why a compatible edge was or was not the frozen choice at a matched node."""
     rank = {e: i for i, e in enumerate(node["perm"])}
-    rows = []
-    for e, (n, w) in enumerate(zip(node["n"], node["w"])):
-        rows.append({"edge": e, "lab": node["lab"][e], "n": n, "wins": w,
-                     "mean": (w / n) if n else None, "qualified": n >= MIN, "tie_rank": rank[e],
-                     "frozen_choice": e == frozen_choice, "chosen": e == chosen_edge})
-    return rows
-
-
-def compat_verdict(rows, bit, frozen_choice):
-    """Why a compatible edge (label bit) was or was not the frozen choice."""
+    rows = [{"edge": e, "lab": node["lab"][e], "n": n, "wins": w, "mean": round(w / n, 4) if n else None,
+             "qualified": n >= MIN, "tie_rank": rank[e]} for e, (n, w) in enumerate(zip(node["n"], node["w"]))]
     comp = [r for r in rows if r["lab"] & bit]
+    out = {"node_edges": len(rows), "qualified_edges": sum(r["qualified"] for r in rows)}
     if not comp:
-        return {"compatible": 0, "verdict": "no compatible edge at node"}
-    fc = next((r for r in rows if r["edge"] == frozen_choice), None)
-    out = {"compatible": len(comp), "edges": [{k: r[k] for k in ("edge", "n", "wins", "mean", "qualified",
-                                                                   "tie_rank")} for r in comp]}
-    if any(r["edge"] == frozen_choice for r in comp):
+        out["verdict"] = "no compatible edge at node"
+        return out
+    for r in comp:
+        r["returns"] = history_summary(hist.get((nid, r["edge"]), []))
+    out["compatible"] = comp
+    fcr = next((r for r in rows if r["edge"] == fc), None)
+    if fcr is not None:
+        out["frozen_choice"] = dict(fcr, returns=history_summary(hist.get((nid, fc), [])))
+    if any(r["edge"] == fc for r in comp):
         out["verdict"] = "compatible edge is the frozen choice"
     elif not any(r["qualified"] for r in comp):
-        out["verdict"] = "compatible edges lack support (<8 backups)"
-    elif fc is None:
-        out["verdict"] = "no qualified edge at node"
+        out["verdict"] = ("compatible edge lacks support, no qualified edge at node" if fcr is None
+                          else "compatible edge lacks support, another edge qualified")
     else:
         best = max((r for r in comp if r["qualified"]), key=lambda r: r["mean"])
-        if best["mean"] < fc["mean"]:
-            out["verdict"] = "qualified compatible edge loses on mean"
-        else:
-            out["verdict"] = "qualified compatible edge ties on mean, loses seeded order"
-        out["frozen_choice_edge"] = {k: fc[k] for k in ("edge", "lab", "n", "wins", "mean", "tie_rank")}
+        out["verdict"] = ("qualified compatible edge loses on mean" if best["mean"] < fcr["mean"]
+                          else "qualified compatible edge ties, loses seeded order")
     return out
 
 
-def eval_world(w, nodes, hist):
-    decs = w["dec"]
-    ev = w["ev"]
-    resolved = Counter()
-    for t, actor, b in ev:
-        for bit, name in ((1, "spy"), (2, "self"), (4, "giant")):
-            if b & bit:
-                resolved[name] += 1
+def eval_world(w, nodes, hist, cast):
+    decs, evs = w["dec"], w["ev"]
+    stage = ordered_stage(evs, cast)
     srcs = Counter(d["src"] for d in decs)
-    out = {"world": w["world"], "end": w["out"]["end"], "j": w["out"]["j"], "focal_nonforced": len(decs),
-           "forced": w["forced"], "opponent": w["opp"], "sources": dict(srcs),
+    first_miss = next((d for d in decs if d["src"] == "first_miss_plain"), None)
+    out = {"world": w["world"], "end": w["out"]["end"], "j": w["out"]["j"], "suffix_stage": stage,
+           "focal_nonforced": len(decs), "forced": w["forced"], "opponent": w["opp"], "sources": dict(srcs),
            "attempted_lookups": sum(1 for d in decs if d["src"] in
                                     ("tree_edge", "matched_no_qualified_plain", "first_miss_plain")),
-           "first_miss_t": next((d["t"] for d in decs if d["src"] == "first_miss_plain"), None),
+           "matched": sum(1 for d in decs if d["src"] in ("tree_edge", "matched_no_qualified_plain")),
+           "first_miss_depth": first_miss["dep"] if first_miss else None,
            "deepest_match": max((d["dep"] for d in decs if d["node"] is not None), default=0),
-           "resolved": dict(resolved), "opportunities": []}
+           "steps": {}, "opportunities": [], "descending_run": descending_run(decs)}
+    st = next((t for t, _, b in evs if b & 2), None)
+    giant = next((d for d in decs if d["off"] & GIANT), None)
+    out["focal_decisions_self_resolution_to_giant_offer"] = (
+        sum(1 for d in decs if st is not None and st <= d["t"] < giant["t"]) if giant and st is not None else None)
+    for bit, name, need in STEPS:
+        offers = [d for d in decs if d["off"] & bit]
+        chosen = [d for d in offers if d["ch"] & bit]
+        resolved = any(b & {1: 1, 2: 2, 4: 4}[bit] for _, _, b in evs)
+        if not offers:
+            status = "never offered"
+        elif not chosen:
+            status = "declined"
+        elif not resolved:
+            status = "chosen, not resolved"
+        else:
+            status = "resolved"
+        out["steps"][name] = {"status": status, "offers": len(offers), "chosen": len(chosen),
+                              "first_offer_depth": offers[0]["dep"] if offers else None,
+                              "offer_sources": dict(Counter(d["src"] for d in offers)),
+                              "chosen_sources": dict(Counter(d["src"] for d in chosen))}
     for d in decs:
-        for bit, name in ((SELF, "self_target"), (GIANT, "dr_giant")):
+        for bit, name, _ in STEPS[1:]:
             if not d["off"] & bit:
                 continue
-            opp = {"kind": name, "t": d["t"], "pd": d["pd"], "ss": d["ss"], "dep": d["dep"], "src": d["src"],
-                   "chosen": bool(d["ch"] & bit), "chosen_bits": d["ch"], "node": d["node"], "edge": d["edge"]}
+            o = {"kind": name, "t": d["t"], "pd": d["pd"], "ss": d["ss"], "dep": d["dep"], "src": d["src"],
+                 "chosen": bool(d["ch"] & bit), "chosen_bits": d["ch"], "node": d["node"], "edge": d["edge"]}
             if isinstance(d["node"], int):
-                node = nodes[d["node"]]
-                rows = node_edge_table(node, hist, d.get("fc"), d["edge"])
-                opp["node_edges"] = len(rows)
-                opp["compat"] = compat_verdict(rows, bit, d.get("fc"))
-                for e in opp["compat"].get("edges", []):
-                    e["returns"] = history_summary(hist.get((d["node"], e["edge"]), []))
-                fc = d.get("fc")
-                if fc is not None and not (node["lab"][fc] & bit):
-                    opp["frozen_choice_returns"] = history_summary(hist.get((d["node"], fc), []))
+                o["at_node"] = compat_verdict(nodes[d["node"]], bit, d.get("fc"), hist, d["node"])
             else:
-                opp["stats"] = None
-                opp["stats_reason"] = {"after_miss_plain": "matching ended at an earlier miss",
-                                       "first_miss_plain": "history not in tree (first miss here)",
-                                       "depth_limit_plain": "beyond depth limit"}.get(d["src"], d["src"])
-            out["opportunities"].append(opp)
+                o["stats"] = None
+                o["stats_reason"] = {"after_miss_plain": "matching ended at an earlier miss",
+                                     "first_miss_plain": "this history is not in the tree (first miss)",
+                                     "depth_limit_plain": "beyond the depth limit"}.get(d["src"], d["src"])
+            out["opportunities"].append(o)
     return out
 
 
-def selection_summary(sims, meta):
-    """Discovered suffixes in selection: where their initiating choices came from."""
-    cast = meta["cast_root"]
+def selection_summary(sims, nodes, cast):
     ends = Counter(s.get("end") for s in sims)
-    complete, src_self, src_giant = 0, Counter(), Counter()
-    offered = Counter()
-    for s in sims:
-        # The resolved suffix in order (labels.rs): Spy (cast roots only),
-        # then the self-target, then DR -> Giant.
-        stage = 0 if cast else 1
-        for _, _, b in s.get("ev", []):
-            if stage == 0 and b & 1:
-                stage = 1
-            elif stage == 1 and b & 2:
-                stage = 2
-            elif stage == 2 and b & 4:
-                stage = 3
+    natural = [s for s in sims if s.get("end") in ("win", "loss")]
+    complete = [s for s in natural if ordered_stage(s.get("ev", []), cast) == 3]
+    oc = Counter()
+    giant_depths, self_depths, tail_depths = Counter(), Counter(), Counter()
+    for s in natural:
+        tail_depths[(s.get("tail") or {}).get("dep")] += 1
         for d in s.get("dec", []):
-            for bit, name in ((SELF, "self"), (GIANT, "giant")):
+            for bit, name, _ in STEPS:
                 if d["off"] & bit:
-                    offered[f"{name}_offered_{d['src']}"] += 1
+                    oc[f"{name}|offered|{d['src']}"] += 1
                     if d["ch"] & bit:
-                        offered[f"{name}_chosen_{d['src']}"] += 1
-        if s.get("end") in ("win", "loss") and stage == 3:
-            complete += 1
-            for d in s.get("dec", []):
-                if d["ch"] & SELF:
-                    src_self[d["src"]] += 1
-                if d["ch"] & GIANT:
-                    src_giant[d["src"]] += 1
-    tails = Counter((s.get("tail") or {}).get("why", "none") for s in sims if s.get("end") in ("win", "loss"))
-    depths = Counter(len(s.get("path", [])) for s in sims if s.get("end") in ("win", "loss"))
-    return {"simulations": dict(ends), "suffix_resolved_natural": complete,
-            "self_target_choice_source_in_resolved": dict(src_self),
-            "dr_giant_choice_source_in_resolved": dict(src_giant),
-            "offered_chosen_by_source": dict(offered), "tail_start": dict(tails),
-            "path_length": dict(sorted(depths.items()))}
+                        oc[f"{name}|chosen|{d['src']}"] += 1
+            if d["off"] & GIANT:
+                giant_depths[d["dep"]] += 1
+            if d["off"] & SELF:
+                self_depths[d["dep"]] += 1
+    init = {name: Counter() for _, name, _ in STEPS}
+    for s in complete:
+        for d in s.get("dec", []):
+            for bit, name, _ in STEPS:
+                if d["ch"] & bit:
+                    init[name][d["src"]] += 1
+    rates = {}
+    for _, name, _ in STEPS:
+        for src in ("tree", "expand", "tail_after_expand", "tail_depth"):
+            off = oc.get(f"{name}|offered|{src}", 0)
+            if off:
+                rates[f"{name}|{src}"] = {"offered": off, "chosen": oc.get(f"{name}|chosen|{src}", 0),
+                                          "rate": round(oc.get(f"{name}|chosen|{src}", 0) / off, 4)}
+
+    def q(c):
+        xs = sorted(k for k, v in c.items() for _ in range(v) if k is not None)
+        return {"n": len(xs), "min": xs[0], "median": xs[len(xs) // 2], "max": xs[-1]} if xs else None
+
+    return {"simulations": dict(ends), "natural": len(natural), "suffix_complete_natural": len(complete),
+            "suffix_complete_wins": sum(1 for s in complete if s["end"] == "win"),
+            "choice_source_in_complete": {k: dict(v) for k, v in init.items()},
+            "choice_rates_by_source": rates,
+            "self_offer_depth": q(self_depths), "giant_offer_depth": q(giant_depths),
+            "tail_start_depth": q(tail_depths),
+            "tree_node_depth": q(Counter(n["dep"] for n in nodes.values()))}
+
+
+def selection_kind(node):
+    """A forced-complete selection node: every edge selects one more object
+    for the same effect and the effect must select them all (min = max)."""
+    kinds = set()
+    for e in node["edges"]:
+        try:
+            x = json.loads(e)
+        except ValueError:
+            return None
+        if x.get("action_kind") != "choose_effect_target":
+            return None
+        kinds.add((x["source"]["card_db_id"], x.get("min_targets"), x.get("max_targets")))
+    if len(kinds) == 1:
+        src, lo, hi = kinds.pop()
+        if lo == hi:
+            return src
+    return None
+
+
+def tree_composition(nodes):
+    sel = Counter()
+    for n in nodes.values():
+        k = selection_kind(n)
+        if k is not None:
+            sel[k] += 1
+    return {"nodes": len(nodes), "forced_complete_selection_nodes": sum(sel.values()),
+            "by_source_card": dict(sel)}
+
+
+def descending_run(decs):
+    """Longest run of consecutive focal decisions whose menu shrinks by one
+    each time (the shape of a forced-complete selection)."""
+    best, cur, start = (0, None), 1, 0
+    for i in range(1, len(decs)):
+        if decs[i]["k"] == decs[i - 1]["k"] - 1 and decs[i]["k"] >= 2:
+            cur += 1
+        else:
+            cur, start = 1, i
+        if cur > best[0]:
+            best = (cur, decs[start]["dep"])
+    return {"length": best[0], "start_depth": best[1]}
+
+
+def root_edges(nodes, hist):
+    root = next((n for n in nodes.values() if n["parent"] is None), None)
+    if root is None:
+        return None
+    rows = []
+    for e, (n, w) in enumerate(zip(root["n"], root["w"])):
+        if n:
+            rows.append({"edge": e, "lab": root["lab"][e], "returns": history_summary(hist.get((root["id"], e), []))})
+    return rows
 
 
 def main():
@@ -197,21 +271,16 @@ def main():
     for t in a.traces:
         meta, sims, nodes, worlds = load(t)
         hist = edge_returns(sims)
-        rid = meta["root_id"]
+        rid, cast = meta["root_id"], meta["cast_root"]
         result[rid] = {"role": roles.get(rid), "stratum": meta["stratum"], "opp_model": meta["opp_model"],
-                       "nodes": len(nodes), "selection": selection_summary(sims, meta),
-                       "worlds": [eval_world(w, nodes, hist) for w in worlds]}
+                       "nodes": len(nodes), "tree": tree_composition(nodes),
+                       "selection": selection_summary(sims, nodes, cast),
+                       "root_edges": root_edges(nodes, hist),
+                       "worlds": [eval_world(w, nodes, hist, cast) for w in worlds]}
     Path(a.out).mkdir(parents=True, exist_ok=True)
     (Path(a.out) / "analysis.json").write_text(json.dumps(result, indent=1))
-    for rid, r in result.items():
-        v = Counter()
-        for w in r["worlds"]:
-            for o in w["opportunities"]:
-                key = f"{o['kind']}:{'chosen' if o['chosen'] else 'declined'}:{o['src']}"
-                if "compat" in o:
-                    key += f":{o['compat']['verdict']}"
-                v[key] += 1
-        print(rid, r["role"], json.dumps(r["selection"]["suffix_resolved_natural"]), dict(v))
+    print(json.dumps({rid: {"role": r["role"], "complete": r["selection"]["suffix_complete_natural"],
+                            "J": sum(w["j"] for w in r["worlds"])} for rid, r in result.items()}))
 
 
 if __name__ == "__main__":
