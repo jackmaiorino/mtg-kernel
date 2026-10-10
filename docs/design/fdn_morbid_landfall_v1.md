@@ -26,4 +26,11 @@ main5114e679 and preserves Standard enum positions, including target IDs55-56
 and AnimateSource. The future permanent-graveyard target is now57. Separate
 read-only integration review found no actionable defects. The existing Haley
 queue targets that prerequisite source while the whole-host reservation holds;
-these two additional card cases are not part of its queued source yet.
+these five additional card cases are not part of its queued source yet.
+
+Source review identified three fixture errors before native qualification:
+target selection had not finalized trigger placement, and direct assignments
+to Cleanup/Untap skipped their entry actions. Fixtures now explicitly finalize
+the targeted stack item before changing state or taking snapshots, and pass
+through EndStep priority into real Cleanup and the opponent's Untap. Original
+source c67ad5b6 is retained; these repairs remain pending native qualification.

@@ -90,6 +90,13 @@ fn target(state: &mut GameState, wanted: ObjectId) {
             assert_eq!(legal_targets, vec![Target::Object(wanted)]);
             assert_eq!((remaining, can_finish), (1, false));
             engine::step(state, Action::ChooseTarget(Target::Object(wanted))).unwrap();
+            assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
+            assert!(state.engine.pending_triggers.is_empty());
+            assert_eq!(state.stack.len(), 1);
+            assert_eq!(
+                state.stack.last().unwrap().targets,
+                vec![Target::Object(wanted)]
+            );
             return;
         }
         pass(state, decision);
@@ -113,6 +120,23 @@ fn settle(state: &mut GameState) {
 
 fn copy(state: &GameState) -> GameState {
     serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap()
+}
+
+fn next_turn_through_cleanup_and_untap(state: &mut GameState) {
+    let previous = state.active_player;
+    // EndStep grants priority. Passing both seats enters Cleanup, then
+    // the opponent's Untap, executing both entry actions normally.
+    state.step = Step::EndStep;
+    for _ in 0..8 {
+        let decision = next(state);
+        if state.active_player != previous {
+            assert_eq!(state.active_player, previous.opponent());
+            assert_eq!(state.step, Step::Upkeep);
+            return;
+        }
+        pass(state, decision);
+    }
+    panic!("turn transition did not finish");
 }
 
 #[test]
@@ -203,8 +227,7 @@ fn banshee_samples_morbid_at_resolution_and_replays_then_expires_at_cleanup() {
                 let debuff = if death_timing == 0 { 1 } else { 13 };
                 assert_eq!(engine::effective_power(current, wanted), 32 - debuff);
                 assert_eq!(engine::effective_toughness(current, wanted), 28 - debuff);
-                current.step = Step::Cleanup;
-                next(current);
+                next_turn_through_cleanup_and_untap(current);
                 assert_eq!(engine::effective_power(current, wanted), 32);
                 assert_eq!(engine::effective_toughness(current, wanted), 28);
             }
@@ -271,10 +294,7 @@ fn kraken_landfall_stuns_already_tapped_targets_and_actual_untap_consumes_one_co
                 settle(current);
                 assert!(current.objects.get(wanted).tapped);
                 assert_eq!(current.objects.get(wanted).counters.stun, 1);
-                current.active_player = player.opponent();
-                current.priority_player = player.opponent();
-                current.step = Step::Untap;
-                next(current);
+                next_turn_through_cleanup_and_untap(current);
                 assert!(current.objects.get(wanted).tapped);
                 assert_eq!(current.objects.get(wanted).counters.stun, 0);
             }
