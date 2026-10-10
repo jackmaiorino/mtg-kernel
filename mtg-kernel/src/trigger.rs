@@ -123,10 +123,6 @@ pub enum TriggerCondition {
     ControllerAttacksWithSubtype(Subtype),
     ControlledLandEnters,
     ControllerGainsLife,
-    /// Global first actual gain, independent of this permanent's entry time.
-    ControllerFirstLifeGain {
-        own_turn_only: bool,
-    },
     ControllerAddedPlusOneCountersToSelf {
         max_per_turn: Option<u16>,
     },
@@ -216,6 +212,10 @@ pub enum TriggerCondition {
     /// "Whenever one or more other creatures you control with power N or
     /// less enter ... This ability triggers only once each turn."
     OtherControlledCreatureWithPowerAtMostEntersOncePerTurn(i32),
+    /// Global first actual gain, independent of this permanent's entry time.
+    ControllerFirstLifeGain {
+        own_turn_only: bool,
+    },
 }
 
 pub struct TriggeredAbilityDef {
