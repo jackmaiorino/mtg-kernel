@@ -15,6 +15,7 @@ import argparse
 import json
 from collections import Counter, defaultdict
 from pathlib import Path
+from panel_coverage import expected_roots, require_coverage
 
 CAST, SELF, GIANT = 1, 2, 4
 MIN = 8
@@ -105,8 +106,10 @@ def compat_verdict(node, bit, fc, hist, nid):
         out["verdict"] = ("compatible edge lacks support, no qualified edge at node" if fcr is None
                           else "compatible edge lacks support, another edge qualified")
     else:
-        best = max((r for r in comp if r["qualified"]), key=lambda r: r["mean"])
-        out["verdict"] = ("qualified compatible edge loses on mean" if best["mean"] < fcr["mean"]
+        # Match Node::frozen_choice's unrounded ratio. Rounded display values
+        # cannot distinguish a genuine mean loss from a seeded tie.
+        best = max((r for r in comp if r["qualified"]), key=lambda r: r["wins"] / r["n"])
+        out["verdict"] = ("qualified compatible edge loses on mean" if best["wins"] / best["n"] < fcr["wins"] / fcr["n"]
                           else "qualified compatible edge ties, loses seeded order")
     return out
 
@@ -264,19 +267,25 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--panel", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--root-id", action="append", help="explicit qualification subset; default requires the full panel")
     ap.add_argument("traces", nargs="+")
     a = ap.parse_args()
-    roles = {r["root_id"]: r["role"] for r in json.loads(Path(a.panel).read_text())["roots"]}
+    panel = json.loads(Path(a.panel).read_text())
+    expected = expected_roots(panel, a.root_id)
+    roles = {r["root_id"]: r["role"] for r in panel["roots"]}
     result = {}
     for t in a.traces:
         meta, sims, nodes, worlds = load(t)
         hist = edge_returns(sims)
         rid, cast = meta["root_id"], meta["cast_root"]
+        if rid not in expected or rid in result:
+            raise ValueError('duplicate or out-of-scope trace root: ' + rid)
         result[rid] = {"role": roles.get(rid), "stratum": meta["stratum"], "opp_model": meta["opp_model"],
                        "nodes": len(nodes), "tree": tree_composition(nodes),
                        "selection": selection_summary(sims, nodes, cast),
                        "root_edges": root_edges(nodes, hist),
                        "worlds": [eval_world(w, nodes, hist, cast) for w in worlds]}
+    require_coverage(result, expected)
     Path(a.out).mkdir(parents=True, exist_ok=True)
     (Path(a.out) / "analysis.json").write_text(json.dumps(result, indent=1))
     print(json.dumps({rid: {"role": r["role"], "complete": r["selection"]["suffix_complete_natural"],

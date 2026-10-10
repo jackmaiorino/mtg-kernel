@@ -12,6 +12,7 @@ import hashlib
 import json
 import sys
 from pathlib import Path
+from panel_coverage import expected_roots, require_coverage
 
 
 def first_diff(a, b, path="$"):
@@ -40,13 +41,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--plan", required=True)
     ap.add_argument("--archive", required=True)
+    ap.add_argument("--root-id", action="append", help="explicit qualification subset; default checks the complete panel")
     ap.add_argument("rows", nargs="+")
     a = ap.parse_args()
     sys.path.insert(0, a.plan)
     import select_panel as sp
-    panel = {r["root_id"]: r for r in json.loads((Path(a.plan) / "PANEL.json").read_text())["roots"]}
+    document = json.loads((Path(a.plan) / "PANEL.json").read_text())
+    expected = expected_roots(document, a.root_id)
+    panel = {r["root_id"]: r for r in document["roots"]}
     ok = True
     n = 0
+    observed = []
     for f in a.rows:
         for line in Path(f).read_text(encoding="utf-8").splitlines():
             if not line.strip():
@@ -57,9 +62,15 @@ def main():
                 ok = False
                 continue
             n += 1
+            observed.append(row["root_id"])
+            if row["root_id"] not in expected:
+                ok = False
+                continue
             ref = panel[row["root_id"]]
             archived = json.loads((Path(a.archive) / ref["row_file"].replace("\\", "/")).read_text(
                 encoding="utf-8").splitlines()[ref["line"] - 1])
+            if archived.get("root_id") != row["root_id"]:
+                raise ValueError('archived row differs from the pinned root identity')
             got = sp.e_projection(row)
             want = sp.e_projection(archived)
             h = hashlib.sha256(sp.canonical_bytes(got)).hexdigest()
@@ -70,7 +81,13 @@ def main():
                    "tree_hash": row["arms"]["E"]["selection"]["extra"]["tree"]["hash"]}
             ok &= rec["hash_equal"] and rec["archived_equal"]
             print(json.dumps(rec))
-    print(json.dumps({"rows": n, "all_exact": ok}))
+    try:
+        require_coverage(observed, expected)
+    except ValueError as error:
+        print(json.dumps({"coverage_error": str(error)}))
+        ok = False
+    print(json.dumps({"rows": n, "all_exact": ok, "expected_roots": sorted(expected),
+                      "scope": "qualification_subset" if a.root_id else "full_panel"}))
     return 0 if ok and n else 1
 
 
