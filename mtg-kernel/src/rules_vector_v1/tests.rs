@@ -607,6 +607,8 @@ fn power_toughness_changes_keep_their_sign() {
 /// or `event_time_trigger_programs`; token names are reached through
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
+    "Billowing Shriekmass",
+    "Apothecary Stomper",
     "Balmor, Battlemage Captain",
     "Firespitter Whelp",
     "Elvish Regrower",
@@ -795,6 +797,11 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    (
+        "engine.rs",
+        "Billowing Shriekmass",
+        "read via engine::static_self_boost_for",
+    ),
     (
         "engine.rs",
         "Anthem of Champions",

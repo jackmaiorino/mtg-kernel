@@ -3609,6 +3609,7 @@ fn effect_recipe_for(card: &CardJson) -> String {
                 "Dwynen, Gilt-Leaf Daen" => ";static=boost_other_controlled_elf_creatures:1:1",
                 "Anthem of Champions" => ";static=boost_live_controlled_creatures:1:1:layer7c:printed_source_abilities",
                 "Empyrean Eagle" => ";static=boost_other_live_controlled_creatures_with_effective_flying:1:1:layer7c:printed_source_abilities",
+                "Billowing Shriekmass" => ";static=controller_graveyard_cards_at_least:7:boost_source:2:1:layer7c:printed_source_abilities",
                 _ => "",
             };
             format!("target=None;spell={spell};mana={mana}{static_bonus}")
@@ -3859,7 +3860,8 @@ fn keywords_for(card: &CardJson) -> String {
         | "Glint Hawk"
         | "Fang Dragon"
         | "Shivan Dragon"
-        | "Vanguard Seraph" => keywords.push("Keywords::FLYING"),
+        | "Vanguard Seraph"
+        | "Billowing Shriekmass" => keywords.push("Keywords::FLYING"),
         "Generous Ent"
         | "Writhing Chrysalis"
         | "Vitu-Ghazi Inspector"
@@ -3874,7 +3876,7 @@ fn keywords_for(card: &CardJson) -> String {
         | "Sun-Blessed Healer" => keywords.push("Keywords::LIFELINK"),
         "Guardian of the Guildpact" => keywords.push("Keywords::PROTECTION_FROM_MONOCOLORED"),
         "Brazen Scourge" | "Fanatical Firebrand" => keywords.push("Keywords::HASTE"),
-        "Samurai Token" => keywords.push("Keywords::VIGILANCE"),
+        "Samurai Token" | "Apothecary Stomper" => keywords.push("Keywords::VIGILANCE"),
         "Dragon Token" | "Dragon 5/5 Token" => keywords.push("Keywords::FLYING"),
         "Resolute Reinforcements" | "Twinblade Blessing" | "Ambush Wolf" => {
             keywords.push("Keywords::FLASH")
@@ -5963,6 +5965,8 @@ fn delve_for(name: &str) -> bool {
 /// event, target, and effect part of the generated card database identity.
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Billowing Shriekmass" => "etb:mill_controller_library:3:private_ordering_exact_incarnations",
+        "Apothecary Stomper" => "etb:mode_before_targets:controlled_creature_plus_one_counters:2|gain_controller_life:4",
         "Celestial Armor" => "etb:target_controlled_creature:attach_exact_source:then_grant_hexproof_indestructible_until_end_of_turn",
         "Mossborn Hydra" => "controlled_land_enters:double_plus_one_counters_on_bound_source",
         "Exemplar of Light" => "controller_gains_positive_life:counter_on_bound_source:1;controller_places_plus_one_counters_on_source:draw:1:limit_per_turn:1",
@@ -9496,6 +9500,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Ouphe" => "Subtype::Ouphe",
         "Octopus" => "Subtype::Octopus",
         "Otter" => "Subtype::Otter",
+        "Elephant" => "Subtype::Elephant",
         "Hyena" => "Subtype::Hyena",
         "Raccoon" => "Subtype::Raccoon",
         "Citizen" => "Subtype::Citizen",

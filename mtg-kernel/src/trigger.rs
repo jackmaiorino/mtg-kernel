@@ -504,6 +504,46 @@ const LIGHTSHELL_DUO_TRIGGERS: [TriggeredAbilityDef; 2] = [
 ];
 const CEPHALID_INKMAGE_TRIGGERS: [TriggeredAbilityDef; 1] =
     [etb_trigger(cephalid_inkmage_etb_effect)];
+const BILLOWING_SHRIEKMASS_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(billowing_shriekmass_effect)];
+const APOTHECARY_STOMPER_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(apothecary_stomper_effect)];
+
+fn billowing_shriekmass_effect() -> EffectOp {
+    EffectOp::MillCards {
+        player: PlayerRef::Controller,
+        count: 3,
+    }
+}
+
+fn apothecary_stomper_modes() -> Vec<(TargetSpec, EffectOp)> {
+    vec![
+        (
+            TargetSpec::ControlledCreature,
+            EffectOp::AddPlusOnePlusOneCounters {
+                object: ObjectRef::Target(0),
+                count: 2,
+            },
+        ),
+        (
+            TargetSpec::None,
+            EffectOp::GainLife {
+                player: PlayerRef::Controller,
+                amount: 4,
+            },
+        ),
+    ]
+}
+
+fn apothecary_stomper_effect() -> EffectOp {
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: apothecary_stomper_modes()
+            .into_iter()
+            .map(|(_, effect)| effect)
+            .collect(),
+    }
+}
 const CRYPT_FEASTER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::AttacksWithControllerGraveyardCardCountAtLeast(7),
     ..etb_trigger(crypt_feaster_threshold_effect)
@@ -827,6 +867,9 @@ pub fn unselected_trigger_modes(
     effect: &EffectOp,
 ) -> Option<Vec<(TargetSpec, EffectOp)>> {
     let card = crate::card_def::CARD_DEFS.get(card_def as usize)?;
+    if card.name == "Apothecary Stomper" && *effect == apothecary_stomper_effect() {
+        return Some(apothecary_stomper_modes());
+    }
     #[cfg(feature = "standard-magezero-fixtures")]
     if card.name == "Hullbreaker Horror"
         && *effect == standard_family_g_v1::hullbreaker_horror_effect()
@@ -2838,6 +2881,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Elementalist Adept" => &ELEMENTALIST_ADEPT_TRIGGERS,
         "Lightshell Duo" => &LIGHTSHELL_DUO_TRIGGERS,
         "Cephalid Inkmage" => &CEPHALID_INKMAGE_TRIGGERS,
+        "Billowing Shriekmass" => &BILLOWING_SHRIEKMASS_TRIGGERS,
+        "Apothecary Stomper" => &APOTHECARY_STOMPER_TRIGGERS,
         "Crypt Feaster" => &CRYPT_FEASTER_TRIGGERS,
         "Erudite Wizard" => &ERUDITE_WIZARD_TRIGGERS,
         "Phyrexian Arena" => &PHYREXIAN_ARENA_TRIGGERS,

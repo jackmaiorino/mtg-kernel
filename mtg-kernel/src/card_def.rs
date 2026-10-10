@@ -295,6 +295,8 @@ pub enum Subtype {
     Sheep,
     /// Appended for Lightshell Duo without changing existing subtype ids.
     Otter,
+    /// Appended for Apothecary Stomper, leaving historical ids fixed.
+    Elephant,
 }
 
 impl Subtype {
@@ -412,6 +414,8 @@ impl Subtype {
         Subtype::Berserker,
         #[cfg(feature = "limited-fdn-fixtures")]
         Subtype::Otter,
+        #[cfg(feature = "limited-fdn-fixtures")]
+        Subtype::Elephant,
         #[cfg(feature = "standard-magezero-fixtures")]
         Subtype::Scout,
         #[cfg(feature = "standard-magezero-fixtures")]
@@ -576,6 +580,7 @@ impl Subtype {
                 | Subtype::Merfolk
                 | Subtype::Octopus
                 | Subtype::Otter
+                | Subtype::Elephant
                 | Subtype::Hyena
                 | Subtype::Raccoon
                 | Subtype::Citizen

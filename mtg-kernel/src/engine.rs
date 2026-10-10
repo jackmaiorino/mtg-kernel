@@ -11802,8 +11802,18 @@ pub(crate) fn static_self_boost_for(name: &str) -> Option<StaticSelfBoostDef> {
             toughness: 0,
             grant_haste: true,
         }),
+        "Billowing Shriekmass" => Some(StaticSelfBoostDef {
+            condition: controller_has_threshold_v1,
+            power: 2,
+            toughness: 1,
+            grant_haste: false,
+        }),
         _ => None,
     }
+}
+
+fn controller_has_threshold_v1(controller: PlayerId, state: &GameState) -> bool {
+    state.players[controller.index()].graveyard.len() >= 7
 }
 
 fn valid_bestow_attachment_host(state: &GameState, aura: ObjectId) -> Option<ObjectId> {
