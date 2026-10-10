@@ -1,6 +1,7 @@
 //! Candidate E and controls A and D: selection under the transition ceiling,
 //! then independent evaluation on paired worlds (RUNNER.md sections 2-3).
 
+use super::diag::{EvalSrc, SelSrc, Trace};
 use super::labels::{SpyDefs, Suffix};
 use super::play::{
     act, acting, apply, decision, observe, plain_to_end, terminal, Counters, End, Meter, PlayErr,
@@ -663,6 +664,7 @@ impl Roles {
         meter: &mut Meter,
         c: &mut Counters,
         suffix: &mut Suffix,
+        mut trace: Option<&mut Trace>,
     ) -> Result<(Vec<(Key, usize)>, Option<(Key, Node)>, End), PlayErr> {
         let mut path: Vec<(Key, usize)> = Vec::new();
         let mut new: Option<(Key, Node)> = None;
@@ -681,15 +683,26 @@ impl Roles {
                         depth += 1;
                         last_phys = Some(d.physical_decision_id);
                     }
+                    // Trace only: where this choice comes from.
+                    let mut src = if in_tree {
+                        SelSrc::TailDepth
+                    } else {
+                        SelSrc::TailAfterExpand
+                    };
                     let a = if in_tree && depth <= MAX_DEPTH {
                         let cn = canon(&s, d)?;
                         let key = child_key(&parent.0, &parent.1, &cn);
                         let (edge_index, edge) = match tree.find(&key, &parent.0, &parent.1, &cn)? {
                             Found::Hit(node) => {
+                                src = SelSrc::Tree;
                                 let e = node.select();
                                 (e, cn.edges[e].clone())
                             }
                             Found::Miss => {
+                                src = SelSrc::Expand;
+                                if let Some(t) = trace.as_deref_mut() {
+                                    t.node_created(&key, path.last(), &cn, &s, ctx.focal, &ctx.defs);
+                                }
                                 let node = Node::new(
                                     &key,
                                     parent.0,
@@ -711,6 +724,12 @@ impl Roles {
                     } else {
                         act(&mut self.focal, &s, &d, c)?
                     };
+                    if let Some(t) = trace.as_deref_mut() {
+                        let at = matches!(src, SelSrc::Tree | SelSrc::Expand)
+                            .then(|| path.last())
+                            .flatten();
+                        t.sel_decision(&s, &d, a, depth, src, at, meter.spent, ctx.focal, &ctx.defs);
+                    }
                     observe(Some(suffix), &s, a, ctx.focal, &ctx.defs);
                     a
                 } else {
@@ -720,12 +739,24 @@ impl Roles {
                 act(&mut self.opps[ctx.opp], &s, &d, c)?
             };
             apply(&mut s, &d, a, meter, ctx.focal, Some(suffix), &ctx.defs)?;
+            if let Some(t) = trace.as_deref_mut() {
+                t.event(meter.spent, acting(&d) == ctx.focal, suffix.last);
+            }
         }
     }
 
     /// E selection: simulations until the transition ceiling; one new node
     /// per completed simulation; natural terminal backups only.
     pub(crate) fn select_e(&mut self, ctx: &RootCtx) -> (Selection, Tree) {
+        self.select_e_traced(ctx, None)
+    }
+
+    /// `select_e` with an optional passive trace.
+    pub(crate) fn select_e_traced(
+        &mut self,
+        ctx: &RootCtx,
+        mut trace: Option<&mut Trace>,
+    ) -> (Selection, Tree) {
         let started = Instant::now();
         let mut sel = Selection::default();
         let mut tree = Tree::default();
@@ -746,13 +777,38 @@ impl Roles {
                 Ok(w) => w,
                 Err(_) => {
                     consecutive += 1;
+                    if let Some(t) = trace.as_deref_mut() {
+                        t.sim_rejected(index);
+                    }
                     continue;
                 }
             };
             consecutive = 0;
             self.reset_main(ctx, "E", index, "select");
             let mut suffix = Suffix::new(ctx.cast_root);
-            match self.simulate(ctx, &tree, world, &mut meter, &mut c, &mut suffix) {
+            if let Some(t) = trace.as_deref_mut() {
+                t.sim_begin(index, meter.spent);
+            }
+            let r = self.simulate(
+                ctx,
+                &tree,
+                world,
+                &mut meter,
+                &mut c,
+                &mut suffix,
+                trace.as_deref_mut(),
+            );
+            if let Some(t) = trace.as_deref_mut() {
+                let (end, new) = match &r {
+                    Ok((_, new, End::Natural { win: true })) => ("win", new.as_ref().map(|x| &x.0)),
+                    Ok((_, new, End::Natural { win: false })) => ("loss", new.as_ref().map(|x| &x.0)),
+                    Ok((_, _, End::NonNatural)) => ("nonnatural", None),
+                    Err(PlayErr::Truncated) => ("truncated", None),
+                    Err(PlayErr::Fault(_)) => ("fault", None),
+                };
+                t.sim_end(end, meter.spent, new);
+            }
+            match r {
                 Ok((path, new, End::Natural { win })) => {
                     sel.discovery
                         .add(&suffix, Some(End::Natural { win }), index);
@@ -774,6 +830,9 @@ impl Roles {
                 }
             }
         }
+        if let Some(t) = trace.as_deref_mut() {
+            t.finish_tree(&tree);
+        }
         sel.transitions = meter.spent;
         sel.inference = c.inference;
         sel.extra = json!({"tree":tree_stats(&tree)});
@@ -793,6 +852,22 @@ impl Roles {
         tree: Option<&Tree>,
         sampler: &mut SamplerStats,
     ) -> EvalOut {
+        self.evaluate_traced(ctx, arm, world, e, choice, tree, sampler, None)
+    }
+
+    /// `evaluate` with an optional passive trace of E's frozen execution.
+    #[allow(clippy::too_many_arguments, reason = "explicit roles and accounting")]
+    pub(crate) fn evaluate_traced(
+        &mut self,
+        ctx: &RootCtx,
+        arm: &str,
+        world: &FastActorSessionV1,
+        e: u64,
+        choice: Option<&Vec<u8>>,
+        tree: Option<&Tree>,
+        sampler: &mut SamplerStats,
+        trace: Option<&mut Trace>,
+    ) -> EvalOut {
         let mut s = world.clone();
         self.reset_main(ctx, arm, e, "eval");
         let mut meter = Meter::new(ctx.limits.eval_cap);
@@ -809,6 +884,7 @@ impl Roles {
                 &mut c,
                 &mut suffix,
                 &mut stats,
+                trace,
             );
             let mut out = finish(r, suffix, &meter, &c);
             out.fallback_root = !stats.root_qualified;
@@ -858,6 +934,7 @@ impl Roles {
         c: &mut Counters,
         suffix: &mut Suffix,
         stats: &mut EStats,
+        mut trace: Option<&mut Trace>,
     ) -> Result<End, PlayErr> {
         let mut parent: (Key, Vec<u8>) = ([0u8; 32], b"root".to_vec());
         let mut matching = true;
@@ -876,20 +953,32 @@ impl Roles {
                         last_phys = Some(d.physical_decision_id);
                     }
                     let root = std::mem::replace(&mut first, false);
+                    // Trace only: values execution computes anyway.
+                    let matching_before = matching;
+                    let mut src = if matching {
+                        EvalSrc::DepthLimit
+                    } else {
+                        EvalSrc::AfterMiss
+                    };
+                    let mut seen: Option<(Key, Option<(&Node, Option<usize>)>, usize)> = None;
                     let a = if matching && depth <= MAX_DEPTH {
                         let cn = canon(s, d)?;
                         let key = child_key(&parent.0, &parent.1, &cn);
                         if !root {
                             stats.nonroot_lookups += 1;
                         }
+                        let mut hit = None;
                         let live = match tree.find(&key, &parent.0, &parent.1, &cn)? {
                             Found::Hit(node) => {
                                 if !root {
                                     stats.nonroot_hits += 1;
                                 }
                                 stats.max_hit_depth = stats.max_hit_depth.max(depth);
-                                match node.frozen_choice() {
+                                let fc = node.frozen_choice();
+                                hit = Some((node, fc));
+                                match fc {
                                     Some(e) => {
+                                        src = EvalSrc::TreeEdge;
                                         if root {
                                             stats.root_qualified = true;
                                         }
@@ -897,30 +986,66 @@ impl Roles {
                                         live_index(&cn, &cn.edges[e])?
                                     }
                                     None => {
+                                        src = EvalSrc::MatchedNoQualified;
                                         stats.fallbacks += 1;
                                         act(&mut self.focal, s, &d, c)?
                                     }
                                 }
                             }
                             Found::Miss => {
+                                src = EvalSrc::FirstMiss;
                                 matching = false;
                                 act(&mut self.focal, s, &d, c)?
                             }
                         };
+                        if trace.is_some() {
+                            let m = &cn.menu[live as usize];
+                            let edge = cn.edges.iter().position(|x| x == m).unwrap_or(usize::MAX);
+                            seen = Some((key, hit, edge));
+                        }
                         parent = (key, cn.menu[live as usize].clone());
                         live
                     } else {
                         act(&mut self.focal, s, &d, c)?
                     };
+                    if let Some(t) = trace.as_deref_mut() {
+                        let key = seen.as_ref().map(|x| &x.0);
+                        let hit = seen.as_ref().and_then(|x| x.1);
+                        let edge = seen.as_ref().map(|x| x.2);
+                        t.eval_decision(
+                            s,
+                            &d,
+                            a,
+                            depth,
+                            (matching_before, matching),
+                            src,
+                            root,
+                            key,
+                            hit,
+                            edge,
+                            meter.spent,
+                            ctx.focal,
+                            &ctx.defs,
+                        );
+                    }
                     observe(Some(suffix), s, a, ctx.focal, &ctx.defs);
                     a
                 } else {
+                    if let Some(t) = trace.as_deref_mut() {
+                        t.count("forced");
+                    }
                     0
                 }
             } else {
+                if let Some(t) = trace.as_deref_mut() {
+                    t.count("opp");
+                }
                 act(&mut self.opps[ctx.opp], s, &d, c)?
             };
             apply(s, &d, a, meter, ctx.focal, Some(suffix), &ctx.defs)?;
+            if let Some(t) = trace.as_deref_mut() {
+                t.event(meter.spent, acting(&d) == ctx.focal, suffix.last);
+            }
         }
     }
 }

@@ -544,3 +544,135 @@ fn suffix_labels_follow_a_scripted_spy_line() {
     );
     assert!(!other.complete(), "{other:?}");
 }
+
+/// The passive diagnostic trace leaves E's selection and frozen execution
+/// unchanged, reconstructs every node's terminal backups from the ordered
+/// simulation records, and classifies every focal non-forced execution
+/// decision consistently with E's own counters (a first miss ends matching).
+#[test]
+fn diagnostic_trace_is_passive_and_reconstructs_backups() {
+    let cfg = test_cfg();
+    let spy = spy_index();
+    let game = spy as u64 + 9 * 3;
+    let setup = game_setup(&cfg, 1, game);
+    let focal_id = PlayerId(setup.focal as u8);
+    let (mut a, mut b) = (fixture(), fixture());
+    let mut root = None;
+    drive(&setup, &mut a, &mut b, |s, d, _| {
+        if play::acting(d) == focal_id && d.legal_action_count >= 3 && s.game_state().turn >= 3 {
+            root = Some(s.clone());
+            return Ok(true);
+        }
+        Ok(false)
+    })
+    .unwrap();
+    let session = root.expect("a fixture root");
+    let prior = world::DeckPrior::new(&cfg.decks);
+    let seeds = RootSeeds {
+        model: "fixture".into(),
+        root: "fixture-root".into(),
+    };
+    let run = |traced: bool| {
+        let mut roles = Roles {
+            focal: fixture(),
+            opps: vec![fixture()],
+            scorer: fixture(),
+            inner_focal: fixture(),
+            inner_opps: vec![fixture()],
+        };
+        let d = play::decision(&session).unwrap();
+        let probs = arms::softmax(&roles.scorer.score_fast_session_v1(&session).unwrap().logits);
+        let ctx = RootCtx {
+            root: &session,
+            d,
+            focal: focal_id,
+            opp: 0,
+            seeds: &seeds,
+            prior: &prior,
+            defs: spy_defs(),
+            cast_root: false,
+            probs,
+            limits: Limits {
+                select_cap: 6_000,
+                eval_worlds: 3,
+                eval_cap: 4_000,
+            },
+        };
+        let mut trace = traced.then(diag::Trace::default);
+        let (e, tree) = roles.select_e_traced(&ctx, trace.as_mut());
+        let mut st = arms::SamplerStats::default();
+        let mut outs = Vec::new();
+        for w in 0..3u64 {
+            let world = world::sample(&session, 99 + w, &prior).unwrap();
+            if let Some(t) = trace.as_mut() {
+                t.world_begin(w);
+            }
+            let o = roles.evaluate_traced(&ctx, "E", &world.world, w, None, Some(&tree), &mut st, trace.as_mut());
+            if let Some(t) = trace.as_mut() {
+                t.world_end(o.json());
+            }
+            outs.push(o.json().to_string());
+        }
+        ((tree.hash(), e.json().to_string(), outs), trace)
+    };
+    let (plain, none) = run(false);
+    let (traced, trace) = run(true);
+    assert!(none.is_none());
+    assert_eq!(plain, traced);
+    let lines: Vec<serde_json::Value> = trace
+        .unwrap()
+        .lines
+        .iter()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    // Backups reconstructed from the ordered simulation records.
+    let mut n: BTreeMap<(u64, u64), (u64, u64)> = BTreeMap::new();
+    for l in lines.iter().filter(|l| l["r"] == "sel") {
+        let win = match l["end"].as_str().unwrap() {
+            "win" => 1,
+            "loss" => 0,
+            _ => continue,
+        };
+        for p in l["path"].as_array().unwrap() {
+            let x = n.entry((p[0].as_u64().unwrap(), p[1].as_u64().unwrap())).or_default();
+            x.0 += 1;
+            x.1 += win;
+        }
+    }
+    let nodes: Vec<&serde_json::Value> = lines.iter().filter(|l| l["r"] == "node").collect();
+    assert!(!nodes.is_empty());
+    for node in &nodes {
+        assert!(node.get("error").is_none(), "{node}");
+        let id = node["id"].as_u64().unwrap();
+        for (e, (c, w)) in node["n"].as_array().unwrap().iter().zip(node["w"].as_array().unwrap()).enumerate() {
+            let got = n.get(&(id, e as u64)).copied().unwrap_or_default();
+            assert_eq!(got, (c.as_u64().unwrap(), w.as_u64().unwrap()), "node {id} edge {e}");
+        }
+    }
+    // Execution sources agree with E's counters; a miss ends matching.
+    for world in lines.iter().filter(|l| l["r"] == "eval") {
+        let e = &world["out"]["e"];
+        let decs = world["dec"].as_array().unwrap();
+        let count = |f: &dyn Fn(&serde_json::Value) -> bool| decs.iter().filter(|d| f(d)).count() as u64;
+        let looked = |d: &serde_json::Value| {
+            matches!(d["src"].as_str().unwrap(), "tree_edge" | "matched_no_qualified_plain" | "first_miss_plain")
+        };
+        let hit = |d: &serde_json::Value| matches!(d["src"].as_str().unwrap(), "tree_edge" | "matched_no_qualified_plain");
+        assert_eq!(count(&|d| d["root"] == false && looked(d)), e["nonroot_lookups"].as_u64().unwrap());
+        assert_eq!(count(&|d| d["root"] == false && hit(d)), e["nonroot_hits"].as_u64().unwrap());
+        assert_eq!(count(&|d| d["src"] == "matched_no_qualified_plain"), e["fallbacks"].as_u64().unwrap());
+        assert_eq!(count(&|d| d["src"] == "tree_edge"), e["executed"].as_array().unwrap().len() as u64);
+        let miss = decs.iter().position(|d| d["src"] == "first_miss_plain");
+        for (i, d) in decs.iter().enumerate() {
+            assert_eq!(d["mb"] == true, miss.is_none_or(|m| i <= m), "{d}");
+            if miss.is_some_and(|m| i > m) {
+                assert_eq!(d["src"], "after_miss_plain");
+                assert!(d["node"].is_null());
+            }
+            if hit(d) {
+                assert!(d["node"].is_u64() && d["edge"].is_u64(), "{d}");
+            }
+        }
+        assert_eq!(decs[0]["root"], true);
+    }
+}

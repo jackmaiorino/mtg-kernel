@@ -224,6 +224,9 @@ pub(crate) struct Suffix {
     /// diagnosis without rerunning. `None` in selection playouts.
     pub(crate) history: Option<[u8; 32]>,
     pub(crate) history_len: u64,
+    /// The last transition's resolution events (read by the passive
+    /// diagnostic trace only).
+    pub(crate) last: Events,
 }
 
 impl Suffix {
@@ -240,6 +243,7 @@ impl Suffix {
     }
 
     pub(crate) fn apply(&mut self, e: Events) {
+        self.last = e;
         self.spy_resolved |= e.spy_resolved;
         self.self_target_resolved |= e.self_target_resolved;
         self.dr_giant_resolved |= e.dr_giant_resolved;
