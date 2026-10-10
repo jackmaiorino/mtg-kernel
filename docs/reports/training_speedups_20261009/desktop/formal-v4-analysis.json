@@ -1,0 +1,614 @@
+{
+  "schema": "training-speedups-full-analysis/v1",
+  "complete": true,
+  "full_fingerprint_parity": true,
+  "canonical_fingerprint_sha256": "e0f06e3ee762e715a3bbc0650470e4abf439865ff883e9781891078a05f36231",
+  "completed_updates": 648,
+  "completed_games": 6480,
+  "dispatch_comparison": {
+    "baseline_mean_seconds": 819.8494327500084,
+    "candidate_mean_seconds": 607.2288879999978,
+    "speedup": 1.3501489289323985,
+    "percent_time_reduction": 25.934096708077327,
+    "adjacent_paired_speedups": [
+      1.3907329010535368,
+      1.3111588467123692
+    ],
+    "statistical_scope": "Two observed matched ABBA pairs; no confidence interval or playing-strength claim."
+  },
+  "complete_case_comparison": {
+    "baseline_mean_seconds": 2087.255053250017,
+    "candidate_mean_seconds": 839.2360099499929,
+    "speedup": 2.4870894819853944,
+    "percent_time_reduction": 59.792359412749406,
+    "adjacent_paired_speedups": [
+      3.6989491142970823,
+      1.2506553180313005
+    ],
+    "statistical_scope": "Two observed matched ABBA pairs; no confidence interval or playing-strength claim."
+  },
+  "cases": [
+    {
+      "id": "clean4-01-baseline",
+      "variant": "baseline",
+      "report_sha256": "af9d3ec6292d60c10b0119751660b3596dbf40525494e5f07a6e8a85c7a835a5",
+      "completed_updates": 162,
+      "completed_games": 1620,
+      "workers": 8,
+      "preparation_workers": 8,
+      "dispatch_seconds": 827.5777651999961,
+      "native_execution_seconds": 602.1817574999877,
+      "child_seconds": 597.7388972000044,
+      "archive_seconds": 86.87383739999495,
+      "runtime": {
+        "engine_commit": "5242a984c2bd8d878c9a5fbc4b3cacab9798d08b",
+        "tracked_tree_sha256": "cfce89a142c40a00c6a355ff61d71054cc77f0cff2a5920bad5c91a179117612",
+        "binary": {
+          "path": "E:\\pinned-binaries\\f252f0867338ab5731612957fbaee94c4b7dcd03ea1d7478fb5f0efd7b51925d\\native_expanded_training_run_v1.exe",
+          "sha256": "f252f0867338ab5731612957fbaee94c4b7dcd03ea1d7478fb5f0efd7b51925d"
+        }
+      },
+      "artifact_timing": null,
+      "archive_shard_timing": [
+        null,
+        null
+      ],
+      "late_copy_accounting": "Payload copy, fsync and SHA readback included; copying this receipt itself is separate metadata envelope overhead.",
+      "inspect_seconds": 137.78027320001274,
+      "transport_seconds": 204.60401430001366,
+      "retain_seconds": 46.721911000000546,
+      "late_copy_seconds": 1918.7663803000178,
+      "complete_case_seconds": 3135.450344000041,
+      "maintenance_stages": {
+        "inspect": {
+          "exposure_seconds": 80.23769440001342,
+          "final_checkpoint_copy_verify_seconds": 0.0430097000207752,
+          "embedding_gate_seconds": 0.47960540000349283,
+          "physical_accounting_seconds": 3.060382399999071,
+          "recovery_copy_plan_hash_seconds": 43.33989540001494
+        },
+        "retain": {
+          "independent_copy_receipt_and_source_verify_seconds": 28.22466269999859,
+          "retention_verify_prune_seconds": 15.048581000010017
+        }
+      },
+      "transport_stages": {
+        "scp_seconds": 0.0,
+        "d_verify_seconds": 1.648756200040225,
+        "e_copy_fsync_seconds": 50.88127790004364,
+        "e_verify_seconds": 1.553918099962175
+      },
+      "scheduler": {
+        "seconds": {
+          "iteration_wall_seconds": 597.2317301999999,
+          "collection_execution_seconds": 124.5312585,
+          "update_execution_seconds": 338.68118530000004,
+          "collection_validation_seconds": 87.09539450000001,
+          "update_validation_seconds": 39.9270377
+        },
+        "scope": "newly_completed_iteration_excludes_initialization_and_completed_prefix_validation",
+        "nested": "collection/update/validation timers partition iteration wall; do not add to dispatch or child"
+      },
+      "learner_nested_seconds": {
+        "input_read_seconds": 43.18281159999998,
+        "behavior_replay_seconds": 7.021848200000004,
+        "learner_update_seconds": 222.32376330000014,
+        "checkpoint_io_seconds": 61.340703099999985,
+        "update_elapsed_seconds": 333.86972000000003
+      },
+      "controller_envelope_seconds": 832.6387506000174
+    },
+    {
+      "id": "clean4-02-candidate",
+      "variant": "candidate",
+      "report_sha256": "1f3f71fea0d19a02c52e4101126752342728c1b5730b6668e5e7bb2042f41b75",
+      "completed_updates": 162,
+      "completed_games": 1620,
+      "workers": 4,
+      "preparation_workers": 4,
+      "dispatch_seconds": 595.0659286000009,
+      "native_execution_seconds": 384.5677423000161,
+      "child_seconds": 380.0858626999834,
+      "archive_seconds": 81.13596390001476,
+      "runtime": {
+        "engine_commit": "e6e1cf8cf239f2f98ab4eba89b4e994ea717b69b",
+        "tracked_tree_sha256": "2b3e38329ec3620083db13360aacab97f1b5c6a3b1e3cd2f9c81958a2c6bba95",
+        "binary": {
+          "path": "E:\\pinned-binaries\\770289efe1437f5fae50f57bf087173e4d0770a240f943c66a6f51fd4ccb0f4c\\native_expanded_training_run_v1.exe",
+          "sha256": "770289efe1437f5fae50f57bf087173e4d0770a240f943c66a6f51fd4ccb0f4c"
+        }
+      },
+      "artifact_timing": {
+        "fingerprint_seconds": 127.7768919999944,
+        "fingerprint_phases": {
+          "collection_seconds": 75.73682319986983,
+          "checkpoint_read_hash_parse_seconds": 29.892320799845038,
+          "checkpoint_encode_hash_seconds": 21.97006459996919,
+          "receipt_read_hash_parse_seconds": 0.13411869984702207
+        },
+        "storage_validation_seconds": 1.4479284000117332,
+        "archive_seconds": 81.13596390001476
+      },
+      "archive_shard_timing": [
+        {
+          "write_fsync_seconds": 63.70584209999652,
+          "full_readback_seconds": 16.29517150000902,
+          "archive_pin_seconds": 1.0328447000065353
+        },
+        {
+          "write_fsync_seconds": 25.134479800006375,
+          "full_readback_seconds": 6.9086338999914005,
+          "archive_pin_seconds": 0.3539457000151742
+        }
+      ],
+      "late_copy_accounting": "Payload copy, fsync and SHA readback included; copying this receipt itself is separate metadata envelope overhead.",
+      "inspect_seconds": 93.13581649999833,
+      "transport_seconds": 81.85260429998743,
+      "retain_seconds": 27.027275100001134,
+      "late_copy_seconds": 50.57814240001608,
+      "complete_case_seconds": 847.6597669000039,
+      "maintenance_stages": {
+        "inspect": {
+          "exposure_seconds": 74.78799250000156,
+          "final_checkpoint_copy_verify_seconds": 0.04011299999547191,
+          "embedding_gate_seconds": 0.4051675999944564,
+          "physical_accounting_seconds": 2.4390985000063665,
+          "recovery_copy_plan_hash_seconds": 5.802077000000281
+        },
+        "retain": {
+          "independent_copy_receipt_and_source_verify_seconds": 6.12040590000106,
+          "retention_verify_prune_seconds": 17.083351999986917
+        }
+      },
+      "transport_stages": {
+        "scp_seconds": 0.0,
+        "d_verify_seconds": 1.4291330000269227,
+        "e_copy_fsync_seconds": 33.31022500002291,
+        "e_verify_seconds": 1.5020140999404248
+      },
+      "scheduler": {
+        "seconds": {
+          "iteration_wall_seconds": 379.65431749999993,
+          "collection_execution_seconds": 106.42182369999992,
+          "update_execution_seconds": 188.6745617999999,
+          "collection_validation_seconds": 40.469601199999964,
+          "update_validation_seconds": 37.71660750000002
+        },
+        "scope": "newly_completed_iteration_excludes_initialization_and_completed_prefix_validation",
+        "nested": "collection/update/validation timers partition iteration wall; do not add to dispatch or child"
+      },
+      "learner_nested_seconds": {
+        "input_read_seconds": 40.954481599999994,
+        "behavior_replay_seconds": 10.583063099999997,
+        "learner_update_seconds": 73.53365400000001,
+        "checkpoint_io_seconds": 59.11862740000002,
+        "update_elapsed_seconds": 184.19040079999994
+      },
+      "controller_envelope_seconds": 600.3633909999917
+    },
+    {
+      "id": "clean4-03-candidate",
+      "variant": "candidate",
+      "report_sha256": "b7702e0cd10df1044a959c71696a5773cb1d85b079253f30c9119ace05461001",
+      "completed_updates": 162,
+      "completed_games": 1620,
+      "workers": 4,
+      "preparation_workers": 4,
+      "dispatch_seconds": 619.3918473999947,
+      "native_execution_seconds": 405.02714000002015,
+      "child_seconds": 400.1520264999999,
+      "archive_seconds": 81.71752869998454,
+      "runtime": {
+        "engine_commit": "e6e1cf8cf239f2f98ab4eba89b4e994ea717b69b",
+        "tracked_tree_sha256": "2b3e38329ec3620083db13360aacab97f1b5c6a3b1e3cd2f9c81958a2c6bba95",
+        "binary": {
+          "path": "E:\\pinned-binaries\\770289efe1437f5fae50f57bf087173e4d0770a240f943c66a6f51fd4ccb0f4c\\native_expanded_training_run_v1.exe",
+          "sha256": "770289efe1437f5fae50f57bf087173e4d0770a240f943c66a6f51fd4ccb0f4c"
+        }
+      },
+      "artifact_timing": {
+        "fingerprint_seconds": 130.850603400002,
+        "fingerprint_phases": {
+          "collection_seconds": 76.57140880011139,
+          "checkpoint_read_hash_parse_seconds": 31.19832740011043,
+          "checkpoint_encode_hash_seconds": 22.909415300091496,
+          "receipt_read_hash_parse_seconds": 0.12955760009936057
+        },
+        "storage_validation_seconds": 1.6595373000018299,
+        "archive_seconds": 81.71752869998454
+      },
+      "archive_shard_timing": [
+        {
+          "write_fsync_seconds": 64.29812849999871,
+          "full_readback_seconds": 16.275579700013623,
+          "archive_pin_seconds": 1.04079400000046
+        },
+        {
+          "write_fsync_seconds": 25.527846500015585,
+          "full_readback_seconds": 6.9604074000089895,
+          "archive_pin_seconds": 0.3608482999843545
+        }
+      ],
+      "late_copy_accounting": "Payload copy, fsync and SHA readback included; copying this receipt itself is separate metadata envelope overhead.",
+      "inspect_seconds": 93.88023489998886,
+      "transport_seconds": 38.05400900001405,
+      "retain_seconds": 28.362957399978768,
+      "late_copy_seconds": 51.123204300005455,
+      "complete_case_seconds": 830.8122529999819,
+      "maintenance_stages": {
+        "inspect": {
+          "exposure_seconds": 76.85420349999913,
+          "final_checkpoint_copy_verify_seconds": 0.04444980001426302,
+          "embedding_gate_seconds": 0.47250450000865385,
+          "physical_accounting_seconds": 2.7328358000086155,
+          "recovery_copy_plan_hash_seconds": 3.714549900003476
+        },
+        "retain": {
+          "independent_copy_receipt_and_source_verify_seconds": 6.156385599984787,
+          "retention_verify_prune_seconds": 18.238502499996684
+        }
+      },
+      "transport_stages": {
+        "scp_seconds": 0.0,
+        "d_verify_seconds": 1.422179299988784,
+        "e_copy_fsync_seconds": 31.261838600039482,
+        "e_verify_seconds": 1.504568999982439
+      },
+      "scheduler": {
+        "seconds": {
+          "iteration_wall_seconds": 399.2931048999999,
+          "collection_execution_seconds": 113.48019249999993,
+          "update_execution_seconds": 196.36112260000007,
+          "collection_validation_seconds": 41.35166879999999,
+          "update_validation_seconds": 41.03597610000001
+        },
+        "scope": "newly_completed_iteration_excludes_initialization_and_completed_prefix_validation",
+        "nested": "collection/update/validation timers partition iteration wall; do not add to dispatch or child"
+      },
+      "learner_nested_seconds": {
+        "input_read_seconds": 42.9689633,
+        "behavior_replay_seconds": 10.983344299999994,
+        "learner_update_seconds": 75.034939,
+        "checkpoint_io_seconds": 62.71169479999999,
+        "update_elapsed_seconds": 191.69957449999995
+      },
+      "controller_envelope_seconds": 625.1556362000119
+    },
+    {
+      "id": "clean4-04-baseline",
+      "variant": "baseline",
+      "report_sha256": "b5b3a70a5dd1bfc41d80909b8444932f84dd5bef37630797792cb69550136587",
+      "completed_updates": 162,
+      "completed_games": 1620,
+      "workers": 8,
+      "preparation_workers": 8,
+      "dispatch_seconds": 812.1211003000208,
+      "native_execution_seconds": 589.4399370000174,
+      "child_seconds": 584.4271708999877,
+      "archive_seconds": 86.79866239998955,
+      "runtime": {
+        "engine_commit": "5242a984c2bd8d878c9a5fbc4b3cacab9798d08b",
+        "tracked_tree_sha256": "cfce89a142c40a00c6a355ff61d71054cc77f0cff2a5920bad5c91a179117612",
+        "binary": {
+          "path": "E:\\pinned-binaries\\f252f0867338ab5731612957fbaee94c4b7dcd03ea1d7478fb5f0efd7b51925d\\native_expanded_training_run_v1.exe",
+          "sha256": "f252f0867338ab5731612957fbaee94c4b7dcd03ea1d7478fb5f0efd7b51925d"
+        }
+      },
+      "artifact_timing": null,
+      "archive_shard_timing": [
+        null,
+        null
+      ],
+      "late_copy_accounting": "Payload copy, fsync and SHA readback included; copying this receipt itself is separate metadata envelope overhead.",
+      "inspect_seconds": 93.48319939998328,
+      "transport_seconds": 30.429948200006038,
+      "retain_seconds": 28.73242919999757,
+      "late_copy_seconds": 74.29308539998601,
+      "complete_case_seconds": 1039.0597624999937,
+      "maintenance_stages": {
+        "inspect": {
+          "exposure_seconds": 76.44768839998869,
+          "final_checkpoint_copy_verify_seconds": 0.037547399988397956,
+          "embedding_gate_seconds": 0.42378519999329,
+          "physical_accounting_seconds": 2.739182899997104,
+          "recovery_copy_plan_hash_seconds": 3.806729300005827
+        },
+        "retain": {
+          "independent_copy_receipt_and_source_verify_seconds": 6.098148399993079,
+          "retention_verify_prune_seconds": 18.42887229999178
+        }
+      },
+      "transport_stages": {
+        "scp_seconds": 0.0,
+        "d_verify_seconds": 1.4249809999600984,
+        "e_copy_fsync_seconds": 23.935485700087156,
+        "e_verify_seconds": 1.4939647000574041
+      },
+      "scheduler": {
+        "seconds": {
+          "iteration_wall_seconds": 583.9922737000002,
+          "collection_execution_seconds": 122.12077520000004,
+          "update_execution_seconds": 331.4778289,
+          "collection_validation_seconds": 82.2052546,
+          "update_validation_seconds": 40.39994840000001
+        },
+        "scope": "newly_completed_iteration_excludes_initialization_and_completed_prefix_validation",
+        "nested": "collection/update/validation timers partition iteration wall; do not add to dispatch or child"
+      },
+      "learner_nested_seconds": {
+        "input_read_seconds": 43.01126250000001,
+        "behavior_replay_seconds": 6.586367900000003,
+        "learner_update_seconds": 214.05151589999997,
+        "checkpoint_io_seconds": 62.78462759999999,
+        "update_elapsed_seconds": 326.4343708000001
+      },
+      "controller_envelope_seconds": 818.0212702999997
+    }
+  ],
+  "native_telemetry": [
+    {
+      "case": "clean4-01-baseline",
+      "source": {
+        "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\clean4-01-baseline\\telemetry.jsonl",
+        "sha256": "c98e72f2990fc00ca9ea6d7a98d030e88c1bb420fefe17adf3ce6fa01ccc4103"
+      },
+      "samples": 19,
+      "sampled_interval_seconds": 548.7825601100922,
+      "native_cpu_seconds_delta": 869.171875,
+      "average_native_cpu_cores": 1.5838183247398279,
+      "affinity_cores": 8,
+      "percent_of_affinity_capacity": 19.797729059247846,
+      "peak_sampled_rss_bytes": 1489010688,
+      "scope": "Native process thread CPU time only, sampled first-to-last interval. Excludes initialization before first sample, final tail, archive and maintenance. No GPU or whole-host utilization claim."
+    },
+    {
+      "case": "clean4-02-candidate",
+      "source": {
+        "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\clean4-02-candidate\\telemetry.jsonl",
+        "sha256": "716a417a130fce0c5b257774624fa0863fb2741517048f5a5d447999d2294740"
+      },
+      "samples": 12,
+      "sampled_interval_seconds": 336.39781665802,
+      "native_cpu_seconds_delta": 477.703125,
+      "average_native_cpu_cores": 1.4200541779545202,
+      "affinity_cores": 8,
+      "percent_of_affinity_capacity": 17.750677224431502,
+      "peak_sampled_rss_bytes": 614416384,
+      "scope": "Native process thread CPU time only, sampled first-to-last interval. Excludes initialization before first sample, final tail, archive and maintenance. No GPU or whole-host utilization claim."
+    },
+    {
+      "case": "clean4-03-candidate",
+      "source": {
+        "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\clean4-03-candidate\\telemetry.jsonl",
+        "sha256": "b299fd6238c0133ae6f3377cf88a0942207edbcceb9320cdcd54f17fa35babd0"
+      },
+      "samples": 13,
+      "sampled_interval_seconds": 369.30967020988464,
+      "native_cpu_seconds_delta": 519.328125,
+      "average_native_cpu_cores": 1.406213177967578,
+      "affinity_cores": 8,
+      "percent_of_affinity_capacity": 17.577664724594722,
+      "peak_sampled_rss_bytes": 902729728,
+      "scope": "Native process thread CPU time only, sampled first-to-last interval. Excludes initialization before first sample, final tail, archive and maintenance. No GPU or whole-host utilization claim."
+    },
+    {
+      "case": "clean4-04-baseline",
+      "source": {
+        "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\clean4-04-baseline\\telemetry.jsonl",
+        "sha256": "31cd6bbdaa3922f1643160d87935d55bb0ec669db0950fb3c36d7a270bd917c8"
+      },
+      "samples": 18,
+      "sampled_interval_seconds": 524.1419324874878,
+      "native_cpu_seconds_delta": 852.578125,
+      "average_native_cpu_cores": 1.6266168992696508,
+      "affinity_cores": 8,
+      "percent_of_affinity_capacity": 20.332711240870633,
+      "peak_sampled_rss_bytes": 943779840,
+      "scope": "Native process thread CPU time only, sampled first-to-last interval. Excludes initialization before first sample, final tail, archive and maintenance. No GPU or whole-host utilization claim."
+    }
+  ],
+  "native_affinity": [
+    {
+      "case": "clean4-01-baseline",
+      "source": {
+        "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\clean4-01-baseline\\native-affinity-observation.json",
+        "sha256": "4b36ec04bd2a6ee1c84cf4f71452db70936a94de15789b98546de5120a3c7227"
+      },
+      "verified": true,
+      "actual_mask": 21845,
+      "expected_mask": 21845,
+      "pid": 12416,
+      "creation_time": 134361138182948719,
+      "scope": "Read-only initial native affinity; no affinity mutation"
+    },
+    {
+      "case": "clean4-02-candidate",
+      "source": {
+        "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\clean4-02-candidate\\native-affinity-observation.json",
+        "sha256": "94a7068e4fecebcbbbdbb3a53fdf3a31a52b1acd516be615b8e7696f01f7dfa8"
+      },
+      "verified": true,
+      "actual_mask": 21845,
+      "expected_mask": 21845,
+      "pid": 31000,
+      "creation_time": 134361175588722660,
+      "scope": "Read-only initial native affinity; no affinity mutation"
+    },
+    {
+      "case": "clean4-03-candidate",
+      "source": {
+        "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\clean4-03-candidate\\native-affinity-observation.json",
+        "sha256": "ba3e7be575e9e6a82e126a9116b2285258d001b8e4cb3a2d017076ae201e5077"
+      },
+      "verified": true,
+      "actual_mask": 21845,
+      "expected_mask": 21845,
+      "pid": 52696,
+      "creation_time": 134361184143196548,
+      "scope": "Read-only initial native affinity; no affinity mutation"
+    },
+    {
+      "case": "clean4-04-baseline",
+      "source": {
+        "path": "D:\\training-speedups-20261009\\desktop\\measure\\hot\\clean4-04-baseline\\native-affinity-observation.json",
+        "sha256": "e9190c9a6bb90bdc880d3980f73d63c6625cb71dcdd8acac9da31822a77718e6"
+      },
+      "verified": true,
+      "actual_mask": 21845,
+      "expected_mask": 21845,
+      "pid": 38988,
+      "creation_time": 134361192530215519,
+      "scope": "Read-only initial native affinity; no affinity mutation"
+    }
+  ],
+  "coordinator_metadata": [
+    {
+      "case": "clean4-01-baseline",
+      "coordinator_case_wall_seconds": 3142.7419440000085,
+      "scope": "full dispatch through late receipt readback",
+      "late_receipt_metadata_seconds": 0.0478022999886889,
+      "late_copy_cold_receipt": {
+        "path": "E:\\training-speedups-20261009\\clean4-01-baseline\\late\\late-copy-receipt.json",
+        "sha256": "f9a0ec1e5f083508d542d79e789f10933668fd2fe1ccc4f46c21f7396d21c684"
+      }
+    },
+    {
+      "case": "clean4-02-candidate",
+      "coordinator_case_wall_seconds": 854.3986726999865,
+      "scope": "full dispatch through late receipt readback",
+      "late_receipt_metadata_seconds": 0.05450360002578236,
+      "late_copy_cold_receipt": {
+        "path": "E:\\training-speedups-20261009\\clean4-02-candidate\\late\\late-copy-receipt.json",
+        "sha256": "db6eb48e1ed203e2a45cd9e81535a98d9f576c9e58951c0dbd6e0a1063400771"
+      }
+    },
+    {
+      "case": "clean4-03-candidate",
+      "coordinator_case_wall_seconds": 838.1525035999948,
+      "scope": "full dispatch through late receipt readback",
+      "late_receipt_metadata_seconds": 0.03922350000357255,
+      "late_copy_cold_receipt": {
+        "path": "E:\\training-speedups-20261009\\clean4-03-candidate\\late\\late-copy-receipt.json",
+        "sha256": "c06ccdab2dcb79323e8264900395b442d8e0ed33773ded5851b3558d9b1930a7"
+      }
+    },
+    {
+      "case": "clean4-04-baseline",
+      "coordinator_case_wall_seconds": 1046.6287997999752,
+      "scope": "full dispatch through late receipt readback",
+      "late_receipt_metadata_seconds": 0.04742919999989681,
+      "late_copy_cold_receipt": {
+        "path": "E:\\training-speedups-20261009\\clean4-04-baseline\\late\\late-copy-receipt.json",
+        "sha256": "77b109dda0ccefabcb500be3cc94109f7f1d8525d2b4fa3e4245be36d7145328"
+      }
+    }
+  ],
+  "interruption_overhead": {
+    "scope": "Clean ABBA excludes contaminated first baseline and refused next dispatch; prior attempts preserved in formal-v2. Formal-v3 affinity-mismatched prefix is also excluded and preserved. No timing from those samples included."
+  },
+  "first_block_allocation_audit": {
+    "seconds": 0.8749407000141218,
+    "growth": {
+      "logical_bytes": 13009470580,
+      "allocated_bytes": 7353678128
+    },
+    "measurement": {
+      "path": "D:\\training-speedups-20261009\\desktop\\formal-v4\\coordinator\\first-block.allocation.json",
+      "sha256": "cd9015564154d4fb9c09d4326bb6479d353fe8be475d2bfb9568d3366555605f"
+    },
+    "accounting": "One-time allocation audit overhead; excluded from per-case complete elapsed totals"
+  },
+  "queue_waits": [
+    {
+      "case": "clean4-01-baseline",
+      "seconds": 0.004553400009172037,
+      "final": {
+        "canonical_state": "free",
+        "generation": null,
+        "lane": null
+      },
+      "scope": "Read-only canonical reservation queue; outside case timing"
+    },
+    {
+      "case": "clean4-02-candidate",
+      "seconds": 597.2529235999973,
+      "final": {
+        "canonical_state": "free",
+        "generation": null,
+        "lane": null
+      },
+      "scope": "Read-only canonical reservation queue; outside case timing"
+    },
+    {
+      "case": "clean4-03-candidate",
+      "seconds": 0.00812959999893792,
+      "final": {
+        "canonical_state": "free",
+        "generation": null,
+        "lane": null
+      },
+      "scope": "Read-only canonical reservation queue; outside case timing"
+    },
+    {
+      "case": "clean4-04-baseline",
+      "seconds": 0.008799699979135767,
+      "final": {
+        "canonical_state": "free",
+        "generation": null,
+        "lane": null
+      },
+      "scope": "Read-only canonical reservation queue; outside case timing"
+    }
+  ],
+  "wall_envelopes": {
+    "original_started_utc": "2026-10-10T13:50:07.652085+00:00",
+    "clean_started_utc": "2026-10-10T13:50:07.652085+00:00",
+    "finished_utc": "2026-10-10T15:38:07.923749+00:00",
+    "overall_clean_coordinator_wall_seconds": 6480.271664,
+    "coordinator_wall_seconds": 6480.271664
+  },
+  "provenance": {
+    "state": {
+      "path": "D:\\training-speedups-20261009\\desktop\\formal-v4\\coordinator\\state.json",
+      "sha256": "f00f12fdfa765600b11249df4e7c81f1c74952ac3b3e0c208941ce00ae0ebd3a"
+    },
+    "excluded_prior_attempt": {
+      "path": "D:\\training-speedups-20261009\\desktop\\formal-v2\\coordinator\\state.json",
+      "sha256": "8025260f737e38503e798c8339b502d9fc42c9249f2b7af25cc3a5f1f7390592"
+    },
+    "excluded_affinity_stop": {
+      "path": "D:\\training-speedups-20261009\\desktop\\formal-v3\\affinity-stop.json",
+      "sha256": "24aeaec5a5bd9c6bb94b1699811cb5dcc815dab4416ada50f472e19ac5d50f23"
+    },
+    "excluded_affinity_attempt_state": {
+      "path": "D:\\training-speedups-20261009\\desktop\\formal-v3\\coordinator\\state.json",
+      "sha256": "43efa2bee7110a621618398b8e57e1dcc859d04600de6b97ceca2ab7a9d160b6"
+    },
+    "plan": {
+      "path": "D:\\training-speedups-20261009\\desktop\\formal-v4\\seal.plan.json",
+      "sha256": "6b6f0931e56eac6c406aa5871b793e18c32649b422c96117d4cbafad088a9aa5"
+    },
+    "helper": {
+      "path": "D:\\training-speedups-20261009\\desktop_helpers\\summarize_cases.py",
+      "sha256": "6d4ab650df34338daf7adf25f210f75b53153a2ec18ad2dbc63a6a7e40c3745c"
+    },
+    "analysis_script": {
+      "path": "D:\\training-speedups-20261009\\desktop\\analyze_formal_clean_v4.py",
+      "sha256": "41bb353671ad4718997aba7d8f9741fd30708118db89e2729848da7372c09dbb"
+    },
+    "manifest": {
+      "path": "D:\\training-speedups-20261009\\desktop\\formal-v4\\analysis\\case-manifest.json",
+      "sha256": "a90be624c6d36dee1625903d11cbfb1b15cf3ebace64ff9b8aab2bc371ab2f35"
+    },
+    "raw_summary": {
+      "path": "D:\\training-speedups-20261009\\desktop\\formal-v4\\analysis\\raw-summary.json",
+      "sha256": "52bd4b9990f3cd779854a99d77067e24c9d62c72c3fb309835ee844fec59464e"
+    },
+    "table": {
+      "path": "D:\\training-speedups-20261009\\desktop\\formal-v4\\analysis\\summary-table.txt",
+      "sha256": "0e4293b45ccf286d988594a7ff5516d3428e785eb4e7854ab070d866db68a3e3"
+    }
+  },
+  "accounting": "complete_case = dispatch + inspect + actual transport + retain + optional pinned late copy. One-time allocation reconciliation and metadata receipt self-copy overhead are separate. Archive/child/scheduler/learner timers are nested diagnostics and never added again. Controller polling envelope is separate.",
+  "claims": "Two matched ABBA pairs compare combined changes and placement. Completed-phase totals exclude explicitly reported failed inspection/stopped gap/audit/self-copy overhead. Clean coordinator wall excludes separate prior contaminated/refused attempts. No individual patch causality, strength or holdout claim."
+}

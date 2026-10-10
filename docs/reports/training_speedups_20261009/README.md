@@ -1,8 +1,16 @@
 # Training speedup implementation and comparison
 
-Status: implementation verified and 16 short qualifications complete on two PCs.
-The corrected full comparison remains pending; total end-to-end speedup
-is not yet measured. Prior attempts and their exclusions are preserved below.
+Status: all four full ABBA cases completed, with identical complete output
+fingerprints and verified independent recovery. Observed full case wall time
+improved **2.48x** (34.91 to 14.10 minutes per block); the declared sum of
+completed phases improved **2.49x** (34.79 to 13.99 minutes). The first
+baseline's unusually slow recovery copying strongly inflates this contrast.
+It is not a stable production speedup estimate. Guarded dispatch improved
+**1.35x**, with adjacent pair ratios of 1.39x and 1.31x. Integration is pending.
+
+The [full result and bottleneck ranking](RESULTS.md) include all four cases,
+timing boundaries, storage variability, numerical parity and next priorities.
+Prior attempts and their exclusions are preserved below.
 
 This follows the completed [throughput audit](../training_throughput_20261009/README.md).
 Three GPT-6.1 Sol agents implemented learner arithmetic, collection/model reuse,
@@ -46,13 +54,14 @@ pods are stopped. Existing storage reserves and other owners' work remain
 binding. Raw benchmark artifacts stay outside Git; compact receipts and hashes
 will accompany measured results.
 
-## Verification and remaining work
+## Verification
 
 Pinned Python 3.13.14 checks passed: 26 dispatcher tests, four archive tests,
 and three storage tests; four Linux-only dispatcher tests were skipped.
 Native parity tests passed, including the pinned two-update GAE state and
-real serial/parallel games. Complete matched blocks, final current-head
-checks and integration remain pending; the short qualifications are below.
+real serial/parallel games. The complete matched blocks and result review
+passed; final current-head CI and integration remain pending. The short
+qualifications and historical progress records are below.
 Review found and repaired two collector issues: a zero enclosing profiler
 duration and source-pin verification across cached collection invocations.
 
@@ -251,16 +260,17 @@ The first v4 native baseline started at 13:50:18 UTC as PID 12416. Its live
 identity and mask 21845 were verified and saved in
 `desktop/formal-v4-initial-affinity.json`.
 
-Current state is
+The completed run's state is
 `D:/training-speedups-20261009/desktop/formal-v4-launcher-repaired/state.json`,
 then `desktop/formal-v4/coordinator/state.json`. The bounded local event
 waiter handles reservation release, and the existing
 `finish-training-throughput-comparison` heartbeat checks completion every
-15 minutes. Queue time is separate from case timing and remains in the
-coordinator wall. No complete ABBA result or final speedup is claimed yet.
+15 minutes through integration. Queue time is separate from case timing and
+remains in the coordinator wall. Final measured results are in `RESULTS.md`.
 
 At 14:26 UTC, a read-only diagnostic found a substantial late-copy cost in
-the first v4 baseline. Dispatch completed in 833.11 seconds; the subsequent
+the first v4 baseline. The coordinator dispatch subprocess finished in
+833.11 seconds, including its controller envelope; the subsequent
 late copy was still progressing more than 15 minutes after retention ended.
 Only 318 destination files (26.4 MB) were present from a maintenance tree
 containing 1,187 files (151.1 MB), plus the controller receipt. Two disk-wide
