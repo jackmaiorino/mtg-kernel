@@ -3862,6 +3862,7 @@ fn keywords_for(card: &CardJson) -> String {
         | "Fang Dragon"
         | "Shivan Dragon"
         | "Vanguard Seraph"
+        | "Vampire Soulcaller"
         | "Billowing Shriekmass" => keywords.push("Keywords::FLYING"),
         "Generous Ent"
         | "Writhing Chrysalis"
@@ -6040,6 +6041,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Bigfin Bouncer" => "etb:target_opponent_controlled_creature:return_to_owners_hand",
         "Rune-Scarred Demon" => "etb:search_library_any_card_to_hand_unrevealed",
         "Elvish Regrower" => "etb:return_target_own_graveyard_permanent_card_to_hand",
+        "Vampire Soulcaller" => "etb:return_target_own_graveyard_creature_card_to_hand;static:cant_block:printed_source_abilities",
         "Ambush Wolf" => "etb:exile_up_to_one_target_graveyard_card",
         "Tatyova, Benthic Druid" => "controlled_land_enters:gain_life:1:then_draw:1",
         "Dazzling Angel" => "other_controlled_creature_enters:gain_life:1",

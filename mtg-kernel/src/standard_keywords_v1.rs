@@ -169,7 +169,7 @@ pub(crate) fn cant_block(state: &GameState, id: ObjectId) -> bool {
     not_a_creature(state, id)
         || CARD_DEFS
             .get(usize::from(state.objects.get(id).card_def))
-            .is_some_and(|def| def.name == "Forsaken Miner")
+            .is_some_and(|def| matches!(def.name, "Forsaken Miner" | "Vampire Soulcaller"))
             && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
 }
 

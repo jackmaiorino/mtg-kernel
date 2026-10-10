@@ -970,6 +970,23 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         });
     }
 
+    if name == "Vampire Soulcaller" {
+        walk.rec(
+            "static_cant_block",
+            json!({"printed_source_abilities": true}),
+        );
+        walk.ability(CtxF::Static, |out| {
+            out.effect(
+                EffectAtom::new(EvF::Restrict)
+                    .obj(ObjF::ThisObject)
+                    .duration(DurF::WhileOnBattlefield),
+            );
+            // Restrict has no predicate distinguishing blocking from other actions.
+            out.atoms.push(Atom::Opaque);
+        });
+        walk.opaque.push("printed source cannot block");
+    }
+
     #[cfg(feature = "standard-magezero-fixtures")]
     standard_statics(name, &mut walk);
     #[cfg(feature = "standard-magezero-fixtures")]
