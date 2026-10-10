@@ -6,9 +6,12 @@ V62 is accepted on default branch at `8e65be54`. The owned v63 candidate
 appends IDs 332-333 and wires its focused gameplay test into CI. Its 40-card
 fixture and candidate registry pass 27 deck tests and six frozen booster-target
 tests with Python 3.13.14. Candidate metadata covers 134 full target names;
-accepted default-branch coverage remains 132. Generated catalog identity,
-separate live store profile and native gameplay qualification remain pending.
-No passing native check or accepted card support is claimed yet.
+accepted default-branch coverage remains 132. The guarded two-core native
+catalog check passed and generated identity `f388a3a4265b37ef`. The appended
+`FdnFirstLifeGain` live store profile pins that identity and the unchanged
+catalog SHA-256 `68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851`.
+Historical v62 `FdnSurveil` stores remain readable; publication and resume
+require the current catalog. Native gameplay qualification remains queued.
 
 | Card | Exact printed behavior | Existing effect |
 | --- | --- | --- |
@@ -61,10 +64,10 @@ source control changes, Food costs, Cat identity, pending capture/surveil
 restore, stale capture replay after drain, and valid captures followed by
 later atomic events. The next-turn regression passes the real End window
 through Cleanup and Untap, verifying Cleanup's damage reset before checking
-the new ledger anchor. Hosted tests will supply actual results after the prior versions
-integrate. Pinned rustfmt and diff checks are the only local Rust checks;
-Stage4a's desktop reservation, paid-run authority and frozen evidence remain
-untouched.
+the new ledger anchor. Gameplay and restore results remain pending. The
+supported host-slot launcher runs native checks on two available cores at
+BelowNormal priority; Stage4a's reservation, paid-run authority and frozen
+evidence remain untouched.
 
 October 10 integration preparation preserves the recent Standard event/state
 fields, appends the new trigger/halt variants after the existing variants,
@@ -72,9 +75,9 @@ and maps Vanguard Seraph's flying keyword. The rules-vector record retains
 the exact first-gain condition. Its existing vocabulary represents the life
 gain and turn-history read, but the global event ordinal and own-turn gate
 are explicitly reported as opaque. This does not reduce gameplay support;
-it records the extractor's representational limit. Registration, catalog
-admission and gameplay qualification still require the generated v63 identity,
-separate store profile and native checks. The supported two-core catalog build
-is queued behind existing claims, including a malformed S4a build shell reported
-to its owner through the shared mailbox and collaboration PR137. No reservation
-or other owner's process was changed.
+it records the extractor's representational limit. Registry wiring, generated
+identity and the separate profile are committed. Gameplay qualification and
+current-head CI remain admission prerequisites. The earlier malformed build
+claim was reported to its owner through the shared mailbox and collaboration
+PR137 and has since been released. No reservation or other owner's process
+was changed.
