@@ -245,7 +245,19 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
             count,
         } => {
             let _ = target_index; // the target filter owns slot legality
-            out.effect(EffectAtom::new(EvF::CounterSpell).obj(ObjF::Spell));
+            out.control(ControlF::Conditional);
+            out.effect(
+                EffectAtom::new(EvF::CounterSpell)
+                    .player(RelF::ObjectOwner)
+                    .obj(ObjF::Spell),
+            );
+            // Nominal counter departure; the executor preserves the shared
+            // flashback exile and virtual-copy cease exceptions.
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Stack), ZoneF::Graveyard)
+                    .player(RelF::ObjectOwner)
+                    .obj(ObjF::Spell),
+            );
             out.effect(
                 EffectAtom::new(EvF::CreateToken)
                     .player(RelF::ObjectController)
