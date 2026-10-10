@@ -11,15 +11,20 @@ catalog check passed and generated identity `f388a3a4265b37ef`. The appended
 `FdnFirstLifeGain` live store profile pins that identity and the unchanged
 catalog SHA-256 `68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851`.
 Historical v62 `FdnSurveil` stores remain readable; publication and resume
-require the current catalog. Native gameplay qualification remains queued.
+require the current catalog. Corrected native gameplay qualification passed
+at `a8a812d8` under the supported two-core launcher: 14 card cases, five
+ledger cases, 23 rules-vector cases (one ignored), 48 catalog cases and
+146 store-profile cases (three ignored). All 236 executed cases passed.
 
 The first guarded gameplay attempt at `bc3c349e` completed with 11 passing
 cases and three fixture failures: the settle helper and private-surveil case
 expected a target prompt for count one, whose preserved protocol is the
 two-option keep/graveyard prompt. Commit `527c565a` uses that actual prompt
 and checks nonchooser public and typed projections across hidden top-card
-changes. The failed output is retained; the corrected attempt is queued and
-is not yet reported passing.
+changes. The failed output is retained alongside the corrected passing log
+`fdn110-v63-gameplay-checks-2.log` in the coordinator scratch directory.
+The corrected launcher exited zero after release of its verified owned
+idle VCTIP helper. Production-profile publication/resume checks remain pending.
 
 | Card | Exact printed behavior | Existing effect |
 | --- | --- | --- |
@@ -72,7 +77,7 @@ source control changes, Food costs, Cat identity, pending capture/surveil
 restore, stale capture replay after drain, and valid captures followed by
 later atomic events. The next-turn regression passes the real End window
 through Cleanup and Untap, verifying Cleanup's damage reset before checking
-the new ledger anchor. Gameplay and restore results remain pending. The
+the new ledger anchor. These gameplay and restore cases passed. The
 supported host-slot launcher runs native checks on two available cores at
 BelowNormal priority; Stage4a's reservation, paid-run authority and frozen
 evidence remain untouched.
@@ -84,8 +89,8 @@ the exact first-gain condition. Its existing vocabulary represents the life
 gain and turn-history read, but the global event ordinal and own-turn gate
 are explicitly reported as opaque. This does not reduce gameplay support;
 it records the extractor's representational limit. Registry wiring, generated
-identity and the separate profile are committed. Gameplay qualification and
-current-head CI remain admission prerequisites. The earlier malformed build
+identity and the separate profile are committed. Production-profile checks
+and current-head CI remain admission prerequisites. The earlier malformed build
 claim was reported to its owner through the shared mailbox and collaboration
 PR137 and has since been released. No reservation or other owner's process
 was changed.
