@@ -29,3 +29,10 @@ and later stolen-creature departure. Tentative ID356 follows the retained
 Raise the Past preparation. No registry, fixture, profile, catalog identity or
 accepted coverage changes. Formatting/diff checks and source review precede
 native qualification; pending native/card checks are not passing results.
+
+Source receipt, October 10: implementation e1ea896f993d9a626798ab5accf16bcd6a6ca0e4
+passed formatting and diff checks. A separate read-only review found no
+actionable defects in ownership, simultaneous entry, replay or later departure.
+The existing Haley guard queue now targets this source for primitive execution
+and Limited test-target compilation; the whole-host Pauper replay reservation
+still prevents admission. The unregistered card cases have not executed.
