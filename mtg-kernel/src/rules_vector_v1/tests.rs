@@ -607,6 +607,7 @@ fn power_toughness_changes_keep_their_sign() {
 /// or `event_time_trigger_programs`; token names are reached through
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
+    "Vampire Soulcaller",
     "Billowing Shriekmass",
     "Apothecary Stomper",
     "Balmor, Battlemage Captain",
@@ -926,6 +927,11 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
         "standard_statics_v1.rs",
         "Unstoppable Slasher",
         "bookkeeping: records the last-known counters its dies trigger reads",
+    ),
+    (
+        "continuous_characteristics_v1.rs",
+        "Vampire Soulcaller",
+        "read via continuous_characteristics_v1::has_printed_cant_block, exact/opaque static record",
     ),
     (
         "standard_keywords_v1.rs",

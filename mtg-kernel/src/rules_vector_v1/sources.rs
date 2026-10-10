@@ -970,7 +970,7 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         });
     }
 
-    if name == "Vampire Soulcaller" {
+    if crate::continuous_characteristics_v1::has_printed_cant_block(name) {
         walk.rec(
             "static_cant_block",
             json!({"printed_source_abilities": true}),

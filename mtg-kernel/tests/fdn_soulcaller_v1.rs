@@ -206,6 +206,8 @@ fn soulcaller_recovery_does_not_follow_a_departed_and_returned_card() {
     enter(&mut state, PlayerId::P0);
     targets(&mut state);
     engine::step(&mut state, Action::ChooseTarget(Target::Object(wanted))).unwrap();
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(state.stack.len(), 1, "trigger has reached the stack");
     event::propose_and_commit(&mut state, ProposedEvent::zone_change(wanted, Zone::Exile));
     event::propose_and_commit(
         &mut state,

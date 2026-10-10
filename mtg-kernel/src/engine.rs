@@ -6787,6 +6787,9 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
             if !def.is_executable() || !object_has_type(state, id, CardType::Creature) {
                 return false;
             }
+            if crate::continuous_characteristics_v1::printed_cant_block(state, id) {
+                return false;
+            }
             #[cfg(feature = "standard-magezero-fixtures")]
             if crate::standard_keywords_v1::cant_block(state, id)
                 || crate::standard_statics_v1::cant_attack_or_block(state, id)
