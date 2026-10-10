@@ -1,6 +1,6 @@
 # MageZero Standard pool inventory
 
-The `standard-magezero-fixtures` catalog targets the 16-deck Standard opponent pool MageZero trains against (`data/standard/magezero_v1/`). As of `kernel_carddb_standard/v2` the decks use 225 distinct nonbasic cards; 21 are supported (Burst Lightning, Consider, Destroy Evil, Dissipate, Duress, Fading Hope, Flow of Knowledge, Get Lost, Hard-Hitting Question, Impulse, Lightning Strike, Llanowar Elves, Memory Deluge, Negate, Opt, Shock, Shoot the Sheriff, Spell Pierce, Thirst for Discovery, Tolarian Terror, Voldaren Epicure) and no deck resolves yet. `mtg-kernel/tests/standard_magezero_catalog_v1.rs` and `python/tests/test_standard_decks_v1.py` track the supported list.
+The `standard-magezero-fixtures` catalog targets the 16-deck Standard opponent pool MageZero trains against (`data/standard/magezero_v1/`). As of `kernel_carddb_standard/v2` the decks use 225 distinct nonbasic cards; 20 are fully supported (Burst Lightning, Consider, Destroy Evil, Dissipate, Duress, Fading Hope, Flow of Knowledge, Get Lost, Hard-Hitting Question, Impulse, Lightning Strike, Llanowar Elves, Negate, Opt, Shock, Shoot the Sheriff, Spell Pierce, Thirst for Discovery, Tolarian Terror, Voldaren Epicure) and no deck resolves yet. `mtg-kernel/tests/standard_magezero_catalog_v1.rs` and `python/tests/test_standard_decks_v1.py` track the supported list.
 
 ## Order of work
 
@@ -42,7 +42,7 @@ The 5-color deck's legends (family H) wait until those land.
 
 ### C. Removal, counters and card selection (35 cards; 15 needed by a mono deck)
 
-`kernel_carddb_standard/v2` supports every mono card here except the FDN-owned Essence Scatter, plus Opt. Two approximations: Shoot the Sheriff counts Pirate, Rogue and Warlock as outlaws (Assassin and Mercenary must join `Subtype::OUTLAW_TYPES` when those subtypes are appended), and Memory Deluge puts the rest on the bottom in looked-at order rather than a random one, since the kernel only randomizes through shuffles.
+`kernel_carddb_standard/v2` fully supports the mono cards here except the FDN-owned Essence Scatter and Partial Memory Deluge, plus Opt. Shoot the Sheriff counts all outlaw subtypes currently representable in the registry: Pirate, Rogue and Warlock. Assassin and Mercenary must join `Subtype::OUTLAW_TYPES` when those subtypes are appended. Memory Deluge's bottom-order approximation is excluded from full deck admission.
 
 - **Removal and burn**: Cut Down, Go for the Throat, Lightning Strike (mono), Shock (mono), Destroy Evil (mono), Sheoldred's Edict, Shoot the Sheriff (mono), Hard-Hitting Question (mono), Maelstrom Pulse, Tear Asunder, Witchstalker Frenzy, Fading Hope (mono), Get Lost (mono), Anoint with Affliction, Gleeful Demolition, Invoke Despair, Gix's Command, Abrade, Boltwave
 - **Counterspells**: Dissipate (mono), Essence Scatter (mono), Negate (mono)
@@ -83,3 +83,5 @@ The 5-color deck's legends (family H) wait until those land.
 ### H. Legends for the 5-color deck (11 cards; 0 needed by a mono deck)
 
 - **Legends**: Jodah, the Unifier, Katilda, Dawnhart Prime, Lagrella, the Magpie, Shanna, Purifying Blade, Melira, the Living Cure, Gwenna, Eyes of Gaea, Hajar, Loyal Bodyguard, Halana and Alena, Partners, Djeru and Hazoret, Ertai Resurrected, Skrelv, Defector Mite
+
+Memory Deluge is Partial: its current implementation keeps the bottomed cards in looked-at order, so full deck admission refuses it until subset randomization is implemented. The registry retains its definition and flashback behavior for development.

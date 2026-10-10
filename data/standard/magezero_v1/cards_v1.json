@@ -316,7 +316,7 @@
     },
     {
       "name": "Memory Deluge",
-      "engine_capability": "full",
+      "engine_capability": "partial",
       "mana_cost": "{2}{U}{U}",
       "mana_value": 4,
       "colors": [

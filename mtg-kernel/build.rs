@@ -3472,7 +3472,7 @@ fn standard_program_for(name: &str) -> Option<Special> {
         "Get Lost" => program(
             "CreatureEnchantmentOrPlaneswalker",
             "Sequence(Conditional(TargetInZone(0,Battlefield),DestroyObject(Target0)),CreateToken(MapToken,ObjectController(Target0)),CreateToken(MapToken,ObjectController(Target0)))",
-            "EffectOp::Sequence(vec![EffectOp::Conditional { cond: EffectCond::TargetInZone(0, Zone::Battlefield), then: Box::new(EffectOp::DestroyObject { object: ObjectRef::Target(0) }), else_: Box::new(EffectOp::Sequence(vec![])) }, EffectOp::CreateToken { token_def: crate::card_def::card_id_by_name(\"Map Token\").expect(\"Map Token in CARD_DEFS\"), controller: PlayerRef::ObjectController(ObjectRef::Target(0)) }, EffectOp::CreateToken { token_def: crate::card_def::card_id_by_name(\"Map Token\").expect(\"Map Token in CARD_DEFS\"), controller: PlayerRef::ObjectController(ObjectRef::Target(0)) }])",
+            "EffectOp::DestroyObjectThenCreateTokens { object: ObjectRef::Target(0), token_def: crate::card_def::card_id_by_name(\"Map Token\").expect(\"Map Token in CARD_DEFS\"), count: 2 }",
         ),
         // Return target creature to its owner's hand. If its mana value was
         // 3 or less, scry 1. The mana value is read before the move.

@@ -79,6 +79,7 @@ impl Scan<'_> {
             | PutObjectInOwnersLibraryTopOrBottom { .. }
             | SurveilOne { .. }
             | DestroyObject { .. }
+            | DestroyObjectThenCreateTokens { .. }
             | CounterUnlessPaysGeneric { .. }
             | DamageEachCreatureWithoutSubtype { .. }
             | CounterTargetUnlessPaysGeneric { .. }

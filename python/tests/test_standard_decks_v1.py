@@ -15,7 +15,7 @@ STANDARD = REPO_ROOT / "data/standard/magezero_v1"
 SUPPORTED_NONBASIC = {
     "Burst Lightning", "Consider", "Destroy Evil", "Dissipate", "Duress", "Fading Hope",
     "Flow of Knowledge", "Get Lost", "Hard-Hitting Question", "Impulse", "Lightning Strike",
-    "Llanowar Elves", "Memory Deluge", "Negate", "Opt", "Shock", "Shoot the Sheriff",
+    "Llanowar Elves", "Negate", "Opt", "Shock", "Shoot the Sheriff",
     "Spell Pierce", "Thirst for Discovery", "Tolarian Terror", "Voldaren Epicure",
 }
 
@@ -62,6 +62,10 @@ class StandardDeckTest(unittest.TestCase):
     def test_unsupported_deck_is_refused(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported mainboard"):
             limited.resolve_mainboard(self.decks["Standard-MonoR"], self.registry)
+
+    def test_memory_deluge_partial_card_is_refused(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported mainboard"):
+            limited.resolve_mainboard(limited.parse_dck("39 Island\n1 Memory Deluge"), self.registry)
 
 
 if __name__ == "__main__":

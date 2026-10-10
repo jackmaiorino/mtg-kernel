@@ -1157,6 +1157,13 @@ pub enum EffectOp {
         pick: u8,
         choose_rest_order: bool,
     },
+    /// Capture the live permanent's controller, destroy it, then create
+    /// tokens for that player even when indestructible prevents destruction.
+    DestroyObjectThenCreateTokens {
+        object: ObjectRef,
+        token_def: u16,
+        count: u8,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -1315,30 +1322,6 @@ pub enum EffectFrame {
         original_prefix: Vec<EffectObjectBinding>,
         progress: LibraryPartitionProgress,
         progress_fingerprint: u64,
-        path: Vec<u16>,
-        canonical_path: Vec<u16>,
-    },
-    /// Resumes one private fixed-cardinality top-library partition. It
-    /// shares the typed partition's progress and binding discipline.
-    LookTopPickToHandBottomRest {
-        player: PlayerId,
-        requested_count: u8,
-        original_library_len: u32,
-        rule: LibraryPickRule,
-        original_prefix: Vec<EffectObjectBinding>,
-        progress: LibraryPartitionProgress,
-        progress_fingerprint: u64,
-        path: Vec<u16>,
-        canonical_path: Vec<u16>,
-    },
-    /// Commits Thirst for Discovery's zero-or-one basic-land discard from
-    /// the exact hand, or its fallback discard when none was chosen.
-    DiscardBasicLandInstead {
-        player: PlayerId,
-        original_hand: Vec<EffectObjectBinding>,
-        eligible: Vec<EffectObjectBinding>,
-        otherwise: u8,
-        selected: Option<EffectObjectBinding>,
         path: Vec<u16>,
         canonical_path: Vec<u16>,
     },
@@ -1507,6 +1490,30 @@ pub enum EffectFrame {
         path: Vec<u16>,
         canonical_path: Vec<u16>,
     },
+    /// Resumes one private fixed-cardinality top-library partition. It
+    /// shares the typed partition's progress and binding discipline.
+    LookTopPickToHandBottomRest {
+        player: PlayerId,
+        requested_count: u8,
+        original_library_len: u32,
+        rule: LibraryPickRule,
+        original_prefix: Vec<EffectObjectBinding>,
+        progress: LibraryPartitionProgress,
+        progress_fingerprint: u64,
+        path: Vec<u16>,
+        canonical_path: Vec<u16>,
+    },
+    /// Commits Thirst for Discovery's zero-or-one basic-land discard from
+    /// the exact hand, or its fallback discard when none was chosen.
+    DiscardBasicLandInstead {
+        player: PlayerId,
+        original_hand: Vec<EffectObjectBinding>,
+        eligible: Vec<EffectObjectBinding>,
+        otherwise: u8,
+        selected: Option<EffectObjectBinding>,
+        path: Vec<u16>,
+        canonical_path: Vec<u16>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -1635,28 +1642,6 @@ pub enum EffectTargetSelectionPurpose {
         stage_fingerprint: u64,
         canonical_path: Vec<u16>,
     },
-    /// One of the two private prompts for a fixed-cardinality top-library
-    /// partition: choose exactly the picked cards, then (when the rule
-    /// allows it) order the rest for the bottom.
-    LookTopPickToHandBottomRest {
-        player: PlayerId,
-        requested_count: u8,
-        original_library_len: u32,
-        rule: LibraryPickRule,
-        original_prefix: Vec<EffectObjectBinding>,
-        stage: LibraryPartitionSelectionStage,
-        stage_fingerprint: u64,
-        canonical_path: Vec<u16>,
-    },
-    /// Private zero-or-one basic land card to discard instead of
-    /// `otherwise` cards. The complete hand binds membership.
-    DiscardBasicLandInstead {
-        player: PlayerId,
-        original_hand: Vec<EffectObjectBinding>,
-        eligible: Vec<EffectObjectBinding>,
-        otherwise: u8,
-        canonical_path: Vec<u16>,
-    },
     /// Optional zero-through-N result of a private typed whole-library
     /// search. Selection order is retained for deterministic reveal and move
     /// ordering while candidates remain exact physical cards.
@@ -1759,6 +1744,28 @@ pub enum EffectTargetSelectionPurpose {
         original_library: Vec<EffectObjectBinding>,
         max_targets: u16,
         destination: LibrarySearchDestinationV1,
+        canonical_path: Vec<u16>,
+    },
+    /// One of the two private prompts for a fixed-cardinality top-library
+    /// partition: choose exactly the picked cards, then (when the rule
+    /// allows it) order the rest for the bottom.
+    LookTopPickToHandBottomRest {
+        player: PlayerId,
+        requested_count: u8,
+        original_library_len: u32,
+        rule: LibraryPickRule,
+        original_prefix: Vec<EffectObjectBinding>,
+        stage: LibraryPartitionSelectionStage,
+        stage_fingerprint: u64,
+        canonical_path: Vec<u16>,
+    },
+    /// Private zero-or-one basic land card to discard instead of
+    /// `otherwise` cards. The complete hand binds membership.
+    DiscardBasicLandInstead {
+        player: PlayerId,
+        original_hand: Vec<EffectObjectBinding>,
+        eligible: Vec<EffectObjectBinding>,
+        otherwise: u8,
         canonical_path: Vec<u16>,
     },
 }
@@ -12306,6 +12313,24 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 event::propose_and_commit(
                     state,
                     event::ProposedEvent::zone_change(object, Zone::Graveyard),
+                );
+            }
+        }
+        EffectOp::DestroyObjectThenCreateTokens {
+            object,
+            token_def,
+            count,
+        } => {
+            let id = ctx.resolve_object(*object);
+            if state.objects.get(id).zone != Zone::Battlefield {
+                return;
+            }
+            let controller = state.objects.get(id).controller;
+            execute(&EffectOp::DestroyObject { object: *object }, ctx, state);
+            for _ in 0..*count {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::create_token(*token_def, controller),
                 );
             }
         }

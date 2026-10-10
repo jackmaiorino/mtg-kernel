@@ -36,7 +36,7 @@ const STANDARD_APPENDED: [&str; 17] = [
 
 /// Every distinct nonbasic card in the 16 decks that this build fully
 /// supports. Each Standard card batch extends this list.
-const SUPPORTED_NONBASIC: [&str; 21] = [
+const SUPPORTED_NONBASIC: [&str; 20] = [
     "Burst Lightning",
     "Consider",
     "Destroy Evil",
@@ -49,7 +49,6 @@ const SUPPORTED_NONBASIC: [&str; 21] = [
     "Impulse",
     "Lightning Strike",
     "Llanowar Elves",
-    "Memory Deluge",
     "Negate",
     "Opt",
     "Shock",
@@ -114,7 +113,9 @@ fn standard_registry_appends_to_the_pauper_prefix_without_fdn() {
     assert_eq!(card_id_by_name("Ajani, Caller of the Pride"), None);
     assert!(CARD_DEFS
         .iter()
-        .all(|def| def.capability == CardCapability::Full || def.is_token));
+        .all(|def| def.capability == CardCapability::Full
+            || def.is_token
+            || (def.object_name == "Memory Deluge" && def.capability == CardCapability::Partial)));
 }
 
 #[test]
@@ -716,4 +717,74 @@ fn get_lost_gives_the_controller_two_maps() {
     assert_eq!(state.objects.get(munitions).zone, Zone::Graveyard);
     assert_eq!(battlefield_count(&state, PlayerId::P1, "Map Token"), 2);
     assert_eq!(battlefield_count(&state, PlayerId::P0, "Map Token"), 0);
+}
+
+#[test]
+fn get_lost_uses_the_live_controller_even_when_destruction_is_prevented() {
+    for change_after_targeting in [false, true] {
+        for indestructible in [false, true] {
+            let mut state = ready(&[], &[(ManaColor::W, 2)]);
+            let victim = put(
+                &mut state,
+                PlayerId::P1,
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            let get_lost = put(&mut state, PlayerId::P0, "Get Lost", Zone::Hand);
+            if indestructible {
+                mtg_kernel::effect::execute(
+                    &mtg_kernel::effect::EffectOp::GrantKeywordTargetUntilEndOfTurn {
+                        object: mtg_kernel::effect::ObjectRef::ThisSource,
+                        keyword: mtg_kernel::card_def::Keywords::INDESTRUCTIBLE,
+                    },
+                    &mtg_kernel::effect::ExecCtx::no_targets(victim, PlayerId::P1),
+                    &mut state,
+                );
+                assert!(engine::has_effective_keyword(
+                    &state,
+                    victim,
+                    mtg_kernel::card_def::Keywords::INDESTRUCTIBLE,
+                ));
+            }
+            let transfer = |state: &mut GameState| {
+                state.players[1]
+                    .battlefield
+                    .retain(|&object| object != victim);
+                state.players[0].battlefield.push(victim);
+                state.objects.get_mut(victim).controller = PlayerId::P0;
+            };
+            if !change_after_targeting {
+                transfer(&mut state);
+            }
+            next(&mut state);
+            engine::step(&mut state, Action::CastSpell(get_lost)).unwrap();
+            assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(victim))).unwrap();
+            if change_after_targeting {
+                transfer(&mut state);
+            }
+            resolve_stack(&mut state, &mut no_decisions);
+            assert_eq!(battlefield_count(&state, PlayerId::P0, "Map Token"), 2);
+            assert_eq!(battlefield_count(&state, PlayerId::P1, "Map Token"), 0);
+            assert_eq!(state.objects.get(victim).owner, PlayerId::P1);
+            assert_eq!(
+                state.objects.get(victim).zone,
+                if indestructible {
+                    Zone::Battlefield
+                } else {
+                    Zone::Graveyard
+                }
+            );
+        }
+    }
+}
+
+#[test]
+fn memory_deluge_is_partial_and_refused_by_full_deck_admission() {
+    let deluge = card_id_by_name("Memory Deluge").unwrap();
+    assert_eq!(
+        CARD_DEFS[deluge as usize].capability,
+        CardCapability::Partial
+    );
+    assert!(preflight_fully_supported_deck(&[deluge]).is_err());
 }

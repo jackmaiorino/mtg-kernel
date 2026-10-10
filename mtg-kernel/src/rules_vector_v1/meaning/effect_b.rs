@@ -249,6 +249,23 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
             let _ = owner; // concrete player id captured at resolution
             let _ = placement; // the branch already represented by the parent's choice
         }
+        EffectOp::DestroyObjectThenCreateTokens {
+            object,
+            token_def,
+            count,
+        } => {
+            effect_op(&EffectOp::DestroyObject { object: *object }, env, out);
+            for _ in 0..*count {
+                super::effect_a::effect_op(
+                    &EffectOp::CreateToken {
+                        token_def: *token_def,
+                        controller: PlayerRef::ObjectController(*object),
+                    },
+                    env,
+                    out,
+                );
+            }
+        }
         EffectOp::DestroyObject { object } => {
             // A battlefield permanent without indestructible goes to its
             // owner's graveyard.

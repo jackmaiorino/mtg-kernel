@@ -116,6 +116,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. }
         | EffectOp::PutBoundObjectInOwnersLibrary { .. }
         | EffectOp::DestroyObject { .. }
+        | EffectOp::DestroyObjectThenCreateTokens { .. }
         | EffectOp::CounterUnlessPaysGeneric { .. }
         | EffectOp::DamageEachCreatureWithoutSubtype { .. }
         | EffectOp::CounterTargetUnlessPaysGeneric { .. }
