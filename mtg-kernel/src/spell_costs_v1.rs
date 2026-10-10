@@ -96,6 +96,21 @@ pub(super) fn prepare_spell_nonmana_v1(
                 )
             })
             .collect::<Vec<_>>();
+        // The legacy predicates below dereference hand entries. Authenticate
+        // them first so malformed resource projections refuse rather than panic.
+        if nonmana
+            .iter()
+            .any(|component| matches!(component, CostComponent::RevealHandIfNoCardsWithType(_)))
+            && projected.players[player.index()].hand.iter().any(|object| {
+                projected.objects.try_get(*object).is_none_or(|card| {
+                    card.owner != player
+                        || card.zone != crate::state::Zone::Hand
+                        || card_def::CARD_DEFS.get(card.card_def as usize).is_none()
+                })
+            })
+        {
+            return None;
+        }
         super::validate_cost_component_choices_v1(&projected, player, source, &nonmana, chosen)?;
         for component in nonmana {
             if !super::can_pay_components(&[component], player, source, &projected) {
@@ -109,13 +124,6 @@ pub(super) fn prepare_spell_nonmana_v1(
                 }
                 CostComponent::RevealHandIfNoCardsWithType(_) => {
                     let hand = projected.players[player.index()].hand.clone();
-                    if hand.iter().any(|object| {
-                        projected.objects.try_get(*object).is_none_or(|card| {
-                            card.owner != player || card.zone != crate::state::Zone::Hand
-                        })
-                    }) {
-                        return None;
-                    }
                     PreparedNonmanaActionV1::RevealHand(hand)
                 }
                 _ => PreparedNonmanaActionV1::Component(component, chosen.to_vec()),
@@ -1025,10 +1033,18 @@ mod tests {
             .iter()
             .any(|entry| entry.object == source));
 
-        state.objects.get_mut(source).owner = PlayerId::P1;
-        let corrupt = serde_json::to_value(&state).unwrap();
-        assert!(prepare_spell_nonmana_v1(&state, PlayerId::P0, source, groups).is_none());
-        assert_eq!(serde_json::to_value(&state).unwrap(), corrupt);
+        for tamper in 0..3 {
+            let mut forged = state.clone();
+            match tamper {
+                0 => forged.objects.get_mut(source).owner = PlayerId::P1,
+                1 => forged.players[0].hand.push(ObjectId(u32::MAX)),
+                2 => forged.objects.get_mut(source).card_def = u16::MAX,
+                _ => unreachable!(),
+            }
+            let corrupt = serde_json::to_value(&forged).unwrap();
+            assert!(prepare_spell_nonmana_v1(&forged, PlayerId::P0, source, groups).is_none());
+            assert_eq!(serde_json::to_value(&forged).unwrap(), corrupt);
+        }
     }
 
     #[test]
