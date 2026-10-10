@@ -3367,6 +3367,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         mode2: None,
     };
     Some(match name {
+        "Aetherize" => program(
+            "None",
+            "ReturnAttackingCreaturesToOwnersHands(currentCombat,currentCreatureType,simultaneous)",
+            "EffectOp::ReturnAttackingCreaturesToOwnersHands",
+        ),
         "Exsanguinate" => program(
             "None",
             "LoseOpponentsLifeXThenGainLifeLost(announcedX,actualCommittedLoss)",

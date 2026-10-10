@@ -146,6 +146,7 @@ impl Scan<'_> {
             | ReturnSourceFromGraveyardUnearthed
             | ReturnAbilitySourceFromGraveyard { .. }
             | LoseOpponentsLifeXThenGainLifeLost
+            | ReturnAttackingCreaturesToOwnersHands
             | ExileGraveyardTargetsDrainPerCreature { .. }
             | RemoveTimeCounterFromSource
             | ReturnSourceAsEnduringEnchantment

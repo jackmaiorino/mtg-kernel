@@ -239,6 +239,16 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                     .duration(DurF::WhileOnBattlefield),
             );
         }
+        EffectOp::ReturnAttackingCreaturesToOwnersHands => {
+            out.effect(
+                EffectAtom::moving(Some(ZoneF::Battlefield), ZoneF::Hand)
+                    .player(RelF::ObjectOwner)
+                    .obj(ObjF::Typed(CardTypeF::Creature))
+                    .amount(AmtF::All),
+            );
+            // Attacking is absent from the fixed object facet vocabulary.
+            out.atoms.push(Atom::Opaque);
+        }
         EffectOp::LoseOpponentsLifeXThenGainLifeLost => {
             out.effect(
                 EffectAtom::new(EvF::LifeLoss)

@@ -1339,6 +1339,9 @@ pub enum EffectOp {
     /// Each opponent loses the spell's announced X; gain exactly the life
     /// lost by those proposals after replacement. The game has two seats.
     LoseOpponentsLifeXThenGainLifeLost,
+    /// Sample current attacking creatures at resolution and move them
+    /// simultaneously to their owners' hands, preserving their public identity.
+    ReturnAttackingCreaturesToOwnersHands,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -13438,6 +13441,21 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ));
             }
         }
+        EffectOp::ReturnAttackingCreaturesToOwnersHands => {
+            let events = state
+                .objects
+                .iter()
+                .filter_map(|(id, object)| {
+                    (object.zone == Zone::Battlefield
+                        && state.engine.combat.attackers.contains(&id)
+                        && crate::engine::object_has_type(state, id, CardType::Creature))
+                    .then(|| {
+                        event::ProposedEvent::zone_change_preserving_known_identity(id, Zone::Hand)
+                    })
+                })
+                .collect();
+            event::propose_and_commit_batch(state, events);
+        }
         EffectOp::MoveAllTargets { to_zone } => {
             let events = ctx
                 .targets
@@ -15199,6 +15217,54 @@ mod tests {
             );
             assert_eq!(state.players[player.opponent().index()].life, 14);
             assert_eq!(state.players[player.index()].life, 26);
+        }
+    }
+
+    #[test]
+    fn return_attacking_creatures_samples_live_combat_and_returns_to_owner() {
+        let creature = crate::card_def::card_id_by_name("Faerie Miscreant").unwrap();
+        let land = crate::card_def::card_id_by_name("Forest").unwrap();
+        for caster in [PlayerId::P0, PlayerId::P1] {
+            let mut state = GameState::new_from_libraries(
+                &[creature; 7],
+                &[creature; 7],
+                |_| "Faerie Miscreant".into(),
+                730,
+            );
+            let attacker = state.players[caster.opponent().index()].hand[0];
+            let idle = state.players[caster.index()].hand[0];
+            let noncreature = state.players[caster.index()].hand[1];
+            for id in [attacker, idle, noncreature] {
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(id, Zone::Battlefield),
+                );
+            }
+            state.objects.get_mut(attacker).controller = caster;
+            state.objects.get_mut(idle).tapped = true;
+            state.objects.get_mut(noncreature).card_def = land;
+            state.objects.get_mut(noncreature).v4 =
+                crate::state::ObjectStateV4::from_card_def(land);
+            state.engine.combat.attackers = vec![attacker, noncreature];
+            let ctx = ExecCtx::no_targets(idle, caster);
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                execute(
+                    &EffectOp::ReturnAttackingCreaturesToOwnersHands,
+                    &ctx,
+                    branch,
+                );
+                assert_eq!(branch.objects.get(attacker).zone, Zone::Hand);
+                assert!(branch.players[caster.opponent().index()]
+                    .hand
+                    .contains(&attacker));
+                assert!(!branch.players[caster.index()].hand.contains(&attacker));
+                assert_eq!(branch.objects.get(idle).zone, Zone::Battlefield);
+                assert_eq!(branch.objects.get(noncreature).zone, Zone::Battlefield);
+                assert!(!branch.engine.combat.attackers.contains(&attacker));
+            }
+            assert_eq!(state.state_hash(), restored.state_hash());
         }
     }
 
