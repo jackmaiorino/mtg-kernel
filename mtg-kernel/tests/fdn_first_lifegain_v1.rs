@@ -6,7 +6,10 @@ use mtg_kernel::engine::{self, Action, Decision, UnsupportedMechanic};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
+use mtg_kernel::policy_surface_v5::PolicySurfaceV5;
+use mtg_kernel::rl::{observe_policy_v6, observe_v2};
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
+use mtg_kernel::surface_v2::HarnessSurfaceV2;
 use mtg_kernel::trigger::{self, PendingTrigger};
 
 fn ready(active: PlayerId) -> GameState {
@@ -90,6 +93,9 @@ fn settle(state: &mut GameState) {
             Decision::ChooseEffectTargets {
                 can_finish: true, ..
             } => Action::FinishEffectSelection,
+            Decision::ChooseEffectOption {
+                option_count: 2, ..
+            } => Action::ChooseEffectOption(0),
             other => panic!("unexpected decision {other:?}"),
         };
         engine::step(state, action).unwrap();
@@ -300,13 +306,13 @@ fn first_lifegain_surveil_choice_is_private_and_restores_exactly() {
     let top = state.players[0].library[0];
     for _ in 0..30 {
         match next(&mut state) {
-            Decision::ChooseEffectTargets {
+            Decision::ChooseEffectOption {
                 player,
-                legal_targets,
+                option_count,
                 ..
             } => {
                 assert_eq!(player, PlayerId::P0);
-                assert_eq!(legal_targets, vec![Target::Object(top)]);
+                assert_eq!(option_count, 2);
                 break;
             }
             Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
@@ -317,9 +323,38 @@ fn first_lifegain_surveil_choice_is_private_and_restores_exactly() {
     let snapshot = state.snapshot();
     let mut restored = ready(PlayerId::P0);
     restored.restore(&snapshot);
+    assert_eq!(next(&mut state), next(&mut restored));
+    let public = observe_v2(&state, &HarnessSurfaceV2::new(), PlayerId::P1, 0).unwrap();
+    let typed =
+        observe_policy_v6(&state, &PolicySurfaceV5::new(), PlayerId::P1, 0, 0, 0, 1).unwrap();
+    let mut hidden_changed = ready(PlayerId::P0);
+    hidden_changed.restore(&snapshot);
+    let replacement = card_id_by_name("Island").unwrap();
+    let hidden = hidden_changed.objects.get_mut(top);
+    hidden.card_def = replacement;
+    hidden.name = "Island".into();
+    hidden.v4 = ObjectStateV4::from_card_def(replacement);
+    assert_eq!(
+        public.visible_projection_hash,
+        observe_v2(&hidden_changed, &HarnessSurfaceV2::new(), PlayerId::P1, 0)
+            .unwrap()
+            .visible_projection_hash
+    );
+    let other = observe_policy_v6(
+        &hidden_changed,
+        &PolicySurfaceV5::new(),
+        PlayerId::P1,
+        0,
+        0,
+        0,
+        1,
+    )
+    .unwrap();
+    assert_eq!(typed.projection, other.projection);
+    assert_eq!(typed.extensions, other.extensions);
+    assert_eq!(typed.visible_projection_hash, other.visible_projection_hash);
     for current in [&mut state, &mut restored] {
-        engine::step(current, Action::ChooseEffectTarget(Target::Object(top))).unwrap();
-        engine::step(current, Action::FinishEffectSelection).unwrap();
+        engine::step(current, Action::ChooseEffectOption(1)).unwrap();
         settle(current);
         assert!(current.players[0].graveyard.contains(&top));
     }
