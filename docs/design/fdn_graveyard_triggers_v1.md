@@ -71,3 +71,15 @@ registered Witness Protection Aura. The fixture lookup now reports the missing
 name explicitly. Local-12's exit101 and full log are retained. This repairs
 only the fixture, preserving engine/catalog/profile identity. Focused checks
 are retried on the repaired head.
+
+Source8603ef7f then passed240 focused native executions with four existing
+ignores under supported guarde290f3e56ee24d60804d70713ce18813, terminal
+exit0. All23 reviewed-head checks in CI38074650616 passed, including eight
+new gameplay cases on both platforms, frozen v64 identity and147 profile
+cases (three existing ignores), plus61 Windows production-profile executions.
+PR210 merged at53fab6045b4ee305ffea31bbdce77399c6469f44. Its parents are
+acceptedbc23a8da and reviewed8603ef7f; actual tree
+6bad54b8d53b3e6e128fe74fc01563bad7c9adbb matches the reviewed composition.
+All34 affected Python3.13.14 cases pass on that actual default merge.
+V64 is accepted at136 full, one partial and149 missing names of286.
+The failed local-12 attempt remains retained. Issue110 stays open.

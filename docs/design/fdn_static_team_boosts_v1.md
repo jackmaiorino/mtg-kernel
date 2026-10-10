@@ -73,3 +73,12 @@ child was released after verifying the completed sequence. All other static
 fixture card names were checked against the registry; the two candidate
 printings and behaviors were reread from the pinned primary Mage source.
 The nine static-team card cases remain unexecuted until registration.
+
+PR210 is now merged at53fab604 after all23 checks passed. Its actual merge
+tree matches the reviewed composition and34 affected Python cases pass.
+This branch merges that accepted v64 and admits the two pinned metadata rows
+as IDs336-337, bumps the generated header to v65, adds the exact40-card
+reference import and wires the nine focused gameplay cases into CI.
+All35 affected Python3.13.14 cases pass. Candidate coverage is138 full,
+one partial and147 missing; accepted coverage remains136 pending native
+gameplay, observed generated identity, live-profile qualification and merge.

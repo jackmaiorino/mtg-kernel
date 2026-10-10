@@ -123,10 +123,16 @@ coverage counts.
 
 `FDN_reference_first_lifegain.dck` is a synthetic 40-card fixture containing
 Vanguard Seraph, Cat Collector and 38 Plains. It resolves the candidate v63
-registry; gameplay and store-profile qualification remain required. See
+registry; gameplay and store-profile qualification are accepted in PR208. See
 `docs/design/fdn_first_lifegain_v1.md`.
 
 `FDN_reference_graveyard_triggers.dck` is a synthetic 40-card candidate v64
-fixture for Elvish Regrower/Ambush Wolf. Serial admission follows accepted
-v63. Gameplay and generated identity/store-profile qualification are pending;
+fixture for Elvish Regrower/Ambush Wolf. Gameplay and generated identity/store
+profile qualification are accepted in PR210 at default53fab604;
 see `docs/design/fdn_graveyard_triggers_v1.md`.
+
+`FDN_reference_static_team.dck` is a synthetic 40-card candidate v65
+fixture containing Anthem of Champions, Empyrean Eagle, flying and grounded
+creatures, temporary flying, ability suppression and three basic lands.
+Gameplay and generated identity/store-profile qualification remain required;
+see `docs/design/fdn_static_team_boosts_v1.md`.
