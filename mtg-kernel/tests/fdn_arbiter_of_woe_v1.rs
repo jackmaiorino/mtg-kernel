@@ -302,21 +302,28 @@ fn opponent_discards_exactly_one_then_life_draw_gain_continue_after_source_leave
 }
 
 #[test]
-fn empty_opponent_hand_does_not_skip_remaining_etb_operations() {
+fn empty_and_forced_single_card_hands_do_not_skip_remaining_etb_operations() {
     for player in [PlayerId::P0, PlayerId::P1] {
-        let mut state = ready(player);
-        enter(&mut state, player);
-        assert!(settle(&mut state).is_none());
-        assert!(state.players[player.opponent().index()].hand.is_empty());
-        assert_eq!(
-            (
-                state.players[player.index()].life,
-                state.players[player.opponent().index()].life
-            ),
-            (22, 18)
-        );
-        assert_eq!(state.players[player.index()].library.len(), 39);
-        assert_eq!(state.players[player.index()].hand.len(), 1);
+        for hand_count in 0..=1 {
+            let mut state = ready(player);
+            let discarded =
+                (hand_count == 1).then(|| put(&mut state, player.opponent(), "Forest", Zone::Hand));
+            enter(&mut state, player);
+            assert!(settle(&mut state).is_none());
+            assert!(state.players[player.opponent().index()].hand.is_empty());
+            assert_eq!(
+                (
+                    state.players[player.index()].life,
+                    state.players[player.opponent().index()].life
+                ),
+                (22, 18)
+            );
+            assert_eq!(state.players[player.index()].library.len(), 39);
+            assert_eq!(state.players[player.index()].hand.len(), 1);
+            if let Some(discarded) = discarded {
+                assert_eq!(state.objects.get(discarded).zone, Zone::Graveyard);
+            }
+        }
     }
 }
 
