@@ -266,6 +266,7 @@ fn opponent_discards_exactly_one_then_life_draw_gain_continue_after_source_leave
                 _ => unreachable!(),
             }
             refuse(&mut forged, Action::Discard(vec![chosen]));
+            refuse(&mut forged, Action::Pass);
             assert!(matches!(
                 engine::advance_until_decision(&mut forged),
                 Decision::Halted { .. }

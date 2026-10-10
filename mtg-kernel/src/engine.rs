@@ -13676,6 +13676,9 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    // A restored continuation must be valid before any action can mutate
+    // state, including when its separately saved discard slot was removed.
+    effect::validate_pending_effect_choice(state)?;
     if crate::london_mulligan_v1::has_pending(state) {
         return crate::london_mulligan_v1::answer(state, action);
     }
