@@ -73,6 +73,8 @@ pub(crate) struct RootCtx<'a> {
     pub(crate) cast_root: bool,
     pub(crate) probs: Vec<f64>,
     pub(crate) limits: Limits,
+    /// E's untried-action urgency (None: the formal untried-first rule).
+    pub(crate) urgency: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -699,7 +701,7 @@ impl Roles {
                         let (edge_index, edge) = match tree.find(&key, &parent.0, &parent.1, &cn)? {
                             Found::Hit(node) => {
                                 src = SelSrc::Tree;
-                                let e = node.select();
+                                let e = node.select_with(ctx.urgency);
                                 (e, cn.edges[e].clone())
                             }
                             Found::Miss => {
@@ -722,7 +724,7 @@ impl Roles {
                                     depth,
                                     ctx.seeds,
                                 );
-                                let e = node.select();
+                                let e = node.select_with(ctx.urgency);
                                 new = Some((key, node));
                                 in_tree = false;
                                 (e, cn.edges[e].clone())

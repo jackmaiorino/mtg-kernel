@@ -13,6 +13,7 @@ The fixed bindings below were recovered from the already selected archived
 node IDs, not from a new case selection. They match the frozen boundary
 result rows in LANES/spy-resolution-boundary-20261010/evidence. ROWS_DIR
 must contain those retained s4a_diag_root rows (*.jsonl). Historical runtime,
+non-baseline selection rules,
 changed bytes/keys/parents, duplicate records and inconsistent chronology
 are refused before creating the output. Existing outputs are preserved.
 Evidence source: mtg-kernel-collab commit
@@ -69,6 +70,7 @@ def load(path, rid=None, pin=None, row=None, nid=None):
             raise ValueError(f"trace hash differs from fixed case binding for {rid}")
         if (row is None or row.get("root_id") != rid
                 or row.get("runtime_rules") != "resolution-boundary-v1"
+                or row.get("select_rule") is not None
                 or row.get("diag", {}).get("trace", {}).get("sha256") != digest):
             raise ValueError(f"missing or incompatible boundary result row for {rid}")
     meta = None
@@ -232,7 +234,11 @@ def build_result(tdir, rows, cases=CASES, pins=PINS):
     result = {}
     for rid, nid, role in cases:
         nodes, sims, worlds = load(Path(tdir) / f"{rid}.trace.jsonl", rid, pins[rid], rows.get(rid), nid)
-        r = {"role": role, "trace_sha256": pins[rid][0], "runtime_rules": "resolution-boundary-v1"}
+        if not reconcile_all(nodes, sims):
+            raise ValueError(f"saved all-node counts disagree for {rid}")
+        r = {"role": role, "trace_sha256": pins[rid][0], "runtime_rules": "resolution-boundary-v1",
+             "select_rule": None,
+             "all_nodes_reconciled": True}
         if nid is None:
             r["eval_prefix"] = eval_prefix(worlds)
             miss = Counter()
@@ -253,6 +259,27 @@ def build_result(tdir, rows, cases=CASES, pins=PINS):
             r["eval_prefix"] = eval_prefix(worlds, nid)
         result[rid] = r
     return result
+
+
+def reconcile_all(nodes, sims):
+    """Rebuild natural n/w/visits at every node, including unselected nodes."""
+    counts = {nid: [0] * len(node["n"]) for nid, node in nodes.items()}
+    wins = {nid: [0] * len(node["w"]) for nid, node in nodes.items()}
+    for sim in sims:
+        if sim.get("end") not in ("win", "loss"):
+            continue
+        for entry in sim.get("path", []):
+            if not isinstance(entry, (list, tuple)) or len(entry) < 2:
+                return False
+            nid, edge = entry[:2]
+            if type(nid) is not int or type(edge) is not int:
+                return False
+            if nid not in nodes or not 0 <= edge < len(counts[nid]) or edge >= len(wins[nid]):
+                return False
+            counts[nid][edge] += 1
+            wins[nid][edge] += int(sim["end"] == "win")
+    return all(counts[nid] == node["n"] and wins[nid] == node["w"]
+               and sum(counts[nid]) == node["visits"] for nid, node in nodes.items())
 
 
 def write_result(tdir, rows_dir, outp, cases=CASES, pins=PINS):
