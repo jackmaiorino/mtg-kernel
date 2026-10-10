@@ -3622,9 +3622,12 @@ fn effect_recipe_for(card: &CardJson) -> String {
             } else {
                 "None".to_string()
             };
-            let static_bonus = if card.name == "Dwynen, Gilt-Leaf Daen" {
-                ";static=boost_other_controlled_elf_creatures:1:1"
-            } else { "" };
+            let static_bonus = match card.name.as_str() {
+                "Dwynen, Gilt-Leaf Daen" => ";static=boost_other_controlled_elf_creatures:1:1",
+                "Anthem of Champions" => ";static=boost_live_controlled_creatures:1:1:layer7c:printed_source_abilities",
+                "Empyrean Eagle" => ";static=boost_other_live_controlled_creatures_with_effective_flying:1:1:layer7c:printed_source_abilities",
+                _ => "",
+            };
             format!("target=None;spell={spell};mana={mana}{static_bonus}")
         }
         Special::BoostControlledCreatures { power, toughness, keyword } => {
@@ -3865,6 +3868,7 @@ fn keywords_for(card: &CardJson) -> String {
         | "Refurbished Familiar"
         | "Sagu Wildling"
         | "Squadron Hawk"
+        | "Empyrean Eagle"
         | "Balustrade Spy"
         | "Spellstutter Sprite"
         | "Glint Hawk"
