@@ -1,0 +1,4119 @@
+{
+  "schema": "native-collection-timing-audit/20261009",
+  "generated_utc": "2026-10-09T21:09:12.525994+00:00",
+  "root": "E:/nine-deck-baseline-20261007/campaign/retained",
+  "selection": "r4 b04..b20, r5/r6 b01..b20, 162 iterations each, one complete collection per iteration",
+  "all": {
+    "updates": 9234,
+    "episodes": 92340,
+    "elapsed_seconds": {
+      "n": 9234,
+      "sum": 5994.4130782,
+      "mean": 0.6491675414988087,
+      "median": 0.6053594499999999,
+      "p90": 0.8623137600000002,
+      "p95": 1.016921575,
+      "p99": 1.403111913,
+      "max": 2.3318334
+    },
+    "initialization_seconds": {
+      "n": 9234,
+      "sum": 1430.2712438,
+      "mean": 0.15489183926792288,
+      "median": 0.1505204,
+      "p90": 0.16908291000000003,
+      "p95": 0.18612043000000003,
+      "p99": 0.21492318700000002,
+      "max": 0.3078749
+    },
+    "initialization_percent_of_collection": 23.860071455560774,
+    "workers_histogram": {
+      "8": 9234
+    },
+    "worker_episode_count_histogram": {
+      "1": 55716,
+      "2": 17844,
+      "3": 312
+    },
+    "sum_worker_busy_seconds": 22892.881852,
+    "worker_capacity_seconds_excluding_initialization": 36513.1346752,
+    "worker_busy_capacity_proxy": 0.6269766224029244,
+    "max_worker_busy_seconds": {
+      "n": 9234,
+      "sum": 4450.8622401,
+      "mean": 0.48200803986354773,
+      "median": 0.43940685,
+      "p90": 0.6923536500000005,
+      "p95": 0.8464300600000001,
+      "p99": 1.236067162,
+      "max": 2.1758771
+    },
+    "mean_worker_busy_seconds": {
+      "n": 9234,
+      "sum": 2861.6102315,
+      "mean": 0.30989931032055446,
+      "median": 0.30446705625,
+      "p90": 0.40920817875000004,
+      "p95": 0.44723992375,
+      "p99": 0.5405402065,
+      "max": 0.8127453
+    },
+    "max_to_mean_worker_busy_ratio": {
+      "n": 9234,
+      "sum": 14260.442149694018,
+      "mean": 1.5443407136337466,
+      "median": 1.455312753174156,
+      "p90": 1.9888356147914381,
+      "p95": 2.246366553596658,
+      "p99": 2.767573740872641,
+      "max": 3.8404394737901346
+    },
+    "max_worker_busy_fraction_of_post_initialization_collection": 0.9751805271592986,
+    "mean_worker_busy_fraction_of_post_initialization_collection": 0.6269766224029244,
+    "post_initialization_nonmax_worker_seconds": 113.2795943000001,
+    "all_complete": true
+  },
+  "blocks": {
+    "r4/b04": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 112.7804905,
+        "mean": 0.6961758672839506,
+        "median": 0.63535465,
+        "p90": 0.90515008,
+        "p95": 1.0856870349999994,
+        "p99": 1.4727429119999997,
+        "max": 1.5629765
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 25.9226807,
+        "mean": 0.1600165475308642,
+        "median": 0.15760354999999998,
+        "p90": 0.16674686,
+        "p95": 0.18132300999999998,
+        "p99": 0.19716417699999988,
+        "max": 0.2121585
+      },
+      "initialization_percent_of_collection": 22.985075330914615,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 978,
+        "2": 312,
+        "3": 6
+      },
+      "sum_worker_busy_seconds": 427.7108271,
+      "worker_capacity_seconds_excluding_initialization": 694.8624784,
+      "worker_busy_capacity_proxy": 0.6155330592678611,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 84.8773405,
+        "mean": 0.5239342006172839,
+        "median": 0.4636846,
+        "p90": 0.73483292,
+        "p95": 0.9224360299999993,
+        "p99": 1.3089196379999999,
+        "max": 1.3918004
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 53.4638533875,
+        "mean": 0.3300237863425926,
+        "median": 0.33127074999999995,
+        "p90": 0.42019592375000003,
+        "p95": 0.45418345562499995,
+        "p99": 0.5339538877499991,
+        "max": 0.7125127625
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 254.20949822969018,
+        "mean": 1.569194433516606,
+        "median": 1.467695525189925,
+        "p90": 2.026783274801957,
+        "p95": 2.2551853747909187,
+        "p99": 2.7820701145286604,
+        "max": 2.8921441583617464
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9771987193257549,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6155330592678611,
+      "post_initialization_nonmax_worker_seconds": 1.9804692999999958,
+      "all_complete": true
+    },
+    "r4/b05": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 110.6510548,
+        "mean": 0.6830312024691358,
+        "median": 0.6629188,
+        "p90": 0.85967084,
+        "p95": 1.0373455849999995,
+        "p99": 1.348664717999999,
+        "max": 1.4223881999999999
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 26.2433404,
+        "mean": 0.16199592839506172,
+        "median": 0.15559610000000001,
+        "p90": 0.18970352000000001,
+        "p95": 0.20014814,
+        "p99": 0.22242695299999987,
+        "max": 0.2333845
+      },
+      "initialization_percent_of_collection": 23.717207619425245,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 976,
+        "2": 316,
+        "3": 4
+      },
+      "sum_worker_busy_seconds": 425.5197261,
+      "worker_capacity_seconds_excluding_initialization": 675.2617152,
+      "worker_busy_capacity_proxy": 0.6301552665013282,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 82.2172886,
+        "mean": 0.5075141271604938,
+        "median": 0.48801655,
+        "p90": 0.6893701300000001,
+        "p95": 0.839829565,
+        "p99": 1.175717792999999,
+        "max": 1.2573921000000001
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 53.1899657625,
+        "mean": 0.3283331219907407,
+        "median": 0.32665614374999996,
+        "p90": 0.42962917250000004,
+        "p95": 0.4602670274999999,
+        "p99": 0.49205946112499943,
+        "max": 0.572067375
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 249.74108283476335,
+        "mean": 1.5416116224368108,
+        "median": 1.4485127555159736,
+        "p90": 1.9922381052394122,
+        "p95": 2.180811463883099,
+        "p99": 2.772187177635867,
+        "max": 3.8404394737901346
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9740494596309078,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6301552665013282,
+      "post_initialization_nonmax_worker_seconds": 2.1904258,
+      "all_complete": true
+    },
+    "r4/b06": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 109.9059888,
+        "mean": 0.6784320296296297,
+        "median": 0.63545505,
+        "p90": 0.9053329,
+        "p95": 0.9723937899999998,
+        "p99": 1.1887672609999984,
+        "max": 1.5189831
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 25.8349237,
+        "mean": 0.159474837654321,
+        "median": 0.15494775,
+        "p90": 0.17284415,
+        "p95": 0.19620093,
+        "p99": 0.2278925429999999,
+        "max": 0.2480174
+      },
+      "initialization_percent_of_collection": 23.506383939652977,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 981,
+        "2": 306,
+        "3": 9
+      },
+      "sum_worker_busy_seconds": 411.7199108,
+      "worker_capacity_seconds_excluding_initialization": 672.5685208,
+      "worker_busy_capacity_proxy": 0.6121605428548329,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 81.8367454,
+        "mean": 0.5051650950617284,
+        "median": 0.46402065000000003,
+        "p90": 0.73457543,
+        "p95": 0.8118180349999998,
+        "p99": 0.9956746239999977,
+        "max": 1.3428989
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 51.46498885,
+        "mean": 0.3176851163580247,
+        "median": 0.31055566874999996,
+        "p90": 0.40482666125,
+        "p95": 0.44251853124999985,
+        "p99": 0.542143067625,
+        "max": 0.5616703875
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 256.60123892820974,
+        "mean": 1.5839582649889492,
+        "median": 1.5345946785302276,
+        "p90": 1.990869458592342,
+        "p95": 2.2035964807421413,
+        "p99": 2.4825975723507194,
+        "max": 2.886957861372053
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9734234400701081,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6121605428548329,
+      "post_initialization_nonmax_worker_seconds": 2.2343197000000004,
+      "all_complete": true
+    },
+    "r4/b07": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 104.0170315,
+        "mean": 0.6420804413580247,
+        "median": 0.6246902999999999,
+        "p90": 0.8829434400000002,
+        "p95": 0.9575261449999999,
+        "p99": 1.2285775649999984,
+        "max": 1.3031053
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 25.7468162,
+        "mean": 0.15893096419753086,
+        "median": 0.1532531,
+        "p90": 0.17645957,
+        "p95": 0.19419309999999995,
+        "p99": 0.212082313,
+        "max": 0.2833112
+      },
+      "initialization_percent_of_collection": 24.75250045950408,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 976,
+        "2": 316,
+        "3": 4
+      },
+      "sum_worker_busy_seconds": 411.2268103,
+      "worker_capacity_seconds_excluding_initialization": 626.1617224,
+      "worker_busy_capacity_proxy": 0.6567421731303197,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 76.2418652,
+        "mean": 0.4706287975308642,
+        "median": 0.44644235,
+        "p90": 0.7069932500000001,
+        "p95": 0.7887021549999997,
+        "p99": 1.054266810999999,
+        "max": 1.1335385999999998
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 51.4033512875,
+        "mean": 0.3173046375771605,
+        "median": 0.31227594375,
+        "p90": 0.42178914749999996,
+        "p95": 0.45370292812499985,
+        "p99": 0.5340760991249995,
+        "max": 0.6367241
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 240.0411179179481,
+        "mean": 1.4817352957898031,
+        "median": 1.4119716035484182,
+        "p90": 1.8574363370032327,
+        "p95": 2.0711841507794717,
+        "p99": 2.5010875675629425,
+        "max": 2.639588999599272
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9740852878425645,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6567421731303197,
+      "post_initialization_nonmax_worker_seconds": 2.0283500999999973,
+      "all_complete": true
+    },
+    "r4/b08": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 99.6538148,
+        "mean": 0.6151470049382716,
+        "median": 0.6083723000000001,
+        "p90": 0.78688658,
+        "p95": 0.83767742,
+        "p99": 0.8695796349999998,
+        "max": 0.9460062
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 25.4448287,
+        "mean": 0.1570668438271605,
+        "median": 0.15317575,
+        "p90": 0.17172268000000002,
+        "p95": 0.18573457000000002,
+        "p99": 0.20985315499999996,
+        "max": 0.2233302
+      },
+      "initialization_percent_of_collection": 25.53322093194971,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 977,
+        "2": 314,
+        "3": 5
+      },
+      "sum_worker_busy_seconds": 395.6193549,
+      "worker_capacity_seconds_excluding_initialization": 593.6718888,
+      "worker_busy_capacity_proxy": 0.6663939498628995,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 72.2997062,
+        "mean": 0.4462944827160494,
+        "median": 0.43901085,
+        "p90": 0.61989058,
+        "p95": 0.6615863249999999,
+        "p99": 0.6988514389999996,
+        "max": 0.7899084
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 49.4524193625,
+        "mean": 0.30526184791666666,
+        "median": 0.30995975625000005,
+        "p90": 0.3893962675,
+        "p95": 0.4276212874999999,
+        "p99": 0.48643006062499955,
+        "max": 0.5175733625
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 238.28697091295882,
+        "mean": 1.4709072278577704,
+        "median": 1.439512158433533,
+        "p90": 1.7757607692564337,
+        "p95": 1.8922761009468079,
+        "p99": 2.2123344170225776,
+        "max": 2.5356783605201905
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9742715808375665,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6663939498628995,
+      "post_initialization_nonmax_worker_seconds": 1.9092799000000014,
+      "all_complete": true
+    },
+    "r4/b09": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 101.4987552,
+        "mean": 0.6265355259259259,
+        "median": 0.5894298499999999,
+        "p90": 0.8094534,
+        "p95": 0.8772497149999999,
+        "p99": 1.0275191499999994,
+        "max": 1.3797079
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.6302019,
+        "mean": 0.15203828333333333,
+        "median": 0.14838045,
+        "p90": 0.16434488000000003,
+        "p95": 0.17612932999999997,
+        "p99": 0.19648016499999982,
+        "max": 0.2222965
+      },
+      "initialization_percent_of_collection": 24.266506373863386,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 979,
+        "2": 310,
+        "3": 7
+      },
+      "sum_worker_busy_seconds": 392.5392594,
+      "worker_capacity_seconds_excluding_initialization": 614.9484264,
+      "worker_busy_capacity_proxy": 0.6383287484740525,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 74.7775315,
+        "mean": 0.46158970061728394,
+        "median": 0.42871689999999996,
+        "p90": 0.64666682,
+        "p95": 0.720808135,
+        "p99": 0.8727613959999994,
+        "max": 1.2214179
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 49.067407425,
+        "mean": 0.3028852310185185,
+        "median": 0.3015130625,
+        "p90": 0.388305395,
+        "p95": 0.42032485,
+        "p99": 0.45870215499999967,
+        "max": 0.552435875
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 246.8930181969566,
+        "mean": 1.5240309765244235,
+        "median": 1.4608689277172586,
+        "p90": 1.811842186935346,
+        "p95": 2.0681947939727787,
+        "p99": 2.4698783391338255,
+        "max": 3.0972998206126987
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.972797435228952,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6383287484740525,
+      "post_initialization_nonmax_worker_seconds": 2.091021800000007,
+      "all_complete": true
+    },
+    "r4/b10": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 98.072339,
+        "mean": 0.6053848086419753,
+        "median": 0.58853355,
+        "p90": 0.77669547,
+        "p95": 0.8585045049999996,
+        "p99": 1.0230853279999996,
+        "max": 1.1753096
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.5016075,
+        "mean": 0.15124449074074073,
+        "median": 0.1487743,
+        "p90": 0.15627652000000003,
+        "p95": 0.16935689499999998,
+        "p99": 0.19655107799999982,
+        "max": 0.2060868
+      },
+      "initialization_percent_of_collection": 24.983198881388972,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 976,
+        "2": 316,
+        "3": 4
+      },
+      "sum_worker_busy_seconds": 381.6374176,
+      "worker_capacity_seconds_excluding_initialization": 588.5658520000001,
+      "worker_busy_capacity_proxy": 0.6484192317701775,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 71.7703607,
+        "mean": 0.44302691790123455,
+        "median": 0.41888645,
+        "p90": 0.6206048000000001,
+        "p95": 0.6938808799999995,
+        "p99": 0.8081719939999994,
+        "max": 1.0151313
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 47.7046772,
+        "mean": 0.2944733160493827,
+        "median": 0.29387311875,
+        "p90": 0.38635391500000005,
+        "p95": 0.41000418625,
+        "p99": 0.44345164362499984,
+        "max": 0.4812206375
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 244.1878239807255,
+        "mean": 1.507332246794602,
+        "median": 1.4352887972238306,
+        "p90": 1.8307867442006638,
+        "p95": 2.048022503108538,
+        "p99": 2.4011626078756425,
+        "max": 2.5289271301441913
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9755287087229791,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6484192317701776,
+      "post_initialization_nonmax_worker_seconds": 1.800370799999996,
+      "all_complete": true
+    },
+    "r4/b11": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 101.8288074,
+        "mean": 0.6285728851851852,
+        "median": 0.59381995,
+        "p90": 0.81998364,
+        "p95": 0.9724186499999993,
+        "p99": 1.1645234859999984,
+        "max": 1.3627482
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.7934975,
+        "mean": 0.15304628086419753,
+        "median": 0.14976945,
+        "p90": 0.16190592,
+        "p95": 0.17582149999999996,
+        "p99": 0.20097577199999975,
+        "max": 0.2137954
+      },
+      "initialization_percent_of_collection": 24.348215532572368,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 984,
+        "2": 300,
+        "3": 12
+      },
+      "sum_worker_busy_seconds": 393.5649828,
+      "worker_capacity_seconds_excluding_initialization": 616.2824792,
+      "worker_busy_capacity_proxy": 0.6386113447698352,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 75.0632764,
+        "mean": 0.46335355802469136,
+        "median": 0.4225202,
+        "p90": 0.6556895300000001,
+        "p95": 0.8196784399999993,
+        "p99": 1.0057711059999985,
+        "max": 1.2006501
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 49.19562285,
+        "mean": 0.30367668425925926,
+        "median": 0.29748843125,
+        "p90": 0.39771567375000005,
+        "p95": 0.4333163287499999,
+        "p99": 0.46784940537499975,
+        "max": 0.5036803375
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 246.31854498725036,
+        "mean": 1.5204848456003108,
+        "median": 1.4214007138510258,
+        "p90": 1.8997305495628936,
+        "p95": 2.349128225683724,
+        "p99": 2.72492196091694,
+        "max": 3.0219584604372067
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9744009143007291,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6386113447698352,
+      "post_initialization_nonmax_worker_seconds": 1.9720334999999949,
+      "all_complete": true
+    },
+    "r4/b12": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 96.5584039,
+        "mean": 0.5960395302469136,
+        "median": 0.57109365,
+        "p90": 0.75692761,
+        "p95": 0.8272660849999999,
+        "p99": 1.147092526,
+        "max": 1.4515513
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.3361664,
+        "mean": 0.15022324938271606,
+        "median": 0.147408,
+        "p90": 0.15508011,
+        "p95": 0.17198732499999997,
+        "p99": 0.207636605,
+        "max": 0.2091752
+      },
+      "initialization_percent_of_collection": 25.2035715350096,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 977,
+        "2": 314,
+        "3": 5
+      },
+      "sum_worker_busy_seconds": 376.3010077,
+      "worker_capacity_seconds_excluding_initialization": 577.7779,
+      "worker_busy_capacity_proxy": 0.6512900678617164,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 70.3705391,
+        "mean": 0.4343860438271605,
+        "median": 0.40494735000000004,
+        "p90": 0.58358675,
+        "p95": 0.6629720449999997,
+        "p99": 0.9843090159999999,
+        "max": 1.2693239
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 47.0376259625,
+        "mean": 0.29035571581790126,
+        "median": 0.29000953125,
+        "p90": 0.36831699375,
+        "p95": 0.4083170249999998,
+        "p99": 0.4687245789999999,
+        "max": 0.5103958375
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 241.85997053729704,
+        "mean": 1.4929627810944264,
+        "median": 1.4284402811864605,
+        "p90": 1.8958690125851525,
+        "p95": 1.9771352342611634,
+        "p99": 2.4356284810055127,
+        "max": 2.699127845592171
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9743611045005356,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6512900678617164,
+      "post_initialization_nonmax_worker_seconds": 1.8516984000000036,
+      "all_complete": true
+    },
+    "r4/b13": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 101.0252007,
+        "mean": 0.62361235,
+        "median": 0.5898466499999999,
+        "p90": 0.83705378,
+        "p95": 0.892114305,
+        "p99": 1.2091586569999995,
+        "max": 1.3200931
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.6871461,
+        "mean": 0.15238979074074074,
+        "median": 0.14808175,
+        "p90": 0.16135339,
+        "p95": 0.17653512999999993,
+        "p99": 0.21474511599999999,
+        "max": 0.2403472
+      },
+      "initialization_percent_of_collection": 24.43662168344497,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 975,
+        "2": 318,
+        "3": 3
+      },
+      "sum_worker_busy_seconds": 386.7232375,
+      "worker_capacity_seconds_excluding_initialization": 610.7044368,
+      "worker_busy_capacity_proxy": 0.633241244367524,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 74.409637,
+        "mean": 0.45931874691358027,
+        "median": 0.4239663,
+        "p90": 0.66478548,
+        "p95": 0.722860565,
+        "p99": 1.0553964089999994,
+        "max": 1.1579867
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 48.3404046875,
+        "mean": 0.2983975597993827,
+        "median": 0.29603840000000003,
+        "p90": 0.40487192125000004,
+        "p95": 0.43177261562499997,
+        "p99": 0.48296097074999983,
+        "max": 0.5076654625
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 247.77720811324815,
+        "mean": 1.5294889389706676,
+        "median": 1.4876473270639894,
+        "p90": 1.9356145164105736,
+        "p95": 2.0893561038770136,
+        "p99": 2.599678879881057,
+        "max": 3.000971666439853
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9747384497796727,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6332412443675242,
+      "post_initialization_nonmax_worker_seconds": 1.9284175999999889,
+      "all_complete": true
+    },
+    "r4/b14": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 99.442266,
+        "mean": 0.6138411481481482,
+        "median": 0.57215965,
+        "p90": 0.8167833700000001,
+        "p95": 0.9345117499999998,
+        "p99": 1.247300744999998,
+        "max": 1.3817092
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.5124472,
+        "mean": 0.1513114024691358,
+        "median": 0.1481004,
+        "p90": 0.16148387,
+        "p95": 0.17681550999999995,
+        "p99": 0.19175827999999998,
+        "max": 0.1959242
+      },
+      "initialization_percent_of_collection": 24.649928230718317,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 977,
+        "2": 314,
+        "3": 5
+      },
+      "sum_worker_busy_seconds": 382.7020657,
+      "worker_capacity_seconds_excluding_initialization": 599.4385504,
+      "worker_busy_capacity_proxy": 0.6384341905348367,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 73.1776179,
+        "mean": 0.45171369074074075,
+        "median": 0.41339795,
+        "p90": 0.63959092,
+        "p95": 0.7599161249999997,
+        "p99": 1.0916040199999981,
+        "max": 1.2219252
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 47.8377582125,
+        "mean": 0.2952948037808642,
+        "median": 0.29569337500000004,
+        "p90": 0.38724193625000003,
+        "p95": 0.411653083125,
+        "p99": 0.4664908712499999,
+        "max": 0.4835324125
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 246.5028778146961,
+        "mean": 1.5216227025598525,
+        "median": 1.421487224268762,
+        "p90": 2.006187552631153,
+        "p95": 2.1602836424707794,
+        "p99": 2.6309050877954623,
+        "max": 2.7474137206424896
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9766154392461976,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6384341905348367,
+      "post_initialization_nonmax_worker_seconds": 1.7522009000000054,
+      "all_complete": true
+    },
+    "r4/b15": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 101.1034492,
+        "mean": 0.6240953654320988,
+        "median": 0.5984925,
+        "p90": 0.8103772300000001,
+        "p95": 0.8903389399999997,
+        "p99": 1.0901487869999997,
+        "max": 1.5138555999999999
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.7787108,
+        "mean": 0.1529550049382716,
+        "median": 0.14882295,
+        "p90": 0.170055,
+        "p95": 0.18416181999999998,
+        "p99": 0.196035716,
+        "max": 0.1997191
+      },
+      "initialization_percent_of_collection": 24.508274441738827,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 977,
+        "2": 314,
+        "3": 5
+      },
+      "sum_worker_busy_seconds": 389.3965003,
+      "worker_capacity_seconds_excluding_initialization": 610.5979072,
+      "worker_busy_capacity_proxy": 0.6377298312168208,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 74.2177946,
+        "mean": 0.4581345345679012,
+        "median": 0.42965155,
+        "p90": 0.6444264000000001,
+        "p95": 0.7050795049999999,
+        "p99": 0.9335129209999997,
+        "max": 1.3541341
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 48.6745625375,
+        "mean": 0.30046026257716046,
+        "median": 0.3002700875,
+        "p90": 0.38007510625,
+        "p95": 0.41275061874999996,
+        "p99": 0.4750084886249996,
+        "max": 0.5067647375
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 246.87224063021796,
+        "mean": 1.5239027199396171,
+        "median": 1.4453473798538603,
+        "p90": 1.951773021823799,
+        "p95": 2.2045273437364252,
+        "p99": 2.5473154029831915,
+        "max": 3.616026557271778
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9723950079074232,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6377298312168208,
+      "post_initialization_nonmax_worker_seconds": 2.1069437999999963,
+      "all_complete": true
+    },
+    "r4/b16": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 99.4199196,
+        "mean": 0.6137032074074074,
+        "median": 0.5747595999999999,
+        "p90": 0.7731514,
+        "p95": 0.8679886799999996,
+        "p99": 1.1689968509999966,
+        "max": 1.8072977
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.8578001,
+        "mean": 0.15344321049382717,
+        "median": 0.14822839999999998,
+        "p90": 0.16654766,
+        "p95": 0.19335556999999995,
+        "p99": 0.22121479799999985,
+        "max": 0.244899
+      },
+      "initialization_percent_of_collection": 25.00283665487897,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 976,
+        "2": 316,
+        "3": 4
+      },
+      "sum_worker_busy_seconds": 388.2499541,
+      "worker_capacity_seconds_excluding_initialization": 596.496956,
+      "worker_busy_capacity_proxy": 0.6508833786907038,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 72.2851246,
+        "mean": 0.44620447283950615,
+        "median": 0.41144165,
+        "p90": 0.60952125,
+        "p95": 0.7027393749999995,
+        "p99": 1.0122210299999965,
+        "max": 1.5897888
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 48.5312442625,
+        "mean": 0.29957558186728395,
+        "median": 0.29616185625,
+        "p90": 0.3791237525,
+        "p95": 0.41257327874999994,
+        "p99": 0.47672196974999964,
+        "max": 0.6260776875
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 241.3304156593475,
+        "mean": 1.4896939238231328,
+        "median": 1.4212691916439222,
+        "p90": 1.8240803840585798,
+        "p95": 2.14759281552048,
+        "p99": 2.9143512222139774,
+        "max": 3.3097757611560605
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.969461773414314,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6508833786907038,
+      "post_initialization_nonmax_worker_seconds": 2.276994899999991,
+      "all_complete": true
+    },
+    "r4/b17": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 103.3547098,
+        "mean": 0.6379920358024691,
+        "median": 0.5962828,
+        "p90": 0.8309787500000001,
+        "p95": 0.9656617449999997,
+        "p99": 1.3412324859999993,
+        "max": 1.4726945
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 25.0325798,
+        "mean": 0.1545220975308642,
+        "median": 0.15110335,
+        "p90": 0.16556347000000002,
+        "p95": 0.1798033,
+        "p99": 0.21702965299999996,
+        "max": 0.2242406
+      },
+      "initialization_percent_of_collection": 24.220066844017204,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 986,
+        "2": 296,
+        "3": 14
+      },
+      "sum_worker_busy_seconds": 400.9086508,
+      "worker_capacity_seconds_excluding_initialization": 626.57704,
+      "worker_busy_capacity_proxy": 0.6398393576630257,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 76.4265485,
+        "mean": 0.4717688179012346,
+        "median": 0.4286702,
+        "p90": 0.65397625,
+        "p95": 0.8025107249999996,
+        "p99": 1.1685092949999991,
+        "max": 1.314916
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 50.11358135,
+        "mean": 0.3093430947530864,
+        "median": 0.30550828124999996,
+        "p90": 0.42519862625000004,
+        "p95": 0.4581958787499999,
+        "p99": 0.48992370487499987,
+        "max": 0.5922533625
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 246.65030250454805,
+        "mean": 1.5225327315095558,
+        "median": 1.4347408058474875,
+        "p90": 1.943673855702453,
+        "p95": 2.258306799490885,
+        "p99": 2.812049655143835,
+        "max": 2.995880173769872
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.975797625779585,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6398393576630258,
+      "post_initialization_nonmax_worker_seconds": 1.8955814999999916,
+      "all_complete": true
+    },
+    "r4/b18": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 103.6539149,
+        "mean": 0.6398389808641975,
+        "median": 0.60154755,
+        "p90": 0.8209682900000002,
+        "p95": 0.9677764249999996,
+        "p99": 1.1507078049999997,
+        "max": 1.9967021
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 25.5499836,
+        "mean": 0.15771594814814816,
+        "median": 0.15067075000000002,
+        "p90": 0.17820839000000002,
+        "p95": 0.20365086,
+        "p99": 0.23703328399999993,
+        "max": 0.2735727
+      },
+      "initialization_percent_of_collection": 24.649318479335122,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 979,
+        "2": 310,
+        "3": 7
+      },
+      "sum_worker_busy_seconds": 406.4726812,
+      "worker_capacity_seconds_excluding_initialization": 624.8314504,
+      "worker_busy_capacity_proxy": 0.6505317248992305,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 76.1874919,
+        "mean": 0.4702931598765432,
+        "median": 0.43808254999999996,
+        "p90": 0.6456243800000001,
+        "p95": 0.8085644549999996,
+        "p99": 0.9815963239999994,
+        "max": 1.8359911
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 50.80908515,
+        "mean": 0.3136363280864198,
+        "median": 0.308119125,
+        "p90": 0.41797698875,
+        "p95": 0.44725576625,
+        "p99": 0.5255888459999996,
+        "max": 0.632074775
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 242.12632253042221,
+        "mean": 1.4946069292001372,
+        "median": 1.4237743755556913,
+        "p90": 1.9133054072815519,
+        "p95": 2.046696293384263,
+        "p99": 2.6644039153640473,
+        "max": 2.904705538992598
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9754629585463644,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6505317248992305,
+      "post_initialization_nonmax_worker_seconds": 1.9164394000000016,
+      "all_complete": true
+    },
+    "r4/b19": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 102.6762044,
+        "mean": 0.6338037308641975,
+        "median": 0.6053515,
+        "p90": 0.7930341900000001,
+        "p95": 0.8738118499999998,
+        "p99": 1.125397222999996,
+        "max": 1.5882854
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 25.5209235,
+        "mean": 0.15753656481481482,
+        "median": 0.15117865000000003,
+        "p90": 0.18174364,
+        "p95": 0.205704655,
+        "p99": 0.21829542099999996,
+        "max": 0.2389104
+      },
+      "initialization_percent_of_collection": 24.855733272508854,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 977,
+        "2": 314,
+        "3": 5
+      },
+      "sum_worker_busy_seconds": 401.4489316,
+      "worker_capacity_seconds_excluding_initialization": 617.2422472,
+      "worker_busy_capacity_proxy": 0.6503912093203201,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 75.2316392,
+        "mean": 0.46439283456790126,
+        "median": 0.43480955,
+        "p90": 0.61638177,
+        "p95": 0.7198706499999996,
+        "p99": 0.9665381119999957,
+        "max": 1.4271045
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 50.18111645,
+        "mean": 0.30975997808641975,
+        "median": 0.31561229375,
+        "p90": 0.39127138250000004,
+        "p95": 0.425021865625,
+        "p99": 0.5054407838749999,
+        "max": 0.545124925
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 244.1588908395085,
+        "mean": 1.50715364715746,
+        "median": 1.420170648577039,
+        "p90": 1.8712503805731941,
+        "p95": 2.0345896976131597,
+        "p99": 2.6189449984742,
+        "max": 3.07710063042523
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9750679191681875,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.65039120932032,
+      "post_initialization_nonmax_worker_seconds": 1.9236417000000046,
+      "all_complete": true
+    },
+    "r4/b20": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 104.8514778,
+        "mean": 0.6472313444444444,
+        "median": 0.61135065,
+        "p90": 0.8346485100000002,
+        "p95": 0.9994969199999999,
+        "p99": 1.2962591799999965,
+        "max": 1.7628794
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 25.3418916,
+        "mean": 0.15643142962962964,
+        "median": 0.14937835,
+        "p90": 0.17697413,
+        "p95": 0.19916705499999998,
+        "p99": 0.22287650299999998,
+        "max": 0.2500103
+      },
+      "initialization_percent_of_collection": 24.169322294473183,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 977,
+        "2": 314,
+        "3": 5
+      },
+      "sum_worker_busy_seconds": 408.9632212,
+      "worker_capacity_seconds_excluding_initialization": 636.0766896,
+      "worker_busy_capacity_proxy": 0.6429464054989636,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 77.5814275,
+        "mean": 0.47889770061728393,
+        "median": 0.43995285,
+        "p90": 0.64256114,
+        "p95": 0.8312712549999993,
+        "p99": 1.094477954999997,
+        "max": 1.6085384
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 51.12040265,
+        "mean": 0.31555804104938273,
+        "median": 0.30871169374999996,
+        "p90": 0.41179220000000005,
+        "p95": 0.4674796112499999,
+        "p99": 0.5361165123749991,
+        "max": 0.6239836125
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 245.72785112068527,
+        "mean": 1.5168385871647239,
+        "median": 1.45799619456433,
+        "p90": 1.8297200043565942,
+        "p95": 2.0626797638971848,
+        "p99": 2.9836716680462754,
+        "max": 3.6258293727245237
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9757493556166942,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6429464054989636,
+      "post_initialization_nonmax_worker_seconds": 1.9281586999999973,
+      "all_complete": true
+    },
+    "r5/b01": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 125.6473641,
+        "mean": 0.7756010129629629,
+        "median": 0.6585148000000001,
+        "p90": 1.29957815,
+        "p95": 1.4902795899999999,
+        "p99": 1.6925515719999997,
+        "max": 1.7630664
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 26.8583412,
+        "mean": 0.16579222962962964,
+        "median": 0.16031165,
+        "p90": 0.18273971000000003,
+        "p95": 0.200528465,
+        "p99": 0.22162178099999993,
+        "max": 0.264057
+      },
+      "initialization_percent_of_collection": 21.37596868217946,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 976,
+        "2": 316,
+        "3": 4
+      },
+      "sum_worker_busy_seconds": 450.9000585,
+      "worker_capacity_seconds_excluding_initialization": 790.3121832,
+      "worker_busy_capacity_proxy": 0.570534110551467,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 96.9670844,
+        "mean": 0.5985622493827161,
+        "median": 0.47901755,
+        "p90": 1.12032713,
+        "p95": 1.32019503,
+        "p99": 1.5145135709999997,
+        "max": 1.5936430000000001
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 56.3625073125,
+        "mean": 0.34791671180555556,
+        "median": 0.330131025,
+        "p90": 0.47326484750000003,
+        "p95": 0.54683108875,
+        "p99": 0.7063025277499999,
+        "max": 0.712984375
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 269.1347073005901,
+        "mean": 1.6613253537073462,
+        "median": 1.495762624419122,
+        "p90": 2.410956998318974,
+        "p95": 2.632851266893781,
+        "p99": 2.9319448889736055,
+        "max": 2.9763365026312374
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9815572778582468,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.570534110551467,
+      "post_initialization_nonmax_worker_seconds": 1.8219385000000017,
+      "all_complete": true
+    },
+    "r5/b02": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 125.0099147,
+        "mean": 0.7716661401234568,
+        "median": 0.6793308,
+        "p90": 1.1916235400000001,
+        "p95": 1.4251738899999997,
+        "p99": 1.6365033809999994,
+        "max": 1.6645778
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 26.5264924,
+        "mean": 0.16374378024691358,
+        "median": 0.15762130000000002,
+        "p90": 0.1858118,
+        "p95": 0.197824795,
+        "p99": 0.20962291399999988,
+        "max": 0.2707139
+      },
+      "initialization_percent_of_collection": 21.21951083932705,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 976,
+        "2": 316,
+        "3": 4
+      },
+      "sum_worker_busy_seconds": 461.1037179,
+      "worker_capacity_seconds_excluding_initialization": 787.8673784,
+      "worker_busy_capacity_proxy": 0.585255501803373,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 96.3704406,
+        "mean": 0.594879262962963,
+        "median": 0.49691430000000003,
+        "p90": 1.03172587,
+        "p95": 1.2551409699999998,
+        "p99": 1.4689999269999998,
+        "max": 1.4931115
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 57.6379647375,
+        "mean": 0.355789905787037,
+        "median": 0.3424147125,
+        "p90": 0.49856677374999997,
+        "p95": 0.540751593125,
+        "p99": 0.6491786754999993,
+        "max": 0.71637915
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 264.71626734590046,
+        "mean": 1.6340510329993856,
+        "median": 1.4742877054078918,
+        "p90": 2.263915521661799,
+        "p95": 2.5106823486936705,
+        "p99": 2.8699111125671446,
+        "max": 3.210238843660707
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9785447981939189,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.585255501803373,
+      "post_initialization_nonmax_worker_seconds": 2.112981700000006,
+      "all_complete": true
+    },
+    "r5/b03": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 115.9112615,
+        "mean": 0.7155016141975309,
+        "median": 0.6551,
+        "p90": 0.9647382900000001,
+        "p95": 1.1325518199999995,
+        "p99": 1.4784098079999974,
+        "max": 1.7528608
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 25.9030335,
+        "mean": 0.1598952685185185,
+        "median": 0.1551124,
+        "p90": 0.18059111,
+        "p95": 0.19553757499999994,
+        "p99": 0.21420474399999997,
+        "max": 0.2312635
+      },
+      "initialization_percent_of_collection": 22.347296686094648,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 978,
+        "2": 312,
+        "3": 6
+      },
+      "sum_worker_busy_seconds": 431.4611352,
+      "worker_capacity_seconds_excluding_initialization": 720.065824,
+      "worker_busy_capacity_proxy": 0.5991967967639581,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 87.6993058,
+        "mean": 0.5413537395061728,
+        "median": 0.47467024999999996,
+        "p90": 0.7966401200000002,
+        "p95": 0.9659098249999996,
+        "p99": 1.3138352779999976,
+        "max": 1.5607533999999998
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 53.9326419,
+        "mean": 0.3329175425925926,
+        "median": 0.32535841875,
+        "p90": 0.4346461462500001,
+        "p95": 0.46154619124999996,
+        "p99": 0.5648375399999996,
+        "max": 0.5971987625
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 260.73554247514124,
+        "mean": 1.6094786572539583,
+        "median": 1.5188718369788499,
+        "p90": 2.0370806602624145,
+        "p95": 2.5025228947835854,
+        "p99": 2.8345843786673672,
+        "max": 3.0285121528014054
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9743476540833578,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.5991967967639581,
+      "post_initialization_nonmax_worker_seconds": 2.308922199999998,
+      "all_complete": true
+    },
+    "r5/b04": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 114.2657452,
+        "mean": 0.7053441061728395,
+        "median": 0.63715855,
+        "p90": 0.92405795,
+        "p95": 1.307216945,
+        "p99": 1.6115421049999998,
+        "max": 1.7533781
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 25.6212485,
+        "mean": 0.1581558549382716,
+        "median": 0.15327965,
+        "p90": 0.17679774,
+        "p95": 0.188424425,
+        "p99": 0.21434414499999985,
+        "max": 0.2317444
+      },
+      "initialization_percent_of_collection": 22.422510311515477,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 977,
+        "2": 314,
+        "3": 5
+      },
+      "sum_worker_busy_seconds": 426.0775084,
+      "worker_capacity_seconds_excluding_initialization": 709.1559736,
+      "worker_busy_capacity_proxy": 0.6008234073486481,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 86.5679805,
+        "mean": 0.53437025,
+        "median": 0.46668259999999995,
+        "p90": 0.7583844600000001,
+        "p95": 1.12768001,
+        "p99": 1.4383686969999998,
+        "max": 1.5836176
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 53.25968855,
+        "mean": 0.32876350956790124,
+        "median": 0.32438054375,
+        "p90": 0.428042675,
+        "p95": 0.4786267049999999,
+        "p99": 0.5506232522499996,
+        "max": 0.6187970125
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 257.48845425474457,
+        "mean": 1.5894349028070651,
+        "median": 1.4761565050051235,
+        "p90": 2.1619224843589135,
+        "p95": 2.3343914550944196,
+        "p99": 2.7600905871363897,
+        "max": 3.4001412746980546
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9765747871858582,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6008234073486483,
+      "post_initialization_nonmax_worker_seconds": 2.076516199999986,
+      "all_complete": true
+    },
+    "r5/b05": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 114.5219394,
+        "mean": 0.7069255518518518,
+        "median": 0.6625828,
+        "p90": 1.04306966,
+        "p95": 1.1823962699999997,
+        "p99": 1.3199141369999998,
+        "max": 1.4122657
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 25.9558011,
+        "mean": 0.16022099444444446,
+        "median": 0.15547485,
+        "p90": 0.17433640000000003,
+        "p95": 0.188796545,
+        "p99": 0.2085990309999999,
+        "max": 0.2313178
+      },
+      "initialization_percent_of_collection": 22.664479169656815,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 979,
+        "2": 310,
+        "3": 7
+      },
+      "sum_worker_busy_seconds": 429.184372,
+      "worker_capacity_seconds_excluding_initialization": 708.5291064,
+      "worker_busy_capacity_proxy": 0.6057399309686284,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 86.3061268,
+        "mean": 0.5327538691358025,
+        "median": 0.4880329,
+        "p90": 0.8754768600000001,
+        "p95": 1.0178844349999998,
+        "p99": 1.155780444,
+        "max": 1.1976992
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 53.6480465,
+        "mean": 0.33116078086419753,
+        "median": 0.333141075,
+        "p90": 0.44289507125000005,
+        "p95": 0.4777443974999999,
+        "p99": 0.552333762625,
+        "max": 0.6690757125
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 256.3981466369376,
+        "mean": 1.5827046088699852,
+        "median": 1.5032362474008503,
+        "p90": 2.061688237815071,
+        "p95": 2.2147011440677353,
+        "p99": 2.6966795219345263,
+        "max": 2.718220618070584
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9744822169806631,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6057399309686285,
+      "post_initialization_nonmax_worker_seconds": 2.2600114999999903,
+      "all_complete": true
+    },
+    "r5/b06": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 112.187907,
+        "mean": 0.6925179444444445,
+        "median": 0.6533812999999999,
+        "p90": 0.9573501,
+        "p95": 1.1135925349999996,
+        "p99": 1.3267711669999998,
+        "max": 1.407013
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 25.1166519,
+        "mean": 0.1550410611111111,
+        "median": 0.1517678,
+        "p90": 0.17104808000000002,
+        "p95": 0.18342693499999999,
+        "p99": 0.19395048199999998,
+        "max": 0.2125281
+      },
+      "initialization_percent_of_collection": 22.388020751648394,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 976,
+        "2": 316,
+        "3": 4
+      },
+      "sum_worker_busy_seconds": 416.7490965,
+      "worker_capacity_seconds_excluding_initialization": 696.5700408,
+      "worker_busy_capacity_proxy": 0.5982874256569664,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 85.161794,
+        "mean": 0.5256900864197531,
+        "median": 0.48170355000000004,
+        "p90": 0.79250761,
+        "p95": 0.9518253999999996,
+        "p99": 1.1676701749999998,
+        "max": 1.2276835
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 52.0936370625,
+        "mean": 0.3215656608796296,
+        "median": 0.30783458750000003,
+        "p90": 0.41820547875,
+        "p95": 0.4629968437499999,
+        "p99": 0.5724031033749997,
+        "max": 0.59844105
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 263.2308718919078,
+        "mean": 1.62488192525869,
+        "median": 1.4968043773428534,
+        "p90": 2.2146942433467642,
+        "p95": 2.374178483452518,
+        "p99": 2.619124929884707,
+        "max": 2.686613781816303
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9780701323553105,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.5982874256569664,
+      "post_initialization_nonmax_worker_seconds": 1.9094611000000015,
+      "all_complete": true
+    },
+    "r5/b07": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 107.7327697,
+        "mean": 0.6650170969135802,
+        "median": 0.6150018500000001,
+        "p90": 0.8965863800000001,
+        "p95": 1.1399429149999998,
+        "p99": 1.4201643249999996,
+        "max": 1.6107433
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.8558559,
+        "mean": 0.15343120925925927,
+        "median": 0.1499607,
+        "p90": 0.16439055,
+        "p95": 0.17678328499999998,
+        "p99": 0.20149506599999958,
+        "max": 0.2259277
+      },
+      "initialization_percent_of_collection": 23.07176912764362,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 975,
+        "2": 318,
+        "3": 3
+      },
+      "sum_worker_busy_seconds": 401.8422694,
+      "worker_capacity_seconds_excluding_initialization": 663.0153104,
+      "worker_busy_capacity_proxy": 0.6060829412183059,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 81.0205325,
+        "mean": 0.5001267438271605,
+        "median": 0.4538742,
+        "p90": 0.7382347400000001,
+        "p95": 0.9620485249999999,
+        "p99": 1.2606502479999997,
+        "max": 1.4536566
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 50.230283675,
+        "mean": 0.31006347947530866,
+        "median": 0.31067025625,
+        "p90": 0.41099435,
+        "p95": 0.44506260875,
+        "p99": 0.5352999786249995,
+        "max": 0.6231508125
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 257.6128644906349,
+        "mean": 1.5902028672261412,
+        "median": 1.4697800237122514,
+        "p90": 2.1505363388431307,
+        "p95": 2.4585318354941195,
+        "p99": 2.6161135866422254,
+        "max": 2.909412413791861
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9776007428983196,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6060829412183057,
+      "post_initialization_nonmax_worker_seconds": 1.8563813000000096,
+      "all_complete": true
+    },
+    "r5/b08": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 107.5731394,
+        "mean": 0.6640317246913581,
+        "median": 0.62706165,
+        "p90": 0.89041489,
+        "p95": 1.1212212499999996,
+        "p99": 1.3552604549999985,
+        "max": 1.5510765
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.8914545,
+        "mean": 0.1536509537037037,
+        "median": 0.1498472,
+        "p90": 0.16278852,
+        "p95": 0.17749325,
+        "p99": 0.20391073499999993,
+        "max": 0.2298462
+      },
+      "initialization_percent_of_collection": 23.13909832773738,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 980,
+        "2": 308,
+        "3": 8
+      },
+      "sum_worker_busy_seconds": 402.0028046,
+      "worker_capacity_seconds_excluding_initialization": 661.4534792000001,
+      "worker_busy_capacity_proxy": 0.6077567315636548,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 80.7058887,
+        "mean": 0.49818449814814814,
+        "median": 0.4580761,
+        "p90": 0.7301159700000001,
+        "p95": 0.9606691649999998,
+        "p99": 1.1965010099999984,
+        "max": 1.3880181
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 50.250350575,
+        "mean": 0.3101873492283951,
+        "median": 0.3041757625,
+        "p90": 0.39604260625,
+        "p95": 0.44044727374999987,
+        "p99": 0.4840385154999997,
+        "max": 0.5930222625
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 257.0330593237692,
+        "mean": 1.5866238229862293,
+        "median": 1.471910250633819,
+        "p90": 2.120656655276348,
+        "p95": 2.2822890617389344,
+        "p99": 2.7682315512679714,
+        "max": 2.8401230760691876
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.976103580830632,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6077567315636548,
+      "post_initialization_nonmax_worker_seconds": 1.9757962000000049,
+      "all_complete": true
+    },
+    "r5/b09": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 104.4102257,
+        "mean": 0.6445075660493828,
+        "median": 0.6121693500000001,
+        "p90": 0.8595356900000001,
+        "p95": 0.9287254649999998,
+        "p99": 1.1019356779999996,
+        "max": 1.8083752
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 25.0369198,
+        "mean": 0.15454888765432098,
+        "median": 0.14895415,
+        "p90": 0.17900605,
+        "p95": 0.18796518499999995,
+        "p99": 0.19739585099999998,
+        "max": 0.2204151
+      },
+      "initialization_percent_of_collection": 23.97937523086879,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 973,
+        "2": 322,
+        "3": 1
+      },
+      "sum_worker_busy_seconds": 407.5786637,
+      "worker_capacity_seconds_excluding_initialization": 634.9864472,
+      "worker_busy_capacity_proxy": 0.6418698627305127,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 77.2643092,
+        "mean": 0.4769401802469136,
+        "median": 0.44318005000000005,
+        "p90": 0.68839189,
+        "p95": 0.7655814499999999,
+        "p99": 0.9453173979999997,
+        "max": 1.6416867000000002
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 50.9473329625,
+        "mean": 0.31448970964506173,
+        "median": 0.30741332499999996,
+        "p90": 0.41646159,
+        "p95": 0.43029346,
+        "p99": 0.4993565042499999,
+        "max": 0.5173414875
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 244.43976155787752,
+        "mean": 1.5088874170239353,
+        "median": 1.4651889038508519,
+        "p90": 1.8395040050280058,
+        "p95": 2.032302750144325,
+        "p99": 2.738057634426167,
+        "max": 3.2933539687607714
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9734293957384482,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6418698627305128,
+      "post_initialization_nonmax_worker_seconds": 2.1089966999999916,
+      "all_complete": true
+    },
+    "r5/b10": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 102.738734,
+        "mean": 0.6341897160493827,
+        "median": 0.6083737,
+        "p90": 0.79462817,
+        "p95": 0.9139443949999997,
+        "p99": 1.2822555369999986,
+        "max": 1.8121158
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.3885165,
+        "mean": 0.15054639814814816,
+        "median": 0.14803159999999999,
+        "p90": 0.15706651000000002,
+        "p95": 0.16910960499999994,
+        "p99": 0.19406112599999994,
+        "max": 0.200772
+      },
+      "initialization_percent_of_collection": 23.73838527151795,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 979,
+        "2": 310,
+        "3": 7
+      },
+      "sum_worker_busy_seconds": 399.2050516,
+      "worker_capacity_seconds_excluding_initialization": 626.80174,
+      "worker_busy_capacity_proxy": 0.636892060318786,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 76.562623,
+        "mean": 0.4726087839506173,
+        "median": 0.44571194999999997,
+        "p90": 0.63752803,
+        "p95": 0.7584652449999996,
+        "p99": 1.1239379559999987,
+        "max": 1.656528
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 49.90063145,
+        "mean": 0.30802858919753084,
+        "median": 0.31017196874999997,
+        "p90": 0.38489539625,
+        "p95": 0.43900492687499976,
+        "p99": 0.4902224483749998,
+        "max": 0.5392645875
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 246.92691602663294,
+        "mean": 1.5242402223866232,
+        "median": 1.4313197693712327,
+        "p90": 1.8773452424196009,
+        "p95": 2.0220445225700505,
+        "p99": 2.6493392046684696,
+        "max": 3.0718278900522096
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9771845623785284,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6368920603187861,
+      "post_initialization_nonmax_worker_seconds": 1.787594499999983,
+      "all_complete": true
+    },
+    "r5/b11": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 103.3903217,
+        "mean": 0.6382118623456791,
+        "median": 0.5805568999999999,
+        "p90": 0.79924362,
+        "p95": 1.1456440649999997,
+        "p99": 1.3711760799999975,
+        "max": 1.6804996
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.3874586,
+        "mean": 0.15053986790123458,
+        "median": 0.1472282,
+        "p90": 0.15745017,
+        "p95": 0.1738839849999999,
+        "p99": 0.205728397,
+        "max": 0.2183035
+      },
+      "initialization_percent_of_collection": 23.587757731099117,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 977,
+        "2": 314,
+        "3": 5
+      },
+      "sum_worker_busy_seconds": 395.9736902,
+      "worker_capacity_seconds_excluding_initialization": 632.0229048,
+      "worker_busy_capacity_proxy": 0.6265179429300962,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 76.9826224,
+        "mean": 0.4752013728395062,
+        "median": 0.42116149999999997,
+        "p90": 0.6457734700000001,
+        "p95": 0.9867835499999998,
+        "p99": 1.2114741329999976,
+        "max": 1.5171411
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 49.496711275,
+        "mean": 0.3055352547839506,
+        "median": 0.3029427125,
+        "p90": 0.39983121375,
+        "p95": 0.44925672874999995,
+        "p99": 0.5195060493749999,
+        "max": 0.6369860375
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 247.30674024550106,
+        "mean": 1.5265848163302536,
+        "median": 1.4311792544919315,
+        "p90": 2.0382525271549747,
+        "p95": 2.238858971910672,
+        "p99": 2.5610046308756638,
+        "max": 3.5727459606166536
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9744282596765788,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6265179429300962,
+      "post_initialization_nonmax_worker_seconds": 2.020240700000002,
+      "all_complete": true
+    },
+    "r5/b12": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 108.7220151,
+        "mean": 0.67112355,
+        "median": 0.6043196500000001,
+        "p90": 0.91639318,
+        "p95": 1.044611625,
+        "p99": 1.301629421,
+        "max": 1.408488
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.7342513,
+        "mean": 0.15268056358024693,
+        "median": 0.14924135,
+        "p90": 0.15998349,
+        "p95": 0.16931895499999997,
+        "p99": 0.2128244799999999,
+        "max": 0.2236828
+      },
+      "initialization_percent_of_collection": 22.749993437161745,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 973,
+        "2": 322,
+        "3": 1
+      },
+      "sum_worker_busy_seconds": 401.2472774,
+      "worker_capacity_seconds_excluding_initialization": 671.9021104,
+      "worker_busy_capacity_proxy": 0.5971811536075211,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 82.0241882,
+        "mean": 0.506322149382716,
+        "median": 0.44238275,
+        "p90": 0.75708869,
+        "p95": 0.88622448,
+        "p99": 1.1408774569999998,
+        "max": 1.2033545
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 50.155909675,
+        "mean": 0.30960438070987656,
+        "median": 0.30318146874999996,
+        "p90": 0.40848169,
+        "p95": 0.434306793125,
+        "p99": 0.4969445433749999,
+        "max": 0.5468697625
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 263.88594478114913,
+        "mean": 1.628925585068822,
+        "median": 1.5607504141049517,
+        "p90": 2.0656808828351254,
+        "p95": 2.3671473067246924,
+        "p99": 2.9600621015048527,
+        "max": 2.9865694117545023
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9766206943588133,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.5971811536075211,
+      "post_initialization_nonmax_worker_seconds": 1.9635755999999986,
+      "all_complete": true
+    },
+    "r5/b13": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 107.1640871,
+        "mean": 0.6615067104938271,
+        "median": 0.60780865,
+        "p90": 0.9250906400000001,
+        "p95": 1.033116795,
+        "p99": 1.4583506169999998,
+        "max": 1.5761131000000002
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.8319231,
+        "mean": 0.15328347592592592,
+        "median": 0.14887855,
+        "p90": 0.16590986000000002,
+        "p95": 0.174504925,
+        "p99": 0.202749995,
+        "max": 0.2182501
+      },
+      "initialization_percent_of_collection": 23.171870140439985,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 980,
+        "2": 308,
+        "3": 8
+      },
+      "sum_worker_busy_seconds": 402.4831407,
+      "worker_capacity_seconds_excluding_initialization": 658.657312,
+      "worker_busy_capacity_proxy": 0.6110660784708634,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 80.6565203,
+        "mean": 0.49787975493827163,
+        "median": 0.44398044999999997,
+        "p90": 0.7481450500000002,
+        "p95": 0.8727136999999999,
+        "p99": 1.291351532,
+        "max": 1.4249094
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 50.3103925875,
+        "mean": 0.31055797893518516,
+        "median": 0.30549455625,
+        "p90": 0.42238871875000006,
+        "p95": 0.45538923812499993,
+        "p99": 0.525316205,
+        "max": 0.560563075
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 257.09488823517074,
+        "mean": 1.5870054829331528,
+        "median": 1.461659012525867,
+        "p90": 2.2059754153728988,
+        "p95": 2.4320730601430816,
+        "p99": 2.7354971158158654,
+        "max": 2.9707051959533097
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.979647763175519,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6110660784708634,
+      "post_initialization_nonmax_worker_seconds": 1.675643700000009,
+      "all_complete": true
+    },
+    "r5/b14": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 108.3663689,
+        "mean": 0.6689282030864198,
+        "median": 0.6248824,
+        "p90": 0.88695705,
+        "p95": 1.0856743649999996,
+        "p99": 1.3689921409999999,
+        "max": 1.4707064
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 25.3709855,
+        "mean": 0.15661102160493828,
+        "median": 0.14989429999999998,
+        "p90": 0.17603290000000002,
+        "p95": 0.20625352999999985,
+        "p99": 0.23417057399999966,
+        "max": 0.2590094
+      },
+      "initialization_percent_of_collection": 23.41223181835338,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 977,
+        "2": 314,
+        "3": 5
+      },
+      "sum_worker_busy_seconds": 421.77363809999997,
+      "worker_capacity_seconds_excluding_initialization": 663.9630672,
+      "worker_busy_capacity_proxy": 0.6352365951296997,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 81.0626972,
+        "mean": 0.5003870197530864,
+        "median": 0.45783035000000005,
+        "p90": 0.7142831000000002,
+        "p95": 0.884313205,
+        "p99": 1.203941529,
+        "max": 1.3098807000000001
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 52.721704762499996,
+        "mean": 0.32544262199074075,
+        "median": 0.31915328125,
+        "p90": 0.41916284500000006,
+        "p95": 0.484568106875,
+        "p99": 0.5732342474999997,
+        "max": 0.6043521374999999
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 248.91412796176564,
+        "mean": 1.5365069627269483,
+        "median": 1.4621141669016167,
+        "p90": 1.9642083124419956,
+        "p95": 2.178661224629868,
+        "p99": 2.690609533145549,
+        "max": 2.8474680988498027
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9767133288524577,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6352365951296997,
+      "post_initialization_nonmax_worker_seconds": 1.932686199999992,
+      "all_complete": true
+    },
+    "r5/b15": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 106.9618857,
+        "mean": 0.6602585537037037,
+        "median": 0.61800695,
+        "p90": 0.8475139300000001,
+        "p95": 0.9623255449999998,
+        "p99": 1.3030432109999994,
+        "max": 1.3858631
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 25.2741018,
+        "mean": 0.15601297407407408,
+        "median": 0.1505494,
+        "p90": 0.17733022000000004,
+        "p95": 0.186089205,
+        "p99": 0.21262840299999988,
+        "max": 0.2614776
+      },
+      "initialization_percent_of_collection": 23.629072762317616,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 977,
+        "2": 314,
+        "3": 5
+      },
+      "sum_worker_busy_seconds": 411.8830997,
+      "worker_capacity_seconds_excluding_initialization": 653.5022712,
+      "worker_busy_capacity_proxy": 0.630270341591431,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 79.6820135,
+        "mean": 0.49186428086419753,
+        "median": 0.45314730000000003,
+        "p90": 0.68439119,
+        "p95": 0.78306621,
+        "p99": 1.1391097909999992,
+        "max": 1.2361873
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 51.4853874625,
+        "mean": 0.3178110337191358,
+        "median": 0.3059308,
+        "p90": 0.43620920375000005,
+        "p95": 0.4613266725,
+        "p99": 0.49541569749999986,
+        "max": 0.601987925
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 250.21737307270308,
+        "mean": 1.5445516856339696,
+        "median": 1.4538176367720697,
+        "p90": 1.9595945737682114,
+        "p95": 2.1737981007066045,
+        "p99": 2.674859923557027,
+        "max": 2.750665297392239
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9754458952827584,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.630270341591431,
+      "post_initialization_nonmax_worker_seconds": 2.005770400000003,
+      "all_complete": true
+    },
+    "r5/b16": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 106.9656527,
+        "mean": 0.6602818067901235,
+        "median": 0.6302418999999999,
+        "p90": 0.8534020800000001,
+        "p95": 1.0358869749999995,
+        "p99": 1.222214249999999,
+        "max": 1.3910771
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 25.1446934,
+        "mean": 0.15521415679012346,
+        "median": 0.15074759999999998,
+        "p90": 0.16870721000000002,
+        "p95": 0.18717938499999995,
+        "p99": 0.205999855,
+        "max": 0.2334695
+      },
+      "initialization_percent_of_collection": 23.507259354104797,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 976,
+        "2": 316,
+        "3": 4
+      },
+      "sum_worker_busy_seconds": 418.7520086,
+      "worker_capacity_seconds_excluding_initialization": 654.5676744,
+      "worker_busy_capacity_proxy": 0.6397382959429565,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 79.87915770000001,
+        "mean": 0.4930812203703704,
+        "median": 0.4581105,
+        "p90": 0.67484569,
+        "p95": 0.8714827049999996,
+        "p99": 1.0560146659999994,
+        "max": 1.2352549
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 52.344001075,
+        "mean": 0.3231111177469136,
+        "median": 0.317139975,
+        "p90": 0.42573736375000004,
+        "p95": 0.47823791124999987,
+        "p99": 0.5178000119999999,
+        "max": 0.5649762375
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 246.62296474080546,
+        "mean": 1.5223639798815152,
+        "median": 1.460454148389065,
+        "p90": 1.916604437272705,
+        "p95": 2.079921889588273,
+        "p99": 2.351319659812497,
+        "max": 2.536565387041842
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9762676749745711,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6397382959429565,
+      "post_initialization_nonmax_worker_seconds": 1.941801599999991,
+      "all_complete": true
+    },
+    "r5/b17": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 97.5298682,
+        "mean": 0.6020362234567901,
+        "median": 0.5505033500000001,
+        "p90": 0.7964551200000001,
+        "p95": 0.9951420199999998,
+        "p99": 1.2408825639999994,
+        "max": 1.3555635
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 23.978832,
+        "mean": 0.14801748148148147,
+        "median": 0.1461208,
+        "p90": 0.15071282,
+        "p95": 0.16048317499999998,
+        "p99": 0.18848469799999984,
+        "max": 0.1967497
+      },
+      "initialization_percent_of_collection": 24.586142114770134,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 977,
+        "2": 314,
+        "3": 5
+      },
+      "sum_worker_busy_seconds": 370.2266564,
+      "worker_capacity_seconds_excluding_initialization": 588.4082896,
+      "worker_busy_capacity_proxy": 0.6292002729119948,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 71.5757077,
+        "mean": 0.4418253561728395,
+        "median": 0.39587859999999997,
+        "p90": 0.6286632400000001,
+        "p95": 0.8370798349999998,
+        "p99": 1.075802276999999,
+        "max": 1.2006688
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 46.27833205,
+        "mean": 0.2856687163580247,
+        "median": 0.28127705625,
+        "p90": 0.3651571125,
+        "p95": 0.41564919249999976,
+        "p99": 0.5222232357499996,
+        "max": 0.5549263125
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 248.3817025321131,
+        "mean": 1.533220386000698,
+        "median": 1.4513832066604926,
+        "p90": 1.9358622991298164,
+        "p95": 2.2815857878575962,
+        "p99": 2.819297661819125,
+        "max": 3.05388152738747
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9731434307107695,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6292002729119948,
+      "post_initialization_nonmax_worker_seconds": 1.9753285000000034,
+      "all_complete": true
+    },
+    "r5/b18": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 92.9674363,
+        "mean": 0.5738730635802469,
+        "median": 0.56317285,
+        "p90": 0.73327878,
+        "p95": 0.811311805,
+        "p99": 1.019532455999998,
+        "max": 1.158153
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 23.4971123,
+        "mean": 0.14504390308641976,
+        "median": 0.14459235,
+        "p90": 0.14948058,
+        "p95": 0.15134569,
+        "p99": 0.15381374399999997,
+        "max": 0.1674455
+      },
+      "initialization_percent_of_collection": 25.274561970469225,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 981,
+        "2": 306,
+        "3": 9
+      },
+      "sum_worker_busy_seconds": 352.3446414,
+      "worker_capacity_seconds_excluding_initialization": 555.762592,
+      "worker_busy_capacity_proxy": 0.6339840904585388,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 67.772709,
+        "mean": 0.41835005555555554,
+        "median": 0.40758435000000004,
+        "p90": 0.58254097,
+        "p95": 0.6498950250000001,
+        "p99": 0.8660919239999981,
+        "max": 1.009532
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 44.043080175,
+        "mean": 0.27187086527777776,
+        "median": 0.27123378125,
+        "p90": 0.35167957875,
+        "p95": 0.37161305125,
+        "p99": 0.3984987397499996,
+        "max": 0.4300407375
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 248.8912808714726,
+        "mean": 1.5363659313053863,
+        "median": 1.4821579657768957,
+        "p90": 1.9028785172264477,
+        "p95": 2.041461187456766,
+        "p99": 2.539658127430615,
+        "max": 3.354959127777249
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9755634506613212,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6339840904585388,
+      "post_initialization_nonmax_worker_seconds": 1.697614999999999,
+      "all_complete": true
+    },
+    "r5/b19": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 99.4170586,
+        "mean": 0.6136855469135802,
+        "median": 0.5663275999999999,
+        "p90": 0.8111133,
+        "p95": 0.9687107199999996,
+        "p99": 1.2521989659999964,
+        "max": 1.4261799
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 23.6262662,
+        "mean": 0.14584114938271606,
+        "median": 0.14519125,
+        "p90": 0.14973150999999998,
+        "p95": 0.151007835,
+        "p99": 0.15448183599999998,
+        "max": 0.1554944
+      },
+      "initialization_percent_of_collection": 23.764801064029868,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 975,
+        "2": 318,
+        "3": 3
+      },
+      "sum_worker_busy_seconds": 361.6102377,
+      "worker_capacity_seconds_excluding_initialization": 606.3263392,
+      "worker_busy_capacity_proxy": 0.5963953968701349,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 73.8864651,
+        "mean": 0.4560892907407407,
+        "median": 0.40970845,
+        "p90": 0.66030383,
+        "p95": 0.8189335049999995,
+        "p99": 1.096833967999996,
+        "max": 1.2679891
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 45.2012797125,
+        "mean": 0.2790202451388889,
+        "median": 0.2762316125,
+        "p90": 0.36543985,
+        "p95": 0.38224396125,
+        "p99": 0.4465305933749997,
+        "max": 0.4641885875
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 262.74057501974727,
+        "mean": 1.6218554013564648,
+        "median": 1.4959186789252796,
+        "p90": 2.110051339225884,
+        "p95": 2.4338118681017806,
+        "p99": 2.7408224098343315,
+        "max": 3.372092000406183
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9748738964233338,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.5963953968701349,
+      "post_initialization_nonmax_worker_seconds": 1.9043273000000056,
+      "all_complete": true
+    },
+    "r5/b20": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 97.1832061,
+        "mean": 0.5998963339506173,
+        "median": 0.54454135,
+        "p90": 0.79541991,
+        "p95": 0.9616055049999995,
+        "p99": 1.2654072209999987,
+        "max": 1.4598848
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 23.6287664,
+        "mean": 0.14585658271604937,
+        "median": 0.14493735000000002,
+        "p90": 0.15032464,
+        "p95": 0.152707305,
+        "p99": 0.157368923,
+        "max": 0.1701522
+      },
+      "initialization_percent_of_collection": 24.31363128284363,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 980,
+        "2": 308,
+        "3": 8
+      },
+      "sum_worker_busy_seconds": 363.6981098,
+      "worker_capacity_seconds_excluding_initialization": 588.4355176,
+      "worker_busy_capacity_proxy": 0.6180764058624186,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 71.755116,
+        "mean": 0.44293281481481483,
+        "median": 0.38647624999999997,
+        "p90": 0.64418096,
+        "p95": 0.8103189299999994,
+        "p99": 1.1041337929999984,
+        "max": 1.2995887
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 45.462263725,
+        "mean": 0.2806312575617284,
+        "median": 0.2746865375,
+        "p90": 0.35873968125,
+        "p95": 0.3900516143749998,
+        "p99": 0.46069624787499996,
+        "max": 0.512192975
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 252.24459003112025,
+        "mean": 1.5570653705624706,
+        "median": 1.4609295323147347,
+        "p90": 2.0179886340241646,
+        "p95": 2.388933558170755,
+        "p99": 2.919968379476322,
+        "max": 3.3448066012081563
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9755375242155505,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6180764058624186,
+      "post_initialization_nonmax_worker_seconds": 1.7993237000000022,
+      "all_complete": true
+    },
+    "r6/b01": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 124.7923684,
+        "mean": 0.770323261728395,
+        "median": 0.66746315,
+        "p90": 1.2143297500000005,
+        "p95": 1.43578934,
+        "p99": 1.8097929329999998,
+        "max": 1.9093076
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 26.386802199999998,
+        "mean": 0.1628814950617284,
+        "median": 0.15992875,
+        "p90": 0.17151522,
+        "p95": 0.19225056499999998,
+        "p99": 0.20799292499999994,
+        "max": 0.211189
+      },
+      "initialization_percent_of_collection": 21.14456399723238,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 975,
+        "2": 318,
+        "3": 3
+      },
+      "sum_worker_busy_seconds": 453.49431500000003,
+      "worker_capacity_seconds_excluding_initialization": 787.2445296,
+      "worker_busy_capacity_proxy": 0.5760526722623542,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 96.513701,
+        "mean": 0.5957635864197531,
+        "median": 0.4959659,
+        "p90": 1.0416695800000004,
+        "p95": 1.264054595,
+        "p99": 1.6383003999999999,
+        "max": 1.7091647
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 56.686789375000004,
+        "mean": 0.3499184529320988,
+        "median": 0.324207025,
+        "p90": 0.4713309775,
+        "p95": 0.5317959899999999,
+        "p99": 0.6960139531249983,
+        "max": 0.8127453
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 268.57229941702343,
+        "mean": 1.6578537001050828,
+        "median": 1.5343461177872744,
+        "p90": 2.2676101555687724,
+        "p95": 2.578955189059599,
+        "p99": 2.7933411410959765,
+        "max": 2.8380489477703876
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9807748151547142,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.5760526722623541,
+      "post_initialization_nonmax_worker_seconds": 1.8918652000000122,
+      "all_complete": true
+    },
+    "r6/b02": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 115.5236359,
+        "mean": 0.7131088635802469,
+        "median": 0.64465575,
+        "p90": 0.97488324,
+        "p95": 1.1032935649999998,
+        "p99": 1.4994248129999994,
+        "max": 1.7668959
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 26.3293167,
+        "mean": 0.1625266462962963,
+        "median": 0.1589299,
+        "p90": 0.17459322000000002,
+        "p95": 0.20294476999999983,
+        "p99": 0.21545332999999994,
+        "max": 0.2303444
+      },
+      "initialization_percent_of_collection": 22.791281190968817,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 979,
+        "2": 310,
+        "3": 7
+      },
+      "sum_worker_busy_seconds": 428.7885416,
+      "worker_capacity_seconds_excluding_initialization": 713.5545536,
+      "worker_busy_capacity_proxy": 0.6009190740030896,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 87.249512,
+        "mean": 0.5385772345679012,
+        "median": 0.47081855000000006,
+        "p90": 0.7962726200000001,
+        "p95": 0.9332603899999998,
+        "p99": 1.322506241999999,
+        "max": 1.5956195
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 53.5985677,
+        "mean": 0.3308553561728395,
+        "median": 0.32605805625,
+        "p90": 0.44207163375,
+        "p95": 0.473144116875,
+        "p99": 0.5226164323749999,
+        "max": 0.6714924625
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 260.69677460757214,
+        "mean": 1.6092393494294575,
+        "median": 1.492088754529441,
+        "p90": 1.994218893535713,
+        "p95": 2.3976843048273246,
+        "p99": 2.773697978562183,
+        "max": 3.163829950184068
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9781958400776717,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6009190740030896,
+      "post_initialization_nonmax_worker_seconds": 1.9448071999999996,
+      "all_complete": true
+    },
+    "r6/b03": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 116.11492,
+        "mean": 0.7167587654320988,
+        "median": 0.6696527999999999,
+        "p90": 0.9902087,
+        "p95": 1.1153694399999996,
+        "p99": 1.4700309729999994,
+        "max": 1.5956053
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 26.3354979,
+        "mean": 0.16256480185185185,
+        "median": 0.15676935,
+        "p90": 0.18214224,
+        "p95": 0.19162968499999997,
+        "p99": 0.23416408999999946,
+        "max": 0.2674614
+      },
+      "initialization_percent_of_collection": 22.680546048690385,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 973,
+        "2": 322,
+        "3": 1
+      },
+      "sum_worker_busy_seconds": 435.8780055,
+      "worker_capacity_seconds_excluding_initialization": 718.2353768,
+      "worker_busy_capacity_proxy": 0.6068734840686839,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 87.6756463,
+        "mean": 0.5412076932098765,
+        "median": 0.49782499999999996,
+        "p90": 0.8264257900000002,
+        "p95": 0.9195310999999998,
+        "p99": 1.288939976999999,
+        "max": 1.4160509
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 54.4847506875,
+        "mean": 0.3363256215277778,
+        "median": 0.32942834375,
+        "p90": 0.43579299374999997,
+        "p95": 0.4706809343749999,
+        "p99": 0.5799005513749994,
+        "max": 0.6346854749999999
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 258.74531597608,
+        "mean": 1.5971933084943213,
+        "median": 1.4959219997918272,
+        "p90": 2.109820051990117,
+        "p95": 2.4180540402696837,
+        "p99": 2.7111521604785107,
+        "max": 2.8539242605098822
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9765672828941053,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6068734840686839,
+      "post_initialization_nonmax_worker_seconds": 2.103775800000008,
+      "all_complete": true
+    },
+    "r6/b04": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 104.7498491,
+        "mean": 0.6466040067901234,
+        "median": 0.60764225,
+        "p90": 0.8142812500000001,
+        "p95": 0.9918397149999998,
+        "p99": 1.360629745,
+        "max": 1.5790085
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 25.7447341,
+        "mean": 0.15891811172839507,
+        "median": 0.15367895,
+        "p90": 0.17862727,
+        "p95": 0.191791355,
+        "p99": 0.22269207699999974,
+        "max": 0.241512
+      },
+      "initialization_percent_of_collection": 24.577347195433813,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 978,
+        "2": 312,
+        "3": 6
+      },
+      "sum_worker_busy_seconds": 401.5915322,
+      "worker_capacity_seconds_excluding_initialization": 632.04092,
+      "worker_busy_capacity_proxy": 0.6353885001622996,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 77.0598322,
+        "mean": 0.47567797654320987,
+        "median": 0.43225435,
+        "p90": 0.63300243,
+        "p95": 0.81334924,
+        "p99": 1.1911916349999996,
+        "max": 1.4204269
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 50.198941525,
+        "mean": 0.3098700094135802,
+        "median": 0.30364659375,
+        "p90": 0.39633413250000005,
+        "p95": 0.43729807062499987,
+        "p99": 0.49310058499999937,
+        "max": 0.6056865125
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 246.245277206708,
+        "mean": 1.5200325753500494,
+        "median": 1.4117722993864712,
+        "p90": 1.9342635058238091,
+        "p95": 2.2467947325086457,
+        "p99": 2.641293133347303,
+        "max": 3.0677074695907027
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9753777613006449,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6353885001622996,
+      "post_initialization_nonmax_worker_seconds": 1.945282800000001,
+      "all_complete": true
+    },
+    "r6/b05": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 105.0800385,
+        "mean": 0.648642212962963,
+        "median": 0.6188621000000001,
+        "p90": 0.8531758100000001,
+        "p95": 0.9832899849999999,
+        "p99": 1.2167789799999993,
+        "max": 1.3070173
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 25.6329936,
+        "mean": 0.15822835555555556,
+        "median": 0.1537297,
+        "p90": 0.17219756,
+        "p95": 0.18856710999999998,
+        "p99": 0.2059212189999999,
+        "max": 0.2195064
+      },
+      "initialization_percent_of_collection": 24.393780175480234,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 976,
+        "2": 316,
+        "3": 4
+      },
+      "sum_worker_busy_seconds": 396.1060444,
+      "worker_capacity_seconds_excluding_initialization": 635.5763592,
+      "worker_busy_capacity_proxy": 0.6232233761787155,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 77.4910069,
+        "mean": 0.4783395487654321,
+        "median": 0.44462725000000003,
+        "p90": 0.6925862300000001,
+        "p95": 0.8251280549999999,
+        "p99": 1.0551402399999994,
+        "max": 1.1466927
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 49.51325555,
+        "mean": 0.3056373799382716,
+        "median": 0.30428076875,
+        "p90": 0.40499019375,
+        "p95": 0.4347738018749999,
+        "p99": 0.5069037873749993,
+        "max": 0.5678437625
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 252.37292082601144,
+        "mean": 1.5578575359630336,
+        "median": 1.4623962349774937,
+        "p90": 2.0076380237119658,
+        "p95": 2.2219880710017295,
+        "p99": 2.5233611271001752,
+        "max": 2.5906086619025186
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9753793485652982,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6232233761787154,
+      "post_initialization_nonmax_worker_seconds": 1.9560380000000066,
+      "all_complete": true
+    },
+    "r6/b06": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 104.0161165,
+        "mean": 0.6420747932098766,
+        "median": 0.59635835,
+        "p90": 0.79999447,
+        "p95": 1.0144713099999996,
+        "p99": 1.356742845999999,
+        "max": 1.7368446
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 25.1950916,
+        "mean": 0.15552525679012347,
+        "median": 0.1515829,
+        "p90": 0.165633,
+        "p95": 0.1816248,
+        "p99": 0.21573106199999975,
+        "max": 0.2369777
+      },
+      "initialization_percent_of_collection": 24.222295974681963,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 974,
+        "2": 320,
+        "3": 2
+      },
+      "sum_worker_busy_seconds": 395.88655140000003,
+      "worker_capacity_seconds_excluding_initialization": 630.5681992,
+      "worker_busy_capacity_proxy": 0.6278251137660608,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 76.8402073,
+        "mean": 0.4743222672839506,
+        "median": 0.4298404,
+        "p90": 0.63865444,
+        "p95": 0.8364771449999996,
+        "p99": 1.200274916999999,
+        "max": 1.5795572
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 49.485818925000004,
+        "mean": 0.30546801805555557,
+        "median": 0.2980272875,
+        "p90": 0.39282526250000005,
+        "p95": 0.4232524481249999,
+        "p99": 0.5095561614999999,
+        "max": 0.5609815375
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 250.38668305063902,
+        "mean": 1.5455968089545618,
+        "median": 1.4516048826722816,
+        "p90": 2.0269635516987696,
+        "p95": 2.2960221246270827,
+        "p99": 3.124396014488002,
+        "max": 3.4892290664897208
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9748694259873802,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6278251137660608,
+      "post_initialization_nonmax_worker_seconds": 1.9808175999999946,
+      "all_complete": true
+    },
+    "r6/b07": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 104.9589972,
+        "mean": 0.6478950444444445,
+        "median": 0.6159946000000001,
+        "p90": 0.85824047,
+        "p95": 1.0051856799999994,
+        "p99": 1.2718790549999968,
+        "max": 1.469373
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.6241662,
+        "mean": 0.15200102592592593,
+        "median": 0.14966005,
+        "p90": 0.15831558,
+        "p95": 0.16600565,
+        "p99": 0.200331086,
+        "max": 0.2172546
+      },
+      "initialization_percent_of_collection": 23.460748346402838,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 983,
+        "2": 302,
+        "3": 11
+      },
+      "sum_worker_busy_seconds": 394.5107119,
+      "worker_capacity_seconds_excluding_initialization": 642.678648,
+      "worker_busy_capacity_proxy": 0.6138537714419291,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 78.40052,
+        "mean": 0.48395382716049384,
+        "median": 0.4506063,
+        "p90": 0.6937615,
+        "p95": 0.8440001199999995,
+        "p99": 1.1164802589999967,
+        "max": 1.3125713
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 49.3138389875,
+        "mean": 0.3044064135030864,
+        "median": 0.30535225,
+        "p90": 0.38737515375000003,
+        "p95": 0.4296515075,
+        "p99": 0.4763850463749998,
+        "max": 0.49795826249999997
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 255.00959239030098,
+        "mean": 1.5741332863598825,
+        "median": 1.4972400226648328,
+        "p90": 1.9745107367437371,
+        "p95": 2.1794455901520293,
+        "p99": 2.9235614915656636,
+        "max": 3.1650606326322626
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9759218887259501,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6138537714419291,
+      "post_initialization_nonmax_worker_seconds": 1.934310999999994,
+      "all_complete": true
+    },
+    "r6/b08": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 105.3010797,
+        "mean": 0.6500066648148148,
+        "median": 0.61763585,
+        "p90": 0.84616374,
+        "p95": 1.00302057,
+        "p99": 1.2851432959999982,
+        "max": 1.8119908
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.897523,
+        "mean": 0.1536884135802469,
+        "median": 0.15010205,
+        "p90": 0.16446895,
+        "p95": 0.1851919499999999,
+        "p99": 0.199188108,
+        "max": 0.2229695
+      },
+      "initialization_percent_of_collection": 23.644128883514192,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 978,
+        "2": 312,
+        "3": 6
+      },
+      "sum_worker_busy_seconds": 397.9286149,
+      "worker_capacity_seconds_excluding_initialization": 643.2284536,
+      "worker_busy_capacity_proxy": 0.618642742983284,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 78.3843345,
+        "mean": 0.48385391666666666,
+        "median": 0.45123145,
+        "p90": 0.6878299900000001,
+        "p95": 0.8441006799999999,
+        "p99": 1.1224118759999981,
+        "max": 1.6103253
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 49.7410768625,
+        "mean": 0.30704368433641976,
+        "median": 0.30039122500000004,
+        "p90": 0.39722865125,
+        "p95": 0.45245986687499995,
+        "p99": 0.5134658317499999,
+        "max": 0.5572275875
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 253.9820244564679,
+        "mean": 1.5677902744226415,
+        "median": 1.4652433555526283,
+        "p90": 2.0968789971899238,
+        "p95": 2.3019480952598146,
+        "p99": 2.6090591305814854,
+        "max": 3.268096829774669
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9748864069840333,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.618642742983284,
+      "post_initialization_nonmax_worker_seconds": 2.0192222000000015,
+      "all_complete": true
+    },
+    "r6/b09": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 102.57570630000001,
+        "mean": 0.6331833722222222,
+        "median": 0.6004521,
+        "p90": 0.83700726,
+        "p95": 0.9444229649999998,
+        "p99": 1.4068915399999973,
+        "max": 1.6873019999999999
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.9317296,
+        "mean": 0.15389956543209876,
+        "median": 0.14947025000000003,
+        "p90": 0.16726615,
+        "p95": 0.18058090499999999,
+        "p99": 0.21219701599999985,
+        "max": 0.2304067
+      },
+      "initialization_percent_of_collection": 24.305686501522043,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 975,
+        "2": 318,
+        "3": 3
+      },
+      "sum_worker_busy_seconds": 393.3528527,
+      "worker_capacity_seconds_excluding_initialization": 621.1518136,
+      "worker_busy_capacity_proxy": 0.6332636307060765,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 75.5870741,
+        "mean": 0.4665868771604938,
+        "median": 0.427407,
+        "p90": 0.66376575,
+        "p95": 0.7616636999999997,
+        "p99": 1.2523864799999973,
+        "max": 1.5286868
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 49.1691065875,
+        "mean": 0.3035130036265432,
+        "median": 0.30371749375,
+        "p90": 0.3912901725,
+        "p95": 0.4324826168749999,
+        "p99": 0.48729928274999995,
+        "max": 0.5077517125
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 246.96193910186548,
+        "mean": 1.5244564142090462,
+        "median": 1.422972275693895,
+        "p90": 1.9281102319050287,
+        "p95": 2.210829719092795,
+        "p99": 2.988800972943209,
+        "max": 3.388834765971888
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9735085361747061,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6332636307060764,
+      "post_initialization_nonmax_worker_seconds": 2.056902600000015,
+      "all_complete": true
+    },
+    "r6/b10": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 99.6767235,
+        "mean": 0.6152884166666667,
+        "median": 0.57188915,
+        "p90": 0.8177684100000001,
+        "p95": 0.9284076699999999,
+        "p99": 1.1592071759999998,
+        "max": 1.5563237
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.7543942,
+        "mean": 0.1528049024691358,
+        "median": 0.1489456,
+        "p90": 0.16825403,
+        "p95": 0.18008777,
+        "p99": 0.20279854799999986,
+        "max": 0.2124253
+      },
+      "initialization_percent_of_collection": 24.834678880671678,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 981,
+        "2": 306,
+        "3": 9
+      },
+      "sum_worker_busy_seconds": 384.1739043,
+      "worker_capacity_seconds_excluding_initialization": 599.3786344,
+      "worker_busy_capacity_proxy": 0.6409536180490853,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 72.8873595,
+        "mean": 0.44992197222222224,
+        "median": 0.4096198,
+        "p90": 0.64269789,
+        "p95": 0.771770235,
+        "p99": 0.9405082629999993,
+        "max": 1.3996293
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 48.0217380375,
+        "mean": 0.296430481712963,
+        "median": 0.292418075,
+        "p90": 0.37361801125000005,
+        "p95": 0.4008336599999999,
+        "p99": 0.4878306737499998,
+        "max": 0.5461832125
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 244.22610983336338,
+        "mean": 1.5075685792182925,
+        "median": 1.4186615274297596,
+        "p90": 1.895199775273572,
+        "p95": 2.134394603857759,
+        "p99": 2.722053704766421,
+        "max": 2.841063234021118
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.97283894108722,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6409536180490853,
+      "post_initialization_nonmax_worker_seconds": 2.034969799999999,
+      "all_complete": true
+    },
+    "r6/b11": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 100.655871,
+        "mean": 0.6213325370370371,
+        "median": 0.599175,
+        "p90": 0.77950692,
+        "p95": 0.886086535,
+        "p99": 1.0622812239999995,
+        "max": 1.6740195
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.7952725,
+        "mean": 0.153057237654321,
+        "median": 0.14859234999999998,
+        "p90": 0.17089394,
+        "p95": 0.18605999,
+        "p99": 0.2012776859999999,
+        "max": 0.2296158
+      },
+      "initialization_percent_of_collection": 24.633707158522327,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 979,
+        "2": 310,
+        "3": 7
+      },
+      "sum_worker_busy_seconds": 395.63794790000003,
+      "worker_capacity_seconds_excluding_initialization": 606.884788,
+      "worker_busy_capacity_proxy": 0.6519160732366224,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 73.5877234,
+        "mean": 0.45424520617283953,
+        "median": 0.42920780000000003,
+        "p90": 0.6141036200000001,
+        "p95": 0.7170663049999999,
+        "p99": 0.9013499099999994,
+        "max": 1.3823692
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 49.454743487500004,
+        "mean": 0.3052761943672839,
+        "median": 0.29632817499999997,
+        "p90": 0.41138640625000006,
+        "p95": 0.44833071999999996,
+        "p99": 0.5104699245,
+        "max": 0.5611706125
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 242.36212129923467,
+        "mean": 1.4960624771557696,
+        "median": 1.4366990599813891,
+        "p90": 1.8534970017413601,
+        "p95": 2.0188470027496517,
+        "p99": 2.3824931735905737,
+        "max": 3.4858449483735656
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9700387929314847,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6519160732366223,
+      "post_initialization_nonmax_worker_seconds": 2.2728751000000074,
+      "all_complete": true
+    },
+    "r6/b12": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 96.9772247,
+        "mean": 0.5986248438271605,
+        "median": 0.58872795,
+        "p90": 0.75011316,
+        "p95": 0.8113674999999998,
+        "p99": 0.963852420999999,
+        "max": 1.1015033
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.892771,
+        "mean": 0.15365908024691358,
+        "median": 0.14915774999999998,
+        "p90": 0.16326769000000002,
+        "p95": 0.17601459,
+        "p99": 0.22533359899999986,
+        "max": 0.2969818
+      },
+      "initialization_percent_of_collection": 25.66867744153953,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 979,
+        "2": 310,
+        "3": 7
+      },
+      "sum_worker_busy_seconds": 382.1298483,
+      "worker_capacity_seconds_excluding_initialization": 576.6756296,
+      "worker_busy_capacity_proxy": 0.6626426168989611,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 70.2080174,
+        "mean": 0.43338282345679013,
+        "median": 0.42258555,
+        "p90": 0.58632331,
+        "p95": 0.6372231199999999,
+        "p99": 0.7932355459999988,
+        "max": 0.9388971
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 47.7662310375,
+        "mean": 0.29485327800925926,
+        "median": 0.29561193124999996,
+        "p90": 0.3771512675,
+        "p95": 0.4023953,
+        "p99": 0.4750332533749998,
+        "max": 0.5074952875
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 239.65159598379725,
+        "mean": 1.4793308394061557,
+        "median": 1.4219669859015385,
+        "p90": 1.8449877536550323,
+        "p95": 2.0445839952366205,
+        "p99": 2.322705032667015,
+        "max": 2.489497569770551
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.97396891834945,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6626426168989611,
+      "post_initialization_nonmax_worker_seconds": 1.8764362999999946,
+      "all_complete": true
+    },
+    "r6/b13": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 102.236653,
+        "mean": 0.631090450617284,
+        "median": 0.59545315,
+        "p90": 0.8019044900000001,
+        "p95": 0.9604840999999995,
+        "p99": 1.2389524449999967,
+        "max": 1.4726688000000001
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.387864,
+        "mean": 0.15054237037037038,
+        "median": 0.14768055000000002,
+        "p90": 0.15766127,
+        "p95": 0.16933459499999998,
+        "p99": 0.20200649099999973,
+        "max": 0.2163257
+      },
+      "initialization_percent_of_collection": 23.85432551278845,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 978,
+        "2": 312,
+        "3": 6
+      },
+      "sum_worker_busy_seconds": 393.9596735,
+      "worker_capacity_seconds_excluding_initialization": 622.790312,
+      "worker_busy_capacity_proxy": 0.6325719361864448,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 75.7181305,
+        "mean": 0.4673958672839506,
+        "median": 0.43350915,
+        "p90": 0.63797601,
+        "p95": 0.8052545099999995,
+        "p99": 1.0835094199999966,
+        "max": 1.3154219999999999
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 49.2449591875,
+        "mean": 0.30398122955246915,
+        "median": 0.30104811875000004,
+        "p90": 0.4008090775,
+        "p95": 0.42234464749999995,
+        "p99": 0.5079135414999998,
+        "max": 0.5809316375
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 249.2108881550516,
+        "mean": 1.5383388157719236,
+        "median": 1.4540050456215252,
+        "p90": 1.943608534012089,
+        "p95": 2.1561250229930633,
+        "p99": 2.973855914555851,
+        "max": 3.147114591176701
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.972630807397659,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6325719361864447,
+      "post_initialization_nonmax_worker_seconds": 2.13065850000001,
+      "all_complete": true
+    },
+    "r6/b14": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 97.6965455,
+        "mean": 0.6030650956790123,
+        "median": 0.58466485,
+        "p90": 0.76432334,
+        "p95": 0.8494781999999999,
+        "p99": 1.104331644999999,
+        "max": 1.2856022999999999
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.5758686,
+        "mean": 0.1517028925925926,
+        "median": 0.1477641,
+        "p90": 0.16265292000000003,
+        "p95": 0.18515041499999996,
+        "p99": 0.2051462419999999,
+        "max": 0.2112511
+      },
+      "initialization_percent_of_collection": 25.155309713586547,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 977,
+        "2": 314,
+        "3": 5
+      },
+      "sum_worker_busy_seconds": 384.3706891,
+      "worker_capacity_seconds_excluding_initialization": 584.9654152,
+      "worker_busy_capacity_proxy": 0.6570827592748939,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 70.9298822,
+        "mean": 0.4378387790123457,
+        "median": 0.41653640000000003,
+        "p90": 0.5932602800000001,
+        "p95": 0.6957066299999999,
+        "p99": 0.9452291609999989,
+        "max": 1.1269938000000002
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 48.0463361375,
+        "mean": 0.29658232183641975,
+        "median": 0.2914342125,
+        "p90": 0.374899155,
+        "p95": 0.40802016249999995,
+        "p99": 0.49424961099999837,
+        "max": 0.6347062625
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 239.8575783725022,
+        "mean": 1.4806023356327296,
+        "median": 1.3944594674714765,
+        "p90": 1.8214829808603736,
+        "p95": 1.9443801749207499,
+        "p99": 2.573788909967498,
+        "max": 3.4712220212518035
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9700386430640385,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6570827592748939,
+      "post_initialization_nonmax_worker_seconds": 2.190794700000012,
+      "all_complete": true
+    },
+    "r6/b15": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 97.2678379,
+        "mean": 0.6004187524691358,
+        "median": 0.5921839499999999,
+        "p90": 0.73442864,
+        "p95": 0.780212815,
+        "p99": 1.0140101929999992,
+        "max": 1.0815605
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.7793206,
+        "mean": 0.15295876913580247,
+        "median": 0.14844615,
+        "p90": 0.16299083,
+        "p95": 0.18888318499999993,
+        "p99": 0.21727556199999987,
+        "max": 0.2420597
+      },
+      "initialization_percent_of_collection": 25.47534841421616,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 977,
+        "2": 314,
+        "3": 5
+      },
+      "sum_worker_busy_seconds": 386.1398621,
+      "worker_capacity_seconds_excluding_initialization": 579.9081384,
+      "worker_busy_capacity_proxy": 0.6658638438242688,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 70.6638982,
+        "mean": 0.4361969024691358,
+        "median": 0.4250739,
+        "p90": 0.57472938,
+        "p95": 0.6236473749999998,
+        "p99": 0.8521850879999991,
+        "max": 0.9207016
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 48.2674827625,
+        "mean": 0.29794742445987654,
+        "median": 0.29592795000000005,
+        "p90": 0.37422969375,
+        "p95": 0.40777141062499994,
+        "p99": 0.4938962788749997,
+        "max": 0.548941425
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 239.50202590265246,
+        "mean": 1.4784075673003239,
+        "median": 1.4233881660618324,
+        "p90": 1.882077416065416,
+        "p95": 1.988052687752627,
+        "p99": 2.4640505073627517,
+        "max": 2.8250287365861646
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.974828853341714,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6658638438242687,
+      "post_initialization_nonmax_worker_seconds": 1.8246191000000067,
+      "all_complete": true
+    },
+    "r6/b16": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 103.4562337,
+        "mean": 0.6386187265432098,
+        "median": 0.5781157,
+        "p90": 0.8786605600000001,
+        "p95": 1.00641113,
+        "p99": 1.1944901239999997,
+        "max": 1.65368
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.8485335,
+        "mean": 0.15338600925925927,
+        "median": 0.14946130000000002,
+        "p90": 0.16527763,
+        "p95": 0.1849411799999999,
+        "p99": 0.19034294599999999,
+        "max": 0.2496982
+      },
+      "initialization_percent_of_collection": 24.01840141605696,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 976,
+        "2": 316,
+        "3": 4
+      },
+      "sum_worker_busy_seconds": 400.6957116,
+      "worker_capacity_seconds_excluding_initialization": 628.8616016,
+      "worker_busy_capacity_proxy": 0.6371763048984354,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 76.3864831,
+        "mean": 0.47152150061728393,
+        "median": 0.40957695,
+        "p90": 0.67222978,
+        "p95": 0.8435275399999999,
+        "p99": 1.0324327819999997,
+        "max": 1.4580849
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 50.08696395,
+        "mean": 0.30917878981481484,
+        "median": 0.30203299375000003,
+        "p90": 0.4057423875,
+        "p95": 0.43879839125,
+        "p99": 0.5160089428749995,
+        "max": 0.5476789125
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 245.45708791789744,
+        "mean": 1.5151672093697373,
+        "median": 1.409726941375771,
+        "p90": 1.95571467063331,
+        "p95": 2.1533644189131995,
+        "p99": 2.857970274805637,
+        "max": 3.165808501340885
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9717430087084523,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6371763048984354,
+      "post_initialization_nonmax_worker_seconds": 2.22121709999999,
+      "all_complete": true
+    },
+    "r6/b17": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 105.5811404,
+        "mean": 0.6517354345679013,
+        "median": 0.59927505,
+        "p90": 0.8770889700000001,
+        "p95": 0.9668715149999999,
+        "p99": 1.3004854429999981,
+        "max": 1.4468625
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 25.8793258,
+        "mean": 0.159748924691358,
+        "median": 0.15056740000000002,
+        "p90": 0.19185877000000004,
+        "p95": 0.20807343,
+        "p99": 0.22593782299999984,
+        "max": 0.2877726
+      },
+      "initialization_percent_of_collection": 24.51131490146322,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 975,
+        "2": 318,
+        "3": 3
+      },
+      "sum_worker_busy_seconds": 410.9428785,
+      "worker_capacity_seconds_excluding_initialization": 637.6145168,
+      "worker_busy_capacity_proxy": 0.6445005056697918,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 77.4505894,
+        "mean": 0.47809005802469134,
+        "median": 0.43139885,
+        "p90": 0.69882694,
+        "p95": 0.7900409249999998,
+        "p99": 1.1331341859999984,
+        "max": 1.2485832000000001
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 51.3678598125,
+        "mean": 0.3170855543981482,
+        "median": 0.30882335625,
+        "p90": 0.4261054825,
+        "p95": 0.452583658125,
+        "p99": 0.5258015667499992,
+        "max": 0.6451984625
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 244.24183995551422,
+        "mean": 1.507665678737742,
+        "median": 1.4439413535926104,
+        "p90": 1.8815167765111311,
+        "p95": 2.2425297418271457,
+        "p99": 2.8568568356080286,
+        "max": 2.934749722152011
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9717544046983343,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6445005056697919,
+      "post_initialization_nonmax_worker_seconds": 2.2512251999999933,
+      "all_complete": true
+    },
+    "r6/b18": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 102.657838,
+        "mean": 0.6336903580246913,
+        "median": 0.6039227,
+        "p90": 0.7917507100000001,
+        "p95": 0.9023196349999996,
+        "p99": 1.225283708999998,
+        "max": 1.3981108
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 25.3581,
+        "mean": 0.1565314814814815,
+        "median": 0.1502961,
+        "p90": 0.17955713,
+        "p95": 0.18798736,
+        "p99": 0.2344794729999998,
+        "max": 0.2542211
+      },
+      "initialization_percent_of_collection": 24.701572226759733,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 979,
+        "2": 310,
+        "3": 7
+      },
+      "sum_worker_busy_seconds": 400.7730661,
+      "worker_capacity_seconds_excluding_initialization": 618.397904,
+      "worker_busy_capacity_proxy": 0.6480828338965392,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 75.0476012,
+        "mean": 0.4632567975308642,
+        "median": 0.43725444999999996,
+        "p90": 0.6129800200000001,
+        "p95": 0.6952108249999999,
+        "p99": 0.9573402279999954,
+        "max": 1.2269324
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 50.0966332625,
+        "mean": 0.30923847692901235,
+        "median": 0.29426096874999996,
+        "p90": 0.41137440875,
+        "p95": 0.4426126675,
+        "p99": 0.481578677375,
+        "max": 0.595928775
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 244.81328724242516,
+        "mean": 1.5111931311260811,
+        "median": 1.4848697662003385,
+        "p90": 1.8423727732460509,
+        "p95": 2.0439789792025183,
+        "p99": 2.48621536970808,
+        "max": 3.3824823798659804
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9708648844320793,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6480828338965393,
+      "post_initialization_nonmax_worker_seconds": 2.252136799999988,
+      "all_complete": true
+    },
+    "r6/b19": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 102.2050186,
+        "mean": 0.6308951765432099,
+        "median": 0.6072042,
+        "p90": 0.79256959,
+        "p95": 0.8850796349999999,
+        "p99": 1.2022069879999997,
+        "max": 1.3371736
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 24.7187165,
+        "mean": 0.15258466975308643,
+        "median": 0.14862635000000002,
+        "p90": 0.16034076000000003,
+        "p95": 0.17625175499999993,
+        "p99": 0.21542419499999976,
+        "max": 0.3078749
+      },
+      "initialization_percent_of_collection": 24.185423415205953,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 979,
+        "2": 310,
+        "3": 7
+      },
+      "sum_worker_busy_seconds": 394.1747523,
+      "worker_capacity_seconds_excluding_initialization": 619.8904168,
+      "worker_busy_capacity_proxy": 0.6358781191275871,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 75.6507509,
+        "mean": 0.4669799438271605,
+        "median": 0.439839,
+        "p90": 0.63319757,
+        "p95": 0.7259648799999999,
+        "p99": 1.0175154039999998,
+        "max": 1.1824011
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 49.2718440375,
+        "mean": 0.3041471854166667,
+        "median": 0.30392511875,
+        "p90": 0.39120056875000003,
+        "p95": 0.42835504187499995,
+        "p99": 0.5430234886249993,
+        "max": 0.6034210125
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 248.65063311462066,
+        "mean": 1.5348804513248189,
+        "median": 1.4788187559863615,
+        "p90": 1.9078956397780178,
+        "p95": 1.9988078755993113,
+        "p99": 2.314368102223785,
+        "max": 2.385564643022532
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9763112814748712,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6358781191275871,
+      "post_initialization_nonmax_worker_seconds": 1.8355511999999976,
+      "all_complete": true
+    },
+    "r6/b20": {
+      "updates": 162,
+      "episodes": 1620,
+      "elapsed_seconds": {
+        "n": 162,
+        "sum": 93.7285509,
+        "mean": 0.5785713018518519,
+        "median": 0.54396605,
+        "p90": 0.74386872,
+        "p95": 0.8480304449999996,
+        "p99": 0.9168930529999998,
+        "max": 2.3318334
+      },
+      "initialization_seconds": {
+        "n": 162,
+        "sum": 23.8389706,
+        "mean": 0.14715413950617284,
+        "median": 0.14546005,
+        "p90": 0.15107837,
+        "p95": 0.157018945,
+        "p99": 0.18169551999999986,
+        "max": 0.1910871
+      },
+      "initialization_percent_of_collection": 25.434054374140544,
+      "workers_histogram": {
+        "8": 162
+      },
+      "worker_episode_count_histogram": {
+        "1": 975,
+        "2": 318,
+        "3": 3
+      },
+      "sum_worker_busy_seconds": 355.5446318,
+      "worker_capacity_seconds_excluding_initialization": 559.1166424,
+      "worker_busy_capacity_proxy": 0.6359042189726813,
+      "max_worker_busy_seconds": {
+        "n": 162,
+        "sum": 68.2547526,
+        "mean": 0.42132563333333334,
+        "median": 0.3878347,
+        "p90": 0.5865995700000001,
+        "p95": 0.6943358849999995,
+        "p99": 0.7643799039999999,
+        "max": 2.1758771
+      },
+      "mean_worker_busy_seconds": {
+        "n": 162,
+        "sum": 44.443078975,
+        "mean": 0.2743399936728395,
+        "median": 0.27459910625,
+        "p90": 0.349019125,
+        "p95": 0.37246382124999994,
+        "p99": 0.41948244299999937,
+        "max": 0.5770015875
+      },
+      "max_to_mean_worker_busy_ratio": {
+        "n": 162,
+        "sum": 246.19400035013138,
+        "mean": 1.519716051544021,
+        "median": 1.4382687983560007,
+        "p90": 1.9470443887587259,
+        "p95": 2.0609230552433098,
+        "p99": 2.346751496756244,
+        "max": 3.7710071291614953
+      },
+      "max_worker_busy_fraction_of_post_initialization_collection": 0.9766084201252528,
+      "mean_worker_busy_fraction_of_post_initialization_collection": 0.6359042189726813,
+      "post_initialization_nonmax_worker_seconds": 1.6348277000000024,
+      "all_complete": true
+    }
+  },
+  "worker_totals": {
+    "0": {
+      "busy_seconds": 2869.800008500002,
+      "completed_episodes": 11505.0,
+      "updates": 9234.0
+    },
+    "1": {
+      "busy_seconds": 2864.1540639000154,
+      "completed_episodes": 11561.0,
+      "updates": 9234.0
+    },
+    "2": {
+      "busy_seconds": 2854.9743576999986,
+      "completed_episodes": 11485.0,
+      "updates": 9234.0
+    },
+    "3": {
+      "busy_seconds": 2869.5337932000125,
+      "completed_episodes": 11561.0,
+      "updates": 9234.0
+    },
+    "4": {
+      "busy_seconds": 2857.3166012999977,
+      "completed_episodes": 11557.0,
+      "updates": 9234.0
+    },
+    "5": {
+      "busy_seconds": 2854.085648299996,
+      "completed_episodes": 11551.0,
+      "updates": 9234.0
+    },
+    "6": {
+      "busy_seconds": 2873.4708022999976,
+      "completed_episodes": 11568.0,
+      "updates": 9234.0
+    },
+    "7": {
+      "busy_seconds": 2849.5465768000013,
+      "completed_episodes": 11552.0,
+      "updates": 9234.0
+    }
+  },
+  "source_count": 9234,
+  "source_hash_rollup_sha256": "5fa0a1c41897c7f88080510e655b15d42c23b4d422b2c61403e995756acf172a",
+  "source_hash_rollup_definition": "SHA256 of UTF-8 json.dumps(sorted traversal list of [POSIX absolute path, SHA256 raw file bytes], separators=(comma, colon)); replica r4,r5,r6; blocks ascending; file path ascending.",
+  "limitations": [
+    "Busy counters are worker wall time, not CPU utilization.",
+    "Max worker busy is total work assigned to one worker within a batch, not one game latency.",
+    "Initialization is excluded from utilization proxy denominator but remains in collection wall.",
+    "No trajectory, non-natural ledger, reward, outcome, or holdout fields were selected."
+  ]
+}

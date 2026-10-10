@@ -46,9 +46,58 @@
 //! raw, unconditional `card_ref` this function reads as input.
 
 use super::*;
+#[cfg(test)]
+pub(crate) use search_state::library_tests::fixture as search_library_fixture_v3;
+
+/// Census keeps physical slots and may relabel unknown card definitions.
+/// Frozen source provenance must never point at a relabeled incarnation.
+pub(super) fn census_hidden_source_conflicts_v1(
+    state: &crate::state::GameState,
+    changed: &[ObjectId],
+) -> bool {
+    // A frozen source can survive its move into a hidden zone. Relabeling
+    // that physical object is unsafe even after its generation has advanced.
+    let same = |id: ObjectId, _generation: u32| changed.contains(&id);
+    let ability = |source: &crate::state::AbilitySourceContractV4| {
+        same(source.source, source.zone_change_count)
+            || source
+                .attached_to
+                .is_some_and(|x| same(x.object, x.zone_change_count))
+    };
+    let stack = |item: &crate::state::StackItem| {
+        item.v4
+            .ability_source_contract
+            .as_ref()
+            .is_some_and(&ability)
+            || item.v4.granted_by.as_ref().is_some_and(&ability)
+            || item
+                .v4
+                .hidden_ability_source
+                .is_some_and(|x| same(x.object, x.zone_change_count))
+            || item
+                .v4
+                .madness_source_contract
+                .is_some_and(|x| same(x.source, x.zone_change_count))
+            || item
+                .v4
+                .source_contract
+                .as_ref()
+                .is_some_and(|x| same(x.source, x.zone_change_count))
+    };
+    state.engine.pending_triggers.iter().any(|trigger| {
+        trigger.source_contract.as_ref().is_some_and(&ability)
+            || trigger.granted_by.as_ref().is_some_and(&ability)
+    }) || state.stack.iter().any(&stack)
+        || state
+            .engine
+            .pending_effect
+            .as_ref()
+            .is_some_and(|pending| stack(&pending.resolving_item))
+}
 mod search_state;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::Zone;
+pub(crate) use search_state::V4SearchActionTokenV1;
 pub(crate) use search_state::V4SearchSampleMode;
 pub(crate) use search_state::V4SearchStateErrorV1;
 

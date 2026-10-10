@@ -3,7 +3,7 @@ use crate::effect::{EffectTargetSelectionPurpose, PendingEffectChoice};
 use crate::engine::{self, Action, Decision};
 use crate::policy_observation_v6::tests::{put, ready_state};
 
-pub(super) fn fixture(
+pub(crate) fn fixture(
     actor: PlayerId,
     form: u8,
     names: &[&str],

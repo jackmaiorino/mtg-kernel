@@ -305,6 +305,16 @@ pub enum EffectCond {
     CreatureDiedThisTurn,
     /// Resolution-time ferocious condition, using current continuous power.
     ControlsCreaturePowerAtLeast(i32),
+    /// The live target incarnation's printed mana value is at most the bound
+    /// (Fading Hope's "if its mana value was 3 or less"). Evaluate it before
+    /// any leaf that moves the target; a stale target fails the condition.
+    TargetManaValueAtMost(u8, u16),
+    /// The live target permanent at this index resolved from a spell cast
+    /// for its warp cost (`ObjectStateV4::warped_v1`).
+    TargetWasCastForWarp(u8),
+    /// The resolving triggered ability's source is still the incarnation
+    /// that triggered, in the zone it triggered from.
+    SourceStillInTriggerZone,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -405,8 +415,9 @@ pub enum EffectOp {
         lifelink: i16,
         stun: i16,
     },
-    /// Job Select creates the token even if the Equipment later left, then
-    /// attaches only when the original source incarnation remains live.
+    /// Job Select (and Cori-Steel Cutter's flurry) creates the token even if
+    /// the Equipment later left, then attaches only when the original source
+    /// incarnation remains live.
     CreateTokenAndAttachSource {
         token_def: u16,
     },
@@ -1126,6 +1137,221 @@ pub enum EffectOp {
         count: crate::card_def::DynamicValueDef,
         tapped: bool,
     },
+    /// `player` draws a number of cards sampled once from `count` at
+    /// resolution (Flow of Knowledge's Island count).
+    DrawCardsDynamic {
+        player: PlayerRef,
+        count: DynamicValueDef,
+    },
+    /// "Discard `otherwise` cards unless you discard a basic land card"
+    /// (Thirst for Discovery). The player privately chooses zero or one
+    /// basic land card from their exact hand; declining, or having none,
+    /// falls through to an ordinary `DiscardCards`. Like `DiscardCards`, it
+    /// must be the terminal effect leaf.
+    DiscardBasicLandOrCards {
+        player: PlayerRef,
+        otherwise: u8,
+    },
+    /// Privately look at the top `count` cards, put exactly `pick` of them
+    /// (or all, if fewer were seen) into hand without revealing them, and
+    /// put the rest on the bottom. With `choose_rest_order` the player
+    /// orders the rest (Impulse); without it the rest keeps its looked-at
+    /// order, the kernel's deterministic stand-in for Memory Deluge's
+    /// "in a random order" since randomness only enters through shuffles.
+    LookTopPickToHandBottomRest {
+        player: PlayerRef,
+        count: LibraryLookCount,
+        pick: u8,
+        choose_rest_order: bool,
+    },
+    /// Capture the live permanent's controller, destroy it, then create
+    /// tokens for that player even when indestructible prevents destruction.
+    DestroyObjectThenCreateTokens {
+        object: ObjectRef,
+        token_def: u16,
+        count: u8,
+    },
+    /// Definition-owned template for an intervening "if that creature has
+    /// greater power or toughness than this" entry trigger (Sharp-Eyed
+    /// Rookie, Evolving Adaptive). Trigger materialization binds the entering
+    /// creature and the source into `IfEntrantOutgrowsSourceThen`; `then`'s
+    /// own source-bound templates are materialized at the same time.
+    BindEntrantOutgrowsSourceThen {
+        then: Box<EffectOp>,
+    },
+    /// 603.4's resolution-time recheck: runs `then` only if the bound
+    /// entering creature's power is greater than the source's, or its
+    /// toughness is greater than the source's. Each side is read live while
+    /// it remains the bound battlefield incarnation; once a side has left,
+    /// the check fails closed and `then` does nothing.
+    IfEntrantOutgrowsSourceThen {
+        entrant: EffectObjectBinding,
+        source: EffectObjectBinding,
+        then: Box<EffectOp>,
+    },
+    /// Template: one oil counter on this exact trigger source.
+    BindOilCounterToTriggerSource,
+    /// Put one oil counter on an exact battlefield incarnation.
+    PutOilCounterOnBoundObject {
+        object: EffectObjectBinding,
+    },
+    /// Create one `token_def` token under the controller's control, tapped
+    /// and attacking (Adeline, Resplendent Cathar). It was never declared
+    /// as an attacker, so attack triggers do not see it. Outside combat
+    /// the token is simply created tapped.
+    CreateTokenTappedAndAttacking {
+        token_def: u16,
+    },
+    /// Put one +1/+1 counter on this activated or triggered ability's source
+    /// while it is still the battlefield incarnation the ability came from
+    /// (Hired Claw, Warden of the Inner Sky). Otherwise nothing happens.
+    AddPlusOneCounterToAbilitySource,
+    /// Return the targeted creature card from its owner's graveyard to the
+    /// battlefield (the target spec only offers the controller's own
+    /// graveyard, so its owner controls it); it can't attack or block for
+    /// as long as that player controls this ability's source (Extraction
+    /// Specialist). If the source has already left, the duration is over
+    /// and the creature returns unrestricted.
+    ReturnTargetCreatureCardRestrictedWhileSourceControlled {
+        target_index: u8,
+    },
+    /// The player loses half their life, rounded up (Unstoppable Slasher).
+    /// A player at 0 or less life loses nothing.
+    LoseHalfLifeRoundedUp {
+        player: PlayerRef,
+    },
+    /// Return this dies trigger's source card from its owner's graveyard to
+    /// the battlefield tapped under its owner's control with `stun` stun
+    /// counters (Unstoppable Slasher). Only the graveyard incarnation the
+    /// death created qualifies; if the card has moved on, nothing happens.
+    ReturnSourceFromGraveyardTappedWithStunCounters {
+        stun: i16,
+    },
+    /// Privately look at the top `count` cards of the player's library; they
+    /// may reveal one creature card with mana value at most `max_mana_value`
+    /// from among them and put it into their hand, and the rest go on the
+    /// bottom (Recruitment Officer). The printed random bottom order is kept
+    /// as the looked-at order: randomness only advances through library
+    /// shuffles. The bottom placement reuses the typed partition frame.
+    LookTopMayTakeCreatureManaValueAtMostToHandBottomRest {
+        player: PlayerRef,
+        count: u8,
+        max_mana_value: u16,
+    },
+    /// Trigger collection binds this template to the number of creatures
+    /// that convoked the trigger source
+    /// (`LookTopTakeCreaturesManaValueAtMostThenShuffle`).
+    BindConvokedCreatureCountToLookTop {
+        count: u8,
+        max_taken: u8,
+    },
+    /// Look at the top `count` cards of the controller's library, reveal up
+    /// to `max_taken` creature cards with mana value `max_mana_value` or
+    /// less from among them and put them into hand, then shuffle. The
+    /// cards are taken without a choice: the highest mana values first,
+    /// then nearest the top.
+    LookTopTakeCreaturesManaValueAtMostThenShuffle {
+        count: u8,
+        max_taken: u8,
+        max_mana_value: u16,
+    },
+    /// Trigger collection binds this template to the source's last-known
+    /// power as it left the battlefield (`DealDamage` to the opponent).
+    BindDamageOpponentEqualToSourceLastPower,
+    /// Battle cry: each other attacking creature gets +power/+toughness
+    /// until end of turn (the attacking set sampled at resolution).
+    PumpOtherAttackingCreaturesUntilEndOfTurn {
+        power: i32,
+        toughness: i32,
+    },
+    /// Reveal the top card of the controller's library and put it into
+    /// their hand; they lose life equal to its mana value.
+    RevealTopCardToHandLoseLifeEqualToManaValue,
+    /// Trigger collection binds this template to the triggering spell's
+    /// mana value (`Incubate`).
+    BindIncubateToTriggerSpell,
+    /// Incubate N: create an Incubator token with N +1/+1 counters.
+    Incubate {
+        amount: u16,
+    },
+    /// Trigger collection binds this template to the warped source
+    /// incarnation (`WarpExileBoundObject`).
+    BindWarpExileToTriggerSource,
+    /// Warp's (and unearth's) delayed end-step trigger: exile this exact
+    /// incarnation if it is still on the battlefield; a warped one may then
+    /// be cast by its owner from exile on a later turn. A source that
+    /// already left does nothing.
+    WarpExileBoundObject {
+        object: EffectObjectBinding,
+    },
+    /// Trigger collection binds this template to the creature whose
+    /// becoming a target triggered the ability
+    /// (`PutPlusOnePlusOneCounterOnTargetOtherThan`).
+    BindPlusOneCounterOnAnotherTargetToTriggerTarget,
+    /// Put a +1/+1 counter on target 0, a creature "other than" `other_than`.
+    /// Target legality (`TargetSpec::AnotherControlledCreature`) reads the
+    /// exclusion from this op, so the targeted creature is never offered.
+    PutPlusOnePlusOneCounterOnTargetOtherThan {
+        other_than: ObjectId,
+    },
+    /// Unearth's resolution: return this exact graveyard incarnation to the
+    /// battlefield and mark it unearthed (`ObjectStateV4::unearthed_v1`),
+    /// which drives its end-step exile and its leave-the-battlefield exile
+    /// replacement.
+    ReturnSourceFromGraveyardUnearthed,
+    /// Ward—Discard a card: counters the exact stack incarnation that
+    /// targeted the bound Ward permanent unless its controller discards a
+    /// card. Like the other Standard ward costs it never asks: the payer
+    /// pays whenever their hand is not empty, discarding its lowest mana
+    /// value card (the earliest in hand on a tie).
+    CounterUnlessDiscardsCard {
+        ward_target: StackTargetContractV4,
+        targeting_stack_item: StackItemId,
+    },
+    /// Exile each still-legal graveyard card target (at most `max_targets`,
+    /// fixed by the trigger's target specification); each opponent loses 1
+    /// life and the controller gains 1 life per creature card exiled.
+    ExileGraveyardTargetsDrainPerCreature {
+        max_targets: u8,
+    },
+    /// Impending's end-step upkeep: remove a time counter from this exact
+    /// source incarnation if it still has one.
+    RemoveTimeCounterFromSource,
+    /// Enduring: return this exact graveyard incarnation to the battlefield
+    /// under its owner's control; it's an enchantment, not a creature
+    /// (`ObjectStateV4::enduring_enchantment_v1`).
+    ReturnSourceAsEnduringEnchantment,
+    // Append new variants to preserve existing derived Hash discriminants.
+    /// Development-only Ward payment approximation. Axebane Ferox is
+    /// Partial until declining and choosing the evidence subset are supported.
+    CounterUnlessCollectsEvidence {
+        ward_target: StackTargetContractV4,
+        targeting_stack_item: StackItemId,
+        minimum_mana_value: u16,
+    },
+    /// Development-only automatic life payment. Brutal Cathar is Partial
+    /// until the controller can decline or choose a legal payment.
+    CounterUnlessPaysLife {
+        ward_target: StackTargetContractV4,
+        targeting_stack_item: StackItemId,
+        life: u8,
+    },
+}
+
+/// How many cards a pick-from-top effect looks at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum LibraryLookCount {
+    Fixed(u8),
+    /// The total mana spent to cast the resolving spell, frozen on its stack
+    /// item at cast time (Memory Deluge). Clamped to `u8::MAX`.
+    ManaSpentToCast,
+}
+
+/// The fixed-cardinality selection rule of a pick-from-top partition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct LibraryPickRule {
+    pub pick: u8,
+    pub choose_rest_order: bool,
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -1436,6 +1662,30 @@ pub enum EffectFrame {
         path: Vec<u16>,
         canonical_path: Vec<u16>,
     },
+    /// Resumes one private fixed-cardinality top-library partition. It
+    /// shares the typed partition's progress and binding discipline.
+    LookTopPickToHandBottomRest {
+        player: PlayerId,
+        requested_count: u8,
+        original_library_len: u32,
+        rule: LibraryPickRule,
+        original_prefix: Vec<EffectObjectBinding>,
+        progress: LibraryPartitionProgress,
+        progress_fingerprint: u64,
+        path: Vec<u16>,
+        canonical_path: Vec<u16>,
+    },
+    /// Commits Thirst for Discovery's zero-or-one basic-land discard from
+    /// the exact hand, or its fallback discard when none was chosen.
+    DiscardBasicLandInstead {
+        player: PlayerId,
+        original_hand: Vec<EffectObjectBinding>,
+        eligible: Vec<EffectObjectBinding>,
+        otherwise: u8,
+        selected: Option<EffectObjectBinding>,
+        path: Vec<u16>,
+        canonical_path: Vec<u16>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -1666,6 +1916,38 @@ pub enum EffectTargetSelectionPurpose {
         original_library: Vec<EffectObjectBinding>,
         max_targets: u16,
         destination: LibrarySearchDestinationV1,
+        canonical_path: Vec<u16>,
+    },
+    /// One of the two private prompts for a fixed-cardinality top-library
+    /// partition: choose exactly the picked cards, then (when the rule
+    /// allows it) order the rest for the bottom.
+    LookTopPickToHandBottomRest {
+        player: PlayerId,
+        requested_count: u8,
+        original_library_len: u32,
+        rule: LibraryPickRule,
+        original_prefix: Vec<EffectObjectBinding>,
+        stage: LibraryPartitionSelectionStage,
+        stage_fingerprint: u64,
+        canonical_path: Vec<u16>,
+    },
+    /// Private zero-or-one basic land card to discard instead of
+    /// `otherwise` cards. The complete hand binds membership.
+    DiscardBasicLandInstead {
+        player: PlayerId,
+        original_hand: Vec<EffectObjectBinding>,
+        eligible: Vec<EffectObjectBinding>,
+        otherwise: u8,
+        canonical_path: Vec<u16>,
+    },
+    /// The private zero-or-one creature choice of
+    /// `EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest`.
+    LookTopTakeCreatureManaValueAtMostToHand {
+        player: PlayerId,
+        requested_count: u8,
+        original_library_len: u32,
+        max_mana_value: u16,
+        original_prefix: Vec<EffectObjectBinding>,
         canonical_path: Vec<u16>,
     },
 }
@@ -2100,6 +2382,9 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::CounterUnlessPaysGeneric { .. }
         | EffectOp::CounterTargetUnlessPaysGeneric { .. }
         | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
+        | EffectOp::LookTopPickToHandBottomRest { .. }
+        | EffectOp::DiscardBasicLandOrCards { .. }
+        | EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. }
         | EffectOp::ExploreTarget { .. }
         | EffectOp::ExileOneFromPlayersGraveyard { .. }
         | EffectOp::MayExileFromPlayersGraveyardMatchingThen { .. }
@@ -3101,6 +3386,36 @@ fn complete_resumable_target_selection(
                 canonical_path,
             });
         }
+        EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand {
+            player,
+            requested_count,
+            original_library_len,
+            max_mana_value: _,
+            original_prefix,
+            canonical_path,
+        } => {
+            validate_library_partition_bound_metadata(
+                requested_count,
+                original_library_len,
+                &original_prefix,
+            )?;
+            if path != canonical_path {
+                return Err("look-top creature prompt structural path changed".to_string());
+            }
+            if objects.len() > 1 {
+                return Err("look-top creature prompt selected more than one card".to_string());
+            }
+            let selected = canonicalize_binding_subset(&original_prefix, &objects)?;
+            push_library_partition_bottom_frame(
+                continuation,
+                player,
+                requested_count,
+                original_library_len,
+                original_prefix,
+                selected,
+                canonical_path,
+            )?;
+        }
         EffectTargetSelectionPurpose::SearchLibraryToHand {
             player,
             filter,
@@ -3178,50 +3493,63 @@ fn complete_resumable_target_selection(
             stage,
             stage_fingerprint,
             canonical_path,
-        } => {
-            validate_library_partition_bound_metadata(
+        } => answer_library_partition_prompt(
+            continuation,
+            LibraryPartitionFilter::ByType(card_type),
+            LibraryPartitionPrompt {
+                player,
                 requested_count,
                 original_library_len,
-                &original_prefix,
-            )?;
-            if stage_fingerprint != library_partition_stage_fingerprint(&stage) {
-                return Err("library-partition prompt stage fingerprint changed".to_string());
+                original_prefix,
+                stage,
+                stage_fingerprint,
+                canonical_path,
+            },
+            path,
+            objects,
+        )?,
+        EffectTargetSelectionPurpose::LookTopPickToHandBottomRest {
+            player,
+            requested_count,
+            original_library_len,
+            rule,
+            original_prefix,
+            stage,
+            stage_fingerprint,
+            canonical_path,
+        } => answer_library_partition_prompt(
+            continuation,
+            LibraryPartitionFilter::Pick(rule),
+            LibraryPartitionPrompt {
+                player,
+                requested_count,
+                original_library_len,
+                original_prefix,
+                stage,
+                stage_fingerprint,
+                canonical_path,
+            },
+            path,
+            objects,
+        )?,
+        EffectTargetSelectionPurpose::DiscardBasicLandInstead {
+            player,
+            original_hand,
+            eligible,
+            otherwise,
+            canonical_path,
+        } => {
+            if path != canonical_path || objects.len() > 1 {
+                return Err("basic-land discard prompt changed path or cardinality".to_string());
             }
-            let mut expected_choice_path = canonical_path.clone();
-            expected_choice_path.push(library_partition_stage_tag(&stage));
-            if path != expected_choice_path {
-                return Err("library-partition prompt structural path changed".to_string());
-            }
-            let progress = match stage {
-                LibraryPartitionSelectionStage::ChooseMatchingSubset => {
-                    let selected = canonicalize_binding_subset(&original_prefix, &objects)?;
-                    LibraryPartitionProgress::MatchingSubsetChosen { selected }
-                }
-                LibraryPartitionSelectionStage::OrderRest { selected } => {
-                    validate_canonical_binding_subset(&original_prefix, &selected)?;
-                    let rest = binding_partition_rest(&original_prefix, &selected)?;
-                    validate_exact_binding_permutation(
-                        &rest,
-                        &objects,
-                        "library-partition ordered rest",
-                    )?;
-                    LibraryPartitionProgress::RestOrderChosen {
-                        selected,
-                        ordered_rest: objects,
-                    }
-                }
-            };
-            let progress_fingerprint = library_partition_progress_fingerprint(&progress);
             continuation
                 .frames
-                .push(EffectFrame::LookTopSelectByTypeToHandBottomRest {
+                .push(EffectFrame::DiscardBasicLandInstead {
                     player,
-                    requested_count,
-                    original_library_len,
-                    card_type,
-                    original_prefix,
-                    progress,
-                    progress_fingerprint,
+                    original_hand,
+                    eligible,
+                    otherwise,
+                    selected: objects.pop(),
                     path: canonical_path.clone(),
                     canonical_path,
                 });
@@ -3400,8 +3728,15 @@ fn complete_resumable_target_selection(
             source,
             canonical_path,
         } => {
-            if path != canonical_path || objects.len() != 1 {
+            let optional = linked_hand_exile_kind(source.card_def)
+                .ok_or("linked-exile choice lost its source definition")?
+                .optional();
+            if path != canonical_path || objects.len() > 1 || (objects.is_empty() && !optional) {
                 return Err("linked-exile choice changed path or cardinality".to_string());
+            }
+            if objects.is_empty() {
+                // "You may exile": declining leaves the hand untouched.
+                return Ok(());
             }
             let expected_remaining_frames = continuation.frames.clone();
             let frame = EffectFrame::LinkedExileChosenHandCard {
@@ -4348,7 +4683,7 @@ fn validate_linked_exile_chosen_hand_frame(
         || source.controller != pending.ctx.controller
         || source.zone != Zone::Battlefield
         || source.attached_to.is_some()
-        || crate::card_def::CARD_DEFS[source.card_def as usize].name != "Mesmeric Fiend"
+        || linked_hand_exile_kind(source.card_def).is_none()
     {
         return Err("linked-exile player or source contract changed".to_string());
     }
@@ -5921,6 +6256,55 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         );
                     }
                 }
+                EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand {
+                    player: library_player,
+                    requested_count,
+                    original_library_len,
+                    max_mana_value,
+                    original_prefix,
+                    canonical_path,
+                } => {
+                    if chooser != library_player {
+                        return Err(
+                            "look-top creature choice player does not own the selected library"
+                                .to_string(),
+                        );
+                    }
+                    validate_library_partition_live_metadata(
+                        state,
+                        *library_player,
+                        *requested_count,
+                        *original_library_len,
+                        LibraryPartitionFilter::ByType(CardType::Creature),
+                        original_prefix,
+                    )?;
+                    if path != canonical_path {
+                        return Err("look-top creature prompt structural path changed".to_string());
+                    }
+                    let candidates = selected
+                        .iter()
+                        .chain(legal)
+                        .map(|candidate| {
+                            candidate.expected_object.ok_or_else(|| {
+                                "look-top creature target lacks an object-incarnation binding"
+                                    .to_string()
+                            })
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    let matching = creature_prefix_mana_value_at_most(
+                        state,
+                        *max_mana_value,
+                        original_prefix,
+                    )?;
+                    if matching.is_empty() || *min_targets != 0 || *max_targets != 1 || *ordered {
+                        return Err("look-top creature prompt has a noncanonical shape".to_string());
+                    }
+                    validate_exact_binding_permutation(
+                        &matching,
+                        &candidates,
+                        "look-top creature candidates",
+                    )?;
+                }
                 EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
                     player: library_player,
                     requested_count,
@@ -5930,98 +6314,89 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     stage,
                     stage_fingerprint,
                     canonical_path,
+                } => validate_library_partition_prompt(
+                    state,
+                    *chooser,
+                    LibraryPartitionFilter::ByType(*card_type),
+                    *library_player,
+                    *requested_count,
+                    *original_library_len,
+                    original_prefix,
+                    stage,
+                    *stage_fingerprint,
+                    canonical_path,
+                    LibraryPartitionPromptShape {
+                        path,
+                        selected,
+                        legal,
+                        min_targets: *min_targets,
+                        max_targets: *max_targets,
+                        ordered: *ordered,
+                    },
+                )?,
+                EffectTargetSelectionPurpose::LookTopPickToHandBottomRest {
+                    player: library_player,
+                    requested_count,
+                    original_library_len,
+                    rule,
+                    original_prefix,
+                    stage,
+                    stage_fingerprint,
+                    canonical_path,
+                } => validate_library_partition_prompt(
+                    state,
+                    *chooser,
+                    LibraryPartitionFilter::Pick(*rule),
+                    *library_player,
+                    *requested_count,
+                    *original_library_len,
+                    original_prefix,
+                    stage,
+                    *stage_fingerprint,
+                    canonical_path,
+                    LibraryPartitionPromptShape {
+                        path,
+                        selected,
+                        legal,
+                        min_targets: *min_targets,
+                        max_targets: *max_targets,
+                        ordered: *ordered,
+                    },
+                )?,
+                EffectTargetSelectionPurpose::DiscardBasicLandInstead {
+                    player: hand_player,
+                    original_hand,
+                    eligible,
+                    otherwise: _,
+                    canonical_path,
                 } => {
-                    if chooser != library_player {
+                    if chooser != hand_player
+                        || path != canonical_path
+                        || *min_targets != 0
+                        || *max_targets != 1
+                        || *ordered
+                        || !selected.is_empty()
+                    {
                         return Err(
-                            "library-partition choice player does not own the selected library"
-                                .to_string(),
+                            "basic-land discard prompt has a noncanonical shape".to_string()
                         );
                     }
-                    validate_library_partition_live_metadata(
-                        state,
-                        *library_player,
-                        *requested_count,
-                        *original_library_len,
-                        *card_type,
-                        original_prefix,
-                    )?;
-                    if *stage_fingerprint != library_partition_stage_fingerprint(stage) {
-                        return Err(
-                            "library-partition prompt stage fingerprint changed".to_string()
-                        );
+                    validate_bound_hand_exact(state, *hand_player, original_hand)?;
+                    let recomputed = basic_land_hand_cards(state, original_hand)?;
+                    if eligible != &recomputed || eligible.is_empty() {
+                        return Err("basic-land discard candidates changed".to_string());
                     }
-                    let mut expected_path = canonical_path.clone();
-                    expected_path.push(library_partition_stage_tag(stage));
-                    if path != &expected_path {
-                        return Err("library-partition prompt structural path changed".to_string());
-                    }
-                    let candidates = selected
+                    let actual = legal
                         .iter()
-                        .chain(legal)
                         .map(|candidate| {
                             candidate.expected_object.ok_or_else(|| {
-                                "library-partition target lacks an object-incarnation binding"
+                                "basic-land discard target lacks an object-incarnation binding"
                                     .to_string()
                             })
                         })
                         .collect::<Result<Vec<_>, String>>()?;
-                    match stage {
-                        LibraryPartitionSelectionStage::ChooseMatchingSubset => {
-                            let matching = library_partition_matching_prefix(
-                                state,
-                                *card_type,
-                                original_prefix,
-                            )?;
-                            let count = u16::try_from(matching.len()).map_err(|_| {
-                                "library-partition matching set exceeds u16".to_string()
-                            })?;
-                            if *min_targets != 0 || *max_targets != count || *ordered {
-                                return Err(
-                                    "library-partition subset prompt has a noncanonical shape"
-                                        .to_string(),
-                                );
-                            }
-                            validate_exact_binding_permutation(
-                                &matching,
-                                &candidates,
-                                "library-partition matching candidates",
-                            )?;
-                        }
-                        LibraryPartitionSelectionStage::OrderRest { selected: chosen } => {
-                            validate_canonical_binding_subset(original_prefix, chosen)?;
-                            let matching = library_partition_matching_prefix(
-                                state,
-                                *card_type,
-                                original_prefix,
-                            )?;
-                            if chosen.iter().any(|binding| !matching.contains(binding)) {
-                                return Err(
-                                    "library-partition selected card does not match the typed filter"
-                                        .to_string(),
-                                );
-                            }
-                            let rest = binding_partition_rest(original_prefix, chosen)?;
-                            if rest.len() < 2 {
-                                return Err(
-                                    "library-partition rest-order prompt has no genuine choice"
-                                        .to_string(),
-                                );
-                            }
-                            let count = u16::try_from(rest.len()).map_err(|_| {
-                                "library-partition rest set exceeds u16".to_string()
-                            })?;
-                            if *min_targets != count || *max_targets != count || !*ordered {
-                                return Err(
-                                    "library-partition rest-order prompt has a noncanonical shape"
-                                        .to_string(),
-                                );
-                            }
-                            validate_exact_binding_permutation(
-                                &rest,
-                                &candidates,
-                                "library-partition rest-order candidates",
-                            )?;
-                        }
+                    if actual != *eligible {
+                        return Err("basic-land discard legal targets changed".to_string());
                     }
                 }
                 EffectTargetSelectionPurpose::SearchLibraryToHandMany {
@@ -6301,7 +6676,9 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     if chooser != &pending.ctx.controller || path != canonical_path {
                         return Err("linked-exile chooser or structural path changed".to_string());
                     }
-                    if *min_targets != 1
+                    let kind = linked_hand_exile_kind(source.card_def)
+                        .ok_or("linked-exile prompt lost its source definition")?;
+                    if *min_targets != kind.min_choices()
                         || *max_targets != 1
                         || !*ordered
                         || !selected.is_empty()
@@ -6338,7 +6715,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                                 .has_type(CardType::Land)
                         })
                         .collect::<Vec<_>>();
-                    if expected.len() < 2 {
+                    if expected.len() < 2 - usize::from(kind.optional()) {
                         return Err(
                             "linked-exile prompt has no genuine multi-card choice".to_string()
                         );
@@ -7730,127 +8107,84 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     path,
                     canonical_path,
                 } => {
-                    if path != canonical_path {
-                        return Err(
-                            "library-partition coordinator path changed from its canonical path"
-                                .to_string(),
-                        );
-                    }
-                    if progress_fingerprint != library_partition_progress_fingerprint(&progress) {
-                        return Err("library-partition coordinator progress fingerprint changed"
-                            .to_string());
-                    }
-                    validate_library_partition_live_metadata(
+                    if resume_library_partition_frame(
                         state,
-                        player,
-                        requested_count,
-                        original_library_len,
-                        card_type,
-                        &original_prefix,
-                    )?;
-                    match progress {
-                        LibraryPartitionProgress::MatchingSubsetChosen { selected } => {
-                            validate_canonical_binding_subset(&original_prefix, &selected)?;
-                            let matching = library_partition_matching_prefix(
-                                state,
-                                card_type,
-                                &original_prefix,
-                            )?;
-                            if selected.iter().any(|binding| !matching.contains(binding)) {
-                                return Err(
-                                    "library-partition selected card does not match the typed filter"
-                                        .to_string(),
-                                );
+                        &mut continuation,
+                        LibraryPartitionFilter::ByType(card_type),
+                        LibraryPartitionCoordinator {
+                            player,
+                            requested_count,
+                            original_library_len,
+                            original_prefix,
+                            progress,
+                            progress_fingerprint,
+                            path,
+                            canonical_path,
+                        },
+                    )? {
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
+                }
+                EffectFrame::LookTopPickToHandBottomRest {
+                    player,
+                    requested_count,
+                    original_library_len,
+                    rule,
+                    original_prefix,
+                    progress,
+                    progress_fingerprint,
+                    path,
+                    canonical_path,
+                } => {
+                    if resume_library_partition_frame(
+                        state,
+                        &mut continuation,
+                        LibraryPartitionFilter::Pick(rule),
+                        LibraryPartitionCoordinator {
+                            player,
+                            requested_count,
+                            original_library_len,
+                            original_prefix,
+                            progress,
+                            progress_fingerprint,
+                            path,
+                            canonical_path,
+                        },
+                    )? {
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
+                }
+                EffectFrame::DiscardBasicLandInstead {
+                    player,
+                    original_hand,
+                    eligible,
+                    otherwise,
+                    selected,
+                    path,
+                    canonical_path,
+                } => {
+                    if path != canonical_path {
+                        return Err("basic-land discard frame path changed".to_string());
+                    }
+                    validate_bound_hand_exact(state, player, &original_hand)?;
+                    if eligible != basic_land_hand_cards(state, &original_hand)?
+                        || selected.is_some_and(|binding| !eligible.contains(&binding))
+                    {
+                        return Err("basic-land discard binding changed".to_string());
+                    }
+                    match selected {
+                        Some(binding) => event::propose_and_commit(
+                            state,
+                            event::ProposedEvent::zone_change(binding.object, Zone::Graveyard),
+                        ),
+                        None => {
+                            if !continuation.frames.is_empty() {
+                                return Err("a resumable discard must be the terminal effect leaf"
+                                    .to_string());
                             }
-                            let rest = binding_partition_rest(&original_prefix, &selected)?;
-                            if rest.len() >= 2 {
-                                stage_library_partition_choice(
-                                    &mut continuation,
-                                    state,
-                                    player,
-                                    requested_count,
-                                    original_library_len,
-                                    card_type,
-                                    original_prefix,
-                                    LibraryPartitionSelectionStage::OrderRest { selected },
-                                    canonical_path,
-                                )?;
-                                state.engine.pending_effect = Some(continuation);
-                                return Ok(ResumableProgress::Suspended);
-                            }
-                            let progress = LibraryPartitionProgress::RestOrderChosen {
-                                selected,
-                                ordered_rest: rest,
-                            };
-                            let progress_fingerprint =
-                                library_partition_progress_fingerprint(&progress);
-                            continuation.frames.push(
-                                EffectFrame::LookTopSelectByTypeToHandBottomRest {
-                                    player,
-                                    requested_count,
-                                    original_library_len,
-                                    card_type,
-                                    original_prefix,
-                                    progress,
-                                    progress_fingerprint,
-                                    path,
-                                    canonical_path,
-                                },
-                            );
-                        }
-                        LibraryPartitionProgress::RestOrderChosen {
-                            selected,
-                            ordered_rest,
-                        } => {
-                            validate_canonical_binding_subset(&original_prefix, &selected)?;
-                            let matching = library_partition_matching_prefix(
-                                state,
-                                card_type,
-                                &original_prefix,
-                            )?;
-                            if selected.iter().any(|binding| !matching.contains(binding)) {
-                                return Err(
-                                    "library-partition selected card does not match the typed filter"
-                                        .to_string(),
-                                );
-                            }
-                            let rest = binding_partition_rest(&original_prefix, &selected)?;
-                            validate_exact_binding_permutation(
-                                &rest,
-                                &ordered_rest,
-                                "library-partition ordered rest",
-                            )?;
-                            let expected_prefix = original_prefix
-                                .iter()
-                                .map(|binding| crate::state::ObjectLinkV4 {
-                                    object: binding.object,
-                                    zone_change_count: binding.expected_zone_change_count,
-                                })
-                                .collect::<Vec<_>>();
-                            let bottom = selected
-                                .iter()
-                                .chain(&ordered_rest)
-                                .map(|binding| binding.object)
-                                .collect::<Vec<_>>();
-                            state.apply_scry_result(player, &expected_prefix, &[], &bottom)?;
-                            let events = selected
-                                .iter()
-                                .map(|binding| {
-                                    event::ProposedEvent::zone_change(binding.object, Zone::Hand)
-                                })
-                                .collect();
-                            event::propose_and_commit_batch(state, events);
-                            for binding in selected {
-                                if state.objects.get(binding.object).zone == Zone::Hand {
-                                    for observer in [PlayerId::P0, PlayerId::P1] {
-                                        state
-                                            .reveal_hand_card(observer, player, binding.object)
-                                            .expect(
-                                            "a successful selected-card move is publicly revealed",
-                                        );
-                                    }
-                                }
-                            }
+                            execute_fallback_discard(&continuation, state, player, otherwise);
                         }
                     }
                 }
@@ -8065,6 +8399,19 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         );
                     }
                     continuation.answered_choice_guard = None;
+                    let source_incarnation_is_live =
+                        state.objects.try_get(source.source).is_some_and(|live| {
+                            live.zone == source.zone
+                                && live.zone_change_count == source.zone_change_count
+                        });
+                    if !source_incarnation_is_live
+                        && linked_hand_exile_kind(source.card_def)
+                            == Some(LinkedHandExileKind::UntilSourceLeaves)
+                    {
+                        // 610.3c: an "until ... leaves" exile whose source is
+                        // already gone does nothing.
+                        continue;
+                    }
                     event::propose_and_commit(
                         state,
                         event::ProposedEvent::zone_change_preserving_known_identity(
@@ -8080,11 +8427,6 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         exiled_owner: exiled.owner,
                         exiled_zone_change_count: exiled.zone_change_count,
                     };
-                    let source_incarnation_is_live =
-                        state.objects.try_get(source.source).is_some_and(|live| {
-                            live.zone == source.zone
-                                && live.zone_change_count == source.zone_change_count
-                        });
                     if source_incarnation_is_live {
                         state.objects.get_mut(chosen.object).v4.exiled_by = Some(ObjectLinkV4 {
                             object: source.source,
@@ -8764,33 +9106,78 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 card_type,
             } => {
                 let player = continuation.ctx.resolve_player(player, state);
-                let original_library_len = state.players[player.index()]
-                    .library
-                    .len()
-                    .try_into()
-                    .expect("a live library length fits the u32 state contract");
-                let original_prefix = bind_library_top(state, player, count);
-                validate_library_partition_live_metadata(
+                if begin_library_partition(
+                    &mut continuation,
                     state,
+                    LibraryPartitionFilter::ByType(card_type),
                     player,
                     count,
-                    original_library_len,
-                    card_type,
-                    &original_prefix,
-                )?;
-                state.reveal_library_top(player, player, original_prefix.len());
-                if !original_prefix.is_empty() {
-                    stage_library_partition_choice(
-                        &mut continuation,
-                        state,
+                    path,
+                )? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
+            EffectOp::LookTopPickToHandBottomRest {
+                player,
+                count,
+                pick,
+                choose_rest_order,
+            } => {
+                let player = continuation.ctx.resolve_player(player, state);
+                let count = match count {
+                    LibraryLookCount::Fixed(count) => count,
+                    LibraryLookCount::ManaSpentToCast => {
+                        u8::try_from(continuation.resolving_item.v4.mana_spent.0).unwrap_or(u8::MAX)
+                    }
+                };
+                if begin_library_partition(
+                    &mut continuation,
+                    state,
+                    LibraryPartitionFilter::Pick(LibraryPickRule {
+                        pick,
+                        choose_rest_order,
+                    }),
+                    player,
+                    count,
+                    path,
+                )? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
+            EffectOp::DiscardBasicLandOrCards { player, otherwise } => {
+                if !continuation.frames.is_empty() {
+                    return Err("a resumable discard must be the terminal effect leaf".to_string());
+                }
+                let player = continuation.ctx.resolve_player(player, state);
+                let original_hand = bind_hand(state, player);
+                let eligible = basic_land_hand_cards(state, &original_hand)?;
+                if eligible.is_empty() {
+                    execute_fallback_discard(&continuation, state, player, otherwise);
+                } else {
+                    continuation.choice = Some(PendingEffectChoice::SelectTargets {
                         player,
-                        count,
-                        original_library_len,
-                        card_type,
-                        original_prefix,
-                        LibraryPartitionSelectionStage::ChooseMatchingSubset,
-                        path,
-                    )?;
+                        path: path.clone(),
+                        selected: Vec::new(),
+                        legal: eligible
+                            .iter()
+                            .map(|binding| EffectTargetCandidate {
+                                target: Target::Object(binding.object),
+                                expected_object: Some(*binding),
+                            })
+                            .collect(),
+                        min_targets: 0,
+                        max_targets: 1,
+                        ordered: false,
+                        purpose: EffectTargetSelectionPurpose::DiscardBasicLandInstead {
+                            player,
+                            original_hand,
+                            eligible,
+                            otherwise,
+                            canonical_path: path,
+                        },
+                    });
                     state.engine.pending_effect = Some(continuation);
                     return Ok(ResumableProgress::Suspended);
                 }
@@ -8821,6 +9208,68 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 );
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest {
+                player,
+                count,
+                max_mana_value,
+            } => {
+                let player = continuation.ctx.resolve_player(player, state);
+                let original_library_len = state.players[player.index()]
+                    .library
+                    .len()
+                    .try_into()
+                    .expect("a live library length fits the u32 state contract");
+                let original_prefix = bind_library_top(state, player, count);
+                validate_library_partition_live_metadata(
+                    state,
+                    player,
+                    count,
+                    original_library_len,
+                    LibraryPartitionFilter::ByType(CardType::Creature),
+                    &original_prefix,
+                )?;
+                state.reveal_library_top(player, player, original_prefix.len());
+                let candidates =
+                    creature_prefix_mana_value_at_most(state, max_mana_value, &original_prefix)?;
+                if candidates.is_empty() {
+                    push_library_partition_bottom_frame(
+                        &mut continuation,
+                        player,
+                        count,
+                        original_library_len,
+                        original_prefix,
+                        Vec::new(),
+                        path,
+                    )?;
+                } else {
+                    continuation.choice = Some(PendingEffectChoice::SelectTargets {
+                        player,
+                        path: path.clone(),
+                        selected: Vec::new(),
+                        legal: candidates
+                            .into_iter()
+                            .map(|binding| EffectTargetCandidate {
+                                target: Target::Object(binding.object),
+                                expected_object: Some(binding),
+                            })
+                            .collect(),
+                        min_targets: 0,
+                        max_targets: 1,
+                        ordered: false,
+                        purpose:
+                            EffectTargetSelectionPurpose::LookTopTakeCreatureManaValueAtMostToHand {
+                                player,
+                                requested_count: count,
+                                original_library_len,
+                                max_mana_value,
+                                original_prefix,
+                                canonical_path: path,
+                            },
+                    });
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
             }
             EffectOp::SearchLibraryToHandUpTo {
                 player,
@@ -8951,10 +9400,12 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     || source.controller != continuation.ctx.controller
                     || source.zone != Zone::Battlefield
                     || source.attached_to.is_some()
-                    || crate::card_def::CARD_DEFS[source.card_def as usize].name != "Mesmeric Fiend"
                 {
                     return Err("linked-exile effect has the wrong source contract".to_string());
                 }
+                let Some(kind) = linked_hand_exile_kind(source.card_def) else {
+                    return Err("linked-exile effect has the wrong source contract".to_string());
+                };
                 let original_hand = bind_hand(state, player);
                 validate_bound_hand_exact(state, player, &original_hand)?;
                 for binding in &original_hand {
@@ -8977,7 +9428,7 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     .collect::<Vec<_>>();
                 match candidates.as_slice() {
                     [] => {}
-                    [chosen] => {
+                    [chosen] if !kind.optional() => {
                         let expected_remaining_frames = continuation.frames.clone();
                         let frame = EffectFrame::LinkedExileChosenHandCard {
                             player,
@@ -9003,6 +9454,7 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                             original_hand,
                             candidates,
                             source,
+                            kind.min_choices(),
                             path,
                         );
                         state.engine.pending_effect = Some(continuation);
@@ -9024,7 +9476,8 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     || source.controller != continuation.ctx.controller
                     || source.zone != Zone::Battlefield
                     || source.attached_to.is_some()
-                    || crate::card_def::CARD_DEFS[source.card_def as usize].name != "Mesmeric Fiend"
+                    || linked_hand_exile_kind(source.card_def)
+                        != Some(LinkedHandExileKind::ReturnTrigger)
                 {
                     return Err("linked-exile return has the wrong source contract".to_string());
                 }
@@ -9277,19 +9730,32 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
             }
             EffectOp::ExploreTarget { object } => {
                 let target = continuation.ctx.resolve_object(object);
-                let target_index = match object {
-                    ObjectRef::Target(index) => usize::from(index),
+                // A self-exploring trigger (Cenote Scout) still reveals when
+                // its source has left; only the +1/+1 counter needs the
+                // exact battlefield incarnation (701.44b).
+                let explorer_on_battlefield = match object {
+                    ObjectRef::Target(index) => {
+                        if !continuation
+                            .ctx
+                            .target_incarnation_matches(usize::from(index), state)
+                            || state.objects.get(target).zone != Zone::Battlefield
+                        {
+                            return Err("Explore target incarnation is no longer valid".to_string());
+                        }
+                        true
+                    }
                     ObjectRef::ThisSource => {
-                        return Err("Explore requires an announced creature target".to_string())
+                        let contract = continuation
+                            .ctx
+                            .ability_source_contract
+                            .as_ref()
+                            .ok_or("a self-exploring ability needs its source contract")?;
+                        let live = state.objects.get(target);
+                        contract.zone == Zone::Battlefield
+                            && live.zone == Zone::Battlefield
+                            && live.zone_change_count == contract.zone_change_count
                     }
                 };
-                if !continuation
-                    .ctx
-                    .target_incarnation_matches(target_index, state)
-                    || state.objects.get(target).zone != Zone::Battlefield
-                {
-                    return Err("Explore target incarnation is no longer valid".to_string());
-                }
                 let player = continuation.ctx.controller;
                 let Some(top) = bind_library_top(state, player, 1).into_iter().next() else {
                     continue;
@@ -9308,10 +9774,12 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     );
                     continue;
                 }
-                let counters = &mut state.objects.get_mut(target).counters.plus1_plus1;
-                *counters = counters
-                    .checked_add(1)
-                    .ok_or("Explore +1/+1 counter overflow")?;
+                if explorer_on_battlefield {
+                    let counters = &mut state.objects.get_mut(target).counters.plus1_plus1;
+                    *counters = counters
+                        .checked_add(1)
+                        .ok_or("Explore +1/+1 counter overflow")?;
+                }
                 let canonical_path = path.clone();
                 continuation.choice = Some(PendingEffectChoice::ChooseOption {
                     player,
@@ -9723,10 +10191,10 @@ fn stage_scry_choice(
 fn stage_library_partition_choice(
     continuation: &mut EffectContinuation,
     state: &GameState,
+    filter: LibraryPartitionFilter,
     player: PlayerId,
     requested_count: u8,
     original_library_len: u32,
-    card_type: CardType,
     original_prefix: Vec<EffectObjectBinding>,
     stage: LibraryPartitionSelectionStage,
     canonical_path: Vec<u16>,
@@ -9736,23 +10204,26 @@ fn stage_library_partition_choice(
         player,
         requested_count,
         original_library_len,
-        card_type,
+        filter,
         &original_prefix,
     )?;
     let (candidates, min_targets, max_targets, ordered) = match &stage {
         LibraryPartitionSelectionStage::ChooseMatchingSubset => {
-            let matching = library_partition_matching_prefix(state, card_type, &original_prefix)?;
-            let count = u16::try_from(matching.len())
+            let matching = library_partition_matching_prefix(state, filter, &original_prefix)?;
+            let (min, max) = filter.subset_bounds(matching.len());
+            if !filter.subset_prompt_is_genuine(matching.len()) {
+                return Err("library-partition subset prompt has no genuine choice".to_string());
+            }
+            let min = u16::try_from(min)
                 .map_err(|_| "library-partition matching set exceeds u16".to_string())?;
-            (matching, 0, count, false)
+            let max = u16::try_from(max)
+                .map_err(|_| "library-partition matching set exceeds u16".to_string())?;
+            (matching, min, max, false)
         }
         LibraryPartitionSelectionStage::OrderRest { selected } => {
-            validate_canonical_binding_subset(&original_prefix, selected)?;
-            let matching = library_partition_matching_prefix(state, card_type, &original_prefix)?;
-            if selected.iter().any(|binding| !matching.contains(binding)) {
-                return Err(
-                    "library-partition selected card does not match the typed filter".to_string(),
-                );
+            validate_library_partition_selected(state, filter, &original_prefix, selected)?;
+            if !filter.orders_rest() {
+                return Err("library-partition rule keeps its rest in looked-at order".to_string());
             }
             let rest = binding_partition_rest(&original_prefix, selected)?;
             if rest.len() < 2 {
@@ -9780,18 +10251,549 @@ fn stage_library_partition_choice(
         min_targets,
         max_targets,
         ordered,
-        purpose: EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
+        purpose: library_partition_purpose(
+            filter,
+            LibraryPartitionPrompt {
+                player,
+                requested_count,
+                original_library_len,
+                original_prefix,
+                stage,
+                stage_fingerprint,
+                canonical_path,
+            },
+        ),
+    });
+    Ok(())
+}
+
+/// Selection rule shared by the typed and fixed-cardinality top-library
+/// partitions. It is recovered from the purpose or frame variant, so it is
+/// never serialized on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LibraryPartitionFilter {
+    ByType(CardType),
+    Pick(LibraryPickRule),
+}
+
+impl LibraryPartitionFilter {
+    /// Exact subset-prompt cardinality over `selectable` candidates.
+    fn subset_bounds(self, selectable: usize) -> (usize, usize) {
+        match self {
+            LibraryPartitionFilter::ByType(_) => (0, selectable),
+            LibraryPartitionFilter::Pick(rule) => {
+                let picked = usize::from(rule.pick).min(selectable);
+                (picked, picked)
+            }
+        }
+    }
+
+    /// A typed partition always asks once it has a prefix; a pick asks only
+    /// when it takes some but not all of the cards looked at.
+    fn subset_prompt_is_genuine(self, selectable: usize) -> bool {
+        match self {
+            LibraryPartitionFilter::ByType(_) => true,
+            LibraryPartitionFilter::Pick(_) => {
+                let (picked, _) = self.subset_bounds(selectable);
+                picked > 0 && picked < selectable
+            }
+        }
+    }
+
+    fn orders_rest(self) -> bool {
+        match self {
+            LibraryPartitionFilter::ByType(_) => true,
+            LibraryPartitionFilter::Pick(rule) => rule.choose_rest_order,
+        }
+    }
+
+    fn reveals_selected(self) -> bool {
+        matches!(self, LibraryPartitionFilter::ByType(_))
+    }
+}
+
+/// Owned fields common to both partition prompt purposes.
+struct LibraryPartitionPrompt {
+    player: PlayerId,
+    requested_count: u8,
+    original_library_len: u32,
+    original_prefix: Vec<EffectObjectBinding>,
+    stage: LibraryPartitionSelectionStage,
+    stage_fingerprint: u64,
+    canonical_path: Vec<u16>,
+}
+
+/// Owned fields common to both partition coordinator frames.
+struct LibraryPartitionCoordinator {
+    player: PlayerId,
+    requested_count: u8,
+    original_library_len: u32,
+    original_prefix: Vec<EffectObjectBinding>,
+    progress: LibraryPartitionProgress,
+    progress_fingerprint: u64,
+    path: Vec<u16>,
+    canonical_path: Vec<u16>,
+}
+
+/// The pending prompt's policy-visible shape, checked against the purpose.
+struct LibraryPartitionPromptShape<'a> {
+    path: &'a [u16],
+    selected: &'a [EffectTargetCandidate],
+    legal: &'a [EffectTargetCandidate],
+    min_targets: u16,
+    max_targets: u16,
+    ordered: bool,
+}
+
+fn library_partition_purpose(
+    filter: LibraryPartitionFilter,
+    prompt: LibraryPartitionPrompt,
+) -> EffectTargetSelectionPurpose {
+    let LibraryPartitionPrompt {
+        player,
+        requested_count,
+        original_library_len,
+        original_prefix,
+        stage,
+        stage_fingerprint,
+        canonical_path,
+    } = prompt;
+    match filter {
+        LibraryPartitionFilter::ByType(card_type) => {
+            EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
+                player,
+                requested_count,
+                original_library_len,
+                card_type,
+                original_prefix,
+                stage,
+                stage_fingerprint,
+                canonical_path,
+            }
+        }
+        LibraryPartitionFilter::Pick(rule) => {
+            EffectTargetSelectionPurpose::LookTopPickToHandBottomRest {
+                player,
+                requested_count,
+                original_library_len,
+                rule,
+                original_prefix,
+                stage,
+                stage_fingerprint,
+                canonical_path,
+            }
+        }
+    }
+}
+
+fn library_partition_frame(
+    filter: LibraryPartitionFilter,
+    coordinator: LibraryPartitionCoordinator,
+) -> EffectFrame {
+    let LibraryPartitionCoordinator {
+        player,
+        requested_count,
+        original_library_len,
+        original_prefix,
+        progress,
+        progress_fingerprint,
+        path,
+        canonical_path,
+    } = coordinator;
+    match filter {
+        LibraryPartitionFilter::ByType(card_type) => {
+            EffectFrame::LookTopSelectByTypeToHandBottomRest {
+                player,
+                requested_count,
+                original_library_len,
+                card_type,
+                original_prefix,
+                progress,
+                progress_fingerprint,
+                path,
+                canonical_path,
+            }
+        }
+        LibraryPartitionFilter::Pick(rule) => EffectFrame::LookTopPickToHandBottomRest {
             player,
             requested_count,
             original_library_len,
-            card_type,
+            rule,
             original_prefix,
-            stage,
-            stage_fingerprint,
+            progress,
+            progress_fingerprint,
+            path,
             canonical_path,
         },
-    });
+    }
+}
+
+/// Binds the top `count` cards, lets their owner privately look at them, and
+/// either stages the first prompt (`Ok(true)`) or, when there is nothing to
+/// choose, pushes the coordinator frame directly (`Ok(false)`).
+fn begin_library_partition(
+    continuation: &mut EffectContinuation,
+    state: &mut GameState,
+    filter: LibraryPartitionFilter,
+    player: PlayerId,
+    count: u8,
+    path: Vec<u16>,
+) -> Result<bool, String> {
+    let original_library_len = state.players[player.index()]
+        .library
+        .len()
+        .try_into()
+        .expect("a live library length fits the u32 state contract");
+    let original_prefix = bind_library_top(state, player, count);
+    validate_library_partition_live_metadata(
+        state,
+        player,
+        count,
+        original_library_len,
+        filter,
+        &original_prefix,
+    )?;
+    state.reveal_library_top(player, player, original_prefix.len());
+    if original_prefix.is_empty() {
+        return Ok(false);
+    }
+    if filter.subset_prompt_is_genuine(original_prefix.len()) {
+        stage_library_partition_choice(
+            continuation,
+            state,
+            filter,
+            player,
+            count,
+            original_library_len,
+            original_prefix,
+            LibraryPartitionSelectionStage::ChooseMatchingSubset,
+            path,
+        )?;
+        return Ok(true);
+    }
+    let (picked, _) = filter.subset_bounds(original_prefix.len());
+    let selected = if picked == 0 {
+        Vec::new()
+    } else {
+        original_prefix.clone()
+    };
+    let progress = LibraryPartitionProgress::MatchingSubsetChosen { selected };
+    let progress_fingerprint = library_partition_progress_fingerprint(&progress);
+    continuation.frames.push(library_partition_frame(
+        filter,
+        LibraryPartitionCoordinator {
+            player,
+            requested_count: count,
+            original_library_len,
+            original_prefix,
+            progress,
+            progress_fingerprint,
+            path: path.clone(),
+            canonical_path: path,
+        },
+    ));
+    Ok(false)
+}
+
+/// Checks a chosen subset against the partition's filter and cardinality.
+fn validate_library_partition_selected(
+    state: &GameState,
+    filter: LibraryPartitionFilter,
+    original_prefix: &[EffectObjectBinding],
+    selected: &[EffectObjectBinding],
+) -> Result<(), String> {
+    validate_canonical_binding_subset(original_prefix, selected)?;
+    let matching = library_partition_matching_prefix(state, filter, original_prefix)?;
+    if selected.iter().any(|binding| !matching.contains(binding)) {
+        return Err("library-partition selected card does not match the typed filter".to_string());
+    }
+    validate_library_partition_selected_count(filter, original_prefix, selected)
+}
+
+fn validate_library_partition_selected_count(
+    filter: LibraryPartitionFilter,
+    original_prefix: &[EffectObjectBinding],
+    selected: &[EffectObjectBinding],
+) -> Result<(), String> {
+    if let LibraryPartitionFilter::Pick(_) = filter {
+        let (picked, _) = filter.subset_bounds(original_prefix.len());
+        if selected.len() != picked {
+            return Err("library-partition pick count changed".to_string());
+        }
+    }
     Ok(())
+}
+
+fn answer_library_partition_prompt(
+    continuation: &mut EffectContinuation,
+    filter: LibraryPartitionFilter,
+    prompt: LibraryPartitionPrompt,
+    path: Vec<u16>,
+    objects: Vec<EffectObjectBinding>,
+) -> Result<(), String> {
+    let LibraryPartitionPrompt {
+        player,
+        requested_count,
+        original_library_len,
+        original_prefix,
+        stage,
+        stage_fingerprint,
+        canonical_path,
+    } = prompt;
+    validate_library_partition_bound_metadata(
+        requested_count,
+        original_library_len,
+        &original_prefix,
+    )?;
+    if stage_fingerprint != library_partition_stage_fingerprint(&stage) {
+        return Err("library-partition prompt stage fingerprint changed".to_string());
+    }
+    let mut expected_choice_path = canonical_path.clone();
+    expected_choice_path.push(library_partition_stage_tag(&stage));
+    if path != expected_choice_path {
+        return Err("library-partition prompt structural path changed".to_string());
+    }
+    let progress = match stage {
+        LibraryPartitionSelectionStage::ChooseMatchingSubset => {
+            let selected = canonicalize_binding_subset(&original_prefix, &objects)?;
+            validate_library_partition_selected_count(filter, &original_prefix, &selected)?;
+            LibraryPartitionProgress::MatchingSubsetChosen { selected }
+        }
+        LibraryPartitionSelectionStage::OrderRest { selected } => {
+            validate_canonical_binding_subset(&original_prefix, &selected)?;
+            if !filter.orders_rest() {
+                return Err("library-partition rule keeps its rest in looked-at order".to_string());
+            }
+            let rest = binding_partition_rest(&original_prefix, &selected)?;
+            validate_exact_binding_permutation(&rest, &objects, "library-partition ordered rest")?;
+            LibraryPartitionProgress::RestOrderChosen {
+                selected,
+                ordered_rest: objects,
+            }
+        }
+    };
+    let progress_fingerprint = library_partition_progress_fingerprint(&progress);
+    continuation.frames.push(library_partition_frame(
+        filter,
+        LibraryPartitionCoordinator {
+            player,
+            requested_count,
+            original_library_len,
+            original_prefix,
+            progress,
+            progress_fingerprint,
+            path: canonical_path.clone(),
+            canonical_path,
+        },
+    ));
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_library_partition_prompt(
+    state: &GameState,
+    chooser: PlayerId,
+    filter: LibraryPartitionFilter,
+    library_player: PlayerId,
+    requested_count: u8,
+    original_library_len: u32,
+    original_prefix: &[EffectObjectBinding],
+    stage: &LibraryPartitionSelectionStage,
+    stage_fingerprint: u64,
+    canonical_path: &[u16],
+    shape: LibraryPartitionPromptShape<'_>,
+) -> Result<(), String> {
+    if chooser != library_player {
+        return Err(
+            "library-partition choice player does not own the selected library".to_string(),
+        );
+    }
+    validate_library_partition_live_metadata(
+        state,
+        library_player,
+        requested_count,
+        original_library_len,
+        filter,
+        original_prefix,
+    )?;
+    if stage_fingerprint != library_partition_stage_fingerprint(stage) {
+        return Err("library-partition prompt stage fingerprint changed".to_string());
+    }
+    let mut expected_path = canonical_path.to_vec();
+    expected_path.push(library_partition_stage_tag(stage));
+    if shape.path != expected_path.as_slice() {
+        return Err("library-partition prompt structural path changed".to_string());
+    }
+    let candidates = shape
+        .selected
+        .iter()
+        .chain(shape.legal)
+        .map(|candidate| {
+            candidate.expected_object.ok_or_else(|| {
+                "library-partition target lacks an object-incarnation binding".to_string()
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    match stage {
+        LibraryPartitionSelectionStage::ChooseMatchingSubset => {
+            let matching = library_partition_matching_prefix(state, filter, original_prefix)?;
+            let (min, max) = filter.subset_bounds(matching.len());
+            if !filter.subset_prompt_is_genuine(matching.len())
+                || usize::from(shape.min_targets) != min
+                || usize::from(shape.max_targets) != max
+                || shape.ordered
+            {
+                return Err("library-partition subset prompt has a noncanonical shape".to_string());
+            }
+            validate_exact_binding_permutation(
+                &matching,
+                &candidates,
+                "library-partition matching candidates",
+            )?;
+        }
+        LibraryPartitionSelectionStage::OrderRest { selected: chosen } => {
+            validate_library_partition_selected(state, filter, original_prefix, chosen)?;
+            if !filter.orders_rest() {
+                return Err("library-partition rule keeps its rest in looked-at order".to_string());
+            }
+            let rest = binding_partition_rest(original_prefix, chosen)?;
+            if rest.len() < 2 {
+                return Err("library-partition rest-order prompt has no genuine choice".to_string());
+            }
+            let count = u16::try_from(rest.len())
+                .map_err(|_| "library-partition rest set exceeds u16".to_string())?;
+            if shape.min_targets != count || shape.max_targets != count || !shape.ordered {
+                return Err(
+                    "library-partition rest-order prompt has a noncanonical shape".to_string(),
+                );
+            }
+            validate_exact_binding_permutation(
+                &rest,
+                &candidates,
+                "library-partition rest-order candidates",
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Advances one partition coordinator frame. Returns `Ok(true)` when it
+/// staged the rest-order prompt and the caller must suspend.
+fn resume_library_partition_frame(
+    state: &mut GameState,
+    continuation: &mut EffectContinuation,
+    filter: LibraryPartitionFilter,
+    coordinator: LibraryPartitionCoordinator,
+) -> Result<bool, String> {
+    let LibraryPartitionCoordinator {
+        player,
+        requested_count,
+        original_library_len,
+        original_prefix,
+        progress,
+        progress_fingerprint,
+        path,
+        canonical_path,
+    } = coordinator;
+    if path != canonical_path {
+        return Err(
+            "library-partition coordinator path changed from its canonical path".to_string(),
+        );
+    }
+    if progress_fingerprint != library_partition_progress_fingerprint(&progress) {
+        return Err("library-partition coordinator progress fingerprint changed".to_string());
+    }
+    validate_library_partition_live_metadata(
+        state,
+        player,
+        requested_count,
+        original_library_len,
+        filter,
+        &original_prefix,
+    )?;
+    match progress {
+        LibraryPartitionProgress::MatchingSubsetChosen { selected } => {
+            validate_library_partition_selected(state, filter, &original_prefix, &selected)?;
+            let rest = binding_partition_rest(&original_prefix, &selected)?;
+            if filter.orders_rest() && rest.len() >= 2 {
+                stage_library_partition_choice(
+                    continuation,
+                    state,
+                    filter,
+                    player,
+                    requested_count,
+                    original_library_len,
+                    original_prefix,
+                    LibraryPartitionSelectionStage::OrderRest { selected },
+                    canonical_path,
+                )?;
+                return Ok(true);
+            }
+            let progress = LibraryPartitionProgress::RestOrderChosen {
+                selected,
+                ordered_rest: rest,
+            };
+            let progress_fingerprint = library_partition_progress_fingerprint(&progress);
+            continuation.frames.push(library_partition_frame(
+                filter,
+                LibraryPartitionCoordinator {
+                    player,
+                    requested_count,
+                    original_library_len,
+                    original_prefix,
+                    progress,
+                    progress_fingerprint,
+                    path,
+                    canonical_path,
+                },
+            ));
+        }
+        LibraryPartitionProgress::RestOrderChosen {
+            selected,
+            ordered_rest,
+        } => {
+            validate_library_partition_selected(state, filter, &original_prefix, &selected)?;
+            let rest = binding_partition_rest(&original_prefix, &selected)?;
+            if !filter.orders_rest() && ordered_rest != rest {
+                return Err("library-partition rest left its looked-at order".to_string());
+            }
+            validate_exact_binding_permutation(
+                &rest,
+                &ordered_rest,
+                "library-partition ordered rest",
+            )?;
+            let expected_prefix = original_prefix
+                .iter()
+                .map(|binding| crate::state::ObjectLinkV4 {
+                    object: binding.object,
+                    zone_change_count: binding.expected_zone_change_count,
+                })
+                .collect::<Vec<_>>();
+            let bottom = selected
+                .iter()
+                .chain(&ordered_rest)
+                .map(|binding| binding.object)
+                .collect::<Vec<_>>();
+            state.apply_scry_result(player, &expected_prefix, &[], &bottom)?;
+            let events = selected
+                .iter()
+                .map(|binding| event::ProposedEvent::zone_change(binding.object, Zone::Hand))
+                .collect();
+            event::propose_and_commit_batch(state, events);
+            if filter.reveals_selected() {
+                for binding in selected {
+                    if state.objects.get(binding.object).zone == Zone::Hand {
+                        for observer in [PlayerId::P0, PlayerId::P1] {
+                            state
+                                .reveal_hand_card(observer, player, binding.object)
+                                .expect("a successful selected-card move is publicly revealed");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(false)
 }
 
 fn stage_library_search_choice(
@@ -10060,6 +11062,67 @@ fn stage_creature_sacrifice_choice(
     });
 }
 
+/// How a linked hand-exile source gets its card back. Mesmeric Fiend's exile
+/// is mandatory and returns through its own leaves-the-battlefield trigger.
+/// Deep-Cavern Bat's "you may exile ... until this creature leaves the
+/// battlefield" is optional and returns immediately, with no stack object,
+/// when that incarnation leaves (610.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LinkedHandExileKind {
+    ReturnTrigger,
+    UntilSourceLeaves,
+}
+
+impl LinkedHandExileKind {
+    fn optional(self) -> bool {
+        self == LinkedHandExileKind::UntilSourceLeaves
+    }
+
+    fn min_choices(self) -> u16 {
+        u16::from(!self.optional())
+    }
+}
+
+pub(crate) fn linked_hand_exile_kind(card_def: u16) -> Option<LinkedHandExileKind> {
+    match crate::card_def::CARD_DEFS.get(card_def as usize)?.name {
+        "Mesmeric Fiend" => Some(LinkedHandExileKind::ReturnTrigger),
+        #[cfg(feature = "standard-magezero-fixtures")]
+        "Deep-Cavern Bat" => Some(LinkedHandExileKind::UntilSourceLeaves),
+        _ => None,
+    }
+}
+
+/// Returns the card an "until this leaves" source exiled once that exact
+/// battlefield incarnation (`left_zone_change_count`) has left. Called from
+/// the zone-change commit, so the return happens immediately rather than
+/// through a trigger.
+pub(crate) fn return_cards_exiled_until_source_leaves(
+    state: &mut GameState,
+    source: ObjectId,
+    left_zone_change_count: u32,
+) {
+    let Some(position) = state.engine.linked_exile_records.iter().position(|record| {
+        record.source.source == source
+            && record.source.zone_change_count == left_zone_change_count
+            && record.source.zone == Zone::Battlefield
+            && linked_hand_exile_kind(record.source.card_def)
+                == Some(LinkedHandExileKind::UntilSourceLeaves)
+    }) else {
+        return;
+    };
+    let record = state.engine.linked_exile_records.remove(position);
+    let still_exiled = state.objects.try_get(record.exiled).is_some_and(|live| {
+        live.zone == Zone::Exile && live.zone_change_count == record.exiled_zone_change_count
+    });
+    if still_exiled {
+        event::propose_and_commit(
+            state,
+            event::ProposedEvent::zone_change_preserving_known_identity(record.exiled, Zone::Hand),
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn stage_linked_exile_hand_choice(
     continuation: &mut EffectContinuation,
     chooser: PlayerId,
@@ -10067,9 +11130,10 @@ fn stage_linked_exile_hand_choice(
     original_hand: Vec<EffectObjectBinding>,
     candidates: Vec<EffectObjectBinding>,
     source: AbilitySourceContractV4,
+    min_targets: u16,
     canonical_path: Vec<u16>,
 ) {
-    debug_assert!(candidates.len() >= 2);
+    debug_assert!(candidates.len() >= 2 - usize::from(min_targets == 0));
     continuation.choice = Some(PendingEffectChoice::SelectTargets {
         player: chooser,
         path: canonical_path.clone(),
@@ -10081,7 +11145,7 @@ fn stage_linked_exile_hand_choice(
                 expected_object: Some(binding),
             })
             .collect(),
-        min_targets: 1,
+        min_targets,
         max_targets: 1,
         ordered: true,
         purpose: EffectTargetSelectionPurpose::LinkedExileNonlandFromRevealedHand {
@@ -10462,7 +11526,7 @@ fn validate_library_partition_live_metadata(
     player: PlayerId,
     requested_count: u8,
     original_library_len: u32,
-    card_type: CardType,
+    filter: LibraryPartitionFilter,
     original_prefix: &[EffectObjectBinding],
 ) -> Result<(), String> {
     validate_library_partition_bound_metadata(
@@ -10480,13 +11544,15 @@ fn validate_library_partition_live_metadata(
         );
     }
     validate_bound_library_prefix_exact(state, player, original_prefix)?;
-    let _ = library_partition_matching_prefix(state, card_type, original_prefix)?;
+    let _ = library_partition_matching_prefix(state, filter, original_prefix)?;
     Ok(())
 }
 
+/// The selectable cards of a partition prefix: the typed filter's matches,
+/// or the whole prefix for a fixed-cardinality pick.
 fn library_partition_matching_prefix(
     state: &GameState,
-    card_type: CardType,
+    filter: LibraryPartitionFilter,
     original_prefix: &[EffectObjectBinding],
 ) -> Result<Vec<EffectObjectBinding>, String> {
     let mut matching = Vec::new();
@@ -10500,7 +11566,11 @@ fn library_partition_matching_prefix(
         let definition = crate::card_def::CARD_DEFS
             .get(object.card_def as usize)
             .ok_or_else(|| "library-partition card definition is missing".to_string())?;
-        if definition.has_type(card_type) {
+        let selectable = match filter {
+            LibraryPartitionFilter::ByType(card_type) => definition.has_type(card_type),
+            LibraryPartitionFilter::Pick(_) => true,
+        };
+        if selectable {
             matching.push(binding);
         }
     }
@@ -10550,6 +11620,59 @@ fn binding_partition_rest(
         .copied()
         .filter(|binding| !selected.contains(binding))
         .collect())
+}
+
+/// The creature cards with mana value at most `max_mana_value` in a bound
+/// library prefix, in prefix order.
+fn creature_prefix_mana_value_at_most(
+    state: &GameState,
+    max_mana_value: u16,
+    original_prefix: &[EffectObjectBinding],
+) -> Result<Vec<EffectObjectBinding>, String> {
+    Ok(library_partition_matching_prefix(
+        state,
+        LibraryPartitionFilter::ByType(CardType::Creature),
+        original_prefix,
+    )?
+    .into_iter()
+    .filter(|binding| {
+        crate::card_def::CARD_DEFS[state.objects.get(binding.object).card_def as usize].mana_value
+            <= max_mana_value
+    })
+    .collect())
+}
+
+/// Queues the typed partition frame's final stage: `selected` to hand and
+/// the rest of the prefix to the bottom in prefix order.
+fn push_library_partition_bottom_frame(
+    continuation: &mut EffectContinuation,
+    player: PlayerId,
+    requested_count: u8,
+    original_library_len: u32,
+    original_prefix: Vec<EffectObjectBinding>,
+    selected: Vec<EffectObjectBinding>,
+    canonical_path: Vec<u16>,
+) -> Result<(), String> {
+    let ordered_rest = binding_partition_rest(&original_prefix, &selected)?;
+    let progress = LibraryPartitionProgress::RestOrderChosen {
+        selected,
+        ordered_rest,
+    };
+    let progress_fingerprint = library_partition_progress_fingerprint(&progress);
+    continuation
+        .frames
+        .push(EffectFrame::LookTopSelectByTypeToHandBottomRest {
+            player,
+            requested_count,
+            original_library_len,
+            card_type: CardType::Creature,
+            original_prefix,
+            progress,
+            progress_fingerprint,
+            path: canonical_path.clone(),
+            canonical_path,
+        });
+    Ok(())
 }
 
 fn scry_stage_tag(stage: &ScrySelectionStage) -> u16 {
@@ -10876,6 +11999,53 @@ fn duress_eligible_hand(
         }
     }
     Ok(eligible)
+}
+
+/// Basic land cards of an exact bound hand, in hand order.
+fn basic_land_hand_cards(
+    state: &GameState,
+    original_hand: &[EffectObjectBinding],
+) -> Result<Vec<EffectObjectBinding>, String> {
+    let mut eligible = Vec::new();
+    for &binding in original_hand {
+        validate_effect_object_binding(state, binding)?;
+        let object = state
+            .objects
+            .try_get(binding.object)
+            .ok_or("basic-land discard hand object is missing")?;
+        let definition = crate::card_def::CARD_DEFS
+            .get(object.card_def as usize)
+            .ok_or("basic-land discard card definition is missing")?;
+        if definition.has_type(CardType::Land)
+            && definition
+                .supertypes
+                .contains(&crate::card_def::Supertype::Basic)
+        {
+            eligible.push(binding);
+        }
+    }
+    Ok(eligible)
+}
+
+/// Thirst for Discovery's "discard N cards" branch, as an ordinary terminal
+/// `DiscardCards` leaf for the already-resolved player.
+fn execute_fallback_discard(
+    continuation: &EffectContinuation,
+    state: &mut GameState,
+    player: PlayerId,
+    otherwise: u8,
+) {
+    execute(
+        &EffectOp::DiscardCards {
+            player: PlayerRef::Controller,
+            count: u32::from(otherwise),
+        },
+        &ExecCtx {
+            controller: player,
+            ..continuation.ctx.clone()
+        },
+        state,
+    );
 }
 
 fn validate_bound_graveyard_exact(
@@ -11332,6 +12502,13 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 event::propose_and_commit(state, event::ProposedEvent::draw(player));
             }
         }
+        EffectOp::DrawCardsDynamic { player, count } => {
+            let player = ctx.resolve_player(*player, state);
+            let count = crate::engine::evaluate_dynamic_value(state, *count, ctx.controller);
+            for _ in 0..count.max(0) {
+                event::propose_and_commit(state, event::ProposedEvent::draw(player));
+            }
+        }
         EffectOp::EachPlayerControllingDefinitionDrawsCard { card_def } => {
             // APNAP-stable order: P0 then P1. Bonder's Ornament's own
             // "getPlayersInRange" iteration order never affects the
@@ -11488,6 +12665,552 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 );
             }
         }
+        EffectOp::BindWarpExileToTriggerSource => {
+            panic!("unmaterialized warp exile");
+        }
+        EffectOp::BindIncubateToTriggerSpell => {
+            panic!("unmaterialized incubate");
+        }
+        EffectOp::BindPlusOneCounterOnAnotherTargetToTriggerTarget => {
+            panic!("unmaterialized other-than counter");
+        }
+        EffectOp::PutPlusOnePlusOneCounterOnTargetOtherThan { other_than } => {
+            if ctx.targets.first() == Some(&Target::Object(*other_than)) {
+                return;
+            }
+            execute(
+                &EffectOp::PutPlusOnePlusOneCounter {
+                    object: ObjectRef::Target(0),
+                },
+                ctx,
+                state,
+            );
+        }
+        EffectOp::CounterUnlessDiscardsCard {
+            targeting_stack_item,
+            ..
+        } => {
+            let Some(payer) = state
+                .stack
+                .iter()
+                .find(|item| item.v4.stack_item_id == *targeting_stack_item)
+                .map(|item| item.controller)
+            else {
+                return;
+            };
+            let discard = state.players[payer.index()]
+                .hand
+                .iter()
+                .copied()
+                .min_by_key(|&id| {
+                    crate::card_def::CARD_DEFS[state.objects.get(id).card_def as usize].mana_value
+                });
+            if let Some(card) = discard {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::zone_change(card, Zone::Graveyard),
+                );
+            } else if crate::engine::counter_stack_item_by_id(state, *targeting_stack_item).is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
+        EffectOp::ExileGraveyardTargetsDrainPerCreature { max_targets } => {
+            let mut creatures = 0;
+            for index in 0..usize::from(*max_targets).min(ctx.targets.len()) {
+                let Target::Object(card) = ctx.targets[index] else {
+                    continue;
+                };
+                if !ctx.target_incarnation_matches(index, state)
+                    || state.objects.get(card).zone != Zone::Graveyard
+                {
+                    continue;
+                }
+                let is_creature = crate::card_def::CARD_DEFS
+                    [state.objects.get(card).card_def as usize]
+                    .has_type(CardType::Creature);
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::zone_change(card, Zone::Exile),
+                );
+                if is_creature && state.objects.get(card).zone == Zone::Exile {
+                    creatures += 1;
+                }
+            }
+            if creatures > 0 {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::life_loss(ctx.controller.opponent(), creatures),
+                );
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::life_gain(ctx.controller, creatures),
+                );
+            }
+        }
+        EffectOp::ReturnSourceAsEnduringEnchantment => {
+            let still_there = ctx.ability_source_contract.is_some_and(|contract| {
+                let object = state.objects.get(contract.source);
+                contract.source == ctx.source
+                    && object.zone == Zone::Graveyard
+                    && object.zone == contract.zone
+                    && object.zone_change_count == contract.zone_change_count
+            });
+            if !still_there {
+                return;
+            }
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change(ctx.source, Zone::Battlefield),
+            );
+            if state.objects.get(ctx.source).zone == Zone::Battlefield {
+                state.objects.get_mut(ctx.source).v4.enduring_enchantment_v1 = true;
+            }
+        }
+        EffectOp::RemoveTimeCounterFromSource => {
+            let still_there = ctx.ability_source_contract.is_some_and(|contract| {
+                let object = state.objects.get(contract.source);
+                object.zone == Zone::Battlefield
+                    && object.zone_change_count == contract.zone_change_count
+            });
+            if still_there {
+                let counters = &mut state.objects.get_mut(ctx.source).v4.time_counters_v1;
+                *counters = counters.saturating_sub(1);
+            }
+        }
+        EffectOp::ReturnSourceFromGraveyardUnearthed => {
+            let still_there = ctx.ability_source_contract.is_some_and(|contract| {
+                let object = state.objects.get(contract.source);
+                contract.source == ctx.source
+                    && contract.zone == Zone::Graveyard
+                    && object.zone == Zone::Graveyard
+                    && object.zone_change_count == contract.zone_change_count
+            });
+            if !still_there {
+                return;
+            }
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change(ctx.source, Zone::Battlefield),
+            );
+            if state.objects.get(ctx.source).zone == Zone::Battlefield {
+                state.objects.get_mut(ctx.source).v4.unearthed_v1 = true;
+            }
+        }
+        EffectOp::BindConvokedCreatureCountToLookTop { .. } => {
+            panic!("unmaterialized convoked look");
+        }
+        EffectOp::BindDamageOpponentEqualToSourceLastPower => {
+            panic!("unmaterialized last-power damage");
+        }
+        EffectOp::PumpOtherAttackingCreaturesUntilEndOfTurn { power, toughness } => {
+            let object_ids: Vec<ObjectId> = state
+                .engine
+                .combat
+                .attackers
+                .iter()
+                .copied()
+                .filter(|&id| {
+                    id != ctx.source
+                        && state.objects.get(id).zone == Zone::Battlefield
+                        && crate::engine::object_has_type(state, id, CardType::Creature)
+                })
+                .collect();
+            if !object_ids.is_empty() {
+                let timestamp = crate::engine::next_timestamp(state);
+                for object_id in object_ids {
+                    let object_zone_change_count = state.objects.get(object_id).zone_change_count;
+                    state.engine.until_end_of_turn.push(
+                        crate::engine::UntilEndOfTurnEffect::ResolvedObjectEffect {
+                            object_id,
+                            object_zone_change_count,
+                            layer: crate::engine::Layers::POWER_TOUGHNESS,
+                            timestamp,
+                            duration: crate::engine::EffectDuration::EndOfTurn,
+                            power: *power,
+                            toughness: *toughness,
+                            grant_haste: false,
+                        },
+                    );
+                }
+            }
+        }
+        EffectOp::RevealTopCardToHandLoseLifeEqualToManaValue => {
+            let player = ctx.controller;
+            let Some(&top) = state.players[player.index()].library.first() else {
+                return;
+            };
+            let mana_value =
+                crate::card_def::CARD_DEFS[state.objects.get(top).card_def as usize].mana_value;
+            event::propose_and_commit(state, event::ProposedEvent::zone_change(top, Zone::Hand));
+            if state.objects.get(top).zone == Zone::Hand {
+                for observer in [PlayerId::P0, PlayerId::P1] {
+                    if state.reveal_hand_card(observer, player, top).is_err() {
+                        state.engine.halted = Some((
+                            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            ctx.source,
+                        ));
+                        return;
+                    }
+                }
+            }
+            if mana_value > 0 {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::life_loss(player, i32::from(mana_value)),
+                );
+            }
+        }
+        EffectOp::LookTopTakeCreaturesManaValueAtMostThenShuffle {
+            count,
+            max_taken,
+            max_mana_value,
+        } => {
+            let player = ctx.controller;
+            let library = &state.players[player.index()].library;
+            let mut candidates: Vec<(usize, ObjectId, u16)> = library
+                .iter()
+                .take(usize::from(*count))
+                .enumerate()
+                .filter_map(|(position, &id)| {
+                    let def = &crate::card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
+                    (def.has_type(CardType::Creature) && def.mana_value <= *max_mana_value)
+                        .then_some((position, id, def.mana_value))
+                })
+                .collect();
+            candidates.sort_by_key(|&(position, _, mana_value)| {
+                (std::cmp::Reverse(mana_value), position)
+            });
+            for &(_, card, _) in candidates.iter().take(usize::from(*max_taken)) {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::zone_change(card, Zone::Hand),
+                );
+                if state.objects.get(card).zone == Zone::Hand {
+                    for observer in [PlayerId::P0, PlayerId::P1] {
+                        if state.reveal_hand_card(observer, player, card).is_err() {
+                            state.engine.halted = Some((
+                                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                                ctx.source,
+                            ));
+                            return;
+                        }
+                    }
+                }
+            }
+            if state.shuffle_library(player).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
+        EffectOp::CounterUnlessPaysLife {
+            targeting_stack_item,
+            life,
+            ..
+        } => {
+            let Some(payer) = state
+                .stack
+                .iter()
+                .find(|item| item.v4.stack_item_id == *targeting_stack_item)
+                .map(|item| item.controller)
+            else {
+                return;
+            };
+            if state.players[payer.index()].life > i32::from(*life) {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::life_loss(payer, i32::from(*life)),
+                );
+            } else if crate::engine::counter_stack_item_by_id(state, *targeting_stack_item).is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
+        EffectOp::Incubate { amount } => {
+            let Some(incubator) = crate::card_def::card_id_by_name("Incubator Token") else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::create_token(incubator, ctx.controller),
+            );
+            let created = state
+                .engine
+                .event_log
+                .iter()
+                .rev()
+                .find_map(|event| match event {
+                    event::CommittedEvent::CreateToken { object, .. }
+                        if state.objects.get(*object).card_def == incubator =>
+                    {
+                        Some(*object)
+                    }
+                    _ => None,
+                });
+            if let Some(token) = created.filter(|_| *amount > 0) {
+                if event::add_plus_one_counters(state, token, ctx.controller, i32::from(*amount))
+                    .is_err()
+                {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                }
+            }
+        }
+        EffectOp::CounterUnlessCollectsEvidence {
+            targeting_stack_item,
+            minimum_mana_value,
+            ..
+        } => {
+            #[cfg(feature = "standard-magezero-fixtures")]
+            {
+                let Some(payer) = state
+                    .stack
+                    .iter()
+                    .find(|item| item.v4.stack_item_id == *targeting_stack_item)
+                    .map(|item| item.controller)
+                else {
+                    return;
+                };
+                match crate::standard_keywords_v1::evidence_plan(state, payer, *minimum_mana_value)
+                {
+                    Some(cards) => {
+                        for card in cards {
+                            event::propose_and_commit(
+                                state,
+                                event::ProposedEvent::zone_change(card, Zone::Exile),
+                            );
+                        }
+                    }
+                    None => {
+                        if crate::engine::counter_stack_item_by_id(state, *targeting_stack_item)
+                            .is_err()
+                        {
+                            state.engine.halted = Some((
+                                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                                ctx.source,
+                            ));
+                        }
+                    }
+                }
+            }
+            #[cfg(not(feature = "standard-magezero-fixtures"))]
+            {
+                let _ = (targeting_stack_item, minimum_mana_value);
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
+        EffectOp::WarpExileBoundObject { object } => {
+            let live = state.objects.get(object.object);
+            if live.zone != object.expected_zone
+                || live.zone_change_count != object.expected_zone_change_count
+            {
+                return;
+            }
+            let owner = live.owner;
+            // Unearth shares this exile; only a warped creature may be cast
+            // from exile afterwards.
+            let warped = live.v4.warped_v1;
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change(object.object, Zone::Exile),
+            );
+            let exiled = state.objects.get(object.object);
+            if warped && exiled.zone == Zone::Exile {
+                let permission = crate::engine::PlayPermission {
+                    object: object.object,
+                    holder: owner,
+                    zone_change_generation: exiled.zone_change_count,
+                    play_or_cast: crate::engine::PlayOrCast::Cast,
+                    expiry: crate::engine::PlayPermissionExpiry::LaterTurn {
+                        granted_turn: state.turn,
+                        granted_active_player: state.active_player,
+                    },
+                };
+                state.engine.exile_play_permissions.push(permission);
+            }
+        }
+        EffectOp::BindEntrantOutgrowsSourceThen { .. }
+        | EffectOp::BindOilCounterToTriggerSource => {
+            // Templates are always materialized before reaching the stack.
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        EffectOp::IfEntrantOutgrowsSourceThen {
+            entrant,
+            source,
+            then,
+        } => {
+            let live = |binding: &EffectObjectBinding| {
+                validate_effect_object_binding(state, *binding).is_ok()
+                    && binding.expected_zone == Zone::Battlefield
+            };
+            if live(entrant)
+                && live(source)
+                && (crate::engine::effective_power(state, entrant.object)
+                    > crate::engine::effective_power(state, source.object)
+                    || crate::engine::effective_toughness(state, entrant.object)
+                        > crate::engine::effective_toughness(state, source.object))
+            {
+                execute(then, ctx, state);
+            }
+        }
+        EffectOp::CreateTokenTappedAndAttacking { token_def } => {
+            let Some(token) = crate::card_def::CARD_DEFS.get(*token_def as usize) else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            if !token.is_token || !token.has_full_support() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::create_token(*token_def, ctx.controller),
+            );
+            let Some(crate::event::CommittedEvent::CreateToken { object, .. }) =
+                state.engine.event_log.last().cloned()
+            else {
+                return;
+            };
+            state.objects.get_mut(object).tapped = true;
+            let combat = &mut state.engine.combat;
+            if combat.attackers_declared
+                && state.active_player == ctx.controller
+                && matches!(
+                    state.step,
+                    crate::state::Step::DeclareAttackers
+                        | crate::state::Step::DeclareBlockers
+                        | crate::state::Step::CombatDamage
+                )
+                && !combat.attackers.contains(&object)
+            {
+                combat.attackers.push(object);
+            }
+        }
+        EffectOp::AddPlusOneCounterToAbilitySource => {
+            let Some(contract) = ctx.ability_source_contract else {
+                return;
+            };
+            let live = state.objects.get(contract.source);
+            if live.zone != Zone::Battlefield
+                || live.zone_change_count != contract.zone_change_count
+                || !crate::engine::object_has_type(state, contract.source, CardType::Creature)
+            {
+                return;
+            }
+            if event::add_plus_one_counters(state, contract.source, ctx.controller, 1).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
+        EffectOp::ReturnTargetCreatureCardRestrictedWhileSourceControlled { target_index } => {
+            let index = usize::from(*target_index);
+            let Some(Target::Object(object)) = ctx.targets.get(index).copied() else {
+                return;
+            };
+            if !ctx.target_incarnation_matches(index, state)
+                || state.objects.get(object).zone != Zone::Graveyard
+            {
+                return;
+            }
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change(object, Zone::Battlefield),
+            );
+            let returned = state.objects.get(object);
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if returned.zone != Zone::Battlefield {
+                return;
+            }
+            #[cfg(not(feature = "standard-magezero-fixtures"))]
+            let _ = returned;
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if let Some(source) = ctx.ability_source_contract {
+                let restriction = crate::state::AttackBlockRestrictionV1 {
+                    creature: crate::state::ObjectLinkV4 {
+                        object,
+                        zone_change_count: returned.zone_change_count,
+                    },
+                    source: crate::state::ObjectLinkV4 {
+                        object: source.source,
+                        zone_change_count: source.zone_change_count,
+                    },
+                    controller: ctx.controller,
+                };
+                crate::standard_statics_v1::record_attack_block_restriction(state, restriction);
+            }
+        }
+        EffectOp::LoseHalfLifeRoundedUp { player } => {
+            let player = ctx.resolve_player(*player, state);
+            let life = state.players[player.index()].life;
+            if life > 0 {
+                let amount = life - life / 2;
+                event::propose_and_commit(state, event::ProposedEvent::life_loss(player, amount));
+            }
+        }
+        EffectOp::ReturnSourceFromGraveyardTappedWithStunCounters { stun } => {
+            let Some(contract) = ctx.ability_source_contract else {
+                return;
+            };
+            let live = state.objects.get(contract.source);
+            if live.zone != Zone::Graveyard
+                || Some(live.zone_change_count) != contract.zone_change_count.checked_add(1)
+            {
+                return;
+            }
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change_to_battlefield_tapped(contract.source),
+            );
+            let returned = state.objects.get_mut(contract.source);
+            if returned.zone == Zone::Battlefield {
+                returned.counters.stun = returned.counters.stun.saturating_add(*stun);
+            }
+        }
+        EffectOp::PutOilCounterOnBoundObject { object } => {
+            if validate_effect_object_binding(state, *object).is_err()
+                || object.expected_zone != Zone::Battlefield
+            {
+                return;
+            }
+            let oil = &mut state.objects.get_mut(object.object).counters.oil;
+            match oil.checked_add(1) {
+                Some(next) => *oil = next,
+                None => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ))
+                }
+            }
+        }
         EffectOp::BoostAttachedCreatureUntilEndOfTurn { power, toughness } => {
             let Some(source_contract) = ctx.ability_source_contract else {
                 return;
@@ -11611,6 +13334,24 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 event::propose_and_commit(
                     state,
                     event::ProposedEvent::zone_change(object, Zone::Graveyard),
+                );
+            }
+        }
+        EffectOp::DestroyObjectThenCreateTokens {
+            object,
+            token_def,
+            count,
+        } => {
+            let id = ctx.resolve_object(*object);
+            if state.objects.get(id).zone != Zone::Battlefield {
+                return;
+            }
+            let controller = state.objects.get(id).controller;
+            execute(&EffectOp::DestroyObject { object: *object }, ctx, state);
+            for _ in 0..*count {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::create_token(*token_def, controller),
                 );
             }
         }
@@ -11831,7 +13572,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     && live.zone_change_count == source.zone_change_count
                     && crate::card_def::CARD_DEFS[live.card_def as usize]
                         .equipment
-                        .is_some_and(|equipment| equipment.job_select)
+                        .is_some()
             });
             if !source_is_live {
                 return;
@@ -12285,6 +14026,19 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             power,
             toughness,
         } => {
+            // A source ability continues to resolve after its source leaves,
+            // but its old incarnation cannot boost a returned permanent.
+            if *target == TargetRef::ThisSource {
+                let Some(source_contract) = ctx.ability_source_contract else {
+                    return;
+                };
+                if !state.objects.try_get(ctx.source).is_some_and(|source| {
+                    source.zone == Zone::Battlefield
+                        && source.zone_change_count == source_contract.zone_change_count
+                }) {
+                    return;
+                }
+            }
             let Target::Object(object) = ctx.resolve_target(*target) else {
                 panic!("dynamic target pump requires an object target");
             };
@@ -12698,6 +14452,12 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             }
             let def = &crate::card_def::CARD_DEFS[source.card_def as usize];
+            // CR 701.27f: an earlier activation may already have transformed
+            // this Incubator since the current activation entered the stack.
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if def.name == "Incubator Token" && source.v4.face_index == 1 {
+                return;
+            }
             if source.v4.face_index != 0 || def.transform_face.is_none() {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -12960,6 +14720,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::CounterUnlessPaysGeneric { .. }
         | EffectOp::CounterTargetUnlessPaysGeneric { .. }
         | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
+        | EffectOp::LookTopPickToHandBottomRest { .. }
+        | EffectOp::DiscardBasicLandOrCards { .. }
+        | EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. }
         | EffectOp::ExileOneFromPlayersGraveyard { .. }
         | EffectOp::MayExileFromPlayersGraveyardMatchingThen { .. }
         | EffectOp::SacrificeCreature { .. }
@@ -13122,6 +14885,24 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
                 .any(|id| id != ctx.source && state.objects.get(id).card_def == source_def)
         }
         EffectCond::WasKicked => ctx.kicked,
+        EffectCond::TargetWasCastForWarp(index) => {
+            ctx.target_incarnation_matches(usize::from(*index), state)
+                && match ctx.targets.get(usize::from(*index)) {
+                    Some(Target::Object(object)) => {
+                        let object = state.objects.get(*object);
+                        object.zone == Zone::Battlefield && object.v4.warped_v1
+                    }
+                    _ => false,
+                }
+        }
+        EffectCond::SourceStillInTriggerZone => {
+            ctx.ability_source_contract.is_some_and(|contract| {
+                let object = state.objects.get(contract.source);
+                contract.source == ctx.source
+                    && object.zone == contract.zone
+                    && object.zone_change_count == contract.zone_change_count
+            })
+        }
         EffectCond::OptionalAdditionalCostPaid(kind) => {
             ctx.optional_additional_cost_paid == Some(*kind)
         }
@@ -13147,6 +14928,17 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
             }),
         EffectCond::ControllerGraveyardCardCountAtLeast(minimum) => {
             controller_graveyard_card_count(state, ctx.controller) >= usize::from(*minimum)
+        }
+        EffectCond::TargetManaValueAtMost(index, maximum) => {
+            ctx.target_incarnation_matches(usize::from(*index), state)
+                && match ctx.targets.get(usize::from(*index)) {
+                    Some(Target::Object(object)) => {
+                        crate::card_def::CARD_DEFS[state.objects.get(*object).card_def as usize]
+                            .mana_value
+                            <= *maximum
+                    }
+                    _ => false,
+                }
         }
     }
 }

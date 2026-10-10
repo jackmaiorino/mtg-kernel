@@ -5,8 +5,10 @@ Usage: python stage4a_queue.py ROOT BINARY QUEUE.json
 
 QUEUE.json: [job or {"parallel": [job, ...]}], job = {"name", "mode": "s4a-corpus"|"s4a-run", "model": "r1"|"r2",
   "workers", "base_seed", and for corpus "first_game", "games"; for run
-  "roots" and optionally "limits"; any job may set "max_wall_seconds" (its share of the
-  global worker-hour cap divided by its workers; the job is killed and recorded incomplete there), ("select_cap,eval_worlds,eval_cap", cost-only
+  "roots" and optionally "limits"; any job may set "max_cpu_seconds" (its share of the
+  global CPU-worker-second cap, polled every 30 s), or jobs of one parallel group may share
+  "group_max_cpu_seconds", or "max_wall_seconds"; the job is killed and
+  recorded incomplete there, ("select_cap,eval_worlds,eval_cap", cost-only
   engineering checks)}]. Jobs run in order. Each process runs at BelowNormal
 priority with Windows power throttling (EcoQoS) switched off, so it uses the
 declared P-cores; priority is unchanged. An `s4a-run` job resumes: the binary
@@ -61,6 +63,28 @@ def no_ecoqos(pid):
     return bool(ok)
 
 
+def cpu_seconds(pid):
+    """User plus kernel CPU seconds of a live process (Windows), else None."""
+    if os.name != "nt":
+        return None
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.restype = ctypes.c_void_p
+    k32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+    k32.GetProcessTimes.argtypes = [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_ulonglong)] * 4
+    k32.CloseHandle.argtypes = [ctypes.c_void_p]
+    h = k32.OpenProcess(0x1000, False, pid)
+    if not h:
+        return None
+    t = [ctypes.c_ulonglong() for _ in range(4)]
+    ok = k32.GetProcessTimes(h, *[ctypes.byref(x) for x in t])
+    k32.CloseHandle(h)
+    return (t[2].value + t[3].value) / 1e7 if ok else None
+
+
+# CPU seconds of the live jobs of a parallel group that shares one budget.
+GROUP_CPU = {}
+
+
 def run_job(item):
     out = OUT / f"{item['name']}.jsonl"
     env = {k: v for k, v in os.environ.items() if k not in ("S4A_LIMITS", "ROOTS")}
@@ -86,14 +110,28 @@ def run_job(item):
             p.kill()
             p.wait()
             log(f"{item['name']} killed: could not switch EcoQoS off")
-        try:
-            code = p.wait(timeout=item.get("max_wall_seconds"))
-        except subprocess.TimeoutExpired:
-            # Global worker-hour cap: workers x wall bounds the job's
-            # worker-seconds, so stopping here keeps the run inside the cap.
-            p.kill()
-            code = p.wait()
-            log(f"{item['name']} stopped at its worker-hour cap ({item['max_wall_seconds']} s wall); incomplete")
+        # Global worker-hour cap, in the plan's unit (CPU-worker-seconds):
+        # `max_cpu_seconds` is this job's share; `max_wall_seconds`, if set,
+        # is a cruder wall bound. Either stop makes the job incomplete.
+        cpu, code = None, None
+        while code is None:
+            try:
+                code = p.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                cpu = cpu_seconds(p.pid) or cpu
+                over_cpu = item.get("max_cpu_seconds") and cpu and cpu > item["max_cpu_seconds"]
+                if item.get("group_max_cpu_seconds") and cpu:
+                    # One budget for the whole parallel group (finished jobs
+                    # keep their last reading in GROUP_CPU).
+                    GROUP_CPU[item["name"]] = cpu
+                    over_cpu = over_cpu or sum(GROUP_CPU.values()) > item["group_max_cpu_seconds"]
+                over_wall = item.get("max_wall_seconds") and time.monotonic() - started > item["max_wall_seconds"]
+                if over_cpu or over_wall:
+                    p.kill()
+                    code = p.wait()
+                    log(f"{item['name']} stopped at its worker-hour cap (cpu {cpu} s, wall "
+                        f"{round(time.monotonic() - started)} s); incomplete")
+        log(f"{item['name']} last sampled cpu seconds {cpu}")
     kinds = Counter()
     if out.exists():
         for line in out.read_text(encoding="utf-8").splitlines():

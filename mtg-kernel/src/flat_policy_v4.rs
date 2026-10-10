@@ -20,7 +20,7 @@ use crate::flat_policy_v3::{
     FlatDecisionLocalLibraryV3, FlatFinalizedChosenCreatureCostV3, FlatPendingCastObjectCostV3,
     FlatPendingChosenCreatureCostV3, FlatQueuedWardPaymentV3, FlatWardPaymentV3,
 };
-use crate::policy_observation_v7::HistoricalSourceContextV7;
+pub use crate::policy_observation_v7::HistoricalSourceContextV7;
 use crate::rl::StackItemKindV2;
 use crate::rl_session::{FastActorDecisionV1, FastActorSessionV1, FlatActionDecisionBindingV3};
 
@@ -28,14 +28,14 @@ pub const FLAT_POLICY_TYPED_LAYOUT_VERSION_V4: u32 = 4;
 pub const FLAT_SCORER_PACKET_VERSION_V4: u32 = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FlatHistoricalPublicSourceV4 {
+pub struct FlatHistoricalPublicSourceV4 {
     pub context: HistoricalSourceContextV7,
     pub stack_item_kind: StackItemKindV2,
     pub model_object_index: u32,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct FlatScoringExtensionsV4 {
+pub struct FlatScoringExtensionsV4 {
     /// Only newly introduced physical rows, in V4 registration order. Rows
     /// reused from common public or legitimately known groups are excluded.
     pub appended_object_indices: Vec<u32>,
@@ -56,9 +56,9 @@ pub(crate) struct FlatDecisionV4 {
 }
 
 /// The common value types are storage layouts, not a V2 identity assertion.
-/// Callers cannot construct or extract this view outside the crate.
+/// Construction is crate-private. Public accessors expose validated scorer data.
 #[derive(Clone, Copy)]
-pub(crate) struct FlatScoringDecisionViewV4<'a> {
+pub struct FlatScoringDecisionViewV4<'a> {
     common: FlatScoringDecisionViewV2<'a>,
     extensions: &'a FlatScoringExtensionsV4,
 }
@@ -71,11 +71,11 @@ impl<'a> FlatScoringDecisionViewV4<'a> {
         Self { common, extensions }
     }
 
-    pub(crate) fn common(self) -> FlatScoringDecisionViewV2<'a> {
+    pub fn common(self) -> FlatScoringDecisionViewV2<'a> {
         self.common
     }
 
-    pub(crate) fn extensions(self) -> &'a FlatScoringExtensionsV4 {
+    pub fn extensions(self) -> &'a FlatScoringExtensionsV4 {
         self.extensions
     }
 }
@@ -89,8 +89,7 @@ impl FastActorSessionV1 {
     /// V4 sibling of `encode_current_flat_scoring_decision_owned_v3`,
     /// reachable (compiles, callable, tested) from the same
     /// `expanded_deck_training_v1`-family scoring entry point shape without
-    /// switching any existing caller to it: no production call site invokes
-    /// this yet.
+    /// switching existing callers. Native search collection V3 explicitly opts in.
     pub(crate) fn encode_current_flat_scoring_decision_owned_v4(
         &self,
         expected: FastActorDecisionV1,
