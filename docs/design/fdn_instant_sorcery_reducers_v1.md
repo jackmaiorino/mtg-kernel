@@ -21,7 +21,12 @@ increases and reductions. It sums base, additional and chosen-X generic cost
 in u32 before one floor; colored/hybrid/Phyrexian pip requirements remain in
 the existing solver. Existing entrypoints delegate with zero modifiers.
 Focused regressions cover kicker, two-X costs, tax/reduction ordering, colored
-requirements and totals above255. Native execution remains pending.
+requirements and totals above255. Read-only review of source8c3b9914 found no
+actionable defects. Both Limited-only and combined Standard/Limited test
+compilations and all15 mana regressions pass under supported
+guardab5c3985b65b40339b8c63a979a7eabd on cores16-17 at BelowNormal priority,
+command sequence exit0. Rust1.94.1 and MSVC19.50.35725 are logged. This
+qualifies the combined solver increment; casting-path integration is pending.
 
 Remaining implementation must derive live source modifiers and route every
 offer, pending choice, X maximum and final payment through one spell-only
