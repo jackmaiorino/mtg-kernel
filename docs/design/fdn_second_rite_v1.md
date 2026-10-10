@@ -22,3 +22,13 @@ Read-only review at `16636107` found no actionable defects in resolution-time
 player selection, equality, damage, restore or lethal state actions. Formatting
 and diff checks passed. Native qualification remains pending after the preceding
 guarded prepared-source check completes; no card case has executed.
+
+Native preflight at `a00f5f50` caught a nonexistent `NoOp` variant. Repair
+`2bf31d81` uses the existing empty sequence in both generated program and
+primitive. The prior fight attempt exposed an undrawn-hand constructor
+assumption; `a00f5f50` draws its operands explicitly, and `d46cf2a1` applies
+that correction to the other prepared primitives and Pilfer/Folly hands.
+Read-only review at `2bf31d81` found those repairs correct. Native retry uses
+that exact source under Haley guard `0c0c355e8efd4ab09d9da6a8ec2f97b9`, with
+primitive execution followed by all-test-target type-checking. Earlier failed
+logs remain retained; no pending result is reported passing.
